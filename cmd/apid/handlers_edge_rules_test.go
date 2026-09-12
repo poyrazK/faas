@@ -106,6 +106,61 @@ func TestCreateEdgeRule_HappyPath(t *testing.T) {
 	}
 }
 
+func edgeRuleRespondReq() api.CreateEdgeRuleRequest {
+	return api.CreateEdgeRuleRequest{
+		MatchHost: "preview.example.com",
+		MatchPath: "/shipping/estimate",
+		Priority:  intPtr(10),
+		Enabled:   boolPtr(true),
+		Kind:      string(state.EdgeRuleKindRespond),
+		Action:    json.RawMessage(`{"status_code":200,"body":{"days":3,"price":4.99}}`),
+	}
+}
+
+func TestCreateEdgeRule_RespondPreviewRoundTrip(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	slug := "pr-42-demo"
+	seedPreviewAppForTest(t, e, slug, "demo", 42)
+
+	rec := e.do(t, "POST", "/v1/apps/"+slug+"/edge-rules", edgeRuleRespondReq(), nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
+	}
+	var out api.EdgeRuleResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Kind != string(state.EdgeRuleKindRespond) {
+		t.Fatalf("kind = %q, want respond", out.Kind)
+	}
+	if string(out.Action) != `{"kind":"respond","respond":{"status_code":200,"body":{"days":3,"price":4.99}}}` {
+		t.Fatalf("action = %s, want fixed response payload", out.Action)
+	}
+
+	updated := json.RawMessage(`{"status_code":503,"body":{"error":"not ready"}}`)
+	patch := e.do(t, "PATCH", "/v1/edge-rules/"+out.ID, api.UpdateEdgeRuleRequest{Action: &updated}, nil)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, want 200; body = %s", patch.Code, patch.Body.String())
+	}
+	var got api.EdgeRuleResponse
+	if err := json.Unmarshal(patch.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal PATCH response: %v", err)
+	}
+	if string(got.Action) != `{"kind":"respond","respond":{"status_code":503,"body":{"error":"not ready"}}}` {
+		t.Fatalf("updated action = %s, want respond envelope", got.Action)
+	}
+}
+
+func TestCreateEdgeRule_RespondRejectsProductionApp(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	slug := mustSeedEdgeRuleApp(t, e, "production")
+
+	rec := e.do(t, "POST", "/v1/apps/"+slug+"/edge-rules", edgeRuleRespondReq(), nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for production respond rule; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestCreateEdgeRule_FreeJWT_Returns402 pins the plan-kind gate
 // (ADR-089 §7): jwt|ip are Hobby+. A Free plan posting a JWT
 // rule must get 402 plan_edge_rule_kind_not_allowed BEFORE loadApp

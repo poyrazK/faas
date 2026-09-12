@@ -286,6 +286,10 @@ type server struct {
 	// The create-run handler rejects before persistence while the runtime is
 	// disabled, so customers never receive a permanently pending run.
 	workflowRuntimeEnabled bool
+	// executionAPIEnabled is an explicit, fail-closed gate for the public
+	// disposable execution admission surface (ADR-171). It remains false by
+	// default until the operator has enabled the scheduler/VM isolation path.
+	executionAPIEnabled bool
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
 	// Postgres and the notification reconciler refreshes this snapshot.
@@ -439,7 +443,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 // degraded — statusCache returns "no source", the metrics handler
 // returns zeroed fields with Source="degraded".
 func (s *server) WithStatusCache(promURL, htmlPath string) *server {
-	s.statusCache = newStatusCache(promURL, s.log)
+	s.statusCache = newStatusCacheWithStore(promURL, s.store, s.log)
 	if promURL != "" {
 		s.promqlClient = promql.NewClient(promURL, nil)
 	}
@@ -598,6 +602,14 @@ func (s *server) WithDataPlacement(enabled bool) *server {
 // gate shared with schedd's FAAS_WORKFLOWS_ENABLED setting.
 func (s *server) WithWorkflowRuntimeEnabled(enabled bool) *server {
 	s.workflowRuntimeEnabled = enabled
+	return s
+}
+
+// WithExecutionAPIEnabled attaches the boot-time gate for the public
+// disposable execution API. Keeping this separate from the scheduler's
+// dispatch flag lets apid fail closed when the VM isolation path is not ready.
+func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
+	s.executionAPIEnabled = enabled
 	return s
 }
 
@@ -905,6 +917,10 @@ func newServerWithDeps(
 		// Unit tests exercise the workflow engine by default. Production
 		// overwrites this from FAAS_WORKFLOWS_ENABLED before serving.
 		workflowRuntimeEnabled: true,
+		// Disposable execution admission is intentionally opt-in. Production
+		// overwrites this from FAAS_EXECUTION_API_ENABLED after the host
+		// scheduler and VM isolation path have been installed.
+		executionAPIEnabled: false,
 		// pkg/auth.Middleware backs the s.requireMFA + s.requireScope
 		// facade (cmd/apid/auth_facade.go). The auditor's Emit is
 		// nil-safe so the auth.mfa_gate_hit audit row fires when the
@@ -1016,6 +1032,9 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageListSurface...)(s.listBuckets))))
+	mux.HandleFunc("GET /v1/apps/{slug}/upload-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageListSurface...)(s.listObjectUploadRoutes))))
+	mux.HandleFunc("POST /v1/apps/{slug}/upload-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.createObjectUploadRoute))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/upload-routes/{route}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.deleteObjectUploadRoute))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.createBucket))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.deleteBucket))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/access-grants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.listBucketAccessGrants))))
@@ -1058,6 +1077,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.accountUsage))))
 	mux.HandleFunc("GET /v1/account/object-storage-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getObjectStorageUsage))))
 	mux.HandleFunc("GET /v1/account/managed-postgres-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getManagedPostgresUsage))))
+	// Disposable one-shot executions (ADR-171). The handlers are mounted
+	// behind a separate explicit opt-in so a control-plane upgrade cannot
+	// accept work before the restore/execute/destroy path is ready. POST and
+	// DELETE use the existing idempotency/auth chain; all reads remain
+	// account-scoped through the authenticated account argument.
+	mux.HandleFunc("POST /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createExecution)))))
+	mux.HandleFunc("GET /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getExecution))))
+	mux.HandleFunc("DELETE /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelExecution)))))
 	mux.HandleFunc("POST /v1/admin/object-storage/usage-reports", s.authLimited(s.requireAdminMutation(s.recordObjectStorageUsage)))
 	// IAM-6 (issue #190 / ADR-061, PR 4): active-org whoami. The
 	// route is undocumented in api/openapi.yaml for PR 4 — PR 5
@@ -1212,6 +1239,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerUsageStatement)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageStatement))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/finalize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.finalizeAPIConsumerUsageStatement)))))
+	// A finalized statement can be claimed exactly once by the customer's
+	// billing system. The handoff records an external invoice reference and
+	// never charges through Gregale.
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageStatementHandoff))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.claimAPIConsumerUsageStatement)))))
 	// Issue #273 / ADR-042 — per-app metrics endpoint. Read-only,
 	// no MFA required (the primary caller is an API key with
 	// ScopesReadSurface). Mirrors getApp's IDOR-safe loadApp so a
@@ -1923,6 +1955,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryCoverageHandler))))
+	mux.HandleFunc("GET /v1/apps/{slug}/debug/running", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRunningHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	// Portable incident artifact for the customer debugger. The export uses
 	// the same retention and tenant gates as the list endpoint, but is kept on
@@ -2594,6 +2627,8 @@ func (s *server) handler() http.Handler {
 	// can manage a connection without weakening the browser CSRF contract.
 	mux.HandleFunc("GET /v1/github/repos", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.listGitHubRepositories)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/github", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.getGitHubConnection)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/github/deployment-policy", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.getGitHubDeployPolicy)))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/github/deployment-policy", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.patchGitHubDeployPolicy)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/github/bind", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.bindGitHubConnection))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/github/sync", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.syncGitHubConnection))))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/github", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.disconnectGitHubConnection))))))

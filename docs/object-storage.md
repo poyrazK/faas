@@ -568,6 +568,35 @@ Gregale sessions/API keys and MFA policy. Bucket lifecycle and grant management
 require `storage:manage`; object reads require `storage:read`; object writes
 require `storage:write`. `admin` and dashboard sessions retain full access.
 
+### Policy-controlled uploads
+
+For application uploads that should not wake or proxy through the customer's
+runtime, declare an edge route with `POST /v1/apps/{slug}/upload-routes`:
+
+```json
+{
+  "name": "avatar",
+  "bucket_id": "…",
+  "key_prefix": "avatars",
+  "max_bytes": 5242880,
+  "allowed_content_types": ["image/*"]
+}
+```
+
+The public app hostname then accepts `POST /uploads/avatar`. Gregale requires a
+Bearer API key belonging to the app account, requires `Content-Length`, checks
+the route byte and content-type policy, and streams the body directly to the
+selected provider. The generated key is `key_prefix/{api-key-id}/{uuid}`; the
+caller receives an object reference and an opaque completion ID. A durable
+completion receipt is written for completed, rejected, and failed attempts.
+
+The route policy is provider-neutral. It uses the registry's optional streaming
+writer, so switching an immutable bucket placement between OVH, R2, AWS, GCS,
+or another compatible backend does not change the customer endpoint. The
+first slice intentionally does not run application-specific business logic;
+applications needing checks beyond account/key policy should keep using a
+signed URL plus an application endpoint.
+
 For a non-admin data key, a scope is necessary but not sufficient: the key must
 also have an explicit grant on the target bucket. A `read` grant permits object
 listing and GET URL issuance, `write` permits object deletion and PUT URL

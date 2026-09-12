@@ -664,7 +664,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		if err = v.prepareJobExitListener(l); err != nil {
 			return fmt.Errorf("vmm: prepare job-exit listener: %w", err)
 		}
-	} else if !l.IsBuilder && cfg.VsockDevice != nil {
+	} else if !l.IsBuilder && !l.Networkless && cfg.VsockDevice != nil {
 		if err = v.prepareCharacterizationListener(l); err != nil {
 			return fmt.Errorf("vmm: prepare characterization listener: %w", err)
 		}
@@ -672,16 +672,20 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err = v.stageMountHelper(root); err != nil {
 		return err
 	}
-	if err = v.bindTunSource(root, l.Instance); err != nil {
-		return err
+	if len(cfg.NetworkInterfaces) > 0 {
+		if err = v.bindTunSource(root, l.Instance); err != nil {
+			return err
+		}
 	}
 	helperReadyAt := time.Now()
 	if err = v.startJailer(ctx, l, "--config-file", VMConfigName); err != nil {
 		return err
 	}
 	startedJailerAt := time.Now()
-	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
-		return err
+	if len(cfg.NetworkInterfaces) > 0 {
+		if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
+			return err
+		}
 	}
 	boundTunAt := time.Now()
 	var coldBootCPU startupCPUProfile
@@ -1101,8 +1105,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.stageMountHelper(root); err != nil {
 		return err
 	}
-	if err = v.bindTunSource(root, l.Instance); err != nil {
-		return err
+	if !spec.Networkless {
+		if err = v.bindTunSource(root, l.Instance); err != nil {
+			return err
+		}
 	}
 	tHelper := time.Now()
 
@@ -1115,8 +1121,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	tStartJailer := time.Now()
-	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
-		return err
+	if !spec.Networkless {
+		if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
+			return err
+		}
 	}
 	var restoreCPU startupCPUProfile
 	trackRestoreCPU := !l.IsBuilder && l.Plan.Valid()
@@ -3298,8 +3306,9 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	}
 	argv := append(JailerCommand(JailerSpec{
 		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
-		Plan:      l.Plan,
-		IsBuilder: l.IsBuilder,
+		Plan:        l.Plan,
+		Networkless: l.Networkless,
+		IsBuilder:   l.IsBuilder,
 		MemoryMaxBytes: func() int64 {
 			if l.MemoryMaxMiB < 1 {
 				return 0

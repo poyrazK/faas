@@ -101,6 +101,31 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 	if len(deliveries) != 1 {
 		t.Fatalf("repeat finalize enqueued %d deliveries, want one", len(deliveries))
 	}
+	handoffPath := finalizePath[:len(finalizePath)-len("/finalize")] + "/handoff"
+	claim := e.do(t, http.MethodPost, handoffPath, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "customer-invoice-1001"}, nil)
+	if claim.Code != http.StatusCreated {
+		t.Fatalf("claim handoff: %d %s", claim.Code, claim.Body)
+	}
+	var handoff api.APIConsumerUsageStatementHandoffResponse
+	if err := json.Unmarshal(claim.Body.Bytes(), &handoff); err != nil || handoff.StatementID != statement.ID || handoff.ExternalInvoiceID != "customer-invoice-1001" || handoff.AmountMillicents != 75 {
+		t.Fatalf("handoff = %+v err=%v", handoff, err)
+	}
+	replayedClaim := e.do(t, http.MethodPost, handoffPath, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "customer-invoice-1001"}, nil)
+	if replayedClaim.Code != http.StatusOK {
+		t.Fatalf("replay handoff: %d %s", replayedClaim.Code, replayedClaim.Body)
+	}
+	var replayedHandoff api.APIConsumerUsageStatementHandoffResponse
+	if err := json.Unmarshal(replayedClaim.Body.Bytes(), &replayedHandoff); err != nil || replayedHandoff.ID != handoff.ID {
+		t.Fatalf("replayed handoff = %+v err=%v", replayedHandoff, err)
+	}
+	conflictingClaim := e.do(t, http.MethodPost, handoffPath, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: "customer-invoice-1002"}, nil)
+	if conflictingClaim.Code != http.StatusConflict {
+		t.Fatalf("conflicting handoff: %d %s", conflictingClaim.Code, conflictingClaim.Body)
+	}
+	gotHandoff := e.do(t, http.MethodGet, handoffPath, nil, nil)
+	if gotHandoff.Code != http.StatusOK {
+		t.Fatalf("get handoff: %d %s", gotHandoff.Code, gotHandoff.Body)
+	}
 	listed := e.do(t, http.MethodGet, path, nil, nil)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("list statements: %d %s", listed.Code, listed.Body)

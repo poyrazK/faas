@@ -1964,8 +1964,17 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// ("" → SQL NULL). The empty-uuid CHECK + the FK with
 	// ON DELETE SET NULL (migration 00167) enforce the
 	// integrity contract downstream.
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
+	// workload_class and start_command are part of the project/app
+	// identity. They must be written explicitly here rather than left
+	// to the schema defaults, otherwise project reconcile loses the
+	// detector's worker/job classification and command on its first
+	// insert (issue #2162).
+	workloadClass := app.WorkloadClass
+	if workloadClass == "" {
+		workloadClass = WorkloadClassHTTP
+	}
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
 		returning ` + appsSelectColumns
 	// status: pull from app.Status when non-empty (the API surfaces it on
 	// update / restore paths); fall back to 'active' on the Go zero so the
@@ -1996,7 +2005,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		appProtocol = api.AppProtocolHTTP1
 	}
 	row := s.pool.QueryRow(ctx, insertAppSQL,
-		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, nullString(app.NodeID),
+		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
 		// Tier A10 / ADR-088: overflow_node preference (nullable
 		// UUID). nullString coerces a nil pointer or empty
@@ -2193,8 +2202,16 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	// ("" → SQL NULL). The empty-uuid CHECK + the FK with
 	// ON DELETE SET NULL (migration 00167) enforce the
 	// integrity contract downstream.
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
+	// Keep the project workload fields explicit on this quota-aware
+	// insert as well. Reconcile uses this path for every new workload;
+	// relying on the schema defaults would turn workers/jobs into HTTP
+	// apps and discard their detected start command (issue #2162).
+	workloadClass := app.WorkloadClass
+	if workloadClass == "" {
+		workloadClass = WorkloadClassHTTP
+	}
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
 		returning ` + appsSelectColumns
 	// status: same fallback as CreateApp above — empty Go Status would
 	// trip 23514 on the CHECK constraint, so coerce to AppActive. The
@@ -2220,7 +2237,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		appProtocol = api.AppProtocolHTTP1
 	}
 	row := tx.QueryRow(ctx, insertAppSQL,
-		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, nullString(app.NodeID),
+		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
 		// Tier A10 / ADR-088: overflow_node preference (nullable
 		// UUID). nullString coerces a nil pointer or empty
@@ -3316,6 +3333,12 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		scalingPolicyBytes, _ = json.Marshal(*p.ScalingPolicy)
 		keepMinInstancesInSync = true
 	}
+	declaredRoutesBytes := []byte("[]")
+	if p.SetDeclaredRoutes {
+		if encoded, err := json.Marshal(derefDeclaredRoutes(p.DeclaredRoutes)); err == nil {
+			declaredRoutesBytes = encoded
+		}
+	}
 	upd := `update apps set
 		   ram_mb          = coalesce($2, ram_mb),
 		   idle_timeout_s  = case when $3 then $4 else idle_timeout_s end,
@@ -3452,7 +3475,10 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 				   -- Hobby+) before reaching this UPDATE.
 				   app_protocol = case when $61 then $62 else app_protocol end,
 				   cpu_millicores = coalesce($63, cpu_millicores),
-				   consumer_auth_mode = case when $64 then $65 else consumer_auth_mode end
+				   consumer_auth_mode = case when $64 then $65 else consumer_auth_mode end,
+				   only_declared_routes = case when $66 then $67 else only_declared_routes end,
+				   declared_routes = case when $68 then $69::jsonb else declared_routes end,
+				   workload_class = case when $70 then $71::text else workload_class end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -3574,7 +3600,10 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		// "don't touch" from "explicit http1".
 		p.SetAppProtocol, derefString(p.AppProtocol),
 		p.CPUMillicores,
-		p.SetConsumerAuthMode, derefString(p.ConsumerAuthMode))
+		p.SetConsumerAuthMode, derefString(p.ConsumerAuthMode),
+		p.SetOnlyAllowDeclaredRoutes, boolOrFalse(p.OnlyAllowDeclaredRoutes),
+		p.SetDeclaredRoutes, declaredRoutesBytes,
+		p.WorkloadClass != nil, workloadClassString(p.WorkloadClass))
 	return scanApp(row)
 }
 
@@ -3611,6 +3640,16 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// workloadClassString lifts the optional reconcile update field into the
+// scalar representation expected by pgx. A nil pointer is only used with a
+// false CASE guard, so the empty string is never written in that shape.
+func workloadClassString(c *WorkloadClass) string {
+	if c == nil {
+		return ""
+	}
+	return string(*c)
 }
 
 // derefAddr returns the string-encoded form of a *netip.Addr, or
@@ -4365,6 +4404,306 @@ func (s *PgStore) ApplyProjectPlan(
 		return Project{}, nil, nil, fmt.Errorf("state: commit apply project plan: %w", err)
 	}
 	return insertedProject, insertedApps, insertedCrons, nil
+}
+
+// ApplyProjectReconcile replaces an existing project's app and cron
+// membership in one PostgreSQL transaction. The account and project rows are
+// locked before quota evaluation, so concurrent project applies cannot pass
+// the gate against the same stale counts. No caller-visible row is committed
+// until every update, soft-delete, insert, and cron replacement succeeds.
+func (s *PgStore) ApplyProjectReconcile(
+	ctx context.Context,
+	project Project,
+	mutations []ProjectReconcileMutation,
+	desiredCrons []ProjectReconcileCron,
+	scanSource ProjectScanSource,
+	limits api.Limits,
+) (ProjectReconcileResult, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ProjectReconcileResult{}, fmt.Errorf("state: begin project reconcile: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, project.AccountID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProjectReconcileResult{}, ErrNotFound
+		}
+		return ProjectReconcileResult{}, fmt.Errorf("state: lock project account: %w", err)
+	}
+	storedProject, err := scanProject(tx.QueryRow(ctx, `
+		select id, account_id, slug, coalesce(repo_full_name,''),
+		       coalesce(production_branch,''), coalesce(install_id,0), scan_source,
+		       created_at, updated_at
+		  from projects where id = $1 and account_id = $2 for update`, project.ID, project.AccountID))
+	if err != nil {
+		return ProjectReconcileResult{}, err
+	}
+
+	rows, err := tx.Query(ctx, `select `+appsSelectColumns+` from apps where project_id = $1 and status <> 'deleted' for update`, project.ID)
+	if err != nil {
+		return ProjectReconcileResult{}, fmt.Errorf("state: load project apps: %w", err)
+	}
+	existing, err := scanApps(rows)
+	rows.Close()
+	if err != nil {
+		return ProjectReconcileResult{}, err
+	}
+	byID := make(map[string]App, len(existing))
+	for _, app := range existing {
+		byID[app.ID] = app
+	}
+
+	creates, removes := 0, 0
+	removeIDs := make(map[string]bool)
+	for _, mutation := range mutations {
+		if mutation.Op == "remove" {
+			removeIDs[mutation.App.ID] = true
+		}
+	}
+	for _, mutation := range mutations {
+		switch mutation.Op {
+		case "create":
+			creates++
+			var collisionID string
+			if err := tx.QueryRow(ctx, `select id from apps where slug = $1 and status <> 'deleted' limit 1`, mutation.App.Slug).Scan(&collisionID); err == nil {
+				if !removeIDs[collisionID] {
+					return ProjectReconcileResult{}, ErrConflict
+				}
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return ProjectReconcileResult{}, err
+			}
+		case "update", "remove":
+			if _, ok := byID[mutation.App.ID]; !ok {
+				return ProjectReconcileResult{}, ErrNotFound
+			}
+			if mutation.Op == "remove" {
+				removes++
+			}
+		default:
+			return ProjectReconcileResult{}, fmt.Errorf("state: unknown project reconcile operation %q", mutation.Op)
+		}
+	}
+
+	var observedApps int
+	if err := tx.QueryRow(ctx, `select count(*) from apps where account_id = $1 and status in ('active','evicted_cold')`, project.AccountID).Scan(&observedApps); err != nil {
+		return ProjectReconcileResult{}, fmt.Errorf("state: count project apps: %w", err)
+	}
+	if observedApps-removes+creates > limits.DeployedApps {
+		return ProjectReconcileResult{}, &QuotaError{Kind: QuotaErrorKindApps, Limit: limits.DeployedApps, Observed: observedApps - removes + creates}
+	}
+
+	if desiredCrons != nil {
+		projectIDs := make([]string, 0, len(existing))
+		for _, app := range existing {
+			projectIDs = append(projectIDs, app.ID)
+		}
+		var observedCrons, projectCronCount int
+		if err := tx.QueryRow(ctx, `select count(*) from crons c join apps a on a.id = c.app_id where a.account_id = $1 and a.status <> 'deleted'`, project.AccountID).Scan(&observedCrons); err != nil {
+			return ProjectReconcileResult{}, fmt.Errorf("state: count account crons: %w", err)
+		}
+		for _, appID := range projectIDs {
+			var n int
+			if err := tx.QueryRow(ctx, `select count(*) from crons where app_id = $1`, appID).Scan(&n); err != nil {
+				return ProjectReconcileResult{}, fmt.Errorf("state: count project crons: %w", err)
+			}
+			projectCronCount += n
+		}
+		if len(desiredCrons) > 0 && limits.CronLimitPerAccount == 0 {
+			return ProjectReconcileResult{}, &QuotaError{Kind: QuotaErrorKindCrons, NotAllowed: true}
+		}
+		projectedCrons := observedCrons - projectCronCount + len(desiredCrons)
+		if projectedCrons > limits.CronLimitPerAccount {
+			return ProjectReconcileResult{}, &QuotaError{Kind: QuotaErrorKindCrons, Limit: limits.CronLimitPerAccount, Observed: projectedCrons}
+		}
+	}
+
+	var out ProjectReconcileResult
+	for _, mutation := range mutations {
+		switch mutation.Op {
+		case "update":
+			app := mutation.App
+			rootDir, workloadName := app.RootDir, app.WorkloadName
+			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, start_command = $4 where id = $1 and project_id = $5 and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, nullString(app.StartCommand), project.ID))
+			if err != nil {
+				return ProjectReconcileResult{}, mapErr(err)
+			}
+			out.Changed = append(out.Changed, updated)
+		case "remove":
+			removed, err := softDeleteAppInTx(ctx, tx, mutation.App.ID)
+			if err != nil {
+				return ProjectReconcileResult{}, err
+			}
+			out.Removed = append(out.Removed, removed)
+		case "create":
+			app := mutation.App
+			app.AccountID, app.ProjectID = project.AccountID, project.ID
+			created, err := insertProjectAppInTx(ctx, tx, app)
+			if err != nil {
+				return ProjectReconcileResult{}, mapErr(err)
+			}
+			out.Added = append(out.Added, created)
+		}
+	}
+
+	if desiredCrons != nil {
+		// Resolve the complete post-mutation workload → app map, then replace
+		// this project's cron rows. Keeping one row per workload makes repeated
+		// applies idempotent and removes legacy duplicate rows.
+		rows, err = tx.Query(ctx, `select id, workload_name from apps where project_id = $1 and status <> 'deleted'`, project.ID)
+		if err != nil {
+			return ProjectReconcileResult{}, err
+		}
+		appByWorkload := make(map[string]string)
+		for rows.Next() {
+			var id, workload string
+			if err := rows.Scan(&id, &workload); err != nil {
+				rows.Close()
+				return ProjectReconcileResult{}, err
+			}
+			appByWorkload[workload] = id
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return ProjectReconcileResult{}, err
+		}
+		rows.Close()
+		desiredByApp := make(map[string]ProjectReconcileCron, len(desiredCrons))
+		for _, cron := range desiredCrons {
+			appID := appByWorkload[cron.WorkloadName]
+			if appID == "" {
+				return ProjectReconcileResult{}, fmt.Errorf("state: cron workload %q has no project app", cron.WorkloadName)
+			}
+			desiredByApp[appID] = cron
+		}
+		for appID := range appByWorkload {
+			rows, err = tx.Query(ctx, `select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at from crons where app_id = $1 order by created_at for update`, appID)
+			if err != nil {
+				return ProjectReconcileResult{}, err
+			}
+			var kept bool
+			for rows.Next() {
+				cron, err := scanCronRow(rows)
+				if err != nil {
+					rows.Close()
+					return ProjectReconcileResult{}, err
+				}
+				desired, wanted := desiredByApp[appID]
+				if !wanted || kept {
+					if _, err := tx.Exec(ctx, `delete from crons where id = $1`, cron.ID); err != nil {
+						rows.Close()
+						return ProjectReconcileResult{}, err
+					}
+					continue
+				}
+				if _, err := tx.Exec(ctx, `update crons set schedule = $2, path = $3, enabled = $4 where id = $1`, cron.ID, desired.Schedule, desired.Path, desired.Enabled); err != nil {
+					rows.Close()
+					return ProjectReconcileResult{}, err
+				}
+				kept = true
+			}
+			rows.Close()
+			if desired, wanted := desiredByApp[appID]; wanted && !kept {
+				if _, err := tx.Exec(ctx, `insert into crons (app_id, schedule, path, enabled, timezone, skip_if_running) values ($1, $2, $3, $4, 'UTC', false)`, appID, desired.Schedule, desired.Path, desired.Enabled); err != nil {
+					return ProjectReconcileResult{}, mapErr(err)
+				}
+			}
+		}
+		// Remove crons attached to apps deleted by this reconcile.
+		for _, removed := range out.Removed {
+			if _, err := tx.Exec(ctx, `delete from crons where app_id = $1`, removed.ID); err != nil {
+				return ProjectReconcileResult{}, err
+			}
+		}
+	}
+
+	if scanSource != "" {
+		if tierRank(scanSource) < tierRank(storedProject.ScanSource) {
+			return ProjectReconcileResult{}, ErrScanSourceDowngrade
+		}
+		if _, err := tx.Exec(ctx, `update projects set scan_source = $2, updated_at = case when scan_source <> $2 then now() else updated_at end where id = $1`, project.ID, string(scanSource)); err != nil {
+			return ProjectReconcileResult{}, mapErr(err)
+		}
+		storedProject.ScanSource = scanSource
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectReconcileResult{}, fmt.Errorf("state: commit project reconcile: %w", err)
+	}
+	out.Project = storedProject
+	return out, nil
+}
+
+func insertProjectAppInTx(ctx context.Context, tx pgx.Tx, app App) (App, error) {
+	manifest := app.Manifest
+	if manifest.IsZero() {
+		manifest = AppManifest{}
+	}
+	manifestBytes, _ := json.Marshal(manifest)
+	ramMB, maxConcurrency, cpu := app.RAMMB, app.MaxConcurrency, app.CPUMillicores
+	if ramMB <= 0 {
+		ramMB = 128
+	}
+	if maxConcurrency <= 0 {
+		maxConcurrency = 1
+	}
+	if cpu <= 0 {
+		cpu = api.DefaultAppCPUMillicores
+	}
+	appType := app.Type
+	if appType == "" {
+		appType = AppTypeApp
+	}
+	status := app.Status
+	if status == "" {
+		status = AppActive
+	}
+	publicAuth := app.PublicAuthMode
+	if publicAuth == "" {
+		publicAuth = AppPublicAuthModeOpen
+	}
+	protocol := app.AppProtocol
+	if protocol == "" {
+		protocol = api.AppProtocolHTTP1
+	}
+	consumerAuth := app.ConsumerAuthMode
+	if consumerAuth == "" {
+		consumerAuth = ConsumerAuthModeOptional
+	}
+	row := tx.QueryRow(ctx, `insert into apps
+		(account_id, slug, type, runtime, ram_mb, max_concurrency, status, manifest,
+		 project_id, root_dir, workload_name, start_command, min_instances,
+		 streaming_enabled, eviction_priority, require_authn, public_auth_mode,
+		 websocket_enabled, route_metrics_enabled, maintenance_mode, app_protocol,
+		 consumer_auth_mode, cpu_millicores)
+		values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+		returning `+appsSelectColumns,
+		app.AccountID, app.Slug, string(appType), nullString(app.Runtime), ramMB,
+		maxConcurrency, string(status), manifestBytes, nullString(app.ProjectID),
+		app.RootDir, app.WorkloadName, nullString(app.StartCommand), app.MinInstances,
+		app.StreamingEnabled, EvictionPriorityOrBestEffort(app.EvictionPriority), app.RequireAuthn,
+		publicAuth, app.WebSocketEnabled, app.RouteMetricsEnabled, app.MaintenanceMode,
+		protocol, string(consumerAuth), cpu)
+	return scanApp(row)
+}
+
+func softDeleteAppInTx(ctx context.Context, tx pgx.Tx, id string) (App, error) {
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&locked); err != nil {
+		return App{}, mapErr(err)
+	}
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `update deployments set status='cancelled', cancelled_at=$2, cancelled_by_principal='system:app-delete', cancel_reason='system' where app_id=$1 and status in ('pending','building','imaging','snapshotting')`, id, now); err != nil {
+		return App{}, err
+	}
+	if _, err := tx.Exec(ctx, `with candidates as (select b.id, b.status from builds b join deployments d on d.id=b.deployment_id where d.app_id=$1 and b.status in ('queued','running') for update of b), cancelled as (update builds b set status='cancelled', cancelled_at=$2, cancelled_by_deployment_cascade=true from candidates c where b.id=c.id returning b.id), cleanup as (insert into builder_vm_cleanup (build_id) select c.id from candidates c where c.status='running' on conflict (build_id) do nothing) select count(*) from cancelled`, id, now); err != nil {
+		return App{}, err
+	}
+	var app App
+	if err := scanAppInto(&app, tx.QueryRow(ctx, `update apps set status='deleted' where id=$1 returning `+appsSelectColumns, id)); err != nil {
+		return App{}, mapErr(err)
+	}
+	return app, nil
 }
 
 // RecordGitHubBinding writes the (install_id, repo_full_name,
@@ -18855,6 +19194,8 @@ func scanAppInto(a *App, row pgx.Row) error {
 	// at scan time; the *bool field is built by lifting
 	// this local below.
 	var corsDefaultEnabled bool
+	var onlyAllowDeclaredRoutes bool
+	var declaredRoutesBytes []byte
 	if err := row.Scan(&a.ID, &a.AccountID, &a.Slug, &typeStr, &a.Runtime, &a.RAMMB, &a.IdleTimeoutS,
 		&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances, &allowlistText,
 		&publicAuthIPAllowlistText,
@@ -18962,7 +19303,8 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// targets are populated by the Set*/CASE branch on the
 		// write side.
 		&a.StaticEgressIP, &a.StaticEgressIPSetAt,
-		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil); err != nil {
+		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil,
+		&onlyAllowDeclaredRoutes, &declaredRoutesBytes); err != nil {
 		return mapErr(err)
 	}
 	if overflowNodeStr != "" {
@@ -18978,6 +19320,15 @@ func scanAppInto(a *App, row pgx.Row) error {
 	// opt-out hydrates identically to *false — the
 	// three-state lives on the write path only).
 	a.CORSDefaultEnabled = &corsDefaultEnabled
+	a.OnlyAllowDeclaredRoutes = onlyAllowDeclaredRoutes
+	if len(declaredRoutesBytes) > 0 {
+		_ = json.Unmarshal(declaredRoutesBytes, &a.DeclaredRoutes)
+		// Keep the empty contract canonical across the PG and memory
+		// stores. An explicit empty list means "fall back to OpenAPI".
+		if len(a.DeclaredRoutes) == 0 {
+			a.DeclaredRoutes = nil
+		}
+	}
 	a.Type = AppType(typeStr)
 	a.Status = AppStatus(statusStr)
 	a.WorkloadClass = WorkloadClass(workloadClassStr)
@@ -19128,7 +19479,10 @@ const appsSelectColumns = `
 	static_egress_ip, static_egress_ip_set_at,
 	-- Configured sustained CPU quota. Appended to keep the positional scan stable.
 	cpu_millicores,
-	deleted_at, delete_grace_until`
+	deleted_at, delete_grace_until,
+	-- Only-allow-declared-routes policy. Appended so older positional
+	-- columns remain stable for every existing scan site.
+	only_declared_routes, coalesce(declared_routes, '[]'::jsonb)`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`

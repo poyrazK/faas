@@ -71,6 +71,10 @@ type InstanceInfo struct {
 	// pressure is a separate axis and tearing down connections is fine
 	// there.
 	OpenConns int64
+	// FlowCountDegraded is true when the conntrack read failed for this
+	// snapshot row. The reaper deliberately fails open, but the debugger
+	// must surface that it could not prove the connection state.
+	FlowCountDegraded bool
 	// TailCount is the in-flight waitUntil(promise) task count for this
 	// instance (issue #667, ADR-078). A wake with active tail tasks
 	// stays RUNNING — the runner is alive and the tasks are draining
@@ -103,6 +107,13 @@ type InstanceInfo struct {
 	// snapshot walk in loop.go first stamps the app-floor value, then
 	// post-enriches after seeing each instance's DeploymentID.
 	MinInstances int
+	// ConfiguredMinInstances preserves the app-level floor before
+	// deployment/prewarm overlays so the debugger can explain the source
+	// of an effective floor. It is informational to the selectors.
+	ConfiguredMinInstances int
+	// PrewarmMinInstances is the temporary demand-window floor, when active.
+	// MinInstances remains the effective floor consulted by the selectors.
+	PrewarmMinInstances int
 	// DeploymentID (issue #557 closure / ADR-072) is the
 	// per-instance deployment id carrier — empty on legacy rows
 	// that pre-date the migration. The snapshot walk reads this

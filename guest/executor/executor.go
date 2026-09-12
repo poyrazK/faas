@@ -34,22 +34,30 @@ const (
 // installation.
 type commandBuilder func(context.Context, string, ...string) *exec.Cmd
 
+// commandResolver resolves the fixed interpreter command for a validated
+// request. It is kept as a narrow seam so tests can exercise deadline and
+// teardown behaviour with a deterministic helper process.
+type commandResolver func(executionproto.Request) (string, []string, string, error)
+
 // Executor is the guest-side execution protocol handler.
 type Executor struct {
-	build commandBuilder
-	now   func() time.Time
+	build   commandBuilder
+	resolve commandResolver
+	now     func() time.Time
 }
 
 // New returns the production executor. The returned handler is safe to use
 // for exactly one request, as required by executionproto.Serve; the VM exits
 // after that exchange and therefore no state is retained between callers.
 func New() *Executor {
-	return &Executor{
+	e := &Executor{
 		build: func(ctx context.Context, path string, args ...string) *exec.Cmd {
 			return exec.CommandContext(ctx, path, args...)
 		},
 		now: time.Now,
 	}
+	e.resolve = e.command
+	return e
 }
 
 // Handle implements executionproto.Handler.
@@ -60,7 +68,16 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	if err := req.Validate(); err != nil {
 		return executionproto.Result{}, err
 	}
-	interpreter, args, sourceName, err := e.command(req)
+	requestCtx, cancelRequest := context.WithTimeout(ctx, time.Duration(req.TimeoutMS)*time.Millisecond)
+	defer cancelRequest()
+	if err := requestCtx.Err(); err != nil {
+		return executionproto.Result{}, err
+	}
+	resolve := e.resolve
+	if resolve == nil {
+		resolve = e.command
+	}
+	interpreter, args, sourceName, err := resolve(req)
 	if err != nil {
 		return executionproto.Result{}, err
 	}
@@ -84,13 +101,16 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	if err := writeGuestFile(resultPath, nil); err != nil {
 		return executionproto.Result{}, errors.New("execution result staging failed")
 	}
+	if err := requestCtx.Err(); err != nil {
+		return executionproto.Result{}, err
+	}
 
 	maxResult := req.MaxOutput
 	if maxResult > resultReserve {
 		maxResult -= resultReserve
 	}
 	args = append(args, sourcePath, inputPath, resultPath, req.ExecutionID, string(req.Runtime), fmt.Sprint(maxResult))
-	commandCtx, cancel := context.WithCancel(ctx)
+	commandCtx, cancel := context.WithCancel(requestCtx)
 	defer cancel()
 	cmd := e.build(commandCtx, interpreter, args...)
 	if cmd == nil {
@@ -125,14 +145,14 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 		if errors.Is(writerErr, executionproto.ErrOutputLimitExceeded) {
 			return failedResultWithUsage(started, e.now(), "output_limit", true, budget.Used()), nil
 		}
-		if errors.Is(writerErr, context.Canceled) && ctx.Err() == nil {
+		if errors.Is(writerErr, context.Canceled) && requestCtx.Err() == nil {
 			return failedResult(started, e.now(), "guest_error"), nil
 		}
 	}
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+	if errors.Is(requestCtx.Err(), context.DeadlineExceeded) || errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 		return executionproto.Result{}, context.DeadlineExceeded
 	}
-	if errors.Is(ctx.Err(), context.Canceled) {
+	if errors.Is(requestCtx.Err(), context.Canceled) {
 		return executionproto.Result{}, context.Canceled
 	}
 	if runErr != nil {

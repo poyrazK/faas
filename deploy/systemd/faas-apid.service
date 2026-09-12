@@ -28,6 +28,7 @@ Environment=FAAS_LOG_ARCHIVE_CREDS_PATH=%d/faas_archive_creds
 Environment=FAAS_APID_ADVISORY_SOCK=/run/faas/apid.sock
 Environment=FAAS_STATUSPAGE_PATH=/etc/faas/statuspage/index.html
 Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
+Environment=FAAS_EXECUTION_API_ENABLED=0
 Environment=FAAS_WORKFLOWS_ENABLED=1
 LoadCredential=faas_session_key:/etc/faas/secrets/session.key
 LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age

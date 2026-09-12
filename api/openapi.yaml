@@ -156,6 +156,12 @@ tags:
       the exit code, and reports back. Lifecycle (created → running →
       succeeded | failed | timeout | oom | cancelled), per-task retry
       with backoff, dead-letter accounting on exhaustion.
+  - name: runs
+    description: |
+      Disposable, one-shot execution of caller-supplied Node.js or Python
+      source inside a fresh, networkless Firecracker microVM. The VM is
+      destroyed after every terminal result; no customer storage disk or
+      persistent sandbox state is exposed by this API.
   - name: workflows
     description: Durable multi-step workflow runs and external events (ADR-081).
   - name: queues
@@ -582,6 +588,69 @@ paths:
               schema: { $ref: '#/components/schemas/ObjectBucket' }
         default:
           description: Invalid request, access denied, bucket limit/conflict, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/upload-routes:
+    parameters:
+      - { name: slug, description: App whose edge upload routes are being managed., in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listObjectUploadRoutes
+      summary: List policy-controlled upload routes
+      description: Routes are served by Gregale's public edge and do not wake the application. Requires storage:read, storage:write, storage:manage, or admin.
+      tags: [storage]
+      responses:
+        '200':
+          description: Upload route policies without provider credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectUploadRouteList' }
+        default:
+          description: Unable to list upload routes because of an authentication, authorization, or storage failure.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: createObjectUploadRoute
+      summary: Create or update an authenticated upload route
+      description: Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object key, enforces the byte/content-type policy, streams directly to the selected provider, and records a completion receipt.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateObjectUploadRouteRequest' }
+      responses:
+        '201':
+          description: Upload route created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectUploadRoute' }
+        '200':
+          description: Existing upload route updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectUploadRoute' }
+        default:
+          description: Invalid policy, bucket unavailable, access denied, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/upload-routes/{route}:
+    parameters:
+      - { name: slug, description: 'App owning the edge upload route.', in: path, required: true, schema: { type: string } }
+      - { name: route, description: 'Stable upload route name used at /uploads/{route}.', in: path, required: true, schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' } }
+    delete:
+      operationId: deleteObjectUploadRoute
+      summary: Delete an authenticated upload route
+      description: Stops new uploads immediately. Existing objects are not deleted.
+      tags: [storage]
+      responses:
+        '204': { description: Upload route deleted }
+        default:
+          description: Route missing, access denied, or storage unavailable
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -1324,6 +1393,74 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/executions:
+    post:
+      tags: [runs]
+      operationId: createExecution
+      summary: Execute source in an isolated disposable microVM.
+      description: |
+        Queues one bounded Node.js or Python source execution. Source and
+        input are sealed by the control plane before dispatch; the guest has
+        loopback-only networking and an internal ephemeral scratch filesystem.
+        The VM is always destroyed before a terminal result is persisted.
+        This endpoint is an explicit opt-in on the control plane and may return
+        501 while the host isolation gate is disabled.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateExecutionRequest' }
+      responses:
+        '202':
+          description: Execution admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/executions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ExecutionID'
+    get:
+      tags: [runs]
+      operationId: getExecution
+      summary: Get one disposable execution.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current or terminal execution receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [runs]
+      operationId: cancelExecution
+      summary: Cancel one disposable execution.
+      description: Cancellation is idempotent and destroys a claimed VM during teardown.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Cancellation accepted or already applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/account:
     get:
@@ -2958,6 +3095,60 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose billing handoff is being recorded.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Durable usage statement UUID to hand off.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsageStatementHandoff
+      summary: Fetch a customer billing handoff receipt.
+      description: Returns the immutable external invoice reference recorded for a finalized usage statement.
+      responses:
+        '200':
+          description: The immutable billing handoff receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementHandoffResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: claimAPIConsumerUsageStatement
+      summary: Record a customer billing handoff for a finalized statement.
+      description: Claims a finalized usage statement for the customer's own billing system. Repeating the same claim returns the original receipt; a statement or external invoice ID cannot be claimed twice.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimAPIConsumerUsageStatementRequest' }
+      responses:
+        '200':
+          description: The existing billing handoff receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementHandoffResponse' }
+        '201':
+          description: The newly recorded billing handoff receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementHandoffResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/apps/{slug}/rate-cards:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -4158,6 +4349,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DebugCoverageResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/debug/running:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppDebugRunning
+      summary: Explain why an app is still running.
+      description: |
+        Returns observed scheduler causes that prevented an application from
+        parking during the requested window. Causes are evidence-shaped: the
+        response reports request activity, open connections, tail tasks,
+        configured or temporary warm floors, cooldowns, and workload modes
+        when those signals were observed. It does not estimate a saving or
+        infer a protocol that was not instrumented. Plan-gated by
+        `DebugTelemetryEnabled` and clamped to `DebugTelemetryRetentionDays`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: [string, 'null'] }
+          description: "Optional lookback window for scheduler observations (e.g. 30m, 24h, 3d); defaults to 24h and is clamped by plan retention."
+        - name: limit
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 1, maximum: 100, default: 20 }
+          description: "Maximum number of recent observations to return; default 20, max 100."
+      responses:
+        '200':
+          description: Observed causes explaining why the app remained resident.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugRunningResponse'
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
@@ -5775,6 +6005,57 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/github/deployment-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [github]
+      operationId: getGitHubDeploymentPolicy
+      summary: Read the customer-owned GitHub deployment policy.
+      description: |
+        Returns the project-level policy applied by githubd to source
+        staging and pull-request previews. Missing policy rows resolve to
+        backwards-compatible defaults.
+      security:
+        - bearerAuth: [github:manage]
+      responses:
+        '200':
+          description: Current GitHub deployment policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubDeploymentPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    patch:
+      tags: [github]
+      operationId: patchGitHubDeploymentPolicy
+      summary: Update the customer-owned GitHub deployment policy.
+      description: |
+        Updates project-level GitHub deployment behaviour. Fields are
+        replace-on-write; omitted fields retain their current values. The
+        ignored_paths list accepts exact paths, one-segment shell globs, and
+        trailing `/**` directory patterns. Mutations require MFA.
+      security:
+        - bearerAuth: [github:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubDeploymentPolicyPatch' }
+      responses:
+        '200':
+          description: Updated GitHub deployment policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubDeploymentPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/github/bind:
     parameters:
@@ -14479,6 +14760,12 @@ components:
       required: true
       schema: { type: string, pattern: '^[a-f0-9]{32}$' }
       description: 32-hex-char opaque ID (NOT canonical UUID).
+    ExecutionID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a disposable execution.
     ManagedPostgresID:
       name: id
       in: path
@@ -14562,6 +14849,25 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    StatusUptimeBucket:
+      description: Daily public status uptime point.
+      type: object
+      required: [date, uptime_pct, successful, total]
+      properties:
+        date: { type: string, format: date-time }
+        uptime_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        successful: { type: integer, format: int64, minimum: 0 }
+        total: { type: integer, format: int64, minimum: 0 }
+    StatusIncident:
+      description: Public operator-authored status incident.
+      type: object
+      required: [started_at, resolved_at, severity, summary]
+      properties:
+        component: { type: string }
+        started_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        severity: { type: string, enum: [degraded, partial_outage, full_outage, maintenance] }
+        summary: { type: string }
     ManagedPostgresDatabase:
       description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
       type: object
@@ -14724,6 +15030,38 @@ components:
         default_region: { type: string }
         max_upload_bytes: { type: integer, format: int64 }
         max_buckets_per_app: { type: integer }
+    ObjectUploadRoute:
+      description: Policy-controlled edge upload route. The edge generates the final object key and never exposes provider placement.
+      type: object
+      required: [id, name, bucket_id, max_bytes, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        bucket_id: { type: string, format: uuid }
+        key_prefix: { type: string, maxLength: 256 }
+        max_bytes: { type: integer, format: int64, minimum: 1 }
+        allowed_content_types: { type: array, items: { type: string }, maxItems: 32 }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ObjectUploadRouteList:
+      description: Policy-controlled edge upload routes for one app.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ObjectUploadRoute' } }
+    CreateObjectUploadRouteRequest:
+      description: Upload policy declaration for POST /uploads/{name}.
+      type: object
+      additionalProperties: false
+      required: [name, bucket_id]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        bucket_id: { type: string, format: uuid }
+        key_prefix: { type: string, maxLength: 256 }
+        max_bytes: { type: integer, format: int64, minimum: 1 }
+        allowed_content_types: { type: array, items: { type: string }, maxItems: 32 }
+        enabled: { type: boolean, default: true }
     ObjectBucketAccessGrant:
       description: Provider-independent access binding between one Gregale API key and one logical bucket.
       type: object
@@ -15279,6 +15617,37 @@ components:
         deploy_branches:
           type: object
           additionalProperties: { type: string }
+
+    GitHubDeploymentPolicy:
+      description: Customer-owned project-level GitHub deployment behaviour.
+      type: object
+      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours]
+      properties:
+        project_id: { type: string, format: uuid }
+        root_dir:
+          type: string
+          maxLength: 255
+          description: Repository-relative root used when the project has a root workload.
+        ignored_paths:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 255 }
+          description: Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds.
+        preview_enabled: { type: boolean, default: true }
+        preview_ttl_hours: { type: integer, minimum: 1, maximum: 720, default: 168 }
+
+    GitHubDeploymentPolicyPatch:
+      description: Partial replacement for a project's GitHub deployment policy.
+      type: object
+      additionalProperties: false
+      properties:
+        root_dir: { type: string, maxLength: 255 }
+        ignored_paths:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 255 }
+        preview_enabled: { type: boolean }
+        preview_ttl_hours: { type: integer, minimum: 1, maximum: 720 }
 
     GitHubInstallMutationRequest:
       description: |
@@ -16097,6 +16466,19 @@ components:
       type: string
       enum: [micro, small, medium, large, xlarge]
 
+    DeclaredRoute:
+      description: "One gateway route declaration. Path parameters use OpenAPI {name} segments."
+      type: object
+      required: [path, methods]
+      properties:
+        path: { type: string, pattern: '^/[^?#]*$' }
+        methods:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, CONNECT, TRACE]
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
@@ -16214,6 +16596,15 @@ components:
           description: "Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed."
           type: boolean
           example: false
+        only_allow_declared_routes:
+          description: "When true, gatewayd rejects paths not present in declared_routes or the imported OpenAPI document before waking an app."
+          type: boolean
+          example: false
+        declared_routes:
+          description: "Optional explicit route contract. When non-empty it takes precedence over the imported OpenAPI document."
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclaredRoute'
         # ADR-091 amendment: apps.maintenance_mode is the
         # coarse-grained "whole app in maintenance" toggle. When
         # true the gatewayd-internal hot-path short-circuits
@@ -16613,6 +17004,25 @@ components:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
 
+    ClaimAPIConsumerUsageStatementRequest:
+      description: "Customer billing system's external invoice reference for a finalized statement."
+      type: object
+      required: [external_invoice_id]
+      properties:
+        external_invoice_id: { type: string, minLength: 1, maxLength: 255 }
+
+    APIConsumerUsageStatementHandoffResponse:
+      description: "Immutable receipt linking a finalized usage statement to a customer-owned external invoice."
+      type: object
+      required: [id, statement_id, external_invoice_id, amount_millicents, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        statement_id: { type: string, format: uuid }
+        external_invoice_id: { type: string, minLength: 1, maxLength: 255 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+
     AppRestartResponse:
       description: "Correlation handle for an accepted app restart."
       type: object
@@ -16934,6 +17344,15 @@ components:
           description: "Per-app per-route observability flag (ADR-093). Omitted → no change. Free PATCHing true is 403 plan_route_metrics_not_allowed."
           type: [boolean, "null"]
           example: false
+        only_allow_declared_routes:
+          description: "Enable or disable gateway-side rejection of paths not declared by the app. Enabling requires declared_routes or an imported OpenAPI document."
+          type: [boolean, "null"]
+          example: true
+        declared_routes:
+          description: "Replace the explicit route contract. An empty array clears it and makes the gateway use the imported OpenAPI document."
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclaredRoute'
         # ADR-091 amendment: partial-update nullable boolean.
         # Omitted → no change. Free-tier allowed; no plan gate.
         # PATCH true → every request to this app 503 + Retry-After.
@@ -18251,7 +18670,7 @@ components:
         - started_at
         - finished_at
       properties:
-        id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        id: { type: string, format: uuid }
         build_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         buildkit_version: { type: string }
         railpack_version: { type: string }
@@ -20509,6 +20928,10 @@ components:
         command:
           type: array
           items: { type: string }
+        depends_on:
+          type: array
+          items: { type: string }
+          description: "Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies."
         class:
           type: string
           enum: [http, graphql, grpc, job, worker, server, unknown]
@@ -24953,6 +25376,102 @@ components:
         scheduled_at: { type: string, format: date-time }
         state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, dead_letter] }
 
+    CreateExecutionRequest:
+      description: |
+        Source and JSON input for one disposable execution. v1 supports only
+        the listed interpreter runtimes and `network.mode=none`; dependencies,
+        secrets, environment injection, and persistent disks are not part of
+        this contract.
+      type: object
+      required: [runtime, source]
+      additionalProperties: false
+      properties:
+        runtime:
+          type: string
+          enum: [node22, node24, python312, python313]
+        source:
+          type: string
+          minLength: 1
+          maxLength: 1048576
+          description: Single-file source code; never returned by execution reads.
+        input:
+          description: One complete JSON value delivered to the guest as input.
+        limits:
+          $ref: '#/components/schemas/ExecutionLimitRequest'
+        network:
+          $ref: '#/components/schemas/ExecutionNetworkPolicy'
+
+    ExecutionLimitRequest:
+      description: Caller-selected execution resource limits; zero selects the plan default.
+      type: object
+      additionalProperties: false
+      properties:
+        timeout_ms: { type: integer, minimum: 0, maximum: 30000, description: "Zero uses the plan default." }
+        memory_mb: { type: integer, enum: [0, 128, 256, 512, 1024] }
+        cpu_millicores: { type: integer, enum: [0, 250, 500, 1000] }
+        ephemeral_disk_mb: { type: integer, enum: [0, 64, 128, 256, 512, 1024, 2048] }
+        max_output_bytes: { type: integer, minimum: 0, description: "Combined result/stdout/stderr cap; zero uses the plan default." }
+
+    ExecutionNetworkPolicy:
+      description: Network policy for a disposable run; v1 is loopback-only.
+      type: object
+      required: [mode]
+      additionalProperties: false
+      properties:
+        mode: { type: string, enum: [none], description: "Loopback only; no tenant bridge, DNS, or public egress." }
+
+    ResolvedExecutionLimits:
+      description: Immutable limits admitted and enforced for one execution.
+      type: object
+      required: [timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max]
+      properties:
+        timeout_ms: { type: integer, minimum: 100 }
+        memory_mb: { type: integer, minimum: 1 }
+        cpu_millicores: { type: integer, minimum: 1 }
+        ephemeral_disk_mb: { type: integer, minimum: 1 }
+        max_output_bytes: { type: integer, minimum: 1024 }
+        pids_max: { type: integer, minimum: 1 }
+
+    ExecutionUsage:
+      description: Host-measured resource usage for a terminal execution.
+      type: object
+      required: [wall_time_ms, cpu_time_ms, peak_memory_mb]
+      properties:
+        wall_time_ms: { type: integer, format: int64, minimum: 0 }
+        cpu_time_ms: { type: integer, format: int64, minimum: 0 }
+        peak_memory_mb: { type: integer, minimum: 0 }
+
+    ExecutionFailure:
+      description: Caller-safe terminal failure classification.
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, description: Stable caller-safe failure vocabulary. }
+        message: { type: string, description: Host paths and VM command lines are never exposed. }
+
+    ExecutionResponse:
+      description: |
+        Account-scoped disposable execution receipt. Source and input are
+        intentionally omitted. A terminal response is written only after the
+        execution VM has been destroyed.
+      type: object
+      required: [id, status, runtime, limits, output_truncated, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled] }
+        runtime: { type: string, enum: [node22, node24, python312, python313] }
+        limits: { $ref: '#/components/schemas/ResolvedExecutionLimits' }
+        result: { description: Terminal JSON result, omitted when unavailable. }
+        stdout: { type: string }
+        stderr: { type: string }
+        output_truncated: { type: boolean }
+        exit_code: { type: [integer, "null"] }
+        usage: { anyOf: [{ $ref: '#/components/schemas/ExecutionUsage' }, { type: "null" }] }
+        failure: { anyOf: [{ $ref: '#/components/schemas/ExecutionFailure' }, { type: "null" }] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+
     Invocation:
       description: "A single invocations row. Account-scoped; cross-account reads return 404."
       type: object
@@ -26538,6 +27057,76 @@ components:
         guest_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
         oldest_telemetry_at: { type: string, format: date-time }
         latest_telemetry_at: { type: string, format: date-time }
+
+    DebugRunningCause:
+      type: object
+      description: |
+        One observed scheduler reason an application remained resident. The
+        platform reports evidence available at the scheduler boundary; it
+        does not infer a protocol or predict a cost saving.
+      required: [code, summary, instance_count]
+      properties:
+        code:
+          type: string
+          enum: [request_activity, open_connection, tail_tasks, min_instances, prewarm_floor, scale_in_cooldown, workload_mode, startup_grace, activity_unknown, no_blocker_observed]
+        summary: { type: string }
+        instance_count: { type: integer, minimum: 0 }
+        open_connections: { type: integer, format: int64, minimum: 0 }
+        tail_tasks: { type: integer, minimum: 0 }
+        mode: { type: string }
+        workload_class: { type: string }
+        last_activity_at: { type: string, format: date-time }
+        idle_deadline: { type: string, format: date-time }
+
+    DebugRunningObservation:
+      type: object
+      description: Bounded point-in-time scheduler observation for the running debugger.
+      required: [observed_at, running_instances, configured_min_instances, effective_min_instances, idle_timeout_seconds, causes]
+      properties:
+        event_id: { type: string }
+        observed_at: { type: string, format: date-time }
+        running_instances: { type: integer, minimum: 0 }
+        configured_min_instances: { type: integer, minimum: 0 }
+        effective_min_instances: { type: integer, minimum: 0 }
+        prewarm_min_instances: { type: integer, minimum: 0 }
+        idle_timeout_seconds: { type: integer, minimum: 0 }
+        degraded: { type: boolean, description: True when one or more scheduler signals were unavailable. }
+        causes:
+          type: array
+          items: { $ref: '#/components/schemas/DebugRunningCause' }
+
+    DebugRunningConfig:
+      type: object
+      description: Configuration context shown with the observed running causes.
+      required: [configured_min_instances, effective_min_instances, idle_timeout_seconds]
+      properties:
+        configured_min_instances: { type: integer, minimum: 0 }
+        effective_min_instances: { type: integer, minimum: 0 }
+        prewarm_min_instances: { type: integer, minimum: 0 }
+        idle_timeout_seconds: { type: integer, minimum: 0 }
+
+    DebugRunningResponse:
+      type: object
+      description: |
+        Customer-safe explanation of why an app remained resident. `current`
+        is the newest observation and `history` contains the bounded recent
+        observations in the requested window.
+      required: [app_id, since, window_start, window_end, retention_clamped, current, config, history, history_truncated]
+      properties:
+        app_id: { type: string, format: uuid }
+        since: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        retention_clamped: { type: boolean }
+        current:
+          type: array
+          items: { $ref: '#/components/schemas/DebugRunningCause' }
+        current_observed_at: { type: string, format: date-time }
+        config: { $ref: '#/components/schemas/DebugRunningConfig' }
+        history:
+          type: array
+          items: { $ref: '#/components/schemas/DebugRunningObservation' }
+        history_truncated: { type: boolean }
 
     DebugTelemetryListResponse:
       type: object

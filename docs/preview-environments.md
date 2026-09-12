@@ -96,6 +96,27 @@ reason. These values are included in the Deployment description and under
 deployer, PR, and reason for reviewers without requiring a second Gregale
 API lookup.
 
+## Mocking API routes
+
+Preview apps can serve a fixed JSON response before the backend route is ready.
+Create a `respond` edge rule for the preview app, then disable or delete it when
+the implementation is deployed:
+
+```bash
+gregale edge-rules create --app pr-42-checkout \
+  --kind respond \
+  --match-host pr-42-checkout.gregale.dev \
+  --match-path /shipping/estimate \
+  --match-method GET \
+  --respond-status 200 \
+  --respond-body '{"days":3,"price":4.99}'
+```
+
+The rule is preview-only, runs after the preview app's authentication gates, and
+returns the configured status and JSON body without waking the backend. Use a
+non-2xx status such as `500` to exercise the frontend failure state. Responses are
+bounded to 64 KiB; status `204` and `304` cannot carry a body.
+
 ## Operational notes
 
 - **Stuck teardowns.** If a preview sits in `closed` for
@@ -114,6 +135,21 @@ API lookup.
   `pr-{N}-{parent-slug}` as stable across events; a
   torn-down PR-{N} that reopens with a fresh head SHA gets
   a fresh `apps` row at the same slug.
+
+## Project GitHub deployment policy
+
+Customers can read and update the project policy through
+`/v1/apps/{slug}/github/deployment-policy` with the `github:manage` scope.
+The policy supports a repository-relative root directory for root workloads,
+ignored change paths (exact paths, one-segment globs, and trailing `/**`
+directory patterns), a preview enable switch, and a preview TTL from 1 hour
+to 30 days. Existing projects default to previews enabled, a 7-day TTL, no
+ignored paths, and the repository root, so adopting the policy is additive.
+
+When all changed files match ignored paths, githubd records the delivery as a
+successful no-op and does not enqueue builds. Compare-API failures still use
+the existing safe full-fan-out fallback, because an unavailable GitHub API
+must not be mistaken for an ignored change set.
 
 ## Related
 

@@ -312,6 +312,12 @@ type UpdateAppRequest struct {
 	// true → false to opt out. Pointer distinguishes "don't
 	// touch" (nil) from "explicit false" (*bool=false).
 	RouteMetricsEnabled *bool `json:"route_metrics_enabled,omitempty"`
+	// OnlyAllowDeclaredRoutes makes the gateway enforce the app's declared
+	// endpoint contract before waking an instance. When enabled, use the
+	// optional DeclaredRoutes list for an explicit contract; when omitted or
+	// empty the imported per-app OpenAPI document is used.
+	OnlyAllowDeclaredRoutes *bool            `json:"only_allow_declared_routes,omitempty"`
+	DeclaredRoutes          *[]DeclaredRoute `json:"declared_routes,omitempty"`
 	// MaintenanceMode (ADR-091 amendment) opts the app into
 	// 503 + Retry-After mode via PATCH. Pointer distinguishes
 	// "don't touch" (nil) from "explicit false" (*bool=false).
@@ -470,6 +476,14 @@ type UpdateAppRequest struct {
 	// `MinScaleInCooldownS` / `MaxScaleInCooldownS`).
 	ScalingPolicy    *ScalingPolicy `json:"scaling_policy,omitempty"`
 	SetScalingPolicy bool           `json:"-"`
+}
+
+// DeclaredRoute is an explicit pre-wake route declaration. Path parameters
+// use OpenAPI's `{name}` segment syntax; methods are HTTP verbs (for example
+// ["GET", "POST"]).
+type DeclaredRoute struct {
+	Path    string   `json:"path"`
+	Methods []string `json:"methods"`
 }
 
 // CreateAPIConsumerRequest creates a stable API consumer identity within an app.
@@ -641,6 +655,24 @@ type APIConsumerUsageStatementResponse struct {
 // APIConsumerUsageStatementListResponse wraps statements newest-period first.
 type APIConsumerUsageStatementListResponse struct {
 	Statements []APIConsumerUsageStatementResponse `json:"statements"`
+}
+
+// ClaimAPIConsumerUsageStatementRequest records the invoice reference in the
+// customer's billing system. The statement amount and currency are always
+// copied server-side from the finalized statement.
+type ClaimAPIConsumerUsageStatementRequest struct {
+	ExternalInvoiceID string `json:"external_invoice_id"`
+}
+
+// APIConsumerUsageStatementHandoffResponse is the immutable receipt returned
+// when a customer billing system claims a finalized usage statement.
+type APIConsumerUsageStatementHandoffResponse struct {
+	ID                string    `json:"id"`
+	StatementID       string    `json:"statement_id"`
+	ExternalInvoiceID string    `json:"external_invoice_id"`
+	Currency          string    `json:"currency,omitempty"`
+	AmountMillicents  int64     `json:"amount_millicents"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
@@ -918,6 +950,9 @@ type AppResponse struct {
 	// show "route metrics on / off" alongside the streaming/WS
 	// pills.
 	RouteMetricsEnabled bool `json:"route_metrics_enabled"`
+	// OnlyAllowDeclaredRoutes reflects the opt-in gateway route contract.
+	OnlyAllowDeclaredRoutes bool            `json:"only_allow_declared_routes"`
+	DeclaredRoutes          []DeclaredRoute `json:"declared_routes,omitempty"`
 	// MaintenanceMode (ADR-091 amendment) is the coarse-grained
 	// maintenance toggle for the whole app. When true the
 	// gatewayd applier (applyAppsMaintenanceMode, §4.1.2.0)
@@ -3694,6 +3729,20 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
+	// Uptime30dPct is the weighted success rate of terminal invocations
+	// observed over the last 30 calendar days. Days without traffic are
+	// represented as 100% in the daily buckets and do not add to the
+	// weighted denominator.
+	Uptime30dPct float64 `json:"uptime_30d_pct"`
+	// Uptime30d contains one bucket for each of the last 30 calendar
+	// days, oldest first. Successful and Total make the no-traffic case
+	// distinguishable from a day with observed failures.
+	Uptime30d []StatusUptimeBucket `json:"uptime_30d"`
+	// Incidents contains status incidents posted in the last 30 days,
+	// plus any still-open incident posted earlier. Results are newest
+	// first and intentionally contain only operator-authored summary
+	// text suitable for a public page.
+	Incidents []StatusIncident `json:"incidents"`
 	// Degraded is true when at least one fleet/platform page- or warn-severity
 	// alert is currently firing on the local Prometheus. Per-account alert
 	// preset signals stay private to their customer and do not change the
@@ -3713,6 +3762,25 @@ type StatusPage struct {
 	// "degraded: <reason>" so an operator tailing the JSON can tell
 	// at a glance why a snapshot is or isn't trustworthy.
 	Source string `json:"source"`
+}
+
+// StatusUptimeBucket is one daily point in StatusPage.Uptime30d.
+type StatusUptimeBucket struct {
+	Date       time.Time `json:"date"`
+	UptimePct  float64   `json:"uptime_pct"`
+	Successful int64     `json:"successful"`
+	Total      int64     `json:"total"`
+}
+
+// StatusIncident is the public projection of the operator status-incidents
+// ledger. Component is included as useful context while the four core fields
+// form the stable public incident contract.
+type StatusIncident struct {
+	Component  string     `json:"component,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	ResolvedAt *time.Time `json:"resolved_at"`
+	Severity   string     `json:"severity"`
+	Summary    string     `json:"summary"`
 }
 
 // --- Move 2: event-driven surface response shapes ----------------------------
@@ -4845,6 +4913,7 @@ type PlanWorkload struct {
 	RootDir       string   `json:"root_dir"`
 	Dockerfile    string   `json:"dockerfile,omitempty"`
 	Command       []string `json:"command"`
+	DependsOn     []string `json:"depends_on,omitempty"`
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`
 	Ports         []int    `json:"ports"`
@@ -7027,6 +7096,7 @@ type RekeyProgress struct {
 type ComputeNodeEnrollmentRequest struct {
 	Name               string `json:"name"`
 	TargetURL          string `json:"target_url"`
+	ScheddTargetURL    string `json:"schedd_target_url,omitempty"`
 	GatewayTargetURL   string `json:"gateway_target_url,omitempty"`
 	VPCPUs             int    `json:"vpcpus"`
 	MemMB              int    `json:"mem_mb"`
@@ -7614,6 +7684,65 @@ type DebugCoverageResponse struct {
 	GuestEvidence       DebugCoverageSignal `json:"guest_evidence"`
 	OldestTelemetryAt   string              `json:"oldest_telemetry_at,omitempty"`
 	LatestTelemetryAt   string              `json:"latest_telemetry_at,omitempty"`
+}
+
+// DebugRunningCause is one observed reason an application remained resident
+// during an idle-reaper observation. Reasons are deliberately evidence-shaped:
+// the debugger reports what the scheduler saw, rather than predicting a
+// saving or inferring a protocol that was not instrumented.
+type DebugRunningCause struct {
+	Code            string `json:"code"`
+	Summary         string `json:"summary"`
+	InstanceCount   int    `json:"instance_count"`
+	OpenConnections int64  `json:"open_connections,omitempty"`
+	TailTasks       int    `json:"tail_tasks,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	WorkloadClass   string `json:"workload_class,omitempty"`
+	LastActivityAt  string `json:"last_activity_at,omitempty"`
+	IdleDeadline    string `json:"idle_deadline,omitempty"`
+}
+
+// DebugRunningObservation is the durable scheduler observation used by the
+// "why is this app running?" debugger. The observation is a bounded snapshot;
+// it is not a billing estimate and it never contains request bodies or raw
+// connection data.
+type DebugRunningObservation struct {
+	EventID                string              `json:"event_id,omitempty"`
+	ObservedAt             string              `json:"observed_at"`
+	RunningInstances       int                 `json:"running_instances"`
+	ConfiguredMinInstances int                 `json:"configured_min_instances"`
+	EffectiveMinInstances  int                 `json:"effective_min_instances"`
+	PrewarmMinInstances    int                 `json:"prewarm_min_instances,omitempty"`
+	IdleTimeoutSeconds     int                 `json:"idle_timeout_seconds"`
+	Degraded               bool                `json:"degraded,omitempty"`
+	Causes                 []DebugRunningCause `json:"causes"`
+}
+
+// DebugRunningConfig is the current configuration context shown beside the
+// observed causes. Config values are returned even when no blocker is
+// currently observed so a customer can distinguish scale-to-zero from a
+// configured warm floor.
+type DebugRunningConfig struct {
+	ConfiguredMinInstances int `json:"configured_min_instances"`
+	EffectiveMinInstances  int `json:"effective_min_instances"`
+	PrewarmMinInstances    int `json:"prewarm_min_instances,omitempty"`
+	IdleTimeoutSeconds     int `json:"idle_timeout_seconds"`
+}
+
+// DebugRunningResponse is returned by GET /v1/apps/{slug}/debug/running.
+// Current is the newest scheduler observation; History contains the bounded
+// recent observations that explain how the application stayed resident.
+type DebugRunningResponse struct {
+	AppID             string                    `json:"app_id"`
+	Since             string                    `json:"since"`
+	WindowStart       string                    `json:"window_start"`
+	WindowEnd         string                    `json:"window_end"`
+	RetentionClamped  bool                      `json:"retention_clamped"`
+	Current           []DebugRunningCause       `json:"current"`
+	CurrentObservedAt string                    `json:"current_observed_at,omitempty"`
+	Config            DebugRunningConfig        `json:"config"`
+	History           []DebugRunningObservation `json:"history"`
+	HistoryTruncated  bool                      `json:"history_truncated"`
 }
 
 // DebugTelemetrySpan is the safe, bounded span drill-down returned by the

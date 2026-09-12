@@ -152,6 +152,10 @@ var daemonInfoTable = map[string]daemonInfo{
 		EnvKey: "FAAS_GITHUBD_ROLE",
 		Allows: map[Role]bool{RoleSingleBox: true, RoleControlPlane: true},
 	},
+	"outboundd": {
+		EnvKey: "FAAS_OUTBOUNDD_ROLE",
+		Allows: map[Role]bool{RoleSingleBox: true, RoleControlPlane: true},
+	},
 	"gatewayd-public": {
 		EnvKey: "FAAS_GATEWAYD_PUBLIC_ROLE",
 		Allows: map[Role]bool{RoleSingleBox: true, RoleControlPlane: true},

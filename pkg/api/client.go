@@ -655,6 +655,21 @@ func (c *Client) FinalizeAPIConsumerUsageStatement(ctx context.Context, slug, co
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/finalize", struct{}{}, &out)
 }
 
+// ClaimAPIConsumerUsageStatement records the customer's external invoice
+// reference for a finalized statement. Repeating the same claim is safe and
+// returns the original immutable handoff receipt.
+func (c *Client) ClaimAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string, req ClaimAPIConsumerUsageStatementRequest) (APIConsumerUsageStatementHandoffResponse, error) {
+	var out APIConsumerUsageStatementHandoffResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/handoff", req, &out)
+}
+
+// GetAPIConsumerUsageStatementHandoff returns the customer's immutable
+// invoice-handoff receipt for a finalized statement.
+func (c *Client) GetAPIConsumerUsageStatementHandoff(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementHandoffResponse, error) {
+	var out APIConsumerUsageStatementHandoffResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/handoff", nil, &out)
+}
+
 // RevokeAPIConsumer revokes an end-customer identity and all future key issuance for it.
 func (c *Client) RevokeAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
 	var out APIConsumerResponse
@@ -4775,6 +4790,42 @@ func (c *Client) GetAppDebugCoverage(ctx context.Context, slug, since string) (D
 	path := "/v1/apps/" + slug + "/debug/coverage"
 	if since != "" {
 		path += "?since=" + url.QueryEscape(since)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugRunning returns the observed scheduler explanations for why an
+// app remains resident. The response includes the newest causes, current
+// floor/idle configuration, and bounded history. It reports observations only
+// and never estimates a hypothetical saving.
+func (c *Client) GetAppDebugRunning(ctx context.Context, slug, since string) (DebugRunningResponse, error) {
+	var out DebugRunningResponse
+	path := "/v1/apps/" + slug + "/debug/running"
+	q := url.Values{}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugRunningWithLimit is the bounded-history form of
+// GetAppDebugRunning. Limit is sent only when positive so the API default is
+// preserved for callers that do not need a custom history size.
+func (c *Client) GetAppDebugRunningWithLimit(ctx context.Context, slug, since string, limit int) (DebugRunningResponse, error) {
+	var out DebugRunningResponse
+	path := "/v1/apps/" + slug + "/debug/running"
+	q := url.Values{}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }

@@ -48,6 +48,7 @@ from .api_consumer_usage_quote_response import APIConsumerUsageQuoteResponse
 from .api_consumer_usage_response import APIConsumerUsageResponse
 from .api_consumer_usage_statement_bucket_response import APIConsumerUsageStatementBucketResponse
 from .api_consumer_usage_statement_finalized_webhook_payload import APIConsumerUsageStatementFinalizedWebhookPayload
+from .api_consumer_usage_statement_handoff_response import APIConsumerUsageStatementHandoffResponse
 from .api_consumer_usage_statement_list_response import APIConsumerUsageStatementListResponse
 from .api_consumer_usage_statement_response import APIConsumerUsageStatementResponse
 from .api_consumer_usage_statement_response_status import APIConsumerUsageStatementResponseStatus
@@ -197,6 +198,7 @@ from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
+from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
@@ -324,6 +326,11 @@ from .debug_request_correlation_stage import DebugRequestCorrelationStage
 from .debug_request_correlation_stage_phase import DebugRequestCorrelationStagePhase
 from .debug_request_correlation_stage_status import DebugRequestCorrelationStageStatus
 from .debug_request_evidence_response import DebugRequestEvidenceResponse
+from .debug_running_cause import DebugRunningCause
+from .debug_running_cause_code import DebugRunningCauseCode
+from .debug_running_config import DebugRunningConfig
+from .debug_running_observation import DebugRunningObservation
+from .debug_running_response import DebugRunningResponse
 from .debug_telemetry_list_filters import DebugTelemetryListFilters
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
@@ -331,6 +338,8 @@ from .debug_telemetry_request_item_method import DebugTelemetryRequestItemMethod
 from .debug_telemetry_span import DebugTelemetrySpan
 from .debug_timeline_event import DebugTimelineEvent
 from .debug_timeline_event_phase import DebugTimelineEventPhase
+from .declared_route import DeclaredRoute
+from .declared_route_methods_item import DeclaredRouteMethodsItem
 from .delayed_task_request import DelayedTaskRequest
 from .delayed_task_request_payload import DelayedTaskRequestPayload
 from .delayed_task_response import DelayedTaskResponse
@@ -1030,6 +1039,7 @@ __all__ = (
     "APIConsumerUsageResponse",
     "APIConsumerUsageStatementBucketResponse",
     "APIConsumerUsageStatementFinalizedWebhookPayload",
+    "APIConsumerUsageStatementHandoffResponse",
     "APIConsumerUsageStatementListResponse",
     "APIConsumerUsageStatementResponse",
     "APIConsumerUsageStatementResponseStatus",
@@ -1179,6 +1189,7 @@ __all__ = (
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
+    "ClaimAPIConsumerUsageStatementRequest",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
     "CompleteObjectMultipartUploadRequest",
@@ -1302,6 +1313,11 @@ __all__ = (
     "DebugRequestCorrelationStagePhase",
     "DebugRequestCorrelationStageStatus",
     "DebugRequestEvidenceResponse",
+    "DebugRunningCause",
+    "DebugRunningCauseCode",
+    "DebugRunningConfig",
+    "DebugRunningObservation",
+    "DebugRunningResponse",
     "DebugTelemetryListFilters",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",
@@ -1309,6 +1325,8 @@ __all__ = (
     "DebugTelemetrySpan",
     "DebugTimelineEvent",
     "DebugTimelineEventPhase",
+    "DeclaredRoute",
+    "DeclaredRouteMethodsItem",
     "DelayedTaskRequest",
     "DelayedTaskRequestPayload",
     "DelayedTaskResponse",

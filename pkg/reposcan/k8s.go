@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"fmt"
 	"io/fs"
 	"path"
 	"sort"
@@ -57,8 +58,9 @@ var k8sRootDirs = []string{nameK8s, nameKubernetes, nameDeploy, nameManifests}
 var k8sManifestExts = []string{".yaml", ".yml"}
 
 // detectK8s walks each present k8s subdirectory and decodes every
-// YAML file inside. Each multi-document YAML is split at
-// `---`. StatefulSet is refused (ADR-046 — the stateless contract
+// YAML file inside. Multi-document YAML stream markers (including
+// comments and trailing whitespace) delimit independent documents.
+// StatefulSet is refused (ADR-046 — the stateless contract
 // covers K8s, not just compose). Deployment → http class hint
 // (only stateless pods run on the platform). CronJob → job + the
 // declared schedule.
@@ -94,14 +96,14 @@ func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 				return err
 			}
 			docs := splitYAMLDocs(body)
-			for _, doc := range docs {
+			for docIndex, doc := range docs {
 				if len(strings.TrimSpace(doc)) == 0 {
 					continue
 				}
 				var m k8sManifest
 				if err := yaml.Unmarshal([]byte(doc), &m); err != nil {
-					warnings = append(warnings, "reposcan: parse "+p+": "+
-						err.Error())
+					warnings = append(warnings, fmt.Sprintf(
+						"reposcan: parse %s document %d: %v", p, docIndex+1, err))
 					continue
 				}
 				switch m.Kind {
@@ -144,23 +146,34 @@ func containsExt(list []string, ext string) bool {
 
 func splitYAMLDocs(body []byte) []string {
 	s := strings.ReplaceAll(string(body), "\r\n", "\n")
-	// Strip a single leading "---" document marker if present.
-	s = strings.TrimPrefix(s, "---\n")
-	// Naive split on lines that are EXACTLY "---" (not indented
-	// list items inside a YAML mapping which also start with "-").
+	// YAML document markers must start at column zero. The marker may
+	// carry trailing whitespace or a comment (for example, `--- # worker`).
+	// Explicit `...` end markers also terminate the current document.
 	var out []string
 	var cur strings.Builder
 	for _, line := range strings.Split(s, "\n") {
-		if line == "---" {
-			out = append(out, cur.String())
+		if isYAMLDocMarker(line, "---") || isYAMLDocMarker(line, "...") {
+			if cur.Len() > 0 || len(out) > 0 {
+				out = append(out, cur.String())
+			}
 			cur.Reset()
 			continue
 		}
 		cur.WriteString(line)
 		cur.WriteByte('\n')
 	}
-	out = append(out, cur.String())
+	if cur.Len() > 0 || len(out) == 0 {
+		out = append(out, cur.String())
+	}
 	return out
+}
+
+func isYAMLDocMarker(line, marker string) bool {
+	if !strings.HasPrefix(line, marker) {
+		return false
+	}
+	rest := strings.TrimSpace(line[len(marker):])
+	return rest == "" || strings.HasPrefix(rest, "#")
 }
 
 func k8sDeploymentSeed(src string, m k8sManifest) workloadSeed {

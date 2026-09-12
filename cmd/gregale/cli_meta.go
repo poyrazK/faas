@@ -126,7 +126,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "crons", "delayed-task", "invocations", "jobs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "crons", "delayed-task", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
 		return "Delivery"
@@ -336,6 +336,8 @@ var cliCommands = []cliCommand{
 			{Name: "ram", Short: "set RAM in MB", Value: "MB"},
 			{Name: "max-concurrency", Short: "set max_concurrency", Value: "N"},
 			{Name: "require-signed", Short: "toggle require_signed", ClosedSet: []string{"true", "false"}},
+			{Name: "only-declared-routes", Short: "reject undeclared paths before waking the app (OpenAPI or explicit route list)"},
+			{Name: "no-only-declared-routes", Short: "disable the declared-route pre-wake gate"},
 		},
 	},
 	// operator-side "backup" verb moved to gregalectl in PR-6.5
@@ -610,7 +612,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "deploy",
 		DocSlug: "deploy",
-		Short:   "Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
+		Short:   "Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
 		Flags: []cliFlag{
 			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
 			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
@@ -636,6 +638,7 @@ var cliCommands = []cliCommand{
 			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
 			{Name: "only", Short: "workloads to apply (comma-separated; project apply path)", Value: "SLUGS"},
+			{Name: "project", Short: "deploy all detected workloads as one project (slug defaults from --name or source)"},
 			// Issue #977 / ADR-116: deployment annotations surface.
 			// --reason is free text (≤280 chars); --tag is closed-set
 			// (see DeploymentAnnotationTags in cmd_deploy_annotations.go);
@@ -857,6 +860,36 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<slug>"},
 	},
 	{
+		Name:    "run",
+		DocSlug: "run",
+		Short:   "Run untrusted code in an isolated disposable microVM",
+		Flags: []cliFlag{
+			{Name: "runtime", Short: "runtime (node22|node24|python312|python313)", Value: "R", ClosedSet: []string{"node22", "node24", "python312", "python313"}},
+			{Name: "source", Short: "inline source code", Value: "CODE"},
+			{Name: "file", Short: "source file (regular file only)", Value: "PATH"},
+			{Name: "input", Short: "JSON input (inline | @file | -)", Value: "J|@file|-"},
+			{Name: "timeout-ms", Short: "execution timeout", Value: "N"},
+			{Name: "memory-mb", Short: "memory limit", Value: "N"},
+			{Name: "cpu-millicores", Short: "CPU limit", Value: "N"},
+			{Name: "ephemeral-disk-mb", Short: "ephemeral scratch size", Value: "N"},
+			{Name: "max-output-bytes", Short: "combined output cap", Value: "N"},
+			{Name: "wait", Short: "wait for terminal result"},
+			{Name: "poll-interval", Short: "status polling interval with --wait", Value: "D"},
+			{Name: "wait-timeout", Short: "maximum client wait duration", Value: "D"},
+		},
+	},
+	{
+		Name:    "runs",
+		DocSlug: "runs",
+		Short:   "Inspect or cancel isolated disposable runs",
+		Subcommands: []cliSub{
+			{Name: "get", Short: "Show one run"},
+			{Name: "status", Short: "Show one run (alias for get)"},
+			{Name: "cancel", Short: "Cancel one run"},
+		},
+		Positionals: []string{"<id>"},
+	},
+	{
 		Name:    "invocations",
 		DocSlug: "invocations",
 		Short:   "Per-account invocation ledger (invocations list|get <id>)",
@@ -873,6 +906,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "requests", Short: "Per-request telemetry (list/watch filters: deployment, status, cold boot, consumer, latency)"},
 			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
+			{Name: "running", Short: "Explain why an app is still running (running <slug> [--since D] [--limit N])"},
 			{Name: "regressions", Short: "Active regression observations (list|watch [--interval D] [--once])"},
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
 			{Name: "bundle", Short: "Export a redacted incident investigation bundle (bundle <slug> <req_id> [--output PATH])"},
@@ -1067,9 +1101,14 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true}},
 	},
 	{
-		Name:    "rollback",
-		DocSlug: "rollback",
-		Short:   "Re-promote the previous deployment",
+		Name:        "rollback",
+		DocSlug:     "rollback",
+		Short:       "Re-promote the previous deployment",
+		Positionals: []string{"<slug>"},
+		Flags: []cliFlag{
+			{Name: "to", Short: "target deployment id", Value: "deployment_id"},
+			{Name: "json", Short: "machine-readable output"},
+		},
 	},
 	{
 		// SAFE-RELEASES-R (issue #976 / ADR-122): the

@@ -52,6 +52,19 @@ type ObjectReader interface {
 	ReadObject(context.Context, string, string) (io.ReadCloser, error)
 }
 
+// ObjectWriter is the narrow capability used by policy-controlled upload
+// routes. It is deliberately optional, like ObjectReader, so a provider can
+// ship the read/list surface before it has a safe streaming write path.
+// Implementations must consume at most the declared size and must not buffer
+// the complete request in memory.
+type ObjectWriter interface {
+	WriteObject(context.Context, string, string, io.Reader, int64, ObjectMetadata) (UploadResult, error)
+}
+
+type UploadResult struct {
+	ETag string
+}
+
 type Object struct {
 	Key          string    `json:"key"`
 	Size         int64     `json:"size_bytes"`

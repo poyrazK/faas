@@ -703,6 +703,57 @@ type WebhookDeliveryReleaser interface {
 	ReleaseWebhookDelivery(ctx context.Context, provider, deliveryID string) error
 }
 
+// ProjectReconcileMutation describes one app membership change in an
+// atomic project apply. Op is one of create, update, or remove. For create
+// and update, App carries the desired identity fields; for remove, App.ID
+// identifies the existing row.
+type ProjectReconcileMutation struct {
+	Op  string
+	App App
+}
+
+// ProjectReconcileCron is the desired cron attached to a scanned workload.
+// The store resolves WorkloadName to the post-reconcile app row while the
+// transaction is open, so callers never need to race a separate app lookup.
+type ProjectReconcileCron struct {
+	WorkloadName string
+	Schedule     string
+	Path         string
+	Enabled      bool
+}
+
+// ProjectReconcileResult contains committed rows returned to the caller.
+// Removed keeps the full pre-delete snapshot so the API can report slugs
+// and emit its existing audit/notification envelopes without another read.
+type ProjectReconcileResult struct {
+	Project Project
+	Added   []App
+	Changed []App
+	Removed []App
+}
+
+// ProjectReconcileStore is the atomic mutation seam used by the repository
+// apply path. Unlike ApplyProjectPlan (which only creates a new project),
+// this operation replaces an existing project's app and cron membership in
+// one transaction. Implementations must perform quota checks and all
+// app/cron writes before committing; a failure leaves the prior project
+// state untouched.
+//
+// It is intentionally separate from Store so older test doubles and
+// integrations remain source-compatible. PgStore and MemStore both
+// implement it; reconcile falls back to the legacy per-row path only for
+// stores that do not.
+type ProjectReconcileStore interface {
+	ApplyProjectReconcile(
+		ctx context.Context,
+		project Project,
+		mutations []ProjectReconcileMutation,
+		crons []ProjectReconcileCron,
+		scanSource ProjectScanSource,
+		limits api.Limits,
+	) (ProjectReconcileResult, error)
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface

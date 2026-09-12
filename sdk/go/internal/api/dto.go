@@ -116,6 +116,10 @@ type UpdateAppRequest struct {
 	// one-liner; this field is exposed for callers that bundle
 	// eviction_priority into a wider PATCH.
 	EvictionPriority *string `json:"eviction_priority,omitempty"`
+	// OnlyAllowDeclaredRoutes enables gateway-side rejection of paths that are
+	// absent from the imported OpenAPI document or explicit route list.
+	OnlyAllowDeclaredRoutes *bool            `json:"only_allow_declared_routes,omitempty"`
+	DeclaredRoutes          *[]DeclaredRoute `json:"declared_routes,omitempty"`
 	// ConsumerAuthMode controls whether app requests may omit an
 	// end-customer consumer key. Values are "optional" and "required".
 	ConsumerAuthMode *string `json:"consumer_auth_mode,omitempty"`
@@ -319,6 +323,23 @@ type APIConsumerUsageStatementListResponse struct {
 	Statements []APIConsumerUsageStatementResponse `json:"statements"`
 }
 
+// ClaimAPIConsumerUsageStatementRequest records the customer's external
+// invoice reference for a finalized statement.
+type ClaimAPIConsumerUsageStatementRequest struct {
+	ExternalInvoiceID string `json:"external_invoice_id"`
+}
+
+// APIConsumerUsageStatementHandoffResponse is the immutable invoice-handoff
+// receipt for a finalized statement.
+type APIConsumerUsageStatementHandoffResponse struct {
+	ID                string    `json:"id"`
+	StatementID       string    `json:"statement_id"`
+	ExternalInvoiceID string    `json:"external_invoice_id"`
+	Currency          string    `json:"currency,omitempty"`
+	AmountMillicents  int64     `json:"amount_millicents"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
 // Validated server-side via the same validSlug regex used at CreateApp
 // time; rejected on conflict with 409 CodeAppRenameFailed when another
@@ -444,6 +465,10 @@ type AppResponse struct {
 	// order matches insertion order. NOT in `required:` because the
 	// empty-slice case is the contract.
 	EgressAllowlist []string `json:"egress_allowlist"`
+	// OnlyAllowDeclaredRoutes reports whether the gateway rejects paths that
+	// are absent from the app's declared OpenAPI/route contract.
+	OnlyAllowDeclaredRoutes bool            `json:"only_allow_declared_routes"`
+	DeclaredRoutes          []DeclaredRoute `json:"declared_routes,omitempty"`
 	// AutoscaleTargetRPS / AutoscaleTargetCPUPct are the per-app
 	// reactive scale-up targets (issue #169 / #172 / pkg/sched/scaleup).
 	// Each is 0 when unset ("disabled") and > 0 when configured.
@@ -468,6 +493,12 @@ type AppResponse struct {
 	// on this surface is unambiguous across operator-deployed
 	// fleets).
 	OverflowNode *string `json:"overflow_node,omitempty"`
+}
+
+// DeclaredRoute is an explicit pre-wake route declaration.
+type DeclaredRoute struct {
+	Path    string   `json:"path"`
+	Methods []string `json:"methods"`
 }
 
 // CreateDeploymentRequest ships a version (JSON variant; the multipart
@@ -1086,6 +1117,14 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
+	// Uptime30dPct is the weighted terminal-invocation success rate over
+	// the last 30 calendar days.
+	Uptime30dPct float64 `json:"uptime_30d_pct"`
+	// Uptime30d contains daily buckets, oldest first, for the public
+	// status page sparkline.
+	Uptime30d []StatusUptimeBucket `json:"uptime_30d"`
+	// Incidents contains recent public status incidents, newest first.
+	Incidents []StatusIncident `json:"incidents"`
 	// Degraded is true when at least one page- or warn-severity alert
 	// is currently firing on the local Prometheus. The public status
 	// page renders a "degraded" pill when this is true so prospects
@@ -1104,6 +1143,23 @@ type StatusPage struct {
 	// "degraded: <reason>" so an operator tailing the JSON can tell
 	// at a glance why a snapshot is or isn't trustworthy.
 	Source string `json:"source"`
+}
+
+// StatusUptimeBucket is one daily point in StatusPage.Uptime30d.
+type StatusUptimeBucket struct {
+	Date       time.Time `json:"date"`
+	UptimePct  float64   `json:"uptime_pct"`
+	Successful int64     `json:"successful"`
+	Total      int64     `json:"total"`
+}
+
+// StatusIncident is the public projection of an operator-posted incident.
+type StatusIncident struct {
+	Component  string     `json:"component,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	ResolvedAt *time.Time `json:"resolved_at"`
+	Severity   string     `json:"severity"`
+	Summary    string     `json:"summary"`
 }
 
 // --- Move 2: event-driven surface response shapes ----------------------------

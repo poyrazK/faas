@@ -28,8 +28,9 @@ import (
 type composeCandidate struct {
 	Name        string `yaml:"-"`
 	Build       any    `yaml:"build"`
-	Command     any    `yaml:"command"` // string OR []string
-	Ports       []any  `yaml:"ports"`   // "8080:80", 8080, {"target": 8080, …}
+	Command     any    `yaml:"command"`    // string OR []string
+	DependsOn   any    `yaml:"depends_on"` // []string OR map[string]any
+	Ports       []any  `yaml:"ports"`      // "8080:80", 8080, {"target": 8080, …}
 	EnvFile     any    `yaml:"env_file"`
 	Environment any    `yaml:"environment"`
 	Image       string `yaml:"image"`
@@ -165,12 +166,60 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			rootDir:    ctx,
 			dockerfile: df,
 			command:    commandSlice(s.Command),
+			dependsOn:  dependencyNames(s.DependsOn),
 			ports:      parsePorts(s.Ports),
 			envKeys:    envKeys(s.Environment),
 			source:     src + ": " + name,
 		})
 	}
 	return seeds, managed, warnings, nil
+}
+
+// dependencyNames normalizes Compose's short and long depends_on forms.
+// Conditions (service_started/service_healthy/service_completed_successfully)
+// are deliberately not carried into the project graph: Gregale's separate
+// app VMs cannot share Compose's container lifecycle, so readiness is handled
+// by the internal service proxy and the caller can still use the generated
+// service URL. Names are sorted and deduplicated for stable plans.
+func dependencyNames(v any) []string {
+	var names []string
+	switch x := v.(type) {
+	case []any:
+		for _, item := range x {
+			if name, ok := item.(string); ok && strings.TrimSpace(name) != "" {
+				names = append(names, strings.TrimSpace(name))
+			}
+		}
+	case []string:
+		for _, name := range x {
+			if strings.TrimSpace(name) != "" {
+				names = append(names, strings.TrimSpace(name))
+			}
+		}
+	case map[string]any:
+		for name := range x {
+			if strings.TrimSpace(name) != "" {
+				names = append(names, strings.TrimSpace(name))
+			}
+		}
+	case map[any]any:
+		for name := range x {
+			if s, ok := name.(string); ok && strings.TrimSpace(s) != "" {
+				names = append(names, strings.TrimSpace(s))
+			}
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	out := names[:0]
+	for _, name := range names {
+		if len(out) == 0 || out[len(out)-1] != name {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // commandSlice normalizes the compose `command:` form which can

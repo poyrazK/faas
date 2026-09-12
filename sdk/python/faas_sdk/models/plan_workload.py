@@ -26,6 +26,8 @@ class PlanWorkload:
     root_dir: str
     command: list[str]
     ports: list[int]
+    depends_on: list[str] | Unset = UNSET
+    """Compose service dependencies."""
     dockerfile: str | Unset = UNSET
     class_: PlanWorkloadClass | Unset = UNSET
     schedule: str | Unset = UNSET
@@ -59,6 +61,10 @@ class PlanWorkload:
         command = self.command
 
         ports = self.ports
+
+        depends_on: list[str] | Unset = UNSET
+        if not isinstance(self.depends_on, Unset):
+            depends_on = self.depends_on
 
         dockerfile = self.dockerfile
 
@@ -98,6 +104,8 @@ class PlanWorkload:
                 "ports": ports,
             }
         )
+        if depends_on is not UNSET:
+            field_dict["depends_on"] = depends_on
         if dockerfile is not UNSET:
             field_dict["dockerfile"] = dockerfile
         if class_ is not UNSET:
@@ -131,6 +139,8 @@ class PlanWorkload:
         command = cast(list[str], d.pop("command"))
 
         ports = cast(list[int], d.pop("ports"))
+
+        depends_on = cast(list[str], d.pop("depends_on", UNSET))
 
         dockerfile = d.pop("dockerfile", UNSET)
 
@@ -175,6 +185,7 @@ class PlanWorkload:
             root_dir=root_dir,
             command=command,
             ports=ports,
+            depends_on=depends_on,
             dockerfile=dockerfile,
             class_=class_,
             schedule=schedule,

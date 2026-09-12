@@ -510,6 +510,8 @@
           - "{{ faas_join_database_node }}"
           - --target-url
           - "{{ faas_vmmd_target_url }}"
+          - --schedd-target-url
+          - "{{ faas_vmmd_schedd_target }}"
           - --gateway-target-url
           - "{{ faas_gateway_target_url | default('tcp://' ~ ansible_host ~ ':8080', true) }}"
           - --vpcpus
@@ -633,6 +635,11 @@
           - "{{ faas_join_inventory_name }}"
           - --pki-trust-only
       changed_when: true
+
+    - name: Remove the legacy vmmd schedd target override
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-vmmd.service.d/99-schedd-target.conf
+        state: absent
 
     - name: Stage the reusable box-age identity when supplied
       ansible.builtin.copy:

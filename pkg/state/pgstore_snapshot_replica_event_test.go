@@ -1,10 +1,13 @@
 package state_test
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -143,18 +146,154 @@ func TestPgSnapshotReplicaEventCursorAndOriginFiltering(t *testing.T) {
 	if job.QueuedAt.IsZero() {
 		t.Fatal("ClaimSnapshotReplica returned an empty durable queue timestamp")
 	}
+	if job.LeaseToken == "" {
+		t.Fatal("ClaimSnapshotReplica returned an empty lease token")
+	}
 	if got, want := job.LayerStorageKeys, []string{
 		"apps/pg-app/" + deploymentID + ".ext4",
 		"apps/pg-app/" + deploymentID + "-metrics.ext4",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("claimed layer keys = %v, want %v", got, want)
 	}
-	if err := s.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, nodeB.ID, errors.New("temporary registry outage")); err != nil {
+	if err := s.MarkSnapshotReplicaFailedWithLease(ctx, job.SnapshotID, nodeB.ID, job.LeaseToken, errors.New("temporary registry outage")); err != nil {
 		t.Fatalf("MarkSnapshotReplicaFailed transient: %v", err)
 	}
-	if err := s.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, nodeB.ID,
+	if _, err := pool.Exec(ctx, `
+		update snapshot_replicas
+		   set next_attempt_at = now() - interval '1 second'
+		 where snapshot_id = $1 and node_id = $2`, job.SnapshotID, nodeB.ID); err != nil {
+		t.Fatalf("make snapshot replica retryable: %v", err)
+	}
+	job, err = s.ClaimSnapshotReplica(ctx, nodeB.ID)
+	if err != nil {
+		t.Fatalf("reclaim snapshot replica: %v", err)
+	}
+	if err := s.MarkSnapshotReplicaFailedWithLease(ctx, job.SnapshotID, nodeB.ID, job.LeaseToken,
 		state.PermanentSnapshotReplicaError(errors.New("immutable object missing"))); err != nil {
 		t.Fatalf("MarkSnapshotReplicaFailed permanent: %v", err)
+	}
+}
+
+func TestPgSnapshotReplicaStaleLeaseCannotCompleteNewAttempt(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	_, _, deploymentID := seedLiveDeploy(t, s, ctx, "replica-lease-race")
+	snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: deploymentID,
+		FCVersion:    "fc-lease",
+		MemBytes:     1024,
+		DiskBytes:    2048,
+		StorageKey:   state.SnapMemKey(deploymentID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.ClaimSnapshotReplica(ctx, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		update snapshot_replicas
+		   set updated_at = now() - interval '6 minutes'
+		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.ClaimSnapshotReplica(ctx, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.LeaseToken == second.LeaseToken {
+		t.Fatal("reclaimed replica reused the old lease token")
+	}
+	if err := s.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, nodeID, first.LeaseToken); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale completion error = %v, want ErrConflict", err)
+	}
+	var currentState, currentLease string
+	if err := pool.QueryRow(ctx, `
+		select state, lease_token::text
+		  from snapshot_replicas
+		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID).Scan(&currentState, &currentLease); err != nil {
+		t.Fatal(err)
+	}
+	if currentState != string(state.SnapshotReplicaSyncing) || currentLease != second.LeaseToken {
+		t.Fatalf("stale completion changed active lease: state=%q lease=%q", currentState, currentLease)
+	}
+	if err := s.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, nodeID, second.LeaseToken); err != nil {
+		t.Fatalf("current completion: %v", err)
+	}
+}
+
+func TestPgSnapshotReplicaLeaseRenewalFencesOwnership(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	_, _, deploymentID := seedLiveDeploy(t, s, ctx, "replica-lease-renew")
+	snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: deploymentID,
+		FCVersion:    "fc-lease-renew",
+		MemBytes:     1024,
+		DiskBytes:    2048,
+		StorageKey:   state.SnapMemKey(deploymentID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.ClaimSnapshotReplica(ctx, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		update snapshot_replicas
+		   set updated_at = now() - interval '6 minutes'
+		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RenewSnapshotReplicaLease(ctx, snap.ID, nodeID, job.LeaseToken); err != nil {
+		t.Fatalf("renew lease: %v", err)
+	}
+	var renewedAt time.Time
+	if err := pool.QueryRow(ctx, `
+		select updated_at
+		  from snapshot_replicas
+		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID).Scan(&renewedAt); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(renewedAt) >= time.Minute {
+		t.Fatalf("renewed updated_at = %s, want recent", renewedAt)
+	}
+	if err := s.RenewSnapshotReplicaLease(ctx, snap.ID, nodeID, uuid.NewString()); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale renewal error = %v, want ErrConflict", err)
+	}
+}
+
+func TestPgSnapshotReplicaLeaseRenewalValidatesInputs(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	validLease := uuid.NewString()
+	for _, tc := range []struct {
+		name       string
+		snapshotID string
+		nodeID     string
+		leaseToken string
+	}{
+		{name: "missing snapshot", nodeID: "node", leaseToken: validLease},
+		{name: "missing node", snapshotID: "snapshot", leaseToken: validLease},
+		{name: "missing lease", snapshotID: "snapshot", nodeID: "node"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.RenewSnapshotReplicaLease(ctx, tc.snapshotID, tc.nodeID, tc.leaseToken); err == nil {
+				t.Fatal("invalid lease renewal unexpectedly succeeded")
+			}
+		})
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := s.RenewSnapshotReplicaLease(canceled, "snapshot", "node", validLease); err == nil {
+		t.Fatal("canceled lease renewal unexpectedly succeeded")
 	}
 }
 
@@ -202,7 +341,7 @@ func TestPgSnapshotReplicaClaimPrioritizesCustomerWakes(t *testing.T) {
 		if job.SnapshotID != want.ID {
 			t.Fatalf("claimed %s, want %s", job.SnapshotID, want.ID)
 		}
-		if err := s.MarkSnapshotReplicaReady(ctx, job.SnapshotID, nodeID); err != nil {
+		if err := s.MarkSnapshotReplicaReadyWithLease(ctx, job.SnapshotID, nodeID, job.LeaseToken); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -236,7 +375,7 @@ func TestPgSnapshotReplicaTransientRetryAndReadyRevalidation(t *testing.T) {
 	if job.Attempts != 8 {
 		t.Fatalf("capped attempts = %d, want 8", job.Attempts)
 	}
-	if err := s.MarkSnapshotReplicaFailed(ctx, snap.ID, nodeID, errors.New("registry unavailable")); err != nil {
+	if err := s.MarkSnapshotReplicaFailedWithLease(ctx, snap.ID, nodeID, job.LeaseToken, errors.New("registry unavailable")); err != nil {
 		t.Fatal(err)
 	}
 	var nextAttemptPresent bool
@@ -250,7 +389,17 @@ func TestPgSnapshotReplicaTransientRetryAndReadyRevalidation(t *testing.T) {
 		t.Fatal("transient failure became terminal at the attempt cap")
 	}
 
-	if err := s.MarkSnapshotReplicaReady(ctx, snap.ID, nodeID); err != nil {
+	if _, err := pool.Exec(ctx, `
+		update snapshot_replicas
+		   set next_attempt_at = now() - interval '1 second'
+		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID); err != nil {
+		t.Fatalf("make snapshot replica ready retryable: %v", err)
+	}
+	job, err = s.ClaimSnapshotReplica(ctx, nodeID)
+	if err != nil {
+		t.Fatalf("reclaim snapshot replica after transient failure: %v", err)
+	}
+	if err := s.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, nodeID, job.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

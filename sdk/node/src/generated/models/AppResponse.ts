@@ -5,6 +5,7 @@
 import type { AppConfiguredResources } from './AppConfiguredResources.js';
 import type { AppEffectiveLimits } from './AppEffectiveLimits.js';
 import type { AppManifest } from './AppManifest.js';
+import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { ParkedDeploymentRef } from './ParkedDeploymentRef.js';
 import type { PublicAuthStatus } from './PublicAuthStatus.js';
 import type { ResourceProfile } from './ResourceProfile.js';
@@ -73,6 +74,14 @@ export type AppResponse = {
    * Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed.
    */
   route_metrics_enabled?: boolean;
+  /**
+   * When true, gatewayd rejects paths not present in declared_routes or the imported OpenAPI document before waking an app.
+   */
+  only_allow_declared_routes?: boolean;
+  /**
+   * Optional explicit route contract. When non-empty it takes precedence over the imported OpenAPI document.
+   */
+  declared_routes?: Array<DeclaredRoute>;
   /**
    * Coarse per-app maintenance toggle (ADR-091 amendment). When true the gatewayd-internal hot-path short-circuits every request to this app with 503 + Retry-After (default 60 s) BEFORE auth, BEFORE wake, BEFORE any kind=maintenance edge rule. Free-tier allowed. Surfaced in the GET /v1/apps/{slug} response so dashboards can show 'maintenance on / off' alongside the streaming/WS pills.
    */

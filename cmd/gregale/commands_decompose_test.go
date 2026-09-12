@@ -20,6 +20,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,6 +47,7 @@ type decomposeSink struct {
 	// capture lets tests assert the multipart body shape, including
 	// the parsed Content-Type and the field set the SDK Client writes.
 	capturedMultipart []byte
+	projectSlug       string
 	scanCalls         int
 	applyCalls        int
 }
@@ -55,14 +58,42 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.scanCalls++
 		body, _ := io.ReadAll(r.Body)
 		s.capturedMultipart = body
+		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.URL.Path == "/v1/projects" && r.Method == http.MethodPost:
 		s.applyCalls++
 		body, _ := io.ReadAll(r.Body)
 		s.capturedMultipart = body
+		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.applyStatus, s.applyBody)
 	default:
 		http.Error(w, "decomposeSink: not found: "+r.URL.Path, http.StatusNotFound)
+	}
+}
+
+// multipartField extracts one text field from a captured request. The sink
+// keeps the raw body for the existing byte-presence assertions, while this
+// helper lets CLI tests verify that derived project metadata reached both
+// ScanProject and ApplyProjectPlan.
+func multipartField(body []byte, contentType, name string) string {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		return ""
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	for {
+		part, nextErr := reader.NextPart()
+		if nextErr == io.EOF {
+			return ""
+		}
+		if nextErr != nil {
+			return ""
+		}
+		value, readErr := io.ReadAll(part)
+		_ = part.Close()
+		if readErr == nil && part.FormName() == name {
+			return string(value)
+		}
 	}
 }
 
@@ -440,6 +471,38 @@ func TestCmdDeployTarball_YesFlagSkeleton(t *testing.T) {
 	}
 }
 
+// TestCmdDeployTarball_ProjectFlagDefaultsSlug makes the discoverable
+// --project spelling equivalent to --project-slug for a tarball while
+// keeping the existing single-app path unchanged when the flag is absent.
+func TestCmdDeployTarball_ProjectFlagDefaultsSlug(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   goldenApply,
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	_, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t),
+		"--project",
+		"--yes",
+	}); code != 0 {
+		t.Fatalf("cmdDeployTarball --project exit = %d, want 0", code)
+	}
+	if sink.scanCalls != 1 || sink.applyCalls != 1 {
+		t.Fatalf("project calls: scan=%d apply=%d, want one each", sink.scanCalls, sink.applyCalls)
+	}
+	if sink.projectSlug != "fixture" {
+		t.Errorf("derived project slug = %q, want %q", sink.projectSlug, "fixture")
+	}
+}
+
 // TestCmdDeployTarball_JSONFlag asserts the --json path emits the
 // apply response verbatim (already validated by the SDK client
 // round-trip test, but the CLI's json_out wrapping is the wire
@@ -567,6 +630,82 @@ func TestCmdDeployTarball_ProjectDryRunHumanRendersPlan(t *testing.T) {
 	}
 	if sink.applyCalls != 0 {
 		t.Fatalf("project dry-run issued apply call: %d", sink.applyCalls)
+	}
+}
+
+func TestCmdDeployTarball_ProjectPreviewStrictGate(t *testing.T) {
+	overQuota := goldenPlan
+	overQuota.CanApply = false
+	overQuota.CanApplyReasons = []string{"apps over plan limit", "cron configuration is unsupported"}
+	overQuota.ObservedApps = 7
+	overQuota.LimitApps = 5
+
+	cases := []struct {
+		name      string
+		flags     []string
+		wantCode  int
+		wantJSON  bool
+		wantUsage string
+	}{
+		{
+			name:     "dry-run strict json",
+			flags:    []string{"--dry-run", "--strict", "--json"},
+			wantCode: 1,
+			wantJSON: true,
+		},
+		{
+			name:     "diff strict json",
+			flags:    []string{"--diff", "--strict", "--json"},
+			wantCode: 1,
+			wantJSON: true,
+		},
+		{
+			name:     "dry-run lenient json",
+			flags:    []string{"--dry-run", "--lenient", "--json"},
+			wantCode: 0,
+			wantJSON: true,
+		},
+		{
+			name:      "dry-run strict text",
+			flags:     []string{"--dry-run", "--strict"},
+			wantCode:  1,
+			wantUsage: "can_apply: false",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetJSONOut(t)
+			sink := &decomposeSink{scanStatus: http.StatusOK, scanBody: overQuota}
+			srv := httptest.NewServer(sink)
+			t.Cleanup(srv.Close)
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			stdout, restore := captureStdout(t)
+			defer restore()
+			args := append([]string{"--tarball", writeTarball(t), "--project-slug", "fixture"}, tc.flags...)
+			if code := cmdDeployTarball(args); code != tc.wantCode {
+				t.Fatalf("project preview exit = %d, want %d; output=%s", code, tc.wantCode, stdout.String())
+			}
+			if sink.applyCalls != 0 {
+				t.Fatalf("project preview issued apply call: %d", sink.applyCalls)
+			}
+			out := stdout.String()
+			if tc.wantJSON {
+				var got api.PlanResponse
+				if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &got); err != nil {
+					t.Fatalf("project preview output is not JSON: %v\n%s", err, out)
+				}
+				if got.CanApply {
+					t.Fatal("project preview reported can_apply=true for blocked plan")
+				}
+				if !reflect.DeepEqual(got.CanApplyReasons, overQuota.CanApplyReasons) {
+					t.Errorf("can_apply_reasons = %#v, want %#v", got.CanApplyReasons, overQuota.CanApplyReasons)
+				}
+			} else if !strings.Contains(out, tc.wantUsage) {
+				t.Errorf("project preview output missing %q: %s", tc.wantUsage, out)
+			}
+		})
 	}
 }
 

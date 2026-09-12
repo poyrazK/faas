@@ -547,10 +547,17 @@ const (
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
-	CodeForbidden  = "insufficient_scope"
-	CodeNotFound   = "not_found"
-	CodeValidation = "validation_failed"
-	CodeConflict   = "conflict"
+	CodeForbidden = "insufficient_scope"
+	CodeNotFound  = "not_found"
+	// CodeUndeclaredRoute is returned directly by gatewayd when the
+	// only-declared-routes contract is enabled and the request path/method is
+	// absent from the explicit list or imported OpenAPI document.
+	CodeUndeclaredRoute = "undeclared_route"
+	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
+	// gateway cannot load or compile the contract required by an enabled app.
+	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
+	CodeValidation                     = "validation_failed"
+	CodeConflict                       = "conflict"
 	// CodeInternal is returned by handlers when an unexpected server-side
 	// failure surfaces to the caller (DB Tx commit, network blip, partial
 	// state). Distinct from CodeCapacity (503, "we ran out of headroom")
@@ -1700,8 +1707,10 @@ func StatusForCode(code string) int {
 		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized
-	case CodeNotFound:
+	case CodeNotFound, CodeUndeclaredRoute:
 		return http.StatusNotFound
+	case CodeDeclaredRoutePolicyUnavailable:
+		return http.StatusServiceUnavailable
 	case CodeNotImplemented:
 		return http.StatusNotImplemented
 	// ADR-124 deployment queue controls. Cancel-of-live +

@@ -83,6 +83,7 @@ from ..models.update_app_request_restart_policy_type_3_type_1 import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.declared_route import DeclaredRoute
     from ..models.public_auth_block import PublicAuthBlock
     from ..models.scaling_policy import ScalingPolicy
     from ..models.service_replicas import ServiceReplicas
@@ -170,6 +171,12 @@ class UpdateAppRequest:
     route_metrics_enabled: bool | None | Unset = UNSET
     """Per-app per-route observability flag (ADR-093). Omitted → no change. Free PATCHing true is 403
     plan_route_metrics_not_allowed."""
+    only_allow_declared_routes: bool | None | Unset = UNSET
+    """Enable or disable gateway-side rejection of paths not declared by the app. Enabling requires declared_routes
+    or an imported OpenAPI document."""
+    declared_routes: list[DeclaredRoute] | Unset = UNSET
+    """Replace the explicit route contract. An empty array clears it and makes the gateway use the imported OpenAPI
+    document."""
     maintenance_mode: bool | None | Unset = UNSET
     """Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → no change. PATCH true pins the app for
     maintenance (every request 503 + Retry-After); PATCH false restores normal handling. Free-tier allowed; no plan
@@ -394,6 +401,19 @@ class UpdateAppRequest:
         else:
             route_metrics_enabled = self.route_metrics_enabled
 
+        only_allow_declared_routes: bool | None | Unset
+        if isinstance(self.only_allow_declared_routes, Unset):
+            only_allow_declared_routes = UNSET
+        else:
+            only_allow_declared_routes = self.only_allow_declared_routes
+
+        declared_routes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.declared_routes, Unset):
+            declared_routes = []
+            for declared_routes_item_data in self.declared_routes:
+                declared_routes_item = declared_routes_item_data.to_dict()
+                declared_routes.append(declared_routes_item)
+
         maintenance_mode: bool | None | Unset
         if isinstance(self.maintenance_mode, Unset):
             maintenance_mode = UNSET
@@ -539,6 +559,10 @@ class UpdateAppRequest:
             field_dict["websocket_enabled"] = websocket_enabled
         if route_metrics_enabled is not UNSET:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
+        if only_allow_declared_routes is not UNSET:
+            field_dict["only_allow_declared_routes"] = only_allow_declared_routes
+        if declared_routes is not UNSET:
+            field_dict["declared_routes"] = declared_routes
         if maintenance_mode is not UNSET:
             field_dict["maintenance_mode"] = maintenance_mode
         if app_protocol is not UNSET:
@@ -572,6 +596,7 @@ class UpdateAppRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.declared_route import DeclaredRoute
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_replicas import ServiceReplicas
@@ -940,6 +965,24 @@ class UpdateAppRequest:
 
         route_metrics_enabled = _parse_route_metrics_enabled(d.pop("route_metrics_enabled", UNSET))
 
+        def _parse_only_allow_declared_routes(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        only_allow_declared_routes = _parse_only_allow_declared_routes(d.pop("only_allow_declared_routes", UNSET))
+
+        _declared_routes = d.pop("declared_routes", UNSET)
+        declared_routes: list[DeclaredRoute] | Unset = UNSET
+        if _declared_routes is not UNSET:
+            declared_routes = []
+            for declared_routes_item_data in _declared_routes:
+                declared_routes_item = DeclaredRoute.from_dict(declared_routes_item_data)
+
+                declared_routes.append(declared_routes_item)
+
         def _parse_maintenance_mode(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -1175,6 +1218,8 @@ class UpdateAppRequest:
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,
+            only_allow_declared_routes=only_allow_declared_routes,
+            declared_routes=declared_routes,
             maintenance_mode=maintenance_mode,
             app_protocol=app_protocol,
             scaling_policy=scaling_policy,

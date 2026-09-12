@@ -188,6 +188,7 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		RootDir:    w.RootDir,
 		Dockerfile: w.Dockerfile,
 		Command:    w.Command,
+		DependsOn:  w.DependsOn,
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
 		Ports:      w.Ports,
@@ -694,43 +695,16 @@ type planCron struct {
 // identical; the local type is a transitional convenience.
 type appliedBuild = api.AppliedBuild
 
-// applyBuildsForAddedChanged stages a per-workload tarball rooted
-// at app.RootDir under FAAS_SPOOL_ROOT/projects/<account>/<project>/
-// <appID>.tar.gz and enqueues one (deployment, build) per workload
-// via apidsource.Enqueue. Returns one appliedBuild per input app in
-// the same order. On staging or enqueue failure the per-app Error
-// field is populated and the loop continues — partial success is the
-// design (mirrors pkg/githubd/service.go:361-367).
-//
-// Lifetime: the staged tarball persists on disk after the function
-// returns — builderd reads it as a local file (pkg/builderd/
-// builderd.go:321). A spool GC is a follow-up issue (the plan calls
-// it out explicitly); this PR does not silently leave it undocumented
-// but also does not implement the GC.
-//
-// The SourceURL + CommitSHA fields are empty (the apply path is
-// upload-from-customer-tarball, not pull-from-codeload); the helper
-// handles empty values cleanly.
-//
-// scanDir is the path to the extracted source tree (req.ScanDir from
-// the multipart parse). It must outlive the staging call but is
-// removed by the handler's defer after scanService returns.
-//
-// r is the inbound HTTP request. MEDIUM review #2 (PR #992): the
-// scan-and-apply path was the only HTTP-routed deploy surface
-// that didn't stamp the four actor columns — every
-// customer-triggered project apply landed in deployments with
-// deployed_by_user_id=NULL and deployed_from_ip=NULL. Threading
-// r through keeps cmd/apid/deploy_actor.go as the single source
-// of truth (routeKindForRequest + middleware.ClientIP) rather
-// than forking the actor surface across packages.
-func (s *server) applyBuildsForAddedChanged(
+func (s *server) applyBuildsForAddedChangedOrdered(
 	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
-	scanDir string, added, changed []state.App,
+	scanDir string, workloads []reposcan.Workload, managed []reposcan.Managed, added, changed []state.App,
 ) []appliedBuild {
 	touched := make([]state.App, 0, len(added)+len(changed))
 	touched = append(touched, added...)
 	touched = append(touched, changed...)
+	if order, orderErr := reposcan.DependencyOrder(workloads, managed); orderErr == nil {
+		touched = orderAppsByWorkload(touched, order)
+	}
 	out := make([]appliedBuild, 0, len(touched))
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
@@ -798,6 +772,31 @@ func (s *server) applyBuildsForAddedChanged(
 	return out
 }
 
+// orderAppsByWorkload keeps build enqueueing aligned with the Compose graph.
+// Reconcile has already validated the graph; the fallback preserves the
+// caller's order if a future scan source bypasses that validation.
+func orderAppsByWorkload(apps []state.App, order []string) []state.App {
+	if len(apps) < 2 || len(order) == 0 {
+		return apps
+	}
+	position := make(map[string]int, len(order))
+	for i, name := range order {
+		position[strings.ToLower(name)] = i
+	}
+	sort.SliceStable(apps, func(i, j int) bool {
+		pi, okI := position[strings.ToLower(apps[i].WorkloadName)]
+		pj, okJ := position[strings.ToLower(apps[j].WorkloadName)]
+		if !okI {
+			pi = len(order)
+		}
+		if !okJ {
+			pj = len(order)
+		}
+		return pi < pj
+	})
+	return apps
+}
+
 // stageApplyTarball writes a per-workload tarball rooted at app.RootDir
 // under <FAAS_SPOOL_ROOT>/projects/<accountID>/<projectID>/<appID>.tar.gz
 // and returns (path, bytes, error). The dir layout keys on
@@ -854,7 +853,7 @@ func (s *server) stageApplyTarball(
 // the apply-time build enqueue loop; the handler renders them in the
 // apply response.
 func (s *server) scanService(
-	w http.ResponseWriter, r *http.Request, acct state.Account,
+	r *http.Request, acct state.Account,
 	planToken string, apply bool,
 ) (*scanPlanResponse, state.Project, []state.App, []state.App, []string, []appliedBuild, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
@@ -970,11 +969,10 @@ func (s *server) scanService(
 			_ = json.Unmarshal(b, &pt)
 		}
 		if pt.AccountID != acct.ID || pt.Hash != req.SourceSHA256 {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
+			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 				"plan_token_stale",
 				"plan_token does not match uploaded source",
-				"re-run scan and apply in one flow"))
-			return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal("plan_token stale")
+				"re-run scan and apply in one flow")
 		}
 	}
 
@@ -1191,14 +1189,14 @@ func (s *server) scanService(
 	// calls are self-contained (no shared scan state).
 	preCanApply, preNotAllowed, preReasons, _ := evaluateQuotaGate(result.Workloads, limits, observedApps, observedCrons)
 	canApply, notAllowed, reasons, _ = evaluateQuotaGate(filteredW, limits, observedApps, observedCrons)
-	preAdmissionReasons := reconcile.WorkloadAdmissionReasons(result.Workloads, acctApps, projectID)
+	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
 		// An actually empty scan is unsafe and must carry the reconcile
 		// package's stable empty-plan reason. A non-empty scan that the
 		// operator deliberately reduced to zero with --exclude is an
 		// applicable no-op; the skipped partition records that intent.
-		admissionReasons = reconcile.WorkloadAdmissionReasons(filteredW, acctApps, projectID)
+		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID)
 	}
 	if len(preAdmissionReasons) > 0 {
 		preCanApply = false
@@ -1557,10 +1555,19 @@ func (s *server) scanService(
 	for slug := range req.Exclude {
 		excludeList = append(excludeList, slug)
 	}
-	rec, recErr := s.reconcileSvc.Reconcile(
+	cronSpecs := make([]reconcile.CronSpec, 0, len(crons))
+	for _, cron := range crons {
+		cronSpecs = append(cronSpecs, reconcile.CronSpec{
+			WorkloadName: cron.WorkloadName,
+			Schedule:     cron.Schedule,
+			Path:         cron.Path,
+			Enabled:      cron.Enabled,
+		})
+	}
+	rec, recErr := s.reconcileSvc.ReconcileWithCrons(
 		r.Context(), project, filteredScan,
 		reconcileInputs.CommitSHA, reconcileInputs.Branch,
-		excludeList)
+		excludeList, cronSpecs)
 	if recErr != nil {
 		// Map reconcile-package errors into the existing RFC 7807
 		// problem shapes so the handler can use a single dispatch
@@ -1628,7 +1635,7 @@ func (s *server) scanService(
 	// is what we want. A future refactor that moves the ScanDir
 	// cleanup into this func must keep staging reads ahead of
 	// the cleanup.
-	builds := s.applyBuildsForAddedChanged(r.Context(), r, acct, project, req.ScanDir, rec.Added, rec.Changed)
+	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, rec.Added, rec.Changed)
 	// ADR-124: surface the destructive subset on the response so the
 	// apply handler can render Removed in the same blast-radius
 	// envelope the preview offered. SoftDeleteAppCascade runs

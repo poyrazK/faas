@@ -262,6 +262,11 @@ func cmdApp(args []string) int {
 	// problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL unless --public-auth is also set")
+	// Only-allow-declared-routes is a plan-agnostic pre-wake gate. The
+	// positive/negative pair mirrors require-authn: explicit false is useful
+	// when temporarily rolling back a contract without deleting the document.
+	onlyDeclaredRoutes := fs.Bool("only-declared-routes", false, "reject paths not declared by the OpenAPI document (or explicit route list) before wake")
+	noOnlyDeclaredRoutes := fs.Bool("no-only-declared-routes", false, "disable the declared-route pre-wake gate")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
@@ -319,6 +324,9 @@ func cmdApp(args []string) int {
 	// CLI's job is to keep the flag pair consistent.
 	if *requireAuthn && *noRequireAuthn {
 		return printErr("Invalid flags", fmt.Errorf("--require-authn and --no-require-authn are mutually exclusive"))
+	}
+	if *onlyDeclaredRoutes && *noOnlyDeclaredRoutes {
+		return printErr("Invalid flags", fmt.Errorf("--only-declared-routes and --no-only-declared-routes are mutually exclusive"))
 	}
 	// Issue #559: --concurrency fast path. Refuse to mix with
 	// update flags (mixing a read-only query with a write would
@@ -451,6 +459,14 @@ func cmdApp(args []string) int {
 			req.PublicAuth = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
 		}
 	}
+	if explicit["only-declared-routes"] {
+		v := true
+		req.OnlyAllowDeclaredRoutes = &v
+	}
+	if explicit["no-only-declared-routes"] {
+		v := false
+		req.OnlyAllowDeclaredRoutes = &v
+	}
 	if explicit["head-wakes"] {
 		v := *headWakes
 		req.HeadWakes = &v
@@ -543,7 +559,7 @@ func cmdApp(args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil {
+		req.OverflowNode == nil && req.AppProtocol == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -653,6 +669,11 @@ func cmdApp(args []string) int {
 		fmt.Printf("%-30s %s\n", "crawler policy:", a.Manifest.EffectiveCrawlerPolicy())
 		fmt.Printf("%-30s %s\n", "health path:", a.Manifest.HealthPath)
 		fmt.Printf("%-30s %t\n", "health path wakes:", a.Manifest.HealthPathWakes)
+		if a.OnlyAllowDeclaredRoutes {
+			fmt.Printf("%-30s %s\n", "only declared routes:", "enabled")
+		} else {
+			fmt.Printf("%-30s %s\n", "only declared routes:", "disabled")
+		}
 		// Tier A10 / ADR-088: surface the resolved overflow_node
 		// preference (the UUID apid returns) so the customer can
 		// verify their PATCH round-tripped. nil on the wire means
@@ -1115,7 +1136,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// Phase 3 (repo decomposition) — one-key provision flags. Presence
 	// of --only or --project-slug short-circuits the existing CreateApp
 	// + DeployTarball path and routes through ScanProject →
-	// ApplyProjectPlan. --yes / --json are absorbed by the global
+	// ApplyProjectPlan. --project is the discoverable opt-in for the
+	// same path when the project slug should be derived from --name or
+	// the selected source; explicit --project-slug remains available for
+	// stable CI names. --yes / --json are absorbed by the global
 	// json_flag.go layer and live alongside the others so a single
 	// `gregale deploy --tarball X --yes --json --project-slug S` works.
 	yes := fs.Bool("yes", false, "skip the apply confirmation prompt")
@@ -1145,6 +1169,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// the 90-day active window; ADR-127 §1 documents the no-FK
 	// posture.
 	deployPersistExclude := fs.Bool("persist-exclude", false, "record --exclude slugs into deployment_scope_exclusions for future deploys (ADR-124 follow-up #3)")
+	projectDeploy := fs.Bool("project", false, "deploy all detected workloads as one project (slug defaults from --name or source)")
 	projectSlug := fs.String("project-slug", "", "kebab slug for the project (triggers one-key provision)")
 	// SAFE-RELEASES production-leveling Stream F: canary ladder
 	// selectors. --canary-preset picks a catalog entry
@@ -1323,8 +1348,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *doctorStrict && *noDoctor {
 		return printErr("Invalid flags", fmt.Errorf("--doctor-strict and --no-doctor are mutually exclusive"))
 	}
-	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "" || *deployOnly != "" || *projectSlug != "") {
-		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, --repo, --only, or --project-slug"))
+	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "" || *deployOnly != "" || *projectDeploy || *projectSlug != "") {
+		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, --repo, --only, --project, or --project-slug"))
+	}
+	if *projectDeploy {
+		if *image != "" {
+			return printErr("Invalid flags", errors.New("--project requires a source archive; --image deploys one app"))
+		}
+		if *githubSnippet {
+			return printErr("Invalid flags", errors.New("--project cannot be combined with --github"))
+		}
+		if *function || *app || *runtime != "" || *handler != "" {
+			return printErr("Invalid flags", errors.New("--project cannot be combined with --function, --app, --runtime, or --handler"))
+		}
+		if _, _, ok := templateFunctionConfig(*templateName); ok {
+			return printErr("Invalid flags", errors.New("--project cannot be combined with a function template"))
+		}
 	}
 	if *profile != "" {
 		if _, ok := api.ResourceProfileSpecFor(*profile); !ok {
@@ -1395,7 +1434,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customers see no behaviour change.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if *deployOnly != "" || *projectSlug != "" {
+	if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "canary-preset", "canary-stages",
@@ -1407,7 +1446,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if len(unsupported) > 0 {
 			return printErr("Unsupported project deploy flags", fmt.Errorf(
-				"%s cannot be combined with --project-slug or --only; project deploy policy is not yet supported",
+				"%s cannot be combined with --project, --project-slug, or --only; project deploy policy is not yet supported",
 				strings.Join(unsupported, ", ")))
 		}
 	}
@@ -1523,8 +1562,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// Phase 3 guard: --repo is the source-ref path; the
 		// one-key provision surface takes --tarball/--path, not
 		// --repo. Mixing them is almost always a mistake.
-		if *deployOnly != "" || *projectSlug != "" {
-			PrintFail(os.Stderr, "--repo cannot be combined with --only or --project-slug")
+		if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
+			PrintFail(os.Stderr, "--repo cannot be combined with --project, --only, or --project-slug")
 			return 1
 		}
 		refIntent := deployIdempotencyIntent{
@@ -1678,6 +1717,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				sourceRoot = selectedRoot
 			}
 		}
+	}
+	// --project is an explicit, safe opt-in to project apply. Keep the
+	// existing single-app slug rules for --name and --path, while making
+	// tarball/template invocations intuitive by using their basename when
+	// no name was supplied. An explicit --project-slug always wins.
+	if *projectDeploy && *projectSlug == "" {
+		projectName := slug
+		switch {
+		case *name == "" && *tarball != "":
+			projectName = defaultProjectSlug(*tarball)
+		case *name == "" && *templateName != "":
+			projectName = *templateName
+		}
+		*projectSlug = sanitizeSlug(projectName)
 	}
 	// Authenticate before any zero-config source scan or archive work. The
 	// zero-config path can inspect the working tree, run doctor checks, and
@@ -2050,12 +2103,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// workload/managed/warning response. Keeping this branch ahead
 		// of runDiff prevents a project preview from silently falling
 		// back to the root-app diff (issue #1976).
-		if *deployOnly != "" || *projectSlug != "" {
+		if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
 			if *profile != "" {
-				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --only or --project-slug"))
+				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --project, --only, or --project-slug"))
 			}
-			return runProjectDeployPreview(ctx, client, *tarball, *projectSlug,
-				*deployOnly, *deployExclude, *deployShowAffected, *diffJSON)
+			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
+				*deployOnly, *deployExclude, *deployShowAffected, *diffJSON,
+				*diffStrict || !*diffLenient)
 		}
 		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, *runtime, *handler, sourceSHA256, *image != "")
@@ -2072,12 +2126,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// pack. The plan is fetched via ScanProject, the apply is
 	// transactional on the server (rollback on over-quota per
 	// ADR-050), and the confirm prompt is gated on TTY + --yes.
-	if *deployOnly != "" || *projectSlug != "" {
+	if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
 		if *createOnly {
 			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --only or --project-slug"))
 		}
 		if *profile != "" {
-			return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --only or --project-slug"))
+			return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --project, --only, or --project-slug"))
 		}
 		// Make sure the tarball resolves the same way it does for
 		// the legacy path: --template materialises, zero-config packs
@@ -2328,7 +2382,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 0
 		}
 		if jsonWait {
-			return writeWaitedDeploymentReceiptUntil(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256, time.Duration(*waitTimeoutSeconds)*time.Second)
+			return writeWaitedDeploymentReceiptUntil(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
 		return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 			onStage:         execution.onStage,
@@ -2389,7 +2443,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return 0
 	}
 	if jsonWait {
-		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", time.Duration(*waitTimeoutSeconds)*time.Second)
+		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", slug, time.Duration(*waitTimeoutSeconds)*time.Second)
 	}
 	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 		onStage:         execution.onStage,
@@ -2401,6 +2455,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	})
 }
 
+const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id>] [--json]"
+
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
 // SAFE-RELEASES-G (issue #976, PR-G): cmdRollback now honours an
@@ -2411,8 +2467,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 // superseded deployment. --json (top-level) emits the
 // DeploymentResponse on stdout for SDK / e2e consumers.
 func cmdRollback(args []string) int {
+	if hasHelpFlag(args) {
+		PrintUsage(osStdout, rollbackUsage, "rollback")
+		return 0
+	}
 	if len(args) < 1 {
-		PrintUsage(os.Stderr, "usage: gregale rollback <slug> [--to <deployment_id>] [--json]", "rollback")
+		PrintUsage(os.Stderr, rollbackUsage, "rollback")
 		return 1
 	}
 	slug := args[0]

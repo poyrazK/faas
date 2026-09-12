@@ -1,0 +1,194 @@
+name: e2e-native
+
+# End-to-end platform gate on real hardware: the whole ./cmd/e2e suite with the
+# metal build tag, on faas-compute-node-2, against /dev/kvm and Firecracker.
+#
+# builder-native.yml proves the builder image and the pkg/fcvm package work on
+# metal. This workflow proves the product does: source upload -> apid ->
+# builderd -> builder microVM -> OCI image -> imaged -> snapshot -> park ->
+# gateway wake -> invoke, plus the §11 jail fences.
+#
+# PREREQUISITE (cloud side, one time): the workload-identity provider condition
+# currently admits only `.github/workflows/builder-native.yml@refs/heads/main`,
+# so this workflow's OIDC token is rejected until the condition also admits
+# `.github/workflows/e2e-native.yml@refs/heads/main`. The exact gcloud command
+# is in docs/ops/e2e-native-ci.md. Until then the auth step fails; the node is
+# never touched, so a rejected run is inert rather than disruptive.
+
+on:
+  schedule:
+    # 04:43 UTC — after builder-native's 03:17 nightly has finished with the
+    # node. Both serialize on the same concurrency group and the same host
+    # flock, so an overrun waits rather than collides.
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  # Deliberately the same group builder-native.yml uses: all native gates stop
+  # services on this one node and must never overlap.
+  group: builder-native-compute-node-2
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GO_VERSION: "1.25.13"
+  GCP_PROJECT: project-5ae37259-04cf-4070-bef
+  GCP_ZONE: europe-west3-c
+  GCP_INSTANCE: faas-compute-node-2
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/811654175645/locations/global/workloadIdentityPools/github-actions/providers/gregale-builder-native
+  GCP_SERVICE_ACCOUNT: gregale-builder-ci@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com
+
+jobs:
+  e2e-native:
+    name: platform e2e (KVM + Firecracker, amd64)
+    # Manual dispatch is restricted to main because the provider condition
+    # admits refs/heads/main only; a dispatch from a branch would fail at auth
+    # with a less obvious error than this check.
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    # 150 min: the suite is the whole ./cmd/e2e package under -race, including
+    # real cold boots, builder microVM builds and the 100-cycle wake loop. The
+    # remote unit caps itself at 120 min; this leaves room for transfer and
+    # cleanup so a hung test fails here rather than by GitHub's 6 h default.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Build exact-source transfer bundle
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          bundle="$RUNNER_TEMP/native-e2e-bundle"
+          mkdir -p "$bundle/source" "$bundle/tools/go"
+          git archive "$SOURCE_SHA" | tar -x -C "$bundle/source"
+          printf '%s\n' "$SOURCE_SHA" > "$bundle/source/.faas-e2e-source-sha"
+
+          go_root="$(go env GOROOT)"
+          bash scripts/ci/package-go-toolchain.sh "$go_root" "$bundle/go.tar.gz"
+          tar -C "$bundle" -czf "$RUNNER_TEMP/native-e2e-bundle.tar.gz" source go.tar.gz
+
+      - id: auth
+        name: Authenticate to GCP with GitHub OIDC
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Start compute node 2 when CI owns its lifecycle
+        id: compute-node
+        run: |
+          set -euo pipefail
+          status="$(
+            gcloud compute instances describe "$GCP_INSTANCE" \
+              --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+              --format='value(status)'
+          )"
+          case "$status" in
+            RUNNING)
+              echo "Compute node 2 was already running; this workflow will leave it running."
+              echo "started=false" >> "$GITHUB_OUTPUT"
+              ;;
+            TERMINATED)
+              echo "started=true" >> "$GITHUB_OUTPUT"
+              gcloud compute instances start "$GCP_INSTANCE" --quiet \
+                --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+              ;;
+            *)
+              echo "::error::compute node 2 is in unexpected state: ${status:-missing}" >&2
+              exit 1
+              ;;
+          esac
+
+          # RUNNING precedes sshd readiness. Bound the wait so a broken boot
+          # fails this job instead of consuming credits until its timeout.
+          for attempt in {1..24}; do
+            if gcloud compute ssh "$GCP_INSTANCE" --quiet \
+              --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+              --command true >/dev/null 2>&1; then
+              exit 0
+            fi
+            echo "Waiting for compute node 2 SSH readiness (${attempt}/24)."
+            sleep 5
+          done
+          echo "::error::compute node 2 did not become SSH-ready within 120 seconds" >&2
+          exit 1
+
+      - name: Run the platform e2e suite on compute node 2
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "mkdir -p '$remote_root'"
+          gcloud compute scp "$RUNNER_TEMP/native-e2e-bundle.tar.gz" \
+            "$GCP_INSTANCE:$remote_root/bundle.tar.gz" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+          # The remote command runs as a transient systemd service: losing the
+          # GitHub SSH connection must not kill cleanup halfway through, with
+          # production daemons still stopped. The DSN is NOT passed here — the
+          # node owns it in /etc/faas/e2e-acceptance.env, so it never appears
+          # in the node's process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go' && sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=120m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' /bin/bash scripts/ci/run-native-e2e.sh"
+
+      - name: Refresh GCP authentication for cleanup
+        if: always() && steps.auth.outcome == 'success'
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Collect log and remove remote transfer bundle
+        if: always() && steps.auth.outcome == 'success'
+        run: |
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          log="$RUNNER_TEMP/native-e2e.log"
+          gcloud compute scp "$GCP_INSTANCE:$remote_root/native-e2e.log" "$log" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
+          if [[ -f "$log" ]]; then
+            cat "$log"
+          fi
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo rm -rf '$remote_root'" || true
+
+      - name: Upload e2e log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-e2e-${{ github.sha }}
+          path: ${{ runner.temp }}/native-e2e.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Stop compute node 2
+        # Only when this run started it: a node that was already running
+        # belongs to whoever started it.
+        if: always() && steps.compute-node.outputs.started == 'true'
+        run: |
+          set -euo pipefail
+          gcloud compute instances stop "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE"

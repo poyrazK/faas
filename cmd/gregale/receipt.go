@@ -31,14 +31,27 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// DeployReleaseSummary is the compact release-to-release context attached to
+// a waited deploy receipt. The API's full DeploymentSummaryResponse remains
+// available from `gregale deployment summary`; this shape keeps the deploy
+// receipt small while carrying the fields automation needs immediately after
+// a successful release.
+type DeployReleaseSummary struct {
+	PreviousDeploymentID string                 `json:"previous_deployment_id,omitempty"`
+	Changes              []api.DeploymentChange `json:"changes"`
+	RollbackTargetID     string                 `json:"rollback_target_id,omitempty"`
+	RollbackCommand      string                 `json:"rollback_command,omitempty"`
+}
+
 // DeployReceipt is the `gregale deploy --json` wire envelope. See
 // cmd/gregale/receipt.go header comment for field provenance.
 type DeployReceipt struct {
 	api.DeploymentResponse
-	AppURL       string `json:"app_url,omitempty"`
-	CommitSHA    string `json:"commit_sha,omitempty"`
-	Dirty        bool   `json:"dirty,omitempty"`
-	SourceSHA256 string `json:"source_sha256,omitempty"`
+	AppURL         string                `json:"app_url,omitempty"`
+	CommitSHA      string                `json:"commit_sha,omitempty"`
+	Dirty          bool                  `json:"dirty,omitempty"`
+	SourceSHA256   string                `json:"source_sha256,omitempty"`
+	ReleaseSummary *DeployReleaseSummary `json:"release_summary,omitempty"`
 }
 
 // newDeployReceipt builds a DeployReceipt from the post-deploy
@@ -69,4 +82,23 @@ func newDeployReceipt(dep api.DeploymentResponse, prov *zeroConfigProvenance, ap
 		r.Dirty = prov.Dirty
 	}
 	return r
+}
+
+func newDeployReleaseSummary(summary api.DeploymentSummaryResponse, appSlug string) *DeployReleaseSummary {
+	release := &DeployReleaseSummary{
+		Changes: append([]api.DeploymentChange(nil), summary.Changes...),
+	}
+	if release.Changes == nil {
+		release.Changes = []api.DeploymentChange{}
+	}
+	if summary.Previous != nil {
+		release.PreviousDeploymentID = summary.Previous.ID
+	}
+	if summary.RollbackTargetID != "" {
+		release.RollbackTargetID = summary.RollbackTargetID
+		if appSlug != "" {
+			release.RollbackCommand = "gregale rollback " + appSlug + " --to " + summary.RollbackTargetID
+		}
+	}
+	return release
 }

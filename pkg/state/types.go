@@ -737,6 +737,32 @@ type APIConsumerUsageStatement struct {
 	FinalizedAt      *time.Time
 }
 
+// APIConsumerUsageStatementHandoff is the immutable customer-billing claim
+// for a finalized usage statement. Gregale records the handoff without
+// becoming the merchant of record; the external invoice reference belongs to
+// the customer's billing system.
+type APIConsumerUsageStatementHandoff struct {
+	ID                string
+	AccountID         string
+	AppID             string
+	ConsumerID        string
+	StatementID       string
+	ExternalInvoiceID string
+	Currency          string
+	AmountMillicents  int64
+	CreatedAt         time.Time
+}
+
+// APIConsumerUsageStatementHandoffInput identifies the finalized statement
+// being claimed and the customer's immutable external invoice reference.
+type APIConsumerUsageStatementHandoffInput struct {
+	AccountID         string
+	AppID             string
+	ConsumerID        string
+	StatementID       string
+	ExternalInvoiceID string
+}
+
 // APIConsumerUsageStatementInput contains the quote to persist. The handler
 // builds it from the usage ledger and immutable rate-card versions.
 type APIConsumerUsageStatementInput struct {
@@ -1009,6 +1035,13 @@ type App struct {
 	// the gatewayd-internal apps LRU cache can be flushed without
 	// waking up on every unrelated app update.
 	MaintenanceMode bool
+	// OnlyAllowDeclaredRoutes enables gateway-side OpenAPI/route-list
+	// enforcement before an application wake. It is deliberately opt-in;
+	// legacy apps keep the historical "forward then let the app 404" path.
+	OnlyAllowDeclaredRoutes bool
+	// DeclaredRoutes is an optional explicit route list. When populated, the
+	// gateway uses it instead of the imported OpenAPI document.
+	DeclaredRoutes []DeclaredRoute
 	// RequireSigned gates OCI image deploys (issue #472 / ADR-054) on
 	// a valid cosign signature from a trusted publisher. When true,
 	// imaged's buildImageLayer calls pkg/cosign.VerifyImageSignature
@@ -1283,6 +1316,14 @@ type App struct {
 	// 00215_apps_cors_defaults.sql for the rationale.
 	CORSDefaultOrigins []string
 	CreatedAt          time.Time
+}
+
+// DeclaredRoute is the persisted explicit route-list shape used by the
+// only-declared-routes policy. Path parameters use OpenAPI's `{name}` segment
+// syntax and Methods contains uppercase HTTP verbs.
+type DeclaredRoute struct {
+	Path    string   `json:"path"`
+	Methods []string `json:"methods"`
 }
 
 // IsDeveloperApp reports whether an app is the expiring environment created
@@ -4586,6 +4627,14 @@ type UpdateAppParams struct {
 	// that does not want the per-route cardinality on the box).
 	RouteMetricsEnabled    *bool
 	SetRouteMetricsEnabled bool
+	// OnlyAllowDeclaredRoutes enables the gateway-side declared-route
+	// contract. SetOnlyAllowDeclaredRoutes distinguishes an explicit false
+	// (disable) from an omitted field. DeclaredRoutes is an optional explicit
+	// route list; when non-empty it takes precedence over OpenAPI at the edge.
+	OnlyAllowDeclaredRoutes    *bool
+	SetOnlyAllowDeclaredRoutes bool
+	DeclaredRoutes             *[]DeclaredRoute
+	SetDeclaredRoutes          bool
 	// AppProtocol (ADR-124) is the per-app wire-protocol
 	// selector stored on the apps row as text NOT NULL DEFAULT
 	// 'http1'. Closed set {http1, http2, grpc} enforced by
@@ -4725,6 +4774,13 @@ type UpdateAppParams struct {
 	// semantics as RootDir: nil = leave alone, empty string = reset
 	// to default. Reconcile writes this on every update.
 	WorkloadName *string
+	// WorkloadClass is the scan-derived lifecycle hint for a project
+	// workload. Nil leaves the current value unchanged; a non-nil
+	// value is written with the same update as RootDir, WorkloadName,
+	// and StartCommand. Customer PATCH callers leave this nil because
+	// workload classification is owned by project reconciliation and
+	// characterization, not the public app update surface.
+	WorkloadClass *WorkloadClass
 	// StartCommand is the customer-supplied override for the image's
 	// entrypoint (e.g. compose `command:`). apps.start_command is
 	// NULL-able; the nullString helper treats the empty string as
@@ -6701,6 +6757,16 @@ type StatusIncident struct {
 	Message    string
 	PostedAt   time.Time
 	ResolvedAt *time.Time
+}
+
+// StatusUptimeBucket is the daily terminal-invocation rollup used by the
+// public status page. It deliberately lives in state so both PgStore and
+// MemStore can expose the same optional read seam without widening Store's
+// large compatibility interface.
+type StatusUptimeBucket struct {
+	Day        time.Time
+	Successful int64
+	Total      int64
 }
 
 // StatusIncidentComponent* are the closed-set vocabulary for the

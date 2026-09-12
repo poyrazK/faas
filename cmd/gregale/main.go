@@ -400,6 +400,13 @@ func run(args []string) (status int) {
 		// the status_url). Same handler the dashboard's "Test" button
 		// uses; auth + MFA + deploy:write scope.
 		return cmdInvoke(args[1:])
+	case "run":
+		// ADR-171: execute untrusted source in a fresh, networkless
+		// disposable microVM and tear it down after the terminal result.
+		return cmdRun(args[1:])
+	case "runs":
+		// ADR-171 lifecycle reads/cancellation for disposable runs.
+		return cmdRuns(args[1:])
 	case "invocations":
 		// Tier C: per-account invocation ledger (issue #394 follow-up).
 		// Mirrors `audit-events` for dispatcher shape.
@@ -503,6 +510,18 @@ func run(args []string) (status int) {
 }
 
 func printLocalCommandHelp(w io.Writer, command cliCommand) {
+	// Release-management commands use verb-first syntax with the slug on
+	// the leaf. The generic manifest renderer cannot express that shape
+	// (it would print `rollouts <slug> <command>`), so keep these two
+	// public help paths aligned with their actual dispatchers.
+	switch command.Name {
+	case "rollback":
+		PrintUsage(w, rollbackUsage, command.DocSlug)
+		return
+	case "rollouts":
+		PrintUsage(w, rolloutsUsage, command.DocSlug)
+		return
+	}
 	usage := "gregale " + command.Name
 	for _, positional := range command.Positionals {
 		usage += " " + positional

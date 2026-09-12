@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ..models.app_configured_resources import AppConfiguredResources
     from ..models.app_effective_limits import AppEffectiveLimits
     from ..models.app_manifest import AppManifest
+    from ..models.declared_route import DeclaredRoute
     from ..models.parked_deployment_ref import ParkedDeploymentRef
     from ..models.public_auth_status import PublicAuthStatus
     from ..models.scaling_policy import ScalingPolicy
@@ -101,6 +102,11 @@ class AppResponse:
     gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.
     Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid
     with 403 plan_route_metrics_not_allowed."""
+    only_allow_declared_routes: bool | Unset = UNSET
+    """When true, gatewayd rejects paths not present in declared_routes or the imported OpenAPI document before
+    waking an app."""
+    declared_routes: list[DeclaredRoute] | Unset = UNSET
+    """Optional explicit route contract. When non-empty it takes precedence over the imported OpenAPI document."""
     maintenance_mode: bool | Unset = UNSET
     """Coarse per-app maintenance toggle (ADR-091 amendment). When true the gatewayd-internal hot-path short-
     circuits every request to this app with 503 + Retry-After (default 60 s) BEFORE auth, BEFORE wake, BEFORE any
@@ -241,6 +247,15 @@ class AppResponse:
 
         route_metrics_enabled = self.route_metrics_enabled
 
+        only_allow_declared_routes = self.only_allow_declared_routes
+
+        declared_routes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.declared_routes, Unset):
+            declared_routes = []
+            for declared_routes_item_data in self.declared_routes:
+                declared_routes_item = declared_routes_item_data.to_dict()
+                declared_routes.append(declared_routes_item)
+
         maintenance_mode = self.maintenance_mode
 
         scaling_policy: dict[str, Any] | None | Unset
@@ -370,6 +385,10 @@ class AppResponse:
             field_dict["websocket_enabled"] = websocket_enabled
         if route_metrics_enabled is not UNSET:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
+        if only_allow_declared_routes is not UNSET:
+            field_dict["only_allow_declared_routes"] = only_allow_declared_routes
+        if declared_routes is not UNSET:
+            field_dict["declared_routes"] = declared_routes
         if maintenance_mode is not UNSET:
             field_dict["maintenance_mode"] = maintenance_mode
         if scaling_policy is not UNSET:
@@ -414,6 +433,7 @@ class AppResponse:
         from ..models.app_configured_resources import AppConfiguredResources
         from ..models.app_effective_limits import AppEffectiveLimits
         from ..models.app_manifest import AppManifest
+        from ..models.declared_route import DeclaredRoute
         from ..models.parked_deployment_ref import ParkedDeploymentRef
         from ..models.public_auth_status import PublicAuthStatus
         from ..models.scaling_policy import ScalingPolicy
@@ -524,6 +544,17 @@ class AppResponse:
         websocket_enabled = d.pop("websocket_enabled", UNSET)
 
         route_metrics_enabled = d.pop("route_metrics_enabled", UNSET)
+
+        only_allow_declared_routes = d.pop("only_allow_declared_routes", UNSET)
+
+        _declared_routes = d.pop("declared_routes", UNSET)
+        declared_routes: list[DeclaredRoute] | Unset = UNSET
+        if _declared_routes is not UNSET:
+            declared_routes = []
+            for declared_routes_item_data in _declared_routes:
+                declared_routes_item = DeclaredRoute.from_dict(declared_routes_item_data)
+
+                declared_routes.append(declared_routes_item)
 
         maintenance_mode = d.pop("maintenance_mode", UNSET)
 
@@ -706,6 +737,8 @@ class AppResponse:
             streaming_enabled=streaming_enabled,
             websocket_enabled=websocket_enabled,
             route_metrics_enabled=route_metrics_enabled,
+            only_allow_declared_routes=only_allow_declared_routes,
+            declared_routes=declared_routes,
             maintenance_mode=maintenance_mode,
             scaling_policy=scaling_policy,
             last_scale_out_at=last_scale_out_at,

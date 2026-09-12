@@ -10,6 +10,45 @@ func migration(version int64, source string) *goose.Migration {
 	return &goose.Migration{Version: version, Source: source}
 }
 
+func TestEffectiveMigrationVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		reported int64
+		applied  map[int64]struct{}
+		want     int64
+	}{
+		{
+			name:     "partial out-of-order run keeps highest applied boundary",
+			reported: 20260912094529228,
+			applied: map[int64]struct{}{
+				20260912094529228: {},
+				20260912120000001: {},
+			},
+			want: 20260912120000001,
+		},
+		{
+			name:     "reported version remains valid without newer applied row",
+			reported: 590,
+			applied:  map[int64]struct{}{589: {}},
+			want:     590,
+		},
+		{
+			name:     "empty ledger remains zero",
+			reported: 0,
+			applied:  nil,
+			want:     0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := effectiveMigrationVersion(tt.reported, tt.applied); got != tt.want {
+				t.Fatalf("effectiveMigrationVersion() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMigrationOptionsForHistoricalGaps(t *testing.T) {
 	tests := []struct {
 		name        string
