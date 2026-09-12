@@ -69,6 +69,10 @@ type CreateAppRequest struct {
 	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int              `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	// Ports declares additional workload listeners. Named TCP entries may be
+	// selected at the public edge with the `--port-<name>` hostname form;
+	// UDP entries remain guest-only discovery endpoints.
+	Ports []WorkloadPort `json:"ports,omitempty"`
 	// Favicon is an optional base64-encoded payload served at /favicon.ico;
 	// the gateway returns 204 when the decoded payload exceeds 32 KiB.
 	Favicon []byte `json:"favicon,omitempty"`
@@ -214,6 +218,9 @@ type UpdateAppRequest struct {
 	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int             `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	// Ports replaces the app-owned listener declaration. An empty slice clears
+	// the declaration; nil leaves it unchanged.
+	Ports *[]WorkloadPort `json:"ports,omitempty"`
 	// Favicon replaces the per-app edge icon. An empty slice clears it;
 	// nil leaves the existing icon unchanged.
 	Favicon *[]byte `json:"favicon,omitempty"`

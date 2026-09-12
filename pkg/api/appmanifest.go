@@ -105,8 +105,10 @@ type AppManifest struct {
 	// Port is the readiness/serving port; 0 means DefaultAppPort.
 	Port int `json:"port,omitempty"`
 	// Ports preserves the OCI image's protocol-aware listener declarations.
-	// Port remains the public HTTP/readiness contract; Ports lets workloads
-	// discover additional TCP or UDP listeners inside their shared netns.
+	// Port remains the primary HTTP/readiness contract; Ports lets workloads
+	// discover additional TCP or UDP listeners inside their shared netns. Named
+	// TCP entries may also be selected at the public edge by the app-owned
+	// `--port-<name>` hostname form.
 	Ports []WorkloadPort `json:"ports,omitempty"`
 	// Healthz, if set, is a GET path guest-init probes for readiness instead of a
 	// bare TCP accept (spec §4.8).

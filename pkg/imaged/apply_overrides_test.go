@@ -1,3 +1,4 @@
+// adr: 176
 package imaged
 
 import (
@@ -249,6 +250,7 @@ func manifestsEqualIgnoreEmptyMaps(a, b api.AppManifest) bool {
 		EnvSecrets:       nilIfEmpty(a.EnvSecrets),
 		WorkingDir:       a.WorkingDir,
 		Port:             a.Port,
+		Ports:            a.Ports,
 		Healthz:          a.Healthz,
 		User:             a.User,
 		ExecutionMode:    a.ExecutionMode,
@@ -263,6 +265,7 @@ func manifestsEqualIgnoreEmptyMaps(a, b api.AppManifest) bool {
 		EnvSecrets:       nilIfEmpty(b.EnvSecrets),
 		WorkingDir:       b.WorkingDir,
 		Port:             b.Port,
+		Ports:            b.Ports,
 		Healthz:          b.Healthz,
 		User:             b.User,
 		ExecutionMode:    b.ExecutionMode,
@@ -289,11 +292,12 @@ func TestApplyAppLifecycle(t *testing.T) {
 		StartupDeadlineS: 30,
 		MaxRetries:       5,
 		ServiceReplicas:  &state.ServiceReplicas{Min: 1, Max: 3, Desired: 2},
+		Ports:            []api.WorkloadPort{{Name: "metrics", Port: 9100, Protocol: api.WorkloadPortTCP}},
 	}}
 	got := applyAppLifecycle(manifest, app)
 	if got.ExecutionMode != api.ExecutionModeService || got.RestartPolicy != api.RestartPolicyAlways ||
 		got.StartupDeadlineS != 30 || got.MaxRetries != 5 || got.ServiceReplicas == nil ||
-		got.ServiceReplicas.Desired != 2 {
+		got.ServiceReplicas.Desired != 2 || len(got.Ports) != 1 || got.Ports[0].Port != 9100 {
 		t.Fatalf("lifecycle overlay = %+v", got)
 	}
 	got.ServiceReplicas.Desired = 3

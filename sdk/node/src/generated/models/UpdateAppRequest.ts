@@ -43,6 +43,10 @@ export type UpdateAppRequest = {
    */
   service_replicas?: ServiceReplicas;
   /**
+   * Replace the app-owned listener declaration. Omit for no change; an empty array clears it. Named TCP listeners use the `<slug>--port-<name>.<domain>` hostname form; UDP remains guest-only.
+   */
+  ports?: any[] | null;
+  /**
    * Replace the per-app base64-encoded favicon; an empty value clears it. Omit for no change.
    */
   favicon?: string | null;

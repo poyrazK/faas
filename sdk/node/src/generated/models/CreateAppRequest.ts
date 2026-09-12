@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { WorkloadPort } from './WorkloadPort.js';
 /**
  * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
  */
@@ -43,6 +44,10 @@ export type CreateAppRequest = {
    */
   max_retries?: number;
   service_replicas?: ServiceReplicas;
+  /**
+   * App-owned listener declarations. Named TCP listeners are publicly routable at `<slug>--port-<name>.<domain>`; UDP listeners remain guest-only.
+   */
+  ports?: Array<WorkloadPort>;
   /**
    * Create-time base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB.
    */

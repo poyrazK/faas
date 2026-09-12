@@ -17308,6 +17308,12 @@ components:
           example: 5
         service_replicas:
           $ref: '#/components/schemas/ServiceReplicas'
+        ports:
+          type: array
+          maxItems: 16
+          description: "App-owned listener declarations. Named TCP listeners are publicly routable at `<slug>--port-<name>.<domain>`; UDP listeners remain guest-only."
+          items:
+            $ref: '#/components/schemas/WorkloadPort'
         favicon:
           type: [string, "null"]
           format: byte
@@ -17494,6 +17500,12 @@ components:
           allOf:
             - $ref: '#/components/schemas/ServiceReplicas'
           description: "Full replacement of the service replica policy. Omit for no change."
+        ports:
+          type: [array, "null"]
+          maxItems: 16
+          description: "Replace the app-owned listener declaration. Omit for no change; an empty array clears it. Named TCP listeners use the `<slug>--port-<name>.<domain>` hostname form; UDP remains guest-only."
+          items:
+            $ref: '#/components/schemas/WorkloadPort'
         favicon:
           type: [string, "null"]
           format: byte
@@ -17900,7 +17912,7 @@ components:
         ports:
           type: array
           maxItems: 16
-          description: "Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the public HTTP/readiness listener; these entries are used for in-task endpoint discovery (ADR-165)."
+          description: "Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries remain available for in-task discovery (ADR-165, ADR-176)."
           items:
             $ref: '#/components/schemas/WorkloadPort'
         healthz: { type: [string, "null"] }

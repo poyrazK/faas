@@ -1,3 +1,4 @@
+// adr: 176
 // Tests for the sidecar portnorm routing-key split
 // (issue #463 / ADR-069 / ADR-071 / PR-C §5). The public
 // listener's hostname carries both the app id AND the
@@ -162,5 +163,32 @@ func TestSidecarSelectorForApp_NoSidecarsRoster(t *testing.T) {
 func TestSidecarHostSeparatorConstant(t *testing.T) {
 	if SidecarHostSeparator != "--" {
 		t.Errorf("SidecarHostSeparator = %q; want \"--\"", SidecarHostSeparator)
+	}
+}
+
+func TestPublicPortSelectorForApp(t *testing.T) {
+	app := App{Ports: []AppPort{
+		{Name: "metrics", Port: 9100, Protocol: "tcp"},
+		{Name: "dns", Port: 53, Protocol: "udp"},
+		{Port: 9000, Protocol: "tcp"},
+	}}
+	tests := []struct {
+		selector string
+		wantPort int
+		wantOK   bool
+	}{
+		{selector: "port-metrics", wantPort: 9100, wantOK: true},
+		{selector: "port-tcp-9000", wantPort: 9000, wantOK: true},
+		{selector: "port-dns", wantOK: false},
+		{selector: "port-unknown", wantOK: false},
+		{selector: "metrics", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.selector, func(t *testing.T) {
+			gotPort, gotOK := PublicPortSelectorForApp(app, tt.selector)
+			if gotPort != tt.wantPort || gotOK != tt.wantOK {
+				t.Fatalf("PublicPortSelectorForApp(%q) = (%d, %v), want (%d, %v)", tt.selector, gotPort, gotOK, tt.wantPort, tt.wantOK)
+			}
+		})
 	}
 }
