@@ -488,7 +488,10 @@ var cliCommands = []cliCommand{
 		DocSlug: "jobs",
 		Short:   "Manage jobs (run-to-completion workloads)",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List jobs in this account"},
+			{Name: "list", Short: "List jobs in this account", Flags: []cliFlag{
+				{Name: "limit", Short: "page size (1..200; 0 = server default)", Value: "N"},
+				{Name: "offset", Short: "number of jobs to skip", Value: "N"},
+			}},
 			{Name: "add", Short: "Create a new job"},
 			{Name: "info", Short: "Show one job"},
 			{Name: "update", Short: "Update one job"},

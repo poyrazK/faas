@@ -1718,14 +1718,42 @@ func (c *Client) DeleteCron(ctx context.Context, id string) error {
 // handler proxies the call to the compute node that owns the
 // instance. The CLI surface lives in cmd/gregale/commands_jobs.go.
 
-// ListJobs returns the account-scoped list of jobs (the /v1/jobs
-// GET route). Wire shape: ListJobsResponse (jobs[] + limit +
-// offset + next_offset + total). Server clamps limit to [1,200].
-// Matches the CronList convention: zero query parameters on the
-// wire so the spec parity gate (TestSpecCompliance) stays green.
-func (c *Client) ListJobs(ctx context.Context) (ListJobsResponse, error) {
+// ListJobs returns one account-scoped page of jobs (the /v1/jobs
+// GET route). The optional pagination arguments are (limit, offset);
+// omitting either value, or passing zero, leaves that query parameter
+// out so the server default applies. Variadic arguments preserve the
+// original ListJobs(ctx) call shape for SDK callers while allowing the
+// CLI and newer callers to request a specific page.
+func (c *Client) ListJobs(ctx context.Context, pagination ...int) (ListJobsResponse, error) {
+	if len(pagination) > 2 {
+		return ListJobsResponse{}, fmt.Errorf("jobs pagination accepts at most limit and offset")
+	}
+	limit, offset := 0, 0
+	if len(pagination) > 0 {
+		limit = pagination[0]
+	}
+	if len(pagination) > 1 {
+		offset = pagination[1]
+	}
+	if limit < 0 || limit > 200 {
+		return ListJobsResponse{}, fmt.Errorf("jobs limit must be between 0 and 200 (got %d)", limit)
+	}
+	if offset < 0 {
+		return ListJobsResponse{}, fmt.Errorf("jobs offset must be non-negative (got %d)", offset)
+	}
+	path := "/v1/jobs"
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
 	var out ListJobsResponse
-	return out, c.do(ctx, "GET", "/v1/jobs", nil, &out)
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // CreateJob creates a new job under the calling account. Idempotent

@@ -647,10 +647,40 @@ func (c *Client) DeleteCron(ctx context.Context, id string) error {
 // the customer's slug (`name`) for create/list/update/delete;
 // runs + tasks use the opaque run id (uuid).
 
-// ListJobs returns the account-scoped list of jobs.
-func (c *Client) ListJobs(ctx context.Context) (ListJobsResponse, error) {
+// ListJobs returns one account-scoped page of jobs. Optional pagination
+// arguments are (limit, offset); zero leaves that query parameter out so
+// the server default applies. The variadic shape keeps existing callers
+// using ListJobs(ctx) source-compatible while exposing page navigation.
+func (c *Client) ListJobs(ctx context.Context, pagination ...int) (ListJobsResponse, error) {
+	if len(pagination) > 2 {
+		return ListJobsResponse{}, fmt.Errorf("jobs pagination accepts at most limit and offset")
+	}
+	limit, offset := 0, 0
+	if len(pagination) > 0 {
+		limit = pagination[0]
+	}
+	if len(pagination) > 1 {
+		offset = pagination[1]
+	}
+	if limit < 0 || limit > 200 {
+		return ListJobsResponse{}, fmt.Errorf("jobs limit must be between 0 and 200 (got %d)", limit)
+	}
+	if offset < 0 {
+		return ListJobsResponse{}, fmt.Errorf("jobs offset must be non-negative (got %d)", offset)
+	}
+	path := "/v1/jobs"
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
 	var out ListJobsResponse
-	return out, c.do(ctx, "GET", "/v1/jobs", nil, &out)
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // CreateJob creates a new job under the calling account.

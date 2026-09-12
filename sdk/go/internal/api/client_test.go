@@ -432,6 +432,23 @@ func TestListCrons_PassesSlugWhenNonEmpty(t *testing.T) {
 	}
 }
 
+func TestListJobs_PassesPagination(t *testing.T) {
+	var gotURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURI = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jobs":[],"limit":25,"offset":50,"next_offset":-1,"total":0}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.ListJobs(context.Background(), 25, 50); err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if gotURI != "/v1/jobs?limit=25&offset=50" {
+		t.Fatalf("RequestURI = %q, want %q", gotURI, "/v1/jobs?limit=25&offset=50")
+	}
+}
+
 // --- Pagination --------------------------------------------------------------
 
 // TestListDeploymentsAll_WalksCursor pins the spec's RFC3339Nano

@@ -433,6 +433,40 @@ func TestListCrons_PassesSlugWhenNonEmpty(t *testing.T) {
 	}
 }
 
+// TestListJobs_PassesPagination pins the jobs page query contract while
+// keeping zero-value pagination omitted for the server defaults.
+func TestListJobs_PassesPagination(t *testing.T) {
+	var gotURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURI = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jobs":[],"limit":25,"offset":50,"next_offset":-1,"total":0}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.ListJobs(context.Background(), 25, 50); err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if gotURI != "/v1/jobs?limit=25&offset=50" {
+		t.Fatalf("RequestURI = %q, want %q", gotURI, "/v1/jobs?limit=25&offset=50")
+	}
+}
+
+func TestListJobs_RejectsInvalidPagination(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	for _, pagination := range [][]int{{-1, 0}, {201, 0}, {1, -1}, {1, 2, 3}} {
+		if _, err := c.ListJobs(context.Background(), pagination...); err == nil {
+			t.Errorf("ListJobs(%v) succeeded, want validation error", pagination)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("invalid pagination sent %d requests, want 0", requests)
+	}
+}
+
 // --- Pagination --------------------------------------------------------------
 
 // TestListDeploymentsAll_WalksCursor pins the spec's RFC3339Nano

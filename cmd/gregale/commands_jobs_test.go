@@ -12,12 +12,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // runWithStderr swaps both os.Stderr and the gregale package's
@@ -203,6 +206,69 @@ func TestCmdJobsLogs_AllowsZeroBasedIndex(t *testing.T) {
 	}
 	if gotPath != "/v1/jobs/valid-slug/runs/00000000-0000-0000-0000-000000000000/tasks/0/logs" {
 		t.Fatalf("request path = %q, want zero-based task path", gotPath)
+	}
+}
+
+// TestCmdJobsList_ForwardsPaginationAndEnvelope pins the customer-facing
+// page contract: the CLI must send both pagination values and retain the
+// server's next_offset/total metadata under --json.
+func TestCmdJobsList_ForwardsPaginationAndEnvelope(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.ListJobsResponse{
+			Jobs:       []api.JobResponse{{Name: "job-one"}},
+			Limit:      1,
+			Offset:     2,
+			NextOffset: 3,
+			Total:      4,
+		})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_jobs_pagination")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	jsonOutput = true
+	var out bytes.Buffer
+	oldOut := osStdout
+	osStdout = &out
+	t.Cleanup(func() { osStdout = oldOut })
+
+	if code := cmdJobsList([]string{"--limit", "1", "--offset", "2"}); code != 0 {
+		t.Fatalf("cmdJobsList = %d, want 0", code)
+	}
+	if gotQuery != "limit=1&offset=2" {
+		t.Fatalf("request query = %q, want %q", gotQuery, "limit=1&offset=2")
+	}
+	var got api.ListJobsResponse
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode JSON output: %v; output=%s", err, out.String())
+	}
+	if got.NextOffset != 3 || got.Total != 4 || len(got.Jobs) != 1 {
+		t.Fatalf("JSON output lost pagination envelope: %+v", got)
+	}
+}
+
+// TestCmdJobsList_RejectsNegativePagination verifies invalid values fail
+// before authentication or a network request.
+func TestCmdJobsList_RejectsNegativePagination(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_jobs_pagination")
+	for _, args := range [][]string{{"--limit", "-1"}, {"--offset", "-1"}} {
+		code, _ := runWithStderr(t, func() int { return cmdJobsList(args) })
+		if code == 0 {
+			t.Fatalf("cmdJobsList(%v) succeeded, want validation failure", args)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("validation sent %d API requests, want 0", requests)
 	}
 }
 
