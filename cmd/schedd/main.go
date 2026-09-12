@@ -273,9 +273,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	executionEnabled := executionDispatchEnabled(os.Getenv("FAAS_EXECUTION_DISPATCH"))
+	var executionHostAgeIdentities []*age.X25519Identity
 	if executionEnabled {
-		if deps.executionArtifacts == nil || deps.executionPayloadDecoder == nil {
+		if deps.executionArtifacts == nil {
 			return errors.New("schedd: execution dispatch enabled but runtime artifacts or authenticated payload decoder is not wired")
+		}
+		if deps.executionPayloadDecoder == nil {
+			hostAgePath := cfg.HostAgeIdentityPath
+			if hostAgePath == "" {
+				hostAgePath = secretbox.DefaultHostKeyPath
+			}
+			var identityErr error
+			executionHostAgeIdentities, identityErr = loadHostAgeIdentities(hostAgePath)
+			if identityErr != nil {
+				return fmt.Errorf("schedd: authenticated payload decoder unavailable: load host age identities: %w", identityErr)
+			}
+			deps.executionPayloadDecoder = sched.NewAgeExecutionPayloadDecoder(executionHostAgeIdentities)
+			if deps.executionPayloadDecoder == nil {
+				return errors.New("schedd: authenticated payload decoder unavailable: no host age identities")
+			}
 		}
 		log.Info("schedd: execution dispatch requested; validating disposable-VM dependencies")
 	}
@@ -1306,7 +1322,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hostAgePath == "" {
 		hostAgePath = secretbox.DefaultHostKeyPath
 	}
-	hostAgeIdentities, hostAgeErr := loadHostAgeIdentities(hostAgePath)
+	hostAgeIdentities := executionHostAgeIdentities
+	var hostAgeErr error
+	if hostAgeIdentities == nil {
+		hostAgeIdentities, hostAgeErr = loadHostAgeIdentities(hostAgePath)
+	}
 	if hostAgeErr != nil {
 		log.Warn("trigger credentials: host age identities unavailable", "path", hostAgePath, "err", hostAgeErr)
 	}
@@ -1718,7 +1738,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if strings.TrimSpace(executionNodeID) == "" {
 			return errors.New("schedd: execution dispatch enabled but no compute node is available")
 		}
-		catalog := sched.NewRuntimeSnapshotCatalog(sched.NewStateRuntimeSnapshotIndex(store), nil)
+		catalogVerifier := sched.NewStorageRuntimeSnapshotVerifier(storageBackend)
+		catalog := sched.NewRuntimeSnapshotCatalog(sched.NewStateRuntimeSnapshotIndex(store), catalogVerifier)
 		resolver := sched.NewExecutionClaimResolver(
 			store,
 			catalog,
@@ -1730,7 +1751,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Enabled: true,
 			Owner:   executionNodeID,
 		}, log).WithClaimResolver(resolver)
-		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "fail-closed-cold-boot")
+		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "storage-digest-pair")
 	}
 	loopErr := make(chan error, 1)
 	go func() { loopErr <- loop.Run(ctx) }()
