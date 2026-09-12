@@ -68,6 +68,9 @@ func (s *PgStore) CreateAPIConsumerUsageStatementHandoff(ctx context.Context, in
 		input.AccountID, input.AppID, input.ConsumerID, input.StatementID)
 	handoff, err = scanAPIConsumerUsageStatementHandoffRow(row)
 	if err == nil {
+		if handoff.ExternalInvoiceID != input.ExternalInvoiceID {
+			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
+		}
 		return handoff, false, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
