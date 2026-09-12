@@ -62,3 +62,14 @@ failures. Confirm the Caddy PID and socket-unit invocation ID do not change.
 
 A public pass is required before announcing a release. The local checks are
 diagnostics only; they do not replace the external HTTPS check.
+
+Validate documentation separately after its publisher finishes. This reads
+the expected first heading from each source in `docs/customer-pages.json`, so
+a marketing-homepage SPA fallback cannot pass just because it returned 200.
+It also requires a random unknown `/docs/*` route to return a real 404.
+
+```sh
+make docs-live-check
+# For a staging publisher:
+DOCS_BASE_URL=https://staging.gregale.dev/docs make docs-live-check
+```

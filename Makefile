@@ -1081,6 +1081,11 @@ pricing-check: ## Verify generated customer pricing is in sync
 .PHONY: docs-links-check
 docs-links-check: ## Verify every Gregale docs URL maps to a customer page source
 	@$(GO) run ./cmd/docs-links-check
+	@python3 scripts/ops/check_live_docs_test.py
+
+.PHONY: docs-live-check
+docs-live-check: ## Verify deployed docs headings and require real 404s (DOCS_BASE_URL optional)
+	@python3 scripts/ops/check_live_docs.py $(if $(DOCS_BASE_URL),--base-url "$(DOCS_BASE_URL)")
 
 .PHONY: api-hosting-contract-check
 api-hosting-contract-check: ## Run the metal-free API framework fixture contract
