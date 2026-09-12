@@ -695,6 +695,65 @@ type APIConsumerRateCard struct {
 	CreatedAt              time.Time
 }
 
+// APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
+// snapshot. Draft statements can be finalized once all usage is priced.
+type APIConsumerUsageStatementStatus string
+
+const (
+	APIConsumerUsageStatementDraft     APIConsumerUsageStatementStatus = "draft"
+	APIConsumerUsageStatementFinalized APIConsumerUsageStatementStatus = "finalized"
+)
+
+// APIConsumerUsageStatementBucket is the priced snapshot for one UTC minute.
+// Empty RateCardID/Currency denotes an explicitly unpriced bucket.
+type APIConsumerUsageStatementBucket struct {
+	WindowStart            time.Time `json:"window_start"`
+	BillableUnits          int64     `json:"billable_units"`
+	RateCardID             string    `json:"rate_card_id,omitempty"`
+	Currency               string    `json:"currency,omitempty"`
+	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
+	AmountMillicents       int64     `json:"amount_millicents"`
+}
+
+// APIConsumerUsageStatement is a durable, auditable snapshot of a consumer's
+// usage quote for one period. Once created, its buckets and totals never
+// change; finalization only records the payable lifecycle transition.
+type APIConsumerUsageStatement struct {
+	ID               string
+	AccountID        string
+	AppID            string
+	ConsumerID       string
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	Status           APIConsumerUsageStatementStatus
+	Currency         string
+	BillableUnits    int64
+	UnpricedUnits    int64
+	AmountMillicents int64
+	Priced           bool
+	Buckets          []APIConsumerUsageStatementBucket
+	AsOf             time.Time
+	CreatedAt        time.Time
+	FinalizedAt      *time.Time
+}
+
+// APIConsumerUsageStatementInput contains the quote to persist. The handler
+// builds it from the usage ledger and immutable rate-card versions.
+type APIConsumerUsageStatementInput struct {
+	AccountID        string
+	AppID            string
+	ConsumerID       string
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	Currency         string
+	BillableUnits    int64
+	UnpricedUnits    int64
+	AmountMillicents int64
+	Priced           bool
+	Buckets          []APIConsumerUsageStatementBucket
+	AsOf             time.Time
+}
+
 // Active reports whether the key is in an authentication-eligible
 // state (not revoked, not expired). The gatewayd-internal
 // middleware reads this on every inbound request.

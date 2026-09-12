@@ -33,6 +33,9 @@ export type { APIConsumerUsageBucketResponse } from './models/APIConsumerUsageBu
 export type { APIConsumerUsageQuoteBucketResponse } from './models/APIConsumerUsageQuoteBucketResponse.js';
 export type { APIConsumerUsageQuoteResponse } from './models/APIConsumerUsageQuoteResponse.js';
 export type { APIConsumerUsageResponse } from './models/APIConsumerUsageResponse.js';
+export type { APIConsumerUsageStatementBucketResponse } from './models/APIConsumerUsageStatementBucketResponse.js';
+export type { APIConsumerUsageStatementListResponse } from './models/APIConsumerUsageStatementListResponse.js';
+export type { APIConsumerUsageStatementResponse } from './models/APIConsumerUsageStatementResponse.js';
 export type { APIKeyExportResponse } from './models/APIKeyExportResponse.js';
 export type { APIKeyResponse } from './models/APIKeyResponse.js';
 export type { AppConfiguredResources } from './models/AppConfiguredResources.js';
@@ -119,6 +122,7 @@ export type { CorsPresetResponse } from './models/CorsPresetResponse.js';
 export type { CreateAlertRuleRequest } from './models/CreateAlertRuleRequest.js';
 export type { CreateAPIConsumerRateCardRequest } from './models/CreateAPIConsumerRateCardRequest.js';
 export type { CreateAPIConsumerRequest } from './models/CreateAPIConsumerRequest.js';
+export type { CreateAPIConsumerUsageStatementRequest } from './models/CreateAPIConsumerUsageStatementRequest.js';
 export type { CreateAppLogDrainRequest } from './models/CreateAppLogDrainRequest.js';
 export type { CreateAppRequest } from './models/CreateAppRequest.js';
 export type { CreateAppWebhookRequest } from './models/CreateAppWebhookRequest.js';

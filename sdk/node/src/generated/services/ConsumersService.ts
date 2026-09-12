@@ -8,10 +8,13 @@ import type { APIConsumerRateCardResponse } from '../models/APIConsumerRateCardR
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
 import type { APIConsumerUsageQuoteResponse } from '../models/APIConsumerUsageQuoteResponse.js';
 import type { APIConsumerUsageResponse } from '../models/APIConsumerUsageResponse.js';
+import type { APIConsumerUsageStatementListResponse } from '../models/APIConsumerUsageStatementListResponse.js';
+import type { APIConsumerUsageStatementResponse } from '../models/APIConsumerUsageStatementResponse.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
 import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsumerRateCardRequest.js';
 import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerRequest.js';
+import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -232,6 +235,172 @@ export class ConsumersService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List durable API consumer usage statements.
+   * Returns immutable quote snapshots newest period first.
+   * @returns APIConsumerUsageStatementListResponse Durable usage statements for the consumer.
+   * @throws ApiError
+   */
+  public static listApiConsumerUsageStatements({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer identity whose durable usage statements are returned.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerUsageStatementListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Snapshot an API consumer usage quote.
+   * Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period returns the original snapshot.
+   * @returns APIConsumerUsageStatementResponse The existing statement for this consumer and period.
+   * @throws ApiError
+   */
+  public static createApiConsumerUsageStatement({
+    slug,
+    consumerId,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer identity whose durable usage statements are returned.
+     */
+    consumerId: string,
+    requestBody: CreateAPIConsumerUsageStatementRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<APIConsumerUsageStatementResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Fetch one durable API consumer usage statement.
+   * @returns APIConsumerUsageStatementResponse The immutable usage statement snapshot.
+   * @throws ApiError
+   */
+  public static getApiConsumerUsageStatement({
+    slug,
+    consumerId,
+    statementId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer identity whose statement is being read.
+     */
+    consumerId: string,
+    /**
+     * Durable usage statement UUID.
+     */
+    statementId: string,
+  }): CancelablePromise<APIConsumerUsageStatementResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'statement_id': statementId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Finalize a fully priced API consumer usage statement.
+   * Records the payable lifecycle transition; repeated calls are idempotent.
+   * @returns APIConsumerUsageStatementResponse The finalized usage statement.
+   * @throws ApiError
+   */
+  public static finalizeApiConsumerUsageStatement({
+    slug,
+    consumerId,
+    statementId,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer identity owning the statement.
+     */
+    consumerId: string,
+    /**
+     * Durable usage statement UUID to finalize.
+     */
+    statementId: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<APIConsumerUsageStatementResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/finalize',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

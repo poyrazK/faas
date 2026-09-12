@@ -1,22 +1,23 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.add_tenant_hostname_request import AddTenantHostnameRequest
+from ...models.api_consumer_usage_statement_response import APIConsumerUsageStatementResponse
+from ...models.create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
 from ...models.problem import Problem
-from ...models.tenant_hostname_response import TenantHostnameResponse
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
-    id: str,
+    consumer_id: UUID,
     *,
-    body: AddTenantHostnameRequest,
+    body: CreateAPIConsumerUsageStatementRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -25,9 +26,9 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/apps/{slug}/tenant-surfaces/{id}/hostnames".format(
+        "url": "/v1/apps/{slug}/consumers/{consumer_id}/usage-statements".format(
             slug=quote(str(slug), safe=""),
-            id=quote(str(id), safe=""),
+            consumer_id=quote(str(consumer_id), safe=""),
         ),
     }
 
@@ -41,11 +42,16 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Problem | TenantHostnameResponse | None:
-    if response.status_code == 202:
-        response_202 = TenantHostnameResponse.from_dict(response.json())
+) -> APIConsumerUsageStatementResponse | Problem | None:
+    if response.status_code == 200:
+        response_200 = APIConsumerUsageStatementResponse.from_dict(response.json())
 
-        return response_202
+        return response_200
+
+    if response.status_code == 201:
+        response_201 = APIConsumerUsageStatementResponse.from_dict(response.json())
+
+        return response_201
 
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
@@ -62,25 +68,10 @@ def _parse_response(
 
         return response_402
 
-    if response.status_code == 403:
-        response_403 = Problem.from_dict(response.json())
-
-        return response_403
-
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
         return response_404
-
-    if response.status_code == 409:
-        response_409 = Problem.from_dict(response.json())
-
-        return response_409
-
-    if response.status_code == 503:
-        response_503 = Problem.from_dict(response.json())
-
-        return response_503
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -90,7 +81,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Problem | TenantHostnameResponse]:
+) -> Response[APIConsumerUsageStatementResponse | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -101,31 +92,35 @@ def _build_response(
 
 def sync_detailed(
     slug: str,
-    id: str,
+    consumer_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: AddTenantHostnameRequest,
+    body: CreateAPIConsumerUsageStatementRequest,
     idempotency_key: str | Unset = UNSET,
-) -> Response[Problem | TenantHostnameResponse]:
-    """Add a hostname to an existing surface.
+) -> Response[APIConsumerUsageStatementResponse | Problem]:
+    """Snapshot an API consumer usage quote.
+
+     Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period
+    returns the original snapshot.
 
     Args:
         slug (str):
-        id (str):
+        consumer_id (UUID):
         idempotency_key (str | Unset):
-        body (AddTenantHostnameRequest): Append a hostname to an existing surface.
+        body (CreateAPIConsumerUsageStatementRequest): Explicit UTC-minute period to snapshot as
+            an immutable usage statement.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | TenantHostnameResponse]
+        Response[APIConsumerUsageStatementResponse | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
-        id=id,
+        consumer_id=consumer_id,
         body=body,
         idempotency_key=idempotency_key,
     )
@@ -139,31 +134,35 @@ def sync_detailed(
 
 def sync(
     slug: str,
-    id: str,
+    consumer_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: AddTenantHostnameRequest,
+    body: CreateAPIConsumerUsageStatementRequest,
     idempotency_key: str | Unset = UNSET,
-) -> Problem | TenantHostnameResponse | None:
-    """Add a hostname to an existing surface.
+) -> APIConsumerUsageStatementResponse | Problem | None:
+    """Snapshot an API consumer usage quote.
+
+     Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period
+    returns the original snapshot.
 
     Args:
         slug (str):
-        id (str):
+        consumer_id (UUID):
         idempotency_key (str | Unset):
-        body (AddTenantHostnameRequest): Append a hostname to an existing surface.
+        body (CreateAPIConsumerUsageStatementRequest): Explicit UTC-minute period to snapshot as
+            an immutable usage statement.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | TenantHostnameResponse
+        APIConsumerUsageStatementResponse | Problem
     """
 
     return sync_detailed(
         slug=slug,
-        id=id,
+        consumer_id=consumer_id,
         client=client,
         body=body,
         idempotency_key=idempotency_key,
@@ -172,31 +171,35 @@ def sync(
 
 async def asyncio_detailed(
     slug: str,
-    id: str,
+    consumer_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: AddTenantHostnameRequest,
+    body: CreateAPIConsumerUsageStatementRequest,
     idempotency_key: str | Unset = UNSET,
-) -> Response[Problem | TenantHostnameResponse]:
-    """Add a hostname to an existing surface.
+) -> Response[APIConsumerUsageStatementResponse | Problem]:
+    """Snapshot an API consumer usage quote.
+
+     Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period
+    returns the original snapshot.
 
     Args:
         slug (str):
-        id (str):
+        consumer_id (UUID):
         idempotency_key (str | Unset):
-        body (AddTenantHostnameRequest): Append a hostname to an existing surface.
+        body (CreateAPIConsumerUsageStatementRequest): Explicit UTC-minute period to snapshot as
+            an immutable usage statement.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | TenantHostnameResponse]
+        Response[APIConsumerUsageStatementResponse | Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
-        id=id,
+        consumer_id=consumer_id,
         body=body,
         idempotency_key=idempotency_key,
     )
@@ -208,32 +211,36 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
-    id: str,
+    consumer_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-    body: AddTenantHostnameRequest,
+    body: CreateAPIConsumerUsageStatementRequest,
     idempotency_key: str | Unset = UNSET,
-) -> Problem | TenantHostnameResponse | None:
-    """Add a hostname to an existing surface.
+) -> APIConsumerUsageStatementResponse | Problem | None:
+    """Snapshot an API consumer usage quote.
+
+     Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period
+    returns the original snapshot.
 
     Args:
         slug (str):
-        id (str):
+        consumer_id (UUID):
         idempotency_key (str | Unset):
-        body (AddTenantHostnameRequest): Append a hostname to an existing surface.
+        body (CreateAPIConsumerUsageStatementRequest): Explicit UTC-minute period to snapshot as
+            an immutable usage statement.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | TenantHostnameResponse
+        APIConsumerUsageStatementResponse | Problem
     """
 
     return (
         await asyncio_detailed(
             slug=slug,
-            id=id,
+            consumer_id=consumer_id,
             client=client,
             body=body,
             idempotency_key=idempotency_key,

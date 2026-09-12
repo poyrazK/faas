@@ -9,6 +9,9 @@ export type { APIConsumerUsageBucketResponse } from './APIConsumerUsageBucketRes
 export type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuoteBucketResponse.js';
 export type { APIConsumerUsageQuoteResponse } from './APIConsumerUsageQuoteResponse.js';
 export type { APIConsumerUsageResponse } from './APIConsumerUsageResponse.js';
+export type { APIConsumerUsageStatementBucketResponse } from './APIConsumerUsageStatementBucketResponse.js';
+export type { APIConsumerUsageStatementListResponse } from './APIConsumerUsageStatementListResponse.js';
+export type { APIConsumerUsageStatementResponse } from './APIConsumerUsageStatementResponse.js';
 export type { APIKeyExportResponse } from './APIKeyExportResponse.js';
 export type { APIKeyResponse } from './APIKeyResponse.js';
 export type { AccountAppSecretResponse } from './AccountAppSecretResponse.js';
@@ -113,6 +116,7 @@ export type { CorsPresetListResponse } from './CorsPresetListResponse.js';
 export type { CorsPresetResponse } from './CorsPresetResponse.js';
 export type { CreateAPIConsumerRateCardRequest } from './CreateAPIConsumerRateCardRequest.js';
 export type { CreateAPIConsumerRequest } from './CreateAPIConsumerRequest.js';
+export type { CreateAPIConsumerUsageStatementRequest } from './CreateAPIConsumerUsageStatementRequest.js';
 export type { CreateAlertRuleRequest } from './CreateAlertRuleRequest.js';
 export type { CreateAppLogDrainRequest } from './CreateAppLogDrainRequest.js';
 export type { CreateAppRequest } from './CreateAppRequest.js';
