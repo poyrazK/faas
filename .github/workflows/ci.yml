@@ -117,7 +117,9 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # golangci-lint alone has an 8-minute cold-cache budget; leave enough
+    # time for setup, build, and the policy gates that follow it.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
