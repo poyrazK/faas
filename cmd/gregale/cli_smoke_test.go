@@ -74,7 +74,7 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "smoke-test-token")
 
-	var hits [3]string // [POST /v1/apps, POST /v1/apps/{slug}/deployments, GET /v1/deployments/{id}/logs]
+	var hits [4]string // [POST /v1/apps, POST /v1/apps/{slug}/deployments, GET /v1/deployments/{id}/logs, GET release summary]
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "POST" && r.URL.Path == "/v1/apps":
@@ -89,6 +89,12 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 			// The CLI reads the terminal row after the live frame so a
 			// durable hosting receipt can be rendered when present.
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "smoke-app"})
+		case r.Method == "GET" && r.URL.Path == "/v1/apps/smoke-app/deployments/d-smoke/summary":
+			hits[3] = r.URL.Path
+			_ = json.NewEncoder(w).Encode(api.DeploymentSummaryResponse{
+				Deployment: api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "smoke-app"},
+				Changes:    []api.DeploymentChange{},
+			})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/") && strings.HasSuffix(r.URL.Path, "/logs"):
 			hits[2] = r.URL.Path
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -123,5 +129,8 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 	}
 	if !strings.HasPrefix(hits[2], "/v1/deployments/") || !strings.HasSuffix(hits[2], "/logs") {
 		t.Errorf("GET deployment logs not hit at the expected path (hits[2] = %q)", hits[2])
+	}
+	if hits[3] != "/v1/apps/smoke-app/deployments/d-smoke/summary" {
+		t.Errorf("GET deployment summary not hit at the expected path (hits[3] = %q)", hits[3])
 	}
 }

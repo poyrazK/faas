@@ -144,7 +144,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx context.Context, slug,
 		return 0
 	}
 	if jsonWait {
-		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", waitTimeout)
+		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", slug, waitTimeout)
 	}
 	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout})
 }

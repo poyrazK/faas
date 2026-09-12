@@ -2349,7 +2349,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 0
 		}
 		if jsonWait {
-			return writeWaitedDeploymentReceiptUntil(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256, time.Duration(*waitTimeoutSeconds)*time.Second)
+			return writeWaitedDeploymentReceiptUntil(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
 		return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 			onStage:         execution.onStage,
@@ -2410,7 +2410,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return 0
 	}
 	if jsonWait {
-		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", time.Duration(*waitTimeoutSeconds)*time.Second)
+		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", slug, time.Duration(*waitTimeoutSeconds)*time.Second)
 	}
 	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 		onStage:         execution.onStage,
