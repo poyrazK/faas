@@ -17,6 +17,11 @@ SSD compute node. The measured interval is the platform wake from
 `wake.boot_started.at` through `wake.boot_completed.at`. Cloudflare, public
 network distance, proxying, and application execution are outside that gate.
 
+The platform-level companion gate — the whole `./cmd/e2e` suite on the same
+node — is documented in [`e2e-native-ci.md`](e2e-native-ci.md). Both workflows
+share the `builder-native-compute-node-2` concurrency group and the
+`/var/lock/faas-builder-acceptance.lock` host lock.
+
 The workflow uses GitHub OIDC through this keyless GCP identity:
 
 - workload identity pool: `github-actions`
