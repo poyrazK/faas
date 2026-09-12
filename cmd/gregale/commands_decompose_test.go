@@ -673,6 +673,79 @@ func projectTerminalBuilds() map[string]api.BuildResponse {
 	}
 }
 
+func runProjectDeployTest(t *testing.T, sink *decomposeSink, json bool, args ...string) (string, string, int) {
+	t.Helper()
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	prevJSON := jsonOutput
+	jsonOutput = json
+	defer func() { jsonOutput = prevJSON }()
+	stdout, restoreStdout := captureStdout(t)
+	defer restoreStdout()
+	stderr, restoreStderr := captureStderr(t)
+	defer restoreStderr()
+	code := cmdDeployTarball(args)
+	return stdout.String(), stderr.String(), code
+}
+
+// TestCmdDeployTarball_ProjectWaitsForSingleBuild covers the one-workload
+// project shape separately from the fan-out case below.
+func TestCmdDeployTarball_ProjectWaitsForSingleBuild(t *testing.T) {
+	apply := goldenApply
+	apply.Builds = []api.AppliedBuild{{Slug: "api", AppID: "a-1", DeploymentID: "d-api", BuildID: "b-api"}}
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   apply,
+		deployments: map[string]api.DeploymentResponse{"d-api": {ID: "d-api", Status: statusLive}},
+		builds:      map[string]api.BuildResponse{"b-api": {ID: "b-api", Status: api.BuildStatusSucceeded}},
+	}
+	out, _, code := runProjectDeployTest(t, sink, false,
+		"--tarball", writeTarball(t), "--project-slug", "fixture", "--yes")
+	if code != 0 {
+		t.Fatalf("single-build project wait exit = %d, want 0", code)
+	}
+	if !strings.Contains(out, "api: deployment=d-api (live) build=b-api (succeeded)") {
+		t.Fatalf("single-build result missing terminal statuses:\n%s", out)
+	}
+}
+
+// TestCmdDeployTarball_ProjectMixedTerminalStates ensures one failed
+// workload makes the project command nonzero without dropping the successful
+// workload from the multi-workload result.
+func TestCmdDeployTarball_ProjectMixedTerminalStates(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   projectApplyWithBuilds(),
+		deployments: map[string]api.DeploymentResponse{
+			"d-api":    {ID: "d-api", Status: statusLive},
+			"d-worker": {ID: "d-worker", Status: deploymentStatusFailed, Error: "user_error"},
+		},
+		builds: map[string]api.BuildResponse{
+			"b-api":    {ID: "b-api", Status: api.BuildStatusSucceeded},
+			"b-worker": {ID: "b-worker", Status: api.BuildStatusFailed, FailureClass: "user_error"},
+		},
+	}
+	out, _, code := runProjectDeployTest(t, sink, false,
+		"--tarball", writeTarball(t), "--project-slug", "fixture", "--yes")
+	if code != 1 {
+		t.Fatalf("mixed project wait exit = %d, want 1", code)
+	}
+	for _, want := range []string{
+		"api: deployment=d-api (live) build=b-api (succeeded)",
+		"worker: deployment=d-worker (failed) build=b-worker (failed)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("mixed result missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestCmdDeployTarball_ProjectWaitsForAllBuilds pins the default project
 // lifecycle: an apply receipt is not considered complete until every
 // deployment and build has a terminal status, and the text output includes
