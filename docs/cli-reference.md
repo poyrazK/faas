@@ -38,6 +38,8 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]) |
+| [`run`](#run) | Run untrusted code in an isolated disposable microVM |
+| [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get &lt;id&gt;) |
 | [`debug`](#debug) | Production debugger (ADR-127) |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
@@ -1084,6 +1086,47 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-])
 |---|---|---|
 | `--async` | return immediately with status_url |  |
 | `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
+
+
+## run
+
+Run untrusted code in an isolated disposable microVM
+
+`gregale run [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--wait] [--poll-interval <D>] [--wait-timeout <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--runtime <R>` | runtime (node22\|node24\|python312\|python313) | one of `node22` · `node24` · `python312` · `python313` |
+| `--source <CODE>` | inline source code |  |
+| `--file <PATH>` | source file (regular file only) |  |
+| `--input <J|@file|->` | JSON input (inline \| @file \| -) |  |
+| `--timeout-ms <N>` | execution timeout |  |
+| `--memory-mb <N>` | memory limit |  |
+| `--cpu-millicores <N>` | CPU limit |  |
+| `--ephemeral-disk-mb <N>` | ephemeral scratch size |  |
+| `--max-output-bytes <N>` | combined output cap |  |
+| `--wait` | wait for terminal result |  |
+| `--poll-interval <D>` | status polling interval with --wait |  |
+| `--wait-timeout <D>` | maximum client wait duration |  |
+
+
+## runs
+
+Inspect or cancel isolated disposable runs
+
+`gregale runs [<subcommand>] <id>`
+
+### runs get
+
+Show one run
+
+### runs status
+
+Show one run (alias for get)
+
+### runs cancel
+
+Cancel one run
 
 
 ## invocations

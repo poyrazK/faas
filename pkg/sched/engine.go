@@ -2743,6 +2743,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	bootInput := bootInput{
 		insID:     ins.ID,
 		appID:     appID,
+		appType:   app.Type,
 		depID:     dep.ID,
 		initState: initState,
 		haveSnap:  haveSnap,
@@ -3119,8 +3120,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// SetAppWorkloadClass failure doesn't block the RUNNING
 	// transition — the class is metadata, not the boot path.
 	if out.Characterization.ObservedClass != "" {
-		if _, err := e.store.SetAppWorkloadClass(ctx, bootInput.appID, state.WorkloadClass(out.Characterization.ObservedClass), "observed"); err != nil {
-			e.log.Warn("wake: SetAppWorkloadClass", "app", bootInput.appID, "err", err)
+		observedClass := state.WorkloadClass(out.Characterization.ObservedClass)
+		if shouldPersistObservedClass(bootInput.appType, observedClass) {
+			if _, err := e.store.SetAppWorkloadClass(ctx, bootInput.appID, observedClass, "observed"); err != nil {
+				e.log.Warn("wake: SetAppWorkloadClass", "app", bootInput.appID, "err", err)
+			}
+		} else {
+			e.log.Warn("wake: ignoring incompatible function characterization",
+				"app", bootInput.appID, "observed_class", observedClass)
 		}
 		// PR-D review finding #6: emit an `app.characterized` audit
 		// row so an operator tailing events can pin the observed
@@ -3248,6 +3255,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 type bootInput struct {
 	insID     string
 	appID     string
+	appType   state.AppType
 	depID     string
 	initState state.State
 	haveSnap  bool
@@ -3312,6 +3320,26 @@ type bootInput struct {
 	// BootStarted emit; BootCompleted intentionally does NOT carry
 	// it (admit-time concept, post-RecordRuntime state is stale).
 	atCapacity bool
+}
+
+// shouldPersistObservedClass prevents a managed function from losing its
+// request-serving route when a failed or incomplete cold-boot probe sees no
+// listening socket and reports a worker-shaped process. Server-shaped
+// refinements remain valid for functions, while ordinary apps keep the full
+// characterization contract, including job and worker classes.
+func shouldPersistObservedClass(appType state.AppType, observed state.WorkloadClass) bool {
+	if observed == "" {
+		return false
+	}
+	if appType != state.AppTypeFunction {
+		return true
+	}
+	switch observed {
+	case state.WorkloadClassHTTP, state.WorkloadClassGraphQL, state.WorkloadClassGRPC:
+		return true
+	default:
+		return false
+	}
 }
 
 // timedDestroy issues a vmm.Destroy bounded by `timeout` and the

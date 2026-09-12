@@ -126,7 +126,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "crons", "delayed-task", "invocations", "jobs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "crons", "delayed-task", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
 		return "Delivery"
@@ -858,6 +858,36 @@ var cliCommands = []cliCommand{
 			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},
 		},
 		Positionals: []string{"<slug>"},
+	},
+	{
+		Name:    "run",
+		DocSlug: "run",
+		Short:   "Run untrusted code in an isolated disposable microVM",
+		Flags: []cliFlag{
+			{Name: "runtime", Short: "runtime (node22|node24|python312|python313)", Value: "R", ClosedSet: []string{"node22", "node24", "python312", "python313"}},
+			{Name: "source", Short: "inline source code", Value: "CODE"},
+			{Name: "file", Short: "source file (regular file only)", Value: "PATH"},
+			{Name: "input", Short: "JSON input (inline | @file | -)", Value: "J|@file|-"},
+			{Name: "timeout-ms", Short: "execution timeout", Value: "N"},
+			{Name: "memory-mb", Short: "memory limit", Value: "N"},
+			{Name: "cpu-millicores", Short: "CPU limit", Value: "N"},
+			{Name: "ephemeral-disk-mb", Short: "ephemeral scratch size", Value: "N"},
+			{Name: "max-output-bytes", Short: "combined output cap", Value: "N"},
+			{Name: "wait", Short: "wait for terminal result"},
+			{Name: "poll-interval", Short: "status polling interval with --wait", Value: "D"},
+			{Name: "wait-timeout", Short: "maximum client wait duration", Value: "D"},
+		},
+	},
+	{
+		Name:    "runs",
+		DocSlug: "runs",
+		Short:   "Inspect or cancel isolated disposable runs",
+		Subcommands: []cliSub{
+			{Name: "get", Short: "Show one run"},
+			{Name: "status", Short: "Show one run (alias for get)"},
+			{Name: "cancel", Short: "Cancel one run"},
+		},
+		Positionals: []string{"<id>"},
 	},
 	{
 		Name:    "invocations",

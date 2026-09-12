@@ -6,6 +6,7 @@
     "gatewayd-public",
     "githubd",
     "meterd",
+    "outboundd",
     "realtimed",
     "schedd",
     "vmmd"

@@ -481,6 +481,10 @@ type MemStore struct {
 	// apiConsumerUsageStatements is keyed by statement ID. statement keys
 	// enforce one immutable snapshot per (app, consumer, period).
 	apiConsumerUsageStatements map[string]APIConsumerUsageStatement
+	// apiConsumerUsageStatementHandoffs is keyed by statement ID. A statement
+	// can be handed off at most once, while the implementation also rejects
+	// reuse of an external invoice reference within an account.
+	apiConsumerUsageStatementHandoffs map[string]APIConsumerUsageStatementHandoff
 	// networkUsageCheckpoints mirrors meter_network_checkpoints. Values are
 	// the last cumulative interface counters atomically reflected in usage.
 	networkUsageCheckpoints map[string]networkUsageCheckpoint
@@ -906,23 +910,24 @@ func NewMemStore() *MemStore {
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
-		deploymentSidecarLayers:    map[string]DeploymentSidecarLayer{},
-		snapshots:                  []Snapshot{},
-		snapshotStorage:            map[string]StorageUsage{},
-		snapshotReplicas:           map[snapshotReplicaKey]snapshotReplicaRow{},
-		snapshotOrigins:            map[string]snapshotOriginRow{},
-		events:                     []Event{},
-		auditOutbox:                map[int64]auditEventOutboxRow{},
-		auditOutboxByKey:           map[string]int64{},
-		nextAuditOutboxID:          1,
-		usage:                      []usageMinute{},
-		usageByMonth:               []Usage{},
-		apiConsumerUsage:           map[string]APIConsumerUsageBucket{},
-		apiConsumerUsageEvents:     map[string]struct{}{},
-		apiConsumerRateCards:       map[string]APIConsumerRateCard{},
-		apiConsumerUsageStatements: map[string]APIConsumerUsageStatement{},
-		networkUsageCheckpoints:    map[string]networkUsageCheckpoint{},
-		idem:                       map[string]idemEntry{},
+		deploymentSidecarLayers:           map[string]DeploymentSidecarLayer{},
+		snapshots:                         []Snapshot{},
+		snapshotStorage:                   map[string]StorageUsage{},
+		snapshotReplicas:                  map[snapshotReplicaKey]snapshotReplicaRow{},
+		snapshotOrigins:                   map[string]snapshotOriginRow{},
+		events:                            []Event{},
+		auditOutbox:                       map[int64]auditEventOutboxRow{},
+		auditOutboxByKey:                  map[string]int64{},
+		nextAuditOutboxID:                 1,
+		usage:                             []usageMinute{},
+		usageByMonth:                      []Usage{},
+		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
+		apiConsumerUsageEvents:            map[string]struct{}{},
+		apiConsumerRateCards:              map[string]APIConsumerRateCard{},
+		apiConsumerUsageStatements:        map[string]APIConsumerUsageStatement{},
+		apiConsumerUsageStatementHandoffs: map[string]APIConsumerUsageStatementHandoff{},
+		networkUsageCheckpoints:           map[string]networkUsageCheckpoint{},
+		idem:                              map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByProviderCustomerID
 		// walks; populated by UpdateAccountProviderCustomerID.
 
@@ -15835,6 +15840,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for sid, statement := range m.apiConsumerUsageStatements {
 		if statement.AccountID == id {
 			delete(m.apiConsumerUsageStatements, sid)
+		}
+	}
+	for sid, handoff := range m.apiConsumerUsageStatementHandoffs {
+		if handoff.AccountID == id {
+			delete(m.apiConsumerUsageStatementHandoffs, sid)
 		}
 	}
 	for did, d := range m.deployments {

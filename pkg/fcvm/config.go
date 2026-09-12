@@ -32,8 +32,9 @@ type VMConfig struct {
 	VsockDevice *VsockDevice `json:"vsock,omitempty"`
 	// EphemeralWritable is true only for builder VMs. Their drive1 is a
 	// unique scratch image deleted immediately after export, so provisioning
-	// may hard-link it instead of copying multi-gigabyte bytes. App VMs keep
-	// the default false and retain copy-on-write isolation.
+	// may hard-link it instead of copying multi-gigabyte bytes. App and
+	// networkless execution VMs keep the default false and retain copy-on-write
+	// isolation.
 	EphemeralWritable bool `json:"-"`
 }
 
@@ -141,6 +142,14 @@ const coldBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
 	"root=/dev/vda ro " +
 	"ip=10.0.0.2::10.0.0.1:255.255.255.252::eth0:off init=/sbin/init"
 
+// executionBootArgs intentionally omits kernel ip= autoconfiguration. The
+// dedicated execution VM has no Firecracker network interface, so even the
+// guest kernel receives no tenant route or DNS/gateway hint.
+const executionBootArgs = "console=ttyS0,115200n8 reboot=k panic=1 pci=off " +
+	"nmi_watchdog=0 hung_task_timeout_secs=0 " +
+	"random.trust_cpu=on rng_core.default_quality=1000 " +
+	"root=/dev/vda ro init=/sbin/init"
+
 // ColdBootSpec is everything needed to build a cold-boot VM config. RAM and vCPU
 // come from the app's plan (via pkg/api limits) — never inline them here.
 //
@@ -176,6 +185,8 @@ type ColdBootSpec struct {
 	ExecutionMode string
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
+	// Networkless execution guests use the vsock execution protocol instead of
+	// binding port 8080.
 	SkipReady bool
 	// Workloads (issue #463 / ADR-069 / PR-B) is the per-workload
 	// drive set. Non-empty → BootColdBoot emits one FC Drive per
@@ -196,6 +207,10 @@ type ColdBootSpec struct {
 	// set, vmmd stages /etc/resolv.conf to point at the node-local DNS
 	// resolver for <slug>.svc.gregale names. Empty preserves legacy guests.
 	ServiceDiscoveryIP string
+	// Networkless omits the Firecracker network interface entirely. It is set
+	// only by the dedicated disposable-execution path; ordinary app and job
+	// boots retain the identical inner network contract.
+	Networkless bool
 }
 
 // JobColdBootSpec (issue #1184 Workstream A / ADR-099) is the
@@ -318,14 +333,25 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 			})
 		}
 	}
+	network := []NetIface{{IfaceID: "eth0", HostDevName: s.Tap}}
+	if s.Networkless {
+		network = nil
+	}
+	bootArgs := coldBootArgs
+	if s.Networkless {
+		bootArgs = executionBootArgs
+	}
 	return VMConfig{
-		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: coldBootArgs},
+		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},
 		Drives:            drives,
 		MachineConfig:     Machine{VcpuCount: s.VcpuCount, MemSizeMib: s.MemSizeMiB, Smt: false},
-		NetworkInterfaces: []NetIface{{IfaceID: "eth0", HostDevName: s.Tap}},
+		NetworkInterfaces: network,
 		Entropy:           &Entropy{},
 		VsockDevice:       NewVsockDevice(slot),
-		EphemeralWritable: s.SkipReady,
+		// SkipReady is also used by networkless execution guests, but their
+		// layer is caller-supplied runtime state and must remain private. Only
+		// builder scratch images may use the hard-link optimization.
+		EphemeralWritable: s.SkipReady && !s.Networkless,
 	}
 }
 
@@ -362,7 +388,7 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: vcpu_count %d < 1", s.VcpuCount)
 	case s.MemSizeMiB < 1:
 		return fmt.Errorf("fcvm: cold boot: mem_size_mib %d < 1", s.MemSizeMiB)
-	case s.Tap == "":
+	case s.Tap == "" && !s.Networkless:
 		return fmt.Errorf("fcvm: cold boot: empty tap device")
 	case s.StartupDeadlineS < 0:
 		return fmt.Errorf("fcvm: cold boot: startup_deadline_s %d < 0", s.StartupDeadlineS)
@@ -504,6 +530,9 @@ type JailerSpec struct {
 	// the legacy/test command shape; production Manager.Wake supplies the
 	// billable VM ceiling before jailer drops privileges.
 	MemoryMaxBytes int64
+	// Networkless omits jailer's --netns argument for disposable execution
+	// guests. Ordinary app and job VMs always retain their tenant namespace.
+	Networkless bool
 }
 
 // PerInstanceScope returns the cgroup scope name the jailer will create
@@ -572,11 +601,17 @@ func JailerCommand(s JailerSpec) []string {
 		"--gid", fmt.Sprintf("%d", s.GID),
 		"--exec-file", execFile,
 		"--chroot-base-dir", JailChrootBase,
-		"--netns", "/run/netns/" + s.Netns,
+	}
+	if !s.Networkless {
+		// Ordinary app/job VMs join their private tenant namespace. Execution
+		// guests intentionally have no namespace at all.
+		args = append(args, "--netns", "/run/netns/"+s.Netns)
+	}
+	args = append(args,
 		"--cgroup-version", "2",
 		"--parent-cgroup", parentCgroup,
 		"--cgroup", fmt.Sprintf("cpu.weight=%d", cpuWeight),
-	}
+	)
 	if s.MemoryMaxBytes > 0 {
 		args = append(args, "--cgroup", fmt.Sprintf("memory.max=%d", s.MemoryMaxBytes))
 	}

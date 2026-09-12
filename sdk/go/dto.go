@@ -27,25 +27,27 @@ type (
 	DeclaredRoute          = api.DeclaredRoute
 
 	// End-customer consumers and credentials (ADR-120).
-	CreateAPIConsumerRequest                = api.CreateAPIConsumerRequest
-	APIConsumerResponse                     = api.APIConsumerResponse
-	APIConsumerListResponse                 = api.APIConsumerListResponse
-	CreateConsumerKeyRequest                = api.CreateConsumerKeyRequest
-	ConsumerKeyResponse                     = api.ConsumerKeyResponse
-	ConsumerKeyListResponse                 = api.ConsumerKeyListResponse
-	APIConsumerUsageBucketResponse          = api.APIConsumerUsageBucketResponse
-	APIConsumerUsageResponse                = api.APIConsumerUsageResponse
-	CreateAPIConsumerRateCardRequest        = api.CreateAPIConsumerRateCardRequest
-	APIConsumerRateCardResponse             = api.APIConsumerRateCardResponse
-	APIConsumerRateCardListResponse         = api.APIConsumerRateCardListResponse
-	APIConsumerUsageQuoteBucketResponse     = api.APIConsumerUsageQuoteBucketResponse
-	APIConsumerUsageQuoteResponse           = api.APIConsumerUsageQuoteResponse
-	CreateAPIConsumerUsageStatementRequest  = api.CreateAPIConsumerUsageStatementRequest
-	APIConsumerUsageStatementBucketResponse = api.APIConsumerUsageStatementBucketResponse
-	APIConsumerUsageStatementResponse       = api.APIConsumerUsageStatementResponse
-	APIConsumerUsageStatementListResponse   = api.APIConsumerUsageStatementListResponse
-	ResourceProfile                         = api.ResourceProfile
-	ResourceProfileSpec                     = api.ResourceProfileSpec
+	CreateAPIConsumerRequest                 = api.CreateAPIConsumerRequest
+	APIConsumerResponse                      = api.APIConsumerResponse
+	APIConsumerListResponse                  = api.APIConsumerListResponse
+	CreateConsumerKeyRequest                 = api.CreateConsumerKeyRequest
+	ConsumerKeyResponse                      = api.ConsumerKeyResponse
+	ConsumerKeyListResponse                  = api.ConsumerKeyListResponse
+	APIConsumerUsageBucketResponse           = api.APIConsumerUsageBucketResponse
+	APIConsumerUsageResponse                 = api.APIConsumerUsageResponse
+	CreateAPIConsumerRateCardRequest         = api.CreateAPIConsumerRateCardRequest
+	APIConsumerRateCardResponse              = api.APIConsumerRateCardResponse
+	APIConsumerRateCardListResponse          = api.APIConsumerRateCardListResponse
+	APIConsumerUsageQuoteBucketResponse      = api.APIConsumerUsageQuoteBucketResponse
+	APIConsumerUsageQuoteResponse            = api.APIConsumerUsageQuoteResponse
+	CreateAPIConsumerUsageStatementRequest   = api.CreateAPIConsumerUsageStatementRequest
+	APIConsumerUsageStatementBucketResponse  = api.APIConsumerUsageStatementBucketResponse
+	APIConsumerUsageStatementResponse        = api.APIConsumerUsageStatementResponse
+	APIConsumerUsageStatementListResponse    = api.APIConsumerUsageStatementListResponse
+	ClaimAPIConsumerUsageStatementRequest    = api.ClaimAPIConsumerUsageStatementRequest
+	APIConsumerUsageStatementHandoffResponse = api.APIConsumerUsageStatementHandoffResponse
+	ResourceProfile                          = api.ResourceProfile
+	ResourceProfileSpec                      = api.ResourceProfileSpec
 
 	// Deployments.
 	CreateDeploymentRequest        = api.CreateDeploymentRequest

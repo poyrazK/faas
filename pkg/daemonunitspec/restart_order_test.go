@@ -79,8 +79,9 @@ func TestRestartOrder_MatchesExpected(t *testing.T) {
 		"gatewayd-public",   // After[apid]
 		"meterd",            // After[apid] — Registry idx 6
 		"githubd",           // After[apid] — Registry idx 7
-		"imaged",            // After[vmmd] — Registry idx 8
-		"builderd",          // After[vmmd] — Registry idx 9, vmmd has popped
+		"outboundd",         // After[apid] — shared third-party admission gateway
+		"imaged",            // After[vmmd] — Registry idx 9
+		"builderd",          // After[vmmd] — Registry idx 10, vmmd has popped
 	}
 	if len(got) != len(want) {
 		t.Fatalf("len(got)=%d, len(want)=%d; got=%v want=%v", len(got), len(want), got, want)

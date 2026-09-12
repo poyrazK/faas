@@ -8,6 +8,7 @@ faas_control_plane_units:
   - faas-apid.service
   - faas-schedd.service
   - faas-meterd.service
+  - faas-outboundd.service
   - faas-gatewayd-public.service
   - faas-githubd.service
 
@@ -43,5 +44,6 @@ faas_daemon_probes:
   faas-gatewayd-public.service: { probe: tcp, target: "127.0.0.1:8080", readyz_url: "http://127.0.0.1:9092/readyz" }
   faas-meterd.service: { probe: systemd, target: "", readyz_url: "http://127.0.0.1:9106/readyz" }
   faas-githubd.service: { probe: systemd, target: "", readyz_url: "http://127.0.0.1:8083/readyz" }
+  faas-outboundd.service: { probe: systemd, target: "", readyz_url: "http://127.0.0.1:8095/readyz" }
   faas-imaged.service: { probe: tcp, target: "127.0.0.1:9102", readyz_url: "http://127.0.0.1:9102/readyz" }
   faas-builderd.service: { probe: unix, target: /run/faas/builderd.sock, readyz_url: "http://127.0.0.1:9105/readyz" }
