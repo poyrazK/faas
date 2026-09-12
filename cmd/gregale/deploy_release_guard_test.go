@@ -79,6 +79,7 @@ func TestProjectDeployRejectsExecutionConfigurationBeforeRequest(t *testing.T) {
 		{name: "require authn", args: []string{"--require-authn"}},
 		{name: "no require authn", args: []string{"--no-require-authn"}},
 		{name: "app protocol", args: []string{"--app-protocol", "grpc"}},
+		{name: "no triggers", args: []string{"--no-triggers"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

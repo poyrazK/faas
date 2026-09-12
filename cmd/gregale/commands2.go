@@ -1526,6 +1526,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
+		if explicit["no-triggers"] {
+			return printErr("Unsupported project deploy flags", errors.New(
+				"--no-triggers cannot be combined with --project, --project-slug, or --only; project deploy trigger suppression is not yet supported"))
+		}
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "canary-preset", "canary-stages",
