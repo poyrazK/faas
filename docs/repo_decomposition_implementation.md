@@ -41,6 +41,14 @@ $ faas deploy
 `Y` creates the project, four apps, one cron row, and enqueues four builds.
 That is the whole interaction.
 
+For Compose workloads, `depends_on` is carried into the plan, validated as a
+cycle-free graph, and used to order app creation/build enqueueing. Each
+workload also receives platform-owned `GREGALE_SERVICE_<NAME>_URL` variables
+for its deployable dependencies (for example,
+`GREGALE_SERVICE_API_URL=http://api.svc.gregale:10080`). The private DNS and
+proxy path provides the endpoint even when the target app is cold; image-only
+managed services remain customer-provided and are not given a Gregale URL.
+
 On every subsequent `faas deploy`, the same scan runs and renders a **diff**
 instead of a first-run list — the repo is the source of truth, so the deployed
 set reconciles to whatever the repo now declares:
@@ -184,6 +192,7 @@ type Workload struct {
     Command    []string // start-command override
     Class      Class    // http|graphql|grpc|job|worker|unknown — a HINT pre-probe
     Schedule   string   // cron expression, when declared
+    DependsOn  []string // Compose service dependencies (name-only graph edges)
     Ports      []int
     EnvKeys    []string // KEYS ONLY — never values (spec §11: never log secrets)
     Source     string   // "docker-compose.yml: api" — shown in the table
@@ -375,6 +384,10 @@ not starve tenant wakes under `make test-load`.
 - **Project-level env** (shared `DATABASE_URL` across members) is not in this
   plan. `app_envs` is keyed `(app_id, key)`; a project-level tier is a later
   migration and should land with preview-environment scoping, not before.
+- **Compose readiness conditions** (`service_healthy` and
+  `service_completed_successfully`) are surfaced as dependency edges but do
+  not block a VM at boot. Callers should use the generated service URL and
+  retry through the proxy; a readiness-aware rollout gate is a follow-up.
 - **Preview deploys per branch** stay out of scope. They need env scoping first
   and are their own milestone.
 - **An override file** (`faas.yaml` naming workloads explicitly) remains open
@@ -412,4 +425,3 @@ CLI surface: `gregale scan --show-affected`, `gregale deploy
 The match key is `(RootDir, Name)` — mirrors `pkg/reposcan.Workload.Key()`
 and `pkg/reconcile.diff.workloadDiff` so the wire and the apply engine
 agree byte-for-byte. No new migrations; this PR is purely derived state.
-

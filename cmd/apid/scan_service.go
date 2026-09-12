@@ -188,6 +188,7 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		RootDir:    w.RootDir,
 		Dockerfile: w.Dockerfile,
 		Command:    w.Command,
+		DependsOn:  w.DependsOn,
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
 		Ports:      w.Ports,
@@ -728,9 +729,19 @@ func (s *server) applyBuildsForAddedChanged(
 	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
 	scanDir string, added, changed []state.App,
 ) []appliedBuild {
+	return s.applyBuildsForAddedChangedOrdered(ctx, r, acct, project, scanDir, nil, nil, added, changed)
+}
+
+func (s *server) applyBuildsForAddedChangedOrdered(
+	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
+	scanDir string, workloads []reposcan.Workload, managed []reposcan.Managed, added, changed []state.App,
+) []appliedBuild {
 	touched := make([]state.App, 0, len(added)+len(changed))
 	touched = append(touched, added...)
 	touched = append(touched, changed...)
+	if order, orderErr := reposcan.DependencyOrder(workloads, managed); orderErr == nil {
+		touched = orderAppsByWorkload(touched, order)
+	}
 	out := make([]appliedBuild, 0, len(touched))
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
@@ -796,6 +807,31 @@ func (s *server) applyBuildsForAddedChanged(
 		out = append(out, res)
 	}
 	return out
+}
+
+// orderAppsByWorkload keeps build enqueueing aligned with the Compose graph.
+// Reconcile has already validated the graph; the fallback preserves the
+// caller's order if a future scan source bypasses that validation.
+func orderAppsByWorkload(apps []state.App, order []string) []state.App {
+	if len(apps) < 2 || len(order) == 0 {
+		return apps
+	}
+	position := make(map[string]int, len(order))
+	for i, name := range order {
+		position[strings.ToLower(name)] = i
+	}
+	sort.SliceStable(apps, func(i, j int) bool {
+		pi, okI := position[strings.ToLower(apps[i].WorkloadName)]
+		pj, okJ := position[strings.ToLower(apps[j].WorkloadName)]
+		if !okI {
+			pi = len(order)
+		}
+		if !okJ {
+			pj = len(order)
+		}
+		return pi < pj
+	})
+	return apps
 }
 
 // stageApplyTarball writes a per-workload tarball rooted at app.RootDir
@@ -1191,14 +1227,14 @@ func (s *server) scanService(
 	// calls are self-contained (no shared scan state).
 	preCanApply, preNotAllowed, preReasons, _ := evaluateQuotaGate(result.Workloads, limits, observedApps, observedCrons)
 	canApply, notAllowed, reasons, _ = evaluateQuotaGate(filteredW, limits, observedApps, observedCrons)
-	preAdmissionReasons := reconcile.WorkloadAdmissionReasons(result.Workloads, acctApps, projectID)
+	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
 		// An actually empty scan is unsafe and must carry the reconcile
 		// package's stable empty-plan reason. A non-empty scan that the
 		// operator deliberately reduced to zero with --exclude is an
 		// applicable no-op; the skipped partition records that intent.
-		admissionReasons = reconcile.WorkloadAdmissionReasons(filteredW, acctApps, projectID)
+		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID)
 	}
 	if len(preAdmissionReasons) > 0 {
 		preCanApply = false
@@ -1628,7 +1664,7 @@ func (s *server) scanService(
 	// is what we want. A future refactor that moves the ScanDir
 	// cleanup into this func must keep staging reads ahead of
 	// the cleanup.
-	builds := s.applyBuildsForAddedChanged(r.Context(), r, acct, project, req.ScanDir, rec.Added, rec.Changed)
+	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, rec.Added, rec.Changed)
 	// ADR-124: surface the destructive subset on the response so the
 	// apply handler can render Removed in the same blast-radius
 	// envelope the preview offered. SoftDeleteAppCascade runs

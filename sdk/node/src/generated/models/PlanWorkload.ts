@@ -11,6 +11,8 @@ export type PlanWorkload = {
   root_dir: string;
   dockerfile?: string;
   command: Array<string>;
+  /** Compose service dependencies. */
+  depends_on?: Array<string>;
   class?: 'http' | 'graphql' | 'grpc' | 'job' | 'worker' | 'server' | 'unknown';
   /**
    * cron expression when declared (CronJob, render, serverless)
@@ -36,4 +38,3 @@ export type PlanWorkload = {
   existing_app_id?: string;
   detected_by?: PlanDetectedBy;
 };
-

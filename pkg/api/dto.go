@@ -4844,6 +4844,7 @@ type PlanWorkload struct {
 	RootDir       string   `json:"root_dir"`
 	Dockerfile    string   `json:"dockerfile,omitempty"`
 	Command       []string `json:"command"`
+	DependsOn     []string `json:"depends_on,omitempty"`
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`
 	Ports         []int    `json:"ports"`

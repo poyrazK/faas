@@ -114,7 +114,7 @@ func workloadDiff(
 			continue
 		}
 		desired := resolveStartCommand(w)
-		changed := diffFieldsChanged(a, w, desired)
+		changed := diffFieldsChanged(a, w, desired, workloadNameSet(scan.Workloads))
 		if len(changed) == 0 {
 			// No-op: same key, same columns. Skip.
 			continue
@@ -139,10 +139,15 @@ func workloadDiff(
 		})
 	}
 
-	// Stable ordering. The diff's order is observable in the
-	// audit log (each Action emits its own row), and we want the
-	// order to be invariant to map-iteration randomness.
-	sortActionsByName(creates, true)
+	// Stable ordering. The diff's order is observable in the audit log
+	// and drives the sequential project build enqueue path. Prefer a
+	// dependency order for creates; fall back to lexical order for a
+	// direct caller that bypassed admission validation.
+	if order, err := reposcan.DependencyOrder(scan.Workloads, scan.Managed); err == nil {
+		sortActionsByDependencyOrder(creates, order)
+	} else {
+		sortActionsByName(creates, true)
+	}
 	sortActionsByName(updates, false)
 	sortActionsByName(removes, false)
 
@@ -151,6 +156,30 @@ func workloadDiff(
 	out = append(out, updates...)
 	out = append(out, removes...)
 	return out
+}
+
+func sortActionsByDependencyOrder(as []Action, order []string) {
+	position := make(map[string]int, len(order))
+	for i, name := range order {
+		position[strings.ToLower(name)] = i
+	}
+	for i := 1; i < len(as); i++ {
+		for j := i; j > 0; j-- {
+			left, okLeft := position[strings.ToLower(as[j-1].Workload.Name)]
+			right, okRight := position[strings.ToLower(as[j].Workload.Name)]
+			if !okLeft {
+				left = len(order)
+			}
+			if !okRight {
+				right = len(order)
+			}
+			if left > right {
+				as[j-1], as[j] = as[j], as[j-1]
+				continue
+			}
+			break
+		}
+	}
 }
 
 func sortActionsByName(as []Action, byWorkload bool) {
@@ -193,12 +222,12 @@ func resolveStartCommand(w reposcan.Workload) string {
 }
 
 // diffFieldsChanged returns the subset of {"root_dir", "workload_name",
-// "start_command"} that actually changed between the existing
+// "start_command", "service_env"} that actually changed between the existing
 // state.App and the new scan-derived workload. The columns
 // RootDir and WorkloadName are NOT NULL DEFAULT ” in the schema
 // so equality is on the empty-string vs populated distinction —
 // no NULL handling needed.
-func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string) []string {
+func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, available ...map[string]struct{}) []string {
 	var changed []string
 	if a.RootDir != w.RootDir {
 		changed = append(changed, "root_dir")
@@ -213,7 +242,22 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string) []stri
 	if a.StartCommand != startCmd {
 		changed = append(changed, "start_command")
 	}
+	var serviceNames map[string]struct{}
+	if len(available) > 0 {
+		serviceNames = available[0]
+	}
+	if !serviceEnvEqual(a.Manifest.Env, serviceEnvForWorkloadWithAvailable(nil, w, serviceNames)) {
+		changed = append(changed, "service_env")
+	}
 	return changed
+}
+
+func workloadNameSet(workloads []reposcan.Workload) map[string]struct{} {
+	set := make(map[string]struct{}, len(workloads))
+	for _, workload := range workloads {
+		set[strings.ToLower(strings.TrimSpace(workload.Name))] = struct{}{}
+	}
+	return set
 }
 
 // DeriveScanSource picks the project scan_source from the
