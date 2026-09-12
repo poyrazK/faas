@@ -178,6 +178,17 @@ func (s *PgStore) ListExecutions(ctx context.Context, accountID string, limit, o
 	return executionRowsFromSQL(rows), nil
 }
 
+func (s *PgStore) ListExecutionsByStatus(ctx context.Context, accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
+	limit, offset = normalizeExecutionPage(limit, offset)
+	rows, err := sqlc.New().ExecutionListForAccountStatus(ctx, s.pool, sqlc.ExecutionListForAccountStatusParams{
+		AccountID: mustPgUUID(accountID), Status: string(status), PageLimit: int32(limit), PageOffset: int32(offset),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return executionRowsFromSQL(rows), nil
+}
+
 func (s *PgStore) ClaimExecution(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" || claimedAt.IsZero() || leaseDuration <= 0 {

@@ -3,11 +3,56 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CreateExecutionRequest } from '../models/CreateExecutionRequest.js';
+import type { ExecutionListResponse } from '../models/ExecutionListResponse.js';
 import type { ExecutionResponse } from '../models/ExecutionResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class RunsService {
+  /**
+   * List disposable executions.
+   * Returns the caller's newest disposable execution receipts. Results are
+   * account-scoped and ordered by creation time descending. Use `status`
+   * to narrow the page before applying offset pagination; source and input
+   * are never returned.
+   *
+   * @returns ExecutionListResponse Account-scoped execution page.
+   * @throws ApiError
+   */
+  public static listExecutions({
+    limit = 50,
+    offset,
+    status,
+  }: {
+    /**
+     * Maximum number of execution receipts to return.
+     */
+    limit?: number,
+    /**
+     * Number of matching receipts to skip.
+     */
+    offset?: number,
+    /**
+     * Return only executions in this lifecycle state.
+     */
+    status?: 'queued' | 'restoring' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'out_of_memory' | 'cancelled',
+  }): CancelablePromise<ExecutionListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/executions',
+      query: {
+        'limit': limit,
+        'offset': offset,
+        'status': status,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
   /**
    * Execute source in an isolated disposable microVM.
    * Queues one bounded Node.js or Python source execution. Source and

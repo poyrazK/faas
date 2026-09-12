@@ -2318,6 +2318,80 @@ func (q *Queries) ExecutionListForAccount(ctx context.Context, db DBTX, arg Exec
 	return items, nil
 }
 
+const executionListForAccountStatus = `-- name: ExecutionListForAccountStatus :many
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at FROM executions
+WHERE account_id = $1
+  AND status = $2
+ORDER BY created_at DESC, id DESC
+LIMIT $4::int OFFSET $3::int
+`
+
+type ExecutionListForAccountStatusParams struct {
+	AccountID  pgtype.UUID
+	Status     string
+	PageOffset int32
+	PageLimit  int32
+}
+
+func (q *Queries) ExecutionListForAccountStatus(ctx context.Context, db DBTX, arg ExecutionListForAccountStatusParams) ([]Execution, error) {
+	rows, err := db.Query(ctx, executionListForAccountStatus,
+		arg.AccountID,
+		arg.Status,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Execution{}
+	for rows.Next() {
+		var i Execution
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Runtime,
+			&i.Status,
+			&i.NetworkMode,
+			&i.TimeoutMs,
+			&i.MemoryMb,
+			&i.CpuMillicores,
+			&i.EphemeralDiskMb,
+			&i.MaxOutputBytes,
+			&i.PidsMax,
+			&i.SourceBytes,
+			&i.InputBytes,
+			&i.DeadlineAt,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.Result,
+			&i.ResultBytes,
+			&i.Stdout,
+			&i.Stderr,
+			&i.OutputTruncated,
+			&i.ExitCode,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.WallTimeMs,
+			&i.CpuTimeMs,
+			&i.PeakMemoryMb,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const executionLockAccount = `-- name: ExecutionLockAccount :one
 SELECT id, plan FROM accounts WHERE id = $1 FOR UPDATE
 `

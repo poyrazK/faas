@@ -13,6 +13,7 @@ ephemeral scratch filesystem.
 ```sh
 gregale run --runtime node22 --file handler.js --input '{"url":"https://example.invalid"}' --wait
 gregale run --runtime node22 --dir . --entrypoint src/index.mjs --wait
+gregale runs list --status running --json
 gregale runs status <execution-id>
 gregale runs cancel <execution-id>
 ```
@@ -29,6 +30,7 @@ receipt.
 The API is account-scoped and requires a Bearer API key:
 
 * `POST /v1/executions` — admit a run and return a queued receipt.
+* `GET /v1/executions` — list account-scoped receipts with `limit`, `offset`, and optional `status` filters.
 * `GET /v1/executions/{id}` — read the current or terminal receipt.
 * `DELETE /v1/executions/{id}` — request idempotent cancellation.
 

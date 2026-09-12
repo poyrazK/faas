@@ -1119,6 +1119,16 @@ Inspect or cancel isolated disposable runs
 
 `gregale runs [<subcommand>] <id>`
 
+### runs list
+
+List runs
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | maximum number of runs (1..200) |  |
+| `--offset <N>` | number of matching runs to skip |  |
+| `--status <STATUS>` | filter by lifecycle status | one of `queued` · `restoring` · `running` · `succeeded` · `failed` · `timed_out` · `out_of_memory` · `cancelled` |
+
 ### runs get
 
 Show one run
