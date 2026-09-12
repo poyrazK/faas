@@ -677,7 +677,6 @@ UpdateCron
 UpdateCronWithOptions
 UpdateCustomDomainCertStatus
 UpdateDeploymentMinInstances
-UpdateDeploymentStatus
 UpdateDeploymentTraffic
 UpdateEdgeRule
 UpdateInstanceStateIf
