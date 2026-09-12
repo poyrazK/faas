@@ -237,6 +237,32 @@ func parsePagination(r *http.Request) (limit, offset int) {
 	return limit, offset
 }
 
+// parseJobsPaginationStrict validates explicit pagination parameters for the
+// public jobs list. The older shared parser intentionally preserves lenient
+// defaults for job-run/task history; the top-level jobs endpoint must reject
+// malformed values so an empty page cannot be mistaken for a valid filter.
+func parseJobsPaginationStrict(r *http.Request) (limit, offset int, err error) {
+	limit = 50
+	q := r.URL.Query()
+	if _, present := q["limit"]; present {
+		raw := q.Get("limit")
+		n, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || n < 1 || n > 200 {
+			return 0, 0, fmt.Errorf("limit must be an integer between 1 and 200")
+		}
+		limit = n
+	}
+	if _, present := q["offset"]; present {
+		raw := q.Get("offset")
+		n, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || n < 0 {
+			return 0, 0, fmt.Errorf("offset must be a non-negative integer")
+		}
+		offset = n
+	}
+	return limit, offset, nil
+}
+
 // --- 6 read handlers (Mega-1 M11.2) ----------------------------------
 
 // listJobs handles GET /v1/jobs. Page-based pagination; the
@@ -253,7 +279,11 @@ func parsePagination(r *http.Request) (limit, offset int) {
 // SELECT) so the dashboard can render "showing 1-50 of 247"
 // without an unbounded count.
 func (s *server) listJobs(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	limit, offset := parsePagination(r)
+	limit, offset, err := parseJobsPaginationStrict(r)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
 	total, err := s.store.JobCountByAccount(r.Context(), acct.ID)
 	if err != nil {
 		s.log.Error("list jobs: count failed", "account", acct.ID, "err", err)

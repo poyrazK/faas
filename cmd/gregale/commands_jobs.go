@@ -94,27 +94,39 @@ func cmdJobs(args []string) int {
 
 // cmdJobsList implements `gregale jobs list`. Returns the
 // account-scoped list. `--limit N` / `--offset N` paginate the
-// server-side list (handler clamps limit to [1,200]). Output is
-// either NDJSON (with --json) or a tabular row per job.
+// server-side list. Output is either the complete pagination envelope
+// in JSON mode or a tabular row per job.
 func cmdJobsList(args []string) int {
 	fs := flag.NewFlagSet("jobs-list", flag.ContinueOnError)
-	limit := fs.Int("limit", 0, "page size (1..200, 0 = server default 50)")
+	limit := fs.Int("limit", 0, "page size (1..200; omit for server default 50)")
 	offset := fs.Int("offset", 0, "page offset")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	limitProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "limit" {
+			limitProvided = true
+		}
+	})
+	if limitProvided && (*limit < 1 || *limit > 200) {
+		PrintUsage(os.Stderr, "usage: gregale jobs list [--limit N] [--offset N]   (--limit must be between 1 and 200)", "jobs")
+		return 1
+	}
+	if *offset < 0 {
+		PrintUsage(os.Stderr, "usage: gregale jobs list [--limit N] [--offset N]   (--offset must be >= 0)", "jobs")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	_ = limit
-	_ = offset
-	out, err := client.ListJobs(context.Background())
+	out, err := client.ListJobs(context.Background(), *limit, *offset)
 	if err != nil {
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeNDJSON(out.Jobs))
+		return jsonOut(writeJSON(out))
 	}
 	renderJobsTable(osStdout, out.Jobs)
 	return 0

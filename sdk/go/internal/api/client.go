@@ -647,10 +647,31 @@ func (c *Client) DeleteCron(ctx context.Context, id string) error {
 // the customer's slug (`name`) for create/list/update/delete;
 // runs + tasks use the opaque run id (uuid).
 
-// ListJobs returns the account-scoped list of jobs.
-func (c *Client) ListJobs(ctx context.Context) (ListJobsResponse, error) {
+// ListJobs returns one account-scoped page of jobs. The optional arguments
+// are limit and offset; zero values omit the corresponding query parameter
+// and use the server default. The variadic form preserves the original
+// ListJobs(ctx) call for existing SDK consumers.
+func (c *Client) ListJobs(ctx context.Context, pagination ...int) (ListJobsResponse, error) {
 	var out ListJobsResponse
-	return out, c.do(ctx, "GET", "/v1/jobs", nil, &out)
+	limit, offset := 0, 0
+	if len(pagination) != 0 && len(pagination) != 2 {
+		return out, fmt.Errorf("ListJobs expects optional limit and offset")
+	}
+	if len(pagination) == 2 {
+		limit, offset = pagination[0], pagination[1]
+	}
+	path := "/v1/jobs"
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // CreateJob creates a new job under the calling account.

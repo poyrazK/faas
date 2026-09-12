@@ -433,6 +433,40 @@ func TestListCrons_PassesSlugWhenNonEmpty(t *testing.T) {
 	}
 }
 
+func TestListJobs_PassesPagination(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jobs":[],"limit":1,"offset":20,"next_offset":-1,"total":20}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.ListJobs(context.Background(), 1, 20); err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if gotPath != "/v1/jobs?limit=1&offset=20" {
+		t.Errorf("RequestURI = %q, want /v1/jobs?limit=1&offset=20", gotPath)
+	}
+}
+
+func TestListJobs_OmitsDefaultPagination(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jobs":[],"limit":50,"offset":0,"next_offset":-1,"total":0}`))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	if _, err := c.ListJobs(context.Background(), 0, 0); err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if gotPath != "/v1/jobs" {
+		t.Errorf("RequestURI = %q, want /v1/jobs", gotPath)
+	}
+}
+
 // --- Pagination --------------------------------------------------------------
 
 // TestListDeploymentsAll_WalksCursor pins the spec's RFC3339Nano
