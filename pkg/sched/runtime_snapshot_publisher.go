@@ -76,7 +76,11 @@ func (p *RuntimeSnapshotPublisher) PublishRuntimeSnapshot(ctx context.Context, p
 	}
 	createdAt := publication.CreatedAt
 	if createdAt.IsZero() {
-		createdAt = p.now().UTC()
+		now := p.now
+		if now == nil {
+			now = time.Now
+		}
+		createdAt = now().UTC()
 	} else {
 		createdAt = createdAt.UTC()
 	}
