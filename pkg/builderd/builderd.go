@@ -797,6 +797,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
 	buildStart = time.Now()
 	b.emitBuildLog(ctx, build.ID, "build started\n")
+	// The source has been materialized, validated, hashed, and classified.
+	// Everything after this boundary belongs to the customer-visible image
+	// build phase: VM startup, Railpack/buildkit, and artifact publication.
+	// Keep this projection best-effort, matching imaged's transition helper;
+	// the durable build/deployment status remains authoritative if the stage
+	// write is temporarily unavailable.
+	if _, stageErr := b.store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageImageBuild, buildStart, ""); stageErr != nil {
+		b.log.Warn("builderd: open image-build stage", "deployment", dep.ID, "err", stageErr)
+	}
 
 	if b.vm == nil {
 		b.markFailed(ctx, build, state.FailureInfra, "vm driver not wired (metal only)", buildStart)

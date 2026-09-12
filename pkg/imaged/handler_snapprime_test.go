@@ -6,6 +6,7 @@ package imaged
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -252,6 +253,9 @@ func TestHandleSnapshotBoot_BuildsAndPrimesForTarball(t *testing.T) {
 	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, "/tmp/oci.tar", sched.AppLayerKey(app.Slug, dep.ID), 4096); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.AppendDeploymentStage(context.Background(), dep.ID, state.StageSourceDownload, state.StageImageBuild, dep.CreatedAt, ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.handleSnapshotBoot(context.Background(), snapshotBootPayload{
 		AppID: app.ID, DeploymentID: dep.ID,
 	}); err != nil {
@@ -274,6 +278,28 @@ func TestHandleSnapshotBoot_BuildsAndPrimesForTarball(t *testing.T) {
 	}
 	if !primeFound {
 		t.Errorf("expected NotifySnapshotPrime to schedd; got %v", notif.calls)
+	}
+	var stages state.StageState
+	if err := json.Unmarshal(got.StageState, &stages); err != nil {
+		t.Fatalf("decode stage state: %v", err)
+	}
+	if stages.Current != state.StageSnapshotPrepare {
+		t.Errorf("current stage = %q, want %q", stages.Current, state.StageSnapshotPrepare)
+	}
+	imageBuilds := 0
+	for _, stage := range stages.History {
+		if stage.StartedAt == nil || stage.EndedAt == nil || stage.DurationMs < 0 {
+			t.Errorf("stage lacks measured timing: %+v", stage)
+		}
+		if stage.Name == state.StageImageBuild {
+			imageBuilds++
+			if stage.Status != "completed" {
+				t.Errorf("image build status = %q, want completed", stage.Status)
+			}
+		}
+	}
+	if imageBuilds != 1 {
+		t.Errorf("image build history entries = %d, want exactly 1: %+v", imageBuilds, stages.History)
 	}
 }
 
