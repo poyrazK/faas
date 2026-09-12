@@ -1943,6 +1943,15 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !ok {
 		return
 	}
+	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"App has no live deployment", "deploy the app before requesting a wake"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not resolve the app's live deployment"))
+		return
+	}
 	st := state.AppActive
 	if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &st}); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not wake app"))

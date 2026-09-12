@@ -1730,7 +1730,11 @@ func TestParkApp_HappyPath(t *testing.T) {
 // TestWakeApp_HappyPath parks, then wakes — exercises the inverse path.
 func TestWakeApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "wake-me")
+	dep := mustSeedDeployment(t, e, "wake-me")
+	appID := dep.AppID
+	if err := e.store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
+		t.Fatalf("mark deployment live: %v", err)
+	}
 	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{
 		AccountID: e.acct.ID, AppID: appID, TargetURL: "https://example.com/woken",
 		SecretSealed: []byte("sealed"), EventFilter: []string{"app.woken"},
@@ -1754,6 +1758,17 @@ func TestWakeApp_HappyPath(t *testing.T) {
 	}
 	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppWoken || deliveries[0].Status != state.AppWebhookDeliveryPending {
 		t.Fatalf("wake deliveries = %+v, want one pending app.woken row", deliveries)
+	}
+}
+
+func TestWakeApp_RejectsAppWithoutLiveDeployment(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "never-deployed")
+
+	rec := e.do(t, "POST", "/v1/apps/never-deployed/wake", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	if !strings.Contains(rec.Body.String(), "deploy the app") {
+		t.Fatalf("response lacks deploy guidance: %s", rec.Body.String())
 	}
 }
 
