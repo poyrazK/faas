@@ -93,7 +93,7 @@ func printBillingUsage(w io.Writer) {
 		"                      dunning-email lie at pkg/mail/account.go:107,150)\n"+
 		"  cancel              set cancel_at_period_end on the active subscription;\n"+
 		"                      y/N confirm (--yes for non-interactive shells)\n"+
-		"  status              read the active billing Provider's catalog snapshot\n"+
+		"  status              show your provider-independent billing status\n"+
 		"                      (--watch N  re-poll every 5 s for N seconds; --json  emit JSON)\n"+
 		"\n"+
 		"Run 'gregale billing help' for this message.\n")

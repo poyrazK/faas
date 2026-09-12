@@ -225,15 +225,12 @@ func TestCmdBilling_Dispatch(t *testing.T) {
 	})
 }
 
-// billingCatalogStub is the minimal apid stub for the PR-P3 catalog
-// endpoints. It answers GET /v1/admin/billing-paddle-catalog with the
-// configure() result. Tests that need to exercise sync / reset mount
-// the same handler under their respective paths; the catalog GET
-// covers the read-side assertions.
-func billingCatalogStub(t *testing.T, configure func() api.BillingCatalogResponse) string {
+// billingStatusStub is the customer endpoint. Any accidental fallback to an
+// operator catalog route returns 404 and fails the command test.
+func billingStatusStub(t *testing.T, configure func() api.BillingStatusResponse) string {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/admin/billing-paddle-catalog", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/billing/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method", http.StatusMethodNotAllowed)
 			return
@@ -246,16 +243,12 @@ func billingCatalogStub(t *testing.T, configure func() api.BillingCatalogRespons
 	return srv.URL
 }
 
-func TestCmdBillingStatus_RendersCatalog(t *testing.T) {
-	apiURL := billingCatalogStub(t, func() api.BillingCatalogResponse {
-		return api.BillingCatalogResponse{
-			Provider: "paddle",
-			SyncedAt: "2026-08-08T12:00:00Z",
-			Entries: []api.BillingCatalogEntry{
-				{Plan: "hobby", Kind: api.BillingCatalogKindMonthly, Handle: "pri_h_monthly", SyncedAt: parseTime(t, "2026-08-08T12:00:00Z")},
-				{Plan: "hobby", Kind: api.BillingCatalogKindOverage, Handle: "pri_h_overage", SyncedAt: parseTime(t, "2026-08-08T12:00:00Z")},
-				{Plan: "pro", Kind: api.BillingCatalogKindMonthly, Handle: "pri_p_monthly", SyncedAt: parseTime(t, "2026-08-08T12:00:00Z")},
-			},
+func TestCmdBillingStatus_RendersCustomerStatus(t *testing.T) {
+	apiURL := billingStatusStub(t, func() api.BillingStatusResponse {
+		return api.BillingStatusResponse{
+			Mode: "live", Enabled: true, Provider: "polar", Plan: api.PlanPro,
+			AccountStatus: "active", CustomerConfigured: true,
+			SubscriptionConfigured: true, UsageReconciliationEnabled: true,
 		}
 	})
 	t.Setenv("FAAS_API", apiURL)
@@ -267,16 +260,19 @@ func TestCmdBillingStatus_RendersCatalog(t *testing.T) {
 		t.Fatalf("cmdBillingStatus = %d, want 0", code)
 	}
 	out := stdout.String()
-	for _, want := range []string{"Provider:", "paddle", "pri_h_monthly", "pri_p_monthly"} {
+	for _, want := range []string{"Mode:", "live", "Billing:", "enabled", "Provider:", "polar", "Plan:", "pro", "Reconciliation:", "enabled"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q; got: %q", want, out)
 		}
 	}
 }
 
-func TestCmdBillingStatus_EmptyCatalogHints(t *testing.T) {
-	apiURL := billingCatalogStub(t, func() api.BillingCatalogResponse {
-		return api.BillingCatalogResponse{Provider: "paddle", SyncedAt: ""}
+func TestCmdBillingStatus_DisabledMode(t *testing.T) {
+	apiURL := billingStatusStub(t, func() api.BillingStatusResponse {
+		return api.BillingStatusResponse{
+			Mode: "disabled", Enabled: false, Provider: "stripe", Plan: api.PlanFree,
+			AccountStatus: "active",
+		}
 	})
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
@@ -287,11 +283,10 @@ func TestCmdBillingStatus_EmptyCatalogHints(t *testing.T) {
 		t.Fatalf("cmdBillingStatus = %d, want 0", code)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "never synced") {
-		t.Errorf("status output missing 'never synced'; got: %q", out)
-	}
-	if !strings.Contains(out, "gregale billing price-catalog sync") {
-		t.Errorf("status output missing actionable hint; got: %q", out)
+	for _, want := range []string{"Mode:", "disabled", "Billing:", "disabled", "Reconciliation:", "disabled"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output missing %q; got: %q", want, out)
+		}
 	}
 }
 
