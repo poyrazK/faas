@@ -535,7 +535,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	pool, err := db.Open(ctx, cfg.DBURL)
+	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
 	if err != nil {
 		return fmt.Errorf("apid: open db: %w", err)
 	}

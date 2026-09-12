@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+output=/var/lib/node_exporter/textfile_collector/faas_postgres_connections.prom
+tmp="${output}.tmp.$$"
+trap 'test ! -e "$tmp" || unlink "$tmp"' EXIT
+
+values="$(psql -d faas -At -F ' ' -c "
+SELECT COALESCE(sum(numbackends), 0),
+       current_setting('max_connections')::bigint -
+       current_setting('superuser_reserved_connections')::bigint
+FROM pg_stat_database;
+")"
+set -- $values
+connections="${1:?missing connection count}"
+capacity="${2:?missing ordinary capacity}"
+
+cat >"$tmp" <<EOF
+# HELP faas_postgres_client_connections PostgreSQL client sessions across all databases.
+# TYPE faas_postgres_client_connections gauge
+faas_postgres_client_connections $connections
+# HELP faas_postgres_ordinary_connection_capacity Connection slots available before the superuser reserve.
+# TYPE faas_postgres_ordinary_connection_capacity gauge
+faas_postgres_ordinary_connection_capacity $capacity
+EOF
+chmod 0644 "$tmp"
+mv "$tmp" "$output"

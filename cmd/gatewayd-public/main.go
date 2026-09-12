@@ -194,7 +194,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// Postgres — required for the readiness ping (no other PG
 	// dependency: certsync leader election is gone in plain-HTTP
 	// mode, the warm-hint mirror is owned by gatewayd-internal).
-	pool, err := db.Open(ctx, "")
+	pool, err := db.OpenWithAppName(ctx, "", "faas-gatewayd-public")
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: open db: %w", err)
 	}

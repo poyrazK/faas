@@ -1009,7 +1009,7 @@ func defaultServer(addr string, handler http.Handler) *http.Server {
 // package; the `prod` prefix was the placeholder-era workaround so
 // the two `run` symbols could coexist in `package main`).
 func run(ctx context.Context, log *slog.Logger) error {
-	pool, err := db.Open(ctx, "")
+	pool, err := db.OpenWithAppName(ctx, "", "faas-gatewayd-internal")
 	if err != nil {
 		return fmt.Errorf("gatewayd: open db: %w", err)
 	}

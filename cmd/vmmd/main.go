@@ -403,10 +403,12 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath:          envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
-		detectFC:            fcvm.DetectFirecrackerVersion,
-		listen:              wire.ListenAs,
-		openDB:              db.Open,
+		configPath: envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
+		detectFC:   fcvm.DetectFirecrackerVersion,
+		listen:     wire.ListenAs,
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-vmmd")
+		},
 		openStore:           state.NewPgStore,
 		detectOverlayIP:     nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
 		loadHostKey:         secretbox.LoadHostKey,

@@ -20,6 +20,33 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: postgres_capacity
+    interval: 30s
+    rules:
+      - alert: FaasPostgresConnectionsHigh
+        expr: max(faas_postgres_client_connections) / clamp_min(max(faas_postgres_ordinary_connection_capacity), 1) > 0.75
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_capacity
+        annotations:
+          summary: "PostgreSQL ordinary connection use is above 75%"
+          description: "Daemon sessions have consumed more than 75% of PostgreSQL's ordinary-client capacity for 10m. Identify oversized pools by application_name and recover headroom before rollouts or bursts exhaust the remaining slots."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresConnectionsHigh.md"
+
+      - alert: FaasPostgresConnectionsCritical
+        expr: max(faas_postgres_client_connections) / clamp_min(max(faas_postgres_ordinary_connection_capacity), 1) > 0.90
+        for: 5m
+        labels:
+          severity: page
+          component: postgres
+          family: database_capacity
+        annotations:
+          summary: "PostgreSQL ordinary connection use is above 90%"
+          description: "Daemon sessions have consumed more than 90% of PostgreSQL's ordinary-client capacity for 5m. New API, scheduler, restore, backup, and rollout work can fail when the remaining ordinary slots are exhausted."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresConnectionsHigh.md"
+
   - name: public_status
     rules:
       - alert: FaasPublicStatusEvaluationStalled
