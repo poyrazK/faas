@@ -154,26 +154,30 @@ func writeMemoryMaxTo(scope string, planMB int) error {
 	return writeMemoryMaxAt(scope, api.BillableRAMMB(planMB))
 }
 
-// widenSnapshotMemoryCgroup temporarily raises the app VM's host-side
-// memory.max while Firecracker materialises a full snapshot. A normal app VM
-// is fenced at ram_mb + PerVMOverheadMB, but /snapshot/create briefly needs
-// additional host memory for its snapshot bookkeeping and copy-on-write
-// accounting. Builders never use the app snapshot path and therefore do not
-// receive this exception.
+// widenSnapshotMemoryCgroup temporarily raises the VM's host-side memory.max
+// while Firecracker materialises a full snapshot. A normal app VM needs
+// bookkeeping and copy-on-write headroom. A builder needs room for a second
+// ramMB charge because Firecracker writes its full memory file into the jail
+// tmpfs while the guest memory remains resident.
 //
 // The returned restore function is deliberately explicit: callers must keep
 // the widened limit for the complete snapshot/export operation, then restore
 // the ordinary per-VM fence before the VM resumes or is destroyed.
 func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
-	if l.IsBuilder || l.MemoryMaxMiB < 1 {
-		// Builders are exported and destroyed rather than parked, while zero
-		// memory is the legacy lease shape used by older unit-only callers.
+	if l.MemoryMaxMiB < 1 {
+		// Zero memory is the legacy lease shape used by older unit-only callers.
 		return func() error { return nil }, nil
 	}
 
 	scope := filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance))
 	original := api.BillableRAMMB(l.MemoryMaxMiB)
-	if err := writeMemoryMaxAt(scope, api.SnapshotMemoryMaxMB(l.MemoryMaxMiB)); err != nil {
+	snapshotLimit := api.SnapshotMemoryMaxMB(l.MemoryMaxMiB)
+	if l.IsBuilder {
+		scope = filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(l.Instance))
+		original = api.BuilderMemoryMaxMB(l.MemoryMaxMiB)
+		snapshotLimit = api.BuilderSnapshotMemoryMaxMB(l.MemoryMaxMiB)
+	}
+	if err := writeMemoryMaxAt(scope, snapshotLimit); err != nil {
 		return nil, fmt.Errorf("fcvm: widen snapshot memory.max for %s: %w", l.Instance, err)
 	}
 

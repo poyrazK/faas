@@ -1,5 +1,7 @@
 package daemonunitspec
 
+// spec: §13
+
 import (
 	"strings"
 	"testing"
@@ -12,8 +14,8 @@ func TestUnitSlice_Renders(t *testing.T) {
 	if u.Slice != "faas-cp.slice" {
 		t.Errorf("Slice = %q, want %q", u.Slice, "faas-cp.slice")
 	}
-	if u.MemoryMax != "3G" {
-		t.Errorf("MemoryMax = %q, want %q", u.MemoryMax, "3G")
+	if u.MemoryMax != "6G" {
+		t.Errorf("MemoryMax = %q, want %q", u.MemoryMax, "6G")
 	}
 	if u.WantedBy != "multi-user.target" {
 		t.Errorf("WantedBy = %q, want %q", u.WantedBy, "multi-user.target")
@@ -24,14 +26,14 @@ func TestUnitSlice_Renders(t *testing.T) {
 
 	// Slice units MUST render through RenderSlice() — NOT Render().
 	// Render() emits [Service] which silently drops MemoryMax.
-	// The 3 GB ceiling is the load-bearing directive for tenant
+	// The 6 GB ceiling is the load-bearing directive for control-plane
 	// admission (CLAUDE.md §11).
 	body := string(u.RenderSlice())
 	for _, want := range []string{
 		"[Unit]",
 		"Description=",
 		"[Slice]",
-		"MemoryMax=3G",
+		"MemoryMax=6G",
 		"[Install]",
 		"WantedBy=multi-user.target",
 	} {
@@ -55,11 +57,8 @@ func TestUnitSlice_Renders(t *testing.T) {
 	_ = daemonunit.Decode // keep the import; may be replaced by a slice-aware decoder later
 }
 
-func TestFaasCPSliceMemoryMax_DefaultIsThreeGigabytes(t *testing.T) {
-	// Pin the constant. Bumping the slice ceiling is a deliberate
-	// operator action; the test prevents an accidental edit from
-	// sliding through CI.
-	if FaasCPSliceMemoryMax != "3G" {
-		t.Errorf("FaasCPSliceMemoryMax = %q, want %q", FaasCPSliceMemoryMax, "3G")
+func TestFaasCPSliceMemoryMaxMatchesControlPlaneReserve(t *testing.T) {
+	if FaasCPSliceMemoryMax != "6G" {
+		t.Errorf("FaasCPSliceMemoryMax = %q, want %q", FaasCPSliceMemoryMax, "6G")
 	}
 }

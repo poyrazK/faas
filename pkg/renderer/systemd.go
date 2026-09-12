@@ -108,7 +108,7 @@ func injectNodeNameEnvironment(body []byte, hostName string) ([]byte, error) {
 //
 // The renderer calls RenderSlice() (NOT Render()) because slice units
 // must use the [Slice] section for MemoryMax — Render() emits
-// [Service] which silently drops the 3 GB ceiling. Per daemonunit's
+// [Service] which silently drops the control-plane memory ceiling. Per daemonunit's
 // godoc on RenderSlice(), this is the load-bearing invariant for
 // tenant admission.
 func renderSliceUnit() []byte {

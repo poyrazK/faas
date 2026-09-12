@@ -167,7 +167,7 @@ func UnitByName(name string) (daemonunit.Unit, error) {
 	return daemonunit.Unit{}, fmt.Errorf("daemonunitspec: unknown daemon %q (known: %v)", name, ActivationOrder())
 }
 
-// FaasCPSlice is the [Slice] MemoryMax=3G ceiling for the entire
+// FaasCPSlice is the [Slice] control-plane memory ceiling for the entire
 // control-plane slice. The 3 GB is hardcoded here (not derived from
 // the financial model §13 line 431 — the model says 6 GB but the
 // shipped slice is 3 GB; tracked as a known under-utilisation that

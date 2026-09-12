@@ -3134,7 +3134,10 @@ const (
 	// 8 MiB per-VM billing overhead is intentionally not reused here: a builder
 	// fills a 2 GiB guest and BuildKit snapshots keep several hundred MiB
 	// charged to the Firecracker cgroup while a layer is being committed.
-	BuildVMOverheadMB      = 768
+	BuildVMOverheadMB = 768
+	// BuilderSliceMaxMB is the faas-cp-build.slice ceiling. It leaves enough
+	// room for one guaranteed builder's full snapshot below the 6 GiB parent.
+	BuilderSliceMaxMB      = 5_120
 	BuildVMVCPU            = 2
 	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
 	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
@@ -6346,6 +6349,14 @@ func SnapshotMemoryMaxMB(ramMB int) int {
 // need a larger host-side RSS allowance than ordinary app VMs.
 func BuilderMemoryMaxMB(ramMB int) int {
 	return ramMB + BuildVMOverheadMB
+}
+
+// BuilderSnapshotMemoryMaxMB returns the temporary per-instance memory.max
+// used while Firecracker writes a full builder snapshot into the jail tmpfs.
+// The builder already has ramMB resident in the VMM; the full memory file can
+// charge up to another ramMB to the same cgroup before it is published.
+func BuilderSnapshotMemoryMaxMB(ramMB int) int {
+	return BuilderMemoryMaxMB(ramMB) + ramMB
 }
 
 // BillableRAMMBWithSidecars is the sidecar-shape variant of

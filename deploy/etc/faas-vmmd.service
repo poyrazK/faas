@@ -17,7 +17,7 @@ Slice=faas-cp.slice
 # residency. MemoryHigh is deliberately absent: that shmem is
 # unreclaimable without swap, so MemoryHigh only spun the reclaim path
 # and made every vmmd child thrash on its own text pages.
-MemoryMax=3G
+MemoryMax=6G
 
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 

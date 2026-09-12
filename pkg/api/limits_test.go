@@ -1138,6 +1138,18 @@ func TestBillableRAMMBWithSidecars(t *testing.T) {
 	}
 }
 
+func TestBuilderSnapshotMemoryBudgetFitsControlPlaneSlices(t *testing.T) {
+	if got, want := BuilderSnapshotMemoryMaxMB(BuildVMRAMMB), 4_864; got != want {
+		t.Fatalf("BuilderSnapshotMemoryMaxMB(%d) = %d, want %d", BuildVMRAMMB, got, want)
+	}
+	if got := BuilderSnapshotMemoryMaxMB(BuildVMRAMMB); got > BuilderSliceMaxMB {
+		t.Fatalf("builder snapshot fence %d MiB exceeds builder slice %d MiB", got, BuilderSliceMaxMB)
+	}
+	if BuilderSliceMaxMB >= ControlPlaneReserveMB {
+		t.Fatalf("builder slice %d MiB must leave daemon headroom below control-plane reserve %d MiB", BuilderSliceMaxMB, ControlPlaneReserveMB)
+	}
+}
+
 // TestPlanConcurrencyPerVMBound pins the platform-advertised per-VM
 // concurrency bound (issue #559). Free 4, Hobby 5, Pro 25, Scale 80.
 // Distinct from MaxConcurrency (the per-app instance cap, free=1 /

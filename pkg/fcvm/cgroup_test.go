@@ -210,14 +210,38 @@ func TestWidenSnapshotMemoryCgroupRestoresOrdinaryFence(t *testing.T) {
 	}
 }
 
-func TestWidenSnapshotMemoryCgroupSkipsBuilders(t *testing.T) {
-	withFakeCgroupRoot(t)
-	restore, err := widenSnapshotMemoryCgroup(Lease{Instance: "builder", IsBuilder: true, MemoryMaxMiB: api.BuildVMRAMMB})
+func TestWidenSnapshotMemoryCgroupRestoresBuilderFence(t *testing.T) {
+	dir := withFakeCgroupRoot(t)
+	inst := "builder"
+	scope := filepath.Join(dir, BuilderCgroupParent, PerInstanceScope(inst))
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	l := Lease{Instance: inst, IsBuilder: true, MemoryMaxMiB: api.BuildVMRAMMB}
+	if err := writeMemoryMaxAt(scope, api.BuilderMemoryMaxMB(l.MemoryMaxMiB)); err != nil {
+		t.Fatalf("write ordinary builder fence: %v", err)
+	}
+
+	restore, err := widenSnapshotMemoryCgroup(l)
 	if err != nil {
 		t.Fatalf("builder snapshot headroom: %v", err)
 	}
+	body, err := os.ReadFile(filepath.Join(scope, "memory.max"))
+	if err != nil {
+		t.Fatalf("read widened builder fence: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(body)), itoa(api.BuilderSnapshotMemoryMaxMB(l.MemoryMaxMiB)<<20); got != want {
+		t.Errorf("widened builder memory.max = %q, want %s", got, want)
+	}
 	if err := restore(); err != nil {
 		t.Fatalf("builder snapshot restore: %v", err)
+	}
+	body, err = os.ReadFile(filepath.Join(scope, "memory.max"))
+	if err != nil {
+		t.Fatalf("read restored builder fence: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(body)), itoa(api.BuilderMemoryMaxMB(l.MemoryMaxMiB)<<20); got != want {
+		t.Errorf("restored builder memory.max = %q, want %s", got, want)
 	}
 }
 

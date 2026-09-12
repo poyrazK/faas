@@ -7,8 +7,7 @@
 # Hard-fence values (spec §1):
 #   faas-tenant.slice : MemoryMax=57344M  (controller for tenant VMs)
 #   faas-cp.slice     : MemoryMax=6144M   (postgres + daemons; spec §13 budget row)
-#   faas-cp-build.slice : MemoryMax=4096M (builder budget under faas-cp.slice)
-#                                                (1 guaranteed slot + 1 opportunistic)
+#   faas-cp-build.slice : MemoryMax=5120M (one 2 GiB builder plus full-snapshot headroom)
 #
 # Per-plan sub-slices (issue #301, ADR-044):
 #   faas-tenant.slice/faas-tenant-free.slice  : CPUWeight=2
@@ -112,7 +111,9 @@
       # vmmd's delegated service subtree can therefore fence each build.
 
       [Slice]
-      MemoryMax=4096M
+      # A full 2 GiB builder snapshot briefly charges both the resident guest
+      # RAM and its memory file to this cgroup: 2*2048 + 768 = 4864 MiB.
+      MemoryMax=5120M
       CPUQuota=200%
   register: build_slice
 

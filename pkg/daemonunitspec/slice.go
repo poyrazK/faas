@@ -4,11 +4,9 @@
 // The pipeline places this file at /etc/systemd/system/faas-cp.slice
 // after the eight per-daemon .service units.
 //
-// The 3 GB ceiling is hardcoded here (matching FaasCPSlice's package
-// comment) — the financial model §13 line 431 says 6 GB but the shipped
-// slice is 3 GB. Tracked as a known under-utilisation that can be
-// widened in a future PR when the daemon set + memory profile
-// stabilises post-DEPLOY-1.
+// The 6 GB ceiling mirrors api.ControlPlaneReserveMB and the financial model
+// §13. It includes the nested builder slice, so the release renderer and the
+// bootstrap role must keep the same value.
 
 package daemonunitspec
 
@@ -17,8 +15,8 @@ import (
 )
 
 // FaasCPSliceMemoryMax is the [Slice] MemoryMax ceiling for the control-
-// plane slice. Hardcoded to 3G for now (see slice.go header).
-const FaasCPSliceMemoryMax = "3G"
+// plane slice. It mirrors api.ControlPlaneReserveMB.
+const FaasCPSliceMemoryMax = "6G"
 
 // UnitSlice returns the daemonunit.Unit for the faas-cp.slice.
 //
