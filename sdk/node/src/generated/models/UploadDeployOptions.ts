@@ -24,5 +24,9 @@ export type UploadDeployOptions = {
   deployed_by?: string;
   pr_number?: number;
   workflows?: Array<WorkflowSpec>;
+  /**
+   * Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback, while omitted or null keeps the default false.
+   */
+  rollback_on_5xx?: boolean | null;
 };
 

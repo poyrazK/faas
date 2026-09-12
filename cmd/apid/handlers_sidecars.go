@@ -329,6 +329,16 @@ func validateDeploymentTrafficOptions(req *api.CreateDeploymentRequest, plan api
 	return nil
 }
 
+// validateDeploymentRollbackOptions enforces the customer-facing plan gate
+// for the first-wake 5xx auto-rollback opt-in. Omitted and explicit false
+// values are safe defaults on every plan; only true requires Pro or Scale.
+func validateDeploymentRollbackOptions(req *api.CreateDeploymentRequest, plan api.Plan) *api.Problem {
+	if req.RollbackOn5xx != nil && *req.RollbackOn5xx && !plan.RollbackOn5xxAllowed() {
+		return api.ErrPlanRollbackOn5xxNotAllowed(plan)
+	}
+	return nil
+}
+
 func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, overrides *api.CreateDeploymentOverrides, limits api.Limits, planOpt ...api.Plan) (state.Deployment, *api.Problem) {
 	plan := api.PlanFree
 	if len(planOpt) > 0 {
@@ -336,6 +346,9 @@ func buildDeploymentForInsert(app state.App, req *api.CreateDeploymentRequest, o
 	}
 	dep := state.Deployment{
 		AppID: app.ID, ImageDigest: req.Image, Kind: state.DeploymentKindImage, Status: state.DeployPending,
+	}
+	if req.RollbackOn5xx != nil {
+		dep.RollbackOn5xx = *req.RollbackOn5xx
 	}
 	if len(req.Workflows) > 0 {
 		dep.Workflows, _ = json.Marshal(req.Workflows)

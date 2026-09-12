@@ -2542,12 +2542,14 @@ func TestDeploymentResponse_RoundTrip(t *testing.T) {
 		ID: "d1", AppID: "a1", ImageDigest: "sha256:x", Kind: state.DeploymentKindImage,
 		Status: state.DeployLive, Error: "boom", ErrorCode: "image_not_found",
 		BuildID: "b1", SourceSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		CreatedAt:     time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		RollbackOn5xx: true, First5xxCount: 2, LastAutoRollbackReason: "first_5xx_threshold",
 	}
 	resp := srv.deploymentResponse(d, state.App{})
 	if resp.ID != "d1" || resp.Status != "live" || resp.Error != "boom" ||
 		resp.ErrorCode != "image_not_found" || resp.CreatedAt != "2026-01-02T03:04:05Z" ||
-		resp.BuildID != "b1" || resp.SourceSHA256 != d.SourceSHA256 {
+		resp.BuildID != "b1" || resp.SourceSHA256 != d.SourceSHA256 || !resp.RollbackOn5xx ||
+		resp.First5xxCount != 2 || resp.LastAutoRollbackReason != "first_5xx_threshold" {
 		t.Errorf("got %+v", resp)
 	}
 }

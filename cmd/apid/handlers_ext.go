@@ -4423,10 +4423,16 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		// render the annotation without an audit round-trip.
 		// omitempty on each field keeps pre-feature rows
 		// byte-identical to the pre-PR wire shape.
-		Reason:     d.Reason,
-		Tag:        d.Tag,
-		DeployedBy: d.DeployedBy,
-		PRNumber:   d.PRNumber,
+		Reason:                 d.Reason,
+		Tag:                    d.Tag,
+		DeployedBy:             d.DeployedBy,
+		PRNumber:               d.PRNumber,
+		RollbackOn5xx:          d.RollbackOn5xx,
+		FirstWakeAt:            d.FirstWakeAt,
+		First5xxWindowEndsAt:   d.First5xxWindowEndsAt,
+		First5xxCount:          d.First5xxCount,
+		LastAutoRollbackAt:     d.LastAutoRollbackAt,
+		LastAutoRollbackReason: d.LastAutoRollbackReason,
 		// Issue #976 / ADR-122 / SAFE-RELEASES-A: canary ladder echo.
 		CanaryPreset:        d.CanaryPreset,
 		CanaryStep:          d.CanaryStep,

@@ -55,6 +55,7 @@ type sidecarPayload struct {
 	PRNumber       int                   `json:"pr_number,omitempty"`
 	TrafficPercent *int                  `json:"traffic_percent,omitempty"`
 	Canary         *api.CanaryPresetSpec `json:"canary,omitempty"`
+	RollbackOn5xx  *bool                 `json:"rollback_on_5xx,omitempty"`
 }
 
 // fieldNameTarball is the multipart field name on both
@@ -138,8 +139,16 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary}
+	rolloutReq := &api.CreateDeploymentRequest{
+		TrafficPercent: sidecar.TrafficPercent,
+		Canary:         sidecar.Canary,
+		RollbackOn5xx:  sidecar.RollbackOn5xx,
+	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -223,6 +232,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		PRNumber:               ann.PRNumber,
 		TrafficPercent:         rollout.TrafficPercent,
 		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
+		RollbackOn5xx:          rollout.RollbackOn5xx,
 		CanaryPreset:           rollout.CanaryPreset,
 		CanaryStep:             rollout.CanaryStep,
 		CanaryTotalSteps:       rollout.CanaryTotalSteps,

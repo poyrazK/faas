@@ -90,6 +90,35 @@ func TestUploadSession_PlanCap(t *testing.T) {
 	}
 }
 
+func TestUploadSession_RollbackOn5xxPlanGate(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_SPOOL_ROOT", dir)
+	e := setup(t, api.PlanFree)
+	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "rollback-gate"}, nil)
+	rollback := true
+	rec := e.do(t, "POST", "/v1/uploads", startUploadRequest{
+		AppSlug: "rollback-gate", TotalSize: 1024,
+		DeployOptions: &api.UploadDeployOptions{RollbackOn5xx: &rollback},
+	}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("want 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var prob api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if prob.Code != api.CodePlanRollbackOn5xxNotAllowed {
+		t.Fatalf("want code %q, got %q", api.CodePlanRollbackOn5xxNotAllowed, prob.Code)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read spool root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("gated upload allocated spool entries: %+v", entries)
+	}
+}
+
 func TestUploadSession_UnknownAppDoesNotAllocateSpool(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("FAAS_SPOOL_ROOT", dir)
@@ -173,14 +202,16 @@ func TestUploadSession_OffsetCAS(t *testing.T) {
 
 func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
+	e := setup(t, api.PlanPro)
 	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "metadata"}, nil)
+	rollback := true
 	body, err := json.Marshal(startUploadRequest{
 		AppSlug: "metadata", TotalSize: 4096,
 		DeployOptions: &api.UploadDeployOptions{
 			SourceRoot: "apps/api", Dockerfile: true, Reason: "release",
-			SourceURL: "github://acme/metadata@0123456789abcdef0123456789abcdef01234567",
-			CommitSHA: "0123456789abcdef0123456789abcdef01234567",
+			SourceURL:     "github://acme/metadata@0123456789abcdef0123456789abcdef01234567",
+			CommitSHA:     "0123456789abcdef0123456789abcdef01234567",
+			RollbackOn5xx: &rollback,
 		},
 	})
 	if err != nil {
@@ -205,6 +236,9 @@ func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 	if !bytes.Contains(row.DeployOptions, []byte(`"source_url":"github://acme/metadata@0123456789abcdef0123456789abcdef01234567"`)) ||
 		!bytes.Contains(row.DeployOptions, []byte(`"commit_sha":"0123456789abcdef0123456789abcdef01234567"`)) {
 		t.Fatalf("persisted provenance options = %s", row.DeployOptions)
+	}
+	if !bytes.Contains(row.DeployOptions, []byte(`"rollback_on_5xx":true`)) {
+		t.Fatalf("persisted rollback option = %s", row.DeployOptions)
 	}
 	req = httptest.NewRequest("GET", "/v1/uploads/"+started.UploadID, nil)
 	req.Header.Set("Authorization", "Bearer "+e.key)

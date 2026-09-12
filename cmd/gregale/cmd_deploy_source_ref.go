@@ -102,6 +102,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx context.Context, slug,
 		PRNumber:       ann.PRNumber,
 		TrafficPercent: ann.TrafficPercent,
 		Canary:         ann.Canary,
+		RollbackOn5xx:  ann.RollbackOn5xx,
 	}
 	deployCtx := ctx
 	if idempotencyKey != "" {

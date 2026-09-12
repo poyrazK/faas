@@ -88,6 +88,52 @@ func TestBuildDeploymentForInsert_PreservesExplicitZeroTraffic(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentForInsert_PreservesRollbackOn5xx(t *testing.T) {
+	rollback := true
+	app := state.App{ID: "app", Manifest: state.AppManifest{}}
+	dep, problem := buildDeploymentForInsert(app, &api.CreateDeploymentRequest{
+		Image: "sha256:test", RollbackOn5xx: &rollback,
+	}, nil, testSidecarLimits(), api.PlanPro)
+	if problem != nil {
+		t.Fatalf("buildDeploymentForInsert: %v", problem)
+	}
+	if !dep.RollbackOn5xx {
+		t.Fatal("deployment should preserve an explicit rollback_on_5xx=true opt-in")
+	}
+}
+
+func TestValidateDeploymentRollbackOptionsPlanGate(t *testing.T) {
+	trueValue := true
+	falseValue := false
+	cases := []struct {
+		name  string
+		plan  api.Plan
+		value *bool
+		code  string
+	}{
+		{name: "free true is gated", plan: api.PlanFree, value: &trueValue, code: api.CodePlanRollbackOn5xxNotAllowed},
+		{name: "hobby true is gated", plan: api.PlanHobby, value: &trueValue, code: api.CodePlanRollbackOn5xxNotAllowed},
+		{name: "pro true is allowed", plan: api.PlanPro, value: &trueValue},
+		{name: "scale true is allowed", plan: api.PlanScale, value: &trueValue},
+		{name: "free false is allowed", plan: api.PlanFree, value: &falseValue},
+		{name: "omitted is allowed", plan: api.PlanFree},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			problem := validateDeploymentRollbackOptions(&api.CreateDeploymentRequest{RollbackOn5xx: tc.value}, tc.plan)
+			if tc.code == "" {
+				if problem != nil {
+					t.Fatalf("validateDeploymentRollbackOptions: got %+v, want nil", problem)
+				}
+				return
+			}
+			if problem == nil || problem.Code != tc.code || problem.Status != 403 {
+				t.Fatalf("validateDeploymentRollbackOptions: got %+v, want 403/%s", problem, tc.code)
+			}
+		})
+	}
+}
+
 // TestValidateAndPlanSidecars_ThreeSidecarsRejected pins
 // AC #3 of issue #463 / ADR-069 / PR-B at the apid
 // handler level: a CreateDeploymentRequest carrying a

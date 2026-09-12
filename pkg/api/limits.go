@@ -1237,6 +1237,13 @@ type Limits struct {
 	// opt-in to a non-100 traffic_percent (which is denied).
 	TrafficSplit bool
 
+	// RollbackOn5xxAllowed (issue #961 / ADR-118) gates the
+	// per-deployment first-wake 5xx auto-rollback opt-in. Pro and
+	// Scale unlock it; Free and Hobby retain the safe default-off
+	// behavior. The deployment column remains available to internal
+	// workers and existing rows on every plan.
+	RollbackOn5xxAllowed bool
+
 	// MirrorRuleAllowed (issue #72 / ADR-125) is the plan gate
 	// for the per-deployment traffic-mirroring opt-in. Pro/Scale
 	// = true; Free/Hobby = false. Same Hobby-locked rationale
@@ -1917,7 +1924,8 @@ var planLimits = map[Plan]Limits{
 		// affected; the gate only fires when a Free customer
 		// passes a non-100 traffic_percent on create (403
 		// plan_traffic_split_not_allowed).
-		TrafficSplit: false,
+		TrafficSplit:         false,
+		RollbackOn5xxAllowed: false,
 		// Mirror (issue #72 / ADR-125): Free stays locked — see
 		// the Limits.MirrorRuleAllowed comment for the cost
 		// rationale. MirrorTargetsPerApp = 0 keeps the field
@@ -2287,7 +2295,8 @@ var planLimits = map[Plan]Limits{
 		// point doesn't cover it. Free/Hobby see 403
 		// plan_traffic_split_not_allowed when they try to
 		// pass a non-100 traffic_percent on create or PATCH.
-		TrafficSplit: false,
+		TrafficSplit:         false,
+		RollbackOn5xxAllowed: false,
 		// Mirror (issue #72 / ADR-125): Free stays locked — see
 		// the Limits.MirrorRuleAllowed comment for the cost
 		// rationale. MirrorTargetsPerApp = 0 keeps the field
@@ -2638,7 +2647,8 @@ var planLimits = map[Plan]Limits{
 		// (00160) and CreateDeployment handler stamp
 		// traffic_percent=100 by default, so customers
 		// who never opt-in see no behavioural change.
-		TrafficSplit: true,
+		TrafficSplit:         true,
+		RollbackOn5xxAllowed: true,
 		// Mirror (issue #72 / ADR-125): Pro/Scale unlock the
 		// per-deployment mirroring surface. MirrorTargetsPerApp
 		// is 1 on Pro (single canary target — the canonical use
@@ -3007,7 +3017,8 @@ var planLimits = map[Plan]Limits{
 		// revenue-protecting feature for the Scale
 		// tier (5/25/100% staged rollout to defend
 		// against bad deploys on a checkout API).
-		TrafficSplit: true,
+		TrafficSplit:         true,
+		RollbackOn5xxAllowed: true,
 		// Mirror (issue #72 / ADR-125): Pro/Scale unlock the
 		// per-deployment mirroring surface. MirrorTargetsPerApp
 		// is 1 on Pro (single canary target — the canonical use
@@ -5375,6 +5386,17 @@ func (p Plan) TrafficSplitAllowed() bool {
 		return false // fail-closed
 	}
 	return l.TrafficSplit
+}
+
+// RollbackOn5xxAllowed reports whether the plan may opt a deployment into
+// first-wake 5xx auto-rollback. Pro and Scale unlock the feature; lower tiers
+// keep the default-off behavior. Unknown plans fail closed.
+func (p Plan) RollbackOn5xxAllowed() bool {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return false
+	}
+	return l.RollbackOn5xxAllowed
 }
 
 // MirrorRuleAllowed reports whether the plan permits a customer to

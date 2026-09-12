@@ -934,6 +934,11 @@ const (
 	// only fires when a customer explicitly opts in to a
 	// non-100 traffic_percent on create or PATCH-traffic.
 	CodePlanTrafficSplitNotAllowed = "plan_traffic_split_not_allowed"
+	// CodePlanRollbackOn5xxNotAllowed (issue #961 / ADR-118) is a
+	// 403 when a Free/Hobby customer opts into deployment-level
+	// first-wake 5xx auto-rollback. The deployment column remains
+	// readable on every plan; only the customer write-side opt-in is gated.
+	CodePlanRollbackOn5xxNotAllowed = "plan_rollback_on_5xx_not_allowed"
 	// CodeInvalidTrafficPercent (issue #556) is a 422 for shape
 	// violations: traffic_percent is outside [0, 100] (or
 	// negative). Distinct from CodeValidation so the CLI can
@@ -1833,6 +1838,8 @@ func StatusForCode(code string) int {
 	case CodePlanTrafficSplitNotAllowed:
 		// 403 — issue #556. Free/Hobby trying to set a
 		// non-default traffic_percent; mirrors CodePlanMinInstancesNotAllowed.
+		return http.StatusForbidden
+	case CodePlanRollbackOn5xxNotAllowed:
 		return http.StatusForbidden
 	case CodeSecretInvalidKey, CodeSecretNotFound:
 		return http.StatusBadRequest
@@ -4432,6 +4439,17 @@ func ErrPlanTrafficSplitNotAllowed(p Plan) *Problem {
 		"Plan doesn't allow traffic splitting",
 		fmt.Sprintf("the %s plan routes 100%% to the most recent deployment; upgrade to Pro or Scale to keep N canary deployments warm.", p)).
 		WithDocs("https://docs.gregale.dev/plans#traffic-split")
+}
+
+// ErrPlanRollbackOn5xxNotAllowed is returned when a Free/Hobby customer
+// requests the per-deployment first-wake 5xx auto-rollback policy. The
+// feature is Pro/Scale-only because it retains a prior revision for a
+// self-healing production rollback window.
+func ErrPlanRollbackOn5xxNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanRollbackOn5xxNotAllowed,
+		"Plan doesn't allow 5xx auto-rollback",
+		fmt.Sprintf("the %s plan cannot opt deployments into automatic rollback after repeated 5xx responses; upgrade to Pro or Scale.", p)).
+		WithDocs("https://docs.gregale.dev/plans#rollback-on-5xx")
 }
 
 // ErrInvalidTrafficPercent (issue #556) is returned when the
