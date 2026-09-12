@@ -46,6 +46,10 @@ func (s *server) obsIncidents(w http.ResponseWriter, r *http.Request, caller sta
 		api.WriteProblem(w, api.ErrCapacity("could not load operator incidents"))
 		return
 	}
+	if err := s.attachObsIncidentTriage(r.Context(), items); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load incident triage state"))
+		return
+	}
 	page, nextCursor, prob := paginateObsIncidents(items, q.cursor, q.limit)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -62,6 +66,44 @@ func (s *server) obsIncidents(w http.ResponseWriter, r *http.Request, caller sta
 		Severity:     q.severity,
 		NextCursor:   nextCursor,
 	})
+}
+
+func (s *server) attachObsIncidentTriage(ctx context.Context, items []api.ObsIncident) error {
+	keys := make([]string, 0, len(items))
+	for _, item := range items {
+		keys = append(keys, item.DedupeKey)
+	}
+	rows, err := s.store.ListOperatorIncidentTriage(ctx, keys)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		row := rows[items[i].DedupeKey]
+		status := row.Status
+		if status == "" {
+			status = state.OperatorIncidentTriageOpen
+		}
+		// A source signal observed after a resolved annotation is a new
+		// occurrence for operator purposes. Keep the note/owner for context,
+		// but present it as open without mutating source or triage state.
+		if status == state.OperatorIncidentTriageResolved && !row.UpdatedAt.IsZero() && items[i].ObservedAt.After(row.UpdatedAt) {
+			status = state.OperatorIncidentTriageOpen
+		}
+		var updatedAt *time.Time
+		if !row.UpdatedAt.IsZero() {
+			value := row.UpdatedAt
+			updatedAt = &value
+		}
+		items[i].Triage = api.ObsIncidentTriage{
+			DedupeKey: items[i].DedupeKey,
+			Status:    status,
+			Owner:     row.Owner,
+			Note:      row.Note,
+			UpdatedAt: updatedAt,
+			UpdatedBy: row.UpdatedBy,
+		}
+	}
+	return nil
 }
 
 type obsIncidentQuery struct {

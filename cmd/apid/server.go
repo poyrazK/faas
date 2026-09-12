@@ -2112,6 +2112,8 @@ func (s *server) handler() http.Handler {
 	// it keeps operator triage out of the deployment request path.
 	mux.HandleFunc("GET /v1/admin/obs/incidents",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidents))))
+	mux.Handle("PUT /v1/admin/obs/incidents/{dedupe_key}/triage",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.putObsIncidentTriage))))
 
 	// P2a + P2b + P2d — operator recovery primitives. All three
 	// routes mount under requireScope(admin-only) so the admin

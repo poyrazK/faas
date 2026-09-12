@@ -65,3 +65,43 @@ func TestCmdObsIncidents_JSONRoundTripAndFilters(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", response)
 	}
 }
+
+func TestCmdObsIncidents_AckUsesOperatorSession(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/admin/obs/incidents/deployment:d1/triage" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("X-Trace-Id"); got != testObsIncidentTraceID {
+			t.Errorf("trace id = %q", got)
+		}
+		if r.Header.Get("Idempotency-Key") == "" {
+			t.Error("missing idempotency key")
+		}
+		if cookie, err := r.Cookie("faas_sid"); err != nil || cookie.Value != "session-cookie" {
+			t.Errorf("session cookie = %v, err=%v", cookie, err)
+		}
+		var request api.ObsIncidentTriageRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Status != "acknowledged" || request.Reason != "triage_started" {
+			t.Errorf("request body = %+v", request)
+		}
+		_ = json.NewEncoder(w).Encode(api.ObsIncidentTriageResponse{Triage: api.ObsIncidentTriage{DedupeKey: "deployment:d1", Status: "acknowledged"}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_APID_URL", srv.URL)
+	t.Setenv("FAAS_OPERATOR_SESSION", "session-cookie")
+	oldOut := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	defer func() { osStdout = oldOut }()
+	if got := cmdObsIncidents([]string{"ack", "--dedupe-key", "deployment:d1", "--reason", "triage_started", "--trace-id", testObsIncidentTraceID, "--yes"}); got != 0 {
+		t.Fatalf("exit = %d, output=%s", got, out.String())
+	}
+	if !strings.Contains(out.String(), "status=acknowledged") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+const testObsIncidentTraceID = "0123456789abcdef0123456789abcdef"

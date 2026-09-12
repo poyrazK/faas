@@ -882,20 +882,47 @@ var ObsHealthKindVocabulary = []string{
 // identifiers are safe operational handles, while customer inputs, image
 // references, environment values, and raw log paths stay out of the shape.
 type ObsIncident struct {
-	ID           string    `json:"id"`
-	Type         string    `json:"type"`
-	Severity     string    `json:"severity"`
-	Status       string    `json:"status"`
-	Summary      string    `json:"summary"`
-	AccountID    string    `json:"account_id,omitempty"`
-	AppID        string    `json:"app_id,omitempty"`
-	ResourceID   string    `json:"resource_id"`
-	ResourceName string    `json:"resource_name,omitempty"`
-	ObservedAt   time.Time `json:"observed_at"`
-	DedupeKey    string    `json:"dedupe_key"`
-	ActionPath   string    `json:"action_path,omitempty"`
-	AuditPath    string    `json:"audit_path,omitempty"`
-	RunbookURL   string    `json:"runbook_url,omitempty"`
+	ID           string            `json:"id"`
+	Type         string            `json:"type"`
+	Severity     string            `json:"severity"`
+	Status       string            `json:"status"`
+	Summary      string            `json:"summary"`
+	AccountID    string            `json:"account_id,omitempty"`
+	AppID        string            `json:"app_id,omitempty"`
+	ResourceID   string            `json:"resource_id"`
+	ResourceName string            `json:"resource_name,omitempty"`
+	ObservedAt   time.Time         `json:"observed_at"`
+	DedupeKey    string            `json:"dedupe_key"`
+	ActionPath   string            `json:"action_path,omitempty"`
+	AuditPath    string            `json:"audit_path,omitempty"`
+	RunbookURL   string            `json:"runbook_url,omitempty"`
+	Triage       ObsIncidentTriage `json:"triage"`
+}
+
+// ObsIncidentTriage is operator-authored workflow metadata for one incident
+// dedupe key. It is deliberately separate from the source incident status:
+// deployments, jobs, nodes, and alerts remain owned by their controllers.
+type ObsIncidentTriage struct {
+	DedupeKey string     `json:"dedupe_key"`
+	Status    string     `json:"status"`
+	Owner     string     `json:"owner,omitempty"`
+	Note      string     `json:"note,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy string     `json:"updated_by,omitempty"`
+}
+
+// ObsIncidentTriageRequest is the body for PUT
+// /v1/admin/obs/incidents/{dedupe_key}/triage. Reason is a short audit
+// reason slug; note is operator-authored context and is bounded by the API.
+type ObsIncidentTriageRequest struct {
+	Status string `json:"status"`
+	Owner  string `json:"owner,omitempty"`
+	Note   string `json:"note,omitempty"`
+	Reason string `json:"reason"`
+}
+
+type ObsIncidentTriageResponse struct {
+	Triage ObsIncidentTriage `json:"triage"`
 }
 
 // ObsIncidentListResponse is the body of GET /v1/admin/obs/incidents. The

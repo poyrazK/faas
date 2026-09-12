@@ -93,26 +93,27 @@ var routeExclude = map[string]bool{
 	// must move together; the SDK does not model operator-only
 	// surfaces, and the public OpenAPI spec does not document
 	// them.
-	"GET /v1/admin/obs/overview":                true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/capacity":                true, // operator-only capacity projection
-	"GET /v1/admin/obs/tenants":                 true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/tenants/{id}/360":        true, // operator-only tenant 360 projection
-	"GET /v1/admin/obs/tenants/{id}":            true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/tenants/{id}/activity":   true, // operator-only tenant activity drill-down
-	"GET /v1/admin/obs/apps/{id}":               true, // operator-only app workload drill-down
-	"GET /v1/admin/obs/nodes":                   true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/nodes/{name}/detail":     true, // operator-only node workload drill-down
-	"GET /v1/admin/obs/nodes/{name}/heartbeats": true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/nodes/events":            true, // ADR-091 — operator-only SSE (PR #3; successor to /v1/compute-nodes/events)
-	"GET /v1/admin/obs/nodes/wake-latency":      true, // ADR-092 — operator-only per-node wake-latency quantiles (PR #4)
-	"GET /v1/admin/obs/anomalies":               true, // ADR-091 — operator-only (PR #2)
-	"GET /v1/admin/obs/audit-log/search":        true, // ADR-091 — operator-only (PR #3)
-	"GET /v1/admin/obs/events":                  true, // ADR-091 — operator-only (PR #3)
-	"GET /v1/admin/obs/traces/{trace_id}":       true, // operator-only exact trace correlation
-	"GET /v1/admin/obs/rate-limits":             true, // ADR-091 — operator-only (PR #2)
-	"GET /v1/admin/obs/builder-heartbeats":      true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
-	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
-	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
+	"GET /v1/admin/obs/overview":                      true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/capacity":                      true, // operator-only capacity projection
+	"GET /v1/admin/obs/tenants":                       true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/tenants/{id}/360":              true, // operator-only tenant 360 projection
+	"GET /v1/admin/obs/tenants/{id}":                  true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/tenants/{id}/activity":         true, // operator-only tenant activity drill-down
+	"GET /v1/admin/obs/apps/{id}":                     true, // operator-only app workload drill-down
+	"GET /v1/admin/obs/nodes":                         true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/nodes/{name}/detail":           true, // operator-only node workload drill-down
+	"GET /v1/admin/obs/nodes/{name}/heartbeats":       true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/nodes/events":                  true, // ADR-091 — operator-only SSE (PR #3; successor to /v1/compute-nodes/events)
+	"GET /v1/admin/obs/nodes/wake-latency":            true, // ADR-092 — operator-only per-node wake-latency quantiles (PR #4)
+	"GET /v1/admin/obs/anomalies":                     true, // ADR-091 — operator-only (PR #2)
+	"GET /v1/admin/obs/audit-log/search":              true, // ADR-091 — operator-only (PR #3)
+	"GET /v1/admin/obs/events":                        true, // ADR-091 — operator-only (PR #3)
+	"GET /v1/admin/obs/traces/{trace_id}":             true, // operator-only exact trace correlation
+	"GET /v1/admin/obs/rate-limits":                   true, // ADR-091 — operator-only (PR #2)
+	"GET /v1/admin/obs/builder-heartbeats":            true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
+	"GET /v1/admin/obs/health":                        true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
+	"GET /v1/admin/obs/incidents":                     true, // operator-only bounded incident correlation inbox
+	"PUT /v1/admin/obs/incidents/{dedupe_key}/triage": true, // operator-only durable triage metadata
 
 	// Operator-side observability mega-PR (PR #1099) P2 recovery
 	// primitives. Mirror the cmd/sdk-coverage/main.go::routeExclude
@@ -388,6 +389,9 @@ var dtoExclude = map[string]bool{
 	"ObsBuilderHeartbeatRow":          true,
 	"ObsIncident":                     true,
 	"ObsIncidentListResponse":         true,
+	"ObsIncidentTriage":               true,
+	"ObsIncidentTriageRequest":        true,
+	"ObsIncidentTriageResponse":       true,
 	// P2d / C5/C7 mega-PR follow-on DTOs (Obs-Meta + Trace-IDs
 	// Mega-PR / PR #1111): admin-only shapes for /v1/admin/obs/*
 	// surface; intentionally undocumented for public consumers.

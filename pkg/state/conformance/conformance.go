@@ -62,6 +62,7 @@ func Run(t *testing.T, open Open) {
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
+		{"operator_incident_triage_is_durable_and_scoped", testOperatorIncidentTriage},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
@@ -667,6 +668,59 @@ func testOperatorDeploymentListing(t *testing.T, fx *Fixture) {
 	}
 	if len(fleetPage) != 1 || len(fleetNext) != 1 || fleetPage[0].ID == fleetNext[0].ID {
 		t.Fatalf("bounded fleet pages = (%+v, %+v), want two distinct rows including foreign %s", fleetPage, fleetNext, foreign.ID)
+	}
+}
+
+func testOperatorIncidentTriage(t *testing.T, fx *Fixture) {
+	key := "deployment:" + uuid.NewString()
+	foreignKey := "job_run:" + uuid.NewString()
+
+	empty, err := fx.Store.ListOperatorIncidentTriage(fx.Ctx, nil)
+	if err != nil {
+		t.Fatalf("ListOperatorIncidentTriage(nil): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("nil-key triage rows = %+v, want empty", empty)
+	}
+
+	initial, err := fx.Store.ListOperatorIncidentTriage(fx.Ctx, []string{key, foreignKey})
+	if err != nil {
+		t.Fatalf("ListOperatorIncidentTriage(empty): %v", err)
+	}
+	if len(initial) != 0 {
+		t.Fatalf("initial triage rows = %+v, want empty", initial)
+	}
+
+	created, err := fx.Store.UpsertOperatorIncidentTriage(
+		fx.Ctx, key, state.OperatorIncidentTriageAcknowledged,
+		"oncall@example.com", "investigating", "operator@example.com",
+	)
+	if err != nil {
+		t.Fatalf("UpsertOperatorIncidentTriage(create): %v", err)
+	}
+	if created.DedupeKey != key || created.Status != state.OperatorIncidentTriageAcknowledged ||
+		created.Owner != "oncall@example.com" || created.Note != "investigating" ||
+		created.UpdatedBy != "operator@example.com" || created.UpdatedAt.IsZero() {
+		t.Fatalf("created triage row = %+v", created)
+	}
+
+	rows, err := fx.Store.ListOperatorIncidentTriage(fx.Ctx, []string{key, foreignKey})
+	if err != nil {
+		t.Fatalf("ListOperatorIncidentTriage(created): %v", err)
+	}
+	if len(rows) != 1 || rows[key].Status != state.OperatorIncidentTriageAcknowledged {
+		t.Fatalf("listed triage rows = %+v, want only acknowledged %s", rows, key)
+	}
+
+	updated, err := fx.Store.UpsertOperatorIncidentTriage(
+		fx.Ctx, key, state.OperatorIncidentTriageResolved,
+		"oncall@example.com", "fixed", "operator@example.com",
+	)
+	if err != nil {
+		t.Fatalf("UpsertOperatorIncidentTriage(update): %v", err)
+	}
+	if updated.Status != state.OperatorIncidentTriageResolved || updated.Note != "fixed" || updated.UpdatedAt.IsZero() {
+		t.Fatalf("updated triage row = %+v", updated)
 	}
 }
 

@@ -1523,6 +1523,15 @@ type OidcTrustPolicy struct {
 	AuditLogin     string
 }
 
+type OperatorIncidentTriage struct {
+	DedupeKey string
+	Status    string
+	Owner     string
+	Note      string
+	UpdatedAt pgtype.Timestamptz
+	UpdatedBy string
+}
+
 type OperatorIntent struct {
 	ID                 pgtype.UUID
 	Kind               string
