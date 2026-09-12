@@ -1361,16 +1361,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// of the synthAdapter struct literal, which broke the compile.
 	// Restoring the off-the-brace call keeps both sides readable.
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, synth, log)
-	// ADR-119 — wire the synth-side gate. The same per-service
-	// public-key allowlist (deps.internalSvcVerifier) gates
-	// /v1/synthesize so a forged cron request cannot wake an
-	// internal_only app (synth bypasses Handler.ServeHTTP).
-	// Same Metrics + same audit emitter + same per-app cache
-	// the HTTP-front-door gate uses — single source of truth.
+	// ADR-119 — wire the synth-side metrics, audit emitter, and app-mode
+	// lookup here. The verifier itself is loaded later from the cluster key or
+	// environment fallback and is attached after that load completes.
 	// appPublicAuthMode is consulted via the per-app cache
 	// populated by the same hydration path Handler.PublicAuthConfig
 	// reads; nil-safe (nil lookup = every app treated as "open").
-	deps.synth.WithInternalSvcVerifier(deps.internalSvcVerifier)
 	deps.synth.WithMetrics(deps.metrics).
 		WithAudit(deps.requireAuthnAudit.Emit).
 		WithAppModeLookup(func(ctx context.Context, appID string) string {
@@ -1776,6 +1772,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 		}
 	}
+	// The synth server is constructed before key loading because its
+	// dispatcher participates in the rest of the runtime wiring. Attach the
+	// resolved verifier now, after the cluster-key and environment fallback
+	// paths have run. Attaching the pre-load nil interface left workflow
+	// admission permanently unconfigured and made every step return HTTP 500.
+	deps.synth.WithInternalSvcVerifier(deps.internalSvcVerifier)
 	// The scheddClient reference is needed by AppLogsHandler (PR-2).
 	// It outlives `run` because we want the AppLogsHandler to keep a
 	// pointer to the same client; defers Close.
