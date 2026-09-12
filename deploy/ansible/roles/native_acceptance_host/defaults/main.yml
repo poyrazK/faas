@@ -54,6 +54,12 @@ nah_postgres_enabled: true
 nah_postgres_packages:
   - postgresql
   - postgresql-client
+  # community.postgresql's modules import psycopg2 ON THE TARGET, not on the
+  # controller. Without this the role fails at "create the e2e database role".
+  # roles/postgres papers over the same gap with `failed_when: false` plus a
+  # psql fallback; installing the library is the honest fix, and it keeps the
+  # module's real errors visible instead of swallowing them.
+  - python3-psycopg2
 nah_postgres_database: faas_e2e
 nah_postgres_role: faas
 # The runner executes as root (jailer needs it) but connects as the `faas`

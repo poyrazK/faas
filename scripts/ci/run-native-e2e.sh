@@ -85,6 +85,17 @@ if [[ -f "${e2e_env_file}" ]]; then
     die "${e2e_env_file} must be root-owned mode 0600 (found: ${env_perms})"
   # shellcheck disable=SC1090
   source "${e2e_env_file}"
+  # If the host bothered to write this file, its DSN wins — falling back to the
+  # default would point the suite at a DIFFERENT cluster than the operator
+  # chose, silently. Observed for real on 2026-09-12: the DSN contains an
+  # unescaped `&`, and written unquoted it makes the shell background the
+  # assignment in a subshell, so the variable arrives here EMPTY. Quote the
+  # value in the env file.
+  [[ -n "${FAAS_E2E_DATABASE_URL:-}" ]] ||
+    die "${e2e_env_file} exists but FAAS_E2E_DATABASE_URL is empty after sourcing it.
+  The value must be quoted — the DSN contains an '&', and unquoted the shell
+  parses it as a background job plus a stray command:
+    FAAS_E2E_DATABASE_URL='postgres:///faas_e2e?host=/run/postgresql&user=faas'"
 fi
 database_url="${FAAS_E2E_DATABASE_URL:-${DATABASE_URL:-postgres:///faas_e2e?host=/run/postgresql&user=faas}}"
 

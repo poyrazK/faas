@@ -157,6 +157,12 @@ grep -Fq 'create extension if not exists citext' "${runner}" ||
 # does not disable it.
 grep -vE '^[[:space:]]*#' "${runner}" | grep -Fq 'unset FAAS_SKIP_PG_TESTS' ||
   fail "the wrapper does not clear FAAS_SKIP_PG_TESTS (a comment mentioning it does not count)"
+# An env file that exists but yields an empty DSN must be fatal, not a silent
+# fall back to the default cluster. Hit for real on 2026-09-12: the DSN holds an
+# unescaped '&', and written unquoted the shell backgrounds the assignment in a
+# subshell so the variable arrives empty.
+grep -Fq 'FAAS_E2E_DATABASE_URL is empty after sourcing it' "${runner}" ||
+  fail "the wrapper silently falls back to the default DSN when the host env file yields an empty one"
 # Postgres is the one service the suite needs up.
 if grep -E '^candidate_services=|^[[:space:]]+faas-' "${runner}" | grep -q 'postgres'; then
   fail "the wrapper stops Postgres; the suite needs it running"

@@ -222,7 +222,39 @@
     content: |
       # Consumed by scripts/ci/run-native-e2e.sh. Managed by Ansible
       # (deploy/ansible/roles/native_acceptance_host).
-      FAAS_E2E_DATABASE_URL=postgres:///{{ nah_postgres_database }}?host={{ nah_postgres_socket_dir }}&user={{ nah_postgres_role }}
+      #
+      # The value MUST stay single-quoted. The runner `source`s this file, and
+      # the DSN contains an unescaped `&` — unquoted, the shell backgrounds the
+      # assignment in a subshell and parses `user=...` as a separate command,
+      # so the variable arrives EMPTY in the parent. The runner then silently
+      # falls back to its default DSN, which is the wrong cluster for any host
+      # that overrode it here.
+      FAAS_E2E_DATABASE_URL='postgres:///{{ nah_postgres_database }}?host={{ nah_postgres_socket_dir }}&user={{ nah_postgres_role }}'
+  when: nah_postgres_enabled | bool
+
+# Verify the FILE, not just the DSN. The task above proved the connection
+# string works when handed straight to psql; this proves it survives the shell
+# round trip the runner actually performs. The first version of this role got
+# that wrong and the DSN arrived empty.
+- name: native_acceptance_host — verify the env file survives being sourced
+  ansible.builtin.shell: |
+    set -eu
+    set -a
+    . {{ nah_env_file }}
+    set +a
+    if [ -z "${FAAS_E2E_DATABASE_URL:-}" ]; then
+      echo "FAAS_E2E_DATABASE_URL is empty after sourcing {{ nah_env_file }}" >&2
+      exit 1
+    fi
+    pg_isready -d "$FAAS_E2E_DATABASE_URL" >/dev/null
+    psql -v ON_ERROR_STOP=1 -q -d "$FAAS_E2E_DATABASE_URL" \
+      -c 'create schema nah_env_probe' \
+      -c 'drop schema nah_env_probe cascade'
+    echo "sourced DSN works: $FAAS_E2E_DATABASE_URL"
+  args:
+    executable: /bin/bash
+  register: nah_env_probe
+  changed_when: false
   when: nah_postgres_enabled | bool
 
 # LAST. Everything the runners need now exists, so the host can consent.
