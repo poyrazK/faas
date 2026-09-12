@@ -2084,7 +2084,19 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		return App{}, fmt.Errorf("state: lock account %s: %w", app.AccountID, err)
 	}
 
-	// 2. Authoritative count under the lock. Developer environments use
+	// 2. Preserve idempotent create-or-fetch behavior at the quota boundary.
+	// Callers use ErrConflict to fetch an already-reserved slug and deploy it;
+	// returning the quota error first strands a customer's first app forever
+	// on plans with a single slot.
+	var slugExists bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from apps where slug = $1 and status <> 'deleted')`, app.Slug).Scan(&slugExists); err != nil {
+		return App{}, fmt.Errorf("state: check app slug %s: %w", app.Slug, err)
+	}
+	if slugExists {
+		return App{}, ErrConflict
+	}
+
+	// 3. Authoritative count under the lock. Developer environments use
 	//    their own cap; production apps and PR previews use DeployedApps.
 	//    Keeping both counts inside the account lock closes the same TOCTOU
 	//    window for either quota family.
@@ -2110,7 +2122,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
 	}
 
-	// 3. Conditional insert. The slug unique index surfaces a collision
+	// 4. Conditional insert. The slug unique index surfaces a concurrent collision
 	//    as a pgx unique-violation SQLSTATE; mapErr wraps it in ErrConflict.
 	manifest := app.Manifest
 	if manifest.IsZero() {

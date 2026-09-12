@@ -3035,7 +3035,14 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	if _, ok := m.accounts[app.AccountID]; !ok {
 		return App{}, ErrNotFound
 	}
-	// 1. Authoritative count under the same lock. Mirrors the PgStore
+	// 1. Return the slug collision before quota. Deploy clients use this
+	// signal to fetch and continue with an app they previously reserved.
+	for _, a := range m.apps {
+		if a.Slug == app.Slug && a.Status != AppDeleted {
+			return App{}, ErrConflict
+		}
+	}
+	// 2. Authoritative count under the same lock. Mirrors the PgStore
 	//    predicates, including the separate developer-environment cap.
 	observed := 0
 	developer := IsDeveloperApp(app)
@@ -3060,14 +3067,8 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	if observed >= limit {
 		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
 	}
-	// 2. Conditional insert. Slug uniqueness is enforced by the same
-	//    loop CreateApp uses; returning ErrConflict keeps the wire
-	//    contract identical to PgStore's apps.slug unique-index path.
-	for _, a := range m.apps {
-		if a.Slug == app.Slug && a.Status != AppDeleted {
-			return App{}, ErrConflict
-		}
-	}
+	// 3. Conditional insert. The lock keeps the collision check above and
+	// insert atomic for MemStore.
 	if app.ID == "" {
 		app.ID = newID()
 	}
