@@ -78,6 +78,10 @@ func cmdInvocationsList(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: gregale invocations list [--before C] [--limit N]")
 		return 1
 	}
+	if err := validateCLILimit("limit", *limit, 100); err != nil {
+		PrintUsage(os.Stderr, "usage: gregale invocations list [--before C] [--limit N] (1 <= N <= 100)", "invocations")
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

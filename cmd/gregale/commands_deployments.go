@@ -162,8 +162,8 @@ func cmdDeployments(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale deployments [--app SLUG] [--limit N] [--before CURSOR] [--all] [--wide]", "deployments")
 		return 1
 	}
-	if *limit < 0 || *limit > 200 {
-		PrintUsage(os.Stderr, "usage: gregale deployments --limit N (0 < N <= 200)", "deployments")
+	if err := validateCLILimit("limit", *limit, 200); err != nil {
+		PrintUsage(os.Stderr, "usage: gregale deployments --limit N (1 <= N <= 200)", "deployments")
 		return 1
 	}
 	client, err := authedClient()

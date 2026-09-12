@@ -52,6 +52,14 @@ func cmdWorkflowsList(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale workflows list --app <slug> [--limit N] [--offset N] [--status S]", "workflows")
 		return 1
 	}
+	if err := validateCLILimit("limit", *limit, 100); err != nil {
+		PrintUsage(os.Stderr, "usage: gregale workflows list --app <slug> [--limit N] [--offset N] (1 <= N <= 100)", "workflows")
+		return 1
+	}
+	if err := validateCLIOffset("offset", *offset); err != nil {
+		PrintUsage(os.Stderr, "usage: gregale workflows list --app <slug> [--limit N] [--offset N] (offset >= 0)", "workflows")
+		return 1
+	}
 
 	client, err := authedClient()
 	if err != nil {

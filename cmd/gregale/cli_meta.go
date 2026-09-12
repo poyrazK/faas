@@ -367,8 +367,10 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchBuild,
 		DocSlug: "build",
-		Short:   "Build provenance + sbom (build provenance <id>|build sbom <id>)",
+		Short:   "Inspect builds (build status|list|provenance|sbom)",
 		Subcommands: []cliSub{
+			{Name: statusLiteral, Short: "Show the current status of one build"},
+			{Name: "list", Short: "List builds and discover build IDs"},
 			{Name: "provenance", Short: "Show the build provenance attestation"},
 			{Name: "sbom", Short: "Show the build SBOM"},
 		},

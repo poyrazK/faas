@@ -13,7 +13,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`app`](#app) | Get/update one app (gregale app &lt;slug&gt; [scale\|rename &lt;new&gt;\|restart\|--profile NAME\|--ram N\|…]) |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
 | [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
-| [`build`](#build) | Build provenance + sbom (build provenance &lt;id&gt;\|build sbom &lt;id&gt;) |
+| [`build`](#build) | Inspect builds (build status\|list\|provenance\|sbom) |
 | [`connect`](#connect) | Connect a third-party service (github \| repo OWNER/NAME) |
 | [`github`](#github) | Manage an app&#39;s GitHub installation and repository binding |
 | [`cors`](#cors) | Configure CORS for an app (allow\|ls\|rm\|show) |
@@ -341,9 +341,17 @@ Estimate per-stage canary success from the last hour
 
 ## build
 
-Build provenance + sbom (build provenance &lt;id&gt;|build sbom &lt;id&gt;)
+Inspect builds (build status|list|provenance|sbom)
 
 `gregale build [<subcommand>]`
+
+### build status
+
+Show the current status of one build
+
+### build list
+
+List builds and discover build IDs
 
 ### build provenance
 

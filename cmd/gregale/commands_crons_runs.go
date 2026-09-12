@@ -45,14 +45,19 @@ func cmdCronsRuns(args []string) int {
 	fs := flag.NewFlagSet("crons-runs", flag.ContinueOnError)
 	before := fs.String("before", "", "pagination cursor (last id of the prior page)")
 	limit := fs.Int("limit", 10, "max rows (1..100; server caps at 100)")
-	if err := fs.Parse(args); err != nil {
+	flags, pos := splitArgsForFlags(args)
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if len(pos) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N]")
 		return 1
 	}
-	id := fs.Arg(0)
+	if err := validateCLILimit("limit", *limit, 100); err != nil {
+		fmt.Fprintln(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N] (1 <= N <= 100)")
+		return 1
+	}
+	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
 		fmt.Fprintln(os.Stderr, "usage: gregale crons runs <id> [--before C] [--limit N]")
 		return 1

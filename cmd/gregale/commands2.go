@@ -702,11 +702,12 @@ func cmdApp(args []string) int {
 func cmdAppsRm(args []string) int {
 	fs := flag.NewFlagSet("apps-rm", flag.ContinueOnError)
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
+	fs.BoolVar(quiet, "quiet", false, "suppress confirmation prompt")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale apps -q <slug>", "apps")
+		PrintUsage(os.Stderr, "usage: gregale apps [-q|--quiet] <slug>", "apps")
 		return 1
 	}
 	slug := fs.Arg(0)
