@@ -168,7 +168,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_INTERNAL_SVC_PUBKEYS` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
 | `FAAS_JOB` | guest | `guest` |  |  | `` |  |
-| `FAAS_JOBS_DISPATCH` | schedd | `unit` |  |  | `` | explicit 0 in faas-schedd.service until the vmmd job RPC ships (Mega-1.5); jobs would otherwise sit pending silently |
+| `FAAS_JOBS_DISPATCH` | schedd | `unit` |  |  | `` | public-beta unit enables queued job dispatch through the vmmd JobColdBoot RPC |
 | `FAAS_LEADER_REDIRECT_TLS_CA` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_LEADER_REDIRECT_TLS_CERT` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_LEADER_REDIRECT_TLS_KEY` | gatewayd-internal | `default` |  |  | `` |  |
@@ -355,7 +355,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMM_TLS_CERT_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_VMM_TLS_KEY_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` |  |  | `` | deprecated fallback delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
-| `FAAS_WORKFLOWS_ENABLED` | apid, schedd | `unit` |  |  | `` | explicit 0 in apid and schedd units; set both to 1 to activate durable workflow dispatch and run creation |
+| `FAAS_WORKFLOWS_ENABLED` | apid, schedd | `unit` |  |  | `` | public-beta apid and schedd units both enable durable workflow run creation and dispatch |
 | `FAAS_WORKLOAD_` | guest | `guest` |  |  | `` | guest-init injects per-task loopback endpoint metadata for the main workload and declared sidecars |
 | `FAAS_WORKLOAD_IDENTITY_ISSUER` | vmmd | `default` |  |  | `` | optional vmmd workload-identity issuer override; config TOML is the primary deployment setting |
 | `FAAS_WORKLOAD_IDENTITY_KEY_ID` | vmmd | `default` |  |  | `` | optional vmmd workload-identity key ID override; config TOML is the primary deployment setting |

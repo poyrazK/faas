@@ -22,8 +22,8 @@ EnvironmentFile=-/etc/faas/secrets/schedd/schedd.env
 EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=TMPDIR=/var/lib/faas/oci-tmp
-Environment=FAAS_JOBS_DISPATCH=0
-Environment=FAAS_WORKFLOWS_ENABLED=0
+Environment=FAAS_JOBS_DISPATCH=1
+Environment=FAAS_WORKFLOWS_ENABLED=1
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

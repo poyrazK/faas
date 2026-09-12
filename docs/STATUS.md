@@ -952,7 +952,7 @@ The "read but never set" outage class (PR #1286 function runner paths, PR
   delivery source and the test proves delivery both ways; table rendered
   to `docs/ops/env-contract.md`. Found and fixed three more silently-off
   gates: streaming (`streaming_enabled=true` in gatewayd-internal.toml),
-  jobs dispatch (explicit `FAAS_JOBS_DISPATCH=0` until Mega-1.5), GeoIP
+  jobs dispatch (`FAAS_JOBS_DISPATCH=1` in public-beta units), GeoIP
   database (new `geoip` role, pinned DB-IP release).
 - **Restart handlers** on every service role (`daemon-reload` +
   `try-restart`), notify on every unit/drop-in/config task.
