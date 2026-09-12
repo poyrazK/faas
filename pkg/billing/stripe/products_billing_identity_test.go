@@ -1,3 +1,4 @@
+// spec: §10 — customer billing identity is synchronized to the billing provider.
 package stripe
 
 import (
