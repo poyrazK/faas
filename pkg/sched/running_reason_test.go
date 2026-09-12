@@ -1,3 +1,5 @@
+// spec: §6.1
+
 package sched
 
 import (
