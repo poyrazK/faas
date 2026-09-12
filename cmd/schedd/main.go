@@ -362,8 +362,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// startup. Empty cfg.NodeName → empty owner (legacy
 	// single-box posture, ownership guard short-circuits);
 	// non-empty → compute_nodes.id. Failures (DB outage, missing
-	// row, default-local collision, inactive node) exit fast
-	// rather than silently falling back to in-process ownership.
+	// row, or default-local collision) exit fast rather than silently
+	// falling back to in-process ownership. A compute-only schedd may
+	// resolve an inactive row during a drained rollout; placement stays
+	// disabled until the deploy workflow activates the node.
 	ownerNodeID, err := cfg.ResolveLocalNodeID(ctx, store)
 	if err != nil {
 		return fmt.Errorf("schedd: resolve local node id: %w", err)
