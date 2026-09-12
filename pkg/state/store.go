@@ -4362,9 +4362,9 @@ type Store interface {
 	// CAS didn't land (the caller is expected to re-read via
 	// NodeGet and decide whether to retry).
 	NodeSetLifecycle(ctx context.Context, id string, expected, next NodeLifecycle) error
-	// NodeListRecoverable returns every node in
-	// ('unavailable','recovering') — the recovery arbiter's input
-	// set. Cold-start sweep + the 1s tick both consume this.
+	// NodeListRecoverable returns recovering nodes and unavailable nodes whose
+	// last heartbeat is less than 24 hours old. Older inventory stays auditable
+	// without causing an endless recovery polling loop.
 	NodeListRecoverable(ctx context.Context) ([]ComputeNode, error)
 	// NodeListDrainable returns every 'active' node with zero live
 	// instances — the set the drain handler is allowed to flip to

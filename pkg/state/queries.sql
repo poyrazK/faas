@@ -2444,8 +2444,9 @@ WHERE id = $1
 --   'unavailable'  → heartbeat gap detected; instances stranded.
 --   'recovering'   → first post-failure ping succeeded; sweep to
 --                    confirm zero stranded instances.
--- Caller is the recovery arbiter; one tick enumerates both classes
--- and applies the same decision matrix.
+-- Unavailable rows age out of active polling after 24 hours. They remain in
+-- inventory for audit; a returning vmmd re-registers through the heartbeat
+-- path and becomes active again.
 SELECT
     id, name, target_url, vpcpus, mem_mb, max_concurrency,
     admission_ceiling_mb,
@@ -2456,7 +2457,8 @@ SELECT
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
     last_recovery_outcome
 FROM compute_nodes
-WHERE lifecycle IN ('unavailable', 'recovering')
+WHERE lifecycle = 'recovering'
+   OR (lifecycle = 'unavailable' AND coalesce(last_heartbeat_at, created_at) >= now() - interval '24 hours')
 ORDER BY name;
 
 -- name: NodeListDrainable :many

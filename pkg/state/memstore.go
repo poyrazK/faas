@@ -12065,14 +12065,20 @@ func (m *MemStore) NodeSetLifecycle(_ context.Context, id string, expected, next
 	return nil
 }
 
-// NodeListRecoverable returns every node in
-// ('unavailable','recovering') — the recovery arbiter's input set.
+// NodeListRecoverable excludes terminally stale unavailable inventory while
+// retaining recovering rows until their in-flight sweep completes.
 func (m *MemStore) NodeListRecoverable(_ context.Context) ([]ComputeNode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]ComputeNode, 0, len(m.computeNodes))
+	now := time.Now()
 	for _, n := range m.computeNodes {
-		if n.Lifecycle == NodeLifecycleUnavailable || n.Lifecycle == NodeLifecycleRecovering {
+		lastSeen := n.LastHeartbeatAt
+		if lastSeen.IsZero() {
+			lastSeen = n.CreatedAt
+		}
+		if n.Lifecycle == NodeLifecycleRecovering ||
+			(n.Lifecycle == NodeLifecycleUnavailable && !lastSeen.Before(now.Add(-24*time.Hour))) {
 			out = append(out, n)
 		}
 	}

@@ -15824,8 +15824,8 @@ func (s *PgStore) NodeSetLifecycle(ctx context.Context, id string, expected, nex
 	return nil
 }
 
-// NodeListRecoverable returns every node in ('unavailable','recovering') —
-// the recovery arbiter's input set.
+// NodeListRecoverable returns recovering nodes and recently unavailable nodes;
+// terminally stale unavailable inventory is kept for audit but not polled.
 func (s *PgStore) NodeListRecoverable(ctx context.Context) ([]ComputeNode, error) {
 	rows, err := s.triggerQueries().NodeListRecoverable(ctx, s.pool)
 	if err != nil {
