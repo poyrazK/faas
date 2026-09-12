@@ -123,9 +123,10 @@ func (s *Service) applyActions(
 		mutations := make([]state.ProjectReconcileMutation, 0, len(orderedActions))
 		for _, action := range orderedActions {
 			app := action.App
-			if action.Op == "create" {
+			switch action.Op {
+			case "create":
 				app = workloadToDraftApp(project, action.Workload, action.StartCommand, acct.Plan, availableServices)
-			} else if action.Op == "update" {
+			case "update":
 				manifest := action.App.Manifest
 				manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, action.Workload, availableServices)
 				app.RootDir = action.Workload.RootDir
