@@ -313,7 +313,7 @@ func (s *fakeStore) BumpComputeNodeGeneration(_ context.Context, name string) (i
 func sampleBundle(sha string) Bundle {
 	// EncodeDaemonHashes requires every daemon in the catalog; the
 	// sample bundle is canonical-complete.
-	hashes := make(map[string]string, 10)
+	hashes := make(map[string]string, 11)
 	patterns := []string{
 		"1111111111111111111111111111111111111111111111111111111111111111",
 		"2222222222222222222222222222222222222222222222222222222222222222",
@@ -325,10 +325,11 @@ func sampleBundle(sha string) Bundle {
 		"8888888888888888888888888888888888888888888888888888888888888888",
 		"9999999999999999999999999999999999999999999999999999999999999999",
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}
 	// We don't import manifest.SortedHostKeys here directly to keep
 	// the test self-contained — but to stay honest with the contract
-	// we list all 10. Order doesn't matter to a map.
+	// we list all 11. Order doesn't matter to a map.
 	keys := []string{
 		"apid", "builderd", "gatewayd_internal", "gatewayd_public",
 		"githubd", "imaged", "meterd", "outboundd", "realtimed", "schedd", "vmmd",
