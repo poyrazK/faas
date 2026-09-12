@@ -1711,6 +1711,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	loopErr := make(chan error, 1)
 	go func() { loopErr <- loop.Run(ctx) }()
+	// Durable deploy handoffs recover the snapshot_prime edge when a LISTEN
+	// delivery is missed during a Postgres or schedd restart. The normal
+	// subscriber acknowledges rows after dispatching the same handler; this
+	// worker only sees rows that remain pending after the wakeup grace period.
+	go func() {
+		err := db.RunNotificationOutbox(ctx, pool, "schedd",
+			[]string{db.NotifySnapshotPrime}, loop.HandleNotification, log)
+		if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
+			log.Warn("schedd: durable notification replay exited", "err", err)
+		}
+	}()
 
 	// Issue #757 / ADR-0NN (commit #16): trigger dispatch
 	// wakeups. Subscribe to the trigger_ready + trigger_changed

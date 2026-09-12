@@ -699,6 +699,21 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, imagedProbe.ReadyFunc())
 	defer notifyStop()
 
+	// Recover deploy handoffs that were emitted while imaged was restarting or
+	// its LISTEN connection was down. The replay worker shares Loop's handler
+	// with the low-latency subscriber and starts after its five-second wakeup
+	// grace, so ordinary notifications are not processed twice.
+	go func() {
+		err := db.RunNotificationOutbox(ctx, pool, "imaged", []string{
+			db.NotifySnapshotBoot,
+			db.NotifySnapshotWritten,
+			db.NotifyDeploymentReady,
+		}, loop.HandleNotification, log)
+		if err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
+			log.Warn("imaged: durable notification replay exited", "err", err)
+		}
+	}()
+
 	return loop.Run(ctx)
 }
 

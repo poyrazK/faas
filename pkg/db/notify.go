@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -25,6 +26,10 @@ var ErrWaitTimeout = errors.New("db: wait timeout")
 type Notification struct {
 	Channel string
 	Payload string
+	// OutboxID is non-zero when this delivery came from the durable handoff
+	// queue. Consumers acknowledge it after handing the payload to their
+	// idempotent handler; legacy/direct notifications leave it zero.
+	OutboxID int64
 }
 
 // BuildQueuedPayload is the wire shape on the `build_queued` channel
@@ -39,15 +44,82 @@ type BuildQueuedPayload struct {
 	Kind         string `json:"kind"`
 }
 
-// Notify publishes a payload on the given channel. Non-blocking; returns an
-// error only if the underlying pg_notify call fails. Payloads are limited to
-// ~8 KB by Postgres — caller's responsibility.
+// Notify publishes a payload on the given channel. Deploy handoff channels
+// first persist a replay row and publish an envelope in the same transaction;
+// all other channels retain the direct pg_notify path. Payloads are limited
+// to ~8 KB by Postgres — caller's responsibility.
 func Notify(ctx context.Context, pool *pgxpool.Pool, channel, payload string) error {
+	if IsDurableNotificationChannel(channel) {
+		return enqueueAndNotify(ctx, pool, channel, payload)
+	}
 	_, err := pool.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload)
 	if err != nil {
 		return fmt.Errorf("db: notify %s: %w", channel, err)
 	}
 	return nil
+}
+
+// enqueueAndNotify makes the durable row and its wakeup one commit boundary.
+// The producer's state mutation may have committed in an earlier transaction
+// (the existing Notifier interface intentionally has no transaction handle),
+// but a successful handoff can no longer disappear between enqueue and notify.
+func enqueueAndNotify(ctx context.Context, pool *pgxpool.Pool, channel, payload string) error {
+	if pool == nil {
+		return fmt.Errorf("db: notify %s: nil pool", channel)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("db: notify %s begin: %w", channel, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var id int64
+	availableAt := time.Now().UTC().Add(notificationOutboxWakeDelay)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO notification_outbox (channel, payload, available_at)
+		VALUES ($1, $2, $3)
+		RETURNING id`, channel, payload, availableAt).Scan(&id)
+	if err != nil {
+		return fmt.Errorf("db: enqueue notification %s: %w", channel, err)
+	}
+	wire := wrapNotificationPayload(id, payload)
+	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", channel, wire); err != nil {
+		return fmt.Errorf("db: notify %s: %w", channel, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("db: notify %s commit: %w", channel, err)
+	}
+	return nil
+}
+
+type notificationEnvelope struct {
+	OutboxID int64           `json:"_notification_outbox_id"`
+	Payload  json.RawMessage `json:"_notification_payload"`
+}
+
+func wrapNotificationPayload(id int64, payload string) string {
+	if id <= 0 || !json.Valid([]byte(payload)) {
+		return payload
+	}
+	wire, err := json.Marshal(notificationEnvelope{OutboxID: id, Payload: json.RawMessage(payload)})
+	if err != nil {
+		return payload
+	}
+	return string(wire)
+}
+
+func decodeNotification(channel, payload string) Notification {
+	n := Notification{Channel: channel, Payload: payload}
+	if !IsDurableNotificationChannel(channel) || !json.Valid([]byte(payload)) {
+		return n
+	}
+	var envelope notificationEnvelope
+	if err := json.Unmarshal([]byte(payload), &envelope); err != nil || envelope.OutboxID <= 0 || len(envelope.Payload) == 0 || !json.Valid(envelope.Payload) {
+		return n
+	}
+	n.OutboxID = envelope.OutboxID
+	n.Payload = string(envelope.Payload)
+	return n
 }
 
 // PoolNotifier adapts *pgxpool.Pool to the small Notifier interface
@@ -566,7 +638,7 @@ func Subscribe(ctx context.Context, pool *pgxpool.Pool, channels []string) (<-ch
 				return
 			}
 			select {
-			case out <- Notification{Channel: n.Channel, Payload: n.Payload}:
+			case out <- decodeNotification(n.Channel, n.Payload):
 			case <-subCtx.Done():
 				return
 			}

@@ -197,6 +197,11 @@ func (l *Loop) Run(ctx context.Context) error {
 				return nil
 			}
 			l.handler.HandleNotification(ctx, n)
+			if n.OutboxID != 0 {
+				if err := db.AcknowledgeNotification(ctx, l.pool, n); err != nil && ctx.Err() == nil {
+					l.log.Warn("imaged: acknowledge durable notification", "id", n.OutboxID, "channel", n.Channel, "err", err)
+				}
+			}
 		case <-buildTicker.C:
 			l.recoverBuildHandoffs(ctx)
 		case <-l.gcCh:
@@ -209,6 +214,14 @@ func (l *Loop) Run(ctx context.Context) error {
 				l.fcCh = nil
 			}
 		}
+	}
+}
+
+// HandleNotification exposes the handler to the durable replay worker while
+// keeping the normal LISTEN and replay paths on one dispatch implementation.
+func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) {
+	if l.handler != nil {
+		l.handler.HandleNotification(ctx, n)
 	}
 }
 
