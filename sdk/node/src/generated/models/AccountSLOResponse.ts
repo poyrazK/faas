@@ -34,6 +34,9 @@ export type AccountSLOResponse = {
    * Sum of mb_seconds / 3600 / 1024 across all apps for the account.
    */
   gb_hours: number;
+  /**
+   * Reserved compatibility field. Zero until the wake-queue histogram can be scoped to the account's apps.
+   */
   wake_queue_p95_ms: number;
   requests_total: number;
   throttled_total: number;

@@ -1,3 +1,5 @@
+// spec: §12.3 — the customer log surface contains tenant stdout/stderr and
+// must not expose Firecracker control-plane output.
 package fcvm
 
 import (

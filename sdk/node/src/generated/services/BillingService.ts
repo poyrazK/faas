@@ -5,10 +5,34 @@
 import type { BillingCancelResponse } from '../models/BillingCancelResponse.js';
 import type { BillingPortalResponse } from '../models/BillingPortalResponse.js';
 import type { BillingRetryResponse } from '../models/BillingRetryResponse.js';
+import type { BillingStatusResponse } from '../models/BillingStatusResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class BillingService {
+  /**
+   * Get the authenticated customer's billing status.
+   * Returns a provider-independent deployment and account billing
+   * projection. This customer endpoint requires usage:read and never
+   * calls an operator catalog surface.
+   *
+   * @returns BillingStatusResponse Current deployment billing mode and customer attachment status.
+   * @throws ApiError
+   */
+  public static getBillingStatus(): CancelablePromise<BillingStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/billing/status',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
   /**
    * Get a provider billing portal URL (and the card-on-file summary).
    * Returns the URL the customer should be sent to in order to

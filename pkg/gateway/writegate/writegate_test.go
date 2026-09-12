@@ -1,3 +1,5 @@
+// adr: 089 — standby mutations are classified and relayed to the active
+// control plane without permitting redirect loops or split-brain writes.
 // Tests for the Tier A9 / ADR-084 write classification helpers.
 // PR-A ships pure helpers + their tests; PR-B wires the
 // writeGate wrapper around `apidProxy` and adds the

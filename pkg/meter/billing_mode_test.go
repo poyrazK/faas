@@ -1,3 +1,5 @@
+// spec: §10 — disabled public-beta billing skips provider delivery without
+// making the metering loop unhealthy.
 package meter
 
 import (

@@ -1,3 +1,5 @@
+// spec: §10 — public-beta billing can pause provider delivery while keeping
+// the platform's usage-accounting path healthy and explicit.
 package billing
 
 import "testing"
