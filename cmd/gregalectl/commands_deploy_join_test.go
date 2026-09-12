@@ -179,6 +179,23 @@ func TestNodeJoinPublishesHardwareCapacityBeforeVMMDStarts(t *testing.T) {
 	}
 }
 
+func TestNodeJoinRemovesEmergencyGatewayReleaseOverrideBeforeRestart(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	remove := strings.Index(playbook, "Remove emergency gateway release override before service activation")
+	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
+	if remove < 0 || restart < 0 || remove >= restart {
+		t.Fatal("node_join must remove the emergency gateway release override before restarting the compute services")
+	}
+	block := playbook[remove:restart]
+	if !strings.Contains(block, "/etc/systemd/system/faas-gatewayd-internal.service.d/zz-emergency-release.conf") {
+		t.Fatal("node_join emergency override cleanup targets the wrong path")
+	}
+}
+
 func TestNodeJoinPreregistrationAcknowledgesBootstrapDatabaseWrite(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
 	if err != nil {

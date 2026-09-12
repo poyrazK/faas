@@ -32,13 +32,19 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 }
 
 // DaemonMaxConnections is the direct-pool budget for each production daemon.
-// The complete three-node public-beta fleet stays below 90 ordinary sessions,
-// leaving at least seven ordinary slots plus PostgreSQL's reserved superuser
-// slots for migrations, backups, recovery, and operator access.
+// The normal public-beta topology (control plane plus one active compute node)
+// stays below 90 ordinary sessions. The powered-off standby compute node can be
+// brought online without exceeding PostgreSQL's 97 ordinary-client slots, but
+// rollout overlap across both nodes still requires the connection-capacity
+// gate documented in the Postgres runbook.
 var DaemonMaxConnections = map[string]int32{
-	"apid":              12,
-	"schedd":            12,
-	"gatewayd-internal": 3,
+	"apid":   12,
+	"schedd": 12,
+	// gatewayd-internal owns six permanent LISTEN subscribers in the
+	// production configuration. Reserve two further slots for request-path
+	// reads and startup reconciliation; a cap of three deadlocks before
+	// sd_notify(READY=1) because the first three subscribers exhaust the pool.
+	"gatewayd-internal": 8,
 	"gatewayd-public":   3,
 	"vmmd":              4,
 	"imaged":            3,

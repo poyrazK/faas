@@ -87,6 +87,13 @@ func (m *hostJournalMetrics) sample(ctx context.Context) error {
 		"--quiet",
 		"--output=cat",
 	)
+	// journalctl --grep exits 1 when the query succeeds but no entry matches.
+	// That is a valid zero sample, not a collector failure. Preserve real
+	// command failures: journalctl also uses exit 1 for some errors, which
+	// include diagnostic output and therefore do not match this branch.
+	if journalNoMatches(journalOutput, journalErr) {
+		journalErr = nil
+	}
 	if journalErr == nil {
 		m.dispatcherErrors.Set(float64(nonEmptyLineCount(journalOutput)))
 	}
@@ -131,6 +138,14 @@ func (m *hostJournalMetrics) sample(ctx context.Context) error {
 		usageErrs = append(usageErrs, fmt.Errorf("journalctl: %w", journalErr))
 	}
 	return errors.Join(usageErrs...)
+}
+
+func journalNoMatches(out []byte, err error) bool {
+	if err == nil || len(bytes.TrimSpace(out)) != 0 {
+		return false
+	}
+	var exitErr interface{ ExitCode() int }
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
 }
 
 func nonEmptyLineCount(out []byte) int {
