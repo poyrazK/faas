@@ -77,12 +77,15 @@ gcloud compute ssh faas-control-plane --zone=europe-west3-a \
   --tunnel-through-iap --command='id && sudo -n true'
 ```
 
-Keep that session open, render the access plan, and apply it only after the
-test succeeds. The apply guard requires an explicit record of that test.
+Keep that session open. Then run the release workflow's read-only SSH
+preflight through its IAP/OS Login deployment identity; public root SSH must
+not be the only path that can roll the control plane. Render the access plan
+and apply it only after both tests succeed. The apply guard requires explicit
+records of both tests.
 
 ```sh
 bash scripts/ops/gcp_public_beta_converge.sh --phase access
-GCLOUD_IAP_SSH_VERIFIED=1 \
+GCLOUD_IAP_SSH_VERIFIED=1 GCLOUD_IAP_CD_VERIFIED=1 \
   bash scripts/ops/gcp_public_beta_converge.sh --phase access --apply
 ```
 

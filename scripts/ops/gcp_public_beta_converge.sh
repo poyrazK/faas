@@ -229,8 +229,8 @@ ALERTS
 }
 
 access_phase() {
-  [[ "$apply" == 0 || "${GCLOUD_IAP_SSH_VERIFIED:-}" == 1 ]] || {
-    echo "refusing access cutover: set GCLOUD_IAP_SSH_VERIFIED=1 after the runbook's emergency-access test" >&2
+  [[ "$apply" == 0 || ("${GCLOUD_IAP_SSH_VERIFIED:-}" == 1 && "${GCLOUD_IAP_CD_VERIFIED:-}" == 1) ]] || {
+    echo "refusing access cutover: set GCLOUD_IAP_SSH_VERIFIED=1 and GCLOUD_IAP_CD_VERIFIED=1 after both runbook tests" >&2
     return 1
   }
   ensure_project_role "user:$operator" roles/compute.osAdminLogin
