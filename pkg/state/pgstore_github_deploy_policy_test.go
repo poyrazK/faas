@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -56,5 +57,28 @@ func TestPgStoreGitHubDeployPolicyParity(t *testing.T) {
 		PreviewTTLHours: 0,
 	}); err == nil {
 		t.Fatal("invalid policy upsert succeeded")
+	}
+}
+
+func TestPgStoreGitHubDeployPolicyDatabaseErrors(t *testing.T) {
+	store, ctx := pgStore(t)
+	acct, err := store.CreateAccount(ctx, "github-policy-pg-errors@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "github-policy-pg-errors"})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := store.GetGitHubDeployPolicy(canceled, project.ID, acct.ID); err == nil {
+		t.Fatal("GetGitHubDeployPolicy with canceled context succeeded")
+	}
+	if _, err := store.UpsertGitHubDeployPolicy(canceled, state.GitHubDeployPolicy{
+		ProjectID: project.ID, AccountID: acct.ID, PreviewEnabled: true, PreviewTTLHours: 168,
+	}); err == nil {
+		t.Fatal("UpsertGitHubDeployPolicy with canceled context succeeded")
 	}
 }
