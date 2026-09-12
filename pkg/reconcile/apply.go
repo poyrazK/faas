@@ -41,6 +41,15 @@ const (
 	auditQuotaSkippedCreates = "skipped_creates"
 )
 
+func fieldsChangedForAction(actions []Action, appID string) []string {
+	for _, action := range actions {
+		if action.Op == "update" && action.App.ID == appID {
+			return action.fieldsChanged
+		}
+	}
+	return nil
+}
+
 // applyActions executes the diff. Quota pre-check is done here so
 // the audit row is emitted before any SQL runs. Updates and
 // removes always run; creates run per-app via
@@ -57,12 +66,9 @@ func (s *Service) applyActions(
 	actions []Action,
 	existing []state.App,
 	commitSHA string,
-	scans ...reposcan.Result,
+	scan reposcan.Result,
+	cronSpecs []CronSpec,
 ) (Result, error) {
-	var scan reposcan.Result
-	if len(scans) > 0 {
-		scan = scans[0]
-	}
 	availableServices := workloadNameSet(scan.Workloads)
 	var out Result
 
@@ -102,6 +108,78 @@ func (s *Service) applyActions(
 		// error. The per-app CreateAppIfUnderQuota calls still
 		// enforce the authoritative cap under their own Tx.
 		planCap = api.MustLimitsFor(api.PlanScale).DeployedApps
+	}
+
+	// PgStore and MemStore expose one transaction for project apply. Use it
+	// whenever available so app updates/removals/creates, cron replacement,
+	// quota checks, and scan-source upgrades commit or roll back together.
+	if txStore, ok := s.Store.(state.ProjectReconcileStore); ok {
+		// Preserve the legacy ordering: updates, removes, then creates. A
+		// replacement create must not collide with the row it supersedes.
+		orderedActions := make([]Action, 0, len(actions))
+		orderedActions = append(orderedActions, updates...)
+		orderedActions = append(orderedActions, removes...)
+		orderedActions = append(orderedActions, creates...)
+		mutations := make([]state.ProjectReconcileMutation, 0, len(orderedActions))
+		for _, action := range orderedActions {
+			app := action.App
+			switch action.Op {
+			case "create":
+				app = workloadToDraftApp(project, action.Workload, action.StartCommand, acct.Plan, availableServices)
+			case "update":
+				manifest := action.App.Manifest
+				manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, action.Workload, availableServices)
+				app.RootDir = action.Workload.RootDir
+				app.WorkloadName = action.Workload.Name
+				app.StartCommand = action.StartCommand
+				app.Manifest = manifest
+			}
+			mutations = append(mutations, state.ProjectReconcileMutation{Op: action.Op, App: app})
+		}
+		var desiredCrons []state.ProjectReconcileCron
+		if cronSpecs != nil {
+			desiredCrons = make([]state.ProjectReconcileCron, 0, len(cronSpecs))
+			for _, cron := range cronSpecs {
+				desiredCrons = append(desiredCrons, state.ProjectReconcileCron{
+					WorkloadName: cron.WorkloadName,
+					Schedule:     cron.Schedule,
+					Path:         cron.Path,
+					Enabled:      cron.Enabled,
+				})
+			}
+		}
+		scanSource := DeriveScanSource(scan.Workloads)
+		if len(mutations) > 0 || cronSpecs != nil || tierRank(scanSource) > tierRank(project.ScanSource) {
+			applied, err := txStore.ApplyProjectReconcile(ctx, project, mutations, desiredCrons, scanSource, limits)
+			if err != nil {
+				var qe *state.QuotaError
+				if errors.As(err, &qe) {
+					skipped := make([]string, 0, len(creates))
+					for _, create := range creates {
+						skipped = append(skipped, create.Workload.Name)
+					}
+					s.emitReconcileQuotaBlocked(ctx, project, qe.Limit, qe.Observed, len(creates), skipped, commitSHA)
+					out.Alerts = append(out.Alerts, Alert{Kind: AlertKindQuotaBlocked, Message: "project apply rejected by store quota", Data: map[string]any{
+						auditQuotaLimit: qe.Limit, auditQuotaObserved: qe.Observed, auditQuotaWouldbeCount: len(creates), auditQuotaSkippedCreates: skipped,
+					}})
+				}
+				return out, err
+			}
+			for _, changed := range applied.Changed {
+				s.emitWorkloadChanged(ctx, project, changed, fieldsChangedForAction(actions, changed.ID), commitSHA)
+				out.Changed = append(out.Changed, changed)
+			}
+			for _, removed := range applied.Removed {
+				s.emitWorkloadRemoved(ctx, project, removed.ID, removed.WorkloadName, commitSHA)
+				out.Removed = append(out.Removed, removed.ID)
+			}
+			for _, added := range applied.Added {
+				s.emitWorkloadAdded(ctx, project, added, commitSHA)
+				out.Added = append(out.Added, added)
+			}
+			out.scanSourceApplied = tierRank(scanSource) > tierRank(project.ScanSource)
+			return out, nil
+		}
 	}
 
 	// 2. Updates first (no quota concern).
@@ -154,8 +232,9 @@ func (s *Service) applyActions(
 				auditQuotaSkippedCreates: skipped,
 			},
 		})
-		// Updates + removes already applied. Bail here.
-		return out, nil
+		// An incomplete apply is an error, never a successful response
+		// carrying only an alert.
+		return out, &state.QuotaError{Kind: state.QuotaErrorKindApps, Limit: planCap, Observed: projected}
 	}
 
 	// Build the store.App slice for the create set. CreateAppIfUnderQuota
@@ -201,7 +280,7 @@ func (s *Service) applyActions(
 					},
 				})
 				out.Added = added
-				return out, nil
+				return out, err
 			}
 			return out, err
 		}
@@ -235,11 +314,13 @@ func (s *Service) applyUpdate(
 		serviceNames = available[0]
 	}
 	manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, a.Workload, serviceNames)
+	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
-		RootDir:      &rootDir,
-		WorkloadName: &workloadName,
-		StartCommand: &a.StartCommand,
-		Manifest:     &manifest,
+		RootDir:       &rootDir,
+		WorkloadName:  &workloadName,
+		WorkloadClass: &workloadClass,
+		StartCommand:  &a.StartCommand,
+		Manifest:      &manifest,
 	}
 	updated, err := s.Store.UpdateApp(ctx, a.App.ID, params)
 	if err != nil {
@@ -282,15 +363,7 @@ func (s *Service) applyRemove(
 // sync` while direct POST /v1/apps on the same plan returns
 // bearer-by-default — same plan, two different defaults.
 func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd string, plan api.Plan, available ...map[string]struct{}) state.App {
-	class := state.WorkloadClass(string(w.Class))
-	if class == "" {
-		class = state.WorkloadClassHTTP
-	}
-	if w.Class == reposcan.ClassServer {
-		// "server" hint is normalised to "http" — ADR-051 will
-		// re-derive the authoritative class.
-		class = state.WorkloadClassHTTP
-	}
+	class := workloadClassFromScan(w)
 	var serviceNames map[string]struct{}
 	if len(available) > 0 {
 		serviceNames = available[0]
@@ -306,6 +379,30 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		Manifest:       state.AppManifest{Env: serviceEnvForWorkloadWithAvailable(nil, w, serviceNames)},
 		RequireAuthn:   plan.RequireAuthnDefault(),
 		PublicAuthMode: plan.PublicAuthModeDefault(),
+	}
+}
+
+// workloadClassFromScan converts the reposcan hint into the closed set that
+// apps.workload_class accepts. Server/unknown/empty hints are intentionally
+// conservative and fall back to HTTP; characterization can refine the class
+// after the workload has booted. Keeping this normalization in one helper
+// ensures create and update paths persist the same value (issue #2162).
+func workloadClassFromScan(w reposcan.Workload) state.WorkloadClass {
+	switch w.Class {
+	case reposcan.ClassGraphQL:
+		return state.WorkloadClassGraphQL
+	case reposcan.ClassGRPC:
+		return state.WorkloadClassGRPC
+	case reposcan.ClassJob:
+		return state.WorkloadClassJob
+	case reposcan.ClassWorker:
+		return state.WorkloadClassWorker
+	case reposcan.ClassHTTP:
+		return state.WorkloadClassHTTP
+	default:
+		// ClassServer, ClassUnknown, empty, and any future scanner
+		// value must not trip the database CHECK on the first apply.
+		return state.WorkloadClassHTTP
 	}
 }
 

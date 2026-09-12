@@ -56,6 +56,9 @@ type fakeStore struct {
 	// createAppIfUnderQuotaHook intercepts the per-app create
 	// path. When nil, MemStore.CreateAppIfUnderQuota is called.
 	createAppIfUnderQuotaHook func(app state.App) (state.App, error)
+	// applyProjectReconcileHook intercepts the atomic project path when a
+	// test needs to inject a quota/store failure after planning.
+	applyProjectReconcileHook func(project state.Project, mutations []state.ProjectReconcileMutation, crons []state.ProjectReconcileCron, scanSource state.ProjectScanSource, limits api.Limits) (state.ProjectReconcileResult, error)
 }
 
 type fakeEvent struct {
@@ -129,6 +132,13 @@ func (s *fakeStore) CreateAppIfUnderQuota(ctx context.Context, app state.App, li
 		return s.createAppIfUnderQuotaHook(app)
 	}
 	return s.MemStore.CreateAppIfUnderQuota(ctx, app, limits)
+}
+
+func (s *fakeStore) ApplyProjectReconcile(ctx context.Context, project state.Project, mutations []state.ProjectReconcileMutation, crons []state.ProjectReconcileCron, scanSource state.ProjectScanSource, limits api.Limits) (state.ProjectReconcileResult, error) {
+	if s.applyProjectReconcileHook != nil {
+		return s.applyProjectReconcileHook(project, mutations, crons, scanSource, limits)
+	}
+	return s.MemStore.ApplyProjectReconcile(ctx, project, mutations, crons, scanSource, limits)
 }
 
 // snapshotEvents returns a copy of the recorded AppendEvent calls

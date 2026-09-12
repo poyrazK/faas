@@ -141,6 +141,56 @@ func TestCompute_FreshImagePreviewIncludesDeploymentIdentity(t *testing.T) {
 	}
 }
 
+func TestCompute_ExistingAppWithoutDeploymentIncludesFirstDeployment(t *testing.T) {
+	cases := []struct {
+		name      string
+		appType   string
+		pending   Pending
+		wantField string
+		wantValue string
+	}{
+		{
+			name:      "source function",
+			appType:   "function",
+			pending:   Pending{BuildPlan: &api.BuildPlan{Class: "function", SourceSHA256: "source-sha"}},
+			wantField: "source_sha256",
+			wantValue: "source-sha",
+		},
+		{
+			name:      "image app",
+			appType:   "app",
+			pending:   Pending{BuildPlan: &api.BuildPlan{Class: "app"}, ImageRef: "registry.example.com/app@sha256:abc"},
+			wantField: "image",
+			wantValue: "registry.example.com/app@sha256:abc",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Compute("reserved", api.PlanHobby, Baseline{
+				App: &api.AppResponse{Slug: "reserved", Type: tc.appType},
+			}, tc.pending)
+
+			var deploymentAdd *Change
+			for i := range got.Changes {
+				change := &got.Changes[i]
+				if change.Field == "deployment" && change.Kind == ChangeAdd {
+					deploymentAdd = change
+				}
+				if change.Field == "deployment.source_sha256" || change.Field == "deployment.image" {
+					t.Fatalf("first deployment identity was rendered as a field modification: %+v", change)
+				}
+			}
+			if deploymentAdd == nil {
+				t.Fatalf("changes = %+v, want first deployment add", got.Changes)
+			}
+			values, ok := deploymentAdd.After.Value.(map[string]string)
+			if !ok || values[tc.wantField] != tc.wantValue {
+				t.Fatalf("deployment add payload = %#v, want %s=%q", deploymentAdd.After.Value, tc.wantField, tc.wantValue)
+			}
+		})
+	}
+}
+
 // TestCompute_EnvByScope — per-scope env diff: add, remove, modify.
 func TestCompute_EnvByScope(t *testing.T) {
 	baseline := Baseline{

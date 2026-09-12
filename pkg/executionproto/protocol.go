@@ -494,6 +494,16 @@ func contextError(ctx context.Context, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
+	// A connection deadline and a context deadline can fire in adjacent
+	// scheduler ticks. net.Pipe and Unix sockets commonly report the former as
+	// a timeout just before ctx.Err observes the latter; preserve the protocol
+	// contract by mapping that race back to context.DeadlineExceeded.
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return context.DeadlineExceeded
+		}
+	}
 	return err
 }
 

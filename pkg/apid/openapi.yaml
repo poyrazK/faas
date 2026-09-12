@@ -4353,6 +4353,45 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/debug/running:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppDebugRunning
+      summary: Explain why an app is still running.
+      description: |
+        Returns observed scheduler causes that prevented an application from
+        parking during the requested window. Causes are evidence-shaped: the
+        response reports request activity, open connections, tail tasks,
+        configured or temporary warm floors, cooldowns, and workload modes
+        when those signals were observed. It does not estimate a saving or
+        infer a protocol that was not instrumented. Plan-gated by
+        `DebugTelemetryEnabled` and clamped to `DebugTelemetryRetentionDays`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: [string, 'null'] }
+          description: "Optional lookback window for scheduler observations (e.g. 30m, 24h, 3d); defaults to 24h and is clamped by plan retention."
+        - name: limit
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 1, maximum: 100, default: 20 }
+          description: "Maximum number of recent observations to return; default 20, max 100."
+      responses:
+        '200':
+          description: Observed causes explaining why the app remained resident.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugRunningResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/debug/requests/{req_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -26873,6 +26912,76 @@ components:
         guest_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
         oldest_telemetry_at: { type: string, format: date-time }
         latest_telemetry_at: { type: string, format: date-time }
+
+    DebugRunningCause:
+      type: object
+      description: |
+        One observed scheduler reason an application remained resident. The
+        platform reports evidence available at the scheduler boundary; it
+        does not infer a protocol or predict a cost saving.
+      required: [code, summary, instance_count]
+      properties:
+        code:
+          type: string
+          enum: [request_activity, open_connection, tail_tasks, min_instances, prewarm_floor, scale_in_cooldown, workload_mode, startup_grace, activity_unknown, no_blocker_observed]
+        summary: { type: string }
+        instance_count: { type: integer, minimum: 0 }
+        open_connections: { type: integer, format: int64, minimum: 0 }
+        tail_tasks: { type: integer, minimum: 0 }
+        mode: { type: string }
+        workload_class: { type: string }
+        last_activity_at: { type: string, format: date-time }
+        idle_deadline: { type: string, format: date-time }
+
+    DebugRunningObservation:
+      type: object
+      description: Bounded point-in-time scheduler observation for the running debugger.
+      required: [observed_at, running_instances, configured_min_instances, effective_min_instances, idle_timeout_seconds, causes]
+      properties:
+        event_id: { type: string }
+        observed_at: { type: string, format: date-time }
+        running_instances: { type: integer, minimum: 0 }
+        configured_min_instances: { type: integer, minimum: 0 }
+        effective_min_instances: { type: integer, minimum: 0 }
+        prewarm_min_instances: { type: integer, minimum: 0 }
+        idle_timeout_seconds: { type: integer, minimum: 0 }
+        degraded: { type: boolean, description: True when one or more scheduler signals were unavailable. }
+        causes:
+          type: array
+          items: { $ref: '#/components/schemas/DebugRunningCause' }
+
+    DebugRunningConfig:
+      type: object
+      description: Configuration context shown with the observed running causes.
+      required: [configured_min_instances, effective_min_instances, idle_timeout_seconds]
+      properties:
+        configured_min_instances: { type: integer, minimum: 0 }
+        effective_min_instances: { type: integer, minimum: 0 }
+        prewarm_min_instances: { type: integer, minimum: 0 }
+        idle_timeout_seconds: { type: integer, minimum: 0 }
+
+    DebugRunningResponse:
+      type: object
+      description: |
+        Customer-safe explanation of why an app remained resident. `current`
+        is the newest observation and `history` contains the bounded recent
+        observations in the requested window.
+      required: [app_id, since, window_start, window_end, retention_clamped, current, config, history, history_truncated]
+      properties:
+        app_id: { type: string, format: uuid }
+        since: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        retention_clamped: { type: boolean }
+        current:
+          type: array
+          items: { $ref: '#/components/schemas/DebugRunningCause' }
+        current_observed_at: { type: string, format: date-time }
+        config: { $ref: '#/components/schemas/DebugRunningConfig' }
+        history:
+          type: array
+          items: { $ref: '#/components/schemas/DebugRunningObservation' }
+        history_truncated: { type: boolean }
 
     DebugTelemetryListResponse:
       type: object

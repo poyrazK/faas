@@ -20,6 +20,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,6 +47,7 @@ type decomposeSink struct {
 	// capture lets tests assert the multipart body shape, including
 	// the parsed Content-Type and the field set the SDK Client writes.
 	capturedMultipart []byte
+	projectSlug       string
 	scanCalls         int
 	applyCalls        int
 }
@@ -55,14 +58,42 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.scanCalls++
 		body, _ := io.ReadAll(r.Body)
 		s.capturedMultipart = body
+		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.URL.Path == "/v1/projects" && r.Method == http.MethodPost:
 		s.applyCalls++
 		body, _ := io.ReadAll(r.Body)
 		s.capturedMultipart = body
+		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.applyStatus, s.applyBody)
 	default:
 		http.Error(w, "decomposeSink: not found: "+r.URL.Path, http.StatusNotFound)
+	}
+}
+
+// multipartField extracts one text field from a captured request. The sink
+// keeps the raw body for the existing byte-presence assertions, while this
+// helper lets CLI tests verify that derived project metadata reached both
+// ScanProject and ApplyProjectPlan.
+func multipartField(body []byte, contentType, name string) string {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		return ""
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	for {
+		part, nextErr := reader.NextPart()
+		if nextErr == io.EOF {
+			return ""
+		}
+		if nextErr != nil {
+			return ""
+		}
+		value, readErr := io.ReadAll(part)
+		_ = part.Close()
+		if readErr == nil && part.FormName() == name {
+			return string(value)
+		}
 	}
 }
 
@@ -437,6 +468,38 @@ func TestCmdDeployTarball_YesFlagSkeleton(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Created project") {
 		t.Errorf("expected success line, got %q", stdout.String())
+	}
+}
+
+// TestCmdDeployTarball_ProjectFlagDefaultsSlug makes the discoverable
+// --project spelling equivalent to --project-slug for a tarball while
+// keeping the existing single-app path unchanged when the flag is absent.
+func TestCmdDeployTarball_ProjectFlagDefaultsSlug(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   goldenApply,
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	_, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t),
+		"--project",
+		"--yes",
+	}); code != 0 {
+		t.Fatalf("cmdDeployTarball --project exit = %d, want 0", code)
+	}
+	if sink.scanCalls != 1 || sink.applyCalls != 1 {
+		t.Fatalf("project calls: scan=%d apply=%d, want one each", sink.scanCalls, sink.applyCalls)
+	}
+	if sink.projectSlug != "fixture" {
+		t.Errorf("derived project slug = %q, want %q", sink.projectSlug, "fixture")
 	}
 }
 

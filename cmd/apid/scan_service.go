@@ -1581,10 +1581,19 @@ func (s *server) scanService(
 	for slug := range req.Exclude {
 		excludeList = append(excludeList, slug)
 	}
-	rec, recErr := s.reconcileSvc.Reconcile(
+	cronSpecs := make([]reconcile.CronSpec, 0, len(crons))
+	for _, cron := range crons {
+		cronSpecs = append(cronSpecs, reconcile.CronSpec{
+			WorkloadName: cron.WorkloadName,
+			Schedule:     cron.Schedule,
+			Path:         cron.Path,
+			Enabled:      cron.Enabled,
+		})
+	}
+	rec, recErr := s.reconcileSvc.ReconcileWithCrons(
 		r.Context(), project, filteredScan,
 		reconcileInputs.CommitSHA, reconcileInputs.Branch,
-		excludeList)
+		excludeList, cronSpecs)
 	if recErr != nil {
 		// Map reconcile-package errors into the existing RFC 7807
 		// problem shapes so the handler can use a single dispatch

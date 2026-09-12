@@ -172,6 +172,25 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending Pending) {
 	if baseline.LatestDeployment != nil {
 		basePlan = baseline.LatestDeployment.BuildPlan
 	}
+	// A create-only app has an app row but no deployment row yet. Treat
+	// the supplied source or image identity as the first deployment add;
+	// comparing it as a modification (or dropping an image entirely) makes
+	// the preview claim that applying the command is a no-op.
+	if baseline.LatestDeployment == nil {
+		deploymentAfter := map[string]string{}
+		if plan.SourceSHA256 != "" {
+			deploymentAfter["source_sha256"] = plan.SourceSHA256
+		}
+		if pending.ImageRef != "" {
+			deploymentAfter["image"] = pending.ImageRef
+		}
+		if len(deploymentAfter) > 0 {
+			out.Changes = append(out.Changes, Change{
+				Field: "deployment", Kind: ChangeAdd,
+				After: AsAny(deploymentAfter),
+			})
+		}
+	}
 	if basePlan != nil {
 		if plan.Framework != "" && plan.Framework != basePlan.Framework {
 			out.Changes = append(out.Changes, Change{
@@ -186,11 +205,9 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending Pending) {
 			})
 		}
 	}
-	if plan.SourceSHA256 != "" {
+	if basePlan != nil && plan.SourceSHA256 != "" {
 		baseSource := ""
-		if basePlan != nil {
-			baseSource = basePlan.SourceSHA256
-		}
+		baseSource = basePlan.SourceSHA256
 		if plan.SourceSHA256 != baseSource {
 			out.Changes = append(out.Changes, Change{
 				Field: "deployment.source_sha256", Kind: ChangeModify,

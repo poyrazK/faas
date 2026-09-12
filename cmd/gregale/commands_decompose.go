@@ -6,7 +6,7 @@ package main
 //
 //	gregale scan     — dry-run; renders the plan as a table or --json
 //	gregale deploy   — extends cmdDeployTarball with --yes, --json,
-//	                   --only, --project-slug for the one-key provision
+//	                   --project, --only, --project-slug for the one-key provision
 //	                   flow on top of the existing --tarball/--image/
 //	                   --template paths.
 //

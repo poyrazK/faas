@@ -21,7 +21,10 @@ const (
 	WarmPaused  WarmState = "warm_paused"
 )
 
-// WarmRestoreResult is emitted when a build asks to start a builder.
+// WarmRestoreResult describes the outcome recorded when a build starts a
+// guaranteed-slot builder. A hit means the VM transport accepted the
+// snapshot restore; a transport failure that falls back to a cold boot is a
+// miss.
 type WarmRestoreResult string
 
 const (

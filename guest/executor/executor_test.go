@@ -70,6 +70,28 @@ func TestExecutionTimeoutDoesNotReturnSuccess(t *testing.T) {
 	}
 }
 
+func TestHandleEnforcesRequestTimeoutWithoutParentDeadline(t *testing.T) {
+	e := New()
+	// Avoid depending on a host-installed language runtime: the production
+	// resolver is replaced with a deterministic long-running helper, while the
+	// real process-group cancellation path remains exercised.
+	e.resolve = func(executionproto.Request) (string, []string, string, error) {
+		return "/bin/sh", []string{"-c", "sleep 5"}, nodeSourceName, nil
+	}
+	started := time.Now()
+	_, err := e.Handle(context.Background(), executionproto.Request{
+		Version: executionproto.Version, ExecutionID: "request-timeout-test", Runtime: api.ExecutionRuntimeNode22,
+		Source: "export default () => 1", Input: json.RawMessage("null"), TimeoutMS: 100, MaxOutput: 4096,
+		NetworkMode: api.ExecutionNetworkNone,
+	}, nil, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("request timeout took %s, want bounded cancellation", elapsed)
+	}
+}
+
 func TestNodeConsoleOutputUsesProtocolStream(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is not installed")

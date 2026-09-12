@@ -325,6 +325,11 @@ from .debug_request_correlation_stage import DebugRequestCorrelationStage
 from .debug_request_correlation_stage_phase import DebugRequestCorrelationStagePhase
 from .debug_request_correlation_stage_status import DebugRequestCorrelationStageStatus
 from .debug_request_evidence_response import DebugRequestEvidenceResponse
+from .debug_running_cause import DebugRunningCause
+from .debug_running_cause_code import DebugRunningCauseCode
+from .debug_running_config import DebugRunningConfig
+from .debug_running_observation import DebugRunningObservation
+from .debug_running_response import DebugRunningResponse
 from .debug_telemetry_list_filters import DebugTelemetryListFilters
 from .debug_telemetry_list_response import DebugTelemetryListResponse
 from .debug_telemetry_request_item import DebugTelemetryRequestItem
@@ -1300,6 +1305,11 @@ __all__ = (
     "DebugRequestCorrelationStagePhase",
     "DebugRequestCorrelationStageStatus",
     "DebugRequestEvidenceResponse",
+    "DebugRunningCause",
+    "DebugRunningCauseCode",
+    "DebugRunningConfig",
+    "DebugRunningObservation",
+    "DebugRunningResponse",
     "DebugTelemetryListFilters",
     "DebugTelemetryListResponse",
     "DebugTelemetryRequestItem",

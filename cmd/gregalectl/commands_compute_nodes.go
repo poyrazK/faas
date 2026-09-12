@@ -836,6 +836,7 @@ func cmdComputeNodesAddTo(args []string, stdout io.Writer) int {
 	fs.SetOutput(os.Stderr)
 	name := fs.String("name", "", "fqdn / short-hostname of the new node (required)")
 	targetURL := fs.String("target-url", "", "routable dial target for vmmd (tcp://vmmd-N.faas:50051 or unix://...)")
+	scheddTargetURL := fs.String("schedd-target-url", "", "routable dial target for this node's schedd")
 	gatewayTargetURL := fs.String("gateway-target-url", "", "private HTTP target for gatewayd-internal (tcp://host:port)")
 	vpcpus := fs.Int("vpcpus", 0, "vCPU count reported to schedd")
 	memMB := fs.Int("mem-mb", 0, "RAM MB reported to schedd")
@@ -867,6 +868,7 @@ func cmdComputeNodesAddTo(args []string, stdout io.Writer) int {
 		payload = computeNodePayload{
 			Name:               *name,
 			TargetURL:          *targetURL,
+			ScheddTargetURL:    *scheddTargetURL,
 			GatewayTargetURL:   *gatewayTargetURL,
 			VPCPUs:             *vpcpus,
 			MemMB:              *memMB,
@@ -897,6 +899,12 @@ func cmdComputeNodesAddTo(args []string, stdout io.Writer) int {
 	if err := validDialTargetURL(payload.TargetURL); err != nil {
 		fmt.Fprintf(os.Stderr, "gregalectl compute-nodes add: --target-url invalid: %v\n", err)
 		return 2
+	}
+	if strings.TrimSpace(payload.ScheddTargetURL) != "" {
+		if err := validDialTargetURL(payload.ScheddTargetURL); err != nil {
+			fmt.Fprintf(os.Stderr, "gregalectl compute-nodes add: --schedd-target-url invalid: %v\n", err)
+			return 2
+		}
 	}
 	if strings.TrimSpace(payload.GatewayTargetURL) != "" {
 		if err := validGatewayTargetURL(payload.GatewayTargetURL); err != nil {
@@ -979,6 +987,9 @@ func computeNodeAddBreakGlass(payload computeNodePayload, reason, traceID string
 		AdmissionCeilingMB: payload.AdmissionCeilingMB,
 		Lifecycle:          state.NodeLifecycleActive,
 	}
+	if value := strings.TrimSpace(payload.ScheddTargetURL); value != "" {
+		node.ScheddTargetURL = &value
+	}
 	if payload.DeferActivation {
 		node.Lifecycle = state.NodeLifecycleUnavailable
 	}
@@ -993,7 +1004,9 @@ func computeNodeAddBreakGlass(payload computeNodePayload, reason, traceID string
 		node.VCPUBudget = existing.VCPUBudget
 		node.Region = existing.Region
 		node.Zone = existing.Zone
-		node.ScheddTargetURL = existing.ScheddTargetURL
+		if node.ScheddTargetURL == nil {
+			node.ScheddTargetURL = existing.ScheddTargetURL
+		}
 		node.Role = existing.Role
 		node.ReleaseID = existing.ReleaseID
 		node.ManifestHash = existing.ManifestHash
