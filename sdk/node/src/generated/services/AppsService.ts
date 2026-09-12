@@ -1305,7 +1305,7 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Lookback duration (e.g. 30m, 24h, 3d). Defaults to 24h and is clamped by plan retention.
+     * Optional lookback window for scheduler observations (e.g. 30m, 24h, 3d); defaults to 24h and is clamped by plan retention.
      */
     since?: string | null,
     /**
