@@ -440,6 +440,8 @@ export type { Sidecar } from './Sidecar.js';
 export type { Slug } from './Slug.js';
 export type { SourceRefDeployRequest } from './SourceRefDeployRequest.js';
 export type { SourceTarballDeployRequest } from './SourceTarballDeployRequest.js';
+export type { StatusIncident } from './StatusIncident.js';
+export type { StatusUptimeBucket } from './StatusUptimeBucket.js';
 export type { StorageUsageListResponse } from './StorageUsageListResponse.js';
 export type { StorageUsageResponse } from './StorageUsageResponse.js';
 export type { SweepStuckBuildsResponse } from './SweepStuckBuildsResponse.js';

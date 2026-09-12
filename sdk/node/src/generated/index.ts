@@ -446,6 +446,8 @@ export type { SLODuration } from './models/SLODuration.js';
 export type { Slug } from './models/Slug.js';
 export type { SourceRefDeployRequest } from './models/SourceRefDeployRequest.js';
 export type { SourceTarballDeployRequest } from './models/SourceTarballDeployRequest.js';
+export type { StatusIncident } from './models/StatusIncident.js';
+export type { StatusUptimeBucket } from './models/StatusUptimeBucket.js';
 export type { StorageUsageListResponse } from './models/StorageUsageListResponse.js';
 export type { StorageUsageResponse } from './models/StorageUsageResponse.js';
 export type { SweepStuckBuildsResponse } from './models/SweepStuckBuildsResponse.js';
