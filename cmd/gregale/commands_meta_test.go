@@ -16,9 +16,11 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 )
 
 // TestClosedSetTemplatesMatchEmbedFS asserts that every --template
@@ -76,5 +78,22 @@ func TestTemplateNames13MirrorsEmbedFS(t *testing.T) {
 		if got := templateNames13[i]; got != want {
 			t.Errorf("templateNames13[%d] = %q, want %q", i, got, want)
 		}
+	}
+}
+
+func TestThrottleSuggestionsRangeManifestMatchesServer(t *testing.T) {
+	var got []string
+	for _, command := range cliCommands {
+		if command.Name != "throttle-suggestions" {
+			continue
+		}
+		for _, flag := range command.Flags {
+			if flag.Name == "range" {
+				got = flag.ClosedSet
+			}
+		}
+	}
+	if !reflect.DeepEqual(got, appmetrics.Ranges()) {
+		t.Fatalf("throttle-suggestions --range manifest = %v, want server vocabulary %v", got, appmetrics.Ranges())
 	}
 }

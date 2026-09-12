@@ -1671,7 +1671,7 @@ Per-route throttle recommendations + dry-run preview (gregale throttle-suggestio
 
 | Flag | Meaning | |
 |---|---|---|
-| `--range <WINDOW>` | observation window (e.g. 5m\|1h\|24h) | one of `5m` · `15m` · `1h` · `6h` · `24h` |
+| `--range <WINDOW>` | observation window (5m\|15m\|1h\|6h\|24h\|7d\|15d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` · `15d` |
 | `--dry-run` | enable the dry-run preview pass (requires --candidate-rps) |  |
 | `--candidate-rps <N>` | candidate rate-limit rps for the dry-run preview |  |
 | `--candidate-burst <N>` | candidate burst for the dry-run preview |  |
