@@ -20890,13 +20890,17 @@ components:
           type: string
           pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
           description: "kebab slug; default = repo dir basename"
+        repo_full_name:
+          type: string
+          pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          description: "GitHub owner/name to persist for push reconciliation"
         production_branch:
           type: string
           example: main
         install_id:
           type: integer
           format: int64
-          description: "GitHub install id (with --repo); 0 for unbound repos"
+          description: "GitHub installation id (with --repository or --repo); 0 for unbound repos"
         only:
           type: string
           description: "CSV of workload names to include (others skipped)"
@@ -21147,6 +21151,7 @@ components:
           type: string
           format: binary
         project_slug: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        repo_full_name: { type: string, pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' }
         production_branch: { type: string }
         install_id: { type: integer, format: int64 }
         only: { type: string }

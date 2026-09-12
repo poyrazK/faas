@@ -3,7 +3,7 @@ package main
 // scan_service.go — Phase 3 scan service.
 //
 // Inputs:  a multipart upload (source=<tar.gz>) + form fields
-//          (project_slug, production_branch, install_id, only).
+//          (project_slug, repo_full_name, production_branch, install_id, only).
 // Outputs: a scanPlanResponse carrying Workloads + Managed + Crons
 //          + ProjectScanSource + canApply + planToken, or a
 //          *api.Problem describing why the scan was rejected.
@@ -13,7 +13,7 @@ package main
 // orchestrate the auth/middleware/notifier boundary; this file is
 // pure logic and unit-testable from an httptest harness.
 //
-// planToken is a base64-JSON blob carrying {Hash, AccountID, TS}.
+// planToken is a base64-JSON blob carrying source and project-binding identity.
 // The apply handler verifies SHA-256(uploaded_bytes) == Hash; if it
 // doesn't, it re-runs the scan from scratch and re-evaluates the
 // quota gate before persisting. This keeps the server authoritative
@@ -54,10 +54,13 @@ import (
 // source bytes (hex). TS is informational — the hash is the load-
 // bearing field.
 type planTokenWire struct {
-	Hash      string `json:"hash"`
-	AccountID string `json:"account_id"`
-	Slug      string `json:"slug"`
-	TSUnix    int64  `json:"ts_unix"`
+	Hash             string `json:"hash"`
+	AccountID        string `json:"account_id"`
+	Slug             string `json:"slug"`
+	RepoFullName     string `json:"repo_full_name,omitempty"`
+	ProductionBranch string `json:"production_branch,omitempty"`
+	InstallID        int64  `json:"install_id,omitempty"`
+	TSUnix           int64  `json:"ts_unix"`
 }
 
 // scanPlanRequest is the parsed multipart body for both /scan and
@@ -69,11 +72,12 @@ type scanPlanRequest struct {
 	// ScanDir is the extracted source tree. Cleaned up by scanService's
 	// defer (task #19 fix; pre-fix was "cleaned up by caller" but no
 	// caller ever removed it, so every successful scan leaked the dir).
-	ScanDir     string
-	ProjectSlug string
-	ProdBranch  string
-	InstallID   int64
-	Only        map[string]bool // ADR-050: allowlist filter on scan
+	ScanDir      string
+	ProjectSlug  string
+	RepoFullName string
+	ProdBranch   string
+	InstallID    int64
+	Only         map[string]bool // ADR-050: allowlist filter on scan
 	// Exclude is the ADR-124 inverse-allowlist. Slugs in Exclude
 	// are filtered out of filteredW *before* reconcile runs on the
 	// apply path so the operator choice cannot be overridden by a
@@ -88,6 +92,23 @@ type scanPlanRequest struct {
 	// the operator's "I excluded this for the long haul" intent.
 	// Default false. The scan path accepts and ignores.
 	PersistExclude bool
+}
+
+func validProjectRepoFullName(repo string) bool {
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, part := range parts {
+		for _, r := range part {
+			if r != '-' && r != '_' && r != '.' &&
+				(r < 'a' || r > 'z') && (r < 'A' || r > 'Z') &&
+				(r < '0' || r > '9') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // scanPlanResponse is the body returned by the scan service and
@@ -974,6 +995,12 @@ func (s *server) scanService(
 				"plan_token does not match uploaded source",
 				"re-run scan and apply in one flow")
 		}
+		if pt.Slug != req.ProjectSlug || pt.RepoFullName != req.RepoFullName ||
+			pt.ProductionBranch != req.ProdBranch || pt.InstallID != req.InstallID {
+			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
+				"plan_token_stale", "plan_token does not match project binding",
+				"re-run scan and apply with the same repository, installation, and production branch")
+		}
 	}
 
 	result, scanErr := reposcan.Scan(os.DirFS(req.ScanDir))
@@ -1264,6 +1291,7 @@ func (s *server) scanService(
 	}
 	resp := &scanPlanResponse{
 		ProjectSlug:   req.ProjectSlug,
+		RepoFullName:  req.RepoFullName,
 		ScanSource:    reconcile.DeriveScanSource(filteredW),
 		Tier:          result.Tier.String(),
 		Workloads:     respWorkloads,
@@ -1322,7 +1350,7 @@ func (s *server) scanService(
 	// Mint a fresh plan_token unless one was supplied (apply path
 	// keeps the caller's; minting a new one would be confusing).
 	if planToken == "" {
-		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.SourceSHA256)
+		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.SourceSHA256)
 		if mintErr != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
 				fmt.Sprintf("mint plan_token: %v", mintErr))
@@ -1385,7 +1413,7 @@ func (s *server) scanService(
 	project := state.Project{
 		AccountID:        acct.ID,
 		Slug:             req.ProjectSlug,
-		RepoFullName:     "",
+		RepoFullName:     req.RepoFullName,
 		ProductionBranch: req.ProdBranch,
 		InstallID:        req.InstallID,
 		ScanSource:       resp.ScanSource,
@@ -1664,6 +1692,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		onlySet        = map[string]bool{}
 		excludeSet     = map[string]bool{}
 		projectSlug    string
+		repoFullName   string
 		prodBranch     = "main"
 		installID      int64
 		persistExclude bool
@@ -1692,6 +1721,9 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		case "project_slug":
 			b, _ := io.ReadAll(io.LimitReader(part, 64))
 			projectSlug = strings.TrimSpace(string(b))
+		case "repo_full_name":
+			b, _ := io.ReadAll(io.LimitReader(part, 256))
+			repoFullName = strings.TrimSpace(string(b))
 		case "production_branch":
 			b, _ := io.ReadAll(io.LimitReader(part, 64))
 			prodBranch = strings.TrimSpace(string(b))
@@ -1755,6 +1787,18 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		// if it has extra context (--repo on the CLI).
 		projectSlug = "project-" + randomToken(6)
 	}
+	if repoFullName != "" && !validProjectRepoFullName(repoFullName) {
+		return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid repository", "repo_full_name must be owner/name")
+	}
+	if installID < 0 {
+		return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid installation", "install_id must be zero or a positive integer")
+	}
+	if (repoFullName == "") != (installID == 0) {
+		return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Incomplete repository binding", "repo_full_name and install_id must be provided together")
+	}
 
 	// Hash the spooled bytes BEFORE extract (extract consumes the
 	// file handle). SHA-256 over the compressed bytes is the
@@ -1777,6 +1821,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		SourceSHA256:   hash,
 		ScanDir:        scanDir,
 		ProjectSlug:    projectSlug,
+		RepoFullName:   repoFullName,
 		ProdBranch:     prodBranch,
 		InstallID:      installID,
 		Only:           onlySet,
@@ -1807,12 +1852,15 @@ func hashFileSHA256(path string) (string, error) {
 // mintPlanToken produces the base64-JSON blob. The hash is the
 // SHA-256 of the source bytes (the apply handler re-hashes and
 // compares). AccountID prevents token-reuse across accounts.
-func mintPlanToken(accountID, slug, hashHex string) (string, error) {
+func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, hashHex string) (string, error) {
 	pt := planTokenWire{
-		Hash:      hashHex,
-		AccountID: accountID,
-		Slug:      slug,
-		TSUnix:    nowUnix(),
+		Hash:             hashHex,
+		AccountID:        accountID,
+		Slug:             slug,
+		RepoFullName:     repoFullName,
+		ProductionBranch: productionBranch,
+		InstallID:        installID,
+		TSUnix:           nowUnix(),
 	}
 	b, err := json.Marshal(pt)
 	if err != nil {

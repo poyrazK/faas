@@ -619,6 +619,9 @@ var cliCommands = []cliCommand{
 			{Name: "path", Short: "deploy a selected local source directory (relative to the current directory)", Value: "DIR"},
 			{Name: "worktree", Short: "deploy the selected source directory from the working tree, including local changes"},
 			{Name: "repo", Short: "deploy from a GitHub repo", Value: "OWNER/NAME"},
+			{Name: "repository", Short: "GitHub owner/name to bind to a project", Value: "OWNER/NAME"},
+			{Name: "install-id", Short: "GitHub installation id for a project binding", Value: "N"},
+			{Name: "production-branch", Short: "production branch for a project binding", Value: "BRANCH"},
 			// Issue #739 / ADR-092: --ref pairs with --repo to
 			// drive the headless source-ref deploy (CI-friendly,
 			// no install-token env). Required when --repo is set.
@@ -1138,6 +1141,10 @@ var cliCommands = []cliCommand{
 			{Name: "tarball", Short: "scan a source tarball", Value: "PATH"},
 			{Name: "path", Short: "scan a local directory", Value: "DIR"},
 			{Name: "repo", Short: "scan a GitHub repo", Value: "OWNER/NAME"},
+			{Name: "repository", Short: "GitHub owner/name to bind to the project (defaults to --repo)", Value: "OWNER/NAME"},
+			{Name: "install-id", Short: "GitHub installation id (with --repository or --repo)", Value: "N"},
+			{Name: "production-branch", Short: "production branch for the project", Value: "BRANCH"},
+			{Name: "project-slug", Short: "kebab slug; default = repo dir basename", Value: "SLUG"},
 			// ADR-124 follow-up #1: --exclude + --show-affected
 			// ship on scan as well as deploy (the partition is the
 			// preview surface, scan is the operator's first stop).

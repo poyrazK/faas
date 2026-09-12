@@ -36,7 +36,7 @@ func TestWriteProjectMultipartFields_PersistExclude_OmittedByDefault(t *testing.
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	if err := writeProjectMultipartFields(w, strings.NewReader("x"), "src.tgz",
-		"demo", "main", 0, nil, []string{"foo"}, false); err != nil {
+		"demo", "", "main", 0, nil, []string{"foo"}, false); err != nil {
 		t.Fatalf("writeProjectMultipartFields: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -65,7 +65,7 @@ func TestWriteProjectMultipartFields_PersistExclude_EmittedWhenTrue(t *testing.T
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	if err := writeProjectMultipartFields(w, strings.NewReader("x"), "src.tgz",
-		"demo", "main", 0, nil, []string{"foo"}, true); err != nil {
+		"demo", "", "main", 0, nil, []string{"foo"}, true); err != nil {
 		t.Fatalf("writeProjectMultipartFields: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -98,7 +98,7 @@ func TestWriteProjectMultipartFields_PersistExclude_NotEmittedWhenExcludeEmpty(t
 	// is a no-op write (Skipped empty), but the body still carries
 	// the flag for the audit trail.
 	if err := writeProjectMultipartFields(w, strings.NewReader("x"), "src.tgz",
-		"demo", "main", 0, nil, nil, true); err != nil {
+		"demo", "", "main", 0, nil, nil, true); err != nil {
 		t.Fatalf("writeProjectMultipartFields: %v", err)
 	}
 	if err := w.Close(); err != nil {
@@ -115,6 +115,32 @@ func TestWriteProjectMultipartFields_PersistExclude_NotEmittedWhenExcludeEmpty(t
 	// exclude field is NOT emitted (no slugs to write).
 	if strings.Contains(string(body), "name=\"exclude\"") {
 		t.Errorf("multipart body carries exclude field when exclude list is empty; body=%s", body)
+	}
+}
+
+// TestWriteProjectMultipartFields_ProjectBinding pins the fields that let a
+// CLI-created project participate in GitHub push reconciliation. The binding
+// tuple must travel with both scan and apply requests so the server can persist
+// the same repository, installation, and production branch identity.
+func TestWriteProjectMultipartFields_ProjectBinding(t *testing.T) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	if err := writeProjectMultipartFields(w, strings.NewReader("x"), "src.tgz",
+		"demo", "acme/widgets", "release", 42, nil, nil, false); err != nil {
+		t.Fatalf("writeProjectMultipartFields: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("multipart close: %v", err)
+	}
+	body := string(buf.Bytes())
+	for _, want := range []string{
+		"name=\"repo_full_name\"\r\n\r\nacme/widgets",
+		"name=\"production_branch\"\r\n\r\nrelease",
+		"name=\"install_id\"\r\n\r\n42",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("multipart body missing %q; body=%s", want, body)
+		}
 	}
 }
 

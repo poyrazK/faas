@@ -139,10 +139,13 @@ func TestSweepExpiredCacheEntries_RemovesOldFiles(t *testing.T) {
 
 func TestDecodePlanToken_RoundTrip(t *testing.T) {
 	pt := planTokenWire{
-		Hash:      "abcd",
-		AccountID: "acct-1",
-		Slug:      "demo",
-		TSUnix:    1700000000,
+		Hash:             "abcd",
+		AccountID:        "acct-1",
+		Slug:             "demo",
+		RepoFullName:     "acme/widgets",
+		ProductionBranch: "release",
+		InstallID:        42,
+		TSUnix:           1700000000,
 	}
 	b, _ := json.Marshal(pt)
 	encoded := base64.StdEncoding.EncodeToString(b)
@@ -150,8 +153,32 @@ func TestDecodePlanToken_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.AccountID != pt.AccountID || got.Hash != pt.Hash || got.Slug != pt.Slug {
+	if got.AccountID != pt.AccountID || got.Hash != pt.Hash || got.Slug != pt.Slug ||
+		got.RepoFullName != pt.RepoFullName || got.ProductionBranch != pt.ProductionBranch ||
+		got.InstallID != pt.InstallID {
 		t.Fatalf("round-trip mismatch: %+v vs %+v", got, pt)
+	}
+}
+
+func TestValidProjectRepoFullName(t *testing.T) {
+	tests := []struct {
+		name  string
+		repo  string
+		valid bool
+	}{
+		{name: "owner and repository", repo: "acme/widgets", valid: true},
+		{name: "allowed punctuation", repo: "acme-inc/widgets_v2.go", valid: true},
+		{name: "missing owner", repo: "/widgets", valid: false},
+		{name: "missing repository", repo: "acme/", valid: false},
+		{name: "nested path", repo: "acme/platform/widgets", valid: false},
+		{name: "invalid character", repo: "acme/widgets.git?ref=main", valid: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validProjectRepoFullName(tt.repo); got != tt.valid {
+				t.Fatalf("validProjectRepoFullName(%q) = %v; want %v", tt.repo, got, tt.valid)
+			}
+		})
 	}
 }
 

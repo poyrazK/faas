@@ -1224,19 +1224,28 @@ func (c *Client) DestroyPreview(ctx context.Context, slug string) error {
 	return c.do(ctx, "POST", "/v1/preview/"+slug+"/destroy", nil, nil)
 }
 
-// ScanProject ships a source tarball to the dry-run endpoint. The
-// response carries the discovered workloads, managed services,
-// derived scan_source, and a plan_token that ApplyProjectPlan can
-// echo back on the same multipart body to skip the second extract
-// in the interactive flow. No writes — POST /v1/projects/scan.
+// ScanProject ships a source tarball to the dry-run endpoint without a
+// GitHub project binding. It preserves the original SDK shape; callers that
+// need push reconciliation should use ScanProjectWithBinding.
 func (c *Client) ScanProject(
 	ctx context.Context,
 	source io.Reader, sourceName, projectSlug, productionBranch string,
 	installID int64, only, exclude []string, persistExclude bool,
 ) (PlanResponse, error) {
+	return c.ScanProjectWithBinding(ctx, source, sourceName, projectSlug, "", productionBranch,
+		installID, only, exclude, persistExclude)
+}
+
+// ScanProjectWithBinding is ScanProject with the repository identity needed
+// for GitHub push reconciliation.
+func (c *Client) ScanProjectWithBinding(
+	ctx context.Context,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude bool,
+) (PlanResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, productionBranch, installID, only, exclude, persistExclude); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude); err != nil {
 		return PlanResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -1254,20 +1263,30 @@ func (c *Client) ScanProject(
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
 
-// ApplyProjectPlan ships the same multipart body as ScanProject
-// plus a plan_token query parameter to /v1/projects. The token is
-// optional — pass "" to force a fresh extract + scan + quota check
-// on the server. On over-quota the response carries the matching
-// 402/403 RFC 7807 problem with zero rows inserted.
+// ApplyProjectPlan ships the same multipart body as ScanProject without a
+// GitHub project binding. It preserves the original SDK shape; callers that
+// need push reconciliation should use ApplyProjectPlanWithBinding.
 func (c *Client) ApplyProjectPlan(
 	ctx context.Context,
 	planToken string,
 	source io.Reader, sourceName, projectSlug, productionBranch string,
 	installID int64, only, exclude []string, persistExclude bool,
 ) (ApplyResponse, error) {
+	return c.ApplyProjectPlanWithBinding(ctx, planToken, source, sourceName, projectSlug, "", productionBranch,
+		installID, only, exclude, persistExclude)
+}
+
+// ApplyProjectPlanWithBinding applies a project plan while carrying the
+// repository identity needed for GitHub push reconciliation.
+func (c *Client) ApplyProjectPlanWithBinding(
+	ctx context.Context,
+	planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude bool,
+) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, productionBranch, installID, only, exclude, persistExclude); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -1310,7 +1329,7 @@ func (c *Client) DeleteDeploymentScopeExclusion(ctx context.Context, projectSlug
 // enforces the field-for-field mapping).
 func writeProjectMultipartFields(
 	w *multipart.Writer, source io.Reader, sourceName, projectSlug,
-	productionBranch string, installID int64, only, exclude []string,
+	repoFullName, productionBranch string, installID int64, only, exclude []string,
 	persistExclude bool,
 ) error {
 	fw, err := w.CreateFormFile("source", sourceName)
@@ -1322,6 +1341,11 @@ func writeProjectMultipartFields(
 	}
 	if projectSlug != "" {
 		if err := w.WriteField("project_slug", projectSlug); err != nil {
+			return err
+		}
+	}
+	if repoFullName != "" {
+		if err := w.WriteField("repo_full_name", repoFullName); err != nil {
 			return err
 		}
 	}

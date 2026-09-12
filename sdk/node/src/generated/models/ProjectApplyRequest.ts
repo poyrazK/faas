@@ -11,6 +11,7 @@
 export type ProjectApplyRequest = {
   source: Blob;
   project_slug?: string;
+  repo_full_name?: string;
   production_branch?: string;
   install_id?: number;
   only?: string;

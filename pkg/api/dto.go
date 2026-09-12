@@ -4905,6 +4905,7 @@ type AccountSLOResponse struct {
 type ProjectScanRequest struct {
 	Source           string `json:"source"`            // tar.gz binary blob
 	ProjectSlug      string `json:"project_slug"`      // kebab slug
+	RepoFullName     string `json:"repo_full_name"`    // GitHub owner/name binding
 	ProductionBranch string `json:"production_branch"` // default "main"
 	InstallID        int64  `json:"install_id"`        // GitHub install id (--repo); 0 for unbound
 	Only             string `json:"only"`              // CSV of workload names
@@ -4916,6 +4917,7 @@ type ProjectScanRequest struct {
 type ProjectApplyRequest struct {
 	Source           string `json:"source"`
 	ProjectSlug      string `json:"project_slug"`
+	RepoFullName     string `json:"repo_full_name"`
 	ProductionBranch string `json:"production_branch"`
 	InstallID        int64  `json:"install_id"`
 	Only             string `json:"only"`
