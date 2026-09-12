@@ -3463,23 +3463,41 @@ func ValidateAppCPUMillicores(cpuMillicores int) *Problem {
 // customer can rotate their host age key after a restore-from-export
 // without losing the per-secret envelope.
 type AccountExportResponse struct {
-	ExportedAt  string                    `json:"exported_at"`
-	Account     AccountResponse           `json:"account"`
-	Apps        []AppResponse             `json:"apps"`
-	Deployments []DeploymentResponse      `json:"deployments"`
-	Builds      []BuildExportResponse     `json:"builds"`
-	Instances   []InstanceResponse        `json:"instances"`
-	Usage       []UsageExportResponse     `json:"usage"`
-	Domains     []CustomDomainResponse    `json:"domains"`
-	Crons       []CronResponse            `json:"crons"`
-	APIKeys     []APIKeyExportResponse    `json:"api_keys"`
-	AppSecrets  []AppSecretExportResponse `json:"app_secrets"`
+	SchemaVersion  int                           `json:"schema_version"`
+	ExportedAt     string                        `json:"exported_at"`
+	Account        AccountResponse               `json:"account"`
+	Organizations  []OrgResponse                 `json:"organizations"`
+	OrgMemberships []OrgMembershipExportResponse `json:"org_memberships"`
+	OrgInvitations []OrgInvitationResponse       `json:"org_invitations"`
+	OrgAPIKeys     []APIKeyResponse              `json:"org_api_keys"`
+	Apps           []AppResponse                 `json:"apps"`
+	Deployments    []DeploymentResponse          `json:"deployments"`
+	Builds         []BuildExportResponse         `json:"builds"`
+	Instances      []InstanceResponse            `json:"instances"`
+	Usage          []UsageExportResponse         `json:"usage"`
+	Domains        []CustomDomainResponse        `json:"domains"`
+	Crons          []CronResponse                `json:"crons"`
+	APIKeys        []APIKeyExportResponse        `json:"api_keys"`
+	AppSecrets     []AppSecretExportResponse     `json:"app_secrets"`
 	// AuditTrail is the customer's own GDPR ledger slice: every
 	// export/delete/restore the customer has hit. Surfaced in the
 	// bundle so the export is self-describing (the customer can see
 	// "yes, my last deletion request fired at <ts>") without a
 	// separate GET round trip.
 	AuditTrail []GdprAuditExportResponse `json:"audit_trail,omitempty"`
+}
+
+// OrgMembershipExportResponse identifies the organization for each membership
+// and preserves lifecycle attribution that the interactive member list omits.
+type OrgMembershipExportResponse struct {
+	OrgID              string `json:"org_id"`
+	OrgSlug            string `json:"org_slug"`
+	AccountID          string `json:"account_id"`
+	Email              string `json:"email"`
+	Role               string `json:"role"`
+	InvitedByAccountID string `json:"invited_by_account_id,omitempty"`
+	JoinedAt           string `json:"joined_at"`
+	RemovedAt          string `json:"removed_at,omitempty"`
 }
 
 // BuildExportResponse is the per-build row in the export bundle.

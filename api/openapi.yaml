@@ -16134,12 +16134,17 @@ components:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
 
     AccountExportResponse:
-      description: "GDPR export bundle: the account itself, every owned app, deployment, build, instance, usage record, domain, cron, API key, and sealed-secret envelope, plus the audit trail."
+      description: "Versioned GDPR export bundle: the account and organization identity graph, owned runtime resources, redacted key metadata, sealed-secret envelopes, and audit trail."
       type: object
-      required: [exported_at, account, apps, deployments, builds, instances, usage, domains, crons, api_keys, app_secrets]
+      required: [schema_version, exported_at, account, organizations, org_memberships, org_invitations, org_api_keys, apps, deployments, builds, instances, usage, domains, crons, api_keys, app_secrets]
       properties:
+        schema_version: { type: integer, enum: [2], description: "Export schema version used by restore and portability tooling." }
         exported_at: { type: string, format: date-time , example: "2026-07-23T11:25:00Z"}
         account: { $ref: '#/components/schemas/AccountResponse' }
+        organizations: { type: array, items: { $ref: '#/components/schemas/OrgResponse' } }
+        org_memberships: { type: array, items: { $ref: '#/components/schemas/OrgMembershipExportResponse' } }
+        org_invitations: { type: array, items: { $ref: '#/components/schemas/OrgInvitationResponse' } }
+        org_api_keys: { type: array, items: { $ref: '#/components/schemas/APIKeyResponse' }, description: "Org-bound API key metadata; plaintext and hashes are never exported." }
         apps: { type: array, items: { $ref: '#/components/schemas/AppResponse' } }
         deployments: { type: array, items: { $ref: '#/components/schemas/DeploymentResponse' } }
         builds: { type: array, items: { $ref: '#/components/schemas/BuildExportResponse' } }
@@ -16152,6 +16157,20 @@ components:
         audit_trail:
           type: array
           items: { $ref: '#/components/schemas/GdprAuditExportResponse' }
+
+    OrgMembershipExportResponse:
+      description: "Organization membership lifecycle row included in export schema v2."
+      type: object
+      required: [org_id, org_slug, account_id, email, role, joined_at]
+      properties:
+        org_id: { type: string, format: uuid }
+        org_slug: { type: string }
+        account_id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { type: string, enum: [owner, admin, developer, billing, viewer] }
+        invited_by_account_id: { type: string, format: uuid }
+        joined_at: { type: string, format: date-time }
+        removed_at: { type: string, format: date-time }
 
     AccountDeletionResponse:
       description: "Result of staging account deletion: status flips to `deleted_pending` and `restore_until` marks the end of the 30-day grace window."
