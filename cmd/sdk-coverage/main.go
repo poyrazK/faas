@@ -506,11 +506,16 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry": "RetryAppWebhookDelivery",
 
 	// ADR-156 — durable managed realtime endpoint configuration.
-	"GET /v1/apps/{slug}/realtime/endpoints":         "ListManagedRealtimeEndpoints",
-	"POST /v1/apps/{slug}/realtime/endpoints":        "CreateManagedRealtimeEndpoint",
-	"GET /v1/apps/{slug}/realtime/endpoints/{id}":    "GetManagedRealtimeEndpoint",
-	"PATCH /v1/apps/{slug}/realtime/endpoints/{id}":  "UpdateManagedRealtimeEndpoint",
-	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}": "DeleteManagedRealtimeEndpoint",
+	"GET /v1/apps/{slug}/realtime/endpoints":                                                             "ListManagedRealtimeEndpoints",
+	"POST /v1/apps/{slug}/realtime/endpoints":                                                            "CreateManagedRealtimeEndpoint",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}":                                                        "GetManagedRealtimeEndpoint",
+	"PATCH /v1/apps/{slug}/realtime/endpoints/{id}":                                                      "UpdateManagedRealtimeEndpoint",
+	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}":                                                     "DeleteManagedRealtimeEndpoint",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send":                      "SendManagedRealtimeConnection",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close":                     "CloseManagedRealtimeConnection",
+	"PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}":    "SubscribeManagedRealtimeConnection",
+	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}": "UnsubscribeManagedRealtimeConnection",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish":                            "PublishManagedRealtimeChannel",
 
 	// Issue #1398 O4 — customer runtime log destinations. Hyphenated path
 	// segments need explicit noun-oriented SDK names.
