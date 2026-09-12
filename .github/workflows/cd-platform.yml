@@ -79,6 +79,10 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  # Called workflows can only reduce the caller's token permissions. The
+  # compute stage reads the dispatch run while resolving a reused preflight,
+  # so the orchestrator must make actions:read available up front.
+  actions: read
   contents: read
 
 jobs:
