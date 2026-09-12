@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { GitHubDeploymentPolicy } from '../models/GitHubDeploymentPolicy.js';
+import type { GitHubDeploymentPolicyPatch } from '../models/GitHubDeploymentPolicyPatch.js';
 import type { GitHubInstallMutationRequest } from '../models/GitHubInstallMutationRequest.js';
 import type { GitHubInstallStatus } from '../models/GitHubInstallStatus.js';
 import type { InstallBindRequest } from '../models/InstallBindRequest.js';
@@ -150,6 +152,74 @@ export class GithubService {
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
+      },
+    });
+  }
+  /**
+   * Read the customer-owned GitHub deployment policy.
+   * Returns the project-level policy applied by githubd to source
+   * staging and pull-request previews. Missing policy rows resolve to
+   * backwards-compatible defaults.
+   *
+   * @returns GitHubDeploymentPolicy Current GitHub deployment policy.
+   * @throws ApiError
+   */
+  public static getGitHubDeploymentPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<GitHubDeploymentPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/github/deployment-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Update the customer-owned GitHub deployment policy.
+   * Updates project-level GitHub deployment behaviour. Fields are
+   * replace-on-write; omitted fields retain their current values. The
+   * ignored_paths list accepts exact paths, one-segment shell globs, and
+   * trailing `**` directory patterns. Mutations require MFA.
+   *
+   * @returns GitHubDeploymentPolicy Updated GitHub deployment policy.
+   * @throws ApiError
+   */
+  public static patchGitHubDeploymentPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: GitHubDeploymentPolicyPatch,
+  }): CancelablePromise<GitHubDeploymentPolicy> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/github/deployment-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

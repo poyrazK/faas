@@ -657,6 +657,24 @@ type APIConsumerUsageStatementListResponse struct {
 	Statements []APIConsumerUsageStatementResponse `json:"statements"`
 }
 
+// ClaimAPIConsumerUsageStatementRequest records the invoice reference in the
+// customer's billing system. The statement amount and currency are always
+// copied server-side from the finalized statement.
+type ClaimAPIConsumerUsageStatementRequest struct {
+	ExternalInvoiceID string `json:"external_invoice_id"`
+}
+
+// APIConsumerUsageStatementHandoffResponse is the immutable receipt returned
+// when a customer billing system claims a finalized usage statement.
+type APIConsumerUsageStatementHandoffResponse struct {
+	ID                string    `json:"id"`
+	StatementID       string    `json:"statement_id"`
+	ExternalInvoiceID string    `json:"external_invoice_id"`
+	Currency          string    `json:"currency,omitempty"`
+	AmountMillicents  int64     `json:"amount_millicents"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
 // Validated server-side via the same validSlug regex used at CreateApp
 // time; rejected on conflict with 409 CodeAppRenameFailed when another
@@ -7078,6 +7096,7 @@ type RekeyProgress struct {
 type ComputeNodeEnrollmentRequest struct {
 	Name               string `json:"name"`
 	TargetURL          string `json:"target_url"`
+	ScheddTargetURL    string `json:"schedd_target_url,omitempty"`
 	GatewayTargetURL   string `json:"gateway_target_url,omitempty"`
 	VPCPUs             int    `json:"vpcpus"`
 	MemMB              int    `json:"mem_mb"`
@@ -7665,6 +7684,65 @@ type DebugCoverageResponse struct {
 	GuestEvidence       DebugCoverageSignal `json:"guest_evidence"`
 	OldestTelemetryAt   string              `json:"oldest_telemetry_at,omitempty"`
 	LatestTelemetryAt   string              `json:"latest_telemetry_at,omitempty"`
+}
+
+// DebugRunningCause is one observed reason an application remained resident
+// during an idle-reaper observation. Reasons are deliberately evidence-shaped:
+// the debugger reports what the scheduler saw, rather than predicting a
+// saving or inferring a protocol that was not instrumented.
+type DebugRunningCause struct {
+	Code            string `json:"code"`
+	Summary         string `json:"summary"`
+	InstanceCount   int    `json:"instance_count"`
+	OpenConnections int64  `json:"open_connections,omitempty"`
+	TailTasks       int    `json:"tail_tasks,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	WorkloadClass   string `json:"workload_class,omitempty"`
+	LastActivityAt  string `json:"last_activity_at,omitempty"`
+	IdleDeadline    string `json:"idle_deadline,omitempty"`
+}
+
+// DebugRunningObservation is the durable scheduler observation used by the
+// "why is this app running?" debugger. The observation is a bounded snapshot;
+// it is not a billing estimate and it never contains request bodies or raw
+// connection data.
+type DebugRunningObservation struct {
+	EventID                string              `json:"event_id,omitempty"`
+	ObservedAt             string              `json:"observed_at"`
+	RunningInstances       int                 `json:"running_instances"`
+	ConfiguredMinInstances int                 `json:"configured_min_instances"`
+	EffectiveMinInstances  int                 `json:"effective_min_instances"`
+	PrewarmMinInstances    int                 `json:"prewarm_min_instances,omitempty"`
+	IdleTimeoutSeconds     int                 `json:"idle_timeout_seconds"`
+	Degraded               bool                `json:"degraded,omitempty"`
+	Causes                 []DebugRunningCause `json:"causes"`
+}
+
+// DebugRunningConfig is the current configuration context shown beside the
+// observed causes. Config values are returned even when no blocker is
+// currently observed so a customer can distinguish scale-to-zero from a
+// configured warm floor.
+type DebugRunningConfig struct {
+	ConfiguredMinInstances int `json:"configured_min_instances"`
+	EffectiveMinInstances  int `json:"effective_min_instances"`
+	PrewarmMinInstances    int `json:"prewarm_min_instances,omitempty"`
+	IdleTimeoutSeconds     int `json:"idle_timeout_seconds"`
+}
+
+// DebugRunningResponse is returned by GET /v1/apps/{slug}/debug/running.
+// Current is the newest scheduler observation; History contains the bounded
+// recent observations that explain how the application stayed resident.
+type DebugRunningResponse struct {
+	AppID             string                    `json:"app_id"`
+	Since             string                    `json:"since"`
+	WindowStart       string                    `json:"window_start"`
+	WindowEnd         string                    `json:"window_end"`
+	RetentionClamped  bool                      `json:"retention_clamped"`
+	Current           []DebugRunningCause       `json:"current"`
+	CurrentObservedAt string                    `json:"current_observed_at,omitempty"`
+	Config            DebugRunningConfig        `json:"config"`
+	History           []DebugRunningObservation `json:"history"`
+	HistoryTruncated  bool                      `json:"history_truncated"`
 }
 
 // DebugTelemetrySpan is the safe, bounded span drill-down returned by the

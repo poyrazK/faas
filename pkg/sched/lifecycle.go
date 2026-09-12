@@ -118,6 +118,53 @@ func classifyServiceReplicas(replicas []state.Instance) serviceReplicaStatus {
 	return status
 }
 
+// observeServiceReplicaStatus projects the current serving capacity of an
+// app onto the scheduler metrics registry. Terminal and parked rows remain
+// in the instance table for reconciliation and retention, so unavailable is
+// derived as the desired-capacity shortfall after active ready, starting, and
+// draining rows are counted rather than treating historical rows as live
+// replicas.
+func (e *Engine) observeServiceReplicaStatus(ctx context.Context, app state.App, deployments []state.Deployment) {
+	if e.ops == nil {
+		return
+	}
+	desired := 0
+	if instanceModeForApp(app) == string(state.InstanceModeService) {
+		desired = desiredServiceReplicas(app.Manifest)
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	if err != nil {
+		e.log.Warn("sched: observe service replica status", "app", app.ID, "err", err)
+		return
+	}
+	liveDeployments := make(map[string]struct{}, len(deployments))
+	for _, deployment := range deployments {
+		liveDeployments[deployment.ID] = struct{}{}
+	}
+	var status serviceReplicaStatus
+	for _, instance := range instances {
+		if instance.Mode != string(state.InstanceModeService) {
+			continue
+		}
+		if _, ok := liveDeployments[instance.DeploymentID]; !ok {
+			continue
+		}
+		switch state.State(instance.State) {
+		case state.StateRunning:
+			status.ready++
+		case state.StateWaking, state.StateColdBooting:
+			status.starting++
+		case state.StateSnapshotting, state.StateMigrating:
+			status.draining++
+		}
+	}
+	status.unavailable = desired - status.ready - status.starting - status.draining
+	if status.unavailable < 0 {
+		status.unavailable = 0
+	}
+	e.ops.SetServiceReplicaStatus(app.ID, desired, status.ready, status.starting, status.draining, status.unavailable)
+}
+
 func listLiveDeploymentInstances(ctx context.Context, store state.Store, appID, deploymentID string) ([]state.Instance, error) {
 	instances, err := store.ListInstancesForApp(ctx, appID)
 	if err != nil {
@@ -540,6 +587,9 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		}
 		return
 	}
+	if !e.ownsApp(app) {
+		return
+	}
 	if app.Status != state.AppActive {
 		return
 	}
@@ -548,6 +598,7 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		e.log.Warn("sched: list live service deployments", "app", appID, "err", err)
 		return
 	}
+	defer e.observeServiceReplicaStatus(ctx, app, deployments)
 	handledScopes := make(map[string]struct{})
 	if instanceModeForApp(app) == string(state.InstanceModeService) {
 		rollouts := activeServiceRollouts(deployments)
@@ -812,6 +863,9 @@ func (e *Engine) ReconcileWorkerApp(ctx context.Context, appID string) {
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load worker app", "app", appID, "err", err)
 		}
+		return
+	}
+	if !e.ownsApp(app) {
 		return
 	}
 	deployments, err := e.store.LiveDeployments(ctx, appID)

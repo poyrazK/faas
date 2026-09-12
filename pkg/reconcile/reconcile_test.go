@@ -59,15 +59,19 @@ func seedProject(t *testing.T, store *fakeStore, scanSource state.ProjectScanSou
 // apps.slug is unconstrained in the schema; reconcile + apid
 // must agree (see workloadToDraftApp's docstring for the
 // rationale + the dual-pin requirement).
-func seedApp(t *testing.T, store *fakeStore, project state.Project, rootDir, workloadName, startCmd string) state.App {
+func seedApp(t *testing.T, store *fakeStore, project state.Project, rootDir, workloadName, startCmd string, classes ...state.WorkloadClass) state.App {
 	t.Helper()
+	class := state.WorkloadClassHTTP
+	if len(classes) > 0 {
+		class = classes[0]
+	}
 	a := state.App{
 		AccountID:     project.AccountID,
 		ProjectID:     project.ID,
 		Slug:          workloadName,
 		RootDir:       rootDir,
 		WorkloadName:  workloadName,
-		WorkloadClass: state.WorkloadClassHTTP,
+		WorkloadClass: class,
 		StartCommand:  startCmd,
 		Status:        state.AppActive,
 	}
@@ -162,7 +166,7 @@ func TestReconcile_ThreeWorkloads_NoDiff(t *testing.T) {
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	seedApp(t, store, proj, "", "api", "")
-	seedApp(t, store, proj, "", "worker", "")
+	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 	seedApp(t, store, proj, "", "web", "")
 
 	svc := freshService(store, aud)
@@ -189,7 +193,7 @@ func TestReconcile_ThreeWorkloads_AddOne(t *testing.T) {
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	seedApp(t, store, proj, "", "api", "")
-	seedApp(t, store, proj, "", "worker", "")
+	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 
 	svc := freshService(store, aud)
 	out, err := svc.Reconcile(context.Background(), proj, threeWorkloads(t, ""), "sha-1", "main", nil)
@@ -214,14 +218,14 @@ func TestReconcile_ThreeWorkloads_RemoveOne(t *testing.T) {
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	seedApp(t, store, proj, "", "api", "")
-	seedApp(t, store, proj, "", "worker", "")
+	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 	seedApp(t, store, proj, "", "extrasvc", "")
 
 	// Only api + worker survive.
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
 			{Name: "api", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
-			{Name: "worker", RootDir: "", Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
+			{Name: "worker", RootDir: "", Class: reposcan.ClassWorker, Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
 	}
@@ -266,7 +270,7 @@ func TestReconcile_ExcludePreventsRemove(t *testing.T) {
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	seedApp(t, store, proj, "", "api", "")
-	seedApp(t, store, proj, "", "worker", "")
+	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 	seedApp(t, store, proj, "", "extrasvc", "")
 
 	// Scan emits only api + worker (extrasvc is "removed" from
@@ -276,7 +280,7 @@ func TestReconcile_ExcludePreventsRemove(t *testing.T) {
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
 			{Name: "api", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
-			{Name: "worker", RootDir: "", Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
+			{Name: "worker", RootDir: "", Class: reposcan.ClassWorker, Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
 	}
@@ -508,11 +512,11 @@ func TestReconcile_OverQuota_CreatesSkipped(t *testing.T) {
 	seedApp(t, store, proj, "", "api", "")
 
 	// Attempt 3 creates. Free cap = 1. proj = 1 existing + 3 = 4.
-	// projected > cap → skipped.
+	// projected > cap → rejected before any mutation.
 	svc := freshService(store, aud)
 	out, err := svc.Reconcile(context.Background(), proj, threeWorkloads(t, ""), "sha-1", "main", nil)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
+	if err == nil {
+		t.Fatal("expected quota error")
 	}
 	if len(out.Added) != 0 {
 		t.Errorf("expected zero creates on over-quota, got %d", len(out.Added))
@@ -527,31 +531,22 @@ func TestReconcile_OverQuota_CreatesSkipped(t *testing.T) {
 	}
 }
 
-func TestReconcile_InnerQuotaError_PartialAddsAndAlert(t *testing.T) {
-	// Pins the inner CreateAppIfUnderQuota → *QuotaError safety
-	// net. Hobby plan cap = 5; seed 1 existing app (matching a
-	// scan workload so it doesn't trigger a remove), then a
-	// 2-workload create set with workload names that aren't in
-	// existing. Pre-check sees 1+2=3 ≤ 5 → passes. The hook
-	// fires QuotaError on the 2nd call to simulate a per-app
-	// race losing against a concurrent insert.
+func TestReconcile_AtomicQuotaErrorRollsBack(t *testing.T) {
+	// The transactional project path must surface a quota race as an error
+	// and leave the existing membership untouched. The hook stands in for a
+	// PostgreSQL transaction that rejects the authoritative quota check.
 	store := newFakeStore()
 	store.accountPlan = api.PlanHobby
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	seedApp(t, store, proj, "", "existing", "")
 
-	hookCalls := 0
-	store.createAppIfUnderQuotaHook = func(app state.App) (state.App, error) {
-		hookCalls++
-		if hookCalls == 2 {
-			return state.App{}, &state.QuotaError{
-				Kind:     state.QuotaErrorKindApps,
-				Limit:    5,
-				Observed: 6,
-			}
+	store.applyProjectReconcileHook = func(_ state.Project, _ []state.ProjectReconcileMutation, _ []state.ProjectReconcileCron, _ state.ProjectScanSource, _ api.Limits) (state.ProjectReconcileResult, error) {
+		return state.ProjectReconcileResult{}, &state.QuotaError{
+			Kind:     state.QuotaErrorKindApps,
+			Limit:    5,
+			Observed: 6,
 		}
-		return app, nil
 	}
 
 	scan := reposcan.Result{
@@ -564,22 +559,21 @@ func TestReconcile_InnerQuotaError_PartialAddsAndAlert(t *testing.T) {
 	}
 	svc := freshService(store, aud)
 	out, err := svc.Reconcile(context.Background(), proj, scan, "sha-inner-q", "main", nil)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
+	if err == nil {
+		t.Fatal("expected quota error")
 	}
-	if len(out.Added) != 1 {
-		t.Fatalf("expected 1 partial add, got %d", len(out.Added))
+	if len(out.Added) != 0 {
+		t.Fatalf("expected no committed adds, got %d", len(out.Added))
 	}
 	if len(out.Alerts) != 1 || out.Alerts[0].Kind != AlertKindQuotaBlocked {
 		t.Fatalf("expected 1 quota_blocked alert, got %v", out.Alerts)
 	}
-	// skipped_creates must exclude the one that already landed.
-	skipped, _ := out.Alerts[0].Data["skipped_creates"].([]string)
-	if len(skipped) != 1 {
-		t.Fatalf("expected 1 skipped name (not 2), got %v", skipped)
+	apps, listErr := store.AppsForProject(context.Background(), proj.AccountID, proj.ID)
+	if listErr != nil {
+		t.Fatalf("AppsForProject: %v", listErr)
 	}
-	if skipped[0] == out.Added[0].WorkloadName {
-		t.Errorf("added workload %q leaked into skipped_creates", skipped[0])
+	if len(apps) != 1 || apps[0].WorkloadName != "existing" {
+		t.Fatalf("partial app mutation leaked after rollback: %#v", apps)
 	}
 	// Audit row payload is the source of truth for dashboards;
 	// pin it too.
@@ -592,14 +586,53 @@ func TestReconcile_InnerQuotaError_PartialAddsAndAlert(t *testing.T) {
 		t.Fatalf("audit payload unparseable: %v", err)
 	}
 	auditSkipped, _ := data["skipped_creates"].([]any)
-	if len(auditSkipped) != 1 {
-		t.Errorf("audit row skipped_creates: expected 1, got %d (%v)", len(auditSkipped), auditSkipped)
+	if len(auditSkipped) != 2 {
+		t.Errorf("audit row skipped_creates: expected 2, got %d (%v)", len(auditSkipped), auditSkipped)
 	}
-	// Chronology: started, added (the one that landed), quota_blocked.
+	// Chronology: started, quota_blocked; no workload row may claim a commit.
 	kinds := extractKinds(store.snapshotEvents())
-	want := []string{KindReconcileStarted, KindWorkloadAdded, KindReconcileQuotaBlocked}
+	want := []string{KindReconcileStarted, KindReconcileQuotaBlocked}
 	if !equalSlices(kinds, want) {
 		t.Errorf("expected kinds %v, got %v", want, kinds)
+	}
+}
+
+func TestReconcileWithCrons_ReplacesIdempotently(t *testing.T) {
+	store := newFakeStore()
+	aud := newFakeAuditor(store)
+	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
+	app := seedApp(t, store, proj, "", "api", "")
+	if _, err := store.CreateCron(context.Background(), app.ID, "*/5 * * * *", "/", true); err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
+	svc := freshService(store, aud)
+	scan := reposcan.Result{Workloads: []reposcan.Workload{{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yaml: api", Schedule: "0 * * * *"}}, Tier: reposcan.TierCompose}
+	cron := []CronSpec{{WorkloadName: "api", Schedule: "0 * * * *", Path: "/", Enabled: true}}
+	if _, err := svc.ReconcileWithCrons(context.Background(), proj, scan, "sha-cron-1", "main", nil, cron); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if _, err := svc.ReconcileWithCrons(context.Background(), proj, scan, "sha-cron-2", "main", nil, cron); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if _, err := svc.Reconcile(context.Background(), proj, scan, "sha-cron-legacy", "main", nil); err != nil {
+		t.Fatalf("legacy reconcile: %v", err)
+	}
+	crons, err := store.ListCronsForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListCronsForApp: %v", err)
+	}
+	if len(crons) != 1 || crons[0].Schedule != "0 * * * *" {
+		t.Fatalf("expected one replaced cron, got %#v", crons)
+	}
+	if _, err := svc.ReconcileWithCrons(context.Background(), proj, reposcan.Result{Workloads: []reposcan.Workload{{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yaml: api"}}, Tier: reposcan.TierCompose}, "sha-cron-3", "main", nil, []CronSpec{}); err != nil {
+		t.Fatalf("cron removal reconcile: %v", err)
+	}
+	crons, err = store.ListCronsForApp(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("ListCronsForApp after removal: %v", err)
+	}
+	if len(crons) != 0 {
+		t.Fatalf("expected cron set to be empty, got %#v", crons)
 	}
 }
 
@@ -690,6 +723,70 @@ func TestReconcile_StartCommand_Flattened(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("resolveStartCommand(%v) = %q, want %q", tc.w, got, tc.want)
 		}
+	}
+}
+
+func TestReconcile_WorkloadClassAndStartCommandRoundTrip(t *testing.T) {
+	store := newFakeStore()
+	aud := newFakeAuditor(store)
+	_, proj := seedProject(t, store, state.ProjectScanSourceProcfile, "main")
+	svc := freshService(store, aud)
+
+	first := reposcan.Result{
+		Workloads: []reposcan.Workload{{
+			Name:    "worker",
+			Class:   reposcan.ClassWorker,
+			Command: []string{"node", "worker.js"},
+			Source:  "procfile: worker",
+		}},
+		Tier: reposcan.TierCompose,
+	}
+	out, err := svc.Reconcile(context.Background(), proj, first, "sha-fields-1", "main", nil)
+	if err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	if len(out.Added) != 1 {
+		t.Fatalf("first Reconcile added=%d, want 1", len(out.Added))
+	}
+	if got := out.Added[0]; got.WorkloadClass != state.WorkloadClassWorker || got.StartCommand != "node worker.js" {
+		t.Fatalf("created workload fields = class %q command %q, want worker/node worker.js", got.WorkloadClass, got.StartCommand)
+	}
+
+	second := first
+	second.Workloads[0].Class = reposcan.ClassJob
+	second.Workloads[0].Command = []string{"python", "job.py"}
+	out, err = svc.Reconcile(context.Background(), proj, second, "sha-fields-2", "main", nil)
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if len(out.Changed) != 1 {
+		t.Fatalf("second Reconcile changed=%d, want 1", len(out.Changed))
+	}
+	if got := out.Changed[0]; got.WorkloadClass != state.WorkloadClassJob || got.StartCommand != "python job.py" {
+		t.Fatalf("updated workload fields = class %q command %q, want job/python job.py", got.WorkloadClass, got.StartCommand)
+	}
+	changed, ok := findEvent(store.snapshotEvents(), KindWorkloadChanged)
+	if !ok {
+		t.Fatal("missing workload.changed audit row")
+	}
+	var data map[string]any
+	if err := json.Unmarshal(changed.Data, &data); err != nil {
+		t.Fatalf("audit payload unparseable: %v", err)
+	}
+	fields, ok := data["fields_changed"].([]any)
+	if !ok {
+		t.Fatalf("fields_changed missing or wrong type: %v", data["fields_changed"])
+	}
+	if len(fields) != 2 || fields[0] != "workload_class" || fields[1] != "start_command" {
+		t.Fatalf("fields_changed=%v, want [workload_class start_command]", fields)
+	}
+}
+
+func TestReconcile_WorkloadClassUnknownFallsBackToHTTP(t *testing.T) {
+	_, proj := seedProject(t, newFakeStore(), state.ProjectScanSourceSingle, "main")
+	got := workloadToDraftApp(proj, reposcan.Workload{Name: "app", Class: reposcan.ClassUnknown}, "", api.PlanFree)
+	if got.WorkloadClass != state.WorkloadClassHTTP {
+		t.Fatalf("unknown scan class persisted as %q, want http", got.WorkloadClass)
 	}
 }
 

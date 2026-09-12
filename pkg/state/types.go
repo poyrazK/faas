@@ -737,6 +737,32 @@ type APIConsumerUsageStatement struct {
 	FinalizedAt      *time.Time
 }
 
+// APIConsumerUsageStatementHandoff is the immutable customer-billing claim
+// for a finalized usage statement. Gregale records the handoff without
+// becoming the merchant of record; the external invoice reference belongs to
+// the customer's billing system.
+type APIConsumerUsageStatementHandoff struct {
+	ID                string
+	AccountID         string
+	AppID             string
+	ConsumerID        string
+	StatementID       string
+	ExternalInvoiceID string
+	Currency          string
+	AmountMillicents  int64
+	CreatedAt         time.Time
+}
+
+// APIConsumerUsageStatementHandoffInput identifies the finalized statement
+// being claimed and the customer's immutable external invoice reference.
+type APIConsumerUsageStatementHandoffInput struct {
+	AccountID         string
+	AppID             string
+	ConsumerID        string
+	StatementID       string
+	ExternalInvoiceID string
+}
+
 // APIConsumerUsageStatementInput contains the quote to persist. The handler
 // builds it from the usage ledger and immutable rate-card versions.
 type APIConsumerUsageStatementInput struct {
@@ -4702,6 +4728,13 @@ type UpdateAppParams struct {
 	// semantics as RootDir: nil = leave alone, empty string = reset
 	// to default. Reconcile writes this on every update.
 	WorkloadName *string
+	// WorkloadClass is the scan-derived lifecycle hint for a project
+	// workload. Nil leaves the current value unchanged; a non-nil
+	// value is written with the same update as RootDir, WorkloadName,
+	// and StartCommand. Customer PATCH callers leave this nil because
+	// workload classification is owned by project reconciliation and
+	// characterization, not the public app update surface.
+	WorkloadClass *WorkloadClass
 	// StartCommand is the customer-supplied override for the image's
 	// entrypoint (e.g. compose `command:`). apps.start_command is
 	// NULL-able; the nullString helper treats the empty string as

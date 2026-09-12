@@ -1304,6 +1304,46 @@ func TestEngineWake_ColdBootPersistsObservedClass(t *testing.T) {
 	}
 }
 
+func TestEngineWake_FunctionIgnoresWorkerCharacterization(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "function@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "managed-function", Type: state.AppTypeFunction,
+		RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+		WorkloadClass: state.WorkloadClassHTTP,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:function", Status: state.DeployLive,
+	}); err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+
+	vmm := &fakeVMM{characterization: api.CharacterizationReport{
+		ObservedClass: string(state.WorkloadClassWorker),
+		ObservedPort:  0,
+		ExitCode:      -1,
+	}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	got, err := store.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if got.WorkloadClass != state.WorkloadClassHTTP {
+		t.Errorf("function class = %q, want %q", got.WorkloadClass, state.WorkloadClassHTTP)
+	}
+}
+
 // TestEngineWake_PropagatesWakeIDToVMM (PR-A, issue #517) asserts the
 // engine lifts wake_id / app_id / deployment_id from its inbound ctx
 // (set by gatewayd-internal via the request middleware) and forwards them on

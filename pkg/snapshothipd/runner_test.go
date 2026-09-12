@@ -3,9 +3,11 @@ package snapshothipd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +23,32 @@ type fakeReplicaStore struct {
 	queued int
 	ready  bool
 	failed error
+}
+
+type renewingReplicaStore struct {
+	fakeReplicaStore
+	renewErr   error
+	renewCalls int
+	renewed    chan struct{}
+	renewOnce  sync.Once
+}
+
+func (f *renewingReplicaStore) RenewSnapshotReplicaLease(context.Context, string, string, string) error {
+	f.renewCalls++
+	if f.renewed != nil {
+		f.renewOnce.Do(func() { close(f.renewed) })
+	}
+	return f.renewErr
+}
+
+func (f *renewingReplicaStore) MarkSnapshotReplicaReadyWithLease(context.Context, string, string, string) error {
+	f.ready = true
+	return nil
+}
+
+func (f *renewingReplicaStore) MarkSnapshotReplicaFailedWithLease(_ context.Context, _, _, _ string, err error) error {
+	f.failed = err
+	return nil
 }
 
 func (f *fakeReplicaStore) EnqueueSnapshotReplicasForNode(context.Context, string) (int, error) {
@@ -57,6 +85,29 @@ type fakeBackend struct {
 	gets    []string
 	failKey string
 }
+
+type leaseGateBackend struct {
+	started      chan struct{}
+	release      chan struct{}
+	canceled     chan struct{}
+	startOnce    sync.Once
+	canceledOnce sync.Once
+}
+
+func (f *leaseGateBackend) Put(context.Context, string, io.Reader) error { return nil }
+
+func (f *leaseGateBackend) Get(ctx context.Context, _ string) (io.ReadCloser, error) {
+	f.startOnce.Do(func() { close(f.started) })
+	select {
+	case <-f.release:
+		return io.NopCloser(bytes.NewReader([]byte("artifact"))), nil
+	case <-ctx.Done():
+		f.canceledOnce.Do(func() { close(f.canceled) })
+		return nil, ctx.Err()
+	}
+}
+
+func (f *leaseGateBackend) Delete(context.Context, string) error { return nil }
 
 func (f *fakeBackend) Put(context.Context, string, io.Reader) error { return nil }
 
@@ -245,6 +296,91 @@ func TestRunnerTickFailureIsRetryable(t *testing.T) {
 	}
 	if got, want := metrics.outcomes, []string{"failed:local"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("metrics = %v, want %v", got, want)
+	}
+}
+
+func TestRunnerRenewsLongSnapshotLeaseBeforeCompleting(t *testing.T) {
+	store := &renewingReplicaStore{
+		fakeReplicaStore: fakeReplicaStore{job: state.SnapshotReplicaJob{
+			SnapshotID: "snap-renew", DeploymentID: "dep-renew", NodeID: "node-2", LeaseToken: "lease-1",
+			StorageKey: "snap/dep-renew/mem", VMStateStorageKey: "snap/dep-renew/vmstate",
+		}},
+		renewed: make(chan struct{}),
+	}
+	backend := &leaseGateBackend{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		canceled: make(chan struct{}),
+	}
+	r := New(store, backend, "node-2", slog.Default()).WithMaxPerTick(1).WithLeaseRenewInterval(time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		r.runWorkTick(context.Background())
+		close(done)
+	}()
+	select {
+	case <-backend.started:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot sync did not start")
+	}
+	select {
+	case <-store.renewed:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot lease was not renewed")
+	}
+	close(backend.release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot sync did not complete")
+	}
+	if !store.ready {
+		t.Fatal("snapshot replica was not marked ready")
+	}
+	if store.renewCalls == 0 {
+		t.Fatal("snapshot lease was not renewed")
+	}
+}
+
+func TestRunnerLeaseRenewalLossCancelsSnapshotSync(t *testing.T) {
+	store := &renewingReplicaStore{
+		fakeReplicaStore: fakeReplicaStore{job: state.SnapshotReplicaJob{
+			SnapshotID: "snap-lost", DeploymentID: "dep-lost", NodeID: "node-2", LeaseToken: "lease-lost",
+			StorageKey: "snap/dep-lost/mem", VMStateStorageKey: "snap/dep-lost/vmstate",
+		}},
+		renewErr: state.ErrConflict,
+	}
+	backend := &leaseGateBackend{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		canceled: make(chan struct{}),
+	}
+	r := New(store, backend, "node-2", slog.Default()).WithMaxPerTick(1).WithLeaseRenewInterval(time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		r.runWorkTick(context.Background())
+		close(done)
+	}()
+	select {
+	case <-backend.started:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot sync did not start")
+	}
+	select {
+	case <-backend.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("lease loss did not cancel snapshot sync")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not finish after lease loss")
+	}
+	if !errors.Is(store.failed, state.ErrConflict) {
+		t.Fatalf("recorded failure = %v, want ErrConflict", store.failed)
+	}
+	if store.ready {
+		t.Fatal("snapshot replica was marked ready after lease loss")
 	}
 }
 

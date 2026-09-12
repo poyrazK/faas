@@ -117,113 +117,119 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	// apid-side audit pipeline only fires the per-project
 	// project.created row (at the bottom of this function).
 
-	// Soft-delete crons for workloads the scan dropped (H8 fix).
-	// Pre-fix, the cron-stamping loop below tried to look up
-	// appID by slug for every cron in resp.CronNames; a workload
-	// that was removed by the scan has no entry in the Added ∪
-	// Changed slug map, and the handler 500'd. Today the loop
-	// only touches crons in the NEW plan; orphans (a cron for a
-	// removed workload) are soft-deleted here so the cron list
-	// stays in sync with the workload list.
-	for _, slug := range removedSlugs {
-		// Find the app_id for the removed workload. The app
-		// was just soft-deleted by reconcile, so its row is
-		// still readable (PR-E sets status=AppDeleted).
-		apps, lerr := s.store.AppsForProject(r.Context(), acct.ID, insertedProject.ID)
-		if lerr != nil {
-			s.audit.Emit(r.Context(), "cron.removed_orphan", &acct.ID, map[string]any{
-				"project_id": insertedProject.ID,
-				"slug":       slug,
-				"err":        lerr.Error(),
-			})
-			continue
-		}
-		var appID string
-		for _, a := range apps {
-			if a.Slug == slug {
-				appID = a.ID
-				break
-			}
-		}
-		if appID == "" {
-			// The removed workload's app row was hard-deleted
-			// somewhere (or never existed) — best-effort,
-			// log the orphan.
-			s.audit.Emit(r.Context(), "cron.removed_orphan", &acct.ID, map[string]any{
-				"project_id": insertedProject.ID,
-				"slug":       slug,
-				"reason":     "no matching app row",
-			})
-			continue
-		}
-		// Soft-delete every cron attached to the removed
-		// workload's app. The Cron row has no separate
-		// workload_name column (one app = one workload in the
-		// scan-tied model), so every cron on this app is
-		// orphaned by the removal. DeleteCron is the
-		// soft-delete primitive (status moves to
-		// app-deleted via the parent row already being
-		// soft-deleted by reconcile).
-		cs, lerr := s.store.ListCronsForApp(r.Context(), appID)
-		if lerr != nil {
-			s.audit.Emit(r.Context(), "cron.removed_orphan", &acct.ID, map[string]any{
-				"project_id": insertedProject.ID,
-				"slug":       slug,
-				"err":        lerr.Error(),
-			})
-			continue
-		}
-		for _, c := range cs {
-			if err := s.store.DeleteCron(r.Context(), c.ID, appID); err != nil {
+	// Cron replacement is now part of reconcile's atomic project mutation.
+	// Keep the legacy fallback below disabled for stores that implement the
+	// new seam; it remains documented here only for source compatibility with
+	// older test doubles.
+	if _, atomic := s.store.(state.ProjectReconcileStore); !atomic {
+		// Soft-delete crons for workloads the scan dropped (H8 fix).
+		// Pre-fix, the cron-stamping loop below tried to look up
+		// appID by slug for every cron in resp.CronNames; a workload
+		// that was removed by the scan has no entry in the Added ∪
+		// Changed slug map, and the handler 500'd. Today the loop
+		// only touches crons in the NEW plan; orphans (a cron for a
+		// removed workload) are soft-deleted here so the cron list
+		// stays in sync with the workload list.
+		for _, slug := range removedSlugs {
+			// Find the app_id for the removed workload. The app
+			// was just soft-deleted by reconcile, so its row is
+			// still readable (PR-E sets status=AppDeleted).
+			apps, lerr := s.store.AppsForProject(r.Context(), acct.ID, insertedProject.ID)
+			if lerr != nil {
 				s.audit.Emit(r.Context(), "cron.removed_orphan", &acct.ID, map[string]any{
 					"project_id": insertedProject.ID,
 					"slug":       slug,
-					"cron_id":    c.ID,
-					"err":        err.Error(),
+					"err":        lerr.Error(),
 				})
 				continue
 			}
-			s.audit.Emit(r.Context(), "cron.removed", &acct.ID, map[string]any{
-				"project_id": insertedProject.ID,
-				"app_id":     appID,
-				"cron_id":    c.ID,
-				"slug":       slug,
-			})
+			var appID string
+			for _, a := range apps {
+				if a.Slug == slug {
+					appID = a.ID
+					break
+				}
+			}
+			if appID == "" {
+				// The removed workload's app row was hard-deleted
+				// somewhere (or never existed) — best-effort,
+				// log the orphan.
+				s.audit.Emit(r.Context(), "cron.removed_orphan", &acct.ID, map[string]any{
+					"project_id": insertedProject.ID,
+					"slug":       slug,
+					"reason":     "no matching app row",
+				})
+				continue
+			}
+			// Soft-delete every cron attached to the removed
+			// workload's app. The Cron row has no separate
+			// workload_name column (one app = one workload in the
+			// scan-tied model), so every cron on this app is
+			// orphaned by the removal. DeleteCron is the
+			// soft-delete primitive (status moves to
+			// app-deleted via the parent row already being
+			// soft-deleted by reconcile).
+			cs, lerr := s.store.ListCronsForApp(r.Context(), appID)
+			if lerr != nil {
+				s.audit.Emit(r.Context(), "cron.removed_orphan", &acct.ID, map[string]any{
+					"project_id": insertedProject.ID,
+					"slug":       slug,
+					"err":        lerr.Error(),
+				})
+				continue
+			}
+			for _, c := range cs {
+				if err := s.store.DeleteCron(r.Context(), c.ID, appID); err != nil {
+					s.audit.Emit(r.Context(), "cron.removed_orphan", &acct.ID, map[string]any{
+						"project_id": insertedProject.ID,
+						"slug":       slug,
+						"cron_id":    c.ID,
+						"err":        err.Error(),
+					})
+					continue
+				}
+				s.audit.Emit(r.Context(), "cron.removed", &acct.ID, map[string]any{
+					"project_id": insertedProject.ID,
+					"app_id":     appID,
+					"cron_id":    c.ID,
+					"slug":       slug,
+				})
+			}
 		}
-	}
 
-	// Build the slug→ID map for cron stamping. The cron list is
-	// encoded by name in resp.CronNames; both Added and Changed
-	// contribute to the map because a cron can attach to either a
-	// newly-created or an updated app. Removed-slug crons were
-	// soft-deleted above; the loop below only stamps NEW crons.
-	slugToID := make(map[string]string, len(added)+len(changed))
-	for _, a := range added {
-		slugToID[a.Slug] = a.ID
-	}
-	for _, a := range changed {
-		slugToID[a.Slug] = a.ID
-	}
-	for i, name := range resp.CronNames {
-		appID := slugToID[name]
-		if appID == "" {
-			// H8 fix: removed workload — the cron for it was
-			// soft-deleted in the loop above. This branch is
-			// now a defensive no-op rather than a 500.
-			continue
+		// Build the slug→ID map for cron stamping. The cron list is
+		// encoded by name in resp.CronNames; both Added and Changed
+		// contribute to the map because a cron can attach to either a
+		// newly-created or an updated app. Removed-slug crons were
+		// soft-deleted above; the loop below only stamps NEW crons.
+		slugToID := make(map[string]string, len(added)+len(changed))
+		for _, a := range added {
+			slugToID[a.Slug] = a.ID
 		}
-		// The schedule + path + enabled flags ride on the planCron
-		// entry captured earlier. resp.Crons has the same length
-		// + order as resp.CronNames (scan_service.go populates
-		// them in the same loop).
-		if i >= len(resp.Crons) {
-			continue
+		for _, a := range changed {
+			slugToID[a.Slug] = a.ID
 		}
-		c := resp.Crons[i]
-		if _, err := s.store.CreateCron(r.Context(), appID, c.Schedule, c.Path, c.Enabled); err != nil {
-			api.WriteProblem(w, api.ErrInternal(
-				fmt.Sprintf("stamp cron app_id: %v", err)))
-			return
+		for i, name := range resp.CronNames {
+			appID := slugToID[name]
+			if appID == "" {
+				// H8 fix: removed workload — the cron for it was
+				// soft-deleted in the loop above. This branch is
+				// now a defensive no-op rather than a 500.
+				continue
+			}
+			// The schedule + path + enabled flags ride on the planCron
+			// entry captured earlier. resp.Crons has the same length
+			// + order as resp.CronNames (scan_service.go populates
+			// them in the same loop).
+			if i >= len(resp.Crons) {
+				continue
+			}
+			c := resp.Crons[i]
+			if _, err := s.store.CreateCron(r.Context(), appID, c.Schedule, c.Path, c.Enabled); err != nil {
+				api.WriteProblem(w, api.ErrInternal(
+					fmt.Sprintf("stamp cron app_id: %v", err)))
+				return
+			}
 		}
 	}
 

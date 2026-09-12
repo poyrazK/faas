@@ -27,7 +27,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`deployments`](#deployments) | List deployments (--app SLUG \| --limit N \| --before C \| --all \| --wide) |
 | [`deployment`](#deployment) | Get, summarize, or wait for one deployment (&lt;id&gt; \| summary &lt;id&gt; \| wait &lt;id&gt; \| set-min-instances &lt;id&gt;) |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
-| [`deploy`](#deploy) | Deploy (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
+| [`deploy`](#deploy) | Deploy an app or project (--path DIR \| --image REF \| --tarball PATH \| --repo OWNER/NAME --ref REF \| --github \| --template NAME) |
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
@@ -38,6 +38,8 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`init`](#init) | Scaffold a reference project from a built-in template (--template NAME --path DIR [--deploy]) |
 | [`inspect`](#inspect) | Explain an app from its runtime, deployment, API, data, scaling, and release signals |
 | [`invoke`](#invoke) | Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J\|@file\|-]) |
+| [`run`](#run) | Run untrusted code in an isolated disposable microVM |
+| [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get &lt;id&gt;) |
 | [`debug`](#debug) | Production debugger (ADR-127) |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
@@ -777,9 +779,9 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 ## deploy
 
-Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
+Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -801,6 +803,7 @@ Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF 
 | `--app` | deploy as an app; skip shape auto-detection |  |
 | `--yes` | skip the apply confirmation prompt |  |
 | `--only <SLUGS>` | workloads to apply (comma-separated; project apply path) |  |
+| `--project` | deploy all detected workloads as one project (slug defaults from --name or source) |  |
 | `--reason <text>` | free-text deploy reason (≤280 chars) |  |
 | `--tag <TAG>` | annotation tag | one of `incident_recovery` · `hotfix` · `scheduled_maintenance` · `compliance_hold` · `partner_request` |
 | `--deployed-by <NAME>` | operator label (auto-resolved from git config user.name) |  |
@@ -1085,6 +1088,47 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-])
 | `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
 
 
+## run
+
+Run untrusted code in an isolated disposable microVM
+
+`gregale run [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--wait] [--poll-interval <D>] [--wait-timeout <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--runtime <R>` | runtime (node22\|node24\|python312\|python313) | one of `node22` · `node24` · `python312` · `python313` |
+| `--source <CODE>` | inline source code |  |
+| `--file <PATH>` | source file (regular file only) |  |
+| `--input <J|@file|->` | JSON input (inline \| @file \| -) |  |
+| `--timeout-ms <N>` | execution timeout |  |
+| `--memory-mb <N>` | memory limit |  |
+| `--cpu-millicores <N>` | CPU limit |  |
+| `--ephemeral-disk-mb <N>` | ephemeral scratch size |  |
+| `--max-output-bytes <N>` | combined output cap |  |
+| `--wait` | wait for terminal result |  |
+| `--poll-interval <D>` | status polling interval with --wait |  |
+| `--wait-timeout <D>` | maximum client wait duration |  |
+
+
+## runs
+
+Inspect or cancel isolated disposable runs
+
+`gregale runs [<subcommand>] <id>`
+
+### runs get
+
+Show one run
+
+### runs status
+
+Show one run (alias for get)
+
+### runs cancel
+
+Cancel one run
+
+
 ## invocations
 
 Per-account invocation ledger (invocations list|get &lt;id&gt;)
@@ -1113,6 +1157,10 @@ Per-request telemetry (list/watch filters: deployment, status, cold boot, consum
 ### debug coverage
 
 Observed debugger signal coverage (coverage &lt;slug&gt; [--since D])
+
+### debug running
+
+Explain why an app is still running (running &lt;slug&gt; [--since D] [--limit N])
 
 ### debug regressions
 

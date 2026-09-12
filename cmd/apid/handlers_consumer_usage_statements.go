@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -213,4 +214,100 @@ func (s *server) finalizeAPIConsumerUsageStatement(w http.ResponseWriter, r *htt
 		}
 	}
 	writeJSON(w, http.StatusOK, apiConsumerUsageStatementResponse(statement))
+}
+
+func apiConsumerUsageStatementHandoffResponse(handoff state.APIConsumerUsageStatementHandoff) api.APIConsumerUsageStatementHandoffResponse {
+	return api.APIConsumerUsageStatementHandoffResponse{
+		ID: handoff.ID, StatementID: handoff.StatementID,
+		ExternalInvoiceID: handoff.ExternalInvoiceID, Currency: handoff.Currency,
+		AmountMillicents: handoff.AmountMillicents, CreatedAt: handoff.CreatedAt.UTC(),
+	}
+}
+
+// claimAPIConsumerUsageStatement records the customer's external invoice
+// reference for a finalized statement. The operation is provider-neutral:
+// Gregale snapshots the amount and currency but never charges the customer.
+func (s *server) claimAPIConsumerUsageStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, consumer, statements, ok := s.apiConsumerUsageStatementStore(w, r, acct)
+	if !ok {
+		return
+	}
+	handoffs, ok := s.store.(state.APIConsumerUsageStatementHandoffStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("API consumer usage statement handoffs are unavailable"))
+		return
+	}
+	statement, err := statements.GetAPIConsumerUsageStatement(r.Context(), acct.ID, app.ID, consumer.ID, r.PathValue("statement_id"))
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "no such usage statement")
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not load API consumer usage statement"))
+		return
+	}
+	if statement.Status != state.APIConsumerUsageStatementFinalized {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Usage statement cannot be handed off", "only finalized usage statements can be handed off to a customer billing system"))
+		return
+	}
+	var req api.ClaimAPIConsumerUsageStatementRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	req.ExternalInvoiceID = strings.TrimSpace(req.ExternalInvoiceID)
+	if req.ExternalInvoiceID == "" || len(req.ExternalInvoiceID) > 255 {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid external invoice ID", "external_invoice_id is required and must be at most 255 bytes"))
+		return
+	}
+	handoff, created, err := handoffs.CreateAPIConsumerUsageStatementHandoff(r.Context(), state.APIConsumerUsageStatementHandoffInput{
+		AccountID: acct.ID, AppID: app.ID, ConsumerID: consumer.ID,
+		StatementID: statement.ID, ExternalInvoiceID: req.ExternalInvoiceID,
+	})
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "no such usage statement")
+		return
+	}
+	if errors.Is(err, state.ErrConflict) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Usage statement handoff conflict", "the statement was already handed off or the external invoice ID is already in use"))
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not record API consumer usage statement handoff"))
+		return
+	}
+	if created {
+		s.audit.Emit(r.Context(), "api_consumer_usage_statement.handed_off", &acct.ID, map[string]any{
+			"app_id": app.ID, "consumer_id": consumer.ID, "statement_id": statement.ID,
+			"handoff_id": handoff.ID, "external_invoice_id": handoff.ExternalInvoiceID,
+		})
+		writeJSON(w, http.StatusCreated, apiConsumerUsageStatementHandoffResponse(handoff))
+		return
+	}
+	writeJSON(w, http.StatusOK, apiConsumerUsageStatementHandoffResponse(handoff))
+}
+
+func (s *server) getAPIConsumerUsageStatementHandoff(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, consumer, _, ok := s.apiConsumerUsageStatementStore(w, r, acct)
+	if !ok {
+		return
+	}
+	handoffs, ok := s.store.(state.APIConsumerUsageStatementHandoffStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("API consumer usage statement handoffs are unavailable"))
+		return
+	}
+	handoff, err := handoffs.GetAPIConsumerUsageStatementHandoff(r.Context(), acct.ID, app.ID, consumer.ID, r.PathValue("statement_id"))
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "no usage statement handoff")
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not load API consumer usage statement handoff"))
+		return
+	}
+	writeJSON(w, http.StatusOK, apiConsumerUsageStatementHandoffResponse(handoff))
 }

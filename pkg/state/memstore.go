@@ -481,6 +481,10 @@ type MemStore struct {
 	// apiConsumerUsageStatements is keyed by statement ID. statement keys
 	// enforce one immutable snapshot per (app, consumer, period).
 	apiConsumerUsageStatements map[string]APIConsumerUsageStatement
+	// apiConsumerUsageStatementHandoffs is keyed by statement ID. A statement
+	// can be handed off at most once, while the implementation also rejects
+	// reuse of an external invoice reference within an account.
+	apiConsumerUsageStatementHandoffs map[string]APIConsumerUsageStatementHandoff
 	// networkUsageCheckpoints mirrors meter_network_checkpoints. Values are
 	// the last cumulative interface counters atomically reflected in usage.
 	networkUsageCheckpoints map[string]networkUsageCheckpoint
@@ -626,6 +630,9 @@ type MemStore struct {
 	// githubDeployBranches stores the optional branch→scope rules keyed by
 	// project ID. It mirrors github_deploy_branches in Postgres.
 	githubDeployBranches map[string]map[string]string
+	// githubDeployPolicies stores the optional project-level GitHub policy.
+	// Missing entries resolve to DefaultGitHubDeployPolicy.
+	githubDeployPolicies map[string]GitHubDeployPolicy
 	// clock is the seam CurrentMonthOverageCents uses to compute the
 	// UTC month-start cutoff. Default is time.Now (production); tests
 	// install a fixture via SetClockForTest so a usage row planted at
@@ -804,6 +811,7 @@ func NewMemStore() *MemStore {
 		deployTokenByHash:       map[string]DeployToken{},
 		apps:                    map[string]App{},
 		githubDeployBranches:    map[string]map[string]string{},
+		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
 		githubBindings:          map[string]GitHubBinding{},
 		githubInstalls:          map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
@@ -906,23 +914,24 @@ func NewMemStore() *MemStore {
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
-		deploymentSidecarLayers:    map[string]DeploymentSidecarLayer{},
-		snapshots:                  []Snapshot{},
-		snapshotStorage:            map[string]StorageUsage{},
-		snapshotReplicas:           map[snapshotReplicaKey]snapshotReplicaRow{},
-		snapshotOrigins:            map[string]snapshotOriginRow{},
-		events:                     []Event{},
-		auditOutbox:                map[int64]auditEventOutboxRow{},
-		auditOutboxByKey:           map[string]int64{},
-		nextAuditOutboxID:          1,
-		usage:                      []usageMinute{},
-		usageByMonth:               []Usage{},
-		apiConsumerUsage:           map[string]APIConsumerUsageBucket{},
-		apiConsumerUsageEvents:     map[string]struct{}{},
-		apiConsumerRateCards:       map[string]APIConsumerRateCard{},
-		apiConsumerUsageStatements: map[string]APIConsumerUsageStatement{},
-		networkUsageCheckpoints:    map[string]networkUsageCheckpoint{},
-		idem:                       map[string]idemEntry{},
+		deploymentSidecarLayers:           map[string]DeploymentSidecarLayer{},
+		snapshots:                         []Snapshot{},
+		snapshotStorage:                   map[string]StorageUsage{},
+		snapshotReplicas:                  map[snapshotReplicaKey]snapshotReplicaRow{},
+		snapshotOrigins:                   map[string]snapshotOriginRow{},
+		events:                            []Event{},
+		auditOutbox:                       map[int64]auditEventOutboxRow{},
+		auditOutboxByKey:                  map[string]int64{},
+		nextAuditOutboxID:                 1,
+		usage:                             []usageMinute{},
+		usageByMonth:                      []Usage{},
+		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
+		apiConsumerUsageEvents:            map[string]struct{}{},
+		apiConsumerRateCards:              map[string]APIConsumerRateCard{},
+		apiConsumerUsageStatements:        map[string]APIConsumerUsageStatement{},
+		apiConsumerUsageStatementHandoffs: map[string]APIConsumerUsageStatementHandoff{},
+		networkUsageCheckpoints:           map[string]networkUsageCheckpoint{},
+		idem:                              map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByProviderCustomerID
 		// walks; populated by UpdateAccountProviderCustomerID.
 
@@ -2719,6 +2728,238 @@ func (m *MemStore) ApplyProjectPlan(
 	return project, insertedApps, insertedCrons, nil
 }
 
+// ApplyProjectReconcile applies an existing project's desired app and cron
+// membership under one MemStore critical section. The map snapshots make
+// the operation rollback-safe even when a validation or uniqueness error is
+// discovered after an earlier mutation; PostgreSQL provides the equivalent
+// guarantee with its transaction in pgstore.go.
+func (m *MemStore) ApplyProjectReconcile(
+	_ context.Context,
+	project Project,
+	mutations []ProjectReconcileMutation,
+	desiredCrons []ProjectReconcileCron,
+	scanSource ProjectScanSource,
+	limits api.Limits,
+) (ProjectReconcileResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	storedProject, ok := m.projects[project.ID]
+	if !ok || storedProject.AccountID != project.AccountID {
+		return ProjectReconcileResult{}, ErrNotFound
+	}
+	appsBackup := make(map[string]App, len(m.apps))
+	for id, app := range m.apps {
+		appsBackup[id] = app
+	}
+	cronsBackup := make(map[string]Cron, len(m.crons))
+	for id, cron := range m.crons {
+		cronsBackup[id] = cron
+	}
+	projectBackup := storedProject
+	rollback := func(err error) (ProjectReconcileResult, error) {
+		m.apps = appsBackup
+		m.crons = cronsBackup
+		m.projects[project.ID] = projectBackup
+		return ProjectReconcileResult{}, err
+	}
+
+	// Validate the action vocabulary and ownership before mutating anything.
+	liveProjectApps := make(map[string]App)
+	for id, app := range m.apps {
+		if app.ProjectID == project.ID && app.AccountID == project.AccountID && app.Status != AppDeleted {
+			liveProjectApps[id] = app
+		}
+	}
+	creates := 0
+	removes := 0
+	seenRemoves := make(map[string]bool)
+	removeIDs := make(map[string]bool)
+	for _, mutation := range mutations {
+		if mutation.Op == "remove" {
+			removeIDs[mutation.App.ID] = true
+		}
+	}
+	workloadKeys := make(map[string]string, len(liveProjectApps))
+	for id, app := range liveProjectApps {
+		workloadKeys[app.RootDir+"\x00"+app.WorkloadName] = id
+	}
+	newSlugs := make(map[string]bool)
+	for _, mutation := range mutations {
+		switch mutation.Op {
+		case "create":
+			creates++
+			key := mutation.App.RootDir + "\x00" + mutation.App.WorkloadName
+			if _, exists := workloadKeys[key]; exists {
+				return rollback(ErrConflict)
+			}
+			workloadKeys[key] = mutation.App.ID
+			for _, existing := range m.apps {
+				if existing.Status != AppDeleted && existing.Slug == mutation.App.Slug && !removeIDs[existing.ID] {
+					return rollback(ErrConflict)
+				}
+			}
+			if newSlugs[mutation.App.Slug] {
+				return rollback(ErrConflict)
+			}
+			newSlugs[mutation.App.Slug] = true
+		case "update", "remove":
+			existing, found := liveProjectApps[mutation.App.ID]
+			if !found || existing.AccountID != project.AccountID {
+				return rollback(ErrNotFound)
+			}
+			if mutation.Op == "remove" {
+				if seenRemoves[mutation.App.ID] {
+					return rollback(ErrConflict)
+				}
+				seenRemoves[mutation.App.ID] = true
+				removes++
+				delete(workloadKeys, existing.RootDir+"\x00"+existing.WorkloadName)
+			} else {
+				key := mutation.App.RootDir + "\x00" + mutation.App.WorkloadName
+				if prior, exists := workloadKeys[key]; exists && prior != mutation.App.ID {
+					return rollback(ErrConflict)
+				}
+				delete(workloadKeys, existing.RootDir+"\x00"+existing.WorkloadName)
+				workloadKeys[key] = mutation.App.ID
+			}
+		default:
+			return rollback(fmt.Errorf("state: unknown project reconcile operation %q", mutation.Op))
+		}
+	}
+
+	observedApps := 0
+	for _, app := range m.apps {
+		if app.AccountID == project.AccountID && (app.Status == AppActive || app.Status == AppEvictedCold) {
+			observedApps++
+		}
+	}
+	if observedApps-removes+creates > limits.DeployedApps {
+		return rollback(&QuotaError{Kind: QuotaErrorKindApps, Limit: limits.DeployedApps, Observed: observedApps - removes + creates})
+	}
+
+	if desiredCrons != nil {
+		projectAppIDs := make(map[string]bool, len(liveProjectApps))
+		for id := range liveProjectApps {
+			projectAppIDs[id] = true
+		}
+		observedCrons := 0
+		projectCronCount := 0
+		for _, cron := range m.crons {
+			app, exists := m.apps[cron.AppID]
+			if !exists || app.Status == AppDeleted || app.AccountID != project.AccountID {
+				continue
+			}
+			observedCrons++
+			if projectAppIDs[cron.AppID] {
+				projectCronCount++
+			}
+		}
+		if len(desiredCrons) > 0 && limits.CronLimitPerAccount == 0 {
+			return rollback(&QuotaError{Kind: QuotaErrorKindCrons, NotAllowed: true})
+		}
+		projectedCrons := observedCrons - projectCronCount + len(desiredCrons)
+		if projectedCrons > limits.CronLimitPerAccount {
+			return rollback(&QuotaError{Kind: QuotaErrorKindCrons, Limit: limits.CronLimitPerAccount, Observed: projectedCrons})
+		}
+	}
+
+	var out ProjectReconcileResult
+	for _, mutation := range mutations {
+		switch mutation.Op {
+		case "create":
+			app := mutation.App
+			if app.ID == "" {
+				app.ID = newID()
+			}
+			app.AccountID = project.AccountID
+			app.ProjectID = project.ID
+			if app.Status == "" {
+				app.Status = AppActive
+			}
+			if app.CPUMillicores <= 0 {
+				app.CPUMillicores = api.DefaultAppCPUMillicores
+			}
+			app.EvictionPriority = EvictionPriorityOrBestEffort(app.EvictionPriority)
+			if app.PublicAuthMode == "" {
+				app.PublicAuthMode = api.AppPublicAuthModeOpen
+			}
+			if app.ConsumerAuthMode == "" {
+				app.ConsumerAuthMode = ConsumerAuthModeOptional
+			}
+			if app.CreatedAt.IsZero() {
+				app.CreatedAt = time.Now()
+			}
+			m.apps[app.ID] = app
+			out.Added = append(out.Added, app)
+		case "update":
+			app := m.apps[mutation.App.ID]
+			app.RootDir = mutation.App.RootDir
+			app.WorkloadName = mutation.App.WorkloadName
+			app.StartCommand = mutation.App.StartCommand
+			m.apps[app.ID] = app
+			out.Changed = append(out.Changed, app)
+		case "remove":
+			app := m.apps[mutation.App.ID]
+			app.Status = AppDeleted
+			m.apps[app.ID] = app
+			out.Removed = append(out.Removed, app)
+		}
+	}
+
+	if desiredCrons != nil {
+		// Replace the project's cron set. A single desired cron is retained per
+		// workload; duplicate legacy rows are removed, making re-apply idempotent.
+		appByWorkload := make(map[string]string)
+		for id, app := range m.apps {
+			if app.ProjectID == project.ID && app.AccountID == project.AccountID && app.Status != AppDeleted {
+				appByWorkload[app.WorkloadName] = id
+			}
+		}
+		desiredByApp := make(map[string]ProjectReconcileCron, len(desiredCrons))
+		for _, cron := range desiredCrons {
+			appID := appByWorkload[cron.WorkloadName]
+			if appID == "" {
+				return rollback(fmt.Errorf("state: cron workload %q has no project app", cron.WorkloadName))
+			}
+			desiredByApp[appID] = cron
+		}
+		firstCron := make(map[string]string)
+		for id, cron := range m.crons {
+			app := m.apps[cron.AppID]
+			if app.ProjectID != project.ID || app.AccountID != project.AccountID {
+				continue
+			}
+			desired, keep := desiredByApp[cron.AppID]
+			if !keep || firstCron[cron.AppID] != "" {
+				delete(m.crons, id)
+				continue
+			}
+			cron.Schedule, cron.Path, cron.Enabled = desired.Schedule, desired.Path, desired.Enabled
+			firstCron[cron.AppID] = id
+			m.crons[id] = cron
+		}
+		for appID, desired := range desiredByApp {
+			if firstCron[appID] != "" {
+				continue
+			}
+			id := newID()
+			m.crons[id] = Cron{ID: id, AppID: appID, Schedule: desired.Schedule, Path: desired.Path, Enabled: desired.Enabled, Timezone: "UTC", CreatedAt: time.Now()}
+		}
+	}
+
+	if scanSource != "" && tierRank(scanSource) < tierRank(storedProject.ScanSource) {
+		return rollback(ErrScanSourceDowngrade)
+	}
+	if scanSource != "" {
+		storedProject.ScanSource = scanSource
+		storedProject.UpdatedAt = time.Now()
+		m.projects[project.ID] = storedProject
+	}
+	out.Project = storedProject
+	return out, nil
+}
+
 // --- Apps -------------------------------------------------------------------
 
 func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
@@ -2761,6 +3002,12 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	}
 	if app.ConsumerAuthMode == "" {
 		app.ConsumerAuthMode = ConsumerAuthModeOptional
+	}
+	// workload_class is NOT NULL with a closed CHECK in PostgreSQL;
+	// mirror the PgStore's HTTP fallback for hand-built callers that
+	// leave the Go zero value unset.
+	if app.WorkloadClass == "" {
+		app.WorkloadClass = WorkloadClassHTTP
 	}
 	m.apps[app.ID] = app
 	return app, nil
@@ -2836,6 +3083,11 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	}
 	if app.ConsumerAuthMode == "" {
 		app.ConsumerAuthMode = ConsumerAuthModeOptional
+	}
+	// Keep the quota-aware path in parity with CreateApp and PgStore:
+	// an omitted workload class is the canonical HTTP default.
+	if app.WorkloadClass == "" {
+		app.WorkloadClass = WorkloadClassHTTP
 	}
 	m.apps[app.ID] = app
 	return app, nil
@@ -4238,6 +4490,9 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	}
 	if p.WorkloadName != nil {
 		a.WorkloadName = *p.WorkloadName
+	}
+	if p.WorkloadClass != nil {
+		a.WorkloadClass = *p.WorkloadClass
 	}
 	if p.StartCommand != nil {
 		a.StartCommand = *p.StartCommand
@@ -15835,6 +16090,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for sid, statement := range m.apiConsumerUsageStatements {
 		if statement.AccountID == id {
 			delete(m.apiConsumerUsageStatements, sid)
+		}
+	}
+	for sid, handoff := range m.apiConsumerUsageStatementHandoffs {
+		if handoff.AccountID == id {
+			delete(m.apiConsumerUsageStatementHandoffs, sid)
 		}
 	}
 	for did, d := range m.deployments {

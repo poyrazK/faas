@@ -6,7 +6,7 @@ package main
 //
 //	gregale scan     — dry-run; renders the plan as a table or --json
 //	gregale deploy   — extends cmdDeployTarball with --yes, --json,
-//	                   --only, --project-slug for the one-key provision
+//	                   --project, --only, --project-slug for the one-key provision
 //	                   flow on top of the existing --tarball/--image/
 //	                   --template paths.
 //
@@ -124,7 +124,7 @@ func cmdScan(args []string) int {
 	return printPlanTextWithExplain(osStdout, plan, excludeList, *showAffected, *explain)
 }
 
-// runProjectDeployPreview is the read-only preview path for
+// runProjectDeployPreviewWithMode is the read-only preview path for
 // `gregale deploy --dry-run/--diff --project-slug ...` and the
 // corresponding `--only` form. Project apply is planned by ScanProject,
 // not by the single-app deploy-diff engine, so using the same endpoint here
@@ -135,12 +135,14 @@ func cmdScan(args []string) int {
 // managed services, warnings, and the optional affected-set partition. The
 // scan endpoint is read-only even when the apply-only `--persist-exclude` flag
 // was present; this helper deliberately does not have access to that flag so a
-// preview cannot accidentally persist state.
-func runProjectDeployPreview(
+// preview cannot accidentally persist state. Strict previews return a
+// non-zero status when the plan cannot be applied; lenient previews retain the
+// rendered plan and return zero.
+func runProjectDeployPreviewWithMode(
 	ctx context.Context,
 	client *api.Client,
 	tarball, projectSlug, only, exclude string,
-	showAffected, emitJSON bool,
+	showAffected, emitJSON, strict bool,
 ) int {
 	if tarball == "" {
 		return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
@@ -167,9 +169,19 @@ func runProjectDeployPreview(
 		return printErr("Scan failed", err)
 	}
 	if emitJSON {
-		return jsonOut(writeJSON(plan))
+		if code := jsonOut(writeJSON(plan)); code != 0 {
+			return code
+		}
+		if strict && !plan.CanApply {
+			return 1
+		}
+		return 0
 	}
-	return printPlanText(osStdout, plan, excludeList, showAffected)
+	printPlanText(osStdout, plan, excludeList, showAffected)
+	if strict && !plan.CanApply {
+		return 1
+	}
+	return 0
 }
 
 // resolveScanSource normalises the three input shapes (--tarball /
