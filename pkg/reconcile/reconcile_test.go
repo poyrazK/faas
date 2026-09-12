@@ -59,15 +59,19 @@ func seedProject(t *testing.T, store *fakeStore, scanSource state.ProjectScanSou
 // apps.slug is unconstrained in the schema; reconcile + apid
 // must agree (see workloadToDraftApp's docstring for the
 // rationale + the dual-pin requirement).
-func seedApp(t *testing.T, store *fakeStore, project state.Project, rootDir, workloadName, startCmd string) state.App {
+func seedApp(t *testing.T, store *fakeStore, project state.Project, rootDir, workloadName, startCmd string, classes ...state.WorkloadClass) state.App {
 	t.Helper()
+	class := state.WorkloadClassHTTP
+	if len(classes) > 0 {
+		class = classes[0]
+	}
 	a := state.App{
 		AccountID:     project.AccountID,
 		ProjectID:     project.ID,
 		Slug:          workloadName,
 		RootDir:       rootDir,
 		WorkloadName:  workloadName,
-		WorkloadClass: state.WorkloadClassHTTP,
+		WorkloadClass: class,
 		StartCommand:  startCmd,
 		Status:        state.AppActive,
 	}
@@ -162,7 +166,7 @@ func TestReconcile_ThreeWorkloads_NoDiff(t *testing.T) {
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	seedApp(t, store, proj, "", "api", "")
-	seedApp(t, store, proj, "", "worker", "")
+	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 	seedApp(t, store, proj, "", "web", "")
 
 	svc := freshService(store, aud)
@@ -189,7 +193,7 @@ func TestReconcile_ThreeWorkloads_AddOne(t *testing.T) {
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	seedApp(t, store, proj, "", "api", "")
-	seedApp(t, store, proj, "", "worker", "")
+	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 
 	svc := freshService(store, aud)
 	out, err := svc.Reconcile(context.Background(), proj, threeWorkloads(t, ""), "sha-1", "main", nil)
@@ -214,14 +218,14 @@ func TestReconcile_ThreeWorkloads_RemoveOne(t *testing.T) {
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	seedApp(t, store, proj, "", "api", "")
-	seedApp(t, store, proj, "", "worker", "")
+	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 	seedApp(t, store, proj, "", "extrasvc", "")
 
 	// Only api + worker survive.
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
 			{Name: "api", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
-			{Name: "worker", RootDir: "", Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
+			{Name: "worker", RootDir: "", Class: reposcan.ClassWorker, Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
 	}
@@ -266,7 +270,7 @@ func TestReconcile_ExcludePreventsRemove(t *testing.T) {
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	seedApp(t, store, proj, "", "api", "")
-	seedApp(t, store, proj, "", "worker", "")
+	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 	seedApp(t, store, proj, "", "extrasvc", "")
 
 	// Scan emits only api + worker (extrasvc is "removed" from
@@ -276,7 +280,7 @@ func TestReconcile_ExcludePreventsRemove(t *testing.T) {
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
 			{Name: "api", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
-			{Name: "worker", RootDir: "", Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
+			{Name: "worker", RootDir: "", Class: reposcan.ClassWorker, Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
 	}
@@ -719,6 +723,70 @@ func TestReconcile_StartCommand_Flattened(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("resolveStartCommand(%v) = %q, want %q", tc.w, got, tc.want)
 		}
+	}
+}
+
+func TestReconcile_WorkloadClassAndStartCommandRoundTrip(t *testing.T) {
+	store := newFakeStore()
+	aud := newFakeAuditor(store)
+	_, proj := seedProject(t, store, state.ProjectScanSourceProcfile, "main")
+	svc := freshService(store, aud)
+
+	first := reposcan.Result{
+		Workloads: []reposcan.Workload{{
+			Name:    "worker",
+			Class:   reposcan.ClassWorker,
+			Command: []string{"node", "worker.js"},
+			Source:  "procfile: worker",
+		}},
+		Tier: reposcan.TierCompose,
+	}
+	out, err := svc.Reconcile(context.Background(), proj, first, "sha-fields-1", "main", nil)
+	if err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	if len(out.Added) != 1 {
+		t.Fatalf("first Reconcile added=%d, want 1", len(out.Added))
+	}
+	if got := out.Added[0]; got.WorkloadClass != state.WorkloadClassWorker || got.StartCommand != "node worker.js" {
+		t.Fatalf("created workload fields = class %q command %q, want worker/node worker.js", got.WorkloadClass, got.StartCommand)
+	}
+
+	second := first
+	second.Workloads[0].Class = reposcan.ClassJob
+	second.Workloads[0].Command = []string{"python", "job.py"}
+	out, err = svc.Reconcile(context.Background(), proj, second, "sha-fields-2", "main", nil)
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if len(out.Changed) != 1 {
+		t.Fatalf("second Reconcile changed=%d, want 1", len(out.Changed))
+	}
+	if got := out.Changed[0]; got.WorkloadClass != state.WorkloadClassJob || got.StartCommand != "python job.py" {
+		t.Fatalf("updated workload fields = class %q command %q, want job/python job.py", got.WorkloadClass, got.StartCommand)
+	}
+	changed, ok := findEvent(store.snapshotEvents(), KindWorkloadChanged)
+	if !ok {
+		t.Fatal("missing workload.changed audit row")
+	}
+	var data map[string]any
+	if err := json.Unmarshal(changed.Data, &data); err != nil {
+		t.Fatalf("audit payload unparseable: %v", err)
+	}
+	fields, ok := data["fields_changed"].([]any)
+	if !ok {
+		t.Fatalf("fields_changed missing or wrong type: %v", data["fields_changed"])
+	}
+	if len(fields) != 2 || fields[0] != "workload_class" || fields[1] != "start_command" {
+		t.Fatalf("fields_changed=%v, want [workload_class start_command]", fields)
+	}
+}
+
+func TestReconcile_WorkloadClassUnknownFallsBackToHTTP(t *testing.T) {
+	_, proj := seedProject(t, newFakeStore(), state.ProjectScanSourceSingle, "main")
+	got := workloadToDraftApp(proj, reposcan.Workload{Name: "app", Class: reposcan.ClassUnknown}, "", api.PlanFree)
+	if got.WorkloadClass != state.WorkloadClassHTTP {
+		t.Fatalf("unknown scan class persisted as %q, want http", got.WorkloadClass)
 	}
 }
 

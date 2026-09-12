@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type warmBuilderTestVM struct {
@@ -25,14 +27,22 @@ type warmRestoreTestVM struct {
 	warmBuilderTestVM
 	restored     WarmSnapshot
 	restoreCalls int
+	restoreErr   error
 	warmOut      BuildOutcome
 	warmCaptured WarmSnapshot
 }
 
 func (v *warmRestoreTestVM) RestoreWarmBuilder(_ context.Context, req VMRequest, snapshot WarmSnapshot) (BuildHandle, error) {
 	v.restoreCalls++
+	if v.restoreErr != nil {
+		return BuildHandle{}, v.restoreErr
+	}
 	v.restored = snapshot
 	return BuildHandle{Instance: "build-" + req.BuildID, BuildID: req.BuildID, TimeoutSec: req.TimeoutSec}, nil
+}
+
+func (v *warmRestoreTestVM) Spawn(_ context.Context, req VMRequest) (BuildHandle, error) {
+	return BuildHandle{Instance: "cold-" + req.BuildID, BuildID: req.BuildID, TimeoutSec: req.TimeoutSec}, nil
 }
 
 func (v *warmRestoreTestVM) WaitForWarmCompletion(context.Context, BuildHandle) (BuildOutcome, WarmSnapshot, error) {
@@ -106,7 +116,8 @@ func TestBuilderWarmScopeKeyIsAppAndRuntimeScoped(t *testing.T) {
 
 func TestPrepareWarmBuilderDiscardsForeignScope(t *testing.T) {
 	vm := &warmBuilderTestVM{}
-	b := New(nil, nil, vm, nil, nil, nil, Config{}, nil)
+	ops := wire.NewOpsMetrics("builderd")
+	b := New(nil, nil, vm, nil, nil, nil, Config{}, nil).WithOpsMetrics(ops)
 	now := time.Unix(100, 0)
 	if _, err := b.warm.Start(now, "firecracker-1.8.0"); err != nil {
 		t.Fatal(err)
@@ -123,6 +134,13 @@ func TestPrepareWarmBuilderDiscardsForeignScope(t *testing.T) {
 	}
 	if len(vm.deleted) != 1 || vm.deleted[0].ScopeKey != "foreign-scope" {
 		t.Fatalf("deleted snapshots = %+v, want the foreign scope", vm.deleted)
+	}
+	body := scrapeMetrics(t, ops)
+	if !strings.Contains(body, `builderd_warm_restore_total{result="miss"} 1`) {
+		t.Fatalf("foreign scope metric missing miss=1:\n%s", body)
+	}
+	if strings.Contains(body, `builderd_warm_restore_total{result="hit"} 1`) {
+		t.Fatal("foreign scope was counted as a warm restore hit")
 	}
 }
 
@@ -141,7 +159,8 @@ func TestProcessOneCleansConsumedWarmSnapshotAfterRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	vm := &warmRestoreTestVM{warmOut: BuildOutcome{OCIImage: layerPath, ExitCode: 0}}
-	b := New(store, &fakeNotifier{}, vm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ops := wire.NewOpsMetrics("builderd")
+	b := New(store, &fakeNotifier{}, vm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
 
 	now := time.Now()
 	if _, _, err := b.StartWarmBuilder(now, "firecracker-1.8.0"); err != nil {
@@ -173,6 +192,58 @@ func TestProcessOneCleansConsumedWarmSnapshotAfterRestore(t *testing.T) {
 	}
 	if got := b.WarmState(); got != WarmCold {
 		t.Fatalf("WarmState() = %q, want %q after no replacement capture", got, WarmCold)
+	}
+	body := scrapeMetrics(t, ops)
+	if !strings.Contains(body, `builderd_warm_restore_total{result="hit"} 1`) {
+		t.Fatalf("successful restore metric missing hit=1:\n%s", body)
+	}
+	if strings.Contains(body, `builderd_warm_restore_total{result="miss"} 1`) {
+		t.Fatal("successful warm restore was also counted as a miss")
+	}
+}
+
+func TestProcessOneCountsWarmRestoreFallbackAsMiss(t *testing.T) {
+	store := state.NewMemStore()
+	source := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, source, []string{"package.json", "index.js"})
+	buildID, _, appID := seedDeployment(t, store, source)
+	app, err := store.AppByID(context.Background(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layerPath := filepath.Join(t.TempDir(), "produced.ext4")
+	if err := os.WriteFile(layerPath, []byte("produced layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vm := &warmRestoreTestVM{
+		restoreErr: errors.New("restore unavailable"),
+		warmOut:    BuildOutcome{OCIImage: layerPath, ExitCode: 0},
+	}
+	ops := wire.NewOpsMetrics("builderd")
+	b := New(store, &fakeNotifier{}, vm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+
+	now := time.Now()
+	if _, _, err := b.StartWarmBuilder(now, "firecracker-1.8.0"); err != nil {
+		t.Fatal(err)
+	}
+	old := testStorageWarmSnapshot()
+	old.ScopeKey = builderWarmScopeKey(app.AccountID, app.ID, FrameworkNode, imaged.BaseRefMinimal)
+	old.CreatedAt = now
+	old.LastUsedAt = now
+	if err := b.CompleteWarmBuilder(now, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	body := scrapeMetrics(t, ops)
+	if !strings.Contains(body, `builderd_warm_restore_total{result="miss"} 1`) {
+		t.Fatalf("restore fallback metric missing miss=1:\n%s", body)
+	}
+	if strings.Contains(body, `builderd_warm_restore_total{result="hit"} 1`) {
+		t.Fatal("failed warm restore was counted as a hit")
 	}
 }
 

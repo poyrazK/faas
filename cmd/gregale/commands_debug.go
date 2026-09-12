@@ -12,6 +12,7 @@
 //	gregale debug requests evidence <slug> <req_id>
 //	gregale debug requests replay <slug> <req_id>
 //	gregale debug coverage <slug> [--since <dur>]
+//	gregale debug running <slug> [--since <dur>] [--limit <n>]
 //	gregale debug bundle <slug> <req_id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
 //	gregale debug regressions watch <slug> [--since <dur>] [--interval D] [--once]
 //	gregale debug regressions <slug> [--since <dur>]
@@ -39,7 +40,7 @@ import (
 
 // debugCmdUsage is the canonical usage text. Mirrors the shape of
 // commands_invocations.go's PrintUsage strings.
-const debugCmdUsage = "usage: gregale debug <requests|coverage|regressions|compare|bundle> ..."
+const debugCmdUsage = "usage: gregale debug <requests|coverage|running|regressions|compare|bundle> ..."
 
 const debugRequestsCmdUsage = "usage: gregale debug requests <list|watch|get|show|evidence|replay> ..."
 
@@ -54,7 +55,7 @@ func cmdDebug(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  regressions       list detected regressions\n  regressions watch watch regression observations for changes\n  compare           compare two deployments\n  bundle            export a redacted incident bundle", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions\n  regressions watch watch regression observations for changes\n  compare           compare two deployments\n  bundle            export a redacted incident bundle", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -62,6 +63,8 @@ func cmdDebug(args []string) int {
 		return cmdDebugRequests(args[1:])
 	case "coverage":
 		return cmdDebugCoverage(args[1:])
+	case "running":
+		return cmdDebugRunning(args[1:])
 	case "regressions":
 		return cmdDebugRegressions(args[1:])
 	case "compare":

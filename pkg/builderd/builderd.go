@@ -238,11 +238,13 @@ func New(store state.Store, notif Notifier, vm VM, cache *Cache, det *Detector, 
 func (b *Builderd) StartWarmBuilder(now time.Time, currentFCVersion string) (WarmRestoreResult, WarmSnapshot, error) {
 	b.warmOpMu.Lock()
 	defer b.warmOpMu.Unlock()
-	result, snapshot, err := b.warm.StartWithSnapshot(now, currentFCVersion)
-	if err == nil && b.ops != nil {
+	return b.warm.StartWithSnapshot(now, currentFCVersion)
+}
+
+func (b *Builderd) observeWarmRestore(result WarmRestoreResult) {
+	if b != nil && b.ops != nil {
 		b.ops.ObserveBuilderWarmRestore(string(result))
 	}
-	return result, snapshot, err
 }
 
 // CompleteWarmBuilder publishes a successfully captured snapshot into the
@@ -301,6 +303,12 @@ func (b *Builderd) prepareWarmBuilder(ctx context.Context, slot SlotDecision, re
 		_ = b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
 		snapshot = WarmSnapshot{}
 		result = WarmRestoreMiss
+	}
+	// A lifecycle hit is only an attempted restore. Defer recording it until
+	// the VM transport accepts the restore; misses and stale snapshots are
+	// final at this point.
+	if result != WarmRestoreHit {
+		b.observeWarmRestore(result)
 	}
 	return warmVM, result, snapshot, true
 }
@@ -877,11 +885,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if warmStarted && warmResult == WarmRestoreHit {
 		handle, err = warmVM.RestoreWarmBuilder(vmCtx, vmReq, warmSnapshot)
 		if err != nil {
+			// The lifecycle found a reusable snapshot, but the transport
+			// rejected it. This build takes the cold fallback path, so the
+			// customer-visible restore outcome is a miss.
+			b.observeWarmRestore(WarmRestoreMiss)
 			b.log.Warn("builderd: warm restore failed; retrying cold", "build", build.ID, "err", err)
 			// cleanupWarmSnapshot logs failures; the cold retry remains authoritative.
 			_ = b.cleanupWarmSnapshot(ctx, warmVM, warmSnapshot)
 			handle, err = b.vm.Spawn(vmCtx, vmReq)
 		} else {
+			b.observeWarmRestore(WarmRestoreHit)
 			// A successful restore has consumed the old memory/vmstate pair.
 			// Keep the retained drive for the live builder, but release the old
 			// snapshot objects so every warm build does not leak another pair.

@@ -1964,8 +1964,17 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// ("" → SQL NULL). The empty-uuid CHECK + the FK with
 	// ON DELETE SET NULL (migration 00167) enforce the
 	// integrity contract downstream.
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
+	// workload_class and start_command are part of the project/app
+	// identity. They must be written explicitly here rather than left
+	// to the schema defaults, otherwise project reconcile loses the
+	// detector's worker/job classification and command on its first
+	// insert (issue #2162).
+	workloadClass := app.WorkloadClass
+	if workloadClass == "" {
+		workloadClass = WorkloadClassHTTP
+	}
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::cidr[], $12::cidr[], $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
 		returning ` + appsSelectColumns
 	// status: pull from app.Status when non-empty (the API surfaces it on
 	// update / restore paths); fall back to 'active' on the Go zero so the
@@ -1996,7 +2005,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		appProtocol = api.AppProtocolHTTP1
 	}
 	row := s.pool.QueryRow(ctx, insertAppSQL,
-		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, nullString(app.NodeID),
+		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
 		// Tier A10 / ADR-088: overflow_node preference (nullable
 		// UUID). nullString coerces a nil pointer or empty
@@ -2193,8 +2202,16 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 	// ("" → SQL NULL). The empty-uuid CHECK + the FK with
 	// ON DELETE SET NULL (migration 00167) enforce the
 	// integrity contract downstream.
-	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
-		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
+	// Keep the project workload fields explicit on this quota-aware
+	// insert as well. Reconcile uses this path for every new workload;
+	// relying on the schema defaults would turn workers/jobs into HTTP
+	// apps and discard their detected start command (issue #2162).
+	workloadClass := app.WorkloadClass
+	if workloadClass == "" {
+		workloadClass = WorkloadClassHTTP
+	}
+	insertAppSQL := `insert into apps (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores)
+		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
 		returning ` + appsSelectColumns
 	// status: same fallback as CreateApp above — empty Go Status would
 	// trip 23514 on the CHECK constraint, so coerce to AppActive. The
@@ -2220,7 +2237,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		appProtocol = api.AppProtocolHTTP1
 	}
 	row := tx.QueryRow(ctx, insertAppSQL,
-		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, nullString(app.NodeID),
+		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
 		// Tier A10 / ADR-088: overflow_node preference (nullable
 		// UUID). nullString coerces a nil pointer or empty
@@ -3460,7 +3477,8 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 				   cpu_millicores = coalesce($63, cpu_millicores),
 				   consumer_auth_mode = case when $64 then $65 else consumer_auth_mode end,
 				   only_declared_routes = case when $66 then $67 else only_declared_routes end,
-				   declared_routes = case when $68 then $69::jsonb else declared_routes end
+				   declared_routes = case when $68 then $69::jsonb else declared_routes end,
+				   workload_class = case when $70 then $71::text else workload_class end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -3584,7 +3602,8 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		p.CPUMillicores,
 		p.SetConsumerAuthMode, derefString(p.ConsumerAuthMode),
 		p.SetOnlyAllowDeclaredRoutes, boolOrFalse(p.OnlyAllowDeclaredRoutes),
-		p.SetDeclaredRoutes, declaredRoutesBytes)
+		p.SetDeclaredRoutes, declaredRoutesBytes,
+		p.WorkloadClass != nil, workloadClassString(p.WorkloadClass))
 	return scanApp(row)
 }
 
@@ -3621,6 +3640,16 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// workloadClassString lifts the optional reconcile update field into the
+// scalar representation expected by pgx. A nil pointer is only used with a
+// false CASE guard, so the empty string is never written in that shape.
+func workloadClassString(c *WorkloadClass) string {
+	if c == nil {
+		return ""
+	}
+	return string(*c)
 }
 
 // derefAddr returns the string-encoded form of a *netip.Addr, or

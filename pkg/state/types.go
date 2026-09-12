@@ -4728,6 +4728,13 @@ type UpdateAppParams struct {
 	// semantics as RootDir: nil = leave alone, empty string = reset
 	// to default. Reconcile writes this on every update.
 	WorkloadName *string
+	// WorkloadClass is the scan-derived lifecycle hint for a project
+	// workload. Nil leaves the current value unchanged; a non-nil
+	// value is written with the same update as RootDir, WorkloadName,
+	// and StartCommand. Customer PATCH callers leave this nil because
+	// workload classification is owned by project reconciliation and
+	// characterization, not the public app update surface.
+	WorkloadClass *WorkloadClass
 	// StartCommand is the customer-supplied override for the image's
 	// entrypoint (e.g. compose `command:`). apps.start_command is
 	// NULL-able; the nullString helper treats the empty string as
