@@ -4049,8 +4049,8 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// TCP-accept on :8080 (pre-PR-D default). Non-empty →
 			// waitReady does HTTP GET <HealthcheckPath> against
 			// <HostIP>:8080 and accepts 2xx as ready.
-			HealthcheckPath:   req.HealthcheckPath,
-			StartupDeadlineS:  req.StartupDeadlineS,
+			HealthcheckPath:  req.HealthcheckPath,
+			StartupDeadlineS: req.StartupDeadlineS,
 			// Execution guests have no tenant network or HTTP listener. Their
 			// readiness fence is the execution vsock protocol, so probing the
 			// ordinary app port would wait until the full startup timeout.

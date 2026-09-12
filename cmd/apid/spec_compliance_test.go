@@ -71,7 +71,7 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"GET /v1/account/dpa": true, // public markdown (no auth)
+	"GET /v1/account/dpa":                       true, // public markdown (no auth)
 	"POST /v1/webhooks/stripe":                  true, // HMAC-signed webhook
 	"POST /v1/webhooks/paddle":                  true, // HMAC-signed webhook (PR #3 / ADR-025)
 	"POST /v1/webhooks/polar":                   true, // Standard Webhooks-signed webhook
