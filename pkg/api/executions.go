@@ -453,6 +453,20 @@ func (s ExecutionStatus) Terminal() bool {
 	}
 }
 
+// Valid reports whether s is one of the durable execution states exposed by
+// the API. It is used by list filters so an unknown value cannot silently
+// produce an empty page.
+func (s ExecutionStatus) Valid() bool {
+	switch s {
+	case ExecutionStatusQueued, ExecutionStatusRestoring, ExecutionStatusRunning,
+		ExecutionStatusSucceeded, ExecutionStatusFailed, ExecutionStatusTimedOut,
+		ExecutionStatusOutOfMemory, ExecutionStatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
 // ExecutionUsage contains bounded, billable measurements from the host. Guest
 // self-reported usage is never authoritative.
 type ExecutionUsage struct {
@@ -485,4 +499,15 @@ type ExecutionResponse struct {
 	CreatedAt       string                  `json:"created_at"`
 	StartedAt       *string                 `json:"started_at,omitempty"`
 	FinishedAt      *string                 `json:"finished_at,omitempty"`
+}
+
+// ExecutionListResponse is the account-scoped page returned by
+// GET /v1/executions. NextOffset is -1 when there is no following page.
+// Source and input are never present in any item; terminal output follows
+// the same bounded projection as a single execution read.
+type ExecutionListResponse struct {
+	Executions []ExecutionResponse `json:"executions"`
+	Limit      int                 `json:"limit"`
+	Offset     int                 `json:"offset"`
+	NextOffset int                 `json:"next_offset"`
 }

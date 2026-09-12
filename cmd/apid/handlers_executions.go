@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -152,6 +154,90 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	writeJSON(w, http.StatusAccepted, executionResponse(row))
+}
+
+// listExecutions handles GET /v1/executions. Results are account-scoped and
+// newest-first; the status filter is pushed into the store so pagination does
+// not skip matching rows hidden behind other execution states.
+func (s *server) listExecutions(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !s.requireExecutionAPI(w) {
+		return
+	}
+	limitProblem, limit := api.ParseLimit(r.URL.Query().Get("limit"), 50, 200, "executions")
+	if limitProblem != nil {
+		api.WriteProblem(w, limitProblem)
+		return
+	}
+	offset := 0
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			api.WriteProblem(w, api.NewProblem(
+				http.StatusBadRequest,
+				api.CodeValidation,
+				"Bad offset",
+				"offset must be a non-negative integer",
+			))
+			return
+		}
+		offset = parsed
+	}
+
+	status := api.ExecutionStatus(strings.TrimSpace(r.URL.Query().Get("status")))
+	if status != "" && !status.Valid() {
+		api.WriteProblem(w, api.NewProblem(
+			http.StatusBadRequest,
+			api.CodeValidation,
+			"Bad execution status",
+			"status must be one of queued, restoring, running, succeeded, failed, timed_out, out_of_memory, or cancelled",
+		))
+		return
+	}
+
+	var (
+		rows       []state.Execution
+		statusRows func(limit, offset int) ([]state.Execution, error)
+		err        error
+	)
+	if status == "" {
+		statusRows = func(pageLimit, pageOffset int) ([]state.Execution, error) {
+			return s.store.ListExecutions(r.Context(), acct.ID, pageLimit, pageOffset)
+		}
+	} else {
+		statusRows = func(pageLimit, pageOffset int) ([]state.Execution, error) {
+			return s.store.ListExecutionsByStatus(r.Context(), acct.ID, status, pageLimit, pageOffset)
+		}
+	}
+	rows, err = statusRows(limit, offset)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list executions"))
+		return
+	}
+	items := make([]api.ExecutionResponse, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, executionResponse(row))
+	}
+	nextOffset := -1
+	if len(items) == limit {
+		// A full page is not sufficient to prove that another page exists.
+		// Probe the first row after this page so next_offset=-1 remains an
+		// exact end-of-results signal without adding a total count to the
+		// customer-facing response.
+		probe, probeErr := statusRows(1, offset+limit)
+		if probeErr != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not list executions"))
+			return
+		}
+		if len(probe) != 0 {
+			nextOffset = offset + len(items)
+		}
+	}
+	writeJSON(w, http.StatusOK, api.ExecutionListResponse{
+		Executions: items,
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: nextOffset,
+	})
 }
 
 func (s *server) writeExecutionCreateError(w http.ResponseWriter, acct state.Account, err error) {

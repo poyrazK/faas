@@ -1548,6 +1548,44 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/executions:
+    get:
+      tags: [runs]
+      operationId: listExecutions
+      summary: List disposable executions.
+      description: |
+        Returns the caller's newest disposable execution receipts. Results are
+        account-scoped and ordered by creation time descending. Use `status`
+        to narrow the page before applying offset pagination; source and input
+        are never returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Maximum number of execution receipts to return.
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Number of matching receipts to skip.
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled]
+          description: Return only executions in this lifecycle state.
+      responses:
+        '200':
+          description: Account-scoped execution page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
     post:
       tags: [runs]
       operationId: createExecution
@@ -25981,6 +26019,20 @@ components:
         created_at: { type: string, format: date-time }
         started_at: { type: [string, "null"], format: date-time }
         finished_at: { type: [string, "null"], format: date-time }
+
+    ExecutionListResponse:
+      description: |
+        Account-scoped page of disposable execution receipts. `next_offset`
+        is -1 when there is no following page; otherwise pass it as `offset`.
+      type: object
+      required: [executions, limit, offset, next_offset]
+      properties:
+        executions:
+          type: array
+          items: { $ref: '#/components/schemas/ExecutionResponse' }
+        limit: { type: integer, minimum: 1, maximum: 200 }
+        offset: { type: integer, minimum: 0 }
+        next_offset: { type: integer, description: "Next offset, or -1 at the end of the result set." }
 
     Invocation:
       description: "A single invocations row. Account-scoped; cross-account reads return 404."

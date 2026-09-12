@@ -886,6 +886,11 @@ var cliCommands = []cliCommand{
 		DocSlug: "runs",
 		Short:   "Inspect or cancel isolated disposable runs",
 		Subcommands: []cliSub{
+			{Name: "list", Short: "List runs", Flags: []cliFlag{
+				{Name: "limit", Short: "maximum number of runs (1..200)", Value: "N"},
+				{Name: "offset", Short: "number of matching runs to skip", Value: "N"},
+				{Name: "status", Short: "filter by lifecycle status", Value: "STATUS", ClosedSet: []string{"queued", "restoring", "running", "succeeded", "failed", "timed_out", "out_of_memory", "cancelled"}},
+			}},
 			{Name: "get", Short: "Show one run"},
 			{Name: "status", Short: "Show one run (alias for get)"},
 			{Name: "cancel", Short: "Cancel one run"},

@@ -1103,6 +1103,7 @@ func (s *server) handler() http.Handler {
 	// accept work before the restore/execute/destroy path is ready. POST and
 	// DELETE use the existing idempotency/auth chain; all reads remain
 	// account-scoped through the authenticated account argument.
+	mux.HandleFunc("GET /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listExecutions))))
 	mux.HandleFunc("POST /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createExecution)))))
 	mux.HandleFunc("GET /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getExecution))))
 	mux.HandleFunc("DELETE /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelExecution)))))
