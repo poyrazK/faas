@@ -71,7 +71,7 @@ func enqueueAndNotify(ctx context.Context, pool *pgxpool.Pool, channel, payload 
 	if err != nil {
 		return fmt.Errorf("db: notify %s begin: %w", channel, err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var id int64
 	availableAt := time.Now().UTC().Add(notificationOutboxWakeDelay)

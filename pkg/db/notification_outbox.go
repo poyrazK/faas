@@ -92,7 +92,7 @@ func ClaimNotification(ctx context.Context, pool *pgxpool.Pool, consumer string,
 	if err != nil {
 		return NotificationOutboxItem{}, fmt.Errorf("db: claim notification begin: %w", err)
 	}
-	defer tx.Rollback(ctx) // harmless after commit
+	defer func() { _ = tx.Rollback(ctx) }() // harmless after commit
 
 	var item NotificationOutboxItem
 	err = tx.QueryRow(ctx, `
