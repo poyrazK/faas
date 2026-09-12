@@ -193,6 +193,17 @@ func TestMemStoreSnapshotReplicaLeaseRenewalFencesOwnership(t *testing.T) {
 	}
 }
 
+func TestMemStoreSnapshotReplicaLeaseRenewalValidatesInputs(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	if err := m.RenewSnapshotReplicaLease(ctx, "snap", "node", ""); err == nil {
+		t.Fatal("empty lease token unexpectedly renewed")
+	}
+	if err := m.RenewSnapshotReplicaLease(ctx, "missing-snapshot", "missing-node", "lease"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing row renewal error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestMemStoreSnapshotReplicaPermanentFailureStopsRetry(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()

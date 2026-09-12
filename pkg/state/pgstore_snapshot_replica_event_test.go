@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -267,6 +268,32 @@ func TestPgSnapshotReplicaLeaseRenewalFencesOwnership(t *testing.T) {
 	}
 	if err := s.RenewSnapshotReplicaLease(ctx, snap.ID, nodeID, uuid.NewString()); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale renewal error = %v, want ErrConflict", err)
+	}
+}
+
+func TestPgSnapshotReplicaLeaseRenewalValidatesInputs(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	validLease := uuid.NewString()
+	for _, tc := range []struct {
+		name       string
+		snapshotID string
+		nodeID     string
+		leaseToken string
+	}{
+		{name: "missing snapshot", nodeID: "node", leaseToken: validLease},
+		{name: "missing node", snapshotID: "snapshot", leaseToken: validLease},
+		{name: "missing lease", snapshotID: "snapshot", nodeID: "node"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.RenewSnapshotReplicaLease(ctx, tc.snapshotID, tc.nodeID, tc.leaseToken); err == nil {
+				t.Fatal("invalid lease renewal unexpectedly succeeded")
+			}
+		})
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := s.RenewSnapshotReplicaLease(canceled, "snapshot", "node", validLease); err == nil {
+		t.Fatal("canceled lease renewal unexpectedly succeeded")
 	}
 }
 
