@@ -163,8 +163,8 @@ func TestPgReconcile_Quota_BlocksCreateSet(t *testing.T) {
 		Tier: reposcan.TierCompose,
 	}
 	out, err := svc.Reconcile(ctx, proj, scan, "sha-pg-2", "main", nil)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
+	if err == nil {
+		t.Fatal("expected quota error")
 	}
 	if len(out.Added) != 0 {
 		t.Errorf("expected 0 adds on quota, got %d", len(out.Added))
