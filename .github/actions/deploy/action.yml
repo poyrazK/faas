@@ -115,7 +115,7 @@ runs:
         FAAS_TOKEN: ${{ inputs.api-key }}
         INPUT_APP: ${{ inputs.app }}
         INPUT_FORMAT: ${{ inputs.format }}
-      run: "$ACTION_PATH/src/run.sh validate"
+      run: bash "$ACTION_PATH/src/run.sh" validate
     - name: Deploy
       id: deploy
       shell: bash
@@ -142,10 +142,10 @@ runs:
         INPUT_TAG: ${{ inputs.tag }}
         INPUT_DEPLOYED_BY: ${{ inputs.deployed-by || github.actor }}
         INPUT_PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
-      run: "$ACTION_PATH/src/run.sh deploy"
+      run: bash "$ACTION_PATH/src/run.sh" deploy
     - name: Annotate on failure
       if: failure()
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
-      run: "$ACTION_PATH/src/annotate.sh"
+      run: bash "$ACTION_PATH/src/annotate.sh"
