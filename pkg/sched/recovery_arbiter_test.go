@@ -1,3 +1,4 @@
+// adr: 137
 // recovery_arbiter_test.go — table-driven coverage for the
 // recovery arbiter's per-(node, instance) verdict (Workstream B
 // / issue #1184 / ADR-137).
