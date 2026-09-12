@@ -472,6 +472,10 @@ type MemStore struct {
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage       map[string]APIConsumerUsageBucket
 	apiConsumerUsageEvents map[string]struct{}
+	// apiConsumerRateCards is keyed by card ID. The production table is
+	// append-only and unique on (app_id, effective_from); MemStore mirrors
+	// both invariants for handler tests.
+	apiConsumerRateCards map[string]APIConsumerRateCard
 	// networkUsageCheckpoints mirrors meter_network_checkpoints. Values are
 	// the last cumulative interface counters atomically reflected in usage.
 	networkUsageCheckpoints map[string]networkUsageCheckpoint
@@ -907,6 +911,7 @@ func NewMemStore() *MemStore {
 		usageByMonth:            []Usage{},
 		apiConsumerUsage:        map[string]APIConsumerUsageBucket{},
 		apiConsumerUsageEvents:  map[string]struct{}{},
+		apiConsumerRateCards:    map[string]APIConsumerRateCard{},
 		networkUsageCheckpoints: map[string]networkUsageCheckpoint{},
 		idem:                    map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByProviderCustomerID

@@ -3,10 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APIConsumerListResponse } from '../models/APIConsumerListResponse.js';
+import type { APIConsumerRateCardListResponse } from '../models/APIConsumerRateCardListResponse.js';
+import type { APIConsumerRateCardResponse } from '../models/APIConsumerRateCardResponse.js';
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
+import type { APIConsumerUsageQuoteResponse } from '../models/APIConsumerUsageQuoteResponse.js';
 import type { APIConsumerUsageResponse } from '../models/APIConsumerUsageResponse.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
+import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsumerRateCardRequest.js';
 import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerRequest.js';
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -175,6 +179,159 @@ export class ConsumersService {
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Quote one API consumer's priced usage.
+   * Applies the app's immutable, versioned request rate cards to durable
+   * consumer usage. The result is a deterministic estimate, not an invoice
+   * or a payment authorization. Usage before the first effective rate card
+   * is returned as unpriced_units rather than silently treated as free.
+   *
+   * @returns APIConsumerUsageQuoteResponse Deterministic usage quote over the requested window.
+   * @throws ApiError
+   */
+  public static getApiConsumerUsageQuote({
+    slug,
+    consumerId,
+    since,
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer identity whose priced usage is returned.
+     */
+    consumerId: string,
+    /**
+     * Optional RFC3339 lower bound for the quote period; defaults to the trailing 30 days.
+     */
+    since?: string,
+    /**
+     * Optional RFC3339 exclusive upper bound for the quote period; defaults to UTC midnight today.
+     */
+    until?: string,
+  }): CancelablePromise<APIConsumerUsageQuoteResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage/quote',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List an app's immutable API consumer rate cards.
+   * @returns APIConsumerRateCardListResponse Rate-card history in effective-time order.
+   * @throws ApiError
+   */
+  public static listApiConsumerRateCards({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APIConsumerRateCardListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/rate-cards',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Publish a new immutable API consumer rate card.
+   * Publishes an app-level request price. Rate cards are append-only and
+   * must use one currency per app. If effective_from is omitted, the card
+   * starts at the next UTC minute.
+   *
+   * @returns APIConsumerRateCardResponse The newly published rate card.
+   * @throws ApiError
+   */
+  public static createApiConsumerRateCard({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateAPIConsumerRateCardRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<APIConsumerRateCardResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/rate-cards',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Fetch one API consumer rate card.
+   * @returns APIConsumerRateCardResponse The requested immutable rate card.
+   * @throws ApiError
+   */
+  public static getApiConsumerRateCard({
+    slug,
+    rateCardId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Immutable API consumer rate-card UUID.
+     */
+    rateCardId: string,
+  }): CancelablePromise<APIConsumerRateCardResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/rate-cards/{rate_card_id}',
+      path: {
+        'slug': slug,
+        'rate_card_id': rateCardId,
+      },
+      errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
       },

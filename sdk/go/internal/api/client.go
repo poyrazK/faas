@@ -316,11 +316,46 @@ func (c *Client) GetAPIConsumer(ctx context.Context, slug, consumerID string) (A
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID, nil, &out)
 }
 
+// ListAPIConsumerRateCards returns the versioned request prices for an app.
+func (c *Client) ListAPIConsumerRateCards(ctx context.Context, slug string) (APIConsumerRateCardListResponse, error) {
+	var out APIConsumerRateCardListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/rate-cards", nil, &out)
+}
+
+// CreateAPIConsumerRateCard adds an immutable request price effective at a UTC minute.
+func (c *Client) CreateAPIConsumerRateCard(ctx context.Context, slug string, req CreateAPIConsumerRateCardRequest) (APIConsumerRateCardResponse, error) {
+	var out APIConsumerRateCardResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rate-cards", req, &out)
+}
+
+// GetAPIConsumerRateCard returns one app rate card by ID.
+func (c *Client) GetAPIConsumerRateCard(ctx context.Context, slug, rateCardID string) (APIConsumerRateCardResponse, error) {
+	var out APIConsumerRateCardResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/rate-cards/"+rateCardID, nil, &out)
+}
+
 // GetAPIConsumerUsage returns the durable minute usage projection for one
 // stable API consumer. Empty bounds use the server's trailing-30d default.
 func (c *Client) GetAPIConsumerUsage(ctx context.Context, slug, consumerID string, since, until string) (APIConsumerUsageResponse, error) {
 	var out APIConsumerUsageResponse
 	path := "/v1/apps/" + slug + "/consumers/" + consumerID + "/usage"
+	q := url.Values{}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if until != "" {
+		q.Set("until", until)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAPIConsumerUsageQuote returns the usage total under the app's versioned rate cards.
+func (c *Client) GetAPIConsumerUsageQuote(ctx context.Context, slug, consumerID, since, until string) (APIConsumerUsageQuoteResponse, error) {
+	var out APIConsumerUsageQuoteResponse
+	path := "/v1/apps/" + slug + "/consumers/" + consumerID + "/usage/quote"
 	q := url.Values{}
 	if since != "" {
 		q.Set("since", since)

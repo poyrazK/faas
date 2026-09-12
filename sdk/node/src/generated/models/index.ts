@@ -2,8 +2,12 @@
 /* istanbul ignore file */
 
 export type { APIConsumerListResponse } from './APIConsumerListResponse.js';
+export type { APIConsumerRateCardListResponse } from './APIConsumerRateCardListResponse.js';
+export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.js';
 export type { APIConsumerResponse } from './APIConsumerResponse.js';
 export type { APIConsumerUsageBucketResponse } from './APIConsumerUsageBucketResponse.js';
+export type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuoteBucketResponse.js';
+export type { APIConsumerUsageQuoteResponse } from './APIConsumerUsageQuoteResponse.js';
 export type { APIConsumerUsageResponse } from './APIConsumerUsageResponse.js';
 export type { APIKeyExportResponse } from './APIKeyExportResponse.js';
 export type { APIKeyResponse } from './APIKeyResponse.js';
@@ -107,6 +111,7 @@ export type { ConsumerKeyResponse } from './ConsumerKeyResponse.js';
 export type { CookieSession } from './CookieSession.js';
 export type { CorsPresetListResponse } from './CorsPresetListResponse.js';
 export type { CorsPresetResponse } from './CorsPresetResponse.js';
+export type { CreateAPIConsumerRateCardRequest } from './CreateAPIConsumerRateCardRequest.js';
 export type { CreateAPIConsumerRequest } from './CreateAPIConsumerRequest.js';
 export type { CreateAlertRuleRequest } from './CreateAlertRuleRequest.js';
 export type { CreateAppLogDrainRequest } from './CreateAppLogDrainRequest.js';

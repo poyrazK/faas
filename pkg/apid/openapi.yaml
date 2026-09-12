@@ -2814,6 +2814,106 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage/quote:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose priced usage is returned.
+        schema: { type: string, format: uuid }
+      - name: since
+        in: query
+        required: false
+        description: Optional RFC3339 lower bound for the quote period; defaults to the trailing 30 days.
+        schema: { type: string, format: date-time }
+      - name: until
+        in: query
+        required: false
+        description: Optional RFC3339 exclusive upper bound for the quote period; defaults to UTC midnight today.
+        schema: { type: string, format: date-time }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsageQuote
+      summary: Quote one API consumer's priced usage.
+      description: |
+        Applies the app's immutable, versioned request rate cards to durable
+        consumer usage. The result is a deterministic estimate, not an invoice
+        or a payment authorization. Usage before the first effective rate card
+        is returned as unpriced_units rather than silently treated as free.
+      responses:
+        '200':
+          description: Deterministic usage quote over the requested window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageQuoteResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/rate-cards:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerRateCards
+      summary: List an app's immutable API consumer rate cards.
+      responses:
+        '200':
+          description: Rate-card history in effective-time order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerRateCardListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: createAPIConsumerRateCard
+      summary: Publish a new immutable API consumer rate card.
+      description: |
+        Publishes an app-level request price. Rate cards are append-only and
+        must use one currency per app. If effective_from is omitted, the card
+        starts at the next UTC minute.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerRateCardRequest' }
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: The newly published rate card.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerRateCardResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/rate-cards/{rate_card_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: rate_card_id
+        in: path
+        required: true
+        description: Immutable API consumer rate-card UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerRateCard
+      summary: Fetch one API consumer rate card.
+      responses:
+        '200':
+          description: The requested immutable rate card.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerRateCardResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/consumers/{consumer_id}/keys:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -15932,6 +16032,67 @@ components:
         buckets:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerUsageBucketResponse' }
+        as_of: { type: string, format: date-time }
+
+    CreateAPIConsumerRateCardRequest:
+      description: "Immutable app-level request price. Currency defaults to EUR and effective_from defaults to the next UTC minute."
+      type: object
+      required: [price_millicents_per_unit]
+      properties:
+        currency: { type: string, pattern: '^[A-Z]{3}$', default: EUR, example: EUR }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0, example: 1000 }
+        effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
+
+    APIConsumerRateCardResponse:
+      description: "Immutable, versioned app-level price for one API request unit."
+      type: object
+      required: [id, app_id, currency, unit, price_millicents_per_unit, effective_from, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        unit: { type: string, enum: [request] }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        effective_from: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    APIConsumerRateCardListResponse:
+      description: "Chronological history of immutable API consumer rate cards for an app."
+      type: object
+      required: [rate_cards]
+      properties:
+        rate_cards:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRateCardResponse' }
+
+    APIConsumerUsageQuoteBucketResponse:
+      description: "One durable usage minute priced by the rate card effective at that minute."
+      type: object
+      required: [window_start, billable_units, amount_millicents]
+      properties:
+        window_start: { type: string, format: date-time }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        rate_card_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerUsageQuoteResponse:
+      description: "Deterministic estimate from durable API consumer usage and versioned app pricing; not an invoice."
+      type: object
+      required: [consumer_id, period_start, period_end, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        priced: { type: boolean }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerUsageQuoteBucketResponse' }
         as_of: { type: string, format: date-time }
 
     AppRestartResponse:
