@@ -24,6 +24,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
+	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -395,6 +396,9 @@ type MemStore struct {
 	// ClaimInvocationWithCap / DecrementAccountAsyncInflight.
 	accountAsyncQuota map[string]accountAsyncQuotaRow
 	instances         map[string]Instance
+	// hostPorts mirrors the durable container_host_port_leases registry. It is
+	// initialized lazily as well so zero-value MemStore fixtures remain valid.
+	hostPorts *hostport.Allocator
 	// loginTokens is keyed by the hex-encoded SHA-256 hash of the
 	// raw token (so the binary []byte hash from ConsumeLoginToken
 	// matches the map key format used in MemStore everywhere else).
@@ -912,6 +916,7 @@ func NewMemStore() *MemStore {
 		runtimeSnapshots:        map[string]RuntimeSnapshotRecord{},
 		accountAsyncQuota:       map[string]accountAsyncQuotaRow{},
 		instances:               map[string]Instance{},
+		hostPorts:               hostport.NewDefaultAllocator(),
 		loginTokens:             map[string]LoginToken{},
 		emailVerificationTokens: map[string]EmailVerificationToken{},
 		mfaDisableRequests:      map[string]MFADisableRequest{},

@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -753,6 +754,11 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		return nil, fmt.Errorf("sched: default-local compute_node %q has empty id", state.DefaultLocalNodeName)
 	}
 	e.defaultLocalNodeID = node.ID
+	if leaseStore, ok := store.(state.HostPortLeaseStore); ok {
+		if err := leaseStore.ReconcileHostPortLeases(bootCtx); err != nil {
+			return nil, fmt.Errorf("sched: reconcile container host-port leases: %w", err)
+		}
+	}
 	return e, nil
 }
 
@@ -1165,6 +1171,47 @@ func (e *Engine) createInstanceWithWakeRetry(ctx context.Context, appID, deploym
 	}
 	return state.Instance{}, err
 }
+
+func hostPortRequestsForManifest(manifest state.AppManifest) []hostport.Request {
+	if len(manifest.Ports) == 0 {
+		return nil
+	}
+	requests := make([]hostport.Request, 0, len(manifest.Ports))
+	for _, port := range manifest.Ports {
+		requests = append(requests, hostport.Request{
+			Name:      port.Name,
+			Protocol:  hostport.Protocol(port.EffectiveProtocol()),
+			GuestPort: port.Port,
+		})
+	}
+	return requests
+}
+
+func (e *Engine) acquireHostPortLeases(ctx context.Context, nodeID, instanceID string, requests []hostport.Request) error {
+	if len(requests) == 0 {
+		return nil
+	}
+	store, ok := e.store.(state.HostPortLeaseStore)
+	if !ok {
+		return fmt.Errorf("sched: host-port lease store is not configured")
+	}
+	_, err := store.AcquireHostPortLeases(ctx, nodeID, instanceID, requests)
+	return err
+}
+
+func (e *Engine) releaseHostPortLeases(ctx context.Context, nodeID, instanceID string) {
+	if nodeID == "" || instanceID == "" {
+		return
+	}
+	store, ok := e.store.(state.HostPortLeaseStore)
+	if !ok {
+		return
+	}
+	if err := store.ReleaseHostPortLeases(ctx, nodeID, instanceID); err != nil {
+		e.log.Warn("sched: release host-port leases", "instance", instanceID, "node", nodeID, "err", err)
+	}
+}
+
 func (e *Engine) WithLivenessWindow(w *LivenessWindow) *Engine {
 	if e == nil {
 		return e
@@ -2539,6 +2586,19 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
 	}
+	// Reserve declared listeners before the ledger and vmmd admission. The
+	// mapping is node-local and durable, so a failed boot can release it from
+	// the same state-transition path and a scheduler restart can recover the
+	// mapping without guessing which host port was in use.
+	hostPortRequests := hostPortRequestsForManifest(app.Manifest)
+	if err := e.acquireHostPortLeases(ctx, placement.NodeID, ins.ID, hostPortRequests); err != nil {
+		_ = e.store.DeleteInstance(ctx, ins.ID)
+		release()
+		if errors.Is(err, hostport.ErrExhausted) {
+			return WakeResult{}, api.ErrCapacity("no host ports are available on the selected compute node")
+		}
+		return WakeResult{}, err
+	}
 	e.emitInstanceChanged(ctx, ins.ID, appID, initState, wakeID)
 
 	if err := e.ledger.Admit(Request{
@@ -2578,6 +2638,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				e.log.Warn("admit: delete unattached row after concurrency cap",
 					"app", appID, "instance", ins.ID, "err", delErr)
 			}
+			e.releaseHostPortLeases(ctx, placement.NodeID, ins.ID)
 			release()
 			e.IncAtCapacity(appID, "wake")
 			return WakeResult{AtCapacity: true}, nil
@@ -7481,6 +7542,7 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 		e.log.Warn("workload_oom: write terminal state",
 			"instance", instanceID, "err", err)
 	}
+	e.releaseHostPortLeases(ctx, freshLocked.NodeID, instanceID)
 	e.emitInstanceChanged(ctx, instanceID, appID, state.StateStopped, "") // wake_id already on the row; the direct-write path doesn't re-load it.
 	if freshLocked.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, deploymentID)
@@ -7693,6 +7755,9 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 	} else if err := updateInstanceStateCAS(ctx, e.store, instanceID, string(from), string(to)); err != nil {
 		return false, err
 	}
+	if to == state.StateParked || to == state.StateStopped || to == state.StateFailed {
+		e.releaseHostPortLeases(ctx, ins.NodeID, instanceID)
+	}
 	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
 	// Recovery recreates use this CAS-aware transition to park a
 	// service replica whose source node is gone. Keep the desired-count
@@ -7752,6 +7817,9 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 	} else if err := e.store.UpdateInstanceState(ctx, instanceID, string(to)); err != nil {
 		e.log.Warn("transition: write", "instance", instanceID, "to", to, "err", err)
 		return
+	}
+	if to == state.StateParked || to == state.StateStopped || to == state.StateFailed {
+		e.releaseHostPortLeases(ctx, ins.NodeID, instanceID)
 	}
 	// Surface the row's wake_id in the SSE payload. The audit-log
 	// caller loaded `ins` at the top of this function precisely to

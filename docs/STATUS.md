@@ -1070,8 +1070,9 @@ explicitly open issues that the doc otherwise implies are closed.
   the same `HostBridgeIP:10080` proxy; the netns firewall admits DNS and proxy
   traffic before the lateral-movement deny. Named TCP public multi-port routing
   now uses the `app--port-<name>` selector and the existing vmmd bridge
-  (ADR-176); host-port leasing, UDP ingress, and custom per-port TLS remain
-  separate follow-ups. Loopback discovery within one task remains supported
+  (ADR-176); durable node-local host-port leasing now reserves declared TCP
+  and UDP listeners (ADR-177). Direct socket binding, UDP ingress, and custom
+  per-port TLS remain separate follow-ups. Loopback discovery within one task remains supported
   (ADR-164 and ADR-165).
 - **Resource and cost isolation** — named RAM/CPU profiles, per-node vCPU
   admission, ephemeral disk ceilings, and the account-level compute + S3 +
@@ -1082,8 +1083,8 @@ explicitly open issues that the doc otherwise implies are closed.
   64 MiB default for inherited profiles. ADR-175 adds a customer-selectable
   16..512 MiB sidecar scratch quota and named per-workload guest `io.weight`
   policies (`low`, `standard`, `high`); omitted values preserve the inherited
-  defaults. Persistent volumes and host-port allocation remain follow-up work;
-  public named TCP listeners are now covered by ADR-176.
+  defaults. Persistent volumes remain follow-up work; public named TCP listeners
+  are now covered by ADR-176 and host-port allocation by ADR-177.
 
 ### Open security & infrastructure issues
 
