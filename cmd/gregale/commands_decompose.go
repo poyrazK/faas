@@ -142,6 +142,20 @@ func runProjectDeployPreview(
 	tarball, projectSlug, only, exclude string,
 	showAffected, emitJSON bool,
 ) int {
+	return runProjectDeployPreviewWithMode(ctx, client, tarball, projectSlug, only, exclude,
+		showAffected, emitJSON, true)
+}
+
+// runProjectDeployPreviewWithMode is the strict/lenient implementation used
+// by deploy previews. The legacy wrapper above keeps direct callers on the
+// documented strict default while the deploy flag parser can opt into
+// --lenient without changing the ScanProject wire request.
+func runProjectDeployPreviewWithMode(
+	ctx context.Context,
+	client *api.Client,
+	tarball, projectSlug, only, exclude string,
+	showAffected, emitJSON, strict bool,
+) int {
 	if tarball == "" {
 		return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
 			errors.New("no source resolved"))
@@ -167,9 +181,19 @@ func runProjectDeployPreview(
 		return printErr("Scan failed", err)
 	}
 	if emitJSON {
-		return jsonOut(writeJSON(plan))
+		if code := jsonOut(writeJSON(plan)); code != 0 {
+			return code
+		}
+		if strict && !plan.CanApply {
+			return 1
+		}
+		return 0
 	}
-	return printPlanText(osStdout, plan, excludeList, showAffected)
+	printPlanText(osStdout, plan, excludeList, showAffected)
+	if strict && !plan.CanApply {
+		return 1
+	}
+	return 0
 }
 
 // resolveScanSource normalises the three input shapes (--tarball /
