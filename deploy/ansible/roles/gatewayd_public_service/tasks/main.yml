@@ -97,7 +97,7 @@
     mode: "0644"
   notify: restart faas-gatewayd-public
 
-- name: gatewayd_public_service — inspect existing gateway enablement
+- name: gatewayd_public_service — inspect existing gateway enablement  # noqa: command-instead-of-module (read-only query / no module equivalent)
   ansible.builtin.command: systemctl is-enabled faas-gatewayd-public.service
   register: gatewayd_public_enabled
   changed_when: false

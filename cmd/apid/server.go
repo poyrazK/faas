@@ -1133,8 +1133,7 @@ func (s *server) handler() http.Handler {
 	// adds the spec coverage + the rest of the /v1/orgs/{slug}/...
 	// surface. Loads the org via s.loadOrg (the pkg/authz middleware
 	// that resolves X-Active-Org / ?org=) and returns the membership
-	// role. No header → {"org": null} (passthrough, pre-PR-5 routes
-	// stay account-scoped).
+	// role. No header resolves the caller's personal organization.
 	mux.HandleFunc("GET /v1/orgs/me", s.auth(s.loadOrg(s.whoamiActiveOrg)))
 
 	// Orgs (ADR-061 / IAM-6 / issue #190, PR 5 + PR 7). Customer-

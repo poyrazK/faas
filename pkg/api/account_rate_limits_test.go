@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -45,8 +46,8 @@ func TestClientPreservesDeployRateHeadersOnProblem(t *testing.T) {
 	defer srv.Close()
 
 	_, err := api.NewClient(srv.URL, "token").GetAccountRateLimits(context.Background())
-	apiErr, ok := err.(*api.APIError)
-	if !ok {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("error = %T %v", err, err)
 	}
 	for name, want := range map[string]string{

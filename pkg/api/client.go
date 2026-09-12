@@ -4367,9 +4367,9 @@ func (c *Client) GetAccountDPA(ctx context.Context) ([]byte, error) {
 
 // --- /v1/orgs/me (IAM-6 / ADR-061) ----------------------------------------
 //
-// Returns the caller's currently-active org + membership role, or
-// {"org": null} when neither X-Active-Org nor ?org= was supplied
-// (cmd/apid/handlers_org_me.go:59). Drives `gregale orgs me`.
+// Returns the caller's currently-active org + membership role. Without an
+// explicit X-Active-Org / ?org= hint, the server returns the caller's personal
+// organization. Drives `gregale orgs me`.
 func (c *Client) GetMyOrg(ctx context.Context) (OrgMeResponse, error) {
 	var out OrgMeResponse
 	return out, c.do(ctx, "GET", "/v1/orgs/me", nil, &out)

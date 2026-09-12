@@ -67,11 +67,115 @@ func Run(t *testing.T, open Open) {
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
 		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
+		{"account_deploy_rate_window_is_fixed_and_durable", testAccountDeployRateWindow},
+		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
+		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testAccountDeployRateWindow(t *testing.T, fx *Fixture) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	initial, err := fx.Store.ReadAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now)
+	if err != nil {
+		t.Fatalf("ReadAccountDeployRate(initial): %v", err)
+	}
+	if initial.Used != 0 || initial.Remaining != 2 || !initial.Allowed || !initial.WindowStart.Equal(now) {
+		t.Fatalf("initial deploy rate = %+v, want used=0 remaining=2 allowed with window=%s", initial, now)
+	}
+	first, err := fx.Store.ConsumeAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now)
+	if err != nil {
+		t.Fatalf("ConsumeAccountDeployRate(first): %v", err)
+	}
+	second, err := fx.Store.ConsumeAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("ConsumeAccountDeployRate(second): %v", err)
+	}
+	blocked, err := fx.Store.ConsumeAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("ConsumeAccountDeployRate(blocked): %v", err)
+	}
+	if !first.Allowed || !second.Allowed || blocked.Allowed || blocked.Used != 2 || blocked.Remaining != 0 {
+		t.Fatalf("deploy admissions = first=%+v second=%+v blocked=%+v", first, second, blocked)
+	}
+	reset, err := fx.Store.ReadAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now.Add(state.AccountDeployRateWindow))
+	if err != nil {
+		t.Fatalf("ReadAccountDeployRate(reset): %v", err)
+	}
+	if reset.Used != 0 || reset.Remaining != 2 || !reset.WindowStart.Equal(now.Add(state.AccountDeployRateWindow)) {
+		t.Fatalf("reset deploy rate = %+v", reset)
+	}
+}
+
+func testPublishInstanceRuntime(t *testing.T, fx *Fixture) {
+	instance, err := fx.Store.CreateInstance(
+		fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateColdBooting),
+		256, fx.Node.ID, "",
+	)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	published, err := fx.Store.PublishInstanceRuntime(
+		fx.Ctx, instance.ID, string(state.StateColdBooting),
+		"fc-conformance", "10.99.0.8", 20008,
+	)
+	if err != nil {
+		t.Fatalf("PublishInstanceRuntime: %v", err)
+	}
+	if published.State != string(state.StateRunning) || published.Netns != "fc-conformance" || published.HostIP != "10.99.0.8" || published.GuestUID != 20008 || published.StartedAt.IsZero() {
+		t.Fatalf("published runtime = %+v", published)
+	}
+	if _, err := fx.Store.PublishInstanceRuntime(
+		fx.Ctx, instance.ID, string(state.StateColdBooting),
+		"stale", "10.99.0.9", 20009,
+	); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale PublishInstanceRuntime error = %v, want ErrConflict", err)
+	}
+}
+
+func testJobTaskTerminalLogs(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(
+		fx.Ctx, fx.Account.ID, "logs-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"},
+		128, 60, 1, 0, nil,
+	)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	parallelism := 1
+	run, tasks, err := fx.Store.JobRunCreate(
+		fx.Ctx, job.ID, fx.Account.ID, "manual", &parallelism,
+		nil, nil, nil, 1,
+	)
+	if err != nil {
+		t.Fatalf("JobRunCreate: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("JobRunCreate tasks = %d, want 1", len(tasks))
+	}
+	finished := time.Date(2026, 9, 12, 12, 30, 0, 0, time.UTC)
+	if err := fx.Store.JobTaskMarkTerminalWithLogs(
+		fx.Ctx, run.ID, tasks[0].TaskIndex, "succeeded", 0,
+		"", "", "hello from task\n", true, finished,
+	); err != nil {
+		t.Fatalf("JobTaskMarkTerminalWithLogs: %v", err)
+	}
+	got, err := fx.Store.JobTaskGet(fx.Ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil {
+		t.Fatalf("JobTaskGet: %v", err)
+	}
+	if got.Status != "succeeded" || got.ExitCode == nil || *got.ExitCode != 0 || got.LogContent != "hello from task\n" || !got.LogTruncated || got.FinishedAt == nil {
+		t.Fatalf("terminal task = %+v", got)
+	}
+	if err := fx.Store.JobTaskMarkTerminalWithLogs(
+		fx.Ctx, run.ID, tasks[0].TaskIndex, "failed", 1,
+		"user_error", "late", "replacement", false, finished.Add(time.Second),
+	); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("terminal replay error = %v, want ErrNotFound", err)
 	}
 }
 

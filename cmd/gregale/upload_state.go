@@ -254,8 +254,8 @@ func inspectUploadCache(now time.Time, policy uploadCachePolicy) ([]uploadCacheE
 	}
 	entries := make([]uploadCacheEntry, 0, len(byKey))
 	for _, entry := range byKey {
-		switch {
-		case entry.StatePath == "":
+		switch entry.StatePath {
+		case "":
 			entry.Status = "orphan_lock"
 			entry.Action = "remove"
 		default:

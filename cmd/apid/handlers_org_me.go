@@ -2,8 +2,8 @@
 // + PR 5.
 //
 // GET /v1/orgs/me returns the caller's currently-active org plus
-// the membership role, or {"org": null} when no X-Active-Org / ?org=
-// hint was supplied. The endpoint exercises pkg/authz.LoadOrg
+// the membership role. With no X-Active-Org / ?org= hint it returns the
+// caller's personal organization. The endpoint exercises pkg/authz.LoadOrg
 // end-to-end and is the load-bearing seam for every org-scoped
 // handler that follows.
 //
@@ -28,9 +28,8 @@
 //	  }
 //	}
 //
-// or {"org": null}. The handler MUST NOT reject a missing header —
-// that's the passthrough case the rest of the platform depends on
-// (every pre-PR-5 route stays account-scoped).
+// A pre-migration account without a personal organization receives
+// {"org": null} for rolling-upgrade compatibility.
 package main
 
 import (
@@ -47,9 +46,7 @@ import (
 // ADR-061, PR 4) and renders the response.
 //
 // Behaviour:
-//   - no membership on r → {"org": null} (passthrough — LoadOrg
-//     stamps the membership only when X-Active-Org / ?org= was
-//     set).
+//   - no membership on r → resolve the caller's personal organization.
 //   - membership present → fetch the org by id (the membership's
 //     OrgID) so the response carries the slug + name + personal
 //     flag. The role field carries the caller's role on the org.

@@ -134,7 +134,7 @@
 
 # --- Caddy ------------------------------------------------------------------
 
-- name: host_hardening — inspect the control-plane Caddy unit
+- name: host_hardening — inspect the control-plane Caddy unit  # noqa: command-instead-of-module (read-only query / no module equivalent)
   ansible.builtin.command: systemctl cat caddy.service
   register: faas_hardening_caddy_unit
   changed_when: false

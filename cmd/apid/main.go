@@ -492,9 +492,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	// DEPLOY-1 / ADR-075 capdecl gate. apid's capsDecl is
-	// cap_net_bind_service (HTTPS listener). A misconfigured
-	// AmbientCapabilities line fails fast at boot. The
+	// DEPLOY-1 / ADR-075 capdecl gate. apid serves only a Unix socket and
+	// high loopback ports behind Caddy, so its allowlist is empty. A future code
+	// path that requires an undeployed capability fails fast at boot. The
 	// capCheck seam lets tests stub the live /proc/self/status
 	// check (review finding M2 — every daemon now has this).
 	capCheck := deps.capCheck

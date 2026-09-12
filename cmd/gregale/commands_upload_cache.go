@@ -54,7 +54,9 @@ func cmdUploadCacheList(args []string) int {
 		return jsonOut(writeNDJSON(entries))
 	}
 	if len(entries) == 0 {
-		fmt.Fprintln(osStdout, "Upload cache is empty.")
+		if _, err := fmt.Fprintln(osStdout, "Upload cache is empty."); err != nil {
+			return printErr("Could not write upload cache", err)
+		}
 		return 0
 	}
 	for _, entry := range entries {
@@ -62,7 +64,9 @@ func cmdUploadCacheList(args []string) int {
 		if entry.Action != "" {
 			action = entry.Action
 		}
-		fmt.Fprintf(osStdout, "%s\t%s\t%s\n", entry.Key, entry.Status, action)
+		if _, err := fmt.Fprintf(osStdout, "%s\t%s\t%s\n", entry.Key, entry.Status, action); err != nil {
+			return printErr("Could not write upload cache", err)
+		}
 	}
 	return 0
 }
@@ -89,7 +93,10 @@ func cmdUploadCacheCleanup(args []string) int {
 	if dryRun {
 		verb = "Would remove"
 	}
-	fmt.Fprintf(osStdout, "%s %d upload cache entr%s; kept %d.\n", verb, removableUploadCacheEntries(entries), pluralY(removableUploadCacheEntries(entries)), result.Kept)
+	removed := removableUploadCacheEntries(entries)
+	if _, err := fmt.Fprintf(osStdout, "%s %d upload cache entr%s; kept %d.\n", verb, removed, pluralY(removed), result.Kept); err != nil {
+		return printErr("Could not write upload cache cleanup result", err)
+	}
 	return 0
 }
 

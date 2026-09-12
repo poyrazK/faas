@@ -165,12 +165,10 @@ func TestPg_CoverageSweepAccounts(t *testing.T) {
 		if err := s.UpdateAccountStatus(ctx, acct.ID, state.AccountActive); err != nil {
 			t.Fatalf("UpdateAccountStatus: %v", err)
 		}
-		// UpdateAccountStatus on a non-UUID id would trip SQLSTATE 22P02
-		// before the not-found check. Pass a syntactically valid zero
-		// uuid — pgstore simply executes the UPDATE which affects 0 rows
-		// and returns nil (no ErrNotFound mapping in pgstore.go:352).
-		if err := s.UpdateAccountStatus(ctx, "00000000-0000-0000-0000-000000000000", state.AccountActive); err != nil {
-			t.Fatalf("UpdateAccountStatus missing: %v", err)
+		// A syntactically valid missing UUID must preserve the Store contract:
+		// both implementations return ErrNotFound after the zero-row update.
+		if err := s.UpdateAccountStatus(ctx, "00000000-0000-0000-0000-000000000000", state.AccountActive); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("UpdateAccountStatus missing = %v, want ErrNotFound", err)
 		}
 
 		if err := s.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, "si_"+uuid.NewString()); err != nil {
