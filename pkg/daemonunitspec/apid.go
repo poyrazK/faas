@@ -59,7 +59,11 @@ func UnitApid() daemonunit.Unit {
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
 
-		AmbientCapabilities: []string{"CAP_NET_BIND_SERVICE"},
+		// apid serves unix and high loopback ports; it never needs host
+		// capabilities. Emit an empty bounding set so package defaults cannot
+		// silently widen it.
+		CapabilityBoundingSet: []string{},
+		AmbientCapabilities:   []string{""},
 
 		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
@@ -81,13 +85,23 @@ func UnitApid() daemonunit.Unit {
 			{Name: "faas_archive_creds", Path: "/etc/faas/secrets/storage-box/archive-creds.json", Optional: true},
 		},
 
-		NoNewPrivileges:       true,
-		ProtectSystem:         "strict",
-		ProtectHome:           true,
-		PrivateTmp:            daemonunit.BoolPtr(true),
-		ProtectKernelTunables: true,
-		ProtectKernelModules:  true,
-		ProtectControlGroups:  true,
+		NoNewPrivileges:         true,
+		ProtectSystem:           "strict",
+		ProtectHome:             true,
+		PrivateTmp:              daemonunit.BoolPtr(true),
+		PrivateDevices:          true,
+		ProtectKernelTunables:   true,
+		ProtectKernelModules:    true,
+		ProtectControlGroups:    true,
+		SystemCallArchitectures: "native",
+		LockPersonality:         true,
+		RestrictNamespaces:      true,
+		RestrictRealtime:        true,
+		RestrictSUIDSGID:        true,
+		RestrictAddressFamilies: []string{"AF_UNIX", "AF_INET", "AF_INET6"},
+		ProtectHostname:         true,
+		ProtectClock:            true,
+		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
 		ReadWritePaths: []string{"/var/lib/faas", "/var/log/faas", "/var/spool/faas"},

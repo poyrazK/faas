@@ -10,6 +10,8 @@ faas_hardening_fail2ban: true
 faas_hardening_unattended_upgrades: true
 faas_hardening_auditd: true
 faas_hardening_sysctl_enabled: true
+faas_hardening_caddy: true
+faas_hardening_caddy_dropin: /etc/systemd/system/caddy.service.d/90-gregale-hardening.conf
 
 # sshd. Applied as a drop-in so the distro file stays untouched and a
 # provider-rendered Port= line (spec §7: non-standard port, operator-owned)
@@ -19,7 +21,10 @@ faas_hardening_sysctl_enabled: true
 # never cause.
 faas_hardening_sshd_dropin: /etc/ssh/sshd_config.d/99-faas-hardening.conf
 faas_hardening_sshd_password_auth: false
-faas_hardening_sshd_permit_root_login: prohibit-password
+# Public beta uses a named OS Login administrator. The role refuses to apply
+# this value when Ansible itself is connected as root, so an access migration
+# fails before it can lock out the operator.
+faas_hardening_sshd_permit_root_login: "no"
 faas_hardening_sshd_max_auth_tries: 4
 faas_hardening_sshd_client_alive_interval: 300
 faas_hardening_sshd_client_alive_count_max: 2

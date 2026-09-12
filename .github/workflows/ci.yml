@@ -310,6 +310,9 @@ jobs:
       - name: systemd hardening gate
         run: make systemd-hardening-check
 
+      - name: GCP public-beta policy gate
+        run: make gcp-public-beta-policy-test
+
       - name: OTLP unit wiring gate
         run: make otlp-unit-check
 

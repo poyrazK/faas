@@ -802,7 +802,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 	// Start the listeners.
 	errc := make(chan error, 2)
 	go func() {
-		l, lerr := net.Listen("tcp", publicSrv.Addr)
+		l, lerr := publicListener(publicSrv.Addr)
 		if lerr != nil {
 			errc <- fmt.Errorf("gatewayd-public: listen %s: %w", publicSrv.Addr, lerr)
 			return
@@ -894,6 +894,71 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		cancel()
 	}
 	return nil
+}
+
+// publicListener consumes the single socket passed by
+// faas-gatewayd-public.socket. systemd keeps the listening socket open across
+// a service restart: the old process drains accepted connections while new
+// connections wait in the kernel backlog for the replacement. Local/dev runs
+// without LISTEN_PID/LISTEN_FDS retain the normal net.Listen path.
+//
+// Issue #607 / ADR-068: this closes the remaining connection-refused window
+// between the existing Caddy edge and gatewayd-public's graceful drain.
+func publicListener(addr string) (net.Listener, error) {
+	pidValue, hasPID := os.LookupEnv("LISTEN_PID")
+	fdsValue, hasFDs := os.LookupEnv("LISTEN_FDS")
+	if !hasPID && !hasFDs {
+		return net.Listen("tcp", addr)
+	}
+	if !hasPID || !hasFDs {
+		return nil, errors.New("gatewayd-public: incomplete systemd socket activation environment")
+	}
+	if pidValue != fmt.Sprint(os.Getpid()) {
+		// systemd's activation contract says a mismatched PID belongs to an
+		// ancestor and must be ignored rather than consuming its descriptor.
+		return net.Listen("tcp", addr)
+	}
+	if fdsValue != "1" {
+		return nil, fmt.Errorf("gatewayd-public: LISTEN_FDS=%s, want exactly 1", fdsValue)
+	}
+	if names := os.Getenv("LISTEN_FDNAMES"); names != "" && names != "public" {
+		return nil, fmt.Errorf("gatewayd-public: LISTEN_FDNAMES=%q, want public", names)
+	}
+
+	file := os.NewFile(uintptr(3), "faas-gatewayd-public.socket")
+	if file == nil {
+		return nil, errors.New("gatewayd-public: systemd listener fd 3 is unavailable")
+	}
+	listener, err := activatedListener(file, addr)
+	_ = file.Close()
+	if err != nil {
+		return nil, err
+	}
+	// Do not leak the activation contract to any helper process spawned after
+	// startup; the descriptor returned by FileListener is close-on-exec.
+	_ = os.Unsetenv("LISTEN_PID")
+	_ = os.Unsetenv("LISTEN_FDS")
+	_ = os.Unsetenv("LISTEN_FDNAMES")
+
+	return listener, nil
+}
+
+func activatedListener(file *os.File, addr string) (net.Listener, error) {
+	listener, err := net.FileListener(file)
+	if err != nil {
+		return nil, fmt.Errorf("gatewayd-public: consume systemd listener: %w", err)
+	}
+	want, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf("gatewayd-public: resolve configured listener: %w", err)
+	}
+	got, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || got.Port != want.Port || !got.IP.Equal(want.IP) {
+		_ = listener.Close()
+		return nil, fmt.Errorf("gatewayd-public: activated listener is %s, want %s", listener.Addr(), want)
+	}
+	return listener, nil
 }
 
 // envOr is the canonical env-override helper (per cmd/gatewayd/main.go).

@@ -48,10 +48,17 @@ On the control-plane host, separately verify the private service and Caddy
 upstream:
 
 ```sh
+systemctl is-active --quiet faas-gatewayd-public.socket
+systemctl show faas-gatewayd-public.socket -p Listen -p ActiveState
 systemctl is-active --quiet faas-gatewayd-public
 curl --fail --silent http://127.0.0.1:9092/readyz
 curl --fail --silent -o /dev/null http://127.0.0.1:8080/
 ```
+
+For a rollout drill, keep a one-request-per-second HTTPS probe running while
+`systemctl restart faas-gatewayd-public.service` completes its bounded drain.
+Every request must succeed; `connection refused`, reset, and Caddy 502 are
+failures. Confirm the Caddy PID and socket-unit invocation ID do not change.
 
 A public pass is required before announcing a release. The local checks are
 diagnostics only; they do not replace the external HTTPS check.

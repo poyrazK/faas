@@ -7,3 +7,7 @@
 - name: reload auditd rules
   ansible.builtin.command: augenrules --load
   changed_when: true
+
+- name: reload systemd for Caddy hardening
+  ansible.builtin.systemd_service:
+    daemon_reload: true

@@ -1,0 +1,22 @@
+{
+  "displayName": "Gregale backup bulk reads",
+  "documentation": {
+    "content": "More than 100 production backup read operations occurred in five minutes. Identify the principal in Cloud Audit Logs and confirm that a restore or recovery drill is active.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "enabled": true,
+  "conditions": [
+    {
+      "displayName": "Backup read burst",
+      "conditionThreshold": {
+        "filter": "resource.type=\"gcs_bucket\" AND metric.type=\"logging.googleapis.com/user/gregale_backup_bulk_read\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 100,
+        "duration": "0s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM"}],
+        "trigger": {"count": 1}
+      }
+    }
+  ]
+}
