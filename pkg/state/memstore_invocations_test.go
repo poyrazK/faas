@@ -103,12 +103,24 @@ func TestInvocationClaimCompleteRoundTrip(t *testing.T) {
 	if _, err := m.ClaimInvocation(ctx, inv.ID, "inst-Y", 30); !errors.Is(err, ErrNotFound) {
 		t.Errorf("re-claim should be ErrNotFound, got %v", err)
 	}
+	// A transient dispatch error is persisted for operator diagnostics. A
+	// later successful attempt must clear it or customer reads expose a
+	// contradictory success result plus the stale scheduler error.
+	if err := m.FailInvocation(ctx, inv.ID, "stale ownership error", time.Nanosecond, 0); err != nil {
+		t.Fatalf("FailInvocation(retry): %v", err)
+	}
+	if _, err := m.ClaimInvocation(ctx, inv.ID, "inst-Z", 30); err != nil {
+		t.Fatalf("ClaimInvocation(retry): %v", err)
+	}
 	if err := m.CompleteInvocation(ctx, inv.ID, json.RawMessage(`{"status":200}`)); err != nil {
 		t.Fatalf("CompleteInvocation: %v", err)
 	}
 	got, _ := m.InvocationByID(ctx, inv.ID)
 	if got.State != InvocationCompleted || got.Result == nil {
 		t.Errorf("post-complete row: %+v", got)
+	}
+	if got.LastError != "" {
+		t.Errorf("post-complete last_error = %q, want cleared", got.LastError)
 	}
 }
 

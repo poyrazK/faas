@@ -12358,6 +12358,7 @@ func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json
 		       outcome = 'success',
 		       completed_at = now(),
 		       received_at = coalesce(received_at, now()),
+		       last_error = '',
 		       result = coalesce($2, result)
 		 where id = $1 and state = 'dispatching'
 		 returning account_id`, id, nullableJSON(result)).Scan(&accountID); err != nil {

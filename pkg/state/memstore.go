@@ -9585,6 +9585,7 @@ func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.
 		return ErrNotFound
 	}
 	inv.State = InvocationCompleted
+	inv.LastError = ""
 	if len(result) > 0 {
 		inv.Result = result
 	}
