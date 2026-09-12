@@ -86,7 +86,8 @@ def sync_detailed(
 ) -> Response[APIConsumerUsageStatementResponse | Problem]:
     """Finalize a fully priced API consumer usage statement.
 
-     Records the payable lifecycle transition; repeated calls are idempotent.
+     Records the payable lifecycle transition; repeated calls are idempotent. A new transition emits a
+    durable, signed usage_statement.finalized app webhook when a matching subscription exists.
 
     Args:
         slug (str):
@@ -126,7 +127,8 @@ def sync(
 ) -> APIConsumerUsageStatementResponse | Problem | None:
     """Finalize a fully priced API consumer usage statement.
 
-     Records the payable lifecycle transition; repeated calls are idempotent.
+     Records the payable lifecycle transition; repeated calls are idempotent. A new transition emits a
+    durable, signed usage_statement.finalized app webhook when a matching subscription exists.
 
     Args:
         slug (str):
@@ -161,7 +163,8 @@ async def asyncio_detailed(
 ) -> Response[APIConsumerUsageStatementResponse | Problem]:
     """Finalize a fully priced API consumer usage statement.
 
-     Records the payable lifecycle transition; repeated calls are idempotent.
+     Records the payable lifecycle transition; repeated calls are idempotent. A new transition emits a
+    durable, signed usage_statement.finalized app webhook when a matching subscription exists.
 
     Args:
         slug (str):
@@ -199,7 +202,8 @@ async def asyncio(
 ) -> APIConsumerUsageStatementResponse | Problem | None:
     """Finalize a fully priced API consumer usage statement.
 
-     Records the payable lifecycle transition; repeated calls are idempotent.
+     Records the payable lifecycle transition; repeated calls are idempotent. A new transition emits a
+    durable, signed usage_statement.finalized app webhook when a matching subscription exists.
 
     Args:
         slug (str):

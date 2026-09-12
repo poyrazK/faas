@@ -17,6 +17,7 @@ CreateAppWebhookRequestEventFilterItem = Literal[
     "job.finished",
     "preview.created",
     "rollout.aborted",
+    "usage_statement.finalized",
 ]
 
 CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequestEventFilterItem] = {
@@ -36,6 +37,7 @@ CREATE_APP_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[CreateAppWebhookRequest
     "job.finished",
     "preview.created",
     "rollout.aborted",
+    "usage_statement.finalized",
 }
 
 

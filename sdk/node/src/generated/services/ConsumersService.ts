@@ -357,7 +357,7 @@ export class ConsumersService {
   }
   /**
    * Finalize a fully priced API consumer usage statement.
-   * Records the payable lifecycle transition; repeated calls are idempotent.
+   * Records the payable lifecycle transition; repeated calls are idempotent. A new transition emits a durable, signed usage_statement.finalized app webhook when a matching subscription exists.
    * @returns APIConsumerUsageStatementResponse The finalized usage statement.
    * @throws ApiError
    */

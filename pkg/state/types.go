@@ -2788,22 +2788,23 @@ func (e *AlertRuleQuotaError) Error() string {
 type AppWebhookEvent string
 
 const (
-	AppWebhookEventCronFired         AppWebhookEvent = "cron.fired"
-	AppWebhookEventCronFiredManually AppWebhookEvent = "cron.fired.manually"
-	AppWebhookEventAppCreated        AppWebhookEvent = "app.created"
-	AppWebhookEventAppDeleted        AppWebhookEvent = "app.deleted"
-	AppWebhookEventAppDeployed       AppWebhookEvent = "app.deployed"
-	AppWebhookEventAppScaled         AppWebhookEvent = "app.scaled"
-	AppWebhookEventAppParked         AppWebhookEvent = "app.parked"
-	AppWebhookEventAppWoken          AppWebhookEvent = "app.woken"
-	AppWebhookEventBuildSucceeded    AppWebhookEvent = "build.succeeded"
-	AppWebhookEventBuildFailed       AppWebhookEvent = "build.failed"
-	AppWebhookEventDeploymentFailed  AppWebhookEvent = "deployment.failed"
-	AppWebhookEventRolloutAborted    AppWebhookEvent = "rollout.aborted"
-	AppWebhookEventErrorNew          AppWebhookEvent = "error.new"
-	AppWebhookEventJobFinished       AppWebhookEvent = "job.finished"
-	AppWebhookEventPreviewCreated    AppWebhookEvent = "preview.created"
-	AppWebhookEventBudgetThreshold   AppWebhookEvent = "budget.threshold"
+	AppWebhookEventCronFired               AppWebhookEvent = "cron.fired"
+	AppWebhookEventCronFiredManually       AppWebhookEvent = "cron.fired.manually"
+	AppWebhookEventAppCreated              AppWebhookEvent = "app.created"
+	AppWebhookEventAppDeleted              AppWebhookEvent = "app.deleted"
+	AppWebhookEventAppDeployed             AppWebhookEvent = "app.deployed"
+	AppWebhookEventAppScaled               AppWebhookEvent = "app.scaled"
+	AppWebhookEventAppParked               AppWebhookEvent = "app.parked"
+	AppWebhookEventAppWoken                AppWebhookEvent = "app.woken"
+	AppWebhookEventBuildSucceeded          AppWebhookEvent = "build.succeeded"
+	AppWebhookEventBuildFailed             AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentFailed        AppWebhookEvent = "deployment.failed"
+	AppWebhookEventRolloutAborted          AppWebhookEvent = "rollout.aborted"
+	AppWebhookEventErrorNew                AppWebhookEvent = "error.new"
+	AppWebhookEventJobFinished             AppWebhookEvent = "job.finished"
+	AppWebhookEventPreviewCreated          AppWebhookEvent = "preview.created"
+	AppWebhookEventBudgetThreshold         AppWebhookEvent = "budget.threshold"
+	AppWebhookEventUsageStatementFinalized AppWebhookEvent = "usage_statement.finalized"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -2826,6 +2827,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventJobFinished,
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
+	AppWebhookEventUsageStatementFinalized,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed

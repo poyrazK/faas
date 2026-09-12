@@ -45,7 +45,7 @@ func TestMigrations_WebhookEventAllowlistB5(t *testing.T) {
 	}
 	for _, event := range []string{
 		"deployment.failed", "rollout.aborted", "error.new",
-		"job.finished", "preview.created", "budget.threshold",
+		"job.finished", "preview.created", "budget.threshold", "usage_statement.finalized",
 	} {
 		if _, err := pool.Exec(ctx, `
 			insert into app_webhook_deliveries

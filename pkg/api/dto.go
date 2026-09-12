@@ -619,7 +619,8 @@ type APIConsumerUsageStatementBucketResponse struct {
 }
 
 // APIConsumerUsageStatementResponse is an immutable, auditable usage
-// snapshot that can be exported to a payment system in a later slice.
+// snapshot that can be exported to a customer's payment system through the
+// usage_statement.finalized webhook.
 type APIConsumerUsageStatementResponse struct {
 	ID               string                                    `json:"id"`
 	ConsumerID       string                                    `json:"consumer_id"`

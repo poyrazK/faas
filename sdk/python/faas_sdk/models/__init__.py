@@ -47,6 +47,7 @@ from .api_consumer_usage_quote_bucket_response import APIConsumerUsageQuoteBucke
 from .api_consumer_usage_quote_response import APIConsumerUsageQuoteResponse
 from .api_consumer_usage_response import APIConsumerUsageResponse
 from .api_consumer_usage_statement_bucket_response import APIConsumerUsageStatementBucketResponse
+from .api_consumer_usage_statement_finalized_webhook_payload import APIConsumerUsageStatementFinalizedWebhookPayload
 from .api_consumer_usage_statement_list_response import APIConsumerUsageStatementListResponse
 from .api_consumer_usage_statement_response import APIConsumerUsageStatementResponse
 from .api_consumer_usage_statement_response_status import APIConsumerUsageStatementResponseStatus
@@ -1020,6 +1021,7 @@ __all__ = (
     "APIConsumerUsageQuoteResponse",
     "APIConsumerUsageResponse",
     "APIConsumerUsageStatementBucketResponse",
+    "APIConsumerUsageStatementFinalizedWebhookPayload",
     "APIConsumerUsageStatementListResponse",
     "APIConsumerUsageStatementResponse",
     "APIConsumerUsageStatementResponseStatus",

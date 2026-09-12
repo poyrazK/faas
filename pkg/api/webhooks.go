@@ -48,6 +48,7 @@ var AllowedAppWebhookEvents = []string{
 	"app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken",
 	"build.succeeded", "build.failed",
 	"deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold",
+	"usage_statement.finalized",
 }
 
 // DeploymentFailedWebhookPayload is the payload stored for a deployment.failed
@@ -109,6 +110,26 @@ type BudgetThresholdWebhookPayload struct {
 	Metric        string  `json:"metric,omitempty"`
 	ObservedCents int64   `json:"observed_cents,omitempty"`
 	Period        string  `json:"period,omitempty"`
+}
+
+// APIConsumerUsageStatementFinalizedWebhookPayload is the immutable billing
+// snapshot delivered when an API consumer usage statement becomes payable.
+// It intentionally carries the complete statement so a customer can create
+// its own invoice or entitlement without another Gregale API round trip.
+type APIConsumerUsageStatementFinalizedWebhookPayload struct {
+	AppID            string                                    `json:"app_id"`
+	ConsumerID       string                                    `json:"consumer_id"`
+	StatementID      string                                    `json:"statement_id"`
+	PeriodStart      time.Time                                 `json:"period_start"`
+	PeriodEnd        time.Time                                 `json:"period_end"`
+	Currency         string                                    `json:"currency,omitempty"`
+	BillableUnits    int64                                     `json:"billable_units"`
+	UnpricedUnits    int64                                     `json:"unpriced_units"`
+	AmountMillicents int64                                     `json:"amount_millicents"`
+	Priced           bool                                      `json:"priced"`
+	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
+	AsOf             string                                    `json:"as_of"`
+	FinalizedAt      time.Time                                 `json:"finalized_at"`
 }
 
 // AppWebhookEventFilterLenMax bounds the number of distinct events a

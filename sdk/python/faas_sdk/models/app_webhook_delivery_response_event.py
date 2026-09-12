@@ -17,6 +17,7 @@ AppWebhookDeliveryResponseEvent = Literal[
     "job.finished",
     "preview.created",
     "rollout.aborted",
+    "usage_statement.finalized",
 ]
 
 APP_WEBHOOK_DELIVERY_RESPONSE_EVENT_VALUES: set[AppWebhookDeliveryResponseEvent] = {
@@ -36,6 +37,7 @@ APP_WEBHOOK_DELIVERY_RESPONSE_EVENT_VALUES: set[AppWebhookDeliveryResponseEvent]
     "job.finished",
     "preview.created",
     "rollout.aborted",
+    "usage_statement.finalized",
 }
 
 
