@@ -21404,7 +21404,10 @@ components:
       required: [name, root_dir, command, ports]
       properties:
         name: { type: string, example: api }
-        root_dir: { type: string, example: "" }
+        root_dir:
+          type: string
+          example: ""
+          description: "Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages remain available outside this directory."
         dockerfile: { type: string, example: Dockerfile }
         command:
           type: array

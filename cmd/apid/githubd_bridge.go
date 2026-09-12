@@ -3,7 +3,7 @@
 //
 // Direction: githubd → apid only. githubd dials /run/faas/apid-githubd.sock
 // after the dispatcher fans out the touched apps and stages each app's
-// RootDir subtree into githubd's build-sources dir as a per-app .tar.gz.
+// full repository into githubd's build-sources dir as a per-app .tar.gz.
 // The apid handler creates the deployment row (Kind=DeploymentKindGitHub),
 // the build row, and emits the build_queued pg_notify that builderd
 // LISTENs on (cmd/builderd/main.go:151).
@@ -126,7 +126,7 @@ const notifyAppField = "app"
 
 // EnqueueBuild creates the deployment + build rows for one (app,
 // commit_sha) and emits the build_queued pg_notify. githubd stages
-// the per-app tarball on its own workdir and the path on disk is
+// the full-repository tarball on its own workdir and the path on disk is
 // passed in source_path — builderd reads it directly (pkg/builderd/
 // builderd.go:321 No URL fetch path).
 //
@@ -325,6 +325,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		Kind:            kind,
 		SourcePath:      req.SourcePath,
 		SourceBytes:     req.SourceBytes,
+		SourceRoot:      app.RootDir,
 		SourceURL:       req.SourceUrl,
 		CommitSHA:       req.CommitSha,
 		FunctionRuntime: functionRuntimeForApp(app),

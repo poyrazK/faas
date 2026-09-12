@@ -756,6 +756,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			Kind:            state.DeploymentKindTarball,
 			SourcePath:      staged,
 			SourceBytes:     bytes,
+			SourceRoot:      app.RootDir,
 			FunctionRuntime: functionRuntimeForApp(app),
 			LogSpool:        spoolRoot(),
 			Log:             s.log,
@@ -818,17 +819,18 @@ func orderAppsByWorkload(apps []state.App, order []string) []state.App {
 	return apps
 }
 
-// stageApplyTarball writes a per-workload tarball rooted at app.RootDir
-// under <FAAS_SPOOL_ROOT>/projects/<accountID>/<projectID>/<appID>.tar.gz
-// and returns (path, bytes, error). The dir layout keys on
+// stageApplyTarball writes a repository-preserving tarball under
+// <FAAS_SPOOL_ROOT>/projects/<accountID>/<projectID>/<appID>.tar.gz
+// and returns (path, bytes, error). The deployment's SourceRoot selects
+// app.RootDir inside that archive, so workspace manifests, lockfiles, and
+// sibling packages remain available to the builder. The dir layout keys on
 // (account, project, app) so a re-apply of the same project overwrites
 // the per-workload tarballs in place.
 //
-// The walk is delegated to githubd.RepackageRootTree — the same
-// gzip-tar encoder githubd uses for push-triggered builds. Empty
-// RootDir walks the whole extracted tree (single-app project);
-// RootDir "/worker" walks everything under that prefix (multi-app
-// project where each app is a subdir).
+// The walk is delegated to githubd.RepackageRepositoryTree — the same
+// gzip-tar encoder githubd uses for push-triggered builds. The full
+// extracted tree is retained for every workload; SourceRoot carries the
+// effective build context separately.
 func (s *server) stageApplyTarball(
 	ctx context.Context, scanDir, accountID, projectID string, app state.App,
 ) (string, int64, error) {
@@ -837,7 +839,10 @@ func (s *server) stageApplyTarball(
 		return "", 0, fmt.Errorf("create spool dir: %w", err)
 	}
 	dst := filepath.Join(dir, app.ID+".tar.gz")
-	if err := githubd.RepackageRootTree(ctx, os.DirFS(scanDir), app.RootDir, dst); err != nil {
+	if err := githubd.ValidateRootDir(os.DirFS(scanDir), app.RootDir); err != nil {
+		return "", 0, fmt.Errorf("validate source root: %w", err)
+	}
+	if err := githubd.RepackageRepositoryTree(ctx, os.DirFS(scanDir), dst); err != nil {
 		return "", 0, fmt.Errorf("repackage: %w", err)
 	}
 	fi, err := os.Stat(dst)

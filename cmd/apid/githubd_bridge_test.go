@@ -210,7 +210,7 @@ func TestEnqueueBuild_HappyPath(t *testing.T) {
 
 	path, size := stageFixtureFile(t, stagingRoot, filepath.Join(accountID, appID, "abc123"), []byte("tiny-tar"))
 
-	store := &bridgeStubStore{app: state.App{ID: appID, AccountID: accountID, Status: state.AppActive}}
+	store := &bridgeStubStore{app: state.App{ID: appID, AccountID: accountID, RootDir: "services/api", Status: state.AppActive}}
 	notif := &bridgeStubNotifier{}
 	ops := wire.NewOpsMetrics("apid")
 	g := &githubdBridge{
@@ -247,6 +247,9 @@ func TestEnqueueBuild_HappyPath(t *testing.T) {
 	}
 	if store.createDeploymentReturned.Tag != "v1.2.3" {
 		t.Errorf("deployment tag = %q, want %q", store.createDeploymentReturned.Tag, "v1.2.3")
+	}
+	if store.createDeploymentReturned.SourceRoot != "services/api" {
+		t.Errorf("deployment source_root = %q, want %q", store.createDeploymentReturned.SourceRoot, "services/api")
 	}
 	// Notify channel: build_queued fired exactly once.
 	if len(notif.channels) != 1 || notif.channels[0] != db.NotifyBuildQueued {
