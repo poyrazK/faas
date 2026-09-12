@@ -693,6 +693,11 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// customer can verify their PATCH landed without a second
 		// round-trip.
 		RouteMetricsEnabled: a.RouteMetricsEnabled,
+		// Only-allow-declared-routes contract. Explicit route declarations
+		// are returned so clients can verify the gateway policy that will be
+		// applied before a request can wake the app.
+		OnlyAllowDeclaredRoutes: a.OnlyAllowDeclaredRoutes,
+		DeclaredRoutes:          declaredRouteResponses(a.DeclaredRoutes),
 		// ADR-124: per-app wire-protocol selector (DB
 		// round-trip). Surfaced so dashboards can show
 		// "protocol: http1 / http2 / grpc" alongside the
@@ -794,6 +799,17 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		CORSDefaultEnabled: a.CORSDefaultEnabled,
 		CORSDefaultOrigins: cORSOriginsList(a.CORSDefaultOrigins),
 	}
+}
+
+func declaredRouteResponses(routes []state.DeclaredRoute) []api.DeclaredRoute {
+	if len(routes) == 0 {
+		return nil
+	}
+	out := make([]api.DeclaredRoute, len(routes))
+	for i, route := range routes {
+		out[i] = api.DeclaredRoute{Path: route.Path, Methods: append([]string(nil), route.Methods...)}
+	}
+	return out
 }
 
 func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {

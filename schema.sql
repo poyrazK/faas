@@ -135,6 +135,23 @@ $$;
 
 
 --
+-- Name: apps_declared_routes_policy_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_declared_routes_policy_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.only_declared_routes IS DISTINCT FROM OLD.only_declared_routes
+       OR NEW.declared_routes IS DISTINCT FROM OLD.declared_routes THEN
+        PERFORM pg_notify('app_changed', NEW.id::text);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: apps_public_auth_ip_allowlist_cidr_check(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1443,6 +1460,8 @@ CREATE TABLE public.apps (
     static_egress_ip_set_at timestamp with time zone,
     preview_destroy_commented_at timestamp with time zone,
     app_protocol text DEFAULT 'http1'::text NOT NULL,
+    only_declared_routes boolean DEFAULT false NOT NULL,
+    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
     deleted_at timestamp with time zone,
     delete_grace_until timestamp with time zone,
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
@@ -1461,6 +1480,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
     CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
     CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
+    CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
     CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
     CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
@@ -7247,6 +7267,13 @@ CREATE TRIGGER apps_egress_allowlist_cidr BEFORE INSERT OR UPDATE OF egress_allo
 --
 
 CREATE TRIGGER apps_maintenance_mode_notify AFTER UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_maintenance_mode_notify();
+
+
+--
+-- Name: apps apps_declared_routes_policy_notify_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_declared_routes_policy_notify_trg AFTER UPDATE OF only_declared_routes, declared_routes ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_declared_routes_policy_notify();
 
 
 --

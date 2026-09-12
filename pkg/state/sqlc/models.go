@@ -263,6 +263,8 @@ type App struct {
 	StaticEgressIpSetAt       pgtype.Timestamptz
 	PreviewDestroyCommentedAt pgtype.Timestamptz
 	AppProtocol               string
+	OnlyDeclaredRoutes        bool
+	DeclaredRoutes            []byte
 	DeletedAt                 pgtype.Timestamptz
 	DeleteGraceUntil          pgtype.Timestamptz
 }

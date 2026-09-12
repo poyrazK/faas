@@ -24,6 +24,7 @@ type (
 	AppResponse            = api.AppResponse
 	AppEffectiveLimits     = api.AppEffectiveLimits
 	AppConfiguredResources = api.AppConfiguredResources
+	DeclaredRoute          = api.DeclaredRoute
 
 	// End-customer consumers and credentials (ADR-120).
 	CreateAPIConsumerRequest                = api.CreateAPIConsumerRequest

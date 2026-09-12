@@ -201,16 +201,18 @@ const (
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
-	CodeForbidden         = "insufficient_scope"
-	CodeNotFound          = "not_found"
-	CodeValidation        = "validation_failed"
-	CodeConflict          = "conflict"
-	CodeDomainNotVerified = "domain_not_verified"
-	CodeCronInvalid       = "cron_invalid"
-	CodeHandlerMissing    = "handler_missing"
-	CodeImageRequired     = "image_required"
-	CodeDeployFailed      = "deploy_failed"
-	CodeNoRollbackTarget  = "no_rollback_target"
+	CodeForbidden                      = "insufficient_scope"
+	CodeNotFound                       = "not_found"
+	CodeUndeclaredRoute                = "undeclared_route"
+	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
+	CodeValidation                     = "validation_failed"
+	CodeConflict                       = "conflict"
+	CodeDomainNotVerified              = "domain_not_verified"
+	CodeCronInvalid                    = "cron_invalid"
+	CodeHandlerMissing                 = "handler_missing"
+	CodeImageRequired                  = "image_required"
+	CodeDeployFailed                   = "deploy_failed"
+	CodeNoRollbackTarget               = "no_rollback_target"
 
 	// CodePayment is the 402 response when an API-only plan change requires
 	// a Stripe subscription the customer does not have (issue #142 / PR).
@@ -448,8 +450,10 @@ func StatusForCode(code string) int {
 		return http.StatusForbidden
 	case CodeUnsupportedByCLI:
 		return http.StatusForbidden
-	case CodeNotFound:
+	case CodeNotFound, CodeUndeclaredRoute:
 		return http.StatusNotFound
+	case CodeDeclaredRoutePolicyUnavailable:
+		return http.StatusServiceUnavailable
 	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget:
 		return http.StatusConflict
 	case CodeDeployFailed, CodeInvalidAppCPU, CodeInvalidResourceProfile:

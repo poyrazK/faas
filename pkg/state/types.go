@@ -1009,6 +1009,13 @@ type App struct {
 	// the gatewayd-internal apps LRU cache can be flushed without
 	// waking up on every unrelated app update.
 	MaintenanceMode bool
+	// OnlyAllowDeclaredRoutes enables gateway-side OpenAPI/route-list
+	// enforcement before an application wake. It is deliberately opt-in;
+	// legacy apps keep the historical "forward then let the app 404" path.
+	OnlyAllowDeclaredRoutes bool
+	// DeclaredRoutes is an optional explicit route list. When populated, the
+	// gateway uses it instead of the imported OpenAPI document.
+	DeclaredRoutes []DeclaredRoute
 	// RequireSigned gates OCI image deploys (issue #472 / ADR-054) on
 	// a valid cosign signature from a trusted publisher. When true,
 	// imaged's buildImageLayer calls pkg/cosign.VerifyImageSignature
@@ -1283,6 +1290,14 @@ type App struct {
 	// 00215_apps_cors_defaults.sql for the rationale.
 	CORSDefaultOrigins []string
 	CreatedAt          time.Time
+}
+
+// DeclaredRoute is the persisted explicit route-list shape used by the
+// only-declared-routes policy. Path parameters use OpenAPI's `{name}` segment
+// syntax and Methods contains uppercase HTTP verbs.
+type DeclaredRoute struct {
+	Path    string   `json:"path"`
+	Methods []string `json:"methods"`
 }
 
 // IsDeveloperApp reports whether an app is the expiring environment created
@@ -4540,6 +4555,14 @@ type UpdateAppParams struct {
 	// that does not want the per-route cardinality on the box).
 	RouteMetricsEnabled    *bool
 	SetRouteMetricsEnabled bool
+	// OnlyAllowDeclaredRoutes enables the gateway-side declared-route
+	// contract. SetOnlyAllowDeclaredRoutes distinguishes an explicit false
+	// (disable) from an omitted field. DeclaredRoutes is an optional explicit
+	// route list; when non-empty it takes precedence over OpenAPI at the edge.
+	OnlyAllowDeclaredRoutes    *bool
+	SetOnlyAllowDeclaredRoutes bool
+	DeclaredRoutes             *[]DeclaredRoute
+	SetDeclaredRoutes          bool
 	// AppProtocol (ADR-124) is the per-app wire-protocol
 	// selector stored on the apps row as text NOT NULL DEFAULT
 	// 'http1'. Closed set {http1, http2, grpc} enforced by

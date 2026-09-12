@@ -247,7 +247,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
 
-`gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>]`
+`gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -255,6 +255,8 @@ Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|-
 | `--ram <MB>` | set RAM in MB |  |
 | `--max-concurrency <N>` | set max_concurrency |  |
 | `--require-signed <value>` | toggle require_signed | one of `true` · `false` |
+| `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list) |  |
+| `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
 
 ### app scale
 
