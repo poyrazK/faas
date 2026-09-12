@@ -70,6 +70,25 @@ func loadHostAgeIdentities(path string) ([]*age.X25519Identity, error) {
 	return secretbox.LoadHostKeys(filepath.Dir(path))
 }
 
+// scheddServerVerifier permits the registered compute-node identities and the
+// three role-specific service leaves that legitimately call schedd. The
+// compute_nodes registry intentionally contains host identities, while the
+// gatewayd, meterd, and vmmd schedd-client leaves carry stable role CNs.
+// Applying the registry verifier alone rejects those clients after the
+// standard CA, SAN, and EKU checks have already succeeded.
+func scheddServerVerifier(nodeVerifier wire.NodeVerifier) wire.NodeVerifier {
+	if nodeVerifier == nil {
+		return nil
+	}
+	serviceVerifier := wire.NewInmemNodeVerifier()
+	serviceVerifier.Set([]string{
+		"gatewayd.faas",
+		"meterd.faas",
+		"vmmd.faas",
+	})
+	return wire.NewAnyNodeVerifier(nodeVerifier, serviceVerifier)
+}
+
 // runDeps is the dependency-injection seam for testing. Production uses the
 // defaults; tests swap fields to drive run without Postgres, KVM, or a socket.
 type runDeps struct {
@@ -797,7 +816,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// surface rotated material on the next handshake without
 	// rebuilding the gRPC server.
 	serverRotator := wire.NewTLSRotator(nil)
-	serverTLS, err := cfg.LoadServerTLSWithPrefixAndVerifierAndReload(nodeVerifier, serverRotator.Reload(nil))
+	serverTLS, err := cfg.LoadServerTLSWithPrefixAndVerifierAndReload(scheddServerVerifier(nodeVerifier), serverRotator.Reload(nil))
 	if err != nil {
 		return fmt.Errorf("schedd: load server TLS: %w", err)
 	}
@@ -821,7 +840,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The closure is goroutine-safe (the loader is stateless
 	// beyond cfg).
 	serverReload := func() (*tls.Config, error) {
-		return cfg.LoadServerTLSWithPrefixAndVerifierAndReload(nodeVerifier, nil)
+		return cfg.LoadServerTLSWithPrefixAndVerifierAndReload(scheddServerVerifier(nodeVerifier), nil)
 	}
 	vmmReload := func() (*tls.Config, error) {
 		return cfg.LoadVMMTLSWithPrefixAndVerifierAndReload(nodeVerifier, nil)

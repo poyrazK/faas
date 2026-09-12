@@ -183,6 +183,15 @@ func TestUnitSchedd_Shape(t *testing.T) {
 	if u.MemoryMax == "" {
 		t.Error("schedd: MemoryMax empty")
 	}
+	if !hasEnvironment(u, "FAAS_HOST_AGE_IDENTITY_PATH", "%d/host.age") {
+		t.Error("schedd: missing host.age credential-dir environment")
+	}
+	if !hasLoadCredential(u, "host.age", "/etc/faas/secrets/host.age") {
+		t.Error("schedd: missing required host.age LoadCredential")
+	}
+	if !hasOptionalLoadCredential(u, "host.age.previous", "/etc/faas/secrets/host.age.previous") {
+		t.Error("schedd: missing optional host.age.previous LoadCredential")
+	}
 }
 
 func TestUnitBuilderd_Shape(t *testing.T) {
@@ -210,8 +219,14 @@ func TestUnitBuilderd_Shape(t *testing.T) {
 
 func TestUnitGatewaydInternal_Shape(t *testing.T) {
 	u := UnitGatewaydInternal()
-	if !hasEnvironment(u, "FAAS_HOST_KEY_PATH", "/etc/faas/secrets/host.age") {
+	if !hasEnvironment(u, "FAAS_HOST_KEY_PATH", "%d/host.age") {
 		t.Fatal("gatewayd-internal must receive the host identity used to unseal public Basic auth")
+	}
+	if !hasLoadCredential(u, "host.age", "/etc/faas/secrets/host.age") {
+		t.Error("gatewayd-internal: missing required host.age LoadCredential")
+	}
+	if !hasOptionalLoadCredential(u, "host.age.previous", "/etc/faas/secrets/host.age.previous") {
+		t.Error("gatewayd-internal: missing optional host.age.previous LoadCredential")
 	}
 	assertBasicShape(t, "gatewayd-internal", u)
 	if u.Slice != FaasCPSlice {

@@ -82,7 +82,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_GATEWAY_LISTEN", Value: "off"},
-			{Key: "FAAS_HOST_KEY_PATH", Value: "/etc/faas/secrets/host.age"},
+			{Key: "FAAS_HOST_KEY_PATH", Value: "%d/host.age"},
 			// Security review A4 (mirrors faas-apid.service): the session
 			// key reaches the daemon as a LoadCredential= path, never as
 			// inherited env content. cmd/gatewayd-internal/session_key.go
@@ -93,6 +93,8 @@ func UnitGatewaydInternal() daemonunit.Unit {
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
+			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 			{Name: "faas_session_key", Path: "/etc/faas/secrets/session.key"},
 			{Name: "faas_archive_creds", Path: "/etc/faas/secrets/storage-box/archive-creds.json", Optional: true},
 		},

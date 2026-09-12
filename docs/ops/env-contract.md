@@ -148,7 +148,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GRACE_INTERVAL` | apid | `default` |  |  | `` |  |
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
-| `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, s3-gatewayd, shared | `unit` |  |  | `` |  |
+| `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, s3-gatewayd, schedd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_AGE_KEY` | githubd | `default` |  |  | `` |  |
 | `FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH` | s3-gatewayd | `unit` |  |  | `` | optional systemd credential path during host-age rotation overlap |
 | `FAAS_HOST_AGE_PUB` | githubd | `default` |  |  | `` |  |
