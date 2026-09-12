@@ -23,7 +23,7 @@ class UploadDeployOptions:
     dockerfile: bool | Unset = UNSET
     source_root: str | Unset = UNSET
     scope: str | Unset = UNSET
-    """Named environment scope read by the deployment; omitted uses default."""
+    """Named environment scope applied when the upload is committed; omitted uses default."""
     source_url: str | Unset = UNSET
     """Informational repository provenance URL; never fetched by apid."""
     commit_sha: str | Unset = UNSET

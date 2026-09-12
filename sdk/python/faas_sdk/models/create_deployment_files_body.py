@@ -32,7 +32,7 @@ class CreateDeploymentFilesBody:
     """Optional repository-relative directory to build from when source contains a workspace context. Empty or
     omitted means the archive root."""
     scope: str | Unset = UNSET
-    """Named environment scope read by the deployment; omitted uses default."""
+    """Named environment scope read by the developer deployment; omitted uses default."""
     source_url: str | Unset = UNSET
     """Optional informational repository provenance URL. The server never fetches this value; the uploaded archive
     remains the source of truth."""
