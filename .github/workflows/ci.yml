@@ -1093,6 +1093,11 @@ jobs:
           # ADR-143: the post-activation verify playbook is production
           # tooling (`make verify-fleet`) and must stay parseable.
           ansible-playbook --syntax-check verify.yml
+          # Gate-F: the opt-in acceptance playbooks. Neither was parsed by any
+          # job, so a syntax error in them would only surface when an operator
+          # ran one by hand against a real host.
+          ansible-playbook --syntax-check metal-h2c-acceptance.yml
+          ansible-playbook --syntax-check native-acceptance-host.yml
           # Gate-E: render and validate the 1/10/100/1000 compute-node
           # topologies, then run Ansible check-mode against the largest one.
           cd ../..

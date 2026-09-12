@@ -51,6 +51,17 @@ role already cover this workflow.
 
 ## Host prerequisites
 
+Provision them with the dedicated playbook — everything below except the
+builder base is owned by `roles/native_acceptance_host`:
+
+```sh
+ansible-playbook -i inventory/native-acceptance.ini native-acceptance-host.yml
+```
+
+Do not place them by hand. They were hand-placed once, and a reprovision on
+2026-09-12 silently dropped the marker and the build toolchain, which disabled
+both native gates until someone went looking.
+
 The runner refuses to touch a host that is missing any of these, and names the
 repair in the failure. Nothing is provisioned implicitly.
 
@@ -74,19 +85,20 @@ test), and dies with the provisioning commands if either fails. It also refuses
 to run at all when `FAAS_SKIP_PG_TESTS` is set.
 
 The DSN is host-owned, not passed down from CI — a DSN on the `gcloud compute
-ssh` command line would be visible in the node's process list. Put it in a
-root-owned `0600` file:
+ssh` command line would be visible in the node's process list. It lives in
+`/etc/faas/e2e-acceptance.env`, and the runner checks that file is root-owned
+`0600` before sourcing it.
 
-```sh
-sudo -u postgres createuser --createdb faas
-sudo -u postgres createdb -O faas faas_e2e
-printf 'FAAS_E2E_DATABASE_URL=%s\n' 'postgres:///faas_e2e?host=/run/postgresql&user=faas' \
-  | sudo install -m 0600 -o root -g root /dev/stdin /etc/faas/e2e-acceptance.env
-```
+`roles/native_acceptance_host` installs a **local, dedicated** cluster for this,
+bound to the unix socket only, with an ident map from `root` (the runner's uid)
+to the `faas` database role, so no password exists on the host. It then proves
+the exact DSN can create a schema and install `citext` before writing the env
+file.
 
-The runner checks that file's ownership and mode before sourcing it. Point it
-at a test cluster or a dedicated database — every test isolates itself into its
-own schema, but the gate should not share a cluster with production rows.
+**Do not point the gate at the control-plane cluster.** On 2026-09-12 that
+cluster hit `max_connections` with 88 of 96 backends idle, and `cmd/e2e` opens a
+schema per test. A test cluster should also not share a failure domain with
+production rows.
 
 ## What the run does on the node
 

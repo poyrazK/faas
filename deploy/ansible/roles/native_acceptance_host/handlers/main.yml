@@ -1,0 +1,19 @@
+# Two handlers, mirroring roles/postgres:
+#   * listen_addresses is PGC_POSTMASTER — changing it REQUIRES a restart.
+#   * pg_hba.conf and pg_ident.conf are reload-only.
+#
+# Unlike roles/postgres these do NOT set failed_when: false. That role runs on
+# the bootstrap path where a chroot/CI host may have no systemd; this role only
+# ever runs against a real designated acceptance host, and a Postgres that
+# silently failed to reload would hand the gate a cluster the runner cannot
+# authenticate against.
+
+- name: restart e2e postgresql
+  ansible.builtin.service:
+    name: postgresql
+    state: restarted
+
+- name: reload e2e postgresql
+  ansible.builtin.service:
+    name: postgresql
+    state: reloaded
