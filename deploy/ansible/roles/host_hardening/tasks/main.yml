@@ -168,6 +168,27 @@
     - "'control_plane' in group_names"
     - faas_hardening_caddy_unit.rc == 0
 
+# --- journald ---------------------------------------------------------------
+
+- name: host_hardening — create journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_hardening_journald | bool
+
+- name: host_hardening — install bounded journal policy
+  ansible.builtin.template:
+    src: 60-faas-journal-bounds.conf.j2
+    dest: /etc/systemd/journald.conf.d/60-faas-journal-bounds.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: converge bounded journal
+  when: faas_hardening_journald | bool
+
 # --- sysctl -----------------------------------------------------------------
 
 - name: host_hardening — apply kernel hardening sysctls

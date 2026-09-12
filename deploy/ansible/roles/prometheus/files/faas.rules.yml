@@ -60,6 +60,60 @@ groups:
           description: "The five-minute public status evaluator has not persisted a complete capability bucket set for at least 15 minutes. Check apid logs, Prometheus reachability, and Postgres status_observation_buckets writes."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/StatusPageDegraded.md"
 
+  # Compute-host journal pressure (issue #2350). vmmd samples these values
+  # once per minute so the existing active-node HTTP-SD job covers every
+  # compute host without exposing node_exporter on an additional port.
+  - name: faas_host_journal
+    interval: 30s
+    rules:
+      - alert: FaasNetworkdDispatcherErrors
+        expr: vmmd_networkd_dispatcher_errors_last_5m > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: vmmd
+          family: host_journal
+        annotations:
+          summary: "networkd-dispatcher is reporting errors on {{ $labels.node }}"
+          description: "networkd-dispatcher has emitted warning-or-higher journal entries for at least two minutes. Expected disappearing Gregale vh<slot> interfaces are filtered before journald, so remaining entries indicate a persistent interface, hook, or networkctl failure."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+
+      - alert: FaasHostJournalNearLimit
+        expr: vmmd_journal_disk_usage_bytes > 419430400
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: host_journal
+        annotations:
+          summary: "Local journal exceeds 400 MiB on {{ $labels.node }}"
+          description: "The persistent and runtime journals have remained above 400 MiB for ten minutes, approaching Gregale's 512 MiB persistent-journal bound. Check noisy units and off-host shipping before rotation removes incident evidence."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+
+      - alert: FaasHostJournalGrowingFast
+        expr: clamp_min(deriv(vmmd_journal_disk_usage_bytes[30m]), 0) > 34953
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: host_journal
+        annotations:
+          summary: "Local journal is growing rapidly on {{ $labels.node }}"
+          description: "Local journal usage has grown faster than 120 MiB/hour for five minutes. Identify the emitting unit before the bounded journal rotates useful history or creates avoidable off-host ingestion volume."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+
+      - alert: FaasHostJournalMetricsDown
+        expr: vmmd_host_journal_metrics_up == 0
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: host_journal
+        annotations:
+          summary: "Host journal metrics are unavailable on {{ $labels.node }}"
+          description: "vmmd has failed to read networkd-dispatcher errors or local journal disk usage for ten minutes. Check journalctl/du availability and vmmd's privileges before trusting the journal pressure signals."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+
   # ────────────────────────────────────────────────────────────────────
   # Off-host log pipeline health (issue #274).
   # Promtail exposes its own counters; these recording rules give the

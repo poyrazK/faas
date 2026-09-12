@@ -11,3 +11,22 @@
 - name: reload systemd for Caddy hardening
   ansible.builtin.systemd_service:
     daemon_reload: true
+
+# Reload first so the configured bound governs the newly active file, then
+# rotate and vacuum archived files. The handler fires only when the drop-in
+# changes, so routine converges do not discard journal history.
+- name: reload journald bounds
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: reloaded
+  listen: converge bounded journal
+
+- name: rotate journal before enforcing new bound
+  ansible.builtin.command: journalctl --rotate
+  changed_when: true
+  listen: converge bounded journal
+
+- name: vacuum archived journal to configured bound
+  ansible.builtin.command: "journalctl --vacuum-size={{ faas_hardening_journal_system_max_use }}"
+  changed_when: true
+  listen: converge bounded journal

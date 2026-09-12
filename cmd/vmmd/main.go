@@ -1309,6 +1309,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Optional /metrics endpoint.
 	var httpSrv *http.Server
 	if cfg.MetricsAddr != "" {
+		// Issue #2350: sample compute-host journal pressure and remaining
+		// networkd-dispatcher errors out of band. vmmd's endpoint is already
+		// discovered per active compute node, so these host signals reach the
+		// control-plane Prometheus without exposing node_exporter on a new port.
+		hostMetrics := newHostJournalMetrics(ops.Registry(), nil, nil)
+		go hostMetrics.runSampler(ctx, log)
 		mux := newMetricsMux(ops, cbm, frm, wpm, dsm)
 		if identitySigner != nil {
 			mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {
