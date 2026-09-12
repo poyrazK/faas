@@ -89,6 +89,27 @@ func scheddServerVerifier(nodeVerifier wire.NodeVerifier) wire.NodeVerifier {
 	return wire.NewAnyNodeVerifier(nodeVerifier, serviceVerifier)
 }
 
+// scheddVMMVerifier permits this schedd's declared owner identity in addition
+// to the active-node registry. A compute rollout can restart schedd while its
+// durable node row is unavailable. In that state the active-only PG verifier
+// intentionally omits the node, but the local heartbeat must still be able to
+// authenticate the node's vmmd and drive unavailable -> recovering. The
+// explicit owner exception is bounded by cfg.NodeName; ResolveLocalNodeID
+// below still requires that name to exist in compute_nodes, and the standard
+// CA, SAN, and EKU checks run before this CN binding hook.
+func scheddVMMVerifier(nodeVerifier wire.NodeVerifier, nodeName string) wire.NodeVerifier {
+	if nodeVerifier == nil {
+		return nil
+	}
+	nodeName = strings.TrimSpace(nodeName)
+	if nodeName == "" {
+		return nodeVerifier
+	}
+	ownerVerifier := wire.NewInmemNodeVerifier()
+	ownerVerifier.Set([]string{nodeName})
+	return wire.NewAnyNodeVerifier(nodeVerifier, ownerVerifier)
+}
+
 // runDeps is the dependency-injection seam for testing. Production uses the
 // defaults; tests swap fields to drive run without Postgres, KVM, or a socket.
 type runDeps struct {
@@ -370,7 +391,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// dialers consult vmmRotator.Get() at dial time so a swap
 	// between rotations is observable to the next dial.
 	vmmRotator := wire.NewTLSRotator(nil)
-	vmmTLS, err := cfg.LoadVMMTLSWithPrefixAndVerifierAndReload(nodeVerifier, vmmRotator.Reload(nil))
+	vmmVerifier := scheddVMMVerifier(nodeVerifier, cfg.NodeName)
+	vmmTLS, err := cfg.LoadVMMTLSWithPrefixAndVerifierAndReload(vmmVerifier, vmmRotator.Reload(nil))
 	if err != nil {
 		return fmt.Errorf("schedd: load vmmd TLS: %w", err)
 	}
@@ -843,7 +865,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return cfg.LoadServerTLSWithPrefixAndVerifierAndReload(scheddServerVerifier(nodeVerifier), nil)
 	}
 	vmmReload := func() (*tls.Config, error) {
-		return cfg.LoadVMMTLSWithPrefixAndVerifierAndReload(nodeVerifier, nil)
+		return cfg.LoadVMMTLSWithPrefixAndVerifierAndReload(vmmVerifier, nil)
 	}
 	go wire.WatchTLSReload(ctx, log, serverHupCh, serverRotator, serverReload)
 	go wire.WatchTLSReload(ctx, log, vmmHupCh, vmmRotator, vmmReload)
