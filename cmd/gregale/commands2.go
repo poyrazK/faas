@@ -1113,6 +1113,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// explicit 1-exit error.
 	repo := fs.String("repo", "", "GitHub repo to deploy from (owner/name)")
 	ref := fs.String("ref", "", "git ref for --repo (branch, tag, or 40-char SHA)")
+	bindingRepo := fs.String("repository", "", "GitHub owner/name to bind to a project")
+	installID := fs.Int64("install-id", 0, "GitHub installation id for a project binding")
+	productionBranch := fs.String("production-branch", "main", "production branch for a project binding")
 	// Issue #270: --github emits a copy-paste-ready GitHub Actions
 	// workflow snippet to stdout and exits 0. No auth, no side effects,
 	// mirrors `cmdBillingPortal --print` (commands_billing.go:104-157).
@@ -1286,7 +1289,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff|--create-only] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff|--create-only] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2076,7 +2079,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --only or --project-slug"))
 			}
 			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
-				*deployOnly, *deployExclude, *deployShowAffected, *diffJSON,
+				*bindingRepo, *productionBranch, *deployOnly, *deployExclude, *installID,
+				*deployShowAffected, *diffJSON,
 				*diffStrict || !*diffLenient)
 		}
 		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
@@ -2109,12 +2113,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
 				errors.New("no source resolved"))
 		}
+		if (*bindingRepo == "") != (*installID == 0) {
+			return printErr("Invalid project binding", errors.New("--repository and --install-id must be provided together"))
+		}
+		if *bindingRepo != "" {
+			if err := validateRepoSlug(*bindingRepo); err != nil {
+				return printErr("Invalid --repository", err)
+			}
+		}
 		openTarball, err := openCustomerFile(*tarball)
 		if err != nil {
 			return printErr("Could not open tarball", err)
 		}
 		defer func() { _ = openTarball.Close() }()
-		prodBranch := "main"
+		prodBranch := *productionBranch
 		onlyList := splitCSV(*deployOnly)
 		excludeList := splitCSV(*deployExclude)
 		if ok, clash := intersect(onlyList, excludeList); ok {
@@ -2122,8 +2134,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				"--only and --exclude share workload(s): %s",
 				strings.Join(clash, ", ")))
 		}
-		plan, err := client.ScanProject(ctx, openTarball, filepath.Base(*tarball),
-			*projectSlug, prodBranch, 0, onlyList, excludeList, *deployPersistExclude)
+		plan, err := client.ScanProjectWithBinding(ctx, openTarball, filepath.Base(*tarball),
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude)
 		if err != nil {
 			return printErr("Scan failed", err)
 		}
@@ -2148,8 +2160,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not reopen tarball", err)
 		}
 		defer func() { _ = openTarball2.Close() }()
-		apply, err := client.ApplyProjectPlan(ctx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
-			*projectSlug, prodBranch, 0, onlyList, excludeList, *deployPersistExclude)
+		apply, err := client.ApplyProjectPlanWithBinding(ctx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude)
 		if err != nil {
 			return printErr("Apply failed", err)
 		}

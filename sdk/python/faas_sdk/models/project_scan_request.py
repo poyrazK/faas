@@ -21,9 +21,11 @@ class ProjectScanRequest:
     """tar.gz of the repo root."""
     project_slug: str | Unset = UNSET
     """kebab slug; default = repo dir basename"""
+    repo_full_name: str | Unset = UNSET
+    """GitHub owner/name to persist for push reconciliation"""
     production_branch: str | Unset = UNSET
     install_id: int | Unset = UNSET
-    """GitHub install id (with --repo); 0 for unbound repos"""
+    """GitHub installation id (with --repository or --repo); 0 for unbound repos"""
     only: str | Unset = UNSET
     """CSV of workload names to include (others skipped)"""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -32,6 +34,8 @@ class ProjectScanRequest:
         source = self.source.to_tuple()
 
         project_slug = self.project_slug
+
+        repo_full_name = self.repo_full_name
 
         production_branch = self.production_branch
 
@@ -48,6 +52,8 @@ class ProjectScanRequest:
         )
         if project_slug is not UNSET:
             field_dict["project_slug"] = project_slug
+        if repo_full_name is not UNSET:
+            field_dict["repo_full_name"] = repo_full_name
         if production_branch is not UNSET:
             field_dict["production_branch"] = production_branch
         if install_id is not UNSET:
@@ -64,6 +70,9 @@ class ProjectScanRequest:
 
         if not isinstance(self.project_slug, Unset):
             files.append(("project_slug", (None, str(self.project_slug).encode(), "text/plain")))
+
+        if not isinstance(self.repo_full_name, Unset):
+            files.append(("repo_full_name", (None, str(self.repo_full_name).encode(), "text/plain")))
 
         if not isinstance(self.production_branch, Unset):
             files.append(("production_branch", (None, str(self.production_branch).encode(), "text/plain")))
@@ -86,6 +95,8 @@ class ProjectScanRequest:
 
         project_slug = d.pop("project_slug", UNSET)
 
+        repo_full_name = d.pop("repo_full_name", UNSET)
+
         production_branch = d.pop("production_branch", UNSET)
 
         install_id = d.pop("install_id", UNSET)
@@ -95,6 +106,7 @@ class ProjectScanRequest:
         project_scan_request = cls(
             source=source,
             project_slug=project_slug,
+            repo_full_name=repo_full_name,
             production_branch=production_branch,
             install_id=install_id,
             only=only,

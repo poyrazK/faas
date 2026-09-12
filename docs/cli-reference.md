@@ -781,7 +781,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -790,6 +790,9 @@ Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF 
 | `--path <DIR>` | deploy a selected local source directory (relative to the current directory) |  |
 | `--worktree` | deploy the selected source directory from the working tree, including local changes |  |
 | `--repo <OWNER/NAME>` | deploy from a GitHub repo |  |
+| `--repository <OWNER/NAME>` | GitHub owner/name to bind to a project |  |
+| `--install-id <N>` | GitHub installation id for a project binding |  |
+| `--production-branch <BRANCH>` | production branch for a project binding |  |
 | `--ref <REF>` | git ref for --repo (branch, tag, or 40-char SHA) |  |
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` |
@@ -1550,13 +1553,17 @@ Manually advance / promote / abort a stuck rollout (operator escape hatch)
 
 Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 
-`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
+`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--project-slug <SLUG>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--tarball <PATH>` | scan a source tarball |  |
 | `--path <DIR>` | scan a local directory |  |
 | `--repo <OWNER/NAME>` | scan a GitHub repo |  |
+| `--repository <OWNER/NAME>` | GitHub owner/name to bind to the project (defaults to --repo) |  |
+| `--install-id <N>` | GitHub installation id (with --repository or --repo) |  |
+| `--production-branch <BRANCH>` | production branch for the project |  |
+| `--project-slug <SLUG>` | kebab slug; default = repo dir basename |  |
 | `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
 | `--show-affected` | render the WillDeploy + Unaffected tables (ADR-124) |  |
 | `--explain` | show why each workload was detected (detector, marker, priority) |  |
