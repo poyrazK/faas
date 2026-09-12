@@ -44,7 +44,7 @@ Reconciliations made while unifying: gatewayd-internal no longer orders on the m
 - every `FAAS_*` the deploy tree sets must be read by something (dead-config tripwire);
 - no stale entries.
 
-**Rule:** a feature that is meant to be on in production may not be `default` with an off default. The three silently-off gates are now declared: streaming via `streaming_enabled = true` in `gatewayd-internal.toml` (the code default stays off per ADR-047; production config turns it on), jobs dispatch as an explicit `FAAS_JOBS_DISPATCH=0` in the schedd unit with the reason (the vmmd job RPC has not shipped), and the GeoIP database staged by a new `geoip` role at the code-default path with a pinned monthly release and two checksums.
+**Rule:** a feature that is meant to be on in production may not be `default` with an off default. The production units now enable streaming through `gatewayd-internal.toml`, jobs dispatch through `FAAS_JOBS_DISPATCH=1`, and durable workflow creation and dispatch through matching `FAAS_WORKFLOWS_ENABLED=1` values on apid and schedd. The GeoIP database is staged by the `geoip` role at the code-default path with a pinned monthly release and two checksums.
 
 ### D3 — every config change reaches the running daemon, safely
 
