@@ -1,8 +1,20 @@
 # Native end-to-end CI
 
 `e2e-native.yml` is the hardware gate for the platform itself. It runs the
-whole `./cmd/e2e` package with the `metal` build tag on `faas-compute-node-2`
-in `europe-west3-c`, against real `/dev/kvm` and Firecracker.
+**metal-tagged tests** of `./cmd/e2e` on `faas-compute-node-2` in
+`europe-west3-c`, against real `/dev/kvm` and Firecracker.
+
+The run set is derived from source — every top-level test declared in a
+`//go:build metal` file — so a new metal test is picked up with no edit, and the
+gate cannot be narrowed to a hand-picked test without failing
+`scripts/ci/run-native-e2e_test.sh`, which executes the same derivation.
+
+It deliberately does **not** run the ~300 non-metal e2e tests. The first real run
+(2026-09-12) did, and they starved the tests that need hardware: on a 4-vCPU node
+under `-race`, apid could not bind inside the harness's 10 s budget and all seven
+required tests failed with `did not accept within 10s`. CI already runs the
+non-metal e2e tests sharded across four dedicated runners, so repeating them here
+costs the signal this gate exists for and adds none.
 
 It is the companion to [`builder-native-ci.md`](builder-native-ci.md).
 `builder-native.yml` proves the builder image and the `pkg/fcvm` package work
@@ -114,7 +126,9 @@ stopped. `scripts/ci/run-native-e2e.sh` then:
    recording each one. `vmmd`, jailer, cgroups, netns and the tenant IP leases
    are host-global; a production daemon left running would fight the test VMs
    and make the closing leak check meaningless. Postgres is never stopped;
-4. runs `make PKGS=./cmd/e2e/... RUN_ARGS='-timeout=75m -v' test-metal`;
+4. derives the metal-tagged test set, refuses an empty set, checks every
+   required test is in it, then runs `make PKGS=./cmd/e2e/...` with that set as
+   the `-run` filter;
 5. restarts every service it stopped, removes staging, and runs a final leak
    check — on every exit path, including a failed or interrupted run.
 
@@ -135,9 +149,11 @@ Two mechanisms, because the tally alone is not enough:
   of them *skips*, the gate fails and names it. A tally cannot distinguish "the
   suite grew" from "the build path stopped running"; this can.
 
-There is no `-run` filter, and `scripts/ci/run-native-e2e_test.sh` — wired into
-the `checks` job in `ci.yml`, so it runs on every PR — fails if one is added,
-if the required-test list shrinks, if a required test name stops existing in
+The `-run` filter is generated from the build tag, never hand-written, and
+`scripts/ci/run-native-e2e_test.sh` — wired into the `checks` job in `ci.yml`, so
+it runs on every PR — re-derives it and fails if the set is empty, if it drops
+below 15 tests, if the derivation stops keying on `//go:build metal`, if the
+required-test list shrinks, if a required test name stops existing in
 `cmd/e2e`, if the Postgres hard-fail is removed, or if the wrapper stops
 restoring services.
 
