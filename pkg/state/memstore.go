@@ -1488,6 +1488,14 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 	}
 	a.Plan = plan
 	m.accounts[id] = a
+	now := time.Now().UTC()
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.Plan = plan
+			org.UpdatedAt = now
+			m.orgs[orgID] = org
+		}
+	}
 	return nil
 }
 
@@ -1500,6 +1508,14 @@ func (m *MemStore) UpdateAccountStatus(_ context.Context, id string, status Acco
 	}
 	a.Status = status
 	m.accounts[id] = a
+	now := time.Now().UTC()
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.Status = OrgStatus(status)
+			org.UpdatedAt = now
+			m.orgs[orgID] = org
+		}
+	}
 	return nil
 }
 
@@ -1712,6 +1728,13 @@ func (m *MemStore) UpdateAccountProviderCustomerID(_ context.Context, id, provid
 	}
 	a.ProviderCustomerID = providerCustomerID
 	m.accounts[id] = a
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.ProviderCustomerID = providerCustomerID
+			org.UpdatedAt = time.Now().UTC()
+			m.orgs[orgID] = org
+		}
+	}
 	// Maintain the reverse-lookup map for AccountByProviderCustomerID.
 	for k, v := range m.stripeByCustomer {
 		if v == id && k != providerCustomerID {
@@ -1759,6 +1782,13 @@ func (m *MemStore) UpdateAccountStripeSubscriptionItem(_ context.Context, id, su
 	}
 	a.StripeSubscriptionItem = subItem
 	m.accounts[id] = a
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.StripeSubscriptionItem = subItem
+			org.UpdatedAt = time.Now().UTC()
+			m.orgs[orgID] = org
+		}
+	}
 	for key, identity := range m.billingIdentities {
 		if identity.AccountID == id && identity.CustomerID == a.ProviderCustomerID {
 			identity.SubscriptionID = subItem

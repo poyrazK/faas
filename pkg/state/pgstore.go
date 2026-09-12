@@ -622,13 +622,47 @@ func scanAPIKey(row pgx.Row) (APIKey, error) {
 }
 
 func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Plan) error {
-	_, err := s.pool.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set plan = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, string(plan)); err != nil {
+		return fmt.Errorf("state: sync personal org plan: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PgStore) UpdateAccountStatus(ctx context.Context, id string, status AccountStatus) error {
-	_, err := s.pool.Exec(ctx, `update accounts set status = $2 where id = $1`, id, string(status))
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `update accounts set status = $2 where id = $1`, id, string(status))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set status = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, string(status)); err != nil {
+		return fmt.Errorf("state: sync personal org status: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 // UpdateAccountProviderCustomerID records the Stripe `cus_…` ID on the
@@ -648,6 +682,12 @@ func (s *PgStore) UpdateAccountProviderCustomerID(ctx context.Context, id, strip
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set provider_customer_id = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, stripeCustomerID); err != nil {
+		return err
 	}
 	provider := billingProviderForCustomerID(stripeCustomerID)
 	_, err = tx.Exec(ctx,
@@ -679,6 +719,12 @@ func (s *PgStore) UpdateAccountStripeSubscriptionItem(ctx context.Context, id, s
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set stripe_subscription_item = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, subItem); err != nil {
+		return err
 	}
 	_, err = tx.Exec(ctx,
 		`update billing_identities bi
