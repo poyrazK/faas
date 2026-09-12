@@ -49,6 +49,7 @@ type (
 	LatestDeploymentsByAppResponse = api.LatestDeploymentsByAppResponse
 
 	// Account.
+	RepoResponse            = api.RepoResponse
 	AccountResponse         = api.AccountResponse
 	CapabilitiesResponse    = api.CapabilitiesResponse
 	CapabilityStatus        = api.CapabilityStatus

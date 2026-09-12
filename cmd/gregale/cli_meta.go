@@ -396,8 +396,9 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "status", Short: "Show the GitHub connection health for <slug>"},
 			{Name: "sync", Short: "Reconcile repository access with GitHub"},
+			{Name: "repos", Short: "List repositories visible to the connected GitHub installation for <slug>"},
 			{Name: "bind", Short: "Bind <slug> to a visible GitHub repository", Flags: []cliFlag{
-				{Name: "installation-id", Short: "GitHub App installation id", Value: "ID", Req: true},
+				{Name: "installation-id", Short: "GitHub App installation id (auto-resolved when omitted)", Value: "ID"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Value: "OWNER/NAME", Req: true},
 				{Name: "branch", Short: "production branch", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},

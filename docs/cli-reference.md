@@ -391,13 +391,17 @@ Show the GitHub connection health for &lt;slug&gt;
 
 Reconcile repository access with GitHub
 
+### github repos
+
+List repositories visible to the connected GitHub installation for &lt;slug&gt;
+
 ### github bind
 
 Bind &lt;slug&gt; to a visible GitHub repository
 
 | Flag | Meaning | |
 |---|---|---|
-| `--installation-id <ID>` | GitHub App installation id | required |
+| `--installation-id <ID>` | GitHub App installation id (auto-resolved when omitted) |  |
 | `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME | required |
 | `--branch <BRANCH>` | production branch |  |
 | `--deploy-branches <MAPPINGS>` | branch=scope mappings |  |

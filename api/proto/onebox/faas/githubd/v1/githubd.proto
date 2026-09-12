@@ -250,6 +250,7 @@ message ExchangeOAuthCodeResponse {
 }
 
 message Repo {
+  int64 id              = 4; // GitHub repository id
   string full_name      = 1; // "owner/name"
   string default_branch = 2; // "main" | "master" | custom
   bool   private        = 3;

@@ -517,5 +517,17 @@ func TestSweep_PostV1AuthSignupMagicLink(t *testing.T) {
 	}
 }
 
+func TestSweep_ListGitHubRepositories(t *testing.T) {
+	srv, _ := newSweepServer(t, 200, `[{"id":42,"full_name":"acme/api","default_branch":"main","private":true}]`)
+	c := NewClient(srv.URL, "fp_test")
+	repos, err := c.ListGitHubRepositories(context.Background())
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if len(repos) != 1 || repos[0].ID != 42 || repos[0].FullName != "acme/api" {
+		t.Fatalf("repos = %+v", repos)
+	}
+}
+
 // (unused — keep json import alive for the r/t field below)
 var _ = json.Unmarshal

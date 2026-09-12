@@ -494,6 +494,7 @@ func (s *RealService) ListInstallableReposContext(ctx context.Context, accountID
 	out := make([]githubdgrpc.Repo, 0, len(repos))
 	for _, r := range repos {
 		out = append(out, githubdgrpc.Repo{
+			ID:            r.ID,
 			FullName:      r.FullName,
 			DefaultBranch: r.DefaultBranch,
 			Private:       r.Private,
