@@ -99,13 +99,7 @@ func (f debugTelemetryFilters) same(other debugTelemetryCursorFilters) bool {
 }
 
 func (f debugTelemetryFilters) cursor() debugTelemetryCursorFilters {
-	return debugTelemetryCursorFilters{
-		DeploymentID: f.DeploymentID,
-		Status:       f.Status,
-		ColdBoot:     f.ColdBoot,
-		ConsumerID:   f.ConsumerID,
-		MinLatencyMS: f.MinLatencyMS,
-	}
+	return debugTelemetryCursorFilters(f)
 }
 
 func (f debugTelemetryFilters) response() api.DebugTelemetryListFilters {
