@@ -108,6 +108,44 @@ func pgJobsCreateJobTaskInstance(t *testing.T, pool *pgxpool.Pool, ctx context.C
 	return id
 }
 
+func TestPg_Jobs_JobRunCreateInheritsOptionalDefaults(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	acct, err := s.CreateAccount(ctx, "pg-jobs-defaults@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.JobCreate(ctx, acct.ID, "defaults", "batch",
+		"oci://registry.example/defaults@sha256:deadbeef",
+		[]string{"/bin/sh", "-c", "echo defaults"}, 256, 60, 4, 3,
+		json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run, tasks, err := s.JobRunCreate(ctx, job.ID, acct.ID, "manual",
+		nil, nil, nil, json.RawMessage(`{}`), 2)
+	if err != nil {
+		t.Fatalf("JobRunCreate with inherited defaults: %v", err)
+	}
+	if run.Parallelism != job.MaxParallelism {
+		t.Errorf("parallelism = %d, want inherited %d", run.Parallelism, job.MaxParallelism)
+	}
+	if run.RetryMax != nil || run.TaskTimeoutS != nil {
+		t.Errorf("durable overrides = retry:%v timeout:%v, want nil inheritance markers", run.RetryMax, run.TaskTimeoutS)
+	}
+	if len(tasks) != 2 {
+		t.Errorf("fanned tasks = %d, want 2", len(tasks))
+	}
+
+	other, err := s.CreateAccount(ctx, "pg-jobs-defaults-other@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.JobRunCreate(ctx, job.ID, other.ID, "manual", nil, nil, nil, nil, 1); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("cross-account JobRunCreate error = %v, want ErrNotFound", err)
+	}
+}
+
 // defaultLocalNodeID returns the UUID of the local compute_node row that
 // migration 00024 inserts. The instances.node_id column is NOT NULL, so
 // every fixture that creates an instance row needs this ID.
