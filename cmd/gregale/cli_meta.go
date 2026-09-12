@@ -612,7 +612,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "deploy",
 		DocSlug: "deploy",
-		Short:   "Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
+		Short:   "Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
 		Flags: []cliFlag{
 			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
 			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
@@ -638,6 +638,7 @@ var cliCommands = []cliCommand{
 			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
 			{Name: "only", Short: "workloads to apply (comma-separated; project apply path)", Value: "SLUGS"},
+			{Name: "project", Short: "deploy all detected workloads as one project (slug defaults from --name or source)"},
 			// Issue #977 / ADR-116: deployment annotations surface.
 			// --reason is free text (≤280 chars); --tag is closed-set
 			// (see DeploymentAnnotationTags in cmd_deploy_annotations.go);
