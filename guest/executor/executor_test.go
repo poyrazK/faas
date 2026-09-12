@@ -52,6 +52,48 @@ func TestPythonExecutionSupportsAsyncMain(t *testing.T) {
 	}
 }
 
+func TestNodeExecutionStagesEphemeralBundle(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is not installed")
+	}
+	result, err := New().Handle(context.Background(), executionproto.Request{
+		Version: executionproto.Version, ExecutionID: "node-bundle-test", Runtime: api.ExecutionRuntimeNode22,
+		Entrypoint: "src/main.mjs", Files: []api.ExecutionFile{
+			{Path: "src/main.mjs", Content: []byte("import { answer } from './lib.mjs'; export default async input => ({value: answer + input.value})")},
+			{Path: "src/lib.mjs", Content: []byte("export const answer = 41")},
+		},
+		Input: json.RawMessage(`{"value":1}`), TimeoutMS: 3000, MaxOutput: 4096,
+		NetworkMode: api.ExecutionNetworkNone,
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if result.Status != api.ExecutionStatusSucceeded || string(result.Result) != `{"value":42}` {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestPythonExecutionStagesEphemeralBundle(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not installed")
+	}
+	result, err := New().Handle(context.Background(), executionproto.Request{
+		Version: executionproto.Version, ExecutionID: "python-bundle-test", Runtime: api.ExecutionRuntimePython312,
+		Entrypoint: "pkg/main.py", Files: []api.ExecutionFile{
+			{Path: "pkg/main.py", Content: []byte("from helper import answer\ndef main(input, context):\n    return {'value': answer + input['value']}\n")},
+			{Path: "pkg/helper.py", Content: []byte("answer = 41\n")},
+		},
+		Input: json.RawMessage(`{"value":1}`), TimeoutMS: 3000, MaxOutput: 4096,
+		NetworkMode: api.ExecutionNetworkNone,
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if result.Status != api.ExecutionStatusSucceeded || string(result.Result) != `{"value":42}` {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 func TestExecutionTimeoutDoesNotReturnSuccess(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is not installed")

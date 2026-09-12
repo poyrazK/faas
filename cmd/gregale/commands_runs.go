@@ -2,10 +2,10 @@ package main
 
 // Customer-facing disposable Runs commands (ADR-171).
 //
-// `gregale run` submits a single source file to a fresh Firecracker VM. The
-// VM has loopback-only networking, an internal ephemeral scratch filesystem,
-// and is destroyed after the terminal result; this command deliberately has
-// no volume or persistent-workspace flags.
+// `gregale run` submits source to a fresh Firecracker VM. It accepts either a
+// single source file or a bounded directory bundle. The VM has loopback-only
+// networking, an internal ephemeral scratch filesystem, and is destroyed
+// after the terminal result; no persistent workspace is implied.
 
 import (
 	"context"
@@ -27,6 +27,8 @@ func cmdRun(args []string) int {
 	runtimeName := fs.String("runtime", string(api.ExecutionRuntimeNode22), "isolated runtime (node22|node24|python312|python313)")
 	source := fs.String("source", "", "source code (use --file for a local file)")
 	file := fs.String("file", "", "read source from a local regular file")
+	dir := fs.String("dir", "", "read a bounded ephemeral source bundle from a local directory")
+	entrypoint := fs.String("entrypoint", "", "normalized bundle path to execute (required with --dir)")
 	input := fs.String("input", "", "JSON input (inline | @file | - for stdin)")
 	timeoutMS := fs.Int("timeout-ms", 0, "maximum execution time in milliseconds")
 	memoryMB := fs.Int("memory-mb", 0, "memory limit in MB")
@@ -40,8 +42,10 @@ func cmdRun(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 0 || (*source == "" && *file == "") || (*source != "" && *file != "") {
-		PrintUsage(osStderr, "usage: gregale run --runtime R (--source CODE | --file PATH) [--input J|@file|-] [--wait]", "run")
+	legacyMode := *source != "" || *file != ""
+	bundleMode := *dir != ""
+	if len(positional) != 0 || (legacyMode && bundleMode) || (!legacyMode && !bundleMode) || (*source != "" && *file != "") || (bundleMode && *entrypoint == "") || (!bundleMode && *entrypoint != "") {
+		PrintUsage(osStderr, "usage: gregale run --runtime R (--source CODE | --file PATH | --dir PATH --entrypoint FILE) [--input J|@file|-] [--wait]", "run")
 		return 1
 	}
 	if *pollInterval <= 0 || *waitTimeout <= 0 {
@@ -49,18 +53,27 @@ func cmdRun(args []string) int {
 		return 1
 	}
 
-	sourceBytes, err := executionSource(*source, *file)
-	if err != nil {
-		return printErr("Could not read source", err)
+	var sourceBytes []byte
+	var files []api.ExecutionFile
+	var err error
+	if bundleMode {
+		files, err = executionBundle(*dir, *entrypoint)
+		if err != nil {
+			return printErr("Could not read source bundle", err)
+		}
+	} else {
+		sourceBytes, err = executionSource(*source, *file)
+		if err != nil {
+			return printErr("Could not read source", err)
+		}
 	}
 	inputBytes, err := resolveExecutionInput(*input)
 	if err != nil {
 		return printErr("Invalid input", err)
 	}
 	req := api.CreateExecutionRequest{
-		Runtime: api.ExecutionRuntime(*runtimeName),
-		Source:  string(sourceBytes),
-		Input:   inputBytes,
+		Runtime: api.ExecutionRuntime(*runtimeName), Source: string(sourceBytes),
+		Entrypoint: *entrypoint, Files: files, Input: inputBytes,
 		Limits: &api.ExecutionLimitRequest{
 			TimeoutMS:       *timeoutMS,
 			MemoryMB:        *memoryMB,

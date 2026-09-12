@@ -199,7 +199,7 @@ type runDeps struct {
 	executionArtifacts func(context.Context, api.ExecutionRuntime, api.ExecutionSnapshotShape) (sched.ExecutionRuntimeArtifacts, error)
 	// executionPayloadDecoder is the authenticated host-side payload decoder.
 	// Production must inject it before enabling execution; nil is fail-closed.
-	executionPayloadDecoder sched.ExecutionPayloadDecoder
+	executionPayloadDecoder any
 }
 
 func defaultDeps() runDeps {
@@ -328,7 +328,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if identityErr != nil {
 				return fmt.Errorf("schedd: authenticated payload decoder unavailable: load host age identities: %w", identityErr)
 			}
-			deps.executionPayloadDecoder = sched.NewAgeExecutionPayloadDecoder(executionHostAgeIdentities)
+			deps.executionPayloadDecoder = sched.NewAgeExecutionBundlePayloadDecoder(executionHostAgeIdentities)
 			if deps.executionPayloadDecoder == nil {
 				return errors.New("schedd: authenticated payload decoder unavailable: no host age identities")
 			}
@@ -1790,7 +1790,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			sched.ExecutionRuntimeArtifactsFunc(deps.executionArtifacts),
 			executionNodeID,
 		)
-		backend := sched.NewRoutedVmmdExecutionBackend(vmmRouter, deps.executionPayloadDecoder)
+		decoder, ok := deps.executionPayloadDecoder.(sched.ExecutionPayloadDecoderV2)
+		if !ok || decoder == nil {
+			return errors.New("schedd: execution payload decoder is not bundle-capable")
+		}
+		backend := sched.NewRoutedVmmdExecutionBackendWithBundle(vmmRouter, decoder)
 		executionCoordinator = sched.NewExecutionCoordinator(store, backend, sched.ExecutionCoordinatorConfig{
 			Enabled: true,
 			Owner:   executionNodeID,

@@ -236,6 +236,7 @@ export type { EnvDiffRow } from './EnvDiffRow.js';
 export type { EnvScope } from './EnvScope.js';
 export type { ErrorNewWebhookPayload } from './ErrorNewWebhookPayload.js';
 export type { ExecutionFailure } from './ExecutionFailure.js';
+export type { ExecutionFile } from './ExecutionFile.js';
 export type { ExecutionID } from './ExecutionID.js';
 export type { ExecutionLimitRequest } from './ExecutionLimitRequest.js';
 export type { ExecutionNetworkPolicy } from './ExecutionNetworkPolicy.js';

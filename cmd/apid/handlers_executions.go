@@ -117,7 +117,7 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrCapacity("host age recipient is not loaded; refusing to seal execution payload"))
 		return
 	}
-	sealed, err := executionpayload.Seal(recipient, resolved.Source, resolved.Input)
+	sealed, err := executionpayload.SealRequest(recipient, resolved)
 	if err != nil {
 		if errors.Is(err, executionpayload.ErrInvalid) {
 			api.WriteProblem(w, api.NewProblem(
@@ -139,7 +139,7 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 	params := state.CreateExecutionParams{
 		AccountID:     acct.ID,
 		Request:       resolved,
-		SourceBytes:   len(resolved.Source),
+		SourceBytes:   resolved.SourceBytes(),
 		InputBytes:    len(resolved.Input),
 		AdmittedAt:    admittedAt,
 		DeadlineAt:    admittedAt.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
