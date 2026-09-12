@@ -57,6 +57,18 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		client.Transport = http.DefaultTransport
 	}
 	return &Handler{Resolver: resolver, Backend: backend, Client: client, MaxBodyBytes: 25 << 20}, nil
+	if r.URL.Path == "/readyz" {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			writeProblem(w, http.StatusMethodNotAllowed, "outbound_method_not_allowed", "Only GET and HEAD are supported for readiness", "")
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = io.WriteString(w, "ok\n")
+		}
+		return
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

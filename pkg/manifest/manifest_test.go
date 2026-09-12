@@ -503,7 +503,7 @@ func mustParseValidate(t *testing.T, s string) Errors {
 func daemonInSchema(name string) bool {
 	switch name {
 	case "schedd", "vmmd", "apid", "meterd", "githubd",
-		"gatewayd_public", "gatewayd_internal", "imaged", "builderd", "realtimed":
+		"gatewayd_public", "gatewayd_internal", "imaged", "builderd", "realtimed", "outboundd":
 		return true
 	}
 	return false

@@ -31,6 +31,7 @@ faas_control_plane_observability_units:
   - prometheus.service
   - alertmanager.service
   - grafana-server.service
+  faas-outboundd.service: { probe: systemd, target: "", readyz_url: "http://127.0.0.1:8095/readyz" }
 
 # probe: systemd (is-active fallback) | unix (socket path fallback) | tcp
 # (host:port fallback). readyz_url is the dependency-aware HTTP gate and is

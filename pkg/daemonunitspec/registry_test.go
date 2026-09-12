@@ -39,7 +39,7 @@ func TestRegistryEntriesHaveBootProbes(t *testing.T) {
 
 func TestActivationOrder(t *testing.T) {
 	got := ActivationOrder()
-	want := []string{"vmmd", "realtimed", "apid", "schedd", "gatewayd-internal", "gatewayd-public", "meterd", "githubd", "imaged", "builderd"}
+	want := []string{"vmmd", "realtimed", "apid", "schedd", "gatewayd-internal", "gatewayd-public", "meterd", "outboundd", "githubd", "imaged", "builderd"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ActivationOrder() = %v, want %v", got, want)
 	}
