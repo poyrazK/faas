@@ -60,6 +60,13 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 	if err := json.Unmarshal(duplicate.Body.Bytes(), &replay); err != nil || replay.ID != statement.ID {
 		t.Fatalf("duplicate replay = %+v err=%v", replay, err)
 	}
+	hook, err := e.store.CreateAppWebhook(context.Background(), state.AppWebhook{
+		AppID: consumer.AppID, AccountID: e.acct.ID, TargetURL: "https://billing.example/statements",
+		EventFilter: []string{string(state.AppWebhookEventUsageStatementFinalized)}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	finalizePath := path + "/" + statement.ID + "/finalize"
 	finalized := e.do(t, http.MethodPost, finalizePath, struct{}{}, nil)
 	if finalized.Code != http.StatusOK {
@@ -69,9 +76,30 @@ func TestAPIConsumerUsageStatementSnapshotAndFinalize(t *testing.T) {
 	if err := json.Unmarshal(finalized.Body.Bytes(), &final); err != nil || final.Status != "finalized" || final.FinalizedAt == nil {
 		t.Fatalf("final statement = %+v err=%v", final, err)
 	}
+	deliveries, _, err := e.store.ListAppWebhookDeliveries(context.Background(), consumer.AppID, hook.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventUsageStatementFinalized {
+		t.Fatalf("deliveries = %+v, want one finalized statement delivery", deliveries)
+	}
+	var delivery api.APIConsumerUsageStatementFinalizedWebhookPayload
+	if err := json.Unmarshal(deliveries[0].Payload, &delivery); err != nil {
+		t.Fatal(err)
+	}
+	if delivery.StatementID != statement.ID || delivery.ConsumerID != consumer.ID || delivery.AmountMillicents != 75 || delivery.FinalizedAt.IsZero() {
+		t.Fatalf("delivery payload = %+v", delivery)
+	}
 	repeated := e.do(t, http.MethodPost, finalizePath, struct{}{}, nil)
 	if repeated.Code != http.StatusOK {
 		t.Fatalf("repeat finalize: %d %s", repeated.Code, repeated.Body)
+	}
+	deliveries, _, err = e.store.ListAppWebhookDeliveries(context.Background(), consumer.AppID, hook.ID, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 {
+		t.Fatalf("repeat finalize enqueued %d deliveries, want one", len(deliveries))
 	}
 	listed := e.do(t, http.MethodGet, path, nil, nil)
 	if listed.Code != http.StatusOK {

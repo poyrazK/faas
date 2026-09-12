@@ -17,6 +17,7 @@ AppWebhookResponseEventFilterItem = Literal[
     "job.finished",
     "preview.created",
     "rollout.aborted",
+    "usage_statement.finalized",
 ]
 
 APP_WEBHOOK_RESPONSE_EVENT_FILTER_ITEM_VALUES: set[AppWebhookResponseEventFilterItem] = {
@@ -36,6 +37,7 @@ APP_WEBHOOK_RESPONSE_EVENT_FILTER_ITEM_VALUES: set[AppWebhookResponseEventFilter
     "job.finished",
     "preview.created",
     "rollout.aborted",
+    "usage_statement.finalized",
 }
 
 

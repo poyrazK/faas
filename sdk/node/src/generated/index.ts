@@ -34,6 +34,7 @@ export type { APIConsumerUsageQuoteBucketResponse } from './models/APIConsumerUs
 export type { APIConsumerUsageQuoteResponse } from './models/APIConsumerUsageQuoteResponse.js';
 export type { APIConsumerUsageResponse } from './models/APIConsumerUsageResponse.js';
 export type { APIConsumerUsageStatementBucketResponse } from './models/APIConsumerUsageStatementBucketResponse.js';
+export type { APIConsumerUsageStatementFinalizedWebhookPayload } from './models/APIConsumerUsageStatementFinalizedWebhookPayload.js';
 export type { APIConsumerUsageStatementListResponse } from './models/APIConsumerUsageStatementListResponse.js';
 export type { APIConsumerUsageStatementResponse } from './models/APIConsumerUsageStatementResponse.js';
 export type { APIKeyExportResponse } from './models/APIKeyExportResponse.js';

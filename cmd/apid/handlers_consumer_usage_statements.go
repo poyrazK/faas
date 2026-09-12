@@ -8,6 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/webhook"
 )
 
 func apiConsumerUsageStatementResponse(statement state.APIConsumerUsageStatement) api.APIConsumerUsageStatementResponse {
@@ -197,6 +198,19 @@ func (s *server) finalizeAPIConsumerUsageStatement(w http.ResponseWriter, r *htt
 			"app_id": app.ID, "consumer_id": consumer.ID, "statement_id": statement.ID,
 			"finalized_at": statement.FinalizedAt.UTC().Format(time.RFC3339Nano),
 		})
+		wire := apiConsumerUsageStatementResponse(statement)
+		payload := api.APIConsumerUsageStatementFinalizedWebhookPayload{
+			AppID: app.ID, ConsumerID: wire.ConsumerID, StatementID: wire.ID,
+			PeriodStart: wire.PeriodStart, PeriodEnd: wire.PeriodEnd,
+			Currency: wire.Currency, BillableUnits: wire.BillableUnits,
+			UnpricedUnits: wire.UnpricedUnits, AmountMillicents: wire.AmountMillicents,
+			Priced: wire.Priced, Buckets: wire.Buckets, AsOf: wire.AsOf,
+			FinalizedAt: statement.FinalizedAt.UTC(),
+		}
+		if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventUsageStatementFinalized, payload); err != nil {
+			s.log.WarnContext(r.Context(), "enqueue usage statement finalized webhook",
+				"app_id", app.ID, "statement_id", statement.ID, "err", err.Error())
+		}
 	}
 	writeJSON(w, http.StatusOK, apiConsumerUsageStatementResponse(statement))
 }

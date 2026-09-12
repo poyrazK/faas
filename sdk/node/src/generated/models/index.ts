@@ -10,6 +10,7 @@ export type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuot
 export type { APIConsumerUsageQuoteResponse } from './APIConsumerUsageQuoteResponse.js';
 export type { APIConsumerUsageResponse } from './APIConsumerUsageResponse.js';
 export type { APIConsumerUsageStatementBucketResponse } from './APIConsumerUsageStatementBucketResponse.js';
+export type { APIConsumerUsageStatementFinalizedWebhookPayload } from './APIConsumerUsageStatementFinalizedWebhookPayload.js';
 export type { APIConsumerUsageStatementListResponse } from './APIConsumerUsageStatementListResponse.js';
 export type { APIConsumerUsageStatementResponse } from './APIConsumerUsageStatementResponse.js';
 export type { APIKeyExportResponse } from './APIKeyExportResponse.js';
