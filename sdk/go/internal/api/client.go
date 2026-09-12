@@ -393,6 +393,21 @@ func (c *Client) FinalizeAPIConsumerUsageStatement(ctx context.Context, slug, co
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/finalize", struct{}{}, &out)
 }
 
+// ClaimAPIConsumerUsageStatement records the customer's external invoice
+// reference for a finalized statement. Repeating the same claim is safe and
+// returns the original immutable handoff receipt.
+func (c *Client) ClaimAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string, req ClaimAPIConsumerUsageStatementRequest) (APIConsumerUsageStatementHandoffResponse, error) {
+	var out APIConsumerUsageStatementHandoffResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/handoff", req, &out)
+}
+
+// GetAPIConsumerUsageStatementHandoff returns the customer's immutable
+// invoice-handoff receipt for a finalized statement.
+func (c *Client) GetAPIConsumerUsageStatementHandoff(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementHandoffResponse, error) {
+	var out APIConsumerUsageStatementHandoffResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/handoff", nil, &out)
+}
+
 // RevokeAPIConsumer revokes an end-customer identity and all future key issuance for it.
 func (c *Client) RevokeAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
 	var out APIConsumerResponse

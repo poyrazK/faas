@@ -3093,6 +3093,60 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose billing handoff is being recorded.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Durable usage statement UUID to hand off.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsageStatementHandoff
+      summary: Fetch a customer billing handoff receipt.
+      description: Returns the immutable external invoice reference recorded for a finalized usage statement.
+      responses:
+        '200':
+          description: The immutable billing handoff receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementHandoffResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: claimAPIConsumerUsageStatement
+      summary: Record a customer billing handoff for a finalized statement.
+      description: Claims a finalized usage statement for the customer's own billing system. Repeating the same claim returns the original receipt; a statement or external invoice ID cannot be claimed twice.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimAPIConsumerUsageStatementRequest' }
+      responses:
+        '200':
+          description: The existing billing handoff receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementHandoffResponse' }
+        '201':
+          description: The newly recorded billing handoff receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementHandoffResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/apps/{slug}/rate-cards:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -16723,6 +16777,25 @@ components:
         statements:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
+
+    ClaimAPIConsumerUsageStatementRequest:
+      description: "Customer billing system's external invoice reference for a finalized statement."
+      type: object
+      required: [external_invoice_id]
+      properties:
+        external_invoice_id: { type: string, minLength: 1, maxLength: 255 }
+
+    APIConsumerUsageStatementHandoffResponse:
+      description: "Immutable receipt linking a finalized usage statement to a customer-owned external invoice."
+      type: object
+      required: [id, statement_id, external_invoice_id, amount_millicents, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        statement_id: { type: string, format: uuid }
+        external_invoice_id: { type: string, minLength: 1, maxLength: 255 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
 
     AppRestartResponse:
       description: "Correlation handle for an accepted app restart."

@@ -11,6 +11,7 @@ export type { APIConsumerUsageQuoteResponse } from './APIConsumerUsageQuoteRespo
 export type { APIConsumerUsageResponse } from './APIConsumerUsageResponse.js';
 export type { APIConsumerUsageStatementBucketResponse } from './APIConsumerUsageStatementBucketResponse.js';
 export type { APIConsumerUsageStatementFinalizedWebhookPayload } from './APIConsumerUsageStatementFinalizedWebhookPayload.js';
+export type { APIConsumerUsageStatementHandoffResponse } from './APIConsumerUsageStatementHandoffResponse.js';
 export type { APIConsumerUsageStatementListResponse } from './APIConsumerUsageStatementListResponse.js';
 export type { APIConsumerUsageStatementResponse } from './APIConsumerUsageStatementResponse.js';
 export type { APIKeyExportResponse } from './APIKeyExportResponse.js';
@@ -106,6 +107,7 @@ export type { CapabilitiesResponse } from './CapabilitiesResponse.js';
 export type { CapabilityStatus } from './CapabilityStatus.js';
 export type { ChangeMemberRoleRequest } from './ChangeMemberRoleRequest.js';
 export type { ChangePlanRequest } from './ChangePlanRequest.js';
+export type { ClaimAPIConsumerUsageStatementRequest } from './ClaimAPIConsumerUsageStatementRequest.js';
 export type { ClearObsoleteReport } from './ClearObsoleteReport.js';
 export type { CompleteObjectMultipartUploadRequest } from './CompleteObjectMultipartUploadRequest.js';
 export type { ConsumeInvoiceResponse } from './ConsumeInvoiceResponse.js';
