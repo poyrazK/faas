@@ -288,6 +288,7 @@ func ConstantTimeEqualHash(a, b []byte) bool {
 //	storage:manage — bucket lifecycle and per-bucket grant management.
 //	storage:read   — object listing/GET signing with a bucket grant.
 //	storage:write  — object deletion/PUT signing with a bucket grant.
+//	github:manage  — customer GitHub installation status, sync, bind, and disconnect.
 //
 // `admin` implicitly satisfies every other scope check — the
 // principalHasScope helper grants any-of. Session-cookie auth (Key ==
@@ -337,6 +338,11 @@ const (
 	ScopeStorageWrite          = "storage:write"
 	ScopeManagedPostgresManage = "postgres:manage"
 	ScopeManagedPostgresRead   = "postgres:read"
+	// ScopeGithubManage controls customer-facing GitHub installation and
+	// repository binding operations. It is intentionally separate from
+	// deploy:write so a CI key cannot silently take over a source-control
+	// connection.
+	ScopeGithubManage = "github:manage"
 )
 
 // validScopes is the closed set of scope strings the API accepts. The
@@ -358,6 +364,7 @@ var validScopes = map[string]struct{}{
 	ScopeStorageWrite:             {},
 	ScopeManagedPostgresManage:    {},
 	ScopeManagedPostgresRead:      {},
+	ScopeGithubManage:             {},
 }
 
 // IsValidScope reports whether s is in the allowed scope vocabulary.
@@ -475,4 +482,5 @@ var (
 	ScopesStorageListSurface           = []string{ScopeAdmin, ScopeStorageManage, ScopeStorageRead, ScopeStorageWrite}
 	ScopesManagedPostgresManageSurface = []string{ScopeAdmin, ScopeManagedPostgresManage}
 	ScopesManagedPostgresReadSurface   = []string{ScopeAdmin, ScopeManagedPostgresRead}
+	ScopesGithubManageSurface          = []string{ScopeAdmin, ScopeGithubManage}
 )

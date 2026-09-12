@@ -30,8 +30,8 @@ class APIKeyExportResponse:
     id: str
     prefix: str
     scopes: list[APIKeyExportResponseScopesItem]
-    """Permission set attached to the exported key. Object-storage data scopes additionally require an explicit
-    per-bucket grant; admin remains full access."""
+    """Permission set attached to the exported key. github:manage controls customer GitHub connection automation;
+    object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."""
     created_at: datetime.datetime
     label: None | str | Unset = UNSET
     last_used_at: datetime.datetime | None | Unset = UNSET

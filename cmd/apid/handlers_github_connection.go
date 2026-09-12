@@ -73,6 +73,22 @@ func (s *server) getGitHubInstallStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, status)
 }
 
+// getGitHubConnection is the bearer/API-key surface for customer automation.
+// It intentionally does not mint or return a CSRF envelope; browser callers
+// stay on the session-only /install routes above.
+func (s *server) getGitHubConnection(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not read GitHub connection status"))
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
 // issueGitHubInstallManageCSRF mints the named form envelope shared by the
 // status, sync, and disconnect surfaces. Keeping the cookie write in one
 // helper ensures the JSON API and server-rendered dashboard use the same
@@ -197,6 +213,75 @@ func (s *server) syncGitHubApp(w http.ResponseWriter, r *http.Request) {
 		"remote_repository_count": result.RemoteRepositoryCount,
 		"detached":                result.Detached,
 	})
+	writeJSON(w, http.StatusOK, status)
+}
+
+// syncGitHubConnection is the API-key equivalent of syncGitHubApp. The
+// account and app are resolved by the same IDOR-safe helpers, while the
+// route's github:manage scope replaces the browser CSRF envelope.
+func (s *server) syncGitHubConnection(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	binding, result, err := s.syncGitHubAppForAccount(r.Context(), app.ID, acct.ID)
+	if err != nil {
+		var problem *api.Problem
+		if errors.As(err, &problem) {
+			api.WriteProblem(w, problem)
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not sync GitHub connection"))
+		return
+	}
+	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("GitHub sync completed but status could not be refreshed"))
+		return
+	}
+	status.SyncResult = result
+	acctID := acct.ID
+	s.audit.Emit(r.Context(), "auth.install.synced", &acctID, map[string]any{
+		"app_id":                  app.ID,
+		"install_id":              binding.InstallID,
+		"repo_full_name":          binding.RepoFullName,
+		"remote_repository_count": result.RemoteRepositoryCount,
+		"detached":                result.Detached,
+		"surface":                 "api",
+	})
+	writeJSON(w, http.StatusOK, status)
+}
+
+// disconnectGitHubConnection is the API-key equivalent of unbindGitHubApp.
+// It is idempotent at the githubd/store layer and returns the refreshed
+// connection projection so scripts can immediately observe the new state.
+func (s *server) disconnectGitHubConnection(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	previous, err := s.unbindGitHubAppForAccount(r.Context(), app.ID, acct.ID)
+	if err != nil {
+		var problem *api.Problem
+		if errors.As(err, &problem) {
+			api.WriteProblem(w, problem)
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not disconnect GitHub"))
+		return
+	}
+	acctID := acct.ID
+	s.audit.Emit(r.Context(), "auth.install.unbound", &acctID, map[string]any{
+		"app_id":         app.ID,
+		"repo_full_name": previous.RepoFullName,
+		"binding_id":     previous.BindingID,
+		"surface":        "api",
+	})
+	status, err := s.githubInstallStatus(r.Context(), acct.ID, app.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("GitHub disconnected but status could not be refreshed"))
+		return
+	}
 	writeJSON(w, http.StatusOK, status)
 }
 

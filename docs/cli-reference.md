@@ -15,6 +15,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`canary`](#canary) | Project a canary preset against recent app traffic (canary simulate &lt;slug&gt;) |
 | [`build`](#build) | Build provenance + sbom (build provenance &lt;id&gt;\|build sbom &lt;id&gt;) |
 | [`connect`](#connect) | Connect a third-party service (github \| repo OWNER/NAME) |
+| [`github`](#github) | Manage an app&#39;s GitHub installation and repository binding |
 | [`cors`](#cors) | Configure CORS for an app (allow\|ls\|rm\|show) |
 | [`crons`](#crons) | Manage scheduled requests |
 | [`triggers`](#triggers) | Manage unified event triggers (broker mappings + cron-linked rows) |
@@ -366,6 +367,40 @@ Connect a GitHub account for repo deploys
 ### connect repo
 
 Open the dashboard wizard to bind &lt;owner&gt;/&lt;name&gt; to a Gregale app
+
+
+## github
+
+Manage an app&#39;s GitHub installation and repository binding
+
+`gregale github [<subcommand>] <slug>`
+
+### github status
+
+Show the GitHub connection health for &lt;slug&gt;
+
+### github sync
+
+Reconcile repository access with GitHub
+
+### github bind
+
+Bind &lt;slug&gt; to a visible GitHub repository
+
+| Flag | Meaning | |
+|---|---|---|
+| `--installation-id <ID>` | GitHub App installation id | required |
+| `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME | required |
+| `--branch <BRANCH>` | production branch |  |
+| `--deploy-branches <MAPPINGS>` | branch=scope mappings |  |
+
+### github disconnect
+
+Remove the app&#39;s GitHub repository binding
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | confirm removing the repository binding |  |
 
 
 ## cors

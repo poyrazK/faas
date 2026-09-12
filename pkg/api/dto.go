@@ -4130,9 +4130,10 @@ type ListAuditLogResponse struct {
 // but kept loose here so the SDK can serialise any GitHub-shaped
 // string the dashboard holds.
 type InstallBindRequest struct {
-	InstallationID   int64  `json:"installation_id"`
-	RepoFullName     string `json:"repo_full_name"`
-	ProductionBranch string `json:"production_branch,omitempty"`
+	InstallationID   int64             `json:"installation_id"`
+	RepoFullName     string            `json:"repo_full_name"`
+	ProductionBranch string            `json:"production_branch,omitempty"`
+	DeployBranches   map[string]string `json:"deploy_branches,omitempty"`
 }
 
 // InstallBindResponse is the body the dashboard parses after a
@@ -4140,9 +4141,10 @@ type InstallBindRequest struct {
 // "bind-<appID>-<repo>" form RealService.BindAppRepo emits; audit
 // log entries reference it directly.
 type InstallBindResponse struct {
-	BindingID        string `json:"binding_id"`
-	RepoFullName     string `json:"repo_full_name"`
-	ProductionBranch string `json:"production_branch"`
+	BindingID        string            `json:"binding_id"`
+	RepoFullName     string            `json:"repo_full_name"`
+	ProductionBranch string            `json:"production_branch"`
+	DeployBranches   map[string]string `json:"deploy_branches,omitempty"`
 }
 
 // RepoResponse is one repo visible to the user's GitHub App

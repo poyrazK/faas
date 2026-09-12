@@ -5493,6 +5493,125 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/github:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [github]
+      operationId: getGitHubConnection
+      summary: Read the GitHub installation and repository binding for an app.
+      description: |
+        Bearer API-key surface for customer automation. Requires the
+        dedicated `github:manage` scope and never returns a CSRF token or
+        installation credentials.
+      security:
+        - bearerAuth: [github:manage]
+      responses:
+        '200':
+          description: Automation-safe installation and binding snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubInstallStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [github]
+      operationId: disconnectGitHubConnection
+      summary: Remove an app's GitHub repository binding.
+      description: |
+        Bearer API-key surface for customer automation. Requires
+        `github:manage`; the account-level GitHub installation remains
+        available for a later bind. Safe to retry with an idempotency key.
+      security:
+        - bearerAuth: [github:manage]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Automation disconnect completed; the installation remains available.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubInstallStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/github/bind:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [github]
+      operationId: bindGitHubConnection
+      summary: Bind or rebind an app to a visible GitHub repository.
+      description: |
+        Bearer API-key surface for customer automation. Requires
+        `github:manage`. The installation_id must belong to the account and
+        the requested repository must currently be visible to that GitHub App
+        installation. Safe to retry with an idempotency key.
+      security:
+        - bearerAuth: [github:manage]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InstallBindRequest' }
+      responses:
+        '200':
+          description: Automation bind completed and the repository edge is active.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InstallBindResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Installation ownership or repository-access proof failed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '502':
+          description: GitHub could not be reached.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/github/sync:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [github]
+      operationId: syncGitHubConnection
+      summary: Check an app's GitHub repository access now.
+      description: |
+        Bearer API-key surface for customer automation. Requires
+        `github:manage`; GitHub is queried and the app is detached only when
+        its bound repository is no longer accessible.
+      security:
+        - bearerAuth: [github:manage]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Post-reconciliation connection projection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubInstallStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '502':
+          description: The GitHub repository catalog was unavailable during reconciliation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/install/bind:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -15553,8 +15672,8 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read] }
-          description: "Permission set attached to the exported key. Object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, "null"], format: date-time }
@@ -21713,8 +21832,8 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read] }
-          description: "Closed permission set attached to the key. storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time, example: "2026-07-25T13:25:00Z" }
@@ -21794,8 +21913,8 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read] }
-          description: "Requested permission set. The server rejects unknown scopes. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
 
     RotateKeyResponse:
@@ -21821,8 +21940,8 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read] }
-          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
 
     ListOrgAPIKeysResponse:

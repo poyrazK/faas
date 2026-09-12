@@ -413,6 +413,12 @@ const (
 	// deploys. Distinct from CodeNotFound so the dashboard can render
 	// a "bind first" CTA rather than a generic 404.
 	CodeGitHubInstallNotFound = "github_install_not_found"
+	// CodeGitHubInstallNotOwned and CodeGitHubRepoNotAccessible are the
+	// bearer GitHub-management proof failures. They deliberately remain
+	// distinct from the browser-only forged/login-required codes so API
+	// clients can give a precise remediation.
+	CodeGitHubInstallNotOwned   = "github_install_not_owned"
+	CodeGitHubRepoNotAccessible = "github_repo_not_accessible"
 	// CodeSourceRefUnavailable is the DEPLOY-PROV-4 / ADR-092 (issue
 	// #739) 503 sentinel for POST /v1/apps/{slug}/deployments/source-ref
 	// when the githubd bridge is down (StreamSourceRef returns

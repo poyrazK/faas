@@ -119,7 +119,7 @@ func cliHelpGroup(command cliCommand) string {
 	switch command.Name {
 	case "account", "billing", "capabilities", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "usage", "version", "completion", "man", "whoami":
 		return "Core"
-	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
+	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
 	case "crons", "delayed-task", "invocations", "jobs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
@@ -386,6 +386,25 @@ var cliCommands = []cliCommand{
 			// install-token trust root.
 			{Name: "repo", Short: "Open the dashboard wizard to bind <owner>/<name> to a Gregale app"},
 		},
+	},
+	{
+		Name:    "github",
+		DocSlug: "github",
+		Short:   "Manage an app's GitHub installation and repository binding",
+		Subcommands: []cliSub{
+			{Name: "status", Short: "Show the GitHub connection health for <slug>"},
+			{Name: "sync", Short: "Reconcile repository access with GitHub"},
+			{Name: "bind", Short: "Bind <slug> to a visible GitHub repository", Flags: []cliFlag{
+				{Name: "installation-id", Short: "GitHub App installation id", Value: "ID", Req: true},
+				{Name: "repo", Short: "GitHub repository OWNER/NAME", Value: "OWNER/NAME", Req: true},
+				{Name: "branch", Short: "production branch", Value: "BRANCH"},
+				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},
+			}},
+			{Name: "disconnect", Short: "Remove the app's GitHub repository binding", Flags: []cliFlag{
+				{Name: "yes", Short: "confirm removing the repository binding"},
+			}},
+		},
+		Positionals: []string{"<slug>"},
 	},
 	{
 		Name:    "cors",

@@ -2536,6 +2536,13 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.getGitHubInstallStatus))))
 	mux.Handle("DELETE /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.unbindGitHubApp))))
 	mux.Handle("POST /v1/apps/{slug}/install/sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.syncGitHubApp))))
+	// Customer automation surface. These aliases deliberately use a
+	// dedicated bearer scope and reject session cookies, so CLI/CI callers
+	// can manage a connection without weakening the browser CSRF contract.
+	mux.HandleFunc("GET /v1/apps/{slug}/github", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.getGitHubConnection)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/github/bind", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.bindGitHubConnection))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/github/sync", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.syncGitHubConnection))))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/github", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.disconnectGitHubConnection))))))
 	// Server-rendered dashboard forms for the same customer-scoped
 	// connection actions. These redirect back with a flash instead of
 	// leaving a browser on a JSON response.

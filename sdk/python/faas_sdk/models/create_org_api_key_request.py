@@ -25,8 +25,9 @@ class CreateOrgAPIKeyRequest:
 
     label: str | Unset = UNSET
     scopes: list[CreateOrgAPIKeyRequestScopesItem] | Unset = UNSET
-    """Requested permission set for the org-scoped key. Unknown scopes are rejected; object-storage data scopes
-    also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."""
+    """Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls
+    customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant.
+    The legacy and org-scoped key vocabularies remain identical."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

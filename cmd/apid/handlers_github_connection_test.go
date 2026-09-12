@@ -129,6 +129,17 @@ func TestGitHubInstallStatusIncludesHealthAndCSRF(t *testing.T) {
 	}
 }
 
+func TestGitHubAutomationSurfaceRejectsSessionCookie(t *testing.T) {
+	gh := &githubConnectionFake{}
+	h, _, _, _, cookie := newGitHubConnectionTestServer(t, gh, []Repo{{FullName: "acme/api"}})
+	req := githubStatusRequest(http.MethodGet, "/v1/apps/myapp/github", cookie, "")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden && rec.Code != http.StatusUnauthorized {
+		t.Fatalf("automation route status = %d, want 401/403\nbody=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSyncGitHubAppRecordsHealthyPass(t *testing.T) {
 	gh := &githubConnectionFake{}
 	h, _, store, acct, cookie := newGitHubConnectionTestServer(t, gh, []Repo{{FullName: "ACME/API"}})
