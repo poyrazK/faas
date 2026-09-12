@@ -467,6 +467,7 @@ from .env_diff_row import EnvDiffRow
 from .env_diff_row_cells import EnvDiffRowCells
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .execution_failure import ExecutionFailure
+from .execution_file import ExecutionFile
 from .execution_limit_request import ExecutionLimitRequest
 from .execution_limit_request_cpu_millicores import ExecutionLimitRequestCpuMillicores
 from .execution_limit_request_ephemeral_disk_mb import ExecutionLimitRequestEphemeralDiskMb
@@ -1496,6 +1497,7 @@ __all__ = (
     "EnvDiffRowCells",
     "ErrorNewWebhookPayload",
     "ExecutionFailure",
+    "ExecutionFile",
     "ExecutionLimitRequest",
     "ExecutionLimitRequestCpuMillicores",
     "ExecutionLimitRequestEphemeralDiskMb",

@@ -5,7 +5,6 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.create_execution_request import CreateExecutionRequest
 from ...models.execution_response import ExecutionResponse
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
@@ -13,7 +12,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    body: CreateExecutionRequest,
+    body: Any,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -25,7 +24,7 @@ def _get_kwargs(
         "url": "/v1/executions",
     }
 
-    _kwargs["json"] = body.to_dict()
+    _kwargs["json"] = body
 
     headers["Content-Type"] = "application/json"
 
@@ -91,7 +90,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient,
-    body: CreateExecutionRequest,
+    body: Any,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ExecutionResponse | Problem]:
     """Execute source in an isolated disposable microVM.
@@ -105,11 +104,11 @@ def sync_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateExecutionRequest): Source and JSON input for one disposable execution. v1
-            supports only
-            the listed interpreter runtimes and `network.mode=none`; dependencies,
-            secrets, environment injection, and persistent disks are not part of
-            this contract.
+        body (Any): Source and JSON input for one disposable execution. Send either the
+            legacy `source` string or an ephemeral `files` bundle with an
+            `entrypoint`. v1 supports only the listed interpreter runtimes and
+            `network.mode=none`; dependencies, secrets, environment injection, and
+            persistent disks are not part of this contract.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -134,7 +133,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient,
-    body: CreateExecutionRequest,
+    body: Any,
     idempotency_key: str | Unset = UNSET,
 ) -> ExecutionResponse | Problem | None:
     """Execute source in an isolated disposable microVM.
@@ -148,11 +147,11 @@ def sync(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateExecutionRequest): Source and JSON input for one disposable execution. v1
-            supports only
-            the listed interpreter runtimes and `network.mode=none`; dependencies,
-            secrets, environment injection, and persistent disks are not part of
-            this contract.
+        body (Any): Source and JSON input for one disposable execution. Send either the
+            legacy `source` string or an ephemeral `files` bundle with an
+            `entrypoint`. v1 supports only the listed interpreter runtimes and
+            `network.mode=none`; dependencies, secrets, environment injection, and
+            persistent disks are not part of this contract.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -172,7 +171,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
-    body: CreateExecutionRequest,
+    body: Any,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ExecutionResponse | Problem]:
     """Execute source in an isolated disposable microVM.
@@ -186,11 +185,11 @@ async def asyncio_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateExecutionRequest): Source and JSON input for one disposable execution. v1
-            supports only
-            the listed interpreter runtimes and `network.mode=none`; dependencies,
-            secrets, environment injection, and persistent disks are not part of
-            this contract.
+        body (Any): Source and JSON input for one disposable execution. Send either the
+            legacy `source` string or an ephemeral `files` bundle with an
+            `entrypoint`. v1 supports only the listed interpreter runtimes and
+            `network.mode=none`; dependencies, secrets, environment injection, and
+            persistent disks are not part of this contract.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -213,7 +212,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient,
-    body: CreateExecutionRequest,
+    body: Any,
     idempotency_key: str | Unset = UNSET,
 ) -> ExecutionResponse | Problem | None:
     """Execute source in an isolated disposable microVM.
@@ -227,11 +226,11 @@ async def asyncio(
 
     Args:
         idempotency_key (str | Unset):
-        body (CreateExecutionRequest): Source and JSON input for one disposable execution. v1
-            supports only
-            the listed interpreter runtimes and `network.mode=none`; dependencies,
-            secrets, environment injection, and persistent disks are not part of
-            this contract.
+        body (Any): Source and JSON input for one disposable execution. Send either the
+            legacy `source` string or an ephemeral `files` bundle with an
+            `entrypoint`. v1 supports only the listed interpreter runtimes and
+            `network.mode=none`; dependencies, secrets, environment injection, and
+            persistent disks are not part of this contract.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
