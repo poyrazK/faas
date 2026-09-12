@@ -54,6 +54,42 @@ use (
 	}
 }
 
+// TestParseGoWorkUses_SingleLine — direct use directives are equivalent to
+// entries in a parenthesized use block and may be repeated.
+func TestParseGoWorkUses_SingleLine(t *testing.T) {
+	t.Parallel()
+	body := `go 1.23
+
+use ./services/api
+use ./services/worker // keep this module
+`
+	got := parseGoWorkUses(body)
+	want := []string{"services/api", "services/worker"}
+	if !equalSet(got, want) {
+		t.Errorf("parseGoWorkUses (single-line) = %v, want %v", got, want)
+	}
+}
+
+// TestParseGoWorkUses_IgnoresDirectivesAfterBlock — closing a use block must
+// stop module collection; later toolchain and replace directives are separate
+// workspace directives, not module paths.
+func TestParseGoWorkUses_IgnoresDirectivesAfterBlock(t *testing.T) {
+	t.Parallel()
+	body := `go 1.23
+
+use (
+	./services/api
+)
+toolchain go1.24.1
+replace example.com/old => ./replacement
+`
+	got := parseGoWorkUses(body)
+	want := []string{"services/api"}
+	if !equalSet(got, want) {
+		t.Errorf("parseGoWorkUses (post-block directives) = %v, want %v", got, want)
+	}
+}
+
 // TestParseGoWorkUses_IgnoresComments — line comments inside
 // the use block are skipped.
 func TestParseGoWorkUses_IgnoresComments(t *testing.T) {

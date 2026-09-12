@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/mod/modfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,7 +22,7 @@ import (
 //	pnpm-workspace.yaml   top-level "packages": ["a", "b/*"]
 //	turbo.json            "pipeline" or "$pipeline" object
 //	nx.json               "projects" map or array
-//	go.work               "use ( ... )" block
+//	go.work               "use ./module" or "use ( ... )" block
 //	Cargo.toml            "[workspace] members" array
 //
 // Member expansion: each entry is a directory path relative to
@@ -218,8 +219,9 @@ func parseWorkspacesField(raw json.RawMessage) []string {
 	return nil
 }
 
-// parseGoWorkUses extracts the module paths inside a go.work
-// "use ( … )" block. The line grammar is one module per line:
+// parseGoWorkUses extracts module paths from a go.work file. The Go
+// workspace grammar accepts both direct use directives and parenthesized
+// use blocks; modfile also keeps unrelated directives out of the result.
 //
 //	use (
 //	    ./services/api
@@ -228,23 +230,18 @@ func parseWorkspacesField(raw json.RawMessage) []string {
 //
 // Each ./ prefix is stripped.
 func parseGoWorkUses(body string) []string {
-	var out []string
-	inUse := false
-	for _, line := range rangeLines(body) {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "use (") || strings.TrimRight(trimmed, " \t") == "use (" {
-			inUse = true
+	wf, err := modfile.ParseWork("go.work", []byte(body), nil)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(wf.Use))
+	for _, use := range wf.Use {
+		if use == nil {
 			continue
 		}
-		if inUse {
-			if strings.HasPrefix(trimmed, ")") || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
-				continue
-			}
-			s := strings.TrimPrefix(trimmed, "./")
-			if s == "" {
-				continue
-			}
-			out = append(out, s)
+		member := strings.TrimPrefix(use.Path, "./")
+		if member != "" {
+			out = append(out, member)
 		}
 	}
 	return out
