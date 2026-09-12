@@ -3711,6 +3711,20 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
+	// Uptime30dPct is the weighted success rate of terminal invocations
+	// observed over the last 30 calendar days. Days without traffic are
+	// represented as 100% in the daily buckets and do not add to the
+	// weighted denominator.
+	Uptime30dPct float64 `json:"uptime_30d_pct"`
+	// Uptime30d contains one bucket for each of the last 30 calendar
+	// days, oldest first. Successful and Total make the no-traffic case
+	// distinguishable from a day with observed failures.
+	Uptime30d []StatusUptimeBucket `json:"uptime_30d"`
+	// Incidents contains status incidents posted in the last 30 days,
+	// plus any still-open incident posted earlier. Results are newest
+	// first and intentionally contain only operator-authored summary
+	// text suitable for a public page.
+	Incidents []StatusIncident `json:"incidents"`
 	// Degraded is true when at least one fleet/platform page- or warn-severity
 	// alert is currently firing on the local Prometheus. Per-account alert
 	// preset signals stay private to their customer and do not change the
@@ -3730,6 +3744,25 @@ type StatusPage struct {
 	// "degraded: <reason>" so an operator tailing the JSON can tell
 	// at a glance why a snapshot is or isn't trustworthy.
 	Source string `json:"source"`
+}
+
+// StatusUptimeBucket is one daily point in StatusPage.Uptime30d.
+type StatusUptimeBucket struct {
+	Date       time.Time `json:"date"`
+	UptimePct  float64   `json:"uptime_pct"`
+	Successful int64     `json:"successful"`
+	Total      int64     `json:"total"`
+}
+
+// StatusIncident is the public projection of the operator status-incidents
+// ledger. Component is included as useful context while the four core fields
+// form the stable public incident contract.
+type StatusIncident struct {
+	Component  string     `json:"component,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	ResolvedAt *time.Time `json:"resolved_at"`
+	Severity   string     `json:"severity"`
+	Summary    string     `json:"summary"`
 }
 
 // --- Move 2: event-driven surface response shapes ----------------------------

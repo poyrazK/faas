@@ -434,7 +434,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 // degraded — statusCache returns "no source", the metrics handler
 // returns zeroed fields with Source="degraded".
 func (s *server) WithStatusCache(promURL, htmlPath string) *server {
-	s.statusCache = newStatusCache(promURL, s.log)
+	s.statusCache = newStatusCacheWithStore(promURL, s.store, s.log)
 	if promURL != "" {
 		s.promqlClient = promql.NewClient(promURL, nil)
 	}

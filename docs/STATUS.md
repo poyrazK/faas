@@ -383,7 +383,10 @@ spinner) and PR #51 (the closeout batch):
   HTML, `deploy/statuspage/index.html`) and `GET /status/slo.json`
   (4 PromQL queries against the local Prometheus with a 30 s
   in-process cache and graceful degradation on transient failures;
-  never 5xx the route). The fourth query drives the `degraded` flag
+  never 5xx the route). The JSON also includes a bounded 30-day
+  terminal-invocation rollup and recent operator incidents from Postgres;
+  history reads are best-effort and cannot block current SLI reporting.
+  The fourth query drives the `degraded` flag
   surfaced by the alert pipeline — see
   [M8 — alert pipeline](#m8--alert-pipeline--this-pr) below.
 - **§14 restore drill wired** —
@@ -594,6 +597,21 @@ The §12 dashboard pipeline is wired end-to-end:
   `ALERTS{}` not yet populated, e.g. on a freshly-reloaded Prometheus)
   is treated as "no firing alerts" rather than poisoning the snapshot
   — the flag is intentionally conservative.
+
+#### Status page history contract
+
+- `uptime_30d_pct` is the weighted terminal-invocation success rate for the
+  last 30 UTC calendar days. `uptime_30d` always contains 30 daily points;
+  each point carries `successful`, `total`, and `uptime_pct`. Pending work is
+  excluded, and a day with no terminal traffic is shown as no traffic rather
+  than as a failure.
+- `incidents` contains incidents posted in the last 30 days, plus any still-
+  open older incident. The public projection includes `started_at`,
+  `resolved_at`, `severity`, `summary`, and the affected `component`.
+- The history query is capped at 100 incidents and has a 2 s database timeout.
+  If Postgres is unavailable, the endpoint still serves the current
+  Prometheus-backed snapshot and leaves history empty/default for that
+  refresh.
 
 #### Runbook index
 

@@ -1,8 +1,8 @@
 # Runbook · StatusPageDegraded
 
-> **Trigger:** `/v1/internal/slo.json` returns `degraded: true` or
+> **Trigger:** `/status/slo.json` returns `degraded: true` or
 > surfaces any open incident with `severity ∈ {degraded, partial_outage, full_outage}`.
-> **Endpoint:** gatewayd-internal `/v1/internal/slo.json` (issue #599 / ADR-130).
+> **Endpoint:** public apid `/status/slo.json` (issue #276 / ADR-130).
 > **Storage:** Postgres `status_incidents` table (migrations/00412).
 
 ## Symptom
@@ -25,10 +25,10 @@ instead of "when the first customer tweeted about it".
 
 ## Triage (3-signal ladder)
 
-1. **Read the incident on the page.** The page lists open
-   incidents in posted_at DESC order — most recent first.
-   Each incident carries `component`, `severity`, `message`,
-   and `posted_at`.
+1. **Read the incident on the page.** The page lists recent and
+   still-open incidents in posted-at DESC order — most recent first.
+   Each incident carries `component`, `severity`, `summary`,
+   `started_at`, and nullable `resolved_at`.
 2. **Cross-reference with the alerting pipeline.** Check whether
    any of the page's alerts are also firing
    (`/v1/alerts/active.json` or the equivalent Prometheus
