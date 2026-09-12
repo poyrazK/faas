@@ -220,6 +220,16 @@
   failed_when: false
   notify: restart postgresql
 
+# CAUTION (observed on the live control plane, 2026-09-12): this host's
+# postgresql.auto.conf already contains an `archive_command` written by a past
+# `ALTER SYSTEM`. auto.conf is read AFTER postgresql.conf and wins, so the
+# lineinfile edit below is currently shadowed — changing
+# `off_host_backup_wal_path` here would converge the role while having no
+# effect on the running server. Check `pg_file_settings` (`applied` column)
+# after any change to a role-managed setting, and clear the override with
+# `ALTER SYSTEM RESET <name>` if postgresql.conf should own it. Not fixed in
+# this change: the two values happen to agree today.
+#
 # Issue #250: archive_command rewrites WAL → local archive first,
 # then best-effort mirrors it to the provider-neutral off-host remote.
 # The local copy is authoritative for PostgreSQL: a remote outage or a
@@ -246,6 +256,39 @@
     line: "max_wal_senders = 3"
     create: false
   register: pg_wal_senders
+  failed_when: false
+  notify: reload postgresql
+
+# TCP keepalives — reap backends whose client host vanished.
+#
+# Without these, Postgres inherits the OS default (tcp_keepalives_idle 7200 s)
+# and a backend belonging to a powered-off node holds its connection slot for
+# two hours. On 2026-09-12 the control-plane cluster hit max_connections with
+# 88 of 96 backends idle; 10 of them belonged to compute-node-2, which CI had
+# stopped 1h40m earlier. Both native gates (builder-native.yml, e2e-native.yml)
+# start and stop that node nightly, so CI itself strands slots on every cycle.
+#
+# 60 s idle + 6 probes × 10 s detects a dead peer in ~2 min instead of ~2 h.
+# Reload-only: the values are read when a connection is established, so they
+# apply to new connections, not existing ones.
+#
+# DO NOT add idle_session_timeout here. pkg/db/notify.go:Subscribe parks one
+# dedicated connection per watcher in LISTEN state for the daemon's lifetime —
+# those connections are idle BY DESIGN, and an idle session timeout would
+# silently kill every watcher in the fleet.
+- name: postgres — TCP keepalives so dead peers free their slots (reload-only)
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?{{ item.name }}\\s*="
+    line: "{{ item.name }} = {{ item.value }}"
+    create: false
+  loop:
+    - { name: "tcp_keepalives_idle", value: 60 }
+    - { name: "tcp_keepalives_interval", value: 10 }
+    - { name: "tcp_keepalives_count", value: 6 }
+  loop_control:
+    label: "{{ item.name }}"
+  register: pg_keepalives
   failed_when: false
   notify: reload postgresql
 
