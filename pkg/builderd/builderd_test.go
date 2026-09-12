@@ -401,6 +401,22 @@ func TestProcessOne_OOMExitClassified(t *testing.T) {
 	if !contains(dep.Error, "build exited 137") {
 		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "build exited 137")
 	}
+	var stages state.StageState
+	if err := json.Unmarshal(dep.StageState, &stages); err != nil {
+		t.Fatalf("decode stage state: %v", err)
+	}
+	if stages.Current != "" {
+		t.Errorf("current stage = %q, want empty after failure", stages.Current)
+	}
+	if len(stages.History) != 2 {
+		t.Fatalf("stage history length = %d, want source + failed image build: %+v", len(stages.History), stages.History)
+	}
+	if got := stages.History[0]; got.Name != state.StageSourceDownload || got.Status != "completed" || got.StartedAt == nil || got.EndedAt == nil {
+		t.Errorf("source stage = %+v, want completed with timestamps", got)
+	}
+	if got := stages.History[1]; got.Name != state.StageImageBuild || got.Status != "failed" || got.StartedAt == nil || got.EndedAt == nil || got.DurationMs < 0 {
+		t.Errorf("image build stage = %+v, want failed with measured timestamps", got)
+	}
 }
 
 // TestProcessOne_FrameworkDetectFailsFlipsDeployment covers the user_error

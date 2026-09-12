@@ -2787,28 +2787,18 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 			"deployment", p.DeploymentID, "status", dep.Status)
 		return nil
 	}
-	// PR-A review fix (F6): precondition check on stage_state.
-	// handleSnapshotBoot's caller (builderd.notifySnapshotBoot
-	// path) sets `status = DeployBuilding` upstream and assumes
-	// the active stage is dependency_restore. If a redelivered
-	// snapshot_boot notification arrives at a row that hasn't
-	// been advanced through handleDeploySourceChanged yet, the
-	// stage_state.current is still the schema default
-	// (source_download). The previous version called
-	// transitionWithStage(dep_restore, security_scan) which
-	// silently dropped the stage projection via the stale-read
-	// guard at pgstore.go. Surface the precondition violation
-	// as an error so the caller logs it loudly and the operator
-	// sees the regression rather than a customer's ticker stuck
-	// on "Source downloaded" forever.
+	// Builderd opens image_build immediately before VM/Railpack work. Cache
+	// hits and legacy producers can still arrive at source_download or
+	// dependency_restore; this handler opens image_build for those paths
+	// before it assembles the final application layer.
 	fromStage := state.StageDependencyRestore
 	if len(dep.StageState) > 0 {
 		var ss state.StageState
 		if uerr := json.Unmarshal(dep.StageState, &ss); uerr == nil && ss.Current != "" {
-			if ss.Current != state.StageDependencyRestore && ss.Current != state.StageSourceDownload {
-				h.log.Warn("imaged: snapshot_boot precondition violated — stage_state.current is not dependency_restore or source_download",
+			if ss.Current != state.StageDependencyRestore && ss.Current != state.StageSourceDownload && ss.Current != state.StageImageBuild {
+				h.log.Warn("imaged: snapshot_boot precondition violated — unsupported active stage",
 					"deployment", p.DeploymentID, "current_stage", ss.Current, "status", dep.Status)
-				return fmt.Errorf("imaged: snapshot_boot precondition violated (current=%q, want dependency_restore or source_download)", ss.Current)
+				return fmt.Errorf("imaged: snapshot_boot precondition violated (current=%q, want dependency_restore, source_download, or image_build)", ss.Current)
 			}
 			fromStage = ss.Current
 		}
@@ -2842,17 +2832,18 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	if err != nil {
 		return fmt.Errorf("imaged: load account: %w", err)
 	}
-	// ADR-117: handleSnapshotBoot enters when the row is already in
-	// DeployBuilding (the caller at builderd's notifySnapshotBoot
-	// path set the status upstream). The active StageName is
-	// dependency_restore (or source_download for direct builds).
-	// PR-A review fix (F1): open security_scan here; the snapshot_boot
-	// path also calls runDeployScan below (line ~1353) so
-	// security_scan→image_build closes at the same place as the
-	// source_changed path. Same from→to pair as sites 1551 + 1928 except
-	// `to` is now security_scan instead of image_build.
-	if err := h.transitionWithStage(ctx, dep.ID, fromStage, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
-		return err
+	// Keep image_build open through final layer assembly. A real builder VM
+	// opened it before Railpack/buildkit; cache-hit and legacy paths open it
+	// here. This makes both failures and measured duration describe the work
+	// customers recognize as the image build.
+	if fromStage == state.StageImageBuild {
+		if err := h.transition(ctx, dep.ID, state.DeployImaging, ""); err != nil {
+			return err
+		}
+	} else {
+		if err := h.transitionWithStage(ctx, dep.ID, fromStage, state.StageImageBuild, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
+			return err
+		}
 	}
 	// Dispatch on the deploy kind — builderd stamps the OCI tarball
 	// (function deploy) or OCI image ref (tarball/dockerfile deploy)
@@ -2888,19 +2879,14 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
 		return err
 	}
-	// ADR-117 PR-A review fix (F1): run the scan here too — the
-	// snapshot_boot path doesn't go through handleDeploySourceChanged,
-	// so without an explicit runDeployScan + security_scan→
-	// image_build transition the customer's ticker would show
-	// "Security scan" stuck on in_progress.
-	h.runDeployScan(ctx, app, dep)
-	if err := h.transitionWithStage(ctx, dep.ID, state.StageSecurityScan, state.StageImageBuild, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
+	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
-	// ADR-117: image_build closes; snapshot_prepare opens. Same
-	// from→to pair as the handleDeploySourceChanged post-scan site
-	// at handler.go:1355.
-	if err := h.transitionWithStage(ctx, dep.ID, state.StageImageBuild, state.StageSnapshotPrepare, state.DeploySnapshotting, "", hostingFlowForApp(app)); err != nil {
+	// The snapshot_boot path doesn't go through
+	// handleDeploySourceChanged, so it owns the scan and closes the
+	// security_scan stage here.
+	h.runDeployScan(ctx, app, dep)
+	if err := h.transitionWithStage(ctx, dep.ID, state.StageSecurityScan, state.StageSnapshotPrepare, state.DeploySnapshotting, "", hostingFlowForApp(app)); err != nil {
 		return err
 	}
 	primePayload, _ := json.Marshal(map[string]string{
