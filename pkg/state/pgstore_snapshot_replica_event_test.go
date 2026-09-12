@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -264,7 +265,7 @@ func TestPgSnapshotReplicaLeaseRenewalFencesOwnership(t *testing.T) {
 	if time.Since(renewedAt) >= time.Minute {
 		t.Fatalf("renewed updated_at = %s, want recent", renewedAt)
 	}
-	if err := s.RenewSnapshotReplicaLease(ctx, snap.ID, nodeID, "stale-token"); !errors.Is(err, state.ErrConflict) {
+	if err := s.RenewSnapshotReplicaLease(ctx, snap.ID, nodeID, uuid.NewString()); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale renewal error = %v, want ErrConflict", err)
 	}
 }
