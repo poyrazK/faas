@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -220,6 +221,51 @@ func TestPgSnapshotReplicaStaleLeaseCannotCompleteNewAttempt(t *testing.T) {
 	}
 	if err := s.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, nodeID, second.LeaseToken); err != nil {
 		t.Fatalf("current completion: %v", err)
+	}
+}
+
+func TestPgSnapshotReplicaLeaseRenewalFencesOwnership(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	_, _, deploymentID := seedLiveDeploy(t, s, ctx, "replica-lease-renew")
+	snap, err := s.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: deploymentID,
+		FCVersion:    "fc-lease-renew",
+		MemBytes:     1024,
+		DiskBytes:    2048,
+		StorageKey:   state.SnapMemKey(deploymentID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.ClaimSnapshotReplica(ctx, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		update snapshot_replicas
+		   set updated_at = now() - interval '6 minutes'
+		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RenewSnapshotReplicaLease(ctx, snap.ID, nodeID, job.LeaseToken); err != nil {
+		t.Fatalf("renew lease: %v", err)
+	}
+	var renewedAt time.Time
+	if err := pool.QueryRow(ctx, `
+		select updated_at
+		  from snapshot_replicas
+		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID).Scan(&renewedAt); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(renewedAt) >= time.Minute {
+		t.Fatalf("renewed updated_at = %s, want recent", renewedAt)
+	}
+	if err := s.RenewSnapshotReplicaLease(ctx, snap.ID, nodeID, "stale-token"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale renewal error = %v, want ErrConflict", err)
 	}
 }
 

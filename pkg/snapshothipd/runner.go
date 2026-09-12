@@ -21,6 +21,10 @@ const (
 	// DefaultMaxPerTick avoids making a registry outage or a large snapshot
 	// backlog monopolise a schedd process.
 	DefaultMaxPerTick = 4
+	// DefaultLeaseRenewInterval is comfortably below the five-minute reclaim
+	// timeout used by the durable replica queue. A long storage read therefore
+	// keeps its claim while still allowing a crashed worker to be reclaimed.
+	DefaultLeaseRenewInterval = time.Minute
 )
 
 // Runner reconciles the local node's snapshot cache. It is deliberately
@@ -28,13 +32,14 @@ const (
 // and shared storage, so no private IP, SSH path, or provider-specific API is
 // needed.
 type Runner struct {
-	store    state.SnapshotReplicaStore
-	backend  storage.StorageBackend
-	nodeID   string
-	log      *slog.Logger
-	metrics  Metrics
-	interval time.Duration
-	maxTick  int
+	store              state.SnapshotReplicaStore
+	backend            storage.StorageBackend
+	nodeID             string
+	log                *slog.Logger
+	metrics            Metrics
+	interval           time.Duration
+	maxTick            int
+	leaseRenewInterval time.Duration
 }
 
 func New(store state.SnapshotReplicaStore, backend storage.StorageBackend, nodeID string, log *slog.Logger) *Runner {
@@ -42,12 +47,13 @@ func New(store state.SnapshotReplicaStore, backend storage.StorageBackend, nodeI
 		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 	return &Runner{
-		store:    store,
-		backend:  backend,
-		nodeID:   nodeID,
-		log:      log,
-		interval: DefaultInterval,
-		maxTick:  DefaultMaxPerTick,
+		store:              store,
+		backend:            backend,
+		nodeID:             nodeID,
+		log:                log,
+		interval:           DefaultInterval,
+		maxTick:            DefaultMaxPerTick,
+		leaseRenewInterval: DefaultLeaseRenewInterval,
 	}
 }
 
@@ -75,6 +81,16 @@ func (r *Runner) Interval() time.Duration {
 func (r *Runner) WithMaxPerTick(max int) *Runner {
 	if max > 0 {
 		r.maxTick = max
+	}
+	return r
+}
+
+// WithLeaseRenewInterval changes the lease heartbeat cadence. It is mainly
+// useful for fast-running tests; production should keep the default well
+// below the queue's reclaim timeout.
+func (r *Runner) WithLeaseRenewInterval(interval time.Duration) *Runner {
+	if interval > 0 {
+		r.leaseRenewInterval = interval
 	}
 	return r
 }
@@ -144,7 +160,7 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 			r.log.Warn("snapshothipd: claim failed", "node_id", r.nodeID, "err", err)
 			return
 		}
-		if err := syncJob(ctx, r.backend, job); err != nil {
+		if err := r.syncJob(ctx, job); err != nil {
 			if storage.IsNotFound(err) {
 				err = state.PermanentSnapshotReplicaError(err)
 			}
@@ -167,6 +183,61 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 			}
 		}
 		r.log.Debug("snapshothipd: snapshot prepositioned", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "node_id", job.NodeID, "attempt", job.Attempts)
+	}
+}
+
+func (r *Runner) syncJob(ctx context.Context, job state.SnapshotReplicaJob) error {
+	leased, ok := r.store.(state.SnapshotReplicaLeaseStore)
+	if !ok || job.LeaseToken == "" {
+		return syncJob(ctx, r.backend, job)
+	}
+	return syncJobWithLease(ctx, leased, r.backend, job, r.leaseRenewInterval)
+}
+
+func syncJobWithLease(ctx context.Context, store state.SnapshotReplicaLeaseStore, backend storage.StorageBackend, job state.SnapshotReplicaJob, renewInterval time.Duration) error {
+	if renewInterval <= 0 {
+		return syncJob(ctx, backend, job)
+	}
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	renewErr := make(chan error, 1)
+	stop := make(chan struct{})
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(renewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-workCtx.Done():
+				return
+			case <-ticker.C:
+				renewCtx, renewCancel := context.WithTimeout(workCtx, renewInterval)
+				err := store.RenewSnapshotReplicaLease(renewCtx, job.SnapshotID, job.NodeID, job.LeaseToken)
+				renewCancel()
+				if err == nil {
+					continue
+				}
+				select {
+				case renewErr <- err:
+				default:
+				}
+				cancel()
+				return
+			}
+		}
+	}()
+
+	syncErr := syncJob(workCtx, backend, job)
+	close(stop)
+	<-heartbeatDone
+	select {
+	case err := <-renewErr:
+		return fmt.Errorf("snapshothipd: snapshot replica lease renewal failed: %w", err)
+	default:
+		return syncErr
 	}
 }
 
