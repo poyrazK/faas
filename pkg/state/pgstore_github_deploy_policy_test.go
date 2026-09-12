@@ -82,3 +82,42 @@ func TestPgStoreGitHubDeployPolicyDatabaseErrors(t *testing.T) {
 		t.Fatal("UpsertGitHubDeployPolicy with canceled context succeeded")
 	}
 }
+
+func TestPgStoreGitHubDeployPolicyDecodeAndValidationErrors(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	acct, err := store.CreateAccount(ctx, "github-policy-pg-decode@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "github-policy-pg-decode"})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if _, err := store.UpsertGitHubDeployPolicy(ctx, state.GitHubDeployPolicy{
+		ProjectID: project.ID, AccountID: acct.ID, PreviewEnabled: true, PreviewTTLHours: 168,
+	}); err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+
+	// Relax the schema checks in this isolated test schema so the read path's
+	// defensive JSON and policy validation branches are exercised directly.
+	if _, err := pool.Exec(ctx, `alter table github_deploy_policies
+		drop constraint github_deploy_policies_ignored_paths_array_chk,
+		drop constraint github_deploy_policies_preview_ttl_chk`); err != nil {
+		t.Fatalf("drop policy checks: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `update github_deploy_policies
+		set ignored_paths = '{"invalid":true}'::jsonb where project_id = $1`, project.ID); err != nil {
+		t.Fatalf("write malformed ignored_paths: %v", err)
+	}
+	if _, err := store.GetGitHubDeployPolicy(ctx, project.ID, acct.ID); err == nil {
+		t.Fatal("GetGitHubDeployPolicy accepted malformed ignored_paths")
+	}
+	if _, err := pool.Exec(ctx, `update github_deploy_policies
+		set ignored_paths = '[]'::jsonb, preview_ttl_hours = 0 where project_id = $1`, project.ID); err != nil {
+		t.Fatalf("write invalid preview ttl: %v", err)
+	}
+	if _, err := store.GetGitHubDeployPolicy(ctx, project.ID, acct.ID); err == nil {
+		t.Fatal("GetGitHubDeployPolicy accepted invalid preview ttl")
+	}
+}
