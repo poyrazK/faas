@@ -1,3 +1,5 @@
+-- filename: 20260912095037940_status_page_history.sql
+
 -- +goose Up
 -- +goose StatementBegin
 -- Public status history (issue #276): bound the daily invocation rollup and

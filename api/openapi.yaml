@@ -14222,6 +14222,25 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    StatusUptimeBucket:
+      description: Daily public status uptime point.
+      type: object
+      required: [date, uptime_pct, successful, total]
+      properties:
+        date: { type: string, format: date-time }
+        uptime_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        successful: { type: integer, format: int64, minimum: 0 }
+        total: { type: integer, format: int64, minimum: 0 }
+    StatusIncident:
+      description: Public operator-authored status incident.
+      type: object
+      required: [started_at, resolved_at, severity, summary]
+      properties:
+        component: { type: string }
+        started_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        severity: { type: string, enum: [degraded, partial_outage, full_outage, maintenance] }
+        summary: { type: string }
     ManagedPostgresDatabase:
       description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
       type: object
