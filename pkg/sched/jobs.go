@@ -20,8 +20,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -465,7 +468,16 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	// status. The mapping mirrors guest/init/job_supervisor_linux.go
 	// (M8); keep them in lock-step.
 	status := mapExitToTerminalStatus(exitCode, errorClass)
-	if err := e.store.JobTaskMarkTerminal(ctx, runID, taskIndex, status, exitCode, errorClass, "", time.Now()); err != nil {
+	logContent, logTruncated, logErr := e.captureJobTaskLogs(ctx, nodeID, instanceID)
+	if logErr != nil {
+		// The task still has to settle and release capacity when vmmd's log
+		// stream is unavailable. Marking it truncated makes the partial result
+		// explicit to the customer instead of reporting a known-incomplete empty
+		// response as complete.
+		logTruncated = true
+		e.log.Warn("sched: capture terminal job logs", "run", runID, "task", taskIndex, "instance", instanceID, "node", nodeID, "err", logErr)
+	}
+	if err := e.store.JobTaskMarkTerminalWithLogs(ctx, runID, taskIndex, status, exitCode, errorClass, "", logContent, logTruncated, time.Now()); err != nil {
 		return fmt.Errorf("sched: HandleJobExit mark terminal: %w", err)
 	}
 	// Release the lease — the lease columns were cleared by
@@ -512,6 +524,54 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		return fmt.Errorf("sched: HandleJobExit recompute: %w", err)
 	}
 	return nil
+}
+
+const (
+	jobTaskLogRetentionBytes = 1024 * 1024
+	jobTaskLogCaptureTimeout = 2 * time.Second
+)
+
+// captureJobTaskLogs copies vmmd's bounded per-instance ring before the job
+// cleanup path destroys the microVM and its only in-memory log source. vmmd
+// already merges stdout/stderr by host ingest order; this method preserves that
+// order and stores the most recent 1 MiB when the ring is larger.
+func (e *Engine) captureJobTaskLogs(ctx context.Context, nodeID, instanceID string) (string, bool, error) {
+	if e.vmm == nil || instanceID == "" {
+		return "", false, nil
+	}
+	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jobTaskLogCaptureTimeout)
+	defer cancel()
+	stream, err := e.vmm.Logs(logCtx, nodeID, instanceID, 0, time.Time{}, false)
+	if err != nil {
+		return "", false, err
+	}
+	buf := make([]byte, 0, 4096)
+	truncated := false
+	for {
+		line, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			return string(buf), true, recvErr
+		}
+		if line.IsGap {
+			truncated = true
+			continue
+		}
+		buf = append(buf, line.Line...)
+		if !strings.HasSuffix(line.Line, "\n") {
+			buf = append(buf, '\n')
+		}
+		if len(buf) > jobTaskLogRetentionBytes {
+			truncated = true
+			buf = append([]byte(nil), buf[len(buf)-jobTaskLogRetentionBytes:]...)
+			for len(buf) > 0 && !utf8.Valid(buf) {
+				buf = buf[1:]
+			}
+		}
+	}
+	return string(buf), truncated, nil
 }
 
 // ReconcileCancelledJobRun tears down VMs for claimed tasks after the state

@@ -8371,10 +8371,9 @@ type JobTaskResponse struct {
 }
 
 // JobTaskLogResponse is the body of GET /v1/jobs/{name}/runs/
-// {id}/tasks/{idx}/logs. Logs are read from vmmd's tail
-// endpoint (same path the dashboard uses for live app logs);
-// the handler proxies the call to the compute node that owns
-// the instance and streams back the last N bytes.
+// {id}/tasks/{idx}/logs. schedd persists the combined stdout/stderr
+// tail before destroying the terminal task's microVM, so completed
+// job output remains available after host cleanup.
 //
 // Truncated=true means the tail was capped at MaxBytes;
 // clients should re-fetch with a larger limit to see more.

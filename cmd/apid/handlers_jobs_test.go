@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -334,6 +335,26 @@ func TestGetJobTaskLogs_AllowsZeroBasedIndex(t *testing.T) {
 	}
 	if resp.TaskStatus != "queued" {
 		t.Errorf("task_status = %q, want queued", resp.TaskStatus)
+	}
+}
+
+func TestGetJobTaskLogs_ReturnsPersistedTail(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	seedJob(t, e, "persisted-task-logs", "ghcr.io/example/worker:v1")
+	runID := seedJobRun(t, e, "persisted-task-logs", 1)
+	if err := e.store.JobTaskMarkTerminalWithLogs(context.Background(), runID, 0, "succeeded", 0, "", "", "alpha\nbeta-job\n", false, time.Now()); err != nil {
+		t.Fatalf("JobTaskMarkTerminalWithLogs: %v", err)
+	}
+	rec := e.do(t, "GET", "/v1/jobs/persisted-task-logs/runs/"+runID+"/tasks/0/logs?max_bytes=9", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET task logs = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.JobTaskLogResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	if resp.TaskStatus != "succeeded" || resp.LogContent != "beta-job\n" || !resp.Truncated || resp.MaxBytes != 9 {
+		t.Fatalf("task logs = %+v, want persisted 9-byte tail", resp)
 	}
 }
 
