@@ -34,13 +34,13 @@ inputs:
     description: "App slug to deploy"
     required: true
   repo:
-    description: "OWNER/NAME of the source GitHub repo (default: ${{ github.repository }})"
+    description: "OWNER/NAME of the source GitHub repo (defaults to the current workflow repository)"
     required: false
-    default: "${{ github.repository }}"
+    default: ""
   ref:
-    description: "git ref — branch, tag, or 40-char SHA (default: ${{ github.sha }})"
+    description: "git ref — branch, tag, or 40-char SHA (defaults to the current workflow SHA)"
     required: false
-    default: "${{ github.sha }}"
+    default: ""
   format:
     description: "Source format passed to the source-ref endpoint"
     required: false
@@ -68,11 +68,11 @@ inputs:
     required: false
     default: ""
   deployed-by:
-    description: "Operator label. Defaults to ${{ github.actor }} when unset."
+    description: "Operator label. Defaults to the current GitHub actor when unset."
     required: false
-    default: "${{ github.actor }}"
+    default: ""
   pr-number:
-    description: "PR number (auto-default to ${{ github.event.pull_request.number }} for pull_request events)."
+    description: "PR number (defaults to the current pull request number for pull_request events)."
     required: false
     default: ""
 
@@ -124,8 +124,8 @@ runs:
         FAAS_API: ${{ inputs.api-base }}
         FAAS_TOKEN: ${{ inputs.api-key }}
         INPUT_APP: ${{ inputs.app }}
-        INPUT_REPO: ${{ inputs.repo }}
-        INPUT_REF: ${{ inputs.ref }}
+        INPUT_REPO: ${{ inputs.repo || github.repository }}
+        INPUT_REF: ${{ inputs.ref || github.sha }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_WAIT: ${{ inputs.wait }}
         INPUT_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
@@ -136,12 +136,12 @@ runs:
         GITHUB_TOKEN: ${{ github.token }}
         # Issue #977 / ADR-116: forward the annotation surface to
         # src/run.sh which appends the corresponding gregale
-        # deploy flags. Default values resolve at action-time
-        # (github.actor / github.event.pull_request.number).
+        # deploy flags. Default values resolve in this composite step,
+        # where the GitHub context is valid for Action metadata.
         INPUT_REASON: ${{ inputs.reason }}
         INPUT_TAG: ${{ inputs.tag }}
-        INPUT_DEPLOYED_BY: ${{ inputs.deployed-by }}
-        INPUT_PR_NUMBER: ${{ inputs.pr-number }}
+        INPUT_DEPLOYED_BY: ${{ inputs.deployed-by || github.actor }}
+        INPUT_PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
       run: "$ACTION_PATH/src/run.sh deploy"
     - name: Annotate on failure
       if: failure()
