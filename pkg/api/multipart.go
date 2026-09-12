@@ -16,10 +16,10 @@ import (
 // the {slug} URL component. The dockerfile flag gates function-runner vs
 // Dockerfile builds (apid/dispatch).
 //
-// Annotation fields (issue #977 / ADR-116): when an annotation is
-// non-zero on `a`, the corresponding multipart form field is emitted
-// (reason / tag / deployed_by / pr_number). nil/zero values skip the
-// field entirely — the server defaults them to NULL on the row.
+// Annotation and source-provenance fields (issue #977 / ADR-116 and
+// issue #1182): when a field is non-zero on `a`, the corresponding
+// multipart form field is emitted. nil/zero values skip the field
+// entirely — the server defaults them to NULL on the row.
 func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile bool, runtime, handler, sourceRoot string, a DeployAnnotations) *multipart.Writer {
 	w := multipart.NewWriter(dst)
 	// slug is redundant (URL has it too) but apid accepts it for log
@@ -37,6 +37,12 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	}
 	if sourceRoot != "" {
 		_ = w.WriteField("source_root", sourceRoot)
+	}
+	if a.SourceURL != "" {
+		_ = w.WriteField("source_url", a.SourceURL)
+	}
+	if a.CommitSHA != "" {
+		_ = w.WriteField("commit_sha", a.CommitSHA)
 	}
 	if a.Reason != "" {
 		_ = w.WriteField("reason", a.Reason)
@@ -92,6 +98,13 @@ func newDevSourceMultipartWriter(dst *bytes.Buffer, slug string, dockerfile bool
 // re-derived from the column scan via the coalesce-on-read pattern
 // at pkg/state/pgstore.go.
 type DeployAnnotations struct {
+	// SourceURL and CommitSHA identify the exact upstream revision that
+	// produced a local source deployment. They are provenance-only: the
+	// server never fetches from SourceURL and the archive bytes remain the
+	// trust root. Empty values mean the source was not associated with a
+	// repository (for example an image or hand-built tarball deploy).
+	SourceURL  string
+	CommitSHA  string
 	Reason     string // free text, ≤280 chars (DB CHECK)
 	Tag        string // closed-set enum (DB CHECK; handler validates too)
 	DeployedBy string // human-readable actor label

@@ -2223,7 +2223,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 
 	if *tarball != "" {
+		sourceURL, commitSHA := zeroConfigSourceProvenance(prov)
 		ann := api.DeployAnnotations{
+			SourceURL:      sourceURL,
+			CommitSHA:      commitSHA,
 			Reason:         *reason,
 			Tag:            *tag,
 			DeployedBy:     resolveDeployedBy(*deployedBy),
@@ -2256,7 +2259,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		} else if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: *runtime, Handler: *handler, Dockerfile: *dockerfile,
-				SourceRoot: sourceRoot, Reason: ann.Reason, Tag: ann.Tag,
+				SourceRoot: sourceRoot, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
+				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs,
 			}
 			var progress resumableUploadProgress

@@ -4330,6 +4330,16 @@ paths:
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
                   description: "Optional repository-relative directory to build from when source contains a workspace context. Empty or omitted means the archive root."
+                source_url:
+                  type: string
+                  maxLength: 1024
+                  description: "Optional informational repository provenance URL. The server never fetches this value; the uploaded archive remains the source of truth."
+                commit_sha:
+                  type: string
+                  minLength: 7
+                  maxLength: 64
+                  pattern: '^[0-9a-f]+$'
+                  description: "Optional lowercase hexadecimal Git commit identifier for deployment provenance."
                 workflows:
                   type: string
                   description: "JSON array of workflow definitions (plan-gated)."
@@ -17163,6 +17173,10 @@ components:
         handler: { type: string }
         dockerfile: { type: boolean }
         source_root: { type: string }
+        source_url:
+          { type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by apid." }
+        commit_sha:
+          { type: string, minLength: 7, maxLength: 64, pattern: '^[0-9a-f]+$', description: "Lowercase hexadecimal Git commit identifier." }
         reason: { type: string, maxLength: 280 }
         tag: { type: string }
         deployed_by: { type: string }

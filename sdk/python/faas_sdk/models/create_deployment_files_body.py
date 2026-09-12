@@ -31,6 +31,11 @@ class CreateDeploymentFilesBody:
     source_root: str | Unset = UNSET
     """Optional repository-relative directory to build from when source contains a workspace context. Empty or
     omitted means the archive root."""
+    source_url: str | Unset = UNSET
+    """Optional informational repository provenance URL. The server never fetches this value; the uploaded archive
+    remains the source of truth."""
+    commit_sha: str | Unset = UNSET
+    """Optional lowercase hexadecimal Git commit identifier for deployment provenance."""
     workflows: str | Unset = UNSET
     """JSON array of workflow definitions (plan-gated)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -52,6 +57,10 @@ class CreateDeploymentFilesBody:
 
         source_root = self.source_root
 
+        source_url = self.source_url
+
+        commit_sha = self.commit_sha
+
         workflows = self.workflows
 
         field_dict: dict[str, Any] = {}
@@ -67,6 +76,10 @@ class CreateDeploymentFilesBody:
             field_dict["runtime"] = runtime
         if source_root is not UNSET:
             field_dict["source_root"] = source_root
+        if source_url is not UNSET:
+            field_dict["source_url"] = source_url
+        if commit_sha is not UNSET:
+            field_dict["commit_sha"] = commit_sha
         if workflows is not UNSET:
             field_dict["workflows"] = workflows
 
@@ -89,6 +102,12 @@ class CreateDeploymentFilesBody:
 
         if not isinstance(self.source_root, Unset):
             files.append(("source_root", (None, str(self.source_root).encode(), "text/plain")))
+
+        if not isinstance(self.source_url, Unset):
+            files.append(("source_url", (None, str(self.source_url).encode(), "text/plain")))
+
+        if not isinstance(self.commit_sha, Unset):
+            files.append(("commit_sha", (None, str(self.commit_sha).encode(), "text/plain")))
 
         if not isinstance(self.workflows, Unset):
             files.append(("workflows", (None, str(self.workflows).encode(), "text/plain")))
@@ -126,6 +145,10 @@ class CreateDeploymentFilesBody:
 
         source_root = d.pop("source_root", UNSET)
 
+        source_url = d.pop("source_url", UNSET)
+
+        commit_sha = d.pop("commit_sha", UNSET)
+
         workflows = d.pop("workflows", UNSET)
 
         create_deployment_files_body = cls(
@@ -134,6 +157,8 @@ class CreateDeploymentFilesBody:
             kind=kind,
             runtime=runtime,
             source_root=source_root,
+            source_url=source_url,
+            commit_sha=commit_sha,
             workflows=workflows,
         )
 
