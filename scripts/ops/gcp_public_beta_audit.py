@@ -159,7 +159,11 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
             failures.append(f"{name}: boot disk is configured to auto-delete")
         if expected.get("require_snapshot_schedule") and boot:
             disk = disks.get(disk_name(str(boot.get("source", ""))), {})
-            if not disk.get("resourcePolicies"):
+            schedules = {disk_name(str(value)) for value in disk.get("resourcePolicies", [])}
+            wanted_schedule = expected.get("snapshot_schedule")
+            if wanted_schedule and wanted_schedule not in schedules:
+                failures.append(f"{name}: boot disk is missing snapshot schedule {wanted_schedule}")
+            elif not wanted_schedule and not schedules:
                 failures.append(f"{name}: boot disk has no snapshot schedule")
         effective_metadata = dict(project_metadata)
         effective_metadata.update(metadata_map(item))

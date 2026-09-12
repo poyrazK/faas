@@ -51,7 +51,9 @@ def healthy_snapshot() -> dict:
             name = attached["source"].split("/")[-1]
             disk = {"name": name, "type": "https://compute/diskTypes/pd-ssd"}
             if vm is control and attached["boot"]:
-                disk["resourcePolicies"] = ["https://compute/resourcePolicies/daily"]
+                disk["resourcePolicies"] = [
+                    f"https://compute/resourcePolicies/{POLICY['control_plane']['snapshot_schedule']}"
+                ]
             disks.append(disk)
     return {
         "active_accounts": [{"account": POLICY["operator_account"], "status": "ACTIVE"}],
