@@ -451,7 +451,7 @@ func TestApidPathMatch_AllBranches(t *testing.T) {
 		{"/logout", true},
 		{"/cli-auth", true},
 		{"/status", true},
-		{"/healthz", true},
+		{"/healthz", false},
 
 		// These must NOT match — VM runtime paths, assets,
 		// collision filenames.

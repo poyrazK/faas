@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
@@ -412,6 +413,44 @@ func TestInternalReverseProxy_ReplacesSingletonEdgeHeaders(t *testing.T) {
 	}
 	if got := rr.Header().Values(api.ErrorCodeHeader); len(got) != 1 || got[0] != api.CodeRequestBudgetExceeded {
 		t.Fatalf("error code headers = %v, want one upstream value", got)
+	}
+}
+
+func TestInternalReverseProxy_PublicEdgeOwnsStaticSecurityHeaders(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		for _, name := range []string{
+			httpsec.HeaderXFrameOptions,
+			httpsec.HeaderXContentTypeOptions,
+			httpsec.HeaderReferrerPolicy,
+			httpsec.HeaderPermissionsPolicy,
+		} {
+			w.Header().Add(name, "inner-one")
+			w.Header().Add(name, "inner-two")
+		}
+		w.Header().Set("X-Customer-Header", "preserved")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	p := NewInternalReverseProxy(&stubDialer{server: upstream}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+	h := httpsec.Static(p)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	want := map[string]string{
+		httpsec.HeaderXFrameOptions:       httpsec.ValueXFrameOptions,
+		httpsec.HeaderXContentTypeOptions: httpsec.ValueXContentTypeOptions,
+		httpsec.HeaderReferrerPolicy:      httpsec.ValueReferrerPolicy,
+		httpsec.HeaderPermissionsPolicy:   httpsec.ValuePermissionsPolicy,
+	}
+	for name, value := range want {
+		if got := rr.Header().Values(name); len(got) != 1 || got[0] != value {
+			t.Errorf("%s = %v, want one canonical value %q", name, got, value)
+		}
+	}
+	if got := rr.Header().Get("X-Customer-Header"); got != "preserved" {
+		t.Errorf("customer header = %q, want preserved", got)
 	}
 }
 

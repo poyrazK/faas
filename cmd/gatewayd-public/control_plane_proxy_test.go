@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/httpsec"
 )
 
 func TestControlPlaneProxyKeepsAPIOnControlPlane(t *testing.T) {
@@ -45,6 +47,66 @@ func TestControlPlaneProxyKeepsAPIOnControlPlane(t *testing.T) {
 				t.Fatalf("body = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestControlPlaneProxyScopesHealthToPlatformHost(t *testing.T) {
+	t.Setenv("FAAS_APPS_DOMAIN", "gregale.dev")
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("platform-health"))
+	}))
+	defer controlPlane.Close()
+	app := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("app-health"))
+	})
+	handler, err := newControlPlaneProxy(controlPlane.URL, app, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		host string
+		want string
+	}{
+		{host: "gregale.dev", want: "platform-health"},
+		{host: "api.gregale.dev", want: "platform-health"},
+		{host: "127.0.0.1:8080", want: "platform-health"},
+		{host: "healthy-app.gregale.dev", want: "app-health"},
+		{host: "nonexistent.gregale.dev", want: "app-health"},
+		{host: "customer.example", want: "app-health"},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/healthz", nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if got := rec.Body.String(); got != tc.want {
+				t.Fatalf("body = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestControlPlaneProxyPublicEdgeOwnsStaticSecurityHeaders(t *testing.T) {
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Add(httpsec.HeaderXFrameOptions, "inner-one")
+		w.Header().Add(httpsec.HeaderXFrameOptions, "inner-two")
+		w.Header().Set("X-Customer-Header", "preserved")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer controlPlane.Close()
+	handler, err := newControlPlaneProxy(controlPlane.URL, http.NotFoundHandler(), slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://gregale.dev/v1/whoami", nil)
+	rec := httptest.NewRecorder()
+	httpsec.Static(handler).ServeHTTP(rec, req)
+	if got := rec.Header().Values(httpsec.HeaderXFrameOptions); len(got) != 1 || got[0] != httpsec.ValueXFrameOptions {
+		t.Fatalf("X-Frame-Options = %v, want one canonical value", got)
+	}
+	if got := rec.Header().Get("X-Customer-Header"); got != "preserved" {
+		t.Fatalf("customer header = %q, want preserved", got)
 	}
 }
 

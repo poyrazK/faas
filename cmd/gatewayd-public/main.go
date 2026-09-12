@@ -89,6 +89,7 @@ func hstsEnabledFromEnv(k string) string {
 }
 
 const (
+	internalGatewayHealthHost = "gatewayd-internal.faas"
 	// defaultListenAddr is the loopback bind for the public listener.
 	// Caddy (api.gregale.dev) reverse-proxies here.
 	defaultListenAddr = "127.0.0.1:8080"
@@ -693,6 +694,9 @@ func checkInternalGateway(ctx context.Context, dialer gateway.InternalDialer, ta
 	if err != nil {
 		return err
 	}
+	// The internal listener also serves app traffic. Pin a private Host so its
+	// health route cannot be confused with an app's configured /healthz path.
+	req.Host = internalGatewayHealthHost
 	req.Header.Set("Connection", "close")
 	if err := req.Write(conn); err != nil {
 		return err

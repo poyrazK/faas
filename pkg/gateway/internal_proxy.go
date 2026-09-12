@@ -48,6 +48,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
+	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
@@ -528,6 +529,12 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		strings.EqualFold(strings.TrimSpace(r.Header.Get(cloudflareWorkerHeader)), cloudflareWorkerZone)
 	for k, vv := range resp.Header {
 		if isHopByHop(k) {
+			continue
+		}
+		// gatewayd-public's outer httpsec.Static middleware is the only
+		// wire owner for these headers. Copying gatewayd-internal's copy
+		// with Header.Add would emit duplicate policy values.
+		if httpsec.IsStaticHeader(k) {
 			continue
 		}
 		// Only this proxy may emit the private edge transport marker. An

@@ -32,6 +32,24 @@ func silentLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func TestStaticHeaderOwnershipHelpers(t *testing.T) {
+	h := http.Header{
+		httpsec.HeaderStrictTransportSecurity: []string{"one", "two"},
+		httpsec.HeaderPermissionsPolicy:       []string{"one", "two"},
+		"X-Customer-Header":                   []string{"keep"},
+	}
+	if !httpsec.IsStaticHeader("strict-transport-security") || httpsec.IsStaticHeader("Content-Security-Policy") {
+		t.Fatal("static-header ownership classification is incorrect")
+	}
+	httpsec.StripStaticHeaders(h)
+	if h.Get(httpsec.HeaderStrictTransportSecurity) != "" || h.Get(httpsec.HeaderPermissionsPolicy) != "" {
+		t.Fatalf("platform headers survived strip: %v", h)
+	}
+	if got := h.Get("X-Customer-Header"); got != "keep" {
+		t.Fatalf("customer header = %q, want keep", got)
+	}
+}
+
 // TestStatic_SetsAllExpectedHeaders confirms the five static
 // headers (HSTS, X-Frame-Options, X-Content-Type-Options,
 // Referrer-Policy, Permissions-Policy) land on every response.
