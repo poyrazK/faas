@@ -6,6 +6,7 @@ import type { CompleteObjectMultipartUploadRequest } from '../models/CompleteObj
 import type { CreateObjectMultipartUploadRequest } from '../models/CreateObjectMultipartUploadRequest.js';
 import type { CreateObjectS3CredentialRequest } from '../models/CreateObjectS3CredentialRequest.js';
 import type { CreateObjectStorageComputeBindingRequest } from '../models/CreateObjectStorageComputeBindingRequest.js';
+import type { CreateObjectUploadRouteRequest } from '../models/CreateObjectUploadRouteRequest.js';
 import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
@@ -21,6 +22,8 @@ import type { ObjectSignRequest } from '../models/ObjectSignRequest.js';
 import type { ObjectStorageComputeBinding } from '../models/ObjectStorageComputeBinding.js';
 import type { ObjectStorageComputeBindingList } from '../models/ObjectStorageComputeBindingList.js';
 import type { ObjectStorageUsageResponse } from '../models/ObjectStorageUsageResponse.js';
+import type { ObjectUploadRoute } from '../models/ObjectUploadRoute.js';
+import type { ObjectUploadRouteList } from '../models/ObjectUploadRouteList.js';
 import type { Problem } from '../models/Problem.js';
 import type { SetObjectBucketAccessGrantRequest } from '../models/SetObjectBucketAccessGrantRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -93,6 +96,84 @@ export class StorageService {
       },
       body: requestBody,
       mediaType: 'application/json',
+    });
+  }
+  /**
+   * List policy-controlled upload routes
+   * Routes are served by Gregale's public edge and do not wake the application. Requires storage:read, storage:write, storage:manage, or admin.
+   * @returns ObjectUploadRouteList Upload route policies without provider credentials.
+   * @returns Problem Authentication, authorization, or storage error
+   * @throws ApiError
+   */
+  public static listObjectUploadRoutes({
+    slug,
+  }: {
+    /**
+     * App whose edge upload routes are being managed.
+     */
+    slug: string,
+  }): CancelablePromise<ObjectUploadRouteList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/upload-routes',
+      path: {
+        'slug': slug,
+      },
+    });
+  }
+  /**
+   * Create or update an authenticated upload route
+   * Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object key, enforces the byte/content-type policy, streams directly to the selected provider, and records a completion receipt.
+   * @returns ObjectUploadRoute Existing upload route updated
+   * @returns Problem Invalid policy, bucket unavailable, access denied, or provider unavailable
+   * @throws ApiError
+   */
+  public static createObjectUploadRoute({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App whose edge upload routes are being managed.
+     */
+    slug: string,
+    requestBody: CreateObjectUploadRouteRequest,
+  }): CancelablePromise<ObjectUploadRoute | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/upload-routes',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Delete an authenticated upload route
+   * Stops new uploads immediately. Existing objects are not deleted.
+   * @returns Problem Route missing, access denied, or storage unavailable
+   * @throws ApiError
+   */
+  public static deleteObjectUploadRoute({
+    slug,
+    route,
+  }: {
+    /**
+     * App owning the edge upload route.
+     */
+    slug: string,
+    /**
+     * Stable upload route name used at /uploads/{route}.
+     */
+    route: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/upload-routes/{route}',
+      path: {
+        'slug': slug,
+        'route': route,
+      },
     });
   }
   /**

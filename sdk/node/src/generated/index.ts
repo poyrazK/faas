@@ -131,6 +131,7 @@ export type { CreateMirrorRuleRequest } from './models/CreateMirrorRuleRequest.j
 export type { CreateObjectMultipartUploadRequest } from './models/CreateObjectMultipartUploadRequest.js';
 export type { CreateObjectS3CredentialRequest } from './models/CreateObjectS3CredentialRequest.js';
 export type { CreateObjectStorageComputeBindingRequest } from './models/CreateObjectStorageComputeBindingRequest.js';
+export type { CreateObjectUploadRouteRequest } from './models/CreateObjectUploadRouteRequest.js';
 export type { CreateOrgAPIKeyRequest } from './models/CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './models/CreateOrgRequest.js';
 export type { CreateTenantSurfaceRequest } from './models/CreateTenantSurfaceRequest.js';
@@ -324,6 +325,8 @@ export type { ObjectStoragePricing } from './models/ObjectStoragePricing.js';
 export type { ObjectStorageUsage } from './models/ObjectStorageUsage.js';
 export type { ObjectStorageUsageReport } from './models/ObjectStorageUsageReport.js';
 export type { ObjectStorageUsageResponse } from './models/ObjectStorageUsageResponse.js';
+export type { ObjectUploadRoute } from './models/ObjectUploadRoute.js';
+export type { ObjectUploadRouteList } from './models/ObjectUploadRouteList.js';
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';
 export type { ObsNodeOperationPreflight } from './models/ObsNodeOperationPreflight.js';
 export type { OIDCExchangeRequest } from './models/OIDCExchangeRequest.js';
