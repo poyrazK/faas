@@ -8,9 +8,20 @@
   "enabled": true,
   "conditions": [
     {
-      "displayName": "Production IAM policy changed",
+      "displayName": "Production project IAM policy changed",
       "conditionThreshold": {
-        "filter": "metric.type=\"logging.googleapis.com/user/gregale_infrastructure_iam_change\"",
+        "filter": "resource.type=\"project\" AND metric.type=\"logging.googleapis.com/user/gregale_infrastructure_iam_change\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM"}],
+        "trigger": {"count": 1}
+      }
+    },
+    {
+      "displayName": "Production backup-bucket IAM policy changed",
+      "conditionThreshold": {
+        "filter": "resource.type=\"gcs_bucket\" AND metric.type=\"logging.googleapis.com/user/gregale_infrastructure_iam_change\"",
         "comparison": "COMPARISON_GT",
         "thresholdValue": 0,
         "duration": "0s",

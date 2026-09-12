@@ -182,7 +182,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DNS_ZONE", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DOMAIN_DOCTOR_ENABLED", Owners: []string{"apid", "shared"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_DOMAIN_DOCTOR_TTL_SECONDS", Owners: []string{"apid"}, Source: EnvSourceRuntimeConfig},
-	{Name: "FAAS_DPA_PATH", Owners: []string{"apid"}, Source: EnvSourceDefault},
+	{Name: "FAAS_DPA_PATH", Owners: []string{"apid"}, Source: EnvSourceUnit},
 	{Name: "FAAS_DUNNING_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_E2E_API_HOSTING_SMOKE", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_EGRESS_ALLOW_LOOPBACK", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},

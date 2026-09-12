@@ -58,6 +58,9 @@ def collect(policy: dict[str, Any]) -> dict[str, Any]:
             allow_error=True,
         ),
         "alert_policies": gcloud("monitoring", "policies", "list", "--project", project, allow_error=True),
+        "notification_channels": gcloud(
+            "beta", "monitoring", "channels", "list", "--project", project, allow_error=True
+        ),
         "budgets": (
             gcloud("beta", "billing", "budgets", "list", "--billing-account", billing_account, allow_error=True)
             if billing_account
@@ -245,6 +248,16 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
         for name in policy["logging"]["required_alerts"]:
             if name not in enabled_names:
                 failures.append(f"enabled alert policy is missing: {name}")
+        if policy["logging"].get("require_notification_destination"):
+            for alert in alerts:
+                if alert.get("displayName") in policy["logging"]["required_alerts"] and not alert.get(
+                    "notificationChannels"
+                ):
+                    failures.append(f"alert policy has no notification destination: {alert.get('displayName')}")
+
+    channels = snap.get("notification_channels", {})
+    if isinstance(channels, dict) and channels.get("_error"):
+        failures.append(f"notification channels cannot be audited: {channels['_error']}")
 
     budgets = snap.get("budgets", {})
     if isinstance(budgets, dict) and budgets.get("_error"):

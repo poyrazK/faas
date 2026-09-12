@@ -99,8 +99,15 @@ def healthy_snapshot() -> dict:
         },
         "default_log_bucket": {"retentionDays": POLICY["audit_logs"]["minimum_retention_days"]},
         "alert_policies": [
-            {"displayName": name, "enabled": True}
+            {
+                "displayName": name,
+                "enabled": True,
+                "notificationChannels": ["projects/test/notificationChannels/operator"],
+            }
             for name in POLICY["logging"]["required_alerts"]
+        ],
+        "notification_channels": [
+            {"name": "projects/test/notificationChannels/operator", "enabled": True, "type": "email"}
         ],
         "budgets": [
             {

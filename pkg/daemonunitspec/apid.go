@@ -34,6 +34,8 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //   - FAAS_STATUSPAGE_PATH points cmd/apid at the statuspage HTML under
 //     /etc/faas; without this the alert-driven "degraded" pill never
 //     renders.
+//   - FAAS_DPA_PATH points the public account/DPA endpoints at the reviewed
+//     artifact installed by the control-plane role.
 //   - ReadWritePaths includes /var/lib/faas (audit HMAC keys + API key
 //     store; PR-M.3 landed this), /var/log/faas, /var/spool/faas.
 //
@@ -73,6 +75,7 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 			{Key: "FAAS_APID_ADVISORY_SOCK", Value: "/run/faas/apid.sock"},
 			{Key: "FAAS_STATUSPAGE_PATH", Value: "/etc/faas/statuspage/index.html"},
+			{Key: "FAAS_DPA_PATH", Value: "/etc/faas/dpa.md"},
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
 			{Key: "FAAS_EXECUTION_API_ENABLED", Value: "0"},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},

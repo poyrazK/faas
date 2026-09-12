@@ -25,6 +25,7 @@
   },
   "logging": {
     "required_project_roles": ["roles/logging.logWriter"],
+    "require_notification_destination": true,
     "required_alerts": [
       "Gregale Ops Agent export failures",
       "Gregale backup object deletion",

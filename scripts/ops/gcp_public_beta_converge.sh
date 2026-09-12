@@ -14,6 +14,7 @@ compute_sa="gregale-compute@${project}.iam.gserviceaccount.com"
 control_sa="gregale-control@${project}.iam.gserviceaccount.com"
 restore_sa="gregale-backup-restore@${project}.iam.gserviceaccount.com"
 backup_role="projects/${project}/roles/gregaleBackupWriter"
+alert_email="${GCP_ALERT_EMAIL:-$operator}"
 phase=guard
 apply=0
 
@@ -158,6 +159,23 @@ guard_phase() {
   done < <(gcloud compute instances list --project="$project" --filter='name~^faas-compute-node-' \
     --flatten=serviceAccounts --format='value(serviceAccounts.email)' | sort -u)
 
+  local channel
+  channel="$(gcloud beta monitoring channels list --project="$project" \
+    --filter='displayName="Gregale operator email" AND enabled=true' --format='value(name)' | head -1)"
+  if [[ -z "$channel" ]]; then
+    run gcloud beta monitoring channels create --project="$project" \
+      --display-name='Gregale operator email' \
+      --description='Primary notification path for Gregale public beta infrastructure alerts' \
+      --type=email --channel-labels="email_address=$alert_email" --quiet
+    if ((apply)); then
+      channel="$(gcloud beta monitoring channels list --project="$project" \
+        --filter='displayName="Gregale operator email" AND enabled=true' --format='value(name)' | head -1)"
+      [[ -n "$channel" ]] || { echo "created notification channel is not visible" >&2; return 1; }
+    else
+      channel="projects/$project/notificationChannels/created-during-apply"
+    fi
+  fi
+
   if ! exists gcloud logging metrics describe gregale_ops_agent_export_failures --project="$project"; then
     run gcloud logging metrics create gregale_ops_agent_export_failures --project="$project" \
       --config-from-file="$root/deploy/gcp/ops-agent-export-metric.yaml"
@@ -165,7 +183,8 @@ guard_phase() {
   if ! gcloud monitoring policies list --project="$project" --format='value(displayName)' \
       | grep -Fqx 'Gregale Ops Agent export failures'; then
     run gcloud monitoring policies create --project="$project" \
-      --policy-from-file="$root/deploy/gcp/ops-agent-export-alert.json"
+      --policy-from-file="$root/deploy/gcp/ops-agent-export-alert.json" \
+      --notification-channels="$channel"
   fi
 
   local metric alert
@@ -179,7 +198,8 @@ guard_phase() {
     if ! gcloud monitoring policies list --project="$project" --format='value(displayName)' \
         | grep -Fqx "$alert"; then
       run gcloud monitoring policies create --project="$project" \
-        --policy-from-file="$root/deploy/gcp/${metric}-alert.json"
+        --policy-from-file="$root/deploy/gcp/${metric}-alert.json" \
+        --notification-channels="$channel"
     fi
   done <<'ALERTS'
 Gregale backup object deletion|backup-object-delete

@@ -363,6 +363,15 @@
     group: faas
     mode: "0644"
 
+- name: control_plane_service — install public DPA artifact
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../../docs/DPA.md"
+    dest: /etc/faas/dpa.md
+    owner: root
+    group: faas
+    mode: "0644"
+  notify: restart faas-apid
+
 - name: control_plane_service — note for operators (NOT auto-enabled)
   ansible.builtin.debug:
     msg: >-
