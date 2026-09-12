@@ -206,3 +206,60 @@ func TestPgReconcile_ScanSourceUpgrade(t *testing.T) {
 		t.Errorf("expected ScanSource=compose, got %q", updated.ScanSource)
 	}
 }
+
+func TestPgReconcile_PersistsWorkloadClassAndStartCommand(t *testing.T) {
+	store, svc, _, ctx := pgReconcileStore(t)
+	_, proj := seedAccountProject(t, store, state.ProjectScanSourceProcfile)
+
+	scan := reposcan.Result{
+		Workloads: []reposcan.Workload{
+			{Name: "api", Class: reposcan.ClassHTTP, Command: []string{"uvicorn", "app:app"}, Source: "procfile: api", Tier: reposcan.TierCompose},
+			{Name: "worker", Class: reposcan.ClassWorker, Command: []string{"node", "worker.js"}, Source: "procfile: worker", Tier: reposcan.TierCompose},
+			{Name: "job", Class: reposcan.ClassJob, Command: []string{"python", "job.py"}, Source: "procfile: job", Tier: reposcan.TierCompose},
+		},
+		Tier: reposcan.TierCompose,
+	}
+	if _, err := svc.Reconcile(ctx, proj, scan, "sha-fields-pg-1", "main", nil); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+
+	apps, err := store.AppsForProject(ctx, proj.AccountID, proj.ID)
+	if err != nil {
+		t.Fatalf("AppsForProject after create: %v", err)
+	}
+	want := map[string]struct {
+		class state.WorkloadClass
+		cmd   string
+	}{
+		"api":    {class: state.WorkloadClassHTTP, cmd: "uvicorn app:app"},
+		"worker": {class: state.WorkloadClassWorker, cmd: "node worker.js"},
+		"job":    {class: state.WorkloadClassJob, cmd: "python job.py"},
+	}
+	if len(apps) != len(want) {
+		t.Fatalf("AppsForProject returned %d apps, want %d", len(apps), len(want))
+	}
+	for _, app := range apps {
+		expected, ok := want[app.WorkloadName]
+		if !ok {
+			t.Fatalf("unexpected workload %q", app.WorkloadName)
+		}
+		if app.WorkloadClass != expected.class || app.StartCommand != expected.cmd {
+			t.Errorf("%s fields = class %q command %q, want %q/%q", app.WorkloadName, app.WorkloadClass, app.StartCommand, expected.class, expected.cmd)
+		}
+	}
+
+	// A changed scanner classification must update the existing row rather
+	// than silently retaining the initial HTTP/worker hint.
+	scan.Workloads[1].Class = reposcan.ClassJob
+	scan.Workloads[1].Command = []string{"python", "worker-job.py"}
+	if _, err := svc.Reconcile(ctx, proj, scan, "sha-fields-pg-2", "main", nil); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	updated, err := store.AppBySlug(ctx, "worker")
+	if err != nil {
+		t.Fatalf("AppBySlug(worker): %v", err)
+	}
+	if updated.WorkloadClass != state.WorkloadClassJob || updated.StartCommand != "python worker-job.py" {
+		t.Fatalf("updated worker fields = class %q command %q, want job/python worker-job.py", updated.WorkloadClass, updated.StartCommand)
+	}
+}
