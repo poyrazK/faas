@@ -20108,7 +20108,7 @@ components:
     InstanceResponse:
       description: "Read-only instance view: id, deployment, state (waking/running/...), lease uid, and host-side internal endpoint (loopback only)."
       type: object
-      required: [id, app_id, deployment_id, state, ram_mb]
+      required: [id, app_id, deployment_id, state, ram_mb, resident]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
@@ -20116,6 +20116,9 @@ components:
         state: { type: string }
         host_ip: { type: [string, "null"] }
         ram_mb: { type: integer, example: 256 }
+        resident:
+          type: boolean
+          description: "True when this instance currently holds host memory. Historical parked, stopped, and failed rows report false."
         # wake_id is a UUIDv7 (time-ordered) minted by schedd at WAKING.
         # Stable across the lifetime of one wake attempt; a PARK → WAKE
         # cycle mints a new one. Surfaced as the x-faas-wake-id header.

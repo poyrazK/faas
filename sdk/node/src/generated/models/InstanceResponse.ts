@@ -12,6 +12,10 @@ export type InstanceResponse = {
   state: string;
   host_ip?: string | null;
   ram_mb: number;
+  /**
+   * True when this instance currently holds host memory. Historical parked, stopped, and failed rows report false.
+   */
+  resident: boolean;
   wake_id?: string;
   started_at?: string | null;
   last_request_at?: string | null;
