@@ -2492,8 +2492,9 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 // gRPC server onto a fresh /run/faas/apid-githubd.sock (or wherever
 // FAAS_APID_GITHUBD_BRIDGE_SOCK points). The githubd daemon dials
 // this listener after the dispatcher fans out the touched apps
-// and stages each app's RootDir subtree into its build-sources
-// dir as a per-app .tar.gz (issue #432 phase 5).
+// and stages each app's full repository into its build-sources
+// dir as a per-app .tar.gz (issue #432 phase 5). The app's
+// RootDir is persisted separately as the builder SourceRoot.
 //
 // The DAC contract mirrors the advisory socket (0660 group
 // `faas`) so githubd can dial without root, but the listener is

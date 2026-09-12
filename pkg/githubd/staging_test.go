@@ -1,8 +1,8 @@
-// staging_test.go — tests for RepackageRootTree (issue #432
+// staging_test.go — tests for repository staging (issue #432
 // phase 5 review follow-up).
 //
-// Pins the per-app RootDir subtree walk into a gzip+tap tarball
-// the bridge hands to apid. The tarball is what builderd reads
+// Pins both the legacy RootDir subtree walk and the workspace-preserving
+// repository walk into gzip+tarballs the bridge hands to apid. The tarball is what builderd reads
 // (pkg/builderd/builderd.go:321 — b.detector.Detect(dep.SourcePath));
 // a wrong shape here silently corrupts every build the bridge
 // dispatches. The tests use fstest.MapFS for hermetic inputs and
@@ -12,6 +12,8 @@
 // Coverage:
 //   - happy path: empty RootDir walks the full repo with a "." walkRoot
 //   - happy path: non-empty RootDir rebases entries to "/"
+//   - workspace path: root manifests and sibling packages retain their
+//     repository-relative names
 //   - regular files vs symlinks (skip-symlink is the default; symlinks
 //     are NOT followed via fs.SkipDir behavior because InfoHeader
 //     fails on them)
@@ -139,6 +141,44 @@ func TestRepackageRootTree_NonEmptyRootDir_RebasesEntries(t *testing.T) {
 	}
 	if string(job) != "worker-job\n" {
 		t.Errorf("job.go body = %q, want %q", job, "worker-job\n")
+	}
+}
+
+func TestRepackageRepositoryTree_PreservesWorkspaceLayout(t *testing.T) {
+	// A workspace member needs repository-level manifests and sibling
+	// packages while builderd runs with SourceRoot=services/api. The
+	// repository staging path must therefore preserve every relative name
+	// instead of rebasing the selected workload to archive root.
+	src := fstest.MapFS{
+		"package.json":                 &fstest.MapFile{Data: []byte(`{"workspaces":["services/*","packages/*"]}`)},
+		"pnpm-lock.yaml":               &fstest.MapFile{Data: []byte("lockfileVersion: '9.0'\n")},
+		"services/api/package.json":    &fstest.MapFile{Data: []byte(`{"name":"api","dependencies":{"@acme/shared":"workspace:*"}}`)},
+		"services/api/src/index.js":    &fstest.MapFile{Data: []byte("require('@acme/shared')\n")},
+		"packages/shared/package.json": &fstest.MapFile{Data: []byte(`{"name":"@acme/shared"}`)},
+		"packages/shared/index.js":     &fstest.MapFile{Data: []byte("module.exports = {}\n")},
+		"go.work":                      &fstest.MapFile{Data: []byte("go 1.24\nuse ./services/api\n")},
+		"services/api/go.mod":          &fstest.MapFile{Data: []byte("module example.com/api\n")},
+		"crates/api/Cargo.toml":        &fstest.MapFile{Data: []byte("[package]\nname = \"api\"\n")},
+		"crates/shared/Cargo.toml":     &fstest.MapFile{Data: []byte("[package]\nname = \"shared\"\n")},
+		"Cargo.lock":                   &fstest.MapFile{Data: []byte("version = 3\n")},
+	}
+	dst := filepath.Join(t.TempDir(), "source.tar.gz")
+	if err := RepackageRepositoryTree(context.Background(), src, dst); err != nil {
+		t.Fatalf("RepackageRepositoryTree: %v", err)
+	}
+	got := decodeTarball(t, dst)
+	for _, want := range []string{
+		"package.json", "pnpm-lock.yaml", "services/api/package.json",
+		"services/api/src/index.js", "packages/shared/package.json",
+		"packages/shared/index.js", "go.work", "services/api/go.mod",
+		"crates/api/Cargo.toml", "crates/shared/Cargo.toml", "Cargo.lock",
+	} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("missing repository file %q (got %v)", want, keys(got))
+		}
+	}
+	if _, ok := got["package.json"]; !ok {
+		t.Fatal("repository root manifest was rebased or omitted")
 	}
 }
 

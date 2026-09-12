@@ -56,8 +56,9 @@ import (
 // AccountID — the dispatcher fills these in from the reconcile
 // result + the binding row. The SourcePath is the absolute
 // path to the per-app .tar.gz on disk (githubd stages each
-// app's RootDir subtree into <FAAS_GITHUBD_WORK_DIR>/build-sources/
-// before the enqueue loop). SourceURL is the upstream archive
+// full repository into <FAAS_GITHUBD_WORK_DIR>/build-sources/
+// before the enqueue loop); the bridge derives SourceRoot from the
+// app's RootDir. SourceURL is the upstream archive
 // URL (the codeload tarball githubd pulled) — provenance-only,
 // builderd never fetches it. SourceBytes is the on-disk size
 // of the staged tarball.
