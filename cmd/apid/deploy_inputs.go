@@ -77,6 +77,8 @@ func spoolRoot() string {
 //	dockerfile bool  — present if the tarball root contains a Dockerfile.
 //	runtime   string — node22|python312 for function deploys.
 //	handler   string — handler path, required when runtime is set.
+//	source_url string — optional informational repository provenance URL.
+//	commit_sha string — optional lowercase hexadecimal Git commit identifier.
 //
 // DeployedApps is enforced at app-create time via
 // store.CreateAppIfUnderQuota — the deploy path cannot bypass it because
@@ -117,6 +119,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		runtime        string
 		handler        string
 		sourceRoot     string
+		sourceURL      string
+		commitSHA      string
 		kind           state.DeploymentKind
 		sourceAccepted bool
 		workflows      []api.WorkflowSpec
@@ -181,6 +185,20 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			sourceRoot = storedRoot
+		case "source_url":
+			b, readErr := io.ReadAll(io.LimitReader(part, 1025))
+			if readErr != nil || len(b) > 1024 {
+				api.WriteProblem(w, api.ErrSourceInvalid("source_url is too long"))
+				return
+			}
+			sourceURL = strings.TrimSpace(string(b))
+		case "commit_sha":
+			b, readErr := io.ReadAll(io.LimitReader(part, 65))
+			if readErr != nil || len(b) > 64 {
+				api.WriteProblem(w, api.ErrSourceInvalid("commit_sha is too long"))
+				return
+			}
+			commitSHA = strings.TrimSpace(string(b))
 		case "workflows":
 			b, readErr := io.ReadAll(io.LimitReader(part, 1<<20))
 			if readErr != nil || !json.Valid(b) {
@@ -247,6 +265,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	if sourcePath == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Source required", "multipart deploys require a 'source' file field"))
+		return
+	}
+	if prob := validateSourceProvenance(sourceURL, commitSHA); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	rolloutReq := &api.CreateDeploymentRequest{TrafficPercent: trafficPercent, Canary: canarySpec}
@@ -363,6 +385,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			SourcePath:             sourcePath,
 			SourceBytes:            sourceBytes,
 			SourceRoot:             sourceRoot,
+			SourceURL:              sourceURL,
+			CommitSHA:              commitSHA,
 			Handler:                handler,
 			FunctionRuntime:        functionRuntimeForApp(app),
 			LogSpool:               spoolRoot(),
@@ -485,6 +509,32 @@ func assertMultipartFileName(part *multipart.Part) *api.Problem {
 	if part.FileName() == "" {
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad source", "source field must be a file")
+	}
+	return nil
+}
+
+// validateSourceProvenance bounds the optional repository metadata accepted
+// by the canonical multipart deploy endpoint. The archive remains the trust
+// root, so SourceURL is informational and is intentionally not fetched or
+// resolved here. CommitSHA is constrained to the same lowercase hexadecimal
+// shape enforced by deployments.commit_sha_shape_chk, allowing the handler to
+// return a useful 400 instead of a generic database error.
+func validateSourceProvenance(sourceURL, commitSHA string) *api.Problem {
+	if len(sourceURL) > 1024 || strings.IndexFunc(sourceURL, func(r rune) bool {
+		return r < 0x20 || r == 0x7f
+	}) >= 0 {
+		return api.ErrSourceInvalid("source_url is invalid")
+	}
+	if commitSHA == "" {
+		return nil
+	}
+	if len(commitSHA) < 7 || len(commitSHA) > 64 {
+		return api.ErrSourceInvalid("commit_sha must contain 7-64 lowercase hexadecimal characters")
+	}
+	for _, r := range commitSHA {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return api.ErrSourceInvalid("commit_sha must contain 7-64 lowercase hexadecimal characters")
+		}
 	}
 	return nil
 }

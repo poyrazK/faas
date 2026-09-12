@@ -152,6 +152,11 @@ func newZeroConfigStubServer(t *testing.T, custom func(http.ResponseWriter, *htt
 func TestDeployZeroConfig_HappyPath_NewApp(t *testing.T) {
 	repo := initZeroConfigRepo(t)
 	withCwd(t, repo)
+	headSHA, err := resolveHEAD(repo)
+	if err != nil {
+		t.Fatalf("resolve HEAD: %v", err)
+	}
+	var gotSourceURL, gotCommitSHA string
 
 	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
 		switch {
@@ -160,8 +165,32 @@ func TestDeployZeroConfig_HappyPath_NewApp(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "demo"})
 		case r.URL.Path == "/v1/apps/demo/deployments" && r.Method == "POST":
 			z.gotCalls["deploy"]++
-			// Drain the multipart body so the connection reuses cleanly.
-			_, _ = io.Copy(io.Discard, r.Body)
+			mr, multipartErr := r.MultipartReader()
+			if multipartErr != nil {
+				t.Errorf("multipart read: %v", multipartErr)
+				return
+			}
+			for {
+				part, nextErr := mr.NextPart()
+				if nextErr == io.EOF {
+					break
+				}
+				if nextErr != nil {
+					t.Errorf("multipart next part: %v", nextErr)
+					break
+				}
+				body, readErr := io.ReadAll(part)
+				if readErr != nil {
+					t.Errorf("read multipart field %q: %v", part.FormName(), readErr)
+				}
+				switch part.FormName() {
+				case "source_url":
+					gotSourceURL = string(body)
+				case "commit_sha":
+					gotCommitSHA = string(body)
+				}
+				_ = part.Close()
+			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "demo"})
 		default:
 			http.Error(w, "no", 404)
@@ -182,6 +211,12 @@ func TestDeployZeroConfig_HappyPath_NewApp(t *testing.T) {
 	// Sanity: Whoami fired too (per-plan cap round-trip).
 	if stub.gotCalls["whoami"] == 0 {
 		t.Errorf("Whoami round-trip for per-plan cap should have fired")
+	}
+	if got, want := gotSourceURL, "github://acme/demo@"+headSHA; got != want {
+		t.Errorf("source_url = %q, want %q", got, want)
+	}
+	if gotCommitSHA != headSHA {
+		t.Errorf("commit_sha = %q, want %q", gotCommitSHA, headSHA)
 	}
 }
 

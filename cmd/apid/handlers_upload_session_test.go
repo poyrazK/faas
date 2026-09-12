@@ -20,6 +20,7 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
 	"encoding/json"
 	"net/http"
@@ -176,7 +177,11 @@ func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "metadata"}, nil)
 	body, err := json.Marshal(startUploadRequest{
 		AppSlug: "metadata", TotalSize: 4096,
-		DeployOptions: &api.UploadDeployOptions{SourceRoot: "apps/api", Dockerfile: true, Reason: "release"},
+		DeployOptions: &api.UploadDeployOptions{
+			SourceRoot: "apps/api", Dockerfile: true, Reason: "release",
+			SourceURL: "github://acme/metadata@0123456789abcdef0123456789abcdef01234567",
+			CommitSHA: "0123456789abcdef0123456789abcdef01234567",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -197,6 +202,10 @@ func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 	if err != nil || !bytes.Contains(row.DeployOptions, []byte(`"source_root":"apps/api"`)) {
 		t.Fatalf("persisted options = %s, err=%v", row.DeployOptions, err)
 	}
+	if !bytes.Contains(row.DeployOptions, []byte(`"source_url":"github://acme/metadata@0123456789abcdef0123456789abcdef01234567"`)) ||
+		!bytes.Contains(row.DeployOptions, []byte(`"commit_sha":"0123456789abcdef0123456789abcdef01234567"`)) {
+		t.Fatalf("persisted provenance options = %s", row.DeployOptions)
+	}
 	req = httptest.NewRequest("GET", "/v1/uploads/"+started.UploadID, nil)
 	req.Header.Set("Authorization", "Bearer "+e.key)
 	rec = httptest.NewRecorder()
@@ -210,6 +219,60 @@ func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 	}
 	if state.UploadID != started.UploadID || state.ReceivedBytes != 0 || state.Status != "open" {
 		t.Fatalf("discovery = %+v", state)
+	}
+}
+
+func TestUploadSession_CommitPreservesSourceProvenance(t *testing.T) {
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	e := setup(t, api.PlanFree)
+	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "provenance"}, nil)
+	raw := buildTestTarGz(t, []tar.Header{{Name: "index.js"}}, map[string][]byte{
+		"index.js": []byte("console.log(1)\n"),
+	})
+	const sourceURL = "github://acme/provenance@0123456789abcdef0123456789abcdef01234567"
+	const commitSHA = "0123456789abcdef0123456789abcdef01234567"
+	body, err := json.Marshal(startUploadRequest{
+		AppSlug: "provenance", TotalSize: int64(len(raw)),
+		DeployOptions: &api.UploadDeployOptions{SourceURL: sourceURL, CommitSHA: commitSHA},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/v1/uploads", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	var started startUploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	if rec := appendChunk(t, e, started.UploadID, 0, raw); rec.Code != http.StatusOK {
+		t.Fatalf("append: %d %s", rec.Code, rec.Body.String())
+	}
+	req = httptest.NewRequest("POST", "/v1/uploads/"+started.UploadID+"/commit", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	rec = httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("commit: %d %s", rec.Code, rec.Body.String())
+	}
+	var out api.DeploymentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.SourceURL != sourceURL || out.CommitSHA != commitSHA {
+		t.Fatalf("response provenance = source_url %q commit_sha %q", out.SourceURL, out.CommitSHA)
+	}
+	dep, err := e.store.LatestDeployment(t.Context(), out.AppID)
+	if err != nil {
+		t.Fatalf("LatestDeployment: %v", err)
+	}
+	if dep.SourceURL != sourceURL || dep.CommitSHA != commitSHA {
+		t.Fatalf("stored provenance = source_url %q commit_sha %q", dep.SourceURL, dep.CommitSHA)
 	}
 }
 

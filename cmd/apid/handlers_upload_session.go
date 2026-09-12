@@ -559,6 +559,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
+	if prob := validateSourceProvenance(opts.SourceURL, opts.CommitSHA); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if opts.SourceRoot != "" {
 		root, rootErr := sourcecontext.StorageRoot(opts.SourceRoot)
 		if rootErr != nil {
@@ -621,6 +625,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	if opts.Dockerfile {
 		kind = state.DeploymentKindDockerfile
 	}
+	sourceURL := opts.SourceURL
+	if sourceURL == "" {
+		sourceURL = "local-tar://upload-session/" + uploadID
+	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 		AppID:            app.ID,
 		Kind:             kind,
@@ -629,7 +637,8 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		SourceRoot:       opts.SourceRoot,
 		Handler:          opts.Handler,
 		FunctionRuntime:  functionRuntimeForApp(app),
-		SourceURL:        "local-tar://upload-session/" + uploadID,
+		SourceURL:        sourceURL,
+		CommitSHA:        opts.CommitSHA,
 		Source:           "upload-session:" + uploadID,
 		LogSpool:         spoolRoot(),
 		Log:              s.log,
