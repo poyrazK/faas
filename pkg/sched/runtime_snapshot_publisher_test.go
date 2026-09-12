@@ -55,7 +55,7 @@ func TestRuntimeSnapshotPublisherPublishesVerifiedPair(t *testing.T) {
 	if entry.SnapshotDigest != RuntimeSnapshotDigest(memory, vmstate) {
 		t.Fatalf("snapshot digest = %s, want %s", entry.SnapshotDigest, RuntimeSnapshotDigest(memory, vmstate))
 	}
-	if !strings.Contains(entry.StorageKey, "/captures/") || !strings.HasSuffix(entry.StorageKey, "/mem") {
+	if !strings.HasPrefix(entry.StorageKey, "snap/"+runtimeSnapshotStorageNamespace+"/captures/") || !strings.HasSuffix(entry.StorageKey, "/mem") {
 		t.Fatalf("storage key = %q", entry.StorageKey)
 	}
 
@@ -137,6 +137,11 @@ func TestRuntimeSnapshotPublisherDoesNotOverwriteCatalogOrLeavePartialObjects(t 
 		t.Fatalf("stored row = %#v, err=%v", stored, err)
 	}
 
+	badBackend, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	badPublisher := NewRuntimeSnapshotPublisher(state.NewMemStore(), badBackend)
 	bad := publication
 	bad.Memory = bytes.NewReader([]byte("mem"))
 	bad.VMState = bytes.NewReader([]byte("state"))
@@ -144,10 +149,10 @@ func TestRuntimeSnapshotPublisherDoesNotOverwriteCatalogOrLeavePartialObjects(t 
 	other := publisherTestIdentity()
 	other.BaseImageDigest = strings.Repeat("d", 64)
 	bad.Identity = other
-	if _, err := publisher.PublishRuntimeSnapshot(context.Background(), bad); !errors.Is(err, ErrRuntimeSnapshotInvalid) {
+	if _, err := badPublisher.PublishRuntimeSnapshot(context.Background(), bad); !errors.Is(err, ErrRuntimeSnapshotInvalid) {
 		t.Fatalf("short capture = %v, want ErrRuntimeSnapshotInvalid", err)
 	}
-	keys, err := backend.List(context.Background(), mustIdentityKey(other)+"/captures")
+	keys, err := badBackend.List(context.Background(), "snap/"+runtimeSnapshotStorageNamespace+"/captures")
 	if err != nil {
 		t.Fatalf("List failed publication objects: %v", err)
 	}
@@ -160,10 +165,10 @@ func TestRuntimeSnapshotPublisherDoesNotOverwriteCatalogOrLeavePartialObjects(t 
 	oversized.Identity.BaseImageDigest = strings.Repeat("e", 64)
 	oversized.Memory = bytes.NewReader([]byte("mem-extra"))
 	oversized.VMState = bytes.NewReader([]byte("state"))
-	if _, err := publisher.PublishRuntimeSnapshot(context.Background(), oversized); !errors.Is(err, ErrRuntimeSnapshotInvalid) {
+	if _, err := badPublisher.PublishRuntimeSnapshot(context.Background(), oversized); !errors.Is(err, ErrRuntimeSnapshotInvalid) {
 		t.Fatalf("oversized capture = %v, want ErrRuntimeSnapshotInvalid", err)
 	}
-	keys, err = backend.List(context.Background(), mustIdentityKey(oversized.Identity)+"/captures")
+	keys, err = badBackend.List(context.Background(), "snap/"+runtimeSnapshotStorageNamespace+"/captures")
 	if err != nil {
 		t.Fatalf("List oversized publication objects: %v", err)
 	}

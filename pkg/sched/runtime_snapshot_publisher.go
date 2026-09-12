@@ -39,6 +39,12 @@ type RuntimeSnapshotPublisher struct {
 	now     func() time.Time
 }
 
+// Runtime snapshots use the storage backend's existing snapshot namespace so
+// local and OCI drivers apply the same atomic pair semantics. The nil UUID is
+// reserved for platform-owned runtime captures; the durable catalog remains
+// the authority that binds each generated capture UUID to its identity.
+const runtimeSnapshotStorageNamespace = "00000000-0000-0000-0000-000000000000"
+
 // NewRuntimeSnapshotPublisher wires the durable catalog and artifact store.
 // A nil dependency is treated as unwired by PublishRuntimeSnapshot.
 func NewRuntimeSnapshotPublisher(store state.RuntimeSnapshotStore, backend storage.StorageBackend) *RuntimeSnapshotPublisher {
@@ -86,7 +92,7 @@ func (p *RuntimeSnapshotPublisher) PublishRuntimeSnapshot(ctx context.Context, p
 		return RuntimeSnapshot{}, err
 	}
 
-	storageKey := runtimeSnapshotPublicationStorageKey(catalogKey)
+	storageKey := runtimeSnapshotPublicationStorageKey()
 	vmstateKey := runtimeSnapshotVMStateStorageKey(storageKey)
 	if err := p.ensureObjectAbsent(ctx, storageKey); err != nil {
 		return RuntimeSnapshot{}, err
@@ -208,8 +214,8 @@ func (p *RuntimeSnapshotPublisher) cleanupObjects(ctx context.Context, keys ...s
 	}
 }
 
-func runtimeSnapshotPublicationStorageKey(catalogKey string) string {
-	return fmt.Sprintf("%s/captures/%s/mem", catalogKey, uuid.NewString())
+func runtimeSnapshotPublicationStorageKey() string {
+	return fmt.Sprintf("snap/%s/captures/%s/mem", runtimeSnapshotStorageNamespace, uuid.NewString())
 }
 
 type runtimeSnapshotPublicationReader struct {
