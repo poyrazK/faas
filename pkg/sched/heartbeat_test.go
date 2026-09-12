@@ -424,6 +424,52 @@ func TestHeartbeat_ProbesUnavailableNodesWithStaleHeartbeat(t *testing.T) {
 	}
 }
 
+// TestHeartbeat_OwnerScopedObserverMarksStalePeerUnavailable covers the
+// partition case that an owner-scoped heartbeat cannot observe by itself: the
+// peer schedd is frozen, so no fresh ping is written for its node. A healthy
+// schedd must still remove that stale peer from placement using the durable
+// timestamp, without dialing or reactivating the peer.
+func TestHeartbeat_OwnerScopedObserverMarksStalePeerUnavailable(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	owner, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName owner: %v", err)
+	}
+	now := time.Now().UTC()
+	peer, err := store.CreateComputeNode(ctx, state.ComputeNode{
+		Name:            "partitioned-peer",
+		TargetURL:       "tcp://10.0.0.22:50051",
+		Lifecycle:       state.NodeLifecycleActive,
+		Active:          true,
+		LastHeartbeatAt: now.Add(-10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode peer: %v", err)
+	}
+
+	dialer := &heartbeatFakeDialer{}
+	h := NewHeartbeat(store, dialer, nil, nil).
+		WithOwnerNodeID(owner.ID).
+		WithStalePeerObserver(true)
+	h.Staleness = time.Minute
+	h.now = func() time.Time { return now }
+	if err := h.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	peerAfter, err := store.ComputeNodeByID(ctx, peer.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID peer: %v", err)
+	}
+	if peerAfter.Lifecycle != state.NodeLifecycleUnavailable || peerAfter.Active {
+		t.Fatalf("peer lifecycle=%q active=%v, want unavailable/false", peerAfter.Lifecycle, peerAfter.Active)
+	}
+	if len(dialer.dials) != 1 || dialer.dials[0] != owner.TargetURL {
+		t.Fatalf("dial targets = %v, want only owner %q; stale-peer observer must not probe peers", dialer.dials, owner.TargetURL)
+	}
+}
+
 // TestHeartbeat_FreshDialPerTick is the issue #120 invariant: every
 // Tick pays the dial cost once per active node. A regression that
 // routes through the router cache (or any cached path) would drop
