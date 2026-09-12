@@ -3,6 +3,7 @@ package reposcan
 import (
 	"io/fs"
 	"sort"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -161,6 +162,80 @@ spec:
 	sort.Strings(got)
 	if !equalSet(got, []string{"a", "b"}) {
 		t.Errorf("seeds = %v, want {a,b}", got)
+	}
+}
+
+// TestDetectK8s_MultiDocumentYAMLMarkers — YAML permits comments and
+// trailing whitespace on document markers, and explicit end markers.
+func TestDetectK8s_MultiDocumentYAMLMarkers(t *testing.T) {
+	t.Parallel()
+	body := `apiVersion: apps/v1
+kind: Deployment
+metadata: {name: a}
+spec: {template: {spec: {containers: [{name: a, image: img-a}]}}}
+--- # worker resource
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: b}
+spec: {template: {spec: {containers: [{name: b, image: img-b}]}}}
+---TRAILING_MARKER
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: c}
+spec: {template: {spec: {containers: [{name: c, image: img-c}]}}}
+...
+`
+	body = strings.ReplaceAll(body, "---TRAILING_MARKER", "---   ")
+	fsys := fstest.MapFS{
+		"k8s":              &fstest.MapFile{Mode: 0o755 | fs.ModeDir},
+		"k8s/markers.yaml": &fstest.MapFile{Data: []byte(body)},
+	}
+	seeds, _, warnings, err := detectK8s(fsys)
+	if err != nil {
+		t.Fatalf("detectK8s: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	got := names(seeds)
+	sort.Strings(got)
+	if !equalSet(got, []string{"a", "b", "c"}) {
+		t.Fatalf("seeds = %v, want {a,b,c}", got)
+	}
+}
+
+// TestDetectK8s_MalformedDocumentDoesNotHideSiblings — a malformed document
+// is reported with its stream index while later valid documents remain
+// visible to the scanner.
+func TestDetectK8s_MalformedDocumentDoesNotHideSiblings(t *testing.T) {
+	t.Parallel()
+	body := `apiVersion: apps/v1
+kind: Deployment
+metadata: {name: before}
+spec: {template: {spec: {containers: [{name: before, image: img}]}}}
+--- # malformed
+apiVersion: [broken
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: after}
+spec: {template: {spec: {containers: [{name: after, image: img}]}}}
+`
+	fsys := fstest.MapFS{
+		"k8s":                &fstest.MapFile{Mode: 0o755 | fs.ModeDir},
+		"k8s/malformed.yaml": &fstest.MapFile{Data: []byte(body)},
+	}
+	seeds, _, warnings, err := detectK8s(fsys)
+	if err != nil {
+		t.Fatalf("detectK8s: %v", err)
+	}
+	got := names(seeds)
+	sort.Strings(got)
+	if !equalSet(got, []string{"after", "before"}) {
+		t.Fatalf("seeds = %v, want {after,before}", got)
+	}
+	if len(warnings) != 1 || !contains(warnings[0], "document 2") {
+		t.Fatalf("warnings = %v, want one warning identifying document 2", warnings)
 	}
 }
 
