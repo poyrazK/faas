@@ -13089,6 +13089,26 @@ paths:
   # dashboard's billing page both render from the same round-trip.
   # Field is omitempty — operator boxes without a configured payment
   # method still return 200 with payment_method absent.
+  /v1/billing/status:
+    get:
+      tags: [billing]
+      operationId: getBillingStatus
+      summary: Get the authenticated customer's billing status.
+      description: |
+        Returns a provider-independent deployment and account billing
+        projection. This customer endpoint requires usage:read and never
+        calls an operator catalog surface.
+      responses:
+        '200':
+          description: Current deployment billing mode and customer attachment status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingStatusResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/billing/portal:
     get:
       tags: [billing]
@@ -18854,6 +18874,20 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Invoice' }
         next_before: { type: [string, "null"], format: date-time }
+
+    BillingStatusResponse:
+      description: Provider-independent customer billing status (issue #2302).
+      type: object
+      required: [mode, enabled, provider, plan, account_status, customer_configured, subscription_configured, usage_reconciliation_enabled]
+      properties:
+        mode: { type: string, enum: [live, disabled] }
+        enabled: { type: boolean }
+        provider: { type: string, description: 'Configured provider name; no provider-specific identifiers are exposed.' }
+        plan: { type: string, enum: [free, hobby, pro, scale] }
+        account_status: { type: string, enum: [active, past_due, suspended, deleted_pending] }
+        customer_configured: { type: boolean }
+        subscription_configured: { type: boolean }
+        usage_reconciliation_enabled: { type: boolean }
 
     BillingPortalResponse:
       description: |

@@ -1384,6 +1384,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if billingProv != nil {
 		srv.WithBillingProvider(billingProv)
 	}
+	srv.WithBillingProviderName(provName)
 	log.Info("billing provider loaded", "provider", provName)
 
 	// Issue #299 / ADR-038 Phase 3: imagd stores CycloneDX JSON under

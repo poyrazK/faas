@@ -3724,6 +3724,17 @@ func (c *Client) GetBillingPortalFull(ctx context.Context) (BillingPortalRespons
 	return out, nil
 }
 
+// GetBillingStatus returns the authenticated customer's provider-independent
+// billing projection. Unlike the operator catalog surface, this endpoint is
+// available to ordinary usage:read credentials and works for every provider.
+func (c *Client) GetBillingStatus(ctx context.Context) (BillingStatusResponse, error) {
+	var out BillingStatusResponse
+	if err := c.do(ctx, "GET", "/v1/billing/status", nil, &out); err != nil {
+		return BillingStatusResponse{}, err
+	}
+	return out, nil
+}
+
 // PostBillingRetry retries the latest unpaid invoice / transaction
 // for the authenticated account (issue #242). Closes the
 // customer-trust lie in pkg/mail/account.go:107,150 — the dunning

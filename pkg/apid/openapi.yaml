@@ -13089,6 +13089,26 @@ paths:
   # dashboard's billing page both render from the same round-trip.
   # Field is omitempty — operator boxes without a configured payment
   # method still return 200 with payment_method absent.
+  /v1/billing/status:
+    get:
+      tags: [billing]
+      operationId: getBillingStatus
+      summary: Get the authenticated customer's billing status.
+      description: |
+        Returns a provider-independent deployment and account billing
+        projection. This customer endpoint requires usage:read and never
+        calls an operator catalog surface.
+      responses:
+        '200':
+          description: Current deployment billing mode and customer attachment status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingStatusResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/billing/portal:
     get:
       tags: [billing]
@@ -16134,12 +16154,17 @@ components:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
 
     AccountExportResponse:
-      description: "GDPR export bundle: the account itself, every owned app, deployment, build, instance, usage record, domain, cron, API key, and sealed-secret envelope, plus the audit trail."
+      description: "Versioned GDPR export bundle: the account and organization identity graph, owned runtime resources, redacted key metadata, sealed-secret envelopes, and audit trail."
       type: object
-      required: [exported_at, account, apps, deployments, builds, instances, usage, domains, crons, api_keys, app_secrets]
+      required: [schema_version, exported_at, account, organizations, org_memberships, org_invitations, org_api_keys, apps, deployments, builds, instances, usage, domains, crons, api_keys, app_secrets]
       properties:
+        schema_version: { type: integer, enum: [2], description: "Export schema version used by restore and portability tooling." }
         exported_at: { type: string, format: date-time , example: "2026-07-23T11:25:00Z"}
         account: { $ref: '#/components/schemas/AccountResponse' }
+        organizations: { type: array, items: { $ref: '#/components/schemas/OrgResponse' } }
+        org_memberships: { type: array, items: { $ref: '#/components/schemas/OrgMembershipExportResponse' } }
+        org_invitations: { type: array, items: { $ref: '#/components/schemas/OrgInvitationResponse' } }
+        org_api_keys: { type: array, items: { $ref: '#/components/schemas/APIKeyResponse' }, description: "Org-bound API key metadata; plaintext and hashes are never exported." }
         apps: { type: array, items: { $ref: '#/components/schemas/AppResponse' } }
         deployments: { type: array, items: { $ref: '#/components/schemas/DeploymentResponse' } }
         builds: { type: array, items: { $ref: '#/components/schemas/BuildExportResponse' } }
@@ -16152,6 +16177,20 @@ components:
         audit_trail:
           type: array
           items: { $ref: '#/components/schemas/GdprAuditExportResponse' }
+
+    OrgMembershipExportResponse:
+      description: "Organization membership lifecycle row included in export schema v2."
+      type: object
+      required: [org_id, org_slug, account_id, email, role, joined_at]
+      properties:
+        org_id: { type: string, format: uuid }
+        org_slug: { type: string }
+        account_id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { type: string, enum: [owner, admin, developer, billing, viewer] }
+        invited_by_account_id: { type: string, format: uuid }
+        joined_at: { type: string, format: date-time }
+        removed_at: { type: string, format: date-time }
 
     AccountDeletionResponse:
       description: "Result of staging account deletion: status flips to `deleted_pending` and `restore_until` marks the end of the 30-day grace window."
@@ -18835,6 +18874,20 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Invoice' }
         next_before: { type: [string, "null"], format: date-time }
+
+    BillingStatusResponse:
+      description: Provider-independent customer billing status (issue #2302).
+      type: object
+      required: [mode, enabled, provider, plan, account_status, customer_configured, subscription_configured, usage_reconciliation_enabled]
+      properties:
+        mode: { type: string, enum: [live, disabled] }
+        enabled: { type: boolean }
+        provider: { type: string, description: 'Configured provider name; no provider-specific identifiers are exposed.' }
+        plan: { type: string, enum: [free, hobby, pro, scale] }
+        account_status: { type: string, enum: [active, past_due, suspended, deleted_pending] }
+        customer_configured: { type: boolean }
+        subscription_configured: { type: boolean }
+        usage_reconciliation_enabled: { type: boolean }
 
     BillingPortalResponse:
       description: |
@@ -25350,8 +25403,10 @@ components:
         (1h/24h/7d) summary of the customer-facing SLO signals,
         not a 5m slice for the dashboard. The fields overlap only
         on latency percentiles, error rate, and cold-boot rate — the
-        remaining fields (`wake_queue_p95_ms`, `throttled_total`,
-        `instance_hours`, `gb_hours`) are net-new per the issue.
+        remaining fields (`throttled_total`, `instance_hours`,
+        `gb_hours`) are net-new per the issue. `wake_queue_p95_ms`
+        remains in the wire shape for compatibility and is zero until
+        the underlying histogram has an app label.
 
         On Prometheus failure the endpoint returns 200 with
         zeroed fields and `source: "degraded: <reason>"`. When
@@ -25378,7 +25433,7 @@ components:
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 over the window (from `usage_minutes`)." }
         wake_queue_p95_ms:
           type: number
-          description: "FLEET wake-queue p95 (`gateway_wake_queue_wait_seconds` is unlabeled)."
+          description: "Reserved compatibility field. Zero until the wake-queue histogram can be scoped to this app."
         requests_total: { type: integer, format: int64 }
         throttled_total: { type: integer, format: int64, description: "Per-app rate-limit count over the window." }
       x-since: "2026-08"
@@ -25526,7 +25581,7 @@ components:
         cold_boot_rate_pct: { type: number }
         instance_hours: { type: number, description: "Sum of instance-minutes / 60 across all apps for the account." }
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 across all apps for the account." }
-        wake_queue_p95_ms: { type: number }
+        wake_queue_p95_ms: { type: number, description: "Reserved compatibility field. Zero until the wake-queue histogram can be scoped to the account's apps." }
         requests_total: { type: integer, format: int64 }
         throttled_total: { type: integer, format: int64 }
       x-since: "2026-08"

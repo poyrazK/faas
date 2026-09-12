@@ -235,6 +235,9 @@ type server struct {
 	// no *stripe.Client is needed at the apid level). The Paddle path
 	// sets this to a *paddle.Provider at boot.
 	billingProvider billing.Provider
+	// billingProviderName retains the configured provider even for the legacy
+	// Stripe apid path, where billingProvider is intentionally nil.
+	billingProviderName string
 	// ops holds the per-daemon Prometheus registry. Wired via
 	// WithOpsMetrics so callers (cmd/apid) control the registry
 	// lifecycle. A dedicated metric observer middleware sits atop
@@ -491,6 +494,14 @@ func (s *server) WithSBOMStorage(backend artifactstorage.StorageBackend) *server
 // (the legacy stripe.VerifySignature + BillingPortalURL template).
 func (s *server) WithBillingProvider(p billing.Provider) *server {
 	s.billingProvider = p
+	return s
+}
+
+// WithBillingProviderName records the provider selected by the deployment
+// loader. It is separate from WithBillingProvider because Stripe's legacy
+// apid implementation deliberately has no Provider value.
+func (s *server) WithBillingProviderName(name string) *server {
+	s.billingProviderName = strings.TrimSpace(name)
 	return s
 }
 
@@ -2369,6 +2380,9 @@ func (s *server) handler() http.Handler {
 	// authenticated Stripe session where the customer can mutate billing.
 	// Email verification therefore applies before the redirect leaves Gregale.
 	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.getBillingPortal))))
+	// Customer billing status is a read-only account projection. It must not
+	// depend on operator allowlists or provider-specific catalog APIs.
+	mux.HandleFunc("GET /v1/billing/status", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.getBillingStatus)))
 
 	// Billing retry (issue #242). Closes the customer-trust lie in
 	// pkg/mail/account.go:107,150 (the dunning email promises
