@@ -41,6 +41,27 @@ func TestCmdDeployments_Empty(t *testing.T) {
 	}
 }
 
+func TestCmdDeploymentsAllEmptyJSONEmitsNoSyntheticRecord(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	t.Cleanup(func() { osStdout = oldOut })
+	if code := cmdDeployments([]string{"--app", "demo", "--all"}); code != 0 {
+		t.Fatalf("deployments --all = %d", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("empty NDJSON stream = %q, want no records", stdout.String())
+	}
+}
+
 func TestCmdDeployments_NonEmpty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{

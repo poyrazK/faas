@@ -48,7 +48,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`login`](#login) | Authenticate this machine (--token for CI) |
 | [`logout`](#logout) | Remove the stored token |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
-| [`logs`](#logs) | Tail app or deployment logs (--follow) |
+| [`logs`](#logs) | Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the follow alias) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (gregale metrics &lt;slug&gt; [--range 5m] \| --account) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
@@ -80,6 +80,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`traffic`](#traffic) | Manage deployment traffic split (issue #556; Pro/Scale only) |
 | [`mirror`](#mirror) | Manage traffic mirroring (mirror list\|create\|info\|update\|rm\|summary --app &lt;slug&gt;; issue #72 / ADR-124; Pro/Scale only) |
 | [`cache`](#cache) | Manage response cache (cache purge &lt;slug&gt; [--path GLOB]) |
+| [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Print a shell completion script (bash\|zsh\|fish\|powershell) |
@@ -198,7 +199,7 @@ Alert preset catalog (preset list|enable --app &lt;slug&gt;)
 
 Audit-log query (audit-events list|get &lt;id&gt;)
 
-`gregale audit-events [<subcommand>] <id>`
+`gregale audit-events [<subcommand>] [<id>]`
 
 ### audit-events list
 
@@ -213,12 +214,11 @@ Show one audit event
 
 List your apps
 
-`gregale apps [<subcommand>] [--q] [--quiet]`
+`gregale apps [<subcommand>] [--quiet]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--q` | delete one app |  |
-| `--quiet` | delete one app |  |
+| `--quiet` | delete one app without prompting (short form: -q) |  |
 
 ### apps ls
 
@@ -249,7 +249,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
 
-`gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>] [--only-declared-routes] [--no-only-declared-routes]`
+`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -310,22 +310,6 @@ Show the card on file
 ### billing status
 
 Show subscription status
-
-### billing price-catalog
-
-Inspect the price catalog (admin)
-
-### billing reconcile
-
-Reconcile an invoice with the provider (admin)
-
-### billing reconcile-paddle-overage
-
-Reconcile Paddle overage charges (admin)
-
-### billing webhook-test
-
-Send a signed test webhook (operator)
 
 
 ## canary
@@ -1151,7 +1135,7 @@ Show one invocation
 
 Production debugger (ADR-127)
 
-`gregale debug [<subcommand>] <slug>`
+`gregale debug [<subcommand>] [flags] <slug> [<request-id>]`
 
 ### debug requests
 
@@ -1259,13 +1243,18 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 ## logs
 
-Tail app or deployment logs (--follow)
+Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the follow alias)
 
-`gregale logs [--follow]`
+`gregale logs <slug> [--follow] [--deployment <ID>] [--grep <SUBSTR>] [--since <RFC3339>] [--level <LEVEL>] [--explain]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--follow` | stream logs until interrupted |  |
+| `--deployment <ID>` | deployment id (default: latest) |  |
+| `--grep <SUBSTR>` | only show lines containing this substring |  |
+| `--since <RFC3339>` | only show lines at or after this RFC3339 timestamp |  |
+| `--level <LEVEL>` | only show lines at this level | one of `info` · `warn` · `error` |
+| `--explain` | summarize the last failure and common error patterns |  |
 
 
 ## metrics
@@ -1862,6 +1851,27 @@ Purge cached responses for an app
 | Flag | Meaning | |
 |---|---|---|
 | `--path <GLOB>` | optional normalized request path glob |  |
+
+
+## upload-cache
+
+Inspect or clean resumable source-upload recovery state
+
+`gregale upload-cache [<subcommand>]`
+
+### upload-cache list
+
+List resumable, stale, and orphaned cache entries
+
+### upload-cache cleanup
+
+Remove stale and excess state safely
+
+| Flag | Meaning | |
+|---|---|---|
+| `--older-than <D>` | maximum recovery-state age |  |
+| `--max-entries <N>` | maximum recovery records to retain |  |
+| `--dry-run` | show actions without deleting files |  |
 
 
 ## webhooks

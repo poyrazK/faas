@@ -5060,6 +5060,18 @@ func ErrPlanSourceBytes(limit int, observed int64) *Problem {
 // nudge). Code differs from CodePlanLimit* because the failure mode
 // is plan-gating, not "you used more than the plan allows".
 func ErrPlanFeatureGated(feature string, p Plan) *Problem {
+	if feature == "analytics" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include analytics",
+			fmt.Sprintf("the %s plan doesn't include request analytics; upgrade to Hobby or higher for historical observability.", p)).
+			WithDocs(docsBase + "/plans#analytics")
+	}
+	if feature == "sync_invoke" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include synchronous invocation",
+			fmt.Sprintf("the %s plan doesn't include synchronous invocation; use the app's public HTTPS endpoint or upgrade to Hobby or higher.", p)).
+			WithDocs(docsBase + "/plans#synchronous-invocation")
+	}
 	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 		"Plan doesn't include this feature",
 		fmt.Sprintf("the %s plan doesn't unlock %s; upgrade to Hobby or higher to use event-driven features.", p, feature)).

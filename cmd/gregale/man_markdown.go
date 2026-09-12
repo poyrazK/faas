@@ -50,10 +50,13 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 
 func mdSynopsis(c cliCommand) string {
 	parts := []string{"gregale", c.Name}
-	if len(c.Subcommands) > 0 {
+	if len(c.Subcommands) > 0 && !c.SubcommandsAfterPositionals {
 		parts = append(parts, "[<subcommand>]")
 	}
 	parts = append(parts, c.Positionals...)
+	if len(c.Subcommands) > 0 && c.SubcommandsAfterPositionals {
+		parts = append(parts, "[<subcommand>]")
+	}
 	for _, f := range c.Flags {
 		parts = append(parts, mdFlagSyntax(f))
 	}

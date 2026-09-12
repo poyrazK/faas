@@ -167,12 +167,7 @@ func renderManCommand(w io.Writer, c cliCommand) {
 	})
 	manSection(w, "SYNOPSIS", func(w io.Writer) {
 		_, _ = fmt.Fprintf(w, ".B gregale %s\n", c.Name)
-		for _, s := range c.Subcommands {
-			_, _ = fmt.Fprintf(w, ".RI [ %s ]\n", s.Name)
-		}
-		for _, p := range c.Positionals {
-			_, _ = fmt.Fprintf(w, ".RI %s\n", p)
-		}
+		writeManCommandArguments(w, c)
 		for _, f := range c.Flags {
 			// Required flags lose the surrounding brackets so the
 			// reader can distinguish them from optional flags at a
@@ -223,6 +218,21 @@ func renderManCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintln(w, ".UE")
 	})
 	manFooter(w)
+}
+
+func writeManCommandArguments(w io.Writer, c cliCommand) {
+	writeSubcommands := func() {
+		_, _ = fmt.Fprintf(w, ".RI [ %s ]\n", c.subcommandChoice())
+	}
+	if !c.SubcommandsAfterPositionals {
+		writeSubcommands()
+	}
+	for _, p := range c.Positionals {
+		_, _ = fmt.Fprintf(w, ".RI %s\n", p)
+	}
+	if c.SubcommandsAfterPositionals {
+		writeSubcommands()
+	}
 }
 
 // manSynopsisFlag emits one complete roff macro invocation. Embedding .IR

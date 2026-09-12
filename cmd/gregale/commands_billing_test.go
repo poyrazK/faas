@@ -201,12 +201,15 @@ func TestCmdBilling_Dispatch(t *testing.T) {
 		if !strings.Contains(stdout.String(), "portal") {
 			t.Errorf("help output missing 'portal' subcommand; got: %q", stdout.String())
 		}
-		// PR-P3 subcommands also appear in the help text so an
-		// operator running `gregale billing help` discovers them.
 		// Issue #242 adds retry / cancel / payment-method.
-		for _, sub := range []string{"status", "price-catalog", "reconcile", "retry", "cancel", "payment-method"} {
+		for _, sub := range []string{"status", "retry", "cancel", "payment-method"} {
 			if !strings.Contains(stdout.String(), sub) {
 				t.Errorf("help output missing %q subcommand; got: %q", sub, stdout.String())
+			}
+		}
+		for _, operatorOnly := range []string{"price-catalog", "reconcile", "reconcile-paddle-overage", "webhook-test"} {
+			if strings.Contains(stdout.String(), operatorOnly) {
+				t.Errorf("customer help advertises operator command %q; got: %q", operatorOnly, stdout.String())
 			}
 		}
 	})

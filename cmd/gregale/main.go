@@ -101,12 +101,12 @@ func run(args []string) (status int) {
 		fmt.Print(topLevelUsage(false))
 		return 0
 	}
-	// Resolve parent-command help before dispatch. These commands otherwise
-	// interpret --help as a subcommand or resource identifier and may perform
-	// authentication or a resource lookup. Nested help remains with the leaf
-	// dispatcher so it can render its more specific usage.
-	if len(args) == 2 && hasHelpFlag(args[1:]) {
-		if command, ok := lookupCliCommand(args[0]); ok {
+	// Resolve help before dispatch. Several legacy leaf parsers treat unknown
+	// arguments as labels or resource identifiers, so allowing --help to reach
+	// them can perform a lookup or even a mutation. The parent metadata is
+	// local, complete enough to discover the leaf, and side-effect free.
+	if len(args) >= 2 && hasHelpFlag(args[1:]) {
+		if command, ok := lookupCliCommand(args[0]); ok && (len(args) == 2 || commandRecognizesNestedHelp(command, args[1:])) {
 			printLocalCommandHelp(osStdout, command)
 			return 0
 		}
@@ -306,6 +306,8 @@ func run(args []string) (status int) {
 		return cmdMirror(args[1:])
 	case "cache":
 		return cmdCache(args[1:])
+	case dispatchUploadCache:
+		return cmdUploadCache(args[1:])
 	case "domains":
 		return cmdDomains(args[1:])
 	case "tenant-surfaces":
@@ -509,6 +511,20 @@ func run(args []string) (status int) {
 	}
 }
 
+func commandRecognizesNestedHelp(command cliCommand, args []string) bool {
+	if len(command.Subcommands) == 0 {
+		return true
+	}
+	for _, arg := range args {
+		for _, sub := range command.Subcommands {
+			if arg == sub.Name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	// Release-management commands use verb-first syntax with the slug on
 	// the leaf. The generic manifest renderer cannot express that shape
@@ -523,11 +539,14 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 		return
 	}
 	usage := "gregale " + command.Name
+	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals {
+		usage += " <" + command.subcommandChoice() + ">"
+	}
 	for _, positional := range command.Positionals {
 		usage += " " + positional
 	}
-	if len(command.Subcommands) > 0 {
-		usage += " <command>"
+	if len(command.Subcommands) > 0 && command.SubcommandsAfterPositionals {
+		usage += " <" + command.subcommandChoice() + ">"
 	}
 	if len(command.Flags) > 0 {
 		usage += " [flags]"

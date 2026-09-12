@@ -95,12 +95,6 @@ func printBillingUsage(w io.Writer) {
 		"                      y/N confirm (--yes for non-interactive shells)\n"+
 		"  status              read the active billing Provider's catalog snapshot\n"+
 		"                      (--watch N  re-poll every 5 s for N seconds; --json  emit JSON)\n"+
-		"  price-catalog       list | sync | reset the provider price + product catalog\n"+
-		"  reconcile <id>      run a single-account reconcile via the active billing Provider\n"+
-		"  reconcile-paddle-overage\n"+
-		"                      pre-flight the paddle_overage_dedupe schema for migration 00041\n"+
-		"  webhook-test        signed round-trip POST to a webhook URL (operator-only)\n"+
-		"                      (gregale billing webhook-test paddle --url … --secret …)\n"+
 		"\n"+
 		"Run 'gregale billing help' for this message.\n")
 }
