@@ -4525,7 +4525,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		case "update":
 			app := mutation.App
 			rootDir, workloadName := app.RootDir, app.WorkloadName
-			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, start_command = $4, workload_class = $5 where id = $1 and project_id = $6 and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, nullString(app.StartCommand), string(app.WorkloadClass), project.ID))
+			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5 where id = $1 and project_id = $6 and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID))
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)
 			}
@@ -4676,18 +4676,18 @@ func insertProjectAppInTx(ctx context.Context, tx pgx.Tx, app App) (App, error) 
 	}
 	row := tx.QueryRow(ctx, `insert into apps
 		(account_id, slug, type, runtime, ram_mb, max_concurrency, status, manifest,
-		 project_id, root_dir, workload_name, workload_class, start_command, min_instances,
-		 streaming_enabled, eviction_priority, require_authn, public_auth_mode,
-		 websocket_enabled, route_metrics_enabled, maintenance_mode, app_protocol,
-		 consumer_auth_mode, cpu_millicores)
+			 project_id, root_dir, workload_name, start_command, min_instances,
+			 streaming_enabled, eviction_priority, require_authn, public_auth_mode,
+			 websocket_enabled, route_metrics_enabled, maintenance_mode, app_protocol,
+			 consumer_auth_mode, cpu_millicores, workload_class)
 		values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 		returning `+appsSelectColumns,
 		app.AccountID, app.Slug, string(appType), nullString(app.Runtime), ramMB,
 		maxConcurrency, string(status), manifestBytes, nullString(app.ProjectID),
-		app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), app.MinInstances,
+		app.RootDir, app.WorkloadName, nullString(app.StartCommand), app.MinInstances,
 		app.StreamingEnabled, EvictionPriorityOrBestEffort(app.EvictionPriority), app.RequireAuthn,
 		publicAuth, app.WebSocketEnabled, app.RouteMetricsEnabled, app.MaintenanceMode,
-		protocol, string(consumerAuth), cpu)
+		protocol, string(consumerAuth), cpu, string(workloadClass))
 	return scanApp(row)
 }
 

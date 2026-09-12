@@ -432,9 +432,8 @@ func TestCmdDeployTarball_RejectsOnlyWithRepo(t *testing.T) {
 //  3. Returns 0 on a happy path
 //  4. Prints the "Created project" line on the text path
 //
-// The --yes flag is irrelevant here because the test harness is
-// non-TTY — stdin reads EOF and confirmPlan returns false. The
-// end-to-end "y" path is covered in test_ephemeral.sh (CI) and the
+// --yes is required here because the test harness is non-TTY. The
+// interactive "y" path is covered in test_ephemeral.sh (CI) and the
 // manual CLI smoke test; gating it on a real TTY here would couple
 // the test to a unix-only CI runner.
 func TestCmdDeployTarball_YesFlagSkeleton(t *testing.T) {
@@ -453,9 +452,7 @@ func TestCmdDeployTarball_YesFlagSkeleton(t *testing.T) {
 	stdout, restore := captureStdout(t)
 	defer restore()
 
-	// --yes is the documented no-confirm flag. The harness is non-TTY
-	// so the prompt is skipped regardless; we still pass --yes so the
-	// future contributor reading the test sees the flag in situ.
+	// --yes is the documented explicit approval for non-interactive use.
 	code := cmdDeployTarball([]string{
 		"--tarball", tarball,
 		"--project-slug", "fixture",
@@ -473,6 +470,81 @@ func TestCmdDeployTarball_YesFlagSkeleton(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Created project") {
 		t.Errorf("expected success line, got %q", stdout.String())
+	}
+}
+
+// TestCmdDeployTarball_NonTTYRequiresExplicitApproval pins the destructive
+// project-deploy boundary. A captured/piped invocation must render the full
+// plan (including removals) and stop before ApplyProjectPlan unless --yes is
+// present. JSON is non-interactive by contract, so it follows the same
+// fail-closed rule even when a terminal would otherwise be available.
+func TestCmdDeployTarball_NonTTYRequiresExplicitApproval(t *testing.T) {
+	plan := goldenPlan
+	plan.Removed = []string{"old-service"}
+
+	for _, tc := range []struct {
+		name string
+		json bool
+	}{
+		{name: "text", json: false},
+		{name: "json", json: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &decomposeSink{
+				scanStatus:  http.StatusOK,
+				scanBody:    plan,
+				applyStatus: http.StatusOK,
+				applyBody:   goldenApply,
+			}
+			srv := httptest.NewServer(sink)
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			// Force the exact non-TTY shape regardless of the test runner.
+			restoreTTY := withTTYForTest(false)
+			defer restoreTTY()
+			prevJSON := jsonOutput
+			jsonOutput = tc.json
+			defer func() { jsonOutput = prevJSON }()
+			prevStdin := osStdin
+			osStdin = strings.NewReader("")
+			defer func() { osStdin = prevStdin }()
+
+			stdout, restoreStdout := captureStdout(t)
+			defer restoreStdout()
+			stderr, restoreStderr := captureStderr(t)
+			defer restoreStderr()
+
+			code := cmdDeployTarball([]string{
+				"--tarball", writeTarball(t),
+				"--project-slug", "fixture",
+			})
+			if code != 1 {
+				t.Fatalf("non-TTY project deploy exit = %d, want 1", code)
+			}
+			if sink.scanCalls != 1 {
+				t.Fatalf("scan calls = %d, want 1", sink.scanCalls)
+			}
+			if sink.applyCalls != 0 {
+				t.Fatalf("non-TTY project deploy issued apply call: %d", sink.applyCalls)
+			}
+			if !strings.Contains(stdout.String(), "old-service") {
+				t.Errorf("plan output omitted removal: %q", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "requires --yes") {
+				t.Errorf("missing explicit-approval error: %q", stderr.String())
+			}
+			if tc.json {
+				var got api.PlanResponse
+				if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &got); err != nil {
+					t.Fatalf("JSON plan output is not valid JSON: %v\n%s", err, stdout.String())
+				}
+				if len(got.Removed) != 1 || got.Removed[0] != "old-service" {
+					t.Errorf("JSON plan removed = %#v, want [old-service]", got.Removed)
+				}
+			}
+		})
 	}
 }
 
