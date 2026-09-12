@@ -21,7 +21,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -459,9 +459,14 @@ func (d *VMMDriver) finishWithoutWarmSnapshot(ctx context.Context, h BuildHandle
 }
 
 func warmBuilderSnapshotKeys(buildID string) (string, string) {
-	sum := sha256.Sum256([]byte(buildID))
-	suffix := hex.EncodeToString(sum[:])
-	return "snap/builder/" + suffix + "/mem", "snap/builder/" + suffix + "/vmstate"
+	// Snapshot storage accepts UUID-scoped snap/<id>/warm/{mem,vmstate}
+	// keys. Derive a stable, builder-specific UUID from the build ID so
+	// retries share the cache while arbitrary caller-provided IDs remain
+	// valid storage keys. Version 8 marks the SHA-256 derivation as a custom
+	// UUID rather than claiming the SHA-1 semantics of UUID version 5.
+	snapshotID := uuid.NewHash(sha256.New(), uuid.Nil, []byte("gregale:builder:"+buildID), 8).String()
+	prefix := "snap/" + snapshotID + "/warm/"
+	return prefix + "mem", prefix + "vmstate"
 }
 
 func (d *VMMDriver) stopAndDestroy(ctx context.Context, instance string) error {

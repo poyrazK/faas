@@ -19,6 +19,21 @@ type recordingJobVMM struct {
 	calls int
 }
 
+// instanceBeforeClaimStore mirrors PostgreSQL's immediate
+// job_tasks_instance_id_fkey. MemStore intentionally does not enforce SQL
+// foreign keys, which previously let WakeJob claim a task before inserting
+// its instance and hid a production-only dispatch failure.
+type instanceBeforeClaimStore struct {
+	state.Store
+}
+
+func (s instanceBeforeClaimStore) JobTaskMarkClaimed(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, leaseExpiresAt time.Time, nodeID string) error {
+	if _, err := s.Store.InstanceByID(ctx, instanceID); err != nil {
+		return errors.New("job task claimed before referenced instance exists")
+	}
+	return s.Store.JobTaskMarkClaimed(ctx, runID, taskIndex, instanceID, leaseToken, leaseExpiresAt, nodeID)
+}
+
 type blockingJobExitWaiter struct {
 	started chan struct{}
 	release chan struct{}
@@ -86,7 +101,8 @@ func TestEngineWakeJobCallsVMMWithCompleteSpec(t *testing.T) {
 }
 
 func TestEngineWakeJobFleetSchedulerChoosesActiveComputeNode(t *testing.T) {
-	store := state.NewMemStore()
+	memStore := state.NewMemStore()
+	store := instanceBeforeClaimStore{Store: memStore}
 	ctx := context.Background()
 	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
 	defaultLocal, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)

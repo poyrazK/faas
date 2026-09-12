@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -94,6 +95,20 @@ func TestWarmBuilderSnapshotKeysAreStableAndScopedToBuild(t *testing.T) {
 	}
 	if otherMem, _ := warmBuilderSnapshotKeys("build-2"); otherMem == mem {
 		t.Fatalf("different builds share memory snapshot key %q", mem)
+	}
+	parts := strings.Split(mem, "/")
+	if len(parts) != 4 || parts[0] != "snap" || parts[2] != "warm" || parts[3] != "mem" {
+		t.Fatalf("memory snapshot key %q does not match snap/<uuid>/warm/mem", mem)
+	}
+	snapshotID, err := uuid.Parse(parts[1])
+	if err != nil {
+		t.Fatalf("memory snapshot key %q has invalid UUID: %v", mem, err)
+	}
+	if snapshotID.Version() != 8 {
+		t.Fatalf("snapshot UUID version = %d, want 8", snapshotID.Version())
+	}
+	if vmstate != strings.TrimSuffix(mem, "mem")+"vmstate" {
+		t.Fatalf("snapshot siblings do not share a prefix: %q/%q", mem, vmstate)
 	}
 }
 
