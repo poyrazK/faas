@@ -95,6 +95,8 @@ type Loop struct {
 	// inline. See dispatchPrime.
 	primeSlots           chan struct{}
 	primeSlotsOnce       sync.Once
+	primeInFlightMu      sync.Mutex
+	primeInFlight        map[string]struct{}
 	now                  func() time.Time
 	flowCounts           FlowCounter
 	ops                  *wire.OpsMetrics       // issue #171 shared registry; nil safe
@@ -918,6 +920,11 @@ func (l *Loop) Run(ctx context.Context) error {
 				return nil
 			}
 			l.handleNotification(ctx, n)
+			if n.OutboxID != 0 {
+				if err := db.AcknowledgeNotification(ctx, l.pool, n); err != nil && ctx.Err() == nil {
+					l.log.Warn("sched: acknowledge durable notification", "id", n.OutboxID, "channel", n.Channel, "err", err)
+				}
+			}
 		case <-reaperT.C:
 			l.runReaper(ctx)
 		case <-cronT.C:
@@ -1524,11 +1531,31 @@ func retryableSnapshotPrimeError(err error) bool {
 // consumed and gone), which is exactly the state this bug left
 // deployments in. Blocking the loop is the lesser harm, and it is
 // bounded by SnapshotTimeout + the cold-boot budget.
+// Durable replay can race a still-running LISTEN delivery, so a deployment
+// already in flight is coalesced before it consumes another prime slot.
 func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
+	primeKey := appID + "\x00" + deploymentID
+	l.primeInFlightMu.Lock()
+	if l.primeInFlight == nil {
+		l.primeInFlight = make(map[string]struct{})
+	}
+	if _, exists := l.primeInFlight[primeKey]; exists {
+		l.primeInFlightMu.Unlock()
+		l.log.Debug("sched: duplicate snapshot prime coalesced", "app", appID, "deployment", deploymentID)
+		return
+	}
+	l.primeInFlight[primeKey] = struct{}{}
+	l.primeInFlightMu.Unlock()
+
 	l.primeSlotsOnce.Do(func() {
 		l.primeSlots = make(chan struct{}, maxConcurrentPrimes)
 	})
 	run := func() {
+		defer func() {
+			l.primeInFlightMu.Lock()
+			delete(l.primeInFlight, primeKey)
+			l.primeInFlightMu.Unlock()
+		}()
 		var err error
 		attempts := 0
 		for attempt := 1; attempt <= maxSnapshotPrimeAttempts; attempt++ {
@@ -1579,6 +1606,13 @@ func (l *Loop) waitPrimes() {
 	for i := 0; i < maxConcurrentPrimes; i++ {
 		<-l.primeSlots
 	}
+}
+
+// HandleNotification exposes the existing notification dispatcher to the
+// durable replay worker. The normal LISTEN loop and replay path share the same
+// idempotent handler so a missed wakeup cannot create a second policy surface.
+func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) {
+	l.handleNotification(ctx, n)
 }
 
 // handleNotification decodes the JSON payload and applies the policy.
