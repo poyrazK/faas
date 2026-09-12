@@ -84,4 +84,13 @@ func TestPgCreateAppIfUnderQuota_PersistsWorkloadFields(t *testing.T) {
 	if defaulted.WorkloadClass != state.WorkloadClassHTTP {
 		t.Fatalf("CreateAppIfUnderQuota default WorkloadClass = %q, want %q", defaulted.WorkloadClass, state.WorkloadClassHTTP)
 	}
+
+	updatedClass := state.WorkloadClassWorker
+	updated, err := s.UpdateApp(ctx, got.ID, state.UpdateAppParams{WorkloadClass: &updatedClass})
+	if err != nil {
+		t.Fatalf("UpdateApp WorkloadClass: %v", err)
+	}
+	if updated.WorkloadClass != updatedClass {
+		t.Fatalf("UpdateApp WorkloadClass = %q, want %q", updated.WorkloadClass, updatedClass)
+	}
 }
