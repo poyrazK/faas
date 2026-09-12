@@ -47,7 +47,6 @@ package main
 //   - gateway_request_duration_seconds_bucket{app,class="2xx"}
 //   - gateway_requests_total{app}
 //   - gateway_cold_boot_total{app}
-//   - gateway_wake_queue_wait_seconds_bucket (unlabeled, fleet)
 //   - gateway_rate_limited_total{app, plan}
 //
 // And no new sqlc queries — the usage_minutes rollup is a
@@ -193,16 +192,8 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 		return degradedAppSLO(err, s.log, "cold_boot", app.ID, window)
 	}
 
-	// 7. wake_queue_p95 — fleet-wide (unlabeled histogram).
-	wakeQ := appmetrics.HistogramQuantileMSQuery(
-		0.95,
-		fmt.Sprintf(`sum by (le)(rate(gateway_wake_queue_wait_seconds_bucket[%s]))`, window),
-		fmt.Sprintf(`sum(rate(gateway_wake_queue_wait_seconds_count[%s]))`, window))
-	if v, err := s.promqlClient.QueryScalar(ctx, wakeQ); err == nil {
-		resp.WakeQueueP95MS = appmetrics.SafeFloat(v)
-	} else {
-		return degradedAppSLO(err, s.log, "wake_queue_p95", app.ID, window)
-	}
+	// wake_queue_p95 remains zero because its source histogram has no app
+	// label. Returning the fleet value here would leak other tenants' load.
 
 	// 8. throttled_total — vector query (gateway_rate_limited_total
 	// is labelled {app, plan}; QueryMap collapses two label
@@ -234,10 +225,9 @@ func (s *server) fetchAppSLO(ctx context.Context, app state.App, acct state.Acco
 	return resp, appmetrics.SourcePrometheus
 }
 
-// fetchAccountSLO is the account-scoped rollup. PromQL is
-// fleet-wide (no app label filter); the Postgres rollup is
-// "sum over all apps for this account" via
-// UsageSLOForAccount.
+// fetchAccountSLO is the account-scoped rollup. The account is resolved to
+// its app IDs before any Prometheus query, then every selector uses that
+// closed set. The Postgres rollup is scoped by account ID as before.
 func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window string) (api.AccountSLOResponse, string) {
 	resp := api.AccountSLOResponse{}
 	if s.promqlClient == nil {
@@ -253,16 +243,35 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 		}
 		return resp, appmetrics.SourceDegradedPrefix + "prometheus not configured"
 	}
+	if s.store == nil {
+		return resp, appmetrics.SourceDegradedPrefix + "account app scope unavailable"
+	}
+	apps, err := s.store.ListApps(ctx, acct.ID)
+	if err != nil {
+		return resp, appmetrics.SourceDegradedPrefix + "account app scope unavailable"
+	}
+	appIDs := make([]string, 0, len(apps))
+	for _, app := range apps {
+		appIDs = append(appIDs, app.ID)
+	}
+	if len(appIDs) == 0 {
+		start, end := windowToRange(window)
+		if instH, gbH, usageErr := s.store.UsageSLOForAccount(ctx, acct.ID, start, end); usageErr == nil {
+			resp.InstanceHours, resp.GBHours = instH, gbH
+		}
+		return resp, appmetrics.SourcePrometheus
+	}
+	appMatcher := appmetrics.AppIDMatcher(appIDs)
 
-	// 1. requests_total (fleet-wide).
-	reqCountQ := fmt.Sprintf(`sum(increase(gateway_requests_total[%s]))`, window)
+	// 1. requests_total.
+	reqCountQ := fmt.Sprintf(`sum(increase(gateway_requests_total{%s}[%s]))`, appMatcher, window)
 	if v, err := s.promqlClient.QueryScalar(ctx, reqCountQ); err == nil {
 		resp.RequestsTotal = int64(appmetrics.SafeRoundNonNeg(v))
 	} else {
 		return degradedAccountSLO(err, s.log, "requests_total", acct.ID, window)
 	}
 
-	// 2-4. latency percentiles (fleet-wide, 2xx class).
+	// 2-4. latency percentiles (2xx class).
 	for _, p := range []struct {
 		q     float64
 		dest  *float64
@@ -274,8 +283,8 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 	} {
 		q := appmetrics.HistogramQuantileMSQuery(
 			p.q,
-			fmt.Sprintf(`sum by (le)(rate(gateway_request_duration_seconds_bucket{class="2xx"}[%s]))`, window),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{class="2xx"}[%s]))`, window))
+			fmt.Sprintf(`sum by (le)(rate(gateway_request_duration_seconds_bucket{%s,class="2xx"}[%s]))`, appMatcher, window),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class="2xx"}[%s]))`, appMatcher, window))
 		v, err := s.promqlClient.QueryScalar(ctx, q)
 		if err != nil {
 			return degradedAccountSLO(err, s.log, p.label, acct.ID, window)
@@ -283,41 +292,33 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 		*p.dest = appmetrics.SafeFloat(v)
 	}
 
-	// 5. error_rate_pct (fleet-wide).
+	// 5. error_rate_pct.
 	errQ := appmetrics.PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_requests_total{code=~"[45].."}[%s]))`, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total[%s]))`, window))
+		fmt.Sprintf(`sum(rate(gateway_requests_total{%s,code=~"[45].."}[%s]))`, appMatcher, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total{%s}[%s]))`, appMatcher, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = appmetrics.SafePercent(v)
 	} else {
 		return degradedAccountSLO(err, s.log, "error_rate", acct.ID, window)
 	}
 
-	// 6. cold_boot_rate_pct (fleet-wide).
+	// 6. cold_boot_rate_pct.
 	coldQ := appmetrics.PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_cold_boot_total[%s]))`, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total[%s]))`, window))
+		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{%s}[%s]))`, appMatcher, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total{%s}[%s]))`, appMatcher, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, coldQ); err == nil {
 		resp.ColdBootRatePct = appmetrics.SafePercent(v)
 	} else {
 		return degradedAccountSLO(err, s.log, "cold_boot", acct.ID, window)
 	}
 
-	// 7. wake_queue_p95 (fleet-wide, unlabeled).
-	wakeQ := appmetrics.HistogramQuantileMSQuery(
-		0.95,
-		fmt.Sprintf(`sum by (le)(rate(gateway_wake_queue_wait_seconds_bucket[%s]))`, window),
-		fmt.Sprintf(`sum(rate(gateway_wake_queue_wait_seconds_count[%s]))`, window))
-	if v, err := s.promqlClient.QueryScalar(ctx, wakeQ); err == nil {
-		resp.WakeQueueP95MS = appmetrics.SafeFloat(v)
-	} else {
-		return degradedAccountSLO(err, s.log, "wake_queue_p95", acct.ID, window)
-	}
+	// wake_queue_p95 remains zero because its source histogram has no app or
+	// account label and therefore cannot be exposed as a tenant projection.
 
-	// 8. throttled_total (fleet-wide). An absent rate-limit counter is a
+	// 8. throttled_total. An absent rate-limit counter is a
 	// healthy zero, not a missing SLO panel. Keep the fallback in PromQL so
 	// QueryScalar receives a finite sample when no throttling series exists.
-	thrQ := fmt.Sprintf(`sum(increase(gateway_rate_limited_total[%s])) or vector(0)`, window)
+	thrQ := fmt.Sprintf(`sum(increase(gateway_rate_limited_total{%s}[%s])) or vector(0)`, appMatcher, window)
 	if v, err := s.promqlClient.QueryScalar(ctx, thrQ); err == nil {
 		resp.ThrottledTotal = int64(appmetrics.SafeRoundNonNeg(v))
 	} else {

@@ -213,10 +213,9 @@ func TestFetchRange_DegradedReturnsEmptySeries(t *testing.T) {
 	}
 }
 
-// TestFetchRangeAccount_NoAppLabel pins the account-wide variant:
-// the PromQL strings do NOT carry an `app=...` selector. The
-// helper is otherwise structurally identical to FetchRange.
-func TestFetchRangeAccount_NoAppLabel(t *testing.T) {
+// TestFetchRangeAccount_UsesClosedAppSet pins tenant isolation: every query
+// includes the account's apps and excludes unrelated IDs.
+func TestFetchRangeAccount_UsesClosedAppSet(t *testing.T) {
 	queries := []string{}
 	fetcher := &stubRangeFetcher{fn: func(query, _, _, _ string) ([]struct {
 		Metric map[string]string
@@ -228,13 +227,10 @@ func TestFetchRangeAccount_NoAppLabel(t *testing.T) {
 			Values []promql.QueryRangeSample
 		}{{Values: makeSeries([]float64{1, 2})}}, nil
 	}}
-	_ = appmetrics.FetchRangeAccount(context.Background(), fetcher, slog.Default(), "24h")
+	_ = appmetrics.FetchRangeAccount(context.Background(), fetcher, slog.Default(), []string{"app-b", "app-a"}, "24h")
 	for _, q := range queries {
-		// The per-app variant has `app=...` selectors; the
-		// account-wide variant must not — strings.Contains
-		// here is the negative test for the per-app path.
-		if strings.Contains(q, "app=") {
-			t.Errorf("account-wide query has app label filter: %s", q)
+		if !strings.Contains(q, `app=~"^(?:app-a|app-b)$"`) {
+			t.Errorf("account query lacks closed app selector: %s", q)
 		}
 	}
 }

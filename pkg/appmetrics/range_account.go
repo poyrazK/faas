@@ -1,16 +1,9 @@
 // range_account.go — Issue #696 / ADR-082 dashboard follow-up PR:
-// the account-wide (fleet-wide) sparkline series for the per-account
+// the account-wide sparkline series for the per-account
 // dashboard SLO card.
 //
-// `FetchRangeAccount` is the per-account twin of FetchRange
-// (range.go). The PromQL queries drop the `app=…` label filter so
-// the time series spans every app in the requester's account — but
-// the PromQL rollup is in fact FLEET-wide (Prometheus has no
-// per-account label on these metrics; the per-account view is
-// brokered by the dashboard's gate, not the metric layer). The
-// per-account view on the same physical series is the same shape
-// the existing /v1/apps/metrics endpoint and the account-scoped
-// Metrics card use — issue #393 / ADR-042.
+// (range.go). Account identity is resolved to app IDs by the API layer and
+// every PromQL selector is constrained to that closed set.
 //
 // The fetch path mirrors range.go so the only difference is the
 // PromQL strings and the absence of the appID label-injection
@@ -21,9 +14,28 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
 )
 
-// FetchRangeAccount runs the fleet-wide PromQL pipeline for the
+// AppIDMatcher returns a Prometheus label matcher for a closed set of app
+// IDs. Values are regex-escaped and sorted so selectors are injection-safe
+// and stable across store implementations.
+func AppIDMatcher(appIDs []string) string {
+	parts := make([]string, 0, len(appIDs))
+	for _, id := range appIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			parts = append(parts, regexp.QuoteMeta(id))
+		}
+	}
+	sort.Strings(parts)
+	pattern := "^(?:" + strings.Join(parts, "|") + ")$"
+	return "app=~" + strconv.Quote(pattern)
+}
+
+// FetchRangeAccount runs the account-scoped PromQL pipeline for the
 // account-wide dashboard sparkline. Returns the projected series
 // on success; on error (or nil fetcher) returns an empty
 // RangeSeries — the caller renders the empty-state badge and the
@@ -36,7 +48,7 @@ import (
 //
 // The bucket count is the same FetchRange uses (60 for 1h, 96
 // for 24h at 15m step, 168 for 7d) — see range.go::stepForWindow.
-func FetchRangeAccount(ctx context.Context, fetcher RangeFetcher, log *slog.Logger, window string) RangeSeries {
+func FetchRangeAccount(ctx context.Context, fetcher RangeFetcher, log *slog.Logger, appIDs []string, window string) RangeSeries {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -46,11 +58,15 @@ func FetchRangeAccount(ctx context.Context, fetcher RangeFetcher, log *slog.Logg
 	}
 	step := stepForWindow(window)
 	out.Step = step
+	if len(appIDs) == 0 {
+		return out
+	}
+	appMatcher := AppIDMatcher(appIDs)
 	start, end := rangeStartEnd(window)
 	startStr := formatEpoch(start)
 	endStr := formatEpoch(end)
 
-	// Latency percentiles (fleet-wide, 2xx class).
+	// Latency percentiles (account apps, 2xx class).
 	for _, p := range []struct {
 		q     float64
 		dest  *[]SparklinePoint
@@ -61,8 +77,8 @@ func FetchRangeAccount(ctx context.Context, fetcher RangeFetcher, log *slog.Logg
 		{q: 0.99, dest: &out.Latency.P99, label: "p99"},
 	} {
 		q := fmt.Sprintf(
-			`histogram_quantile(%g, sum by (le)(rate(gateway_request_duration_seconds_bucket{class="2xx"}[%s]))) * 1000`,
-			p.q, window)
+			`histogram_quantile(%g, sum by (le)(rate(gateway_request_duration_seconds_bucket{%s,class="2xx"}[%s]))) * 1000`,
+			p.q, appMatcher, window)
 		rows, err := fetcher.QueryRange(ctx, q, startStr, endStr, step)
 		if err != nil || len(rows) == 0 {
 			// Drop the err value from the log line. CodeQL's
@@ -81,10 +97,10 @@ func FetchRangeAccount(ctx context.Context, fetcher RangeFetcher, log *slog.Logg
 		*p.dest = seriesToPoints(rows[0].Values)
 	}
 
-	// Error rate (fleet-wide).
+	// Error rate (account apps).
 	errQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_requests_total{code=~"[45].."}[%s]))`, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total[%s]))`, window))
+		fmt.Sprintf(`sum(rate(gateway_requests_total{%s,code=~"[45].."}[%s]))`, appMatcher, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total{%s}[%s]))`, appMatcher, window))
 	if rows, err := fetcher.QueryRange(ctx, errQ, startStr, endStr, step); err == nil && len(rows) > 0 {
 		out.ErrorRate = seriesToPoints(rows[0].Values)
 	} else {
@@ -97,10 +113,10 @@ func FetchRangeAccount(ctx context.Context, fetcher RangeFetcher, log *slog.Logg
 		log.Warn("appmetrics: account range error_rate query failed")
 	}
 
-	// Cold-boot rate (fleet-wide).
+	// Cold-boot rate (account apps).
 	coldQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_cold_boot_total[%s]))`, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total[%s]))`, window))
+		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{%s}[%s]))`, appMatcher, window),
+		fmt.Sprintf(`sum(rate(gateway_requests_total{%s}[%s]))`, appMatcher, window))
 	if rows, err := fetcher.QueryRange(ctx, coldQ, startStr, endStr, step); err == nil && len(rows) > 0 {
 		out.ColdBootRate = seriesToPoints(rows[0].Values)
 	} else {

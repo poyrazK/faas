@@ -25350,8 +25350,10 @@ components:
         (1h/24h/7d) summary of the customer-facing SLO signals,
         not a 5m slice for the dashboard. The fields overlap only
         on latency percentiles, error rate, and cold-boot rate — the
-        remaining fields (`wake_queue_p95_ms`, `throttled_total`,
-        `instance_hours`, `gb_hours`) are net-new per the issue.
+        remaining fields (`throttled_total`, `instance_hours`,
+        `gb_hours`) are net-new per the issue. `wake_queue_p95_ms`
+        remains in the wire shape for compatibility and is zero until
+        the underlying histogram has an app label.
 
         On Prometheus failure the endpoint returns 200 with
         zeroed fields and `source: "degraded: <reason>"`. When
@@ -25378,7 +25380,7 @@ components:
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 over the window (from `usage_minutes`)." }
         wake_queue_p95_ms:
           type: number
-          description: "FLEET wake-queue p95 (`gateway_wake_queue_wait_seconds` is unlabeled)."
+          description: "Reserved compatibility field. Zero until the wake-queue histogram can be scoped to this app."
         requests_total: { type: integer, format: int64 }
         throttled_total: { type: integer, format: int64, description: "Per-app rate-limit count over the window." }
       x-since: "2026-08"
@@ -25526,7 +25528,7 @@ components:
         cold_boot_rate_pct: { type: number }
         instance_hours: { type: number, description: "Sum of instance-minutes / 60 across all apps for the account." }
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 across all apps for the account." }
-        wake_queue_p95_ms: { type: number }
+        wake_queue_p95_ms: { type: number, description: "Reserved compatibility field. Zero until the wake-queue histogram can be scoped to the account's apps." }
         requests_total: { type: integer, format: int64 }
         throttled_total: { type: integer, format: int64 }
       x-since: "2026-08"

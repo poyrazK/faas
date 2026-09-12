@@ -4712,10 +4712,9 @@ type AppSLOResponse struct {
 	ColdBootRatePct float64     `json:"cold_boot_rate_pct"`
 	InstanceHours   float64     `json:"instance_hours"`
 	GBHours         float64     `json:"gb_hours"`
-	// WakeQueueP95MS is the FLEET wake-queue p95
-	// (gateway_wake_queue_wait_seconds is unlabeled — same as
-	// gateway_wake_latency_seconds on the /metrics surfaces).
-	// Labelled as such in the UI.
+	// WakeQueueP95MS remains zero until the wake-queue histogram carries an
+	// app label. The wire field is retained for compatibility; an unlabeled
+	// fleet value cannot be exposed as an app projection.
 	WakeQueueP95MS float64 `json:"wake_queue_p95_ms"`
 	RequestsTotal  int64   `json:"requests_total"`
 	ThrottledTotal int64   `json:"throttled_total"`
@@ -4900,9 +4899,11 @@ type AccountSLOResponse struct {
 	ColdBootRatePct float64     `json:"cold_boot_rate_pct"`
 	InstanceHours   float64     `json:"instance_hours"`
 	GBHours         float64     `json:"gb_hours"`
-	WakeQueueP95MS  float64     `json:"wake_queue_p95_ms"`
-	RequestsTotal   int64       `json:"requests_total"`
-	ThrottledTotal  int64       `json:"throttled_total"`
+	// WakeQueueP95MS is retained for wire compatibility and remains zero
+	// until wake-queue observations can be scoped to the account's apps.
+	WakeQueueP95MS float64 `json:"wake_queue_p95_ms"`
+	RequestsTotal  int64   `json:"requests_total"`
+	ThrottledTotal int64   `json:"throttled_total"`
 }
 
 // ProjectScanRequest is the multipart body for POST /v1/projects/scan.
