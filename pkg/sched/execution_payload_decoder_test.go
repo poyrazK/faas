@@ -1,3 +1,6 @@
+// adr: 171 — authenticated execution payloads stay bound to the scheduler's
+// selected host identity before one-shot dispatch.
+
 package sched
 
 import (

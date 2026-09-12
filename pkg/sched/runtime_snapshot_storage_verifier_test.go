@@ -1,3 +1,5 @@
+// adr: 171 — restore only accepts a verified memory/vmstate snapshot pair.
+
 package sched
 
 import (
