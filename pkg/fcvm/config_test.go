@@ -47,6 +47,9 @@ func TestColdBootConfigNetworklessOmitsInterfaces(t *testing.T) {
 	if cfg.VsockDevice == nil {
 		t.Fatal("networkless execution config must retain vsock")
 	}
+	if cfg.EphemeralWritable {
+		t.Fatal("networkless execution config must retain a private writable layer")
+	}
 	if strings.Contains(cfg.BootSource.BootArgs, " ip=") || strings.Contains(cfg.BootSource.BootArgs, "eth0") {
 		t.Fatalf("networkless boot args contain tenant networking: %q", cfg.BootSource.BootArgs)
 	}
