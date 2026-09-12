@@ -132,18 +132,17 @@ var goldenApply = api.ApplyResponse{
 	},
 }
 
-// writeTarball writes a fake .tar.gz that the CLI's openCustomerFile
-// path accepts. The contents do not matter — the test server only
-// cares that the file is openable; the Phase 3 plan integrates with
-// the real extractor on the server side.
+// writeTarball writes a small valid .tar.gz. The project-deploy tests use a
+// sink that does not inspect source contents, but the CLI now validates and
+// extracts explicit archives before handing them to the API.
 func writeTarball(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "fixture.tar.gz")
-	if err := os.WriteFile(path, []byte("fake-tar-bytes"), 0o600); err != nil {
-		t.Fatalf("write tarball: %v", err)
+	path := writeDeploySourceArchive(t, map[string]string{"fixture/README.md": "fixture"})
+	fixturePath := filepath.Join(filepath.Dir(path), "fixture.tar.gz")
+	if err := os.Rename(path, fixturePath); err != nil {
+		t.Fatalf("rename tarball fixture: %v", err)
 	}
-	return path
+	return fixturePath
 }
 
 // TestCmdScan_JSONStable is the §4 acceptance gate. Two scans of
@@ -914,15 +913,15 @@ func TestSplitCSVEdgeCases(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestCmdDeployTarball_DoctorStrict_FailsFast pins the failure path:
-// a cwd with a top-level data/ directory trips the stateless-only
-// check → exit 1 + doctor report on stderr + zero HTTP calls.
+// an archive with a top-level data/ directory trips the stateless-only
+// check → exit 1 + doctor report on stderr + zero HTTP calls, even though
+// the caller's cwd is clean.
 // The test swaps osStderr for a buffer so we can grep the rendered
 // prose; the sink's HTTP counter is the "no upload" assertion.
 func TestCmdDeployTarball_DoctorStrict_FailsFast(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "data"), 0o755); err != nil {
-		t.Fatalf("mkdir data: %v", err)
-	}
+	// Keep the caller directory clean: the error must come from the archive,
+	// not from an accidental cwd scan.
 	prev := jsonOutput
 	jsonOutput = false
 	defer func() { jsonOutput = prev }()
@@ -943,13 +942,15 @@ func TestCmdDeployTarball_DoctorStrict_FailsFast(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	// t.Chdir into the fixture so os.Getwd() in the wire-in path
-	// picks up the data/ subdir. Chdir auto-restores on test exit.
+	// Chdir keeps the caller source unrelated to the archive. Chdir
+	// auto-restores on test exit.
 	t.Chdir(dir)
 
 	if code := cmdDeployTarball([]string{
 		"--doctor-strict",
-		"--tarball", writeTarball(t), // never reached, but the flag parser still validates
+		"--tarball", writeDeploySourceArchive(t, map[string]string{
+			"fixture/data/marker.txt": "archive-only",
+		}),
 		"--project-slug", "fixture",
 		"--only", "api,worker,nightly",
 		"--yes",
@@ -1088,9 +1089,6 @@ func TestCmdDeployTarball_DoctorStrict_WarnsOnlyContinues(t *testing.T) {
 // on, so a regression to "human prose" would break parse-ability.
 func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "data"), 0o755); err != nil {
-		t.Fatalf("mkdir data: %v", err)
-	}
 	prev := jsonOutput
 	jsonOutput = true
 	defer func() { jsonOutput = prev }()
@@ -1115,7 +1113,9 @@ func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 
 	if code := cmdDeployTarball([]string{
 		"--doctor-strict",
-		"--tarball", writeTarball(t),
+		"--tarball", writeDeploySourceArchive(t, map[string]string{
+			"fixture/data/marker.txt": "archive-only",
+		}),
 		"--project-slug", "fixture",
 		"--only", "api,worker,nightly",
 		"--yes",
