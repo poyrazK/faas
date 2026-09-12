@@ -14,7 +14,11 @@ import (
 )
 
 type Config struct {
-	ListenAddr   string                       `toml:"listen_addr"`
+	ListenAddr string `toml:"listen_addr"`
+	// MetricsAddr is the private bind address for the operator-only
+	// Prometheus endpoint. Keep it loopback unless a firewall explicitly
+	// restricts the scrape network.
+	MetricsAddr  string                       `toml:"metrics_addr"`
 	DBURL        string                       `toml:"db_url"`
 	MaxBodyBytes int64                        `toml:"max_body_bytes"`
 	ReadTimeout  time.Duration                `toml:"read_timeout"`
@@ -40,6 +44,7 @@ type IntegrationConfig struct {
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
 		ListenAddr:   "127.0.0.1:8095",
+		MetricsAddr:  "127.0.0.1:9108",
 		MaxBodyBytes: 25 << 20,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 2 * time.Minute,
@@ -61,6 +66,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if c.ListenAddr == "" {
 		c.ListenAddr = "127.0.0.1:8095"
+	}
+	if c.MetricsAddr == "" {
+		c.MetricsAddr = "127.0.0.1:9108"
 	}
 	if c.MaxBodyBytes == 0 {
 		c.MaxBodyBytes = 25 << 20

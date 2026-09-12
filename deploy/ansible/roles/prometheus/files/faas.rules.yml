@@ -977,7 +977,7 @@ groups:
       # a dead alertmanager means alerts evaluate but never page anyone.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasDaemonDown
-        expr: up{job=~"apid|gatewayd|gatewayd-internal|schedd|vmmd|imaged|builderd|meterd|githubd|prometheus|alertmanager"} == 0
+        expr: up{job=~"apid|gatewayd|gatewayd-internal|schedd|vmmd|imaged|builderd|meterd|outboundd|githubd|prometheus|alertmanager"} == 0
         for: 2m
         labels:
           severity: page
@@ -1004,6 +1004,7 @@ groups:
           or imaged_daemon_ready{daemon="imaged"} == 0
           or builderd_daemon_ready{daemon="builderd"} == 0
           or meterd_daemon_ready{daemon="meterd"} == 0
+          or outboundd_daemon_ready{daemon="outboundd"} == 0
         for: 5m
         labels:
           severity: page
@@ -1013,6 +1014,35 @@ groups:
           summary: "Daemon {{ $labels.daemon }} is not ready"
           description: "{{ $labels.daemon }} has exposed daemon_ready=0 for 5m. Check its /readyz response and dependency-specific reason before routing traffic or restarting it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonNotReady.md"
+
+      # Outbound admission is deliberately reject-first in v1. A sustained
+      # rejection rate means an attached application is exhausting the
+      # provider budget or the integration's in-flight ceiling; it is a
+      # warning rather than a page because this is an explicit back-pressure
+      # signal, not a gateway outage.
+      - alert: FaasOutboundBudgetSaturated
+        expr: sum by (integration_id) (rate(outbound_rejections_total{reason=~"rate_limit|concurrency_limit"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: outboundd
+          family: outbound_admission
+        annotations:
+          summary: "Outbound integration {{ $labels.integration_id }} is rejecting requests"
+          description: "The shared outbound budget for integration {{ $labels.integration_id }} has rejected requests continuously for 10m. Check rate/concurrency settings, provider quotas, and the outbound gateway saturation panels before increasing limits."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/outbound-integrations.md"
+
+      - alert: FaasOutboundAdmissionUnavailable
+        expr: sum by (integration_id) (rate(outbound_admissions_total{outcome="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+          component: outboundd
+          family: outbound_admission
+        annotations:
+          summary: "Outbound admission backend is unavailable"
+          description: "outboundd has failed closed while admitting integration {{ $labels.integration_id }} for 5m. Check Postgres connectivity, pool saturation, and the outbound_admission_state/leases tables."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/outbound-integrations.md"
 
       # A rollout should converge to one daemon release. This catches a
       # partial deploy where systemd is healthy and readiness is green, but

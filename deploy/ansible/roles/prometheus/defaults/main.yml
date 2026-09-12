@@ -88,6 +88,7 @@ prom_alertmanager_url: "http://127.0.0.1:9094"
 #   here match the production deployment on the EX44:
 #   - meterd 9106 — deploy/digitalocean/config/meterd.toml pins it.
 #   - schedd 9103 — deploy/digitalocean/config/schedd.toml pins it.
+#   - outboundd 9108 — cmd/outboundd/config.go's private loopback default.
 #   - builderd 9105 — the daemon's canonical loopback default and the
 #     value documented in builderd.toml.example. The single-box target
 #     is omitted automatically on a split control-plane host.
@@ -119,6 +120,9 @@ prom_targets:
   - job: meterd
     host: 127.0.0.1
     port: 9106
+  - job: outboundd
+    host: 127.0.0.1
+    port: 9108
   - job: s3-gatewayd
     host: 127.0.0.1
     port: 9096
