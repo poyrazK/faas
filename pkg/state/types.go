@@ -1398,23 +1398,27 @@ type ServiceReplicas struct {
 // as jsonb in Postgres; lifecycle fields are overlaid onto each deployment's
 // image manifest before it is written into the snapshot for guest-init.
 type AppManifest struct {
-	Entrypoint       []string          `json:"entrypoint,omitempty"`
-	Env              map[string]string `json:"env,omitempty"`
-	WorkingDir       string            `json:"working_dir,omitempty"`
-	Port             int               `json:"port,omitempty"`
-	Healthz          string            `json:"healthz,omitempty"`
-	User             string            `json:"user,omitempty"`
-	ExecutionMode    string            `json:"execution_mode,omitempty"`
-	RestartPolicy    string            `json:"restart_policy,omitempty"`
-	StartupDeadlineS int               `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int               `json:"max_retries,omitempty"`
-	ServiceReplicas  *ServiceReplicas  `json:"service_replicas,omitempty"`
-	Favicon          []byte            `json:"favicon,omitempty"`
-	RobotsTxt        string            `json:"robots_txt,omitempty"`
-	HeadWakes        bool              `json:"head_wakes,omitempty"`
-	CrawlerPolicy    string            `json:"crawler_policy,omitempty"`
-	HealthPath       string            `json:"health_path,omitempty"`
-	HealthPathWakes  bool              `json:"health_path_wakes,omitempty"`
+	Entrypoint []string          `json:"entrypoint,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+	WorkingDir string            `json:"working_dir,omitempty"`
+	Port       int               `json:"port,omitempty"`
+	// Ports is the app-owned listener declaration. It is merged into every
+	// deployment manifest so the gateway can expose named TCP listeners while
+	// UDP listeners remain available to workloads through guest discovery.
+	Ports            []api.WorkloadPort `json:"ports"`
+	Healthz          string             `json:"healthz,omitempty"`
+	User             string             `json:"user,omitempty"`
+	ExecutionMode    string             `json:"execution_mode,omitempty"`
+	RestartPolicy    string             `json:"restart_policy,omitempty"`
+	StartupDeadlineS int                `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int                `json:"max_retries,omitempty"`
+	ServiceReplicas  *ServiceReplicas   `json:"service_replicas,omitempty"`
+	Favicon          []byte             `json:"favicon,omitempty"`
+	RobotsTxt        string             `json:"robots_txt,omitempty"`
+	HeadWakes        bool               `json:"head_wakes,omitempty"`
+	CrawlerPolicy    string             `json:"crawler_policy,omitempty"`
+	HealthPath       string             `json:"health_path,omitempty"`
+	HealthPathWakes  bool               `json:"health_path_wakes,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1433,7 +1437,7 @@ func (m AppManifest) EffectiveCrawlerPolicy() string {
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.WorkingDir == "" &&
-		m.Port == 0 && m.Healthz == "" && m.User == "" &&
+		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&

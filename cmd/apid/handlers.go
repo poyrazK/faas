@@ -658,6 +658,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 			Env:              a.Manifest.Env,
 			WorkingDir:       a.Manifest.WorkingDir,
 			Port:             a.Manifest.Port,
+			Ports:            append([]api.WorkloadPort(nil), a.Manifest.Ports...),
 			Healthz:          a.Manifest.Healthz,
 			User:             a.Manifest.User,
 			ExecutionMode:    a.Manifest.ExecutionMode,

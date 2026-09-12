@@ -2,10 +2,11 @@
 // ADR-071 / PR-C §5).
 //
 // The public listener's hostname carries both the app id
-// AND the (optional) sidecar name. The convention:
+// AND the optional workload selector. The conventions are:
 //
 //	<app>.on-faas.com              → main workload (port 8080)
 //	<app>--<sidecar>.on-faas.com   → sidecar <sidecar>'s port
+//	<app>--port-<name>.on-faas.com  → app listener <name>'s port
 //
 // `--` is the separator: two ASCII hyphens. The hostname
 // segment right of the separator is the sidecar's stable
@@ -31,7 +32,25 @@
 
 package gateway
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+// PublicPortsFromWorkloadPorts converts the shared manifest shape into the
+// gateway's narrow routing projection without retaining caller-owned slices.
+func PublicPortsFromWorkloadPorts(ports []api.WorkloadPort) []AppPort {
+	if ports == nil {
+		return nil
+	}
+	out := make([]AppPort, len(ports))
+	for i, port := range ports {
+		out[i] = AppPort{Name: port.Name, Port: port.Port, Protocol: string(port.EffectiveProtocol())}
+	}
+	return out
+}
 
 // SidecarHostSeparator is the canonical split between the
 // app id and the sidecar selector (issue #463 / ADR-069 /
@@ -39,6 +58,11 @@ import "strings"
 // listener, the test suite, the dashboard, and the
 // provisioner can refer to the same string without drift.
 const SidecarHostSeparator = "--"
+
+// PublicPortSelectorPrefix reserves a separate hostname namespace for app
+// listeners so a sidecar named "metrics" and a listener named "metrics" can
+// coexist without changing the existing sidecar routing contract.
+const PublicPortSelectorPrefix = "port-"
 
 // SplitHostSelector parses a routing-key hostname into
 // (appHost, sidecarName). The sidecarName is empty for the
@@ -135,6 +159,37 @@ func SidecarSelectorForApp(app App, sidecarName string) (port int, ok bool) {
 	for _, sc := range app.Sidecars {
 		if sc.Name == sidecarName {
 			return sc.Port, true
+		}
+	}
+	return 0, false
+}
+
+// PublicPortSelectorForApp resolves a reserved `port-<name>` selector to a
+// TCP listener. A name is preferred when present; unnamed listeners use the
+// deterministic `<protocol>-<port>` key generated from the manifest. UDP is
+// intentionally rejected because the public edge is HTTP/TCP only.
+func PublicPortSelectorForApp(app App, selector string) (port int, ok bool) {
+	if !strings.HasPrefix(selector, PublicPortSelectorPrefix) {
+		return 0, false
+	}
+	key := strings.ToLower(strings.TrimPrefix(selector, PublicPortSelectorPrefix))
+	if key == "" {
+		return 0, false
+	}
+	for _, candidate := range app.Ports {
+		protocol := strings.ToLower(strings.TrimSpace(candidate.Protocol))
+		if protocol == "" {
+			protocol = "tcp"
+		}
+		if protocol != "tcp" || candidate.Port < 1 || candidate.Port > 65535 {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(candidate.Name))
+		if name == "" {
+			name = protocol + "-" + strconv.Itoa(candidate.Port)
+		}
+		if name == key {
+			return candidate.Port, true
 		}
 	}
 	return 0, false
