@@ -230,6 +230,8 @@ export type { FireCronRequestResponse } from './models/FireCronRequestResponse.j
 export type { FireCronResponse } from './models/FireCronResponse.js';
 export type { GdprAuditExportResponse } from './models/GdprAuditExportResponse.js';
 export type { GithubCheckUpdateRecord } from './models/GithubCheckUpdateRecord.js';
+export type { GitHubDeploymentPolicy } from './models/GitHubDeploymentPolicy.js';
+export type { GitHubDeploymentPolicyPatch } from './models/GitHubDeploymentPolicyPatch.js';
 export type { GitHubInstallMutationRequest } from './models/GitHubInstallMutationRequest.js';
 export type { GitHubInstallStatus } from './models/GitHubInstallStatus.js';
 export type { GithubRecoveryRetryResponse } from './models/GithubRecoveryRetryResponse.js';
