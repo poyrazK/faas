@@ -2896,6 +2896,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			app := m.apps[mutation.App.ID]
 			app.RootDir = mutation.App.RootDir
 			app.WorkloadName = mutation.App.WorkloadName
+			app.WorkloadClass = mutation.App.WorkloadClass
 			app.StartCommand = mutation.App.StartCommand
 			m.apps[app.ID] = app
 			out.Changed = append(out.Changed, app)
