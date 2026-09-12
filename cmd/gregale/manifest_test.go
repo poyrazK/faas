@@ -206,6 +206,27 @@ func TestDeployManifestTriggers_PreCountTrip(t *testing.T) {
 	}
 }
 
+func TestDeployManifestTriggers_ExistingManifestTriggerIsNoopAtQuota(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeGitkeep(t, dir)
+	writeManifest(t, dir, `triggers:
+  - {kind: cron, app: my-api, schedule: "0 3 * * *", path: /a}
+`)
+	// Hobby is capped at five per app. An unchanged manifest row must not
+	// consume headroom or issue a duplicate INSERT when the app is already
+	// exactly at that cap.
+	existing := make([]api.CronResponse, 5)
+	existing[0] = api.CronResponse{ID: "cron-existing", Schedule: "0 3 * * *", Path: "/a"}
+	fc := &fakeCronClient{preExistingCrons: existing, whoami: api.AccountResponse{Plan: "hobby"}}
+	if err := deployManifestTriggers(context.Background(), fc, "my-api", dir); err != nil {
+		t.Fatalf("err = %v, want unchanged manifest row to be a no-op", err)
+	}
+	if len(fc.createdCalls) != 0 {
+		t.Fatalf("CreateCron calls = %d, want 0 for unchanged row at quota", len(fc.createdCalls))
+	}
+}
+
 func TestDeployManifestTriggers_FailFastAtEntry4(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -289,5 +310,52 @@ func TestDeployManifestTriggers_WorkflowDefinitionsDoNotAffectTriggers(t *testin
 	}
 	if len(fc.createdCalls) != 0 {
 		t.Fatalf("CreateCron calls = %d, want 0 for workflow-only manifest", len(fc.createdCalls))
+	}
+}
+
+type rollbackFakeCronClient struct {
+	fakeCronClient
+	deletedIDs []string
+}
+
+func (f *rollbackFakeCronClient) CreateCron(_ context.Context, _ string, req api.CreateCronRequest) (api.CronResponse, error) {
+	idx := len(f.createdCalls) + 1
+	f.createdCalls = append(f.createdCalls, req)
+	if f.createErrAt > 0 && idx == f.createErrAt {
+		return api.CronResponse{}, f.createErr
+	}
+	return api.CronResponse{ID: "cron-" + string(rune('0'+idx)), Schedule: req.Schedule, Path: req.Path}, nil
+}
+
+func (f *rollbackFakeCronClient) DeleteCron(_ context.Context, id string) error {
+	f.deletedIDs = append(f.deletedIDs, id)
+	return nil
+}
+
+func TestDeployManifestTriggers_RollsBackPartialFanout(t *testing.T) {
+	dir := t.TempDir()
+	writeGitkeep(t, dir)
+	writeManifest(t, dir, `triggers:
+  - {kind: cron, app: my-api, schedule: "0 3 * * *", path: /a}
+  - {kind: cron, app: my-api, schedule: "0 4 * * *", path: /b}
+  - {kind: cron, app: my-api, schedule: "0 5 * * *", path: /c}
+`)
+	fc := &rollbackFakeCronClient{
+		fakeCronClient: fakeCronClient{
+			whoami:      api.AccountResponse{Plan: "pro"},
+			createErrAt: 3,
+			createErr:   errors.New("synthetic create failure"),
+		},
+	}
+
+	ids, err := deployManifestTriggersWithRollback(context.Background(), fc, "my-api", dir)
+	if err == nil {
+		t.Fatal("err = nil, want fan-out failure")
+	}
+	if len(ids) != 2 {
+		t.Fatalf("returned created IDs = %v, want two staged IDs", ids)
+	}
+	if got, want := strings.Join(fc.deletedIDs, ","), "cron-2,cron-1"; got != want {
+		t.Fatalf("deleted IDs = %q, want reverse-order compensation %q", got, want)
 	}
 }
