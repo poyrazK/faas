@@ -5965,6 +5965,57 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/github/deployment-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [github]
+      operationId: getGitHubDeploymentPolicy
+      summary: Read the customer-owned GitHub deployment policy.
+      description: |
+        Returns the project-level policy applied by githubd to source
+        staging and pull-request previews. Missing policy rows resolve to
+        backwards-compatible defaults.
+      security:
+        - bearerAuth: [github:manage]
+      responses:
+        '200':
+          description: Current GitHub deployment policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubDeploymentPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    patch:
+      tags: [github]
+      operationId: patchGitHubDeploymentPolicy
+      summary: Update the customer-owned GitHub deployment policy.
+      description: |
+        Updates project-level GitHub deployment behaviour. Fields are
+        replace-on-write; omitted fields retain their current values. The
+        ignored_paths list accepts exact paths, one-segment shell globs, and
+        trailing `/**` directory patterns. Mutations require MFA.
+      security:
+        - bearerAuth: [github:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubDeploymentPolicyPatch' }
+      responses:
+        '200':
+          description: Updated GitHub deployment policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubDeploymentPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/apps/{slug}/github/bind:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -15422,6 +15473,37 @@ components:
         deploy_branches:
           type: object
           additionalProperties: { type: string }
+
+    GitHubDeploymentPolicy:
+      description: Customer-owned project-level GitHub deployment behaviour.
+      type: object
+      required: [project_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours]
+      properties:
+        project_id: { type: string, format: uuid }
+        root_dir:
+          type: string
+          maxLength: 255
+          description: Repository-relative root used when the project has a root workload.
+        ignored_paths:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 255 }
+          description: Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds.
+        preview_enabled: { type: boolean, default: true }
+        preview_ttl_hours: { type: integer, minimum: 1, maximum: 720, default: 168 }
+
+    GitHubDeploymentPolicyPatch:
+      description: Partial replacement for a project's GitHub deployment policy.
+      type: object
+      additionalProperties: false
+      properties:
+        root_dir: { type: string, maxLength: 255 }
+        ignored_paths:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 255 }
+        preview_enabled: { type: boolean }
+        preview_ttl_hours: { type: integer, minimum: 1, maximum: 720 }
 
     GitHubInstallMutationRequest:
       description: |

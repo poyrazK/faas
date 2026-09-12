@@ -239,6 +239,8 @@ export type { FilterCriteriaOp } from './FilterCriteriaOp.js';
 export type { FireCronRequestResponse } from './FireCronRequestResponse.js';
 export type { FireCronResponse } from './FireCronResponse.js';
 export type { GdprAuditExportResponse } from './GdprAuditExportResponse.js';
+export type { GitHubDeploymentPolicy } from './GitHubDeploymentPolicy.js';
+export type { GitHubDeploymentPolicyPatch } from './GitHubDeploymentPolicyPatch.js';
 export type { GitHubInstallMutationRequest } from './GitHubInstallMutationRequest.js';
 export type { GitHubInstallStatus } from './GitHubInstallStatus.js';
 export type { GithubCheckUpdateRecord } from './GithubCheckUpdateRecord.js';
