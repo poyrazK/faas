@@ -29,7 +29,12 @@
 
 package main
 
-import "github.com/onebox-faas/faas/pkg/api"
+import (
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
+)
 
 // cliAudience controls how a command is presented in the customer binary.
 // The complete manifest remains authoritative for dispatch, man pages, and
@@ -1213,7 +1218,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "throttle-suggestions",
 		Short:   "Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions <slug> [--range 5m] [--dry-run --candidate-rps N --candidate-burst N])",
 		Flags: []cliFlag{
-			{Name: "range", Short: "observation window (e.g. 5m|1h|24h)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h"}},
+			{Name: "range", Short: "observation window (" + strings.Join(appmetrics.Ranges(), "|") + ")", Value: "WINDOW", ClosedSet: appmetrics.Ranges()},
 			{Name: "dry-run", Short: "enable the dry-run preview pass (requires --candidate-rps)"},
 			{Name: "candidate-rps", Short: "candidate rate-limit rps for the dry-run preview", Value: "N"},
 			{Name: "candidate-burst", Short: "candidate burst for the dry-run preview", Value: "N"},

@@ -79,6 +79,7 @@ func TestObservabilityCommandsStillRejectInvalidArguments(t *testing.T) {
 		{"slo extra positional", func() int { return cmdSLO([]string{"demo", "extra", "--window", "1h"}) }},
 		{"throttle unknown flag", func() int { return cmdThrottleSuggestions([]string{"demo", "--wat", "x"}) }},
 		{"throttle extra positional", func() int { return cmdThrottleSuggestions([]string{"demo", "extra", "--range", "5m"}) }},
+		{"throttle invalid range", func() int { return cmdThrottleSuggestions([]string{"demo", "--range", "yesterday"}) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
