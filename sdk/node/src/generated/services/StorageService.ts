@@ -102,7 +102,7 @@ export class StorageService {
    * List policy-controlled upload routes
    * Routes are served by Gregale's public edge and do not wake the application. Requires storage:read, storage:write, storage:manage, or admin.
    * @returns ObjectUploadRouteList Upload route policies without provider credentials.
-   * @returns Problem Authentication, authorization, or storage error
+   * @returns Problem Unable to list upload routes because of an authentication, authorization, or storage failure.
    * @throws ApiError
    */
   public static listObjectUploadRoutes({

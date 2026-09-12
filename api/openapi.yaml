@@ -599,7 +599,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ObjectUploadRouteList' }
         default:
-          description: Authentication, authorization, or storage error
+          description: Unable to list upload routes because of an authentication, authorization, or storage failure.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
