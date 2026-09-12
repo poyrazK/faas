@@ -310,3 +310,35 @@ func TestRunDiff_LenientBaselineFailureEmitsWarning(t *testing.T) {
 		t.Fatalf("missing machine-readable baseline warning: %s", stdout.String())
 	}
 }
+
+func TestRunDiff_StrictBaselineFailureReturnsNonzero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps/target":
+			_, _ = w.Write([]byte(`{"id":"app-target","slug":"target","type":"app"}`))
+		case "/v1/apps/target/deployments":
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "history_unavailable", "Unavailable", "deployment history is temporarily unavailable"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	var stderr bytes.Buffer
+	oldErr, oldJSON := osStderr, jsonOutput
+	osStderr, jsonOutput = &stderr, false
+	t.Cleanup(func() { osStderr, jsonOutput = oldErr, oldJSON })
+
+	code := runDiff(context.Background(), NewClient(srv.URL, "test"), diffCLIOptions{
+		Slug:      "target",
+		Cwd:       t.TempDir(),
+		JSON:      true,
+		BuildPlan: &api.BuildPlan{Class: "app"},
+	})
+	if code == 0 {
+		t.Fatal("strict runDiff succeeded despite deployment history failure")
+	}
+	if !strings.Contains(stderr.String(), "deployment history is temporarily unavailable") {
+		t.Fatalf("strict error omitted API problem detail: %s", stderr.String())
+	}
+}
