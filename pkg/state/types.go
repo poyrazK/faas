@@ -5551,6 +5551,10 @@ const (
 	// migrations/00321_edge_rules_kind_cache.sql for the schema
 	// CHECK widening.
 	EdgeRuleKindCache EdgeRuleKind = "cache"
+	// EdgeRuleKindRespond returns a fixed JSON response for a matched
+	// route. It is restricted to preview applications by the API and
+	// checked again by the gateway before it can short-circuit traffic.
+	EdgeRuleKindRespond EdgeRuleKind = "respond"
 )
 
 // IsValid reports whether k is a closed-set kind. New kinds land via
@@ -5562,7 +5566,7 @@ func (k EdgeRuleKind) IsValid() bool {
 		EdgeRuleKindHeaders, EdgeRuleKindCORSA, EdgeRuleKindJWT,
 		EdgeRuleKindIP, EdgeRuleKindValidate, EdgeRuleKindLimit,
 		EdgeRuleKindMaintenance, EdgeRuleKindThrottle, EdgeRuleKindGeo,
-		EdgeRuleKindBudget, EdgeRuleKindCache:
+		EdgeRuleKindBudget, EdgeRuleKindCache, EdgeRuleKindRespond:
 		return true
 	}
 	return false
@@ -5845,6 +5849,15 @@ type EdgeRuleCacheAction struct {
 	Methods             []string `json:"methods,omitempty"`
 }
 
+// EdgeRuleRespondAction is the fixed JSON response for kind=respond.
+// The API validates the status/body contract before persistence; the
+// gateway performs the same checks while compiling rules so a direct
+// database write cannot create an unsafe response.
+type EdgeRuleRespondAction struct {
+	StatusCode int             `json:"status_code"`
+	Body       json.RawMessage `json:"body,omitempty"`
+}
+
 // EdgeRuleThrottleAction is the per-rule token-bucket parameter set
 // for kind=throttle (ADR-091 D20.5 amendment, issue #881). The
 // runtime is pkg/gateway/ratelimit.go::Limiter — the gateway matcher
@@ -5963,6 +5976,8 @@ type EdgeRuleAction struct {
 	// {GET, HEAD}). The runtime is pkg/gateway/response_cache.go;
 	// the apply step is pkg/gateway/handler_apply_edge_rule_cache.go.
 	Cache *EdgeRuleCacheAction `json:"cache,omitempty"`
+	// Respond carries the fixed JSON response for a preview-only mock route.
+	Respond *EdgeRuleRespondAction `json:"respond,omitempty"`
 }
 
 // EdgeRule is the in-memory row mirrored from edge_rules.

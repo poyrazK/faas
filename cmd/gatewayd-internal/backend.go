@@ -229,6 +229,7 @@ func (r pgRouter) toApp(ctx context.Context, app state.App) (gateway.App, bool, 
 		AutoscaleTargetRPS: app.AutoscaleTargetRPS,
 		IdleTimeoutS:       app.IdleTimeoutS,
 		Slug:               app.Slug,
+		IsPreview:          app.PreviewOfSlug != "",
 		StreamingEnabled:   app.StreamingEnabled,
 		NodeID:             app.NodeID,
 		// Issue #676 / ADR-080: per-app raw-bytes Upgrade

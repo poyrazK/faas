@@ -5951,6 +5951,33 @@ type EdgeRuleValidateAction struct {
 	ValidateMode          string          `json:"validate_mode,omitempty"`
 }
 
+// EdgeRuleRespondAction is the wire shape for a kind=respond edge rule.
+// It returns a bounded, fixed JSON document directly from the gateway and is
+// only accepted for preview applications by the edge-rule handler.
+type EdgeRuleRespondAction struct {
+	StatusCode int             `json:"status_code"`
+	Body       json.RawMessage `json:"body,omitempty"`
+}
+
+func (a *EdgeRuleRespondAction) Validate() *Problem {
+	if a == nil {
+		return ErrValidation("respond action is required")
+	}
+	if a.StatusCode < http.StatusOK || a.StatusCode > 599 {
+		return ErrValidation(fmt.Sprintf("respond action: status_code must be in 200..599 (got %d)", a.StatusCode))
+	}
+	if len(a.Body) > MaxEdgeRuleRespondBodyBytes {
+		return ErrValidation(fmt.Sprintf("respond action: body exceeds %d bytes (got %d)", MaxEdgeRuleRespondBodyBytes, len(a.Body)))
+	}
+	if len(a.Body) > 0 && !json.Valid(a.Body) {
+		return ErrValidation("respond action: body must be valid JSON")
+	}
+	if (a.StatusCode == http.StatusNoContent || a.StatusCode == http.StatusNotModified) && len(a.Body) > 0 {
+		return ErrValidation(fmt.Sprintf("respond action: status %d cannot include a body", a.StatusCode))
+	}
+	return nil
+}
+
 // ValidateMode values (issue #975 #3 / Mega-Foundation #979-a).
 // The set is small and closed; the gateway defaults to 'block'
 // when the rule row predates the column migration.

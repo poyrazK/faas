@@ -102,6 +102,10 @@ type App struct {
 	// identify which app is in maintenance. Default-empty in
 	// fakeBackend unit tests; production path always populates.
 	Slug string
+	// IsPreview identifies preview applications. Fixed response rules are
+	// deliberately limited to these apps and the gateway rechecks this flag
+	// even when a rule was written through a non-HTTP path.
+	IsPreview bool
 	// MaintenanceMode (ADR-091 amendment / §4.1.2.0) is the
 	// coarse-grained per-app maintenance flag mirrored from
 	// apps.maintenance_mode. When true, every inbound request is
@@ -5293,6 +5297,12 @@ haveApp:
 	// credential). nil-safe: open / unset modes pass
 	// through (the pre-#477 default is preserved).
 	if !h.enforcePublicAuth(w, r, rec, app) { //nolint:contextcheck // request ctx is the canonical inbound ctx; the helper uses r.Context() internally so passing ctx separately would shadow it.
+		return
+	}
+	// Preview-only fixed response rules return after both app auth gates and
+	// before cache lookup or backend wake/admission.
+	if h.applyEdgeRuleRespond(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
 

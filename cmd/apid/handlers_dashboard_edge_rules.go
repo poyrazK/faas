@@ -51,7 +51,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	}
 
 	data := dashboard.AppEdgeRulesData{
-		App:    dashboard.AppListItem{Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain)},
+		App:    dashboard.AppListItem{Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain), IsPreview: app.PreviewOfSlug != ""},
 		Action: dashboardEdgeRulesActionFlash(r),
 	}
 	if rules, listErr := s.store.ListEdgeRulesForApp(ctx, app.ID); listErr != nil {
@@ -179,13 +179,36 @@ func (s *server) dashboardCreateEdgeRule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	actionRaw := strings.TrimSpace(r.FormValue("action"))
+	kind := strings.TrimSpace(r.FormValue("kind"))
+	if kind == string(state.EdgeRuleKindRespond) {
+		status := 200
+		if rawStatus := strings.TrimSpace(r.FormValue("respond_status")); rawStatus != "" {
+			parsed, err := strconv.Atoi(rawStatus)
+			if err != nil {
+				api.WriteProblem(w, api.ErrValidation("respond status must be an integer"))
+				return
+			}
+			status = parsed
+		}
+		body := strings.TrimSpace(r.FormValue("respond_body"))
+		action := api.EdgeRuleRespondAction{StatusCode: status}
+		if body != "" {
+			action.Body = json.RawMessage(body)
+		}
+		actionBytes, err := json.Marshal(action)
+		if err != nil {
+			api.WriteProblem(w, api.ErrValidation("could not encode respond action"))
+			return
+		}
+		actionRaw = string(actionBytes)
+	}
 	if actionRaw == "" || !json.Valid([]byte(actionRaw)) {
 		api.WriteProblem(w, api.ErrValidation("action must be valid JSON"))
 		return
 	}
 	req := api.CreateEdgeRuleRequest{
 		MatchHost: strings.TrimSpace(r.FormValue("match_host")), MatchPath: strings.TrimSpace(r.FormValue("match_path")),
-		MatchMethods: splitDashboardEdgeRuleMethods(r.FormValue("match_methods")), Kind: strings.TrimSpace(r.FormValue("kind")),
+		MatchMethods: splitDashboardEdgeRuleMethods(r.FormValue("match_methods")), Kind: kind,
 		Action: json.RawMessage(actionRaw),
 	}
 	enabled := r.FormValue("enabled") != ""

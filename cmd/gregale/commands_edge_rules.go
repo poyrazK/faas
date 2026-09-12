@@ -41,7 +41,7 @@ import (
 var edgeRuleKindVocab = []string{
 	"route", "rewrite", "redirect", "headers", "cors", "jwt", "ip",
 	"validate", "limit", "geo", "maintenance", "throttle", "budget",
-	"cache",
+	"cache", "respond",
 }
 
 // edgeRuleJWTAlgVocab is the closed `algorithm` set for kind=jwt.
@@ -275,6 +275,8 @@ func cmdEdgeRulesCreate(args []string) int {
 	// is a valid "hard down, no hint" shape.
 	maintenanceRetryAfter := fs.Int("maintenance-retry-after-seconds", 0, "kind=maintenance: Retry-After hint in seconds (>=0; max 86400)")
 	maintenanceMessage := fs.String("maintenance-message", "", "kind=maintenance: operator message surfaced to callers (<=512 bytes)")
+	respondStatus := fs.Int("respond-status", 200, "kind=respond: response status code (200..599)")
+	respondBody := fs.String("respond-body", "", "kind=respond: JSON response body (max 64 KiB)")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -329,6 +331,8 @@ func cmdEdgeRulesCreate(args []string) int {
 		BudgetOverrideHeader:       *budgetOverrideHeader,
 		MaintenanceRetryAfter:      *maintenanceRetryAfter,
 		MaintenanceMessage:         *maintenanceMessage,
+		RespondStatus:              *respondStatus,
+		RespondBody:                *respondBody,
 	})
 	if err != nil {
 		return printErr("Invalid flags for --kind="+*kind, err)
@@ -482,6 +486,8 @@ func cmdEdgeRulesUpdate(args []string) int {
 	budgetOverrideHeader := fs.String("budget-allow-override-header", "", "kind=budget: header that may override budget-ms per request (default x-faas-budget-ms)")
 	maintenanceRetryAfter := fs.Int("maintenance-retry-after-seconds", 0, "kind=maintenance: new Retry-After hint in seconds (>=0; max 86400)")
 	maintenanceMessage := fs.String("maintenance-message", "", "kind=maintenance: new operator message (<=512 bytes)")
+	respondStatus := fs.Int("respond-status", 0, "kind=respond: new response status code (200..599)")
+	respondBody := fs.String("respond-body", "", "kind=respond: new JSON response body (max 64 KiB)")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -581,6 +587,8 @@ func cmdEdgeRulesUpdate(args []string) int {
 			BudgetOverrideHeader:       *budgetOverrideHeader,
 			MaintenanceRetryAfter:      *maintenanceRetryAfter,
 			MaintenanceMessage:         *maintenanceMessage,
+			RespondStatus:              *respondStatus,
+			RespondBody:                *respondBody,
 		})
 		if err != nil {
 			return printErr("Invalid flags for --kind="+*kind, err)
@@ -716,6 +724,9 @@ type edgeRuleActionInputs struct {
 	// presence, only for range.
 	MaintenanceRetryAfter int
 	MaintenanceMessage    string
+	// respond (preview-only fixed JSON response)
+	RespondStatus int
+	RespondBody   string
 }
 
 // buildEdgeRuleAction marshals the per-kind inputs into the matching
@@ -964,6 +975,18 @@ func buildEdgeRuleAction(kind string, in edgeRuleActionInputs) (json.RawMessage,
 		a := api.EdgeRuleMaintenanceAction{
 			RetryAfterSeconds: in.MaintenanceRetryAfter,
 			Message:           in.MaintenanceMessage,
+		}
+		if err := a.Validate(); err != nil {
+			return nil, errToError(err)
+		}
+		return marshalAction(a)
+	case "respond":
+		a := api.EdgeRuleRespondAction{
+			StatusCode: in.RespondStatus,
+			Body:       json.RawMessage(in.RespondBody),
+		}
+		if in.RespondBody == "" {
+			a.Body = nil
 		}
 		if err := a.Validate(); err != nil {
 			return nil, errToError(err)

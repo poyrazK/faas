@@ -48,6 +48,7 @@
     <p><a href="/dashboard/apps/{{.Data.App.Slug}}">← Back to {{.Data.App.Slug}}</a></p>
     <h1>Edge rules for <code>{{.Data.App.Slug}}</code></h1>
     <p class="muted">Rules run before the app wake gate. The dashboard uses the same validation and quotas as the API and CLI.</p>
+    {{if .Data.App.IsPreview}}<p class="muted">This preview can serve fixed JSON responses while backend routes are still being implemented.</p>{{end}}
 
     {{if eq .Data.Action "created"}}<div class="flash ok" role="status">Edge rule created.</div>{{end}}
     {{if eq .Data.Action "updated"}}<div class="flash ok" role="status">Edge rule updated.</div>{{end}}
@@ -106,9 +107,14 @@
             <option value="rewrite">rewrite</option><option value="route">route</option><option value="maintenance">maintenance</option>
             <option value="limit">limit</option><option value="budget">budget</option><option value="cache">cache</option>
             <option value="geo">geo</option><option value="throttle">throttle</option><option value="validate">validate</option>
+            {{if .Data.App.IsPreview}}<option value="respond">respond (preview mock)</option>{{end}}
           </select>
         </label>
-        <label>Action JSON<br><textarea name="action" rows="5" required placeholder='{"response_headers":[{"name":"X-Example","value":"on","action":"set"}]}'></textarea></label>
+        {{if .Data.App.IsPreview}}
+          <label>Mock status <input name="respond_status" type="number" min="200" max="599" value="200"></label>
+          <label>Mock JSON body<br><textarea name="respond_body" rows="5" placeholder='{"days":3,"price":4.99}'></textarea> <span class="muted">Used when kind is respond.</span></label>
+        {{end}}
+        <label>Action JSON<br><textarea name="action" rows="5" placeholder='{"response_headers":[{"name":"X-Example","value":"on","action":"set"}]}'></textarea> <span class="muted">Used for other rule kinds.</span></label>
         <label><input type="checkbox" name="enabled" checked> enabled</label>
         <button type="submit">Create rule</button>
       </form>
