@@ -1001,7 +1001,7 @@ func Sha256Equal(a, b []byte) bool {
 // map.
 func (s *PgStore) AccountByProviderCustomerID(ctx context.Context, stripeCustomerID string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at
+		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,'')
 		 from accounts where provider_customer_id = $1`,
 		stripeCustomerID)
 	return scanAccount(row)
