@@ -174,6 +174,13 @@ type Builderd struct {
 	// separate from VM so an implementation can add warm capture/restore
 	// without changing the existing cold-build interface.
 	warm *WarmLifecycle
+	// warmCleanup retains backing-store cleanup obligations that failed after
+	// the lifecycle had already evicted the snapshot. The sweep loop retries
+	// these while the daemon is alive; Drain makes one final attempt during
+	// shutdown.
+	warmOpMu           sync.Mutex
+	warmCleanupMu      sync.Mutex
+	warmCleanupPending map[warmSnapshotCleanupKey]WarmSnapshot
 	// lifecycleMu closes the admission race between ProcessOne/ProcessNext and
 	// Drain. Once draining is true no new process call can increment processWG.
 	lifecycleMu sync.Mutex
@@ -210,16 +217,17 @@ func New(store state.Store, notif Notifier, vm VM, cache *Cache, det *Detector, 
 		cfg.BuildLogMaxBytes = maxBuildLogMaxBytes
 	}
 	return &Builderd{
-		store:         store,
-		notif:         notif,
-		vm:            vm,
-		cache:         cache,
-		detector:      det,
-		resid:         resid,
-		cfg:           cfg,
-		log:           log,
-		builderNodeID: cfg.BuilderNodeID,
-		warm:          NewWarmLifecycle(cfg.WarmIdle),
+		store:              store,
+		notif:              notif,
+		vm:                 vm,
+		cache:              cache,
+		detector:           det,
+		resid:              resid,
+		cfg:                cfg,
+		log:                log,
+		builderNodeID:      cfg.BuilderNodeID,
+		warm:               NewWarmLifecycle(cfg.WarmIdle),
+		warmCleanupPending: make(map[warmSnapshotCleanupKey]WarmSnapshot),
 	}
 }
 
@@ -228,6 +236,8 @@ func New(store state.Store, notif Notifier, vm VM, cache *Cache, det *Detector, 
 // storage backend after a miss or stale result. Restore hits retain the same
 // snapshot metadata for the VM driver to consume.
 func (b *Builderd) StartWarmBuilder(now time.Time, currentFCVersion string) (WarmRestoreResult, WarmSnapshot, error) {
+	b.warmOpMu.Lock()
+	defer b.warmOpMu.Unlock()
 	result, snapshot, err := b.warm.StartWithSnapshot(now, currentFCVersion)
 	if err == nil && b.ops != nil {
 		b.ops.ObserveBuilderWarmRestore(string(result))
@@ -238,18 +248,24 @@ func (b *Builderd) StartWarmBuilder(now time.Time, currentFCVersion string) (War
 // CompleteWarmBuilder publishes a successfully captured snapshot into the
 // lifecycle. Invalid metadata returns the lifecycle to cold.
 func (b *Builderd) CompleteWarmBuilder(now time.Time, snapshot WarmSnapshot) error {
+	b.warmOpMu.Lock()
+	defer b.warmOpMu.Unlock()
 	return b.warm.Complete(now, snapshot)
 }
 
 // ExpireWarmBuilder evicts an idle snapshot and returns its metadata so the
 // VM driver can delete the backing-store objects.
 func (b *Builderd) ExpireWarmBuilder(now time.Time) (WarmSnapshot, bool) {
+	b.warmOpMu.Lock()
+	defer b.warmOpMu.Unlock()
 	return b.warm.ExpireSnapshot(now)
 }
 
 // InvalidateWarmBuilder returns the warm slot to cold and returns retained
 // snapshot metadata for best-effort backing-store cleanup.
 func (b *Builderd) InvalidateWarmBuilder() (WarmSnapshot, bool) {
+	b.warmOpMu.Lock()
+	defer b.warmOpMu.Unlock()
 	return b.warm.InvalidateSnapshot()
 }
 
@@ -290,13 +306,21 @@ func (b *Builderd) prepareWarmBuilder(ctx context.Context, slot SlotDecision, re
 }
 
 func (b *Builderd) cleanupWarmSnapshot(ctx context.Context, warmVM WarmVM, snapshot WarmSnapshot) error {
+	b.warmOpMu.Lock()
+	defer b.warmOpMu.Unlock()
+	return b.cleanupWarmSnapshotLocked(ctx, warmVM, snapshot)
+}
+
+func (b *Builderd) cleanupWarmSnapshotLocked(ctx context.Context, warmVM WarmVM, snapshot WarmSnapshot) error {
 	if warmVM == nil || snapshot.StorageKey == "" {
 		return nil
 	}
 	if err := warmVM.DeleteWarmSnapshot(context.WithoutCancel(ctx), snapshot); err != nil {
+		b.enqueueWarmSnapshotCleanup(snapshot)
 		b.log.Warn("builderd: warm snapshot cleanup failed", "mem_key", snapshot.StorageKey, "vmstate_key", snapshot.VMStateStorageKey, "err", err)
 		return err
 	}
+	b.removeWarmSnapshotCleanup(snapshot)
 	return nil
 }
 
