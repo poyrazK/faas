@@ -20549,6 +20549,10 @@ components:
         command:
           type: array
           items: { type: string }
+        depends_on:
+          type: array
+          items: { type: string }
+          description: "Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies."
         class:
           type: string
           enum: [http, graphql, grpc, job, worker, server, unknown]

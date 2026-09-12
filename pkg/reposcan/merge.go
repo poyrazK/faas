@@ -17,6 +17,9 @@ import "sort"
 //     (TierCompose, detProcfile) fills the class field of a
 //     compose `web` (TierCompose, detCompose) when compose didn't
 //     set it.
+//   - DependsOn is additive: explicit dependency edges from merged
+//     detectors are unioned rather than allowing a higher-priority
+//     detector to erase them.
 //
 // Determinism: maps are not safe under -race. Sort seeds by the
 // priority key above before iterating so the merge is
@@ -46,6 +49,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		dockerfile string // highest-tier seed's dockerfile
 		class      Class
 		command    []string
+		dependsOn  []string
 		schedule   string
 		ports      []int
 		envKeys    []string
@@ -109,6 +113,14 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.command = append([]string(nil), s.command...)
 			b.cmdSet = true
 		}
+		// Dependency edges are additive across detectors. A Compose seed
+		// may merge with a Procfile/workspace seed for the same workload;
+		// retaining the union avoids silently dropping an explicit edge.
+		for _, dep := range s.dependsOn {
+			if !containsString(b.dependsOn, dep) {
+				b.dependsOn = append(b.dependsOn, dep)
+			}
+		}
 		if !b.schedSet && s.schedule != "" {
 			b.schedule = s.schedule
 			b.schedSet = true
@@ -135,6 +147,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			RootDir:    b.rootDir,
 			Dockerfile: b.dockerfile,
 			Command:    b.command,
+			DependsOn:  b.dependsOn,
 			Class:      cls,
 			Schedule:   b.schedule,
 			Ports:      b.ports,

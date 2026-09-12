@@ -19,6 +19,14 @@ var ErrInvalidWorkloadPlan = errors.New("reconcile: invalid workload plan")
 // project member update; reusing an account-wide slug with another key would
 // fail the later create and can otherwise leave a partially applied project.
 func WorkloadAdmissionReasons(workloads []reposcan.Workload, accountApps []state.App, projectID string) []string {
+	return WorkloadAdmissionReasonsWithManaged(workloads, nil, accountApps, projectID)
+}
+
+// WorkloadAdmissionReasonsWithManaged extends the project admission checks
+// with the Compose dependency graph. Image-only Compose services are external
+// managed resources; they are valid references but are not included in the
+// deploy order because Gregale does not provision them.
+func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed []reposcan.Managed, accountApps []state.App, projectID string) []string {
 	if len(workloads) == 0 {
 		return []string{EmptyWorkloadPlanReason}
 	}
@@ -54,11 +62,12 @@ func WorkloadAdmissionReasons(workloads []reposcan.Workload, accountApps []state
 				workload.Name, app.Slug))
 		}
 	}
+	reasons = append(reasons, reposcan.DependencyValidationReasons(workloads, managed)...)
 	return reasons
 }
 
-func validateWorkloadAdmission(workloads []reposcan.Workload, accountApps []state.App, projectID string) error {
-	reasons := WorkloadAdmissionReasons(workloads, accountApps, projectID)
+func validateWorkloadAdmissionWithManaged(workloads []reposcan.Workload, managed []reposcan.Managed, accountApps []state.App, projectID string) error {
+	reasons := WorkloadAdmissionReasonsWithManaged(workloads, managed, accountApps, projectID)
 	if len(reasons) == 0 {
 		return nil
 	}
