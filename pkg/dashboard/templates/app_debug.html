@@ -35,6 +35,11 @@
     .compare-table td:nth-child(n+2) { white-space: nowrap; }
     .coverage { padding: 0.8rem; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; border-radius: 6px; }
     .coverage-table td:nth-child(n+2) { white-space: nowrap; }
+    .running { padding: 0.8rem; border: 1px solid #c4b5fd; border-left: 4px solid #7c3aed; border-radius: 6px; }
+    .running-causes { display: grid; gap: 0.6rem; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); }
+    .running-cause { padding: 0.65rem 0.75rem; border: 1px solid #ddd6fe; border-radius: 5px; }
+    .running-cause p { margin: 0.25rem 0; }
+    .running-table td:nth-child(n+2) { white-space: nowrap; }
     .explanation { padding: 0.65rem 0.8rem; background: #eff6ff; border-left: 4px solid #2563eb; border-radius: 4px; }
     .span-table { font-size: 0.9rem; }
     .span-table td:nth-child(3) { white-space: nowrap; }
@@ -76,6 +81,63 @@
       </form>
       {{if .Data.ErrorMessage}}<p class="error">{{.Data.ErrorMessage}}</p>{{end}}
       {{if .Data.ActionMessage}}<p class="{{if .Data.ActionError}}error{{else}}notice{{end}}">{{.Data.ActionMessage}}</p>{{end}}
+
+      <h2 id="running">Why is this app running?</h2>
+      {{if .Data.RunningError}}
+        <div class="running"><p class="error">{{.Data.RunningError}}</p></div>
+      {{else if .Data.Running}}
+        <div class="running">
+          <p class="muted">Observed scheduler causes explain why instances have not parked. This is evidence from the selected window, not a savings estimate.</p>
+          {{if .Data.Running.RetentionClamped}}<p class="notice">The window was reduced to your plan's debugger retention.</p>{{end}}
+          {{if .Data.Running.HasObservation}}
+            <p><strong>Latest observation</strong>: {{.Data.Running.CurrentObservedAt}}</p>
+            {{if .Data.Running.Current}}
+              <p><strong>Current observed causes</strong></p>
+              <div class="running-causes" aria-label="Current observed running causes">
+                {{range .Data.Running.Current}}
+                  <article class="running-cause">
+                    <p><strong>{{.Label}}</strong> <span class="badge">{{.Code}}</span></p>
+                    <p>{{.Summary}}</p>
+                    {{if .LastActivityAt}}<small class="muted">Last activity {{.LastActivityAt}}{{if .IdleDeadline}} · idle deadline {{.IdleDeadline}}{{end}}</small>{{end}}
+                    {{if .Mode}}<small class="muted">Mode {{.Mode}}{{if .WorkloadClass}} · workload {{.WorkloadClass}}{{end}}</small>{{end}}
+                  </article>
+                {{end}}
+              </div>
+            {{else}}
+              <p class="empty muted">No parking blocker was observed in the latest scheduler tick.</p>
+            {{end}}
+          {{else}}
+            <p class="empty muted">No scheduler observation was retained in this window. Refresh after the app has been running for a few seconds.</p>
+          {{end}}
+          <h3>Configuration context</h3>
+          <table aria-label="Running debugger configuration">
+            <tbody>
+              <tr><th>Idle timeout</th><td>{{.Data.Running.Config.IdleTimeoutSeconds}} seconds</td></tr>
+              <tr><th>Configured minimum</th><td>{{.Data.Running.Config.ConfiguredMinInstances}} warm instances</td></tr>
+              <tr><th>Effective minimum</th><td>{{.Data.Running.Config.EffectiveMinInstances}} warm instances</td></tr>
+              {{if .Data.Running.Config.PrewarmMinInstances}}<tr><th>Temporary prewarm floor</th><td>{{.Data.Running.Config.PrewarmMinInstances}} instances</td></tr>{{end}}
+            </tbody>
+          </table>
+          {{if .Data.Running.History}}
+            <h3>Recent observations</h3>
+            <table class="running-table" aria-label="Recent running debugger observations">
+              <thead><tr><th>Observed</th><th>Instances</th><th>Status</th><th>Causes</th></tr></thead>
+              <tbody>
+                {{range .Data.Running.History}}
+                  <tr>
+                    <td><code>{{.ObservedAt}}</code></td>
+                    <td>{{.RunningInstances}}</td>
+                    <td>{{if .Degraded}}<span class="badge partial">degraded</span>{{else}}<span class="badge ok">complete</span>{{end}}</td>
+                    <td>{{if .Causes}}{{range .Causes}}<span class="badge">{{.Label}}</span> {{end}}{{else}}<span class="muted">none observed</span>{{end}}</td>
+                  </tr>
+                {{end}}
+              </tbody>
+            </table>
+            {{if .Data.Running.HistoryTruncated}}<p class="muted">History is truncated at the dashboard page limit; use the CLI for a different window or limit.</p>{{end}}
+          {{end}}
+          <p class="muted">CLI view: <code>{{.Data.Running.CLICommand}}</code></p>
+        </div>
+      {{end}}
 
       {{if .Data.Coverage}}
         <h2 id="coverage">Signal coverage</h2>

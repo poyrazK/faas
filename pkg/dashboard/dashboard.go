@@ -1696,6 +1696,63 @@ type DebugPageData struct {
 	ReplayPollActive    bool
 	ReplayPollExhausted bool
 	Coverage            *DebugCoverageView
+	Running             *DebugRunningView
+	RunningError        string
+}
+
+// DebugRunningView is the dashboard projection of the bounded scheduler
+// explanation returned by GET /v1/apps/{slug}/debug/running. It intentionally
+// keeps the evidence shape intact: the page reports observed causes and
+// freshness, without inferring savings or inventing a more specific owner.
+type DebugRunningView struct {
+	Since             string
+	WindowStart       string
+	WindowEnd         string
+	RetentionClamped  bool
+	Current           []DebugRunningCauseView
+	CurrentObservedAt string
+	Config            DebugRunningConfigView
+	History           []DebugRunningObservationView
+	HistoryTruncated  bool
+	HasObservation    bool
+	CLICommand        string
+}
+
+// DebugRunningConfigView is the configuration context shown next to the
+// observed causes. Values are retained even when no blocker was observed.
+type DebugRunningConfigView struct {
+	ConfiguredMinInstances int
+	EffectiveMinInstances  int
+	PrewarmMinInstances    int
+	IdleTimeoutSeconds     int
+}
+
+// DebugRunningObservationView is one bounded scheduler observation in the
+// dashboard history table.
+type DebugRunningObservationView struct {
+	ObservedAt             string
+	RunningInstances       int
+	ConfiguredMinInstances int
+	EffectiveMinInstances  int
+	PrewarmMinInstances    int
+	IdleTimeoutSeconds     int
+	Degraded               bool
+	Causes                 []DebugRunningCauseView
+}
+
+// DebugRunningCauseView is a human-readable projection of one observed
+// running-state cause. The code remains visible for CLI/API correlation.
+type DebugRunningCauseView struct {
+	Code            string
+	Label           string
+	Summary         string
+	InstanceCount   int
+	OpenConnections int64
+	TailTasks       int
+	Mode            string
+	WorkloadClass   string
+	LastActivityAt  string
+	IdleDeadline    string
 }
 
 // DebugCoverageView is the template-safe projection of observed debugger
