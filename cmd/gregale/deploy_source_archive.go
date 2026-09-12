@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -106,8 +107,13 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 	seen := map[string]struct{}{}
 	var entries, expanded int64
 	for {
+		// codeql[go/path-injection] false-positive: cleanDeployArchiveName
+		// rejects absolute paths, volume names, NUL bytes, and every `..`
+		// component before the value reaches filepath.Join below. The
+		// deployArchivePathStaysUnder check is a second containment guard,
+		// and dst is a fresh 0700 directory owned by this invocation.
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
