@@ -620,6 +620,8 @@ func (s *Server) JobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 	inst, err := jobVMM.BootJob(ctx, boot)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
+		s.log.Error("vmmd: job cold boot failed", "instance", req.GetInstance(),
+			"run", req.GetRunId(), "task", req.GetTaskIndex(), "err", err.Error())
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	if inst == nil {

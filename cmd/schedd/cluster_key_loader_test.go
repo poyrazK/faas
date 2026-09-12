@@ -54,9 +54,8 @@ func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
 	// generated test identity so the unseal path is exercised
 	// end-to-end. The production-side secretbox.OpenBytesMulti
 	// attempts every identity in the chain; if none match, it
-	// returns a wrapped error. We generate the identity, write
-	// it to a temp dir, point secretbox.DefaultHostKeyPath at
-	// that dir for the duration of the test.
+	// returns a wrapped error. Point the production loader at the
+	// systemd-credential-shaped path used by the deployed unit.
 	hostDir := t.TempDir()
 	hostAgePath := filepath.Join(hostDir, "host.age")
 	hostKey, err := age.GenerateX25519Identity()
@@ -73,7 +72,7 @@ func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
 	if err := os.Chmod(hostAgePath, 0o400); err != nil {
 		t.Fatalf("chmod host.age: %v", err)
 	}
-	t.Setenv("FAAS_HOST_AGE_DIR_OVERRIDE", hostDir) // consulted by the test-only loader shim below; not used in production
+	t.Setenv(hostAgeIdentityPathEnv, hostAgePath)
 
 	// Marshal the private key as PKCS#8 PEM (the production
 	// shape) so the unsealed-bytes path matches reality.
@@ -102,19 +101,7 @@ func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	// Production loadClusterInternalSvcKey reads host.age from
-	// filepath.Dir(secretbox.DefaultHostKeyPath). For this test
-	// we temporarily redirect DefaultHostKeyPath's directory by
-	// setting an env override the loader can consult, or by
-	// simply moving host.age into the production path. The
-	// path used by the production loader is
-	// secretbox.DefaultHostKeyPath — check that constant and
-	// mirror it via a temp HOME override if necessary.
-	t.Setenv("FAAS_TEST_HOST_AGE_DIR", hostDir)
-
-	// Use the test-only loader shim that consults
-	// FAAS_TEST_HOST_AGE_DIR (production never reads this env).
-	gotPriv, gotKid, err := loadClusterInternalSvcKeyWithDirOverride(ctx, store, hostDir, quietLoggerForTest())
+	gotPriv, gotKid, err := loadClusterInternalSvcKey(ctx, store, quietLoggerForTest())
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -123,6 +110,20 @@ func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(gotPriv, priv) {
 		t.Errorf("unsealed private key bytes do not match the original")
+	}
+}
+
+func TestScheddHostAgeKeyDirHonorsSystemdCredentialPath(t *testing.T) {
+	t.Setenv(hostAgeIdentityPathEnv, "/run/credentials/faas-schedd.service/host.age")
+	if got, want := scheddHostAgeKeyDir(), "/run/credentials/faas-schedd.service"; got != want {
+		t.Fatalf("scheddHostAgeKeyDir() = %q, want %q", got, want)
+	}
+}
+
+func TestScheddHostAgeKeyDirFallsBackToCanonicalPath(t *testing.T) {
+	t.Setenv(hostAgeIdentityPathEnv, "")
+	if got, want := scheddHostAgeKeyDir(), filepath.Dir(secretbox.DefaultHostKeyPath); got != want {
+		t.Fatalf("scheddHostAgeKeyDir() = %q, want %q", got, want)
 	}
 }
 

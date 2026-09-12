@@ -43,7 +43,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -101,7 +100,7 @@ func loadClusterInternalSvcKey(
 		return nil, "", fmt.Errorf("schedd: load cluster_signing_keys: %w", err)
 	}
 
-	identities, err := secretbox.LoadHostKeys(filepath.Dir(secretbox.DefaultHostKeyPath))
+	identities, err := secretbox.LoadHostKeys(scheddHostAgeKeyDir())
 	if err != nil {
 		// No host.age on this box at all — single-box dev
 		// without an unseal key. Fall back to the per-host

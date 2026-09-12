@@ -42,6 +42,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // JobManifest is the JSON shape vmmd writes to drive1 at
@@ -347,7 +349,11 @@ func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) (retErr err
 		}
 	}()
 
-	etc, err := ensureJobManifestDirectory(mnt)
+	manifestRoot, err := jobManifestStorageRoot(mnt)
+	if err != nil {
+		return fmt.Errorf("vmm: stageJobManifest: resolve artifact layout: %w", err)
+	}
+	etc, err := ensureJobManifestDirectory(manifestRoot)
 	if err != nil {
 		return fmt.Errorf("vmm: stageJobManifest: prepare etc/faas: %w", err)
 	}
@@ -395,6 +401,70 @@ func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) (retErr err
 		return fmt.Errorf("vmm: stageJobManifest: close parent: %w", err)
 	}
 	return nil
+}
+
+// jobManifestStorageRoot returns the directory that becomes / inside the
+// guest. Optimized artifacts store their filesystem below /upper because the
+// guest mounts it as overlayfs' upperdir. Full-rootfs artifacts pivot directly
+// into the ext4 root and carry the authenticated full-rootfs marker there.
+// Writing every manifest at the ext4 root made optimized job VMs miss
+// job.json and start as ordinary HTTP apps.
+func jobManifestStorageRoot(mountpoint string) (string, error) {
+	fullRootfs, err := jobArtifactIsFullRootfs(mountpoint)
+	if err != nil {
+		return "", err
+	}
+	if fullRootfs {
+		return mountpoint, nil
+	}
+	upper := filepath.Join(mountpoint, "upper")
+	info, err := os.Lstat(upper)
+	if err != nil {
+		return "", fmt.Errorf("optimized artifact upper: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("optimized artifact upper %s is not a real directory", upper)
+	}
+	return upper, nil
+}
+
+// jobArtifactIsFullRootfs validates the marker without following an
+// image-provided symlink in any ancestor. A missing marker selects the normal
+// optimized /upper layout; a malformed marker rejects the artifact.
+func jobArtifactIsFullRootfs(mountpoint string) (bool, error) {
+	components := strings.Split(strings.TrimPrefix(api.FullRootfsMarkerPath, "/"), "/")
+	current := mountpoint
+	for i, component := range components {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return false, fmt.Errorf("full-rootfs marker path %s contains a symlink", current)
+		}
+		if i < len(components)-1 {
+			if !info.IsDir() {
+				return false, fmt.Errorf("full-rootfs marker parent %s is not a directory", current)
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			return false, fmt.Errorf("full-rootfs marker %s is not a regular file", current)
+		}
+		data, err := os.ReadFile(current)
+		if err != nil {
+			return false, err
+		}
+		if string(data) != api.FullRootfsMarkerValue {
+			return false, fmt.Errorf("full-rootfs marker %s has invalid payload", current)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // ensureJobManifestDirectory creates the fixed platform-owned directory one
