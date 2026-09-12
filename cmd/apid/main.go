@@ -2602,7 +2602,7 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
 	}
-	srv := grpc.NewServer()
+	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	registerRequestTelemetryReceiver(srv, store, ops, limiter, true)
 	return srv, lis, nil
 }
@@ -2622,7 +2622,7 @@ func runSpansWriterServer(ctx context.Context, target string, store state.Store,
 	if err != nil {
 		return nil, nil, fmt.Errorf("otel spans writer listen: %w", err)
 	}
-	srv := grpc.NewServer()
+	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	registerSpansWriterReceiver(srv, store, ops, limiter, true)
 	return srv, lis, nil
 }
@@ -2643,7 +2643,7 @@ func runAuthServer(ctx context.Context, target string, store state.Store, log *s
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth listen: %w", err)
 	}
-	srv := grpc.NewServer()
+	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	registerAuthReceiver(srv, store)
 	return srv, lis, nil
 }
