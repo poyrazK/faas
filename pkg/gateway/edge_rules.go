@@ -446,6 +446,7 @@ type HostEntry struct {
 	// the cmd-side loader threads one slice per kind into the
 	// HostEntry.
 	Cache        []EdgeRuleCacheResolved
+	Respond      []EdgeRuleRespondResolved
 	PathGlobErrs []PathGlobError
 }
 
@@ -480,6 +481,10 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 	out.Throttle = slices.Clone(entry.Throttle)
 	out.Budget = slices.Clone(entry.Budget)
 	out.Cache = slices.Clone(entry.Cache)
+	out.Respond = slices.Clone(entry.Respond)
+	for i := range out.Respond {
+		out.Respond[i].Body = slices.Clone(entry.Respond[i].Body)
+	}
 	out.PathGlobErrs = slices.Clone(entry.PathGlobErrs)
 	return &out, true
 }
@@ -767,6 +772,24 @@ func (c *EdgeRuleCache) GetCache(host string) ([]EdgeRuleCacheResolved, bool) {
 	return out, true
 }
 
+// GetRespond returns a defensive copy of the compiled preview-response rules
+// for a host.
+func (c *EdgeRuleCache) GetRespond(host string) ([]EdgeRuleRespondResolved, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	if entry.Respond == nil {
+		return nil, true
+	}
+	out := make([]EdgeRuleRespondResolved, len(entry.Respond))
+	for i := range entry.Respond {
+		out[i] = entry.Respond[i]
+		out[i].Body = slices.Clone(entry.Respond[i].Body)
+	}
+	return out, true
+}
+
 // getEntry promotes the entry on hit and returns it. Internal —
 // the Get* family wraps this so each returns a typed slice.
 //
@@ -938,6 +961,7 @@ type EdgeRuleMatcher interface {
 	// rule (the cache key + storage live in handler.go so the
 	// wake-gate interaction stays in one place).
 	MatchCache(ctx context.Context, host, path, method string) *EdgeRuleCacheResolved
+	MatchRespond(ctx context.Context, host, path, method string) *EdgeRuleRespondResolved
 	Reset()
 }
 
@@ -1140,6 +1164,9 @@ func (noOpEdgeRuleMatcher) MatchBudget(context.Context, string, string, string) 
 	return nil
 }
 func (noOpEdgeRuleMatcher) MatchCache(context.Context, string, string, string) *EdgeRuleCacheResolved {
+	return nil
+}
+func (noOpEdgeRuleMatcher) MatchRespond(context.Context, string, string, string) *EdgeRuleRespondResolved {
 	return nil
 }
 func (noOpEdgeRuleMatcher) Reset() {}

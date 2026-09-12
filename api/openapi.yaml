@@ -20766,7 +20766,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -20791,6 +20791,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -20808,7 +20809,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -20832,6 +20833,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -20866,6 +20868,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
 
     EdgeRuleRouteAction:
       description: 'Re-targets the matched request to another app owned by the same account.'
@@ -21478,6 +21481,25 @@ components:
             customer's status page so monitoring / curl users see
             why the endpoint is dark.
           example: "Rolling out v2; back at 14:00 UTC."
+
+    EdgeRuleRespondAction:
+      description: |
+        Preview-only fixed JSON response. The gateway serves this body
+        directly for the matched route, so the preview frontend can be
+        developed before the backend endpoint exists. Status codes are
+        limited to 200..599 and the JSON body is capped at 64 KiB.
+      type: object
+      required: [status_code]
+      properties:
+        status_code:
+          type: integer
+          minimum: 200
+          maximum: 599
+          example: 200
+        body:
+          description: Arbitrary JSON response body. Omit for an empty response.
+          # An unconstrained schema intentionally accepts any JSON value:
+          # object, array, scalar, or null.
 
     EdgeRuleGeoAction:
       description: |

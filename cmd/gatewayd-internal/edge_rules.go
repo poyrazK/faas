@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -147,6 +148,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	throttle, throttleErrs := compileThrottleRules(storeRules)
 	budget, budgetErrs := compileBudgetRules(storeRules)
 	cache, cacheErrs := compileCacheRules(storeRules)
+	respond, respondErrs := compileRespondRules(storeRules)
 	entry := &gateway.HostEntry{
 		Route:       route,
 		Rewrite:     rewrite,
@@ -162,6 +164,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		Throttle:    throttle,
 		Budget:      budget,
 		Cache:       cache,
+		Respond:     respond,
 	}
 	parseErrs := append(routeErrs, rewriteErrs...)
 	parseErrs = append(parseErrs, redirectErrs...)
@@ -176,6 +179,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	parseErrs = append(parseErrs, throttleErrs...)
 	parseErrs = append(parseErrs, budgetErrs...)
 	parseErrs = append(parseErrs, cacheErrs...)
+	parseErrs = append(parseErrs, respondErrs...)
 	if len(parseErrs) > 0 {
 		entry.PathGlobErrs = parseErrs
 	}
@@ -225,6 +229,9 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		}
 		for range throttleErrs {
 			g.metrics.ObserveEdgeRuleCompileError("throttle")
+		}
+		for range respondErrs {
+			g.metrics.ObserveEdgeRuleCompileError("respond")
 		}
 	}
 	g.cache.PutIfGeneration(host, entry, generation)
@@ -596,6 +603,27 @@ func (g *gatewaydEdgeRules) MatchCache(ctx context.Context, host, requestPath, m
 		rules = entry.Cache
 	}
 	return gateway.PickFirstCacheMatch(rules, requestPath, method)
+}
+
+// MatchRespond returns the highest-priority preview-response rule matching the
+// request. It shares the host cache with all other edge-rule kinds.
+func (g *gatewaydEdgeRules) MatchRespond(ctx context.Context, host, requestPath, method string) *gateway.EdgeRuleRespondResolved {
+	if g == nil || g.cache == nil {
+		return nil
+	}
+	rules, hit := g.cache.GetRespond(host)
+	if !hit {
+		entry, err := g.loadHost(ctx, host)
+		if err != nil {
+			if g.log != nil {
+				g.log.Warn("edge rule loader failed; treating respond rule as miss", "host", host, "err", err)
+			}
+			return nil
+		}
+		g.warnPathGlobErrs(host, entry.PathGlobErrs)
+		rules = entry.Respond
+	}
+	return gateway.PickFirstRespondMatch(rules, requestPath, method)
 }
 
 // Reset drops every cached entry. Called by the pg_notify loop in
@@ -1293,6 +1321,46 @@ func compileMaintenanceRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleMai
 			Methods:           buildMethodsMap(r.MatchMethods),
 			RetryAfterSeconds: retry,
 			Message:           r.Action.Maintenance.Message,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	return out, parseErrs
+}
+
+// compileRespondRules compiles preview-only fixed JSON responses. Invalid
+// direct-DB rows are dropped so the gateway fails open to the normal backend
+// route instead of serving an unsafe status or malformed body.
+func compileRespondRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRespondResolved, []gateway.PathGlobError) {
+	if len(storeRules) == 0 {
+		return nil, nil
+	}
+	out := make([]gateway.EdgeRuleRespondResolved, 0, len(storeRules))
+	var parseErrs []gateway.PathGlobError
+	for i := range storeRules {
+		r := &storeRules[i]
+		if !r.Enabled || r.Kind != state.EdgeRuleKindRespond || r.Action.Respond == nil {
+			continue
+		}
+		if errs := validatePathGlob(r.ID, r.MatchPath); errs != nil {
+			parseErrs = append(parseErrs, errs...)
+			continue
+		}
+		a := r.Action.Respond
+		if a.StatusCode < 200 || a.StatusCode > 599 || len(a.Body) > api.MaxEdgeRuleRespondBodyBytes || (len(a.Body) > 0 && !json.Valid(a.Body)) {
+			continue
+		}
+		if (a.StatusCode == 204 || a.StatusCode == 304) && len(a.Body) > 0 {
+			continue
+		}
+		out = append(out, gateway.EdgeRuleRespondResolved{
+			ID:         r.ID,
+			AccountID:  r.AccountID,
+			AppID:      r.AppID,
+			Priority:   r.Priority,
+			PathGlob:   r.MatchPath,
+			Methods:    buildMethodsMap(r.MatchMethods),
+			StatusCode: a.StatusCode,
+			Body:       append([]byte(nil), a.Body...),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

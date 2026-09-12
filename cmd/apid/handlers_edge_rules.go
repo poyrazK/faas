@@ -201,6 +201,12 @@ func validateEdgeRuleAction(kind string, raw json.RawMessage, plan api.Plan) *ap
 		// pkg/state/pgstore.go::CreateEdgeRuleIfUnderQuota
 		// and memstore.go::CreateEdgeRuleIfUnderQuota.
 		return a.Validate()
+	case state.EdgeRuleKindRespond:
+		var a api.EdgeRuleRespondAction
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return api.ErrValidation(fmt.Sprintf("respond action: %v", err))
+		}
+		return a.Validate()
 	}
 	return api.ErrValidation("edge rule action validation fell through — internal bug")
 }
@@ -294,6 +300,10 @@ func (s *server) createEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	if req.Kind == string(state.EdgeRuleKindRespond) && app.PreviewOfSlug == "" {
+		api.WriteProblem(w, api.ErrValidation("respond edge rules are only allowed on preview applications"))
 		return
 	}
 	if prob := validateEdgeRuleBody(&req, acct.Plan); prob != nil {
@@ -587,6 +597,14 @@ func actionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				Methods:             a.Methods,
 			}
 		}
+	case state.EdgeRuleKindRespond:
+		var a api.EdgeRuleRespondAction
+		if err := json.Unmarshal(raw, &a); err == nil {
+			out.Respond = &state.EdgeRuleRespondAction{
+				StatusCode: a.StatusCode,
+				Body:       append([]byte(nil), a.Body...),
+			}
+		}
 	}
 	return out
 }
@@ -629,6 +647,17 @@ func (s *server) updateEdgeRule(w http.ResponseWriter, r *http.Request, acct sta
 	if row.AccountID != acct.ID {
 		s.notFound(w, "no such edge rule")
 		return
+	}
+	if row.Kind == state.EdgeRuleKindRespond {
+		app, appErr := s.store.AppByID(r.Context(), row.AppID)
+		if appErr != nil {
+			s.notFound(w, "no such app")
+			return
+		}
+		if app.PreviewOfSlug == "" {
+			api.WriteProblem(w, api.ErrValidation("respond edge rules are only allowed on preview applications"))
+			return
+		}
 	}
 	var req api.UpdateEdgeRuleRequest
 	if err := decodeJSON(r, &req); err != nil {

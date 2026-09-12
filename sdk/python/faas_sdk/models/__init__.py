@@ -413,6 +413,7 @@ from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
 from .edge_rule_redirect_action import EdgeRuleRedirectAction
 from .edge_rule_redirect_action_headers import EdgeRuleRedirectActionHeaders
 from .edge_rule_redirect_action_status_code import EdgeRuleRedirectActionStatusCode
+from .edge_rule_respond_action import EdgeRuleRespondAction
 from .edge_rule_response import EdgeRuleResponse
 from .edge_rule_response_kind import EdgeRuleResponseKind
 from .edge_rule_response_validate_mode import EdgeRuleResponseValidateMode
@@ -1370,6 +1371,7 @@ __all__ = (
     "EdgeRuleRedirectAction",
     "EdgeRuleRedirectActionHeaders",
     "EdgeRuleRedirectActionStatusCode",
+    "EdgeRuleRespondAction",
     "EdgeRuleResponse",
     "EdgeRuleResponseKind",
     "EdgeRuleResponseValidateMode",

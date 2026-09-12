@@ -3406,6 +3406,11 @@ const (
 	// schema documents).
 	MaxEdgeRuleValidateSchemaBytes = 64 * 1024 // 64 KiB
 
+	// MaxEdgeRuleRespondBodyBytes bounds the JSON body stored in a
+	// preview-only kind=respond rule. Keeping this bounded protects both
+	// Postgres jsonb rows and the gateway host-rule cache.
+	MaxEdgeRuleRespondBodyBytes = 64 * 1024 // 64 KiB
+
 	// EdgeRuleMaintenanceRetryAfterSeconds (ADR-091 amendment,
 	// PR-A #??? / kind=maintenance) is the platform default
 	// Retry-After for both the kind=maintenance edge rule and the
