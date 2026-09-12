@@ -772,9 +772,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if storage.AsCacheBackend(storageBackend) == nil {
 			return errors.New("vmmd: OCI snapshot fan-out requires the local read-through cache")
 		}
-		replicaStore, ok := store.(state.SnapshotReplicaStore)
+		replicaStore, ok := store.(state.SnapshotReplicaLeaseStore)
 		if !ok {
-			return errors.New("vmmd: OCI snapshot fan-out requires a snapshot replica store")
+			return errors.New("vmmd: OCI snapshot fan-out requires a lease-aware snapshot replica store")
 		}
 		fanoutRegion := ""
 		if node, regionErr := store.ComputeNodeByID(ctx, nodeID); regionErr != nil {
