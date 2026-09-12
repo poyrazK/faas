@@ -372,7 +372,8 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 // WaitForWarmCompletion waits for the guest's successful build handoff,
 // captures the reusable memory state, destroys the live VM, and retains the
 // host drive for the next restore. Failed builds use the ordinary teardown
-// path and return no warm snapshot.
+// path and return no warm snapshot. If cleanup after snapshot publication
+// fails, the published snapshot metadata is returned so builderd can retry it.
 func (d *VMMDriver) WaitForWarmCompletion(ctx context.Context, h BuildHandle) (BuildOutcome, WarmSnapshot, error) {
 	if d == nil || d.cli == nil {
 		return BuildOutcome{}, WarmSnapshot{}, fmt.Errorf("builderd: VMMDriver not wired")
@@ -381,11 +382,11 @@ func (d *VMMDriver) WaitForWarmCompletion(ctx context.Context, h BuildHandle) (B
 	defer cancel()
 	readyResp, err := d.cli.WaitBuilderReady(waitCtx, &vmmdpb.WaitBuilderReadyRequest{Instance: h.Instance})
 	if err != nil {
-		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), h.Instance)
+		cleanupErr := d.cleanupWarmBuilderStart(context.WithoutCancel(ctx), h)
 		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: wait builder ready: %w", err), cleanupErr)
 	}
 	if readyResp == nil {
-		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), h.Instance)
+		cleanupErr := d.cleanupWarmBuilderStart(context.WithoutCancel(ctx), h)
 		return BuildOutcome{}, WarmSnapshot{}, errors.Join(errors.New("builderd: nil builder readiness outcome"), cleanupErr)
 	}
 	if !readyResp.GetReady() {
@@ -422,20 +423,38 @@ func (d *VMMDriver) WaitForWarmCompletion(ctx context.Context, h BuildHandle) (B
 		cleanupErr := d.DeleteWarmSnapshot(context.WithoutCancel(ctx), discard)
 		out, empty, fallbackErr := d.finishWithoutWarmSnapshot(ctx, h, fmt.Errorf("stop warm builder: %w", err))
 		if fallbackErr != nil {
-			return BuildOutcome{}, WarmSnapshot{}, errors.Join(fallbackErr, cleanupErr)
+			if cleanupErr != nil {
+				return BuildOutcome{}, discard, errors.Join(fallbackErr, cleanupErr)
+			}
+			return BuildOutcome{}, empty, fallbackErr
 		}
 		if cleanupErr != nil {
 			out.WarmSnapshotError = errors.Join(errors.New(out.WarmSnapshotError), cleanupErr).Error()
+			return out, discard, nil
 		}
 		return out, empty, nil
 	}
 	out, err := d.waitForCompletion(ctx, h, true)
 	if err != nil {
-		_ = d.DeleteWarmSnapshot(context.WithoutCancel(ctx), snapshot)
-		_ = os.Remove(h.HostDrive1)
+		cleanupErr := d.DeleteWarmSnapshot(context.WithoutCancel(ctx), snapshot)
+		if cleanupErr != nil {
+			return BuildOutcome{}, snapshot, errors.Join(err, fmt.Errorf("builderd: warm snapshot cleanup after wait: %w", cleanupErr))
+		}
 		return BuildOutcome{}, WarmSnapshot{}, err
 	}
 	return out, snapshot, nil
+}
+
+func (d *VMMDriver) cleanupWarmBuilderStart(ctx context.Context, h BuildHandle) error {
+	if h.HostDrive1 == "" {
+		return d.stopAndDestroy(ctx, h.Instance)
+	}
+	cleanupErr := d.stopAndDestroy(ctx, h.Instance)
+	removeErr := os.Remove(h.HostDrive1)
+	if errors.Is(removeErr, os.ErrNotExist) {
+		removeErr = nil
+	}
+	return errors.Join(cleanupErr, removeErr)
 }
 
 // finishWithoutWarmSnapshot preserves a completed build when the optional
