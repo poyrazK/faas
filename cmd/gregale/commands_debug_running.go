@@ -47,35 +47,35 @@ func cmdDebugRunning(args []string) int {
 }
 
 func renderDebugRunning(w io.Writer, slug string, resp api.DebugRunningResponse) {
-	fmt.Fprintf(w, "Why is %s running?\n", slug)
+	_, _ = fmt.Fprintf(w, "Why is %s running?\n", slug)
 	if resp.CurrentObservedAt == "" {
-		fmt.Fprintln(w, "No scheduler observation is available in the selected window.")
+		_, _ = fmt.Fprintln(w, "No scheduler observation is available in the selected window.")
 	} else {
-		fmt.Fprintf(w, "Observed at %s\n", resp.CurrentObservedAt)
+		_, _ = fmt.Fprintf(w, "Observed at %s\n", resp.CurrentObservedAt)
 		if len(resp.Current) == 0 {
-			fmt.Fprintln(w, "Current blockers: none observed")
+			_, _ = fmt.Fprintln(w, "Current blockers: none observed")
 		} else {
-			fmt.Fprintln(w, "Current observed causes:")
+			_, _ = fmt.Fprintln(w, "Current observed causes:")
 			for _, cause := range resp.Current {
-				fmt.Fprintf(w, "  - %s: %s\n", cause.Code, cause.Summary)
+				_, _ = fmt.Fprintf(w, "  - %s: %s\n", cause.Code, cause.Summary)
 			}
 		}
 		if len(resp.History) > 0 && resp.History[0].Degraded {
-			fmt.Fprintln(w, "Signal status: degraded (one or more scheduler signals were unavailable)")
+			_, _ = fmt.Fprintln(w, "Signal status: degraded (one or more scheduler signals were unavailable)")
 		}
 	}
-	fmt.Fprintf(w, "Configuration: idle timeout %ds; configured minimum %d; effective minimum %d",
+	_, _ = fmt.Fprintf(w, "Configuration: idle timeout %ds; configured minimum %d; effective minimum %d",
 		resp.Config.IdleTimeoutSeconds, resp.Config.ConfiguredMinInstances, resp.Config.EffectiveMinInstances)
 	if resp.Config.PrewarmMinInstances > 0 {
-		fmt.Fprintf(w, "; temporary prewarm floor %d", resp.Config.PrewarmMinInstances)
+		_, _ = fmt.Fprintf(w, "; temporary prewarm floor %d", resp.Config.PrewarmMinInstances)
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	if len(resp.History) == 0 {
 		return
 	}
-	fmt.Fprintln(w, "Recent observations:")
+	_, _ = fmt.Fprintln(w, "Recent observations:")
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "OBSERVED AT\tCAUSES\tSTATUS")
+	_, _ = fmt.Fprintln(tw, "OBSERVED AT\tCAUSES\tSTATUS")
 	for _, observation := range resp.History {
 		codes := make([]string, 0, len(observation.Causes))
 		for _, cause := range observation.Causes {
@@ -85,10 +85,10 @@ func renderDebugRunning(w io.Writer, slug string, resp api.DebugRunningResponse)
 		if observation.Degraded {
 			status = "degraded"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", observation.ObservedAt, strings.Join(codes, ", "), status)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", observation.ObservedAt, strings.Join(codes, ", "), status)
 	}
 	_ = tw.Flush()
 	if resp.HistoryTruncated {
-		fmt.Fprintln(w, "History is truncated; narrow or widen --since to inspect another window.")
+		_, _ = fmt.Fprintln(w, "History is truncated; narrow or widen --since to inspect another window.")
 	}
 }
