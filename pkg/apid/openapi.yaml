@@ -11431,6 +11431,131 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: connection_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Live connection identifier returned by the callback event.
+    post:
+      tags: [realtime]
+      operationId: sendManagedRealtimeConnection
+      summary: Send a message to one live managed realtime connection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeMessageRequest' }
+      responses:
+        '202': { description: Message accepted by the connection owner. }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: connection_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Live socket identifier to close on its owning realtime node.
+    post:
+      tags: [realtime]
+      operationId: closeManagedRealtimeConnection
+      summary: Close one live managed realtime connection.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeCloseRequest' }
+      responses:
+        '204': { description: The connection was closed. }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: connection_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Live connection identifier returned in realtime callback events.
+      - name: channel
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 256, pattern: '^[^/?#\\r\\n ]+$' }
+        description: Channel to add or remove for the live connection.
+    put:
+      tags: [realtime]
+      operationId: subscribeManagedRealtimeConnection
+      summary: Subscribe one live connection to a channel.
+      responses:
+        '204': { description: Subscription applied. }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [realtime]
+      operationId: unsubscribeManagedRealtimeConnection
+      summary: Remove one live connection from a channel.
+      responses:
+        '204': { description: Subscription removed. }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: channel
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 256, pattern: '^[^/?#\\r\\n ]+$' }
+        description: Channel that receives the published message.
+    post:
+      tags: [realtime]
+      operationId: publishManagedRealtimeChannel
+      summary: Publish a message to subscribed live connections.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeMessageRequest' }
+      responses:
+        '200':
+          description: Number of owner queues that accepted the message.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimePublishResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   # ─── Customer runtime log drains (issue #1398 O4) ─────────────────────────
   /v1/apps/{slug}/log-drains:
     parameters:
@@ -27139,6 +27264,27 @@ components:
         callback_auth_token: { type: string, minLength: 1, maxLength: 256, writeOnly: true }
         auth_token: { type: string, maxLength: 256, writeOnly: true }
         enabled: { type: boolean }
+
+    ManagedRealtimeMessageRequest:
+      type: object
+      description: Binary-safe message payload encoded as standard base64.
+      required: [data_base64]
+      properties:
+        data_base64: { type: string, format: byte, maxLength: 1398104, description: Decoded payload is limited to 1 MiB. }
+        binary: { type: boolean, default: false }
+
+    ManagedRealtimeCloseRequest:
+      type: object
+      description: Optional close reason for a live managed realtime connection.
+      properties:
+        reason: { type: string, maxLength: 256 }
+
+    ManagedRealtimePublishResponse:
+      type: object
+      description: Result of publishing a message to an endpoint-scoped channel.
+      required: [queued]
+      properties:
+        queued: { type: integer, minimum: 0, description: Number of local owner queues that accepted the message. }
 
     AppLogDrainResponse:
       type: object

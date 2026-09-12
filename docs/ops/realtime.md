@@ -18,6 +18,10 @@ writing the daemon socket directly:
 ```
 POST /v1/apps/{slug}/realtime/endpoints
 GET|PATCH|DELETE /v1/apps/{slug}/realtime/endpoints/{id}
+POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send
+POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close
+PUT|DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}
+POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish
 ```
 
 The API persists endpoint configuration in the control plane, applies the
@@ -34,10 +38,14 @@ curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/en
 
 The callback URL should be an ordinary application route. Its first request
 wakes a sleeping VM; the quiet WebSocket itself remains owned by `realtimed`.
-Use `pkg/realtime.Client` (or the equivalent management HTTP calls) to send to
-a `connection_id`, subscribe/publish channels, or close a connection.
-The current registry is node-local, so endpoint registration and management
-must target the realtimed node that owns the connections.
+Use the authenticated API (or `pkg/realtime.Client` for node-local tooling) to
+send to a `connection_id`, subscribe/publish channels, or close a connection.
+Send and publish bodies contain `data_base64` and an optional `binary` flag;
+decoded frames are limited to 1 MiB. The current registry is node-local, so
+public management calls succeed only when an owner resolver is configured for
+the target node; deployments without one fail closed with `503` rather than
+guessing an owner. Cross-node routing will replace this adapter with a leased
+resolver.
 
 Inspect health and counters from the `faas` group:
 

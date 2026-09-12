@@ -28,7 +28,12 @@ const (
 	RealtimeAuthTokenMaxBytes         = 256
 	RealtimePathMaxBytes              = 256
 	RealtimeCallbackURLMaxBytes       = 2048
-	RealtimeSecretMasked              = "***"
+	// RealtimeMessageMaxBytes is the maximum decoded payload accepted by the
+	// public connection-management API. The daemon enforces its own limit too;
+	// keeping the API bound explicit prevents oversized requests from reaching
+	// an owner node.
+	RealtimeMessageMaxBytes = 1 << 20
+	RealtimeSecretMasked    = "***"
 )
 
 const (
@@ -55,6 +60,26 @@ type UpdateManagedRealtimeEndpointRequest struct {
 	CallbackAuthToken *string `json:"callback_auth_token,omitempty"`
 	AuthToken         *string `json:"auth_token,omitempty"`
 	Enabled           *bool   `json:"enabled,omitempty"`
+}
+
+// ManagedRealtimeMessageRequest is a binary-safe message sent to one live
+// connection or published to an endpoint channel. DataBase64 is decoded
+// before the request is forwarded to the realtime owner.
+type ManagedRealtimeMessageRequest struct {
+	DataBase64 string `json:"data_base64"`
+	Binary     bool   `json:"binary,omitempty"`
+}
+
+// ManagedRealtimeCloseRequest optionally supplies the WebSocket close reason.
+type ManagedRealtimeCloseRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+// ManagedRealtimePublishResponse reports how many local owner queues accepted
+// a published message. A cross-node owner may return a different aggregate
+// after the leased registry is enabled.
+type ManagedRealtimePublishResponse struct {
+	Queued int `json:"queued"`
 }
 
 type ManagedRealtimeEndpointResponse struct {

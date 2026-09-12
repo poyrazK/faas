@@ -106,6 +106,11 @@ type server struct {
 	// mirrors durable endpoint writes onto the local realtimed owner; cross-node
 	// routing will replace this seam with the leased control-plane adapter.
 	realtimeRegistrar realtimeEndpointRegistrar
+	// realtimeOwner routes customer-facing connection operations to the node
+	// that owns a live socket. The initial implementation wires a local Unix
+	// client; a leased cross-node resolver can replace it without changing the
+	// public API handlers.
+	realtimeOwner realtimeOwner
 	// events is the in-process broadcaster the SSE handlers read from
 	// (slice 5/6). nil falls back to a fresh one so callers can defer
 	// initialization in unit tests.
@@ -687,8 +692,19 @@ func (s *server) WithGatewaydControlURL(url string) *server {
 // persist endpoint state without assuming a local realtime owner.
 func (s *server) WithRealtimeSocket(socket string) *server {
 	if socket != "" {
-		s.realtimeRegistrar = realtime.NewUnixClient(socket)
+		client := realtime.NewUnixClient(socket)
+		s.realtimeRegistrar = client
+		s.realtimeOwner = localRealtimeOwner{client: client}
 	}
+	return s
+}
+
+// WithRealtimeOwner attaches the owner resolver used by public managed
+// realtime operations. Production currently uses WithRealtimeSocket; this
+// seam lets the dispatch/lease control plane route operations to another
+// realtime node and keeps tests independent of a Unix socket.
+func (s *server) WithRealtimeOwner(owner realtimeOwner) *server {
+	s.realtimeOwner = owner
 	return s
 }
 
@@ -1895,6 +1911,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimeEndpoint))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateManagedRealtimeEndpoint))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteManagedRealtimeEndpoint))))
+	// Live managed realtime operations are endpoint-scoped so an API key can
+	// never address a connection or channel outside an app it owns. The owner
+	// interface behind these handlers is local today and becomes the leased
+	// cross-node resolver in the next control-plane slice.
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sendManagedRealtimeConnection))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.closeManagedRealtimeConnection))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.subscribeManagedRealtimeConnection))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.unsubscribeManagedRealtimeConnection))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeChannel))))
 
 	// Customer runtime log drains (issue #1398 O4). Each destination is
 	// provider-neutral: HTTP JSON covers compatible intake endpoints, while

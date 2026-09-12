@@ -78,8 +78,11 @@ registry is intentionally node-local.
 ## Follow-up work
 
 The socket owner, gateway routing, callbacks, durable endpoint/resource table,
-and authenticated `apid` CRUD API are now shipped. The remaining production
-work is a leased cross-node registry or deterministic node routing, plus
-customer-facing send/close/subscribe/publish operations. Those pieces should
-reuse the existing `pkg/dispatch` retry/lease contracts rather than writing
-Postgres rows from `realtimed`.
+authenticated `apid` CRUD API, and authenticated customer-facing
+send/close/subscribe/publish operations are now shipped. The public operations
+are endpoint-scoped and route through an owner interface; the current adapter
+targets the local Unix socket and fails closed with `503` when no owner is
+configured. The remaining production work is a leased cross-node registry or
+deterministic node routing. That resolver should reuse the existing
+`pkg/dispatch` retry/lease contracts rather than writing Postgres rows from
+`realtimed`.
