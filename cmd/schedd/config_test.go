@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
@@ -270,6 +273,36 @@ func TestLoadConfig_NodeNameEnvOverlay(t *testing.T) {
 	}
 	if cfg.NodeName != "" {
 		t.Errorf("default NodeName = %q, want empty (single-box dev)", cfg.NodeName)
+	}
+}
+
+func TestResolveLocalNodeID_ComputeOnlyAllowsDrainedRollout(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.CreateComputeNode(ctx, state.ComputeNode{
+		Name:      "drained-rollout-node",
+		TargetURL: "tcp://127.0.0.1:50051",
+		Lifecycle: state.NodeLifecycleMaintenance,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	if node.Active {
+		t.Fatal("test node unexpectedly active")
+	}
+
+	computeCfg := &Config{NodeName: node.Name, Role: role.RoleComputeOnly}
+	got, err := computeCfg.ResolveLocalNodeID(ctx, store)
+	if err != nil {
+		t.Fatalf("compute-only ResolveLocalNodeID: %v", err)
+	}
+	if got != node.ID {
+		t.Errorf("owner node id = %q, want %q", got, node.ID)
+	}
+
+	controlCfg := &Config{NodeName: node.Name, Role: role.RoleControlPlane}
+	if _, err := controlCfg.ResolveLocalNodeID(ctx, store); err == nil || !strings.Contains(err.Error(), "is inactive") {
+		t.Fatalf("control-plane ResolveLocalNodeID error = %v, want inactive-node refusal", err)
 	}
 }
 

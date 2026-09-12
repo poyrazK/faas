@@ -222,8 +222,9 @@ type Config struct {
 	// The field is intentionally not backed by a [compute_node] TOML
 	// subsection: the node identity is deployment-owned and is injected
 	// through FAAS_NODE_NAME on each node-local schedd. The control-plane
-	// schedd leaves it empty; compute schedds resolve their own active
-	// compute_nodes row before serving requests.
+	// schedd leaves it empty; compute schedds resolve their own durable
+	// compute_nodes row before serving requests. The row may remain
+	// drained during rollout until the full daemon set is healthy.
 	NodeName string `toml:"node_name"`
 
 	// Role is the box shape this schedd inhabits (Gate-B; env
@@ -253,8 +254,8 @@ func (c *Config) ResolveListenTarget() string {
 // guard short-circuits, and the single-box install preserves
 // bit-for-bit behaviour.
 //
-// Failures (DB outage, NodeName set but no matching active
-// compute_nodes row, NodeName resolves to default-local while
+// Failures (DB outage, NodeName set but no matching compute_nodes
+// row, NodeName resolves to default-local while
 // any non-default-local is active) return a non-nil error so
 // cmd/schedd's main exits fast — a misconfigured schedd
 // silently falling back to in-process ownership would mask
@@ -264,15 +265,16 @@ func (c *Config) ResolveLocalNodeID(ctx context.Context, store state.Store) (str
 	if c.NodeName == "" {
 		return "", nil
 	}
-	// Look up the active compute_nodes row by name. The
-	// state.Store exposes ActiveComputeNodes(ctx) but not a
-	// per-name lookup, so we resolve via a small helper that
-	// matches the (name, active=true) predicate.
+	// Look up the durable compute_nodes row by name. A compute-only
+	// schedd is allowed to resolve its owner while the row is drained:
+	// the release rollout intentionally keeps placement disabled until
+	// every daemon is healthy, then activates the row. Other roles retain
+	// the fail-closed active-row requirement.
 	cn, err := store.ComputeNodeByName(ctx, c.NodeName)
 	if err != nil {
 		return "", fmt.Errorf("schedd: resolve %s: %w", c.NodeName, err)
 	}
-	if !cn.Active {
+	if !cn.Active && c.Role != role.RoleComputeOnly {
 		return "", fmt.Errorf("schedd: compute_node %s is inactive", c.NodeName)
 	}
 	if cn.Name == "default-local" {
