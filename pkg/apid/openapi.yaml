@@ -21128,7 +21128,8 @@ components:
       description: |
         Per-workload build result from the apply-time build-enqueue loop.
         On success: slug + app_id + deployment_id + build_id. On failure:
-        slug + app_id + error, no IDs.
+        slug + app_id + error, no IDs. Wait-aware project deploys also
+        include the observed deployment and build lifecycle statuses.
       type: object
       required: [slug, app_id]
       properties:
@@ -21136,6 +21137,9 @@ components:
         app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         build_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        deployment_status: { type: string, description: "Observed deployment lifecycle status (for example live, failed, superseded, or cancelled) when the CLI waits." }
+        build_status: { type: string, description: "Observed build lifecycle status (queued, running, succeeded, or failed) when the CLI waits." }
+        failure_class: { type: string, description: "Build failure class when the observed build failed." }
         error: { type: string, description: "Staging or enqueue error message; partial-failure rows carry this in lieu of IDs." }
 
     # ─── Alert rules (issue #396 / ADR-045 PR 3) ──────────────────────────
