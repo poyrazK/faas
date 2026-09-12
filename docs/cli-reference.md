@@ -1477,7 +1477,12 @@ Remove a registry credential
 
 Re-promote the previous deployment
 
-`gregale rollback`
+`gregale rollback <slug> [--to <deployment_id>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to <deployment_id>` | target deployment id |  |
+| `--json` | machine-readable output |  |
 
 
 ## rollouts
