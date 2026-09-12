@@ -200,6 +200,44 @@ func TestCmdDeployments_All(t *testing.T) {
 	}
 }
 
+func TestCmdDeployments_All_JSON_EmptyIsZeroRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		path string
+	}{
+		{name: "account", args: []string{"--all"}, path: "/v1/deployments"},
+		{name: "app", args: []string{"--app", "jnjk", "--all"}, path: "/v1/apps/jnjk/deployments"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tc.path {
+					t.Errorf("path = %q, want %q", r.URL.Path, tc.path)
+				}
+				_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{})
+			}))
+			defer srv.Close()
+
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			var stdout bytes.Buffer
+			oldOut := osStdout
+			osStdout = &stdout
+			defer func() { osStdout = oldOut }()
+			resetJSONOutput()
+			t.Cleanup(resetJSONOutput)
+			jsonOutput = true
+
+			if code := cmdDeployments(tc.args); code != 0 {
+				t.Fatalf("cmdDeployments %v = %d, want 0", tc.args, code)
+			}
+			if got := stdout.String(); got != "" {
+				t.Fatalf("empty NDJSON list emitted %q; want zero records", got)
+			}
+		})
+	}
+}
+
 // --- cmdDeployment ----------------------------------------------------------
 
 func TestCmdDeployment_MissingID(t *testing.T) {

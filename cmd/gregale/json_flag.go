@@ -35,7 +35,7 @@ import (
 //   - cmdHostAge init/rotate/status/prune — operator fs writes
 //   - cmdPKI init/status/rotate          — operator fs writes
 //   - cmdSignKeys init/rotate/status     — operator fs writes
-//   - cmdTrustedPublishers add/remove/list — operator fs writes
+//   - cmdTrustedPublishers add/remove — operator fs writes
 //   - cmdOverageCap (set/clear)          — side-effect only
 //   - cmdApp --concurrency fast path     — explicitly rejects --json
 //     (commands2.go)
