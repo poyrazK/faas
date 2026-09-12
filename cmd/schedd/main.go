@@ -1262,6 +1262,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// interval through runDeps.heartbeatInterval.
 	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log).
 		WithOwnerNodeID(ownerNodeID).
+		WithStalePeerObserver(ownerNodeID != "").
 		WithNodeRegistry(nodeRegistry).
 		WithEvents(eventsPlatform)
 	hb.Interval = cfg.HeartbeatInterval
