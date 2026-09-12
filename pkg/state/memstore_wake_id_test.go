@@ -78,3 +78,53 @@ func TestMemStore_ListEventsByWakeID(t *testing.T) {
 		t.Errorf("unknown wake_id = %d, want 0", len(none))
 	}
 }
+
+func TestMemStore_ListEventsByWakeID_DeduplicatesCanonicalWake(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	wakeID := "w-mirror"
+	canonical := []byte(`{"wake_id":"w-mirror","app_id":"a-1","trigger":"gateway","at_capacity":true}`)
+	mirror := []byte(`{"wake_id":"w-mirror","app_id":"a-1","trigger":"gateway","at_capacity":false}`)
+	if err := m.AppendEvent(ctx, "schedd", "wake.boot_started", nil, canonical); err != nil {
+		t.Fatalf("append canonical: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := m.AppendEvent(ctx, "vmmd", "wake.boot_started", nil, mirror); err != nil {
+		t.Fatalf("append mirror: %v", err)
+	}
+
+	rows, err := m.ListEventsByWakeID(ctx, wakeID, time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("ListEventsByWakeID: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want one canonical boot row", len(rows))
+	}
+	if rows[0].Actor != "schedd" {
+		t.Fatalf("actor = %q, want schedd canonical row", rows[0].Actor)
+	}
+	if string(rows[0].Data) != string(canonical) {
+		t.Fatalf("data = %s, want canonical payload %s", rows[0].Data, canonical)
+	}
+
+	// A cursor after the canonical row must not resurrect the later
+	// mirror as a second boot marker.
+	since := rows[0].At
+	rows, err = m.ListEventsByWakeID(ctx, wakeID, since, 0)
+	if err != nil {
+		t.Fatalf("ListEventsByWakeID after canonical: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("rows after canonical cursor = %d, want 0", len(rows))
+	}
+
+	// The raw operator view remains able to distinguish the
+	// corroborating observation from the canonical row.
+	raw, err := m.ListAllEventsPaged(ctx, "", "wake.boot_started", "", time.Time{}, 100)
+	if err != nil {
+		t.Fatalf("ListAllEventsPaged: %v", err)
+	}
+	if len(raw) != 2 {
+		t.Fatalf("raw rows = %d, want 2", len(raw))
+	}
+}

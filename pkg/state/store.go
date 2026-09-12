@@ -3837,9 +3837,11 @@ type Store interface {
 	// dashboard's "Recent wakes" table doesn't fan out per row.
 	// Empty map when no rows match (pre-ADR-123 fleet).
 	LookupBootStartedForWakes(ctx context.Context, wakeIDs []string) (map[string]WakeBootMeta, error)
-	// CountWakeBootStarted24h returns the count of wake.boot_started
-	// events the schedd recorded for the given app in the trailing
-	// 24 hours. Used by cmd/apid/handlers_metrics.go to populate
+	// CountWakeBootStarted24h returns the count of distinct logical
+	// wakes (unique wake_id values) the schedd recorded for the given
+	// app in the trailing 24 hours. Corroborating vmmd rows with the
+	// same wake_id are not counted again. Used by
+	// cmd/apid/handlers_metrics.go to populate
 	// the AppMetricsResponse.Wakes24h field on the customer-facing
 	// per-app dashboard (Free is gated off; Hobby/Pro/Scale only
 	// — see pkg/api/limits.go::PerAppMetricsAllowed). Returns 0 on
@@ -4468,9 +4470,11 @@ type Store interface {
 	// expression index events_wake_id_idx
 	// (migrations/00113_events_wake_id_idx.sql) and orders by at
 	// ASC so the customer-facing timeline endpoint surfaces a
-	// forward narrative. The since parameter is the RFC 3339
-	// lower bound (zero-value passes the floor); limit is
-	// bounded to 1000 by the handler.
+	// forward narrative. For wake.boot_started, the read returns one
+	// canonical row per wake_id (schedd preferred over vmmd's
+	// corroborating mirror) before applying since/limit. The since
+	// parameter is the RFC 3339 lower bound (zero-value passes the
+	// floor); limit is bounded to 1000 by the handler.
 	ListEventsByWakeID(ctx context.Context, wakeID string, since time.Time, limit int) ([]Event, error)
 	// ListEventsBySidecar (issue #463 / ADR-069 / PR-B) is the
 	// sidecar-aware read-side query for the customer-facing
