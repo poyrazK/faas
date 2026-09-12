@@ -209,7 +209,7 @@ var cliCommands = []cliCommand{
 		// tier-1-scaleout pair).
 		Name:    dispatchComputeNodes,
 		DocSlug: "compute-nodes",
-		Short:   "Compute-node state machine (compute-nodes add|list|show|drain|drain-status|activate|force-drain|retire)",
+		Short:   "Compute-node state machine (compute-nodes add|list|show|release-status|drain|drain-status|activate|force-drain|retire)",
 		Subcommands: []cliSub{
 			{
 				Name:  "add",
@@ -246,6 +246,18 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "node", Short: "fqdn / short-hostname of the node to show (required)"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
+					{Name: "break-glass-db", Short: "read directly during an apid outage"},
+				},
+			},
+			{
+				Name:  "release-status",
+				Short: "Wait for every active node to observe a desired release with a fresh heartbeat",
+				Flags: []cliFlag{
+					{Name: "desired-release", Short: "40-character lowercase release git SHA", Req: true},
+					{Name: "timeout", Short: "maximum convergence wait; zero performs one observation"},
+					{Name: "poll-interval", Short: "interval between fleet observations"},
+					{Name: "heartbeat-staleness", Short: "maximum age of a ready node heartbeat"},
+					{Name: "json", Short: "emit desired and observed release state per node"},
 					{Name: "break-glass-db", Short: "read directly during an apid outage"},
 				},
 			},
