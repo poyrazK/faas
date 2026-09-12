@@ -733,7 +733,10 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		env = append(env, extraEnv...)
 		h.procs = append(h.procs, startProc(t, bin, "apid", env))
 		h.APIDURL = "http://" + addr
-		waitTCP(t, addr, 10*time.Second)
+		// APID can take longer than the other daemons to initialize on a
+		// cold, concurrently loaded CI runner. Keep waiting for the
+		// listener while still failing promptly on a crashed process.
+		waitTCP(t, addr, 30*time.Second)
 	}
 	if which&Schedd != 0 {
 		sockPath := filepath.Join(h.SockDir, "schedd.sock")
@@ -801,7 +804,9 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 	)
 	h.procs = append(h.procs, startProc(t, bin, "apid", env))
 	h.APIDURL = "http://" + addr
-	waitTCP(t, addr, 10*time.Second)
+	// Match the StartWithEnv path above: APID startup can exceed 10s on
+	// a cold CI runner while migrations and dependency wiring settle.
+	waitTCP(t, addr, 30*time.Second)
 }
 
 // writeScheddConfig renders the per-test schedd.toml and writes it under
@@ -951,8 +956,8 @@ func startGatewaySynthStub(t *testing.T, h *Harness) {
 //     apid boot. The CI runner / dev Mac lacks the `faas-apid` user
 //     that the listener boot probes (config.go:144-149); the lookup
 //     returns an error and the apid never reaches the main HTTP
-//     listener, so e2e `waitTCP(t, addr, 10s)` exhausts and every
-//     test reports "did not accept within 10s". Production deploys
+//     listener, so e2e `waitTCP(t, addr, 30s)` exhausts and every
+//     test reports "did not accept within 30s". Production deploys
 //     have the user (the systemd unit runs as `faas-apid`); the e2e
 //     harness sets this off so the apid skips the new gRPC listener
 //     and the main HTTP path boots cleanly. The reader-path handlers
