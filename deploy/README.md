@@ -46,6 +46,13 @@ the fixture, and performs a final leak check on every exit path.
 The cloud identity and host controls are documented in
 [`docs/ops/builder-native-ci.md`](../docs/ops/builder-native-ci.md).
 
+`.github/workflows/e2e-native.yml` is the platform-level gate on the same host:
+the whole `./cmd/e2e` suite with the `metal` build tag, covering source upload
+through builder microVM, snapshot, park, and gateway wake. It shares the host
+lock and the acceptance-host marker, additionally requires a reachable Postgres
+cluster on the node, and is documented in
+[`docs/ops/e2e-native-ci.md`](../docs/ops/e2e-native-ci.md).
+
 - `ansible/` — role-aware split-box bootstrap: the control-plane and
   compute-only plays install only their own daemon set and mask stale
   opposite-role services. See [`ansible/README.md`](ansible/README.md).
