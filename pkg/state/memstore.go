@@ -123,6 +123,7 @@ type MemStore struct {
 	objectUploadCompletions map[string]ObjectUploadCompletion
 	mu                      sync.Mutex
 	accounts                map[string]Account
+	accountDeployRates      map[string]accountDeployRateRow
 	keys                    map[string]APIKey
 	keyByHash               map[string]APIKey
 	deployTokens            map[string]DeployToken
@@ -810,6 +811,7 @@ func NewMemStore() *MemStore {
 		objectUploadRoutes:      map[string]ObjectUploadRoute{},
 		objectUploadCompletions: map[string]ObjectUploadCompletion{},
 		accounts:                map[string]Account{},
+		accountDeployRates:      map[string]accountDeployRateRow{},
 		keys:                    map[string]APIKey{},
 		keyByHash:               map[string]APIKey{},
 		deployTokens:            map[string]DeployToken{},

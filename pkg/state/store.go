@@ -765,6 +765,10 @@ type Store interface {
 
 	// Accounts & auth.
 	CreateAccount(ctx context.Context, email string, plan api.Plan) (Account, error)
+	// Account-wide fixed-window deployment admissions. Consume is atomic across
+	// all apps and deploy sources; Read never spends an admission.
+	ConsumeAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (AccountDeployRateSnapshot, error)
+	ReadAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (AccountDeployRateSnapshot, error)
 	// CreateAccountWithPersonalOrg is the PR 3 canonical
 	// account-creation entry point (issue #190 / ADR-061). It runs
 	// the account INSERT + orgs INSERT + org_memberships INSERT
