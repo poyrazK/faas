@@ -183,6 +183,29 @@ func TestListJobs_HappyPath(t *testing.T) {
 	}
 }
 
+func TestListJobs_RejectsInvalidPagination(t *testing.T) {
+	cases := []string{
+		"?limit=-1",
+		"?limit=0",
+		"?limit=201",
+		"?limit=not-a-number",
+		"?limit=",
+		"?offset=-1",
+		"?offset=not-a-number",
+		"?offset=",
+	}
+	for _, query := range cases {
+		t.Run(query[1:], func(t *testing.T) {
+			e := setup(t, api.PlanHobby)
+			rec := e.do(t, "GET", "/v1/jobs"+query, nil, nil)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("GET jobs%s = %d, want 400; body=%s", query, rec.Code, rec.Body.String())
+			}
+			assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+		})
+	}
+}
+
 // TestUpdateJob_PauseAndResume pins the PATCH status=paused +
 // status=active transitions. The pointer-based UpdateJobRequest
 // keeps "unset" distinct from explicit-zero so a customer can

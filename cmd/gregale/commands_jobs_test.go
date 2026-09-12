@@ -71,6 +71,53 @@ func TestCmdJobs_UnknownSubcommand(t *testing.T) {
 	}
 }
 
+func TestCmdJobsList_RejectsNegativePaginationLocally(t *testing.T) {
+	cases := [][]string{
+		{"list", "--limit", "-1"},
+		{"list", "--offset", "-1"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			code, captured := runWithStderr(t, func() int { return cmdJobsList(args[1:]) })
+			if code != 1 {
+				t.Errorf("cmdJobsList(%v) = %d, want 1", args, code)
+			}
+			if !strings.Contains(captured, "gregale jobs list") {
+				t.Errorf("usage must mention 'gregale jobs list'; got: %s", captured)
+			}
+		})
+	}
+}
+
+func TestCmdJobsList_ForwardsPaginationAndKeepsEnvelope(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"jobs":[],"limit":1,"offset":20,"next_offset":-1,"total":20}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	jsonOutput = true
+
+	stdout, restore := captureStdout(t)
+	code := cmdJobsList([]string{"--limit", "1", "--offset", "20"})
+	restore()
+	if code != 0 {
+		t.Fatalf("cmdJobsList = %d, want 0", code)
+	}
+	if gotQuery != "limit=1&offset=20" {
+		t.Fatalf("query = %q, want limit=1&offset=20", gotQuery)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, `"next_offset": -1`) || !strings.Contains(out, `"total": 20`) {
+		t.Fatalf("JSON output lost pagination envelope: %s", out)
+	}
+}
+
 // TestCmdJobsAdd_NoImage verifies that omitting --image fails
 // locally with the per-leaf usage line. The handler-side
 // validSlug + buildJob pipeline is exercised in

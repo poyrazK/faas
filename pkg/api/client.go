@@ -1718,14 +1718,32 @@ func (c *Client) DeleteCron(ctx context.Context, id string) error {
 // handler proxies the call to the compute node that owns the
 // instance. The CLI surface lives in cmd/gregale/commands_jobs.go.
 
-// ListJobs returns the account-scoped list of jobs (the /v1/jobs
-// GET route). Wire shape: ListJobsResponse (jobs[] + limit +
-// offset + next_offset + total). Server clamps limit to [1,200].
-// Matches the CronList convention: zero query parameters on the
-// wire so the spec parity gate (TestSpecCompliance) stays green.
-func (c *Client) ListJobs(ctx context.Context) (ListJobsResponse, error) {
+// ListJobs returns one account-scoped page of jobs (the /v1/jobs GET route).
+// The optional arguments are limit and offset; omitting them, or passing zero
+// for either, uses the server default. Non-zero values are sent verbatim so
+// callers can advance using ListJobsResponse.NextOffset. The variadic form
+// preserves the original ListJobs(ctx) call for existing SDK consumers.
+func (c *Client) ListJobs(ctx context.Context, pagination ...int) (ListJobsResponse, error) {
 	var out ListJobsResponse
-	return out, c.do(ctx, "GET", "/v1/jobs", nil, &out)
+	limit, offset := 0, 0
+	if len(pagination) != 0 && len(pagination) != 2 {
+		return out, fmt.Errorf("ListJobs expects optional limit and offset")
+	}
+	if len(pagination) == 2 {
+		limit, offset = pagination[0], pagination[1]
+	}
+	path := "/v1/jobs"
+	q := url.Values{}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // CreateJob creates a new job under the calling account. Idempotent
