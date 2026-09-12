@@ -66,7 +66,9 @@ import (
 // 401/302. The companion tripwire
 // (pkg/api/lint_tripwires_test.go) ensures no other pkg/api file
 // composes a path that matches this regex.
-var cookieOnlyPathRE = regexp.MustCompile(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password)$`)
+const cookieOnlyAdminStatusPath = "/v1/admin/status/incidents"
+
+var cookieOnlyPathRE = regexp.MustCompile(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
 // NewClient (30s default timeout) or NewClientWithDeployTimeout

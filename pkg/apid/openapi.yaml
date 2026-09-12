@@ -252,6 +252,8 @@ tags:
       Bearer must carry the admin scope AND the caller's email
       must be in FAAS_ADMIN_EMAILS. CLI surface:
       `faas admin credit <account_uuid> <cents> --reason <text>`.
+  - name: status
+    description: Public platform status and operator-managed incident timelines.
   - name: auth
     description: |
       Dashboard authentication (issue #165 PR #2, ADR-032).
@@ -302,6 +304,157 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/status:
+    get:
+      tags: [status]
+      operationId: getPublicStatus
+      summary: Read the current public platform status.
+      description: |
+        Unauthenticated single-region snapshot. Includes five public
+        capabilities, exactly 30 UTC daily observations per capability,
+        current error-budget indicators, active events, maintenance in the
+        next 30 days, and up to 20 resolved incidents from the last 90 days.
+        Data older than 90 seconds is marked stale; missing telemetry is never
+        represented as operational.
+      security: []
+      responses:
+        '200':
+          description: Current status snapshot, including degraded-source responses.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: Uses public max-age 15 and stale-while-revalidate 45 caching.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicStatusOverview' }
+
+  /v1/status/incidents/{public_id}:
+    get:
+      tags: [status]
+      operationId: getPublicStatusIncident
+      summary: Read one public incident or maintenance timeline.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/PublicStatusEventID'
+      responses:
+        '200':
+          description: Public event and chronological update timeline.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: public, max-age=15, stale-while-revalidate=45
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicStatusEvent' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /status/slo.json:
+    get:
+      tags: [status]
+      operationId: getLegacyStatusSLO
+      summary: Read the backwards-compatible status indicator projection.
+      description: Always returns valid JSON, including when the evaluator source is degraded.
+      security: []
+      responses:
+        '200':
+          description: Legacy status projection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatusPage' }
+
+  /v1/admin/status/incidents:
+    get:
+      tags: [admin, status]
+      operationId: listAdminStatusEvents
+      summary: List public status events (admin-only).
+      description: Requires admin scope, operator allowlist membership, and MFA.
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CookieSession'
+        - name: kind
+          in: query
+          description: Restrict results to incidents or maintenance.
+          schema: { type: string, enum: [incident, maintenance] }
+        - name: active
+          in: query
+          description: Return only events that have not reached a terminal lifecycle state.
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Status events, newest update first.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 200
+                items: { $ref: '#/components/schemas/PublicStatusEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [admin, status]
+      operationId: createAdminStatusEvent
+      summary: Publish a public incident or maintenance event (admin-only).
+      description: Requires admin scope, operator allowlist membership, MFA, recent step-up authentication, and an Idempotency-Key.
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CookieSession'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Stable caller-generated key used to replay this create safely.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminStatusEventCreateRequest' }
+      responses:
+        '201':
+          description: Published event. Replays return the same public UUID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicStatusEvent' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/admin/status/incidents/{public_id}/updates:
+    post:
+      tags: [admin, status]
+      operationId: updateAdminStatusEvent
+      summary: Append a public timeline update and lifecycle transition (admin-only).
+      description: Updates are append-only. Terminal incidents and maintenance cannot reopen.
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PublicStatusEventID'
+        - $ref: '#/components/parameters/CookieSession'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Stable caller-generated key used to replay this timeline update safely.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminStatusEventUpdateRequest' }
+      responses:
+        '200':
+          description: Updated event with its complete chronological timeline.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicStatusEvent' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/postgres/databases:
     get:
       operationId: listManagedPostgresDatabases
@@ -14650,8 +14803,19 @@ components:
         Bearer API key. Format: `fp_live_` + 48 hex chars. The plaintext is
         returned exactly once on `POST /v1/keys`; subsequent reads only
         surface the prefix.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: faas_sid
+      description: Browser dashboard session cookie. The browser sends this HttpOnly cookie automatically.
 
   parameters:
+    PublicStatusEventID:
+      name: public_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Stable public UUID used by status permalinks.
     CookieSession:
       name: faas_sid
       in: cookie
@@ -14791,6 +14955,181 @@ components:
         resolved_at: { type: [string, "null"], format: date-time }
         severity: { type: string, enum: [degraded, partial_outage, full_outage, maintenance] }
         summary: { type: string }
+    PublicStatusDaily:
+      description: One UTC day's status, uptime, and telemetry coverage observation.
+      type: object
+      additionalProperties: false
+      required: [date, status, uptime_pct, coverage_pct]
+      properties:
+        date: { type: string, format: date }
+        status: { type: string, enum: [operational, maintenance, degraded, partial_outage, major_outage, unknown] }
+        uptime_pct: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        coverage_pct: { type: number, minimum: 0, maximum: 100 }
+    PublicStatusComponent:
+      description: Current and 30-day status summary for one public capability.
+      type: object
+      additionalProperties: false
+      required: [id, name, status, uptime_30d_pct, coverage_30d_pct, daily]
+      properties:
+        id: { type: string, enum: [api_console, deployments, app_execution, networking, observability] }
+        name: { type: string }
+        status: { type: string, enum: [operational, maintenance, degraded, partial_outage, major_outage, unknown] }
+        uptime_30d_pct: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        coverage_30d_pct: { type: number, minimum: 0, maximum: 100 }
+        daily:
+          type: array
+          minItems: 30
+          maxItems: 30
+          items: { $ref: '#/components/schemas/PublicStatusDaily' }
+    PublicStatusIndicator:
+      description: Current error-budget indicator with its unit, target, and comparison direction.
+      type: object
+      additionalProperties: false
+      required: [id, label, value, unit, target, comparison]
+      properties:
+        id: { type: string, enum: [api_availability, wake_p95, build_success] }
+        label: { type: string }
+        value: { type: [number, 'null'] }
+        unit: { type: string }
+        target: { type: number }
+        comparison: { type: string, enum: [gte, lte] }
+    PublicStatusUpdate:
+      description: One append-only, plain-text event timeline entry.
+      type: object
+      additionalProperties: false
+      required: [id, state, message, posted_at]
+      properties:
+        id: { type: string, format: uuid }
+        state: { type: string, enum: [investigating, identified, monitoring, resolved, scheduled, in_progress, completed, cancelled] }
+        message: { type: string, minLength: 1, maxLength: 1024 }
+        posted_at: { type: string, format: date-time }
+    PublicStatusEvent:
+      description: Public incident or maintenance metadata and chronological timeline.
+      type: object
+      additionalProperties: false
+      required: [id, kind, title, impact, components, state, updated_at, updates]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [incident, maintenance] }
+        title: { type: string, minLength: 1, maxLength: 160 }
+        impact: { type: string, enum: [maintenance, degraded, partial_outage, major_outage] }
+        components:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [api_console, deployments, app_execution, networking, observability] }
+        state: { type: string, enum: [investigating, identified, monitoring, resolved, scheduled, in_progress, completed, cancelled] }
+        starts_at: { type: string, format: date-time }
+        scheduled_start_at: { type: string, format: date-time }
+        scheduled_end_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        updates:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/PublicStatusUpdate' }
+    PublicStatusOverview:
+      description: Complete public status snapshot for the single Gregale region.
+      type: object
+      additionalProperties: false
+      required: [overall_status, data_status, updated_at, region_scope, components, indicators, active_events, upcoming_maintenance, resolved_incidents]
+      properties:
+        overall_status: { type: string, enum: [operational, maintenance, degraded, partial_outage, major_outage, unknown] }
+        data_status: { type: string, enum: [fresh, stale, unavailable] }
+        updated_at: { type: string, format: date-time }
+        region_scope: { type: string, enum: [single-region] }
+        components:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items: { $ref: '#/components/schemas/PublicStatusComponent' }
+        indicators:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items: { $ref: '#/components/schemas/PublicStatusIndicator' }
+        active_events:
+          type: array
+          items: { $ref: '#/components/schemas/PublicStatusEvent' }
+        upcoming_maintenance:
+          type: array
+          items: { $ref: '#/components/schemas/PublicStatusEvent' }
+        resolved_incidents:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/PublicStatusEvent' }
+    AdminStatusEventCreateRequest:
+      description: Operator request to publish an incident or schedule maintenance, discriminated by kind.
+      oneOf:
+        - $ref: '#/components/schemas/AdminStatusIncidentCreateRequest'
+        - $ref: '#/components/schemas/AdminStatusMaintenanceCreateRequest'
+      discriminator:
+        propertyName: kind
+        mapping:
+          incident: '#/components/schemas/AdminStatusIncidentCreateRequest'
+          maintenance: '#/components/schemas/AdminStatusMaintenanceCreateRequest'
+    AdminStatusIncidentCreateRequest:
+      description: Publish an active incident. Terminal and maintenance lifecycle states are not valid at creation.
+      type: object
+      additionalProperties: false
+      required: [kind, title, impact, components, message]
+      properties:
+        kind: { type: string, enum: [incident] }
+        title: { type: string, minLength: 1, maxLength: 160 }
+        impact: { type: string, enum: [degraded, partial_outage, major_outage] }
+        components:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [api_console, deployments, app_execution, networking, observability] }
+        state: { type: string, enum: [investigating, identified, monitoring], default: investigating }
+        starts_at: { type: string, format: date-time }
+        message: { type: string, minLength: 1, maxLength: 1024 }
+    AdminStatusMaintenanceCreateRequest:
+      description: Schedule maintenance with a bounded start/end window.
+      type: object
+      additionalProperties: false
+      required: [kind, title, components, scheduled_start_at, scheduled_end_at, message]
+      properties:
+        kind: { type: string, enum: [maintenance] }
+        title: { type: string, minLength: 1, maxLength: 160 }
+        impact: { type: string, enum: [maintenance], default: maintenance }
+        components:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [api_console, deployments, app_execution, networking, observability] }
+        state: { type: string, enum: [scheduled], default: scheduled }
+        scheduled_start_at: { type: string, format: date-time }
+        scheduled_end_at: { type: string, format: date-time }
+        message: { type: string, minLength: 1, maxLength: 1024 }
+    AdminStatusEventUpdateRequest:
+      description: Operator request to append a plain-text lifecycle update.
+      type: object
+      additionalProperties: false
+      required: [state, message]
+      properties:
+        state: { type: string, enum: [investigating, identified, monitoring, resolved, scheduled, in_progress, completed, cancelled] }
+        message: { type: string, minLength: 1, maxLength: 1024 }
+    StatusPage:
+      description: Backwards-compatible three-indicator status response.
+      type: object
+      additionalProperties: false
+      required: [api_availability_pct, wake_p95_ms, build_success_pct, uptime_30d_pct, uptime_30d, incidents, degraded, as_of, source]
+      properties:
+        api_availability_pct: { type: number }
+        wake_p95_ms: { type: number }
+        build_success_pct: { type: number }
+        uptime_30d_pct: { type: number, minimum: 0, maximum: 100 }
+        uptime_30d:
+          type: array
+          items: { $ref: '#/components/schemas/StatusUptimeBucket' }
+        incidents:
+          type: array
+          items: { $ref: '#/components/schemas/StatusIncident' }
+        degraded: { type: boolean }
+        as_of: { type: string, format: date-time }
+        source: { type: string }
     ManagedPostgresDatabase:
       description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
       type: object

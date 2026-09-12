@@ -42,6 +42,8 @@ func TestAdminMutationRoutesRejectBearerKeys(t *testing.T) {
 		{http.MethodDelete, "/v1/compute-nodes/security-test"},
 		{http.MethodPatch, "/v1/admin/config/data_placement_enabled"},
 		{http.MethodPost, "/v1/admin/config/data_placement_enabled/rollback"},
+		{http.MethodPost, "/v1/admin/status/incidents"},
+		{http.MethodPost, "/v1/admin/status/incidents/11111111-1111-4111-8111-111111111111/updates"},
 	}
 
 	for _, tc := range paths {

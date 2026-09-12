@@ -1,194 +1,117 @@
-# ADR-130 · Status-page wiring via /v1/internal/slo.json
+# ADR-130 · Gregale public status model and publishing workflow
 
-- **Status:** proposed
-- **Date:** 2026-08-24
-- **Issue / PR:** [#599](https://github.com/poyrazK/faas/issues/599)
-- **Decision:** Ship a Postgres-backed `status_incidents` table
-  (migrations/00412), a `Store` interface triple
-  (InsertStatusIncident / ResolveStatusIncident /
-  ListOpenStatusIncidents), a `gatewayd-internal`
-  `/v1/internal/slo.json` endpoint that composes the open
-  incident list with meterd's loopback Prometheus exporter, a
-  `gregalectl status incident` CLI subcommand, and a static
-  status-page HTML that fetches the endpoint on load. The
-  closed-set vocabulary at every layer (component, severity,
-  message length) is enforced at the SQL CHECK layer so a
-  typo at the CLI surface fails closed (23514).
+- **Status:** accepted
+- **Date:** 2026-09-09
+- **Issues:** #276, #277, #599
 
 ## Context
 
-Issue #599's three unanswered operator questions today:
+The original M8 status surface exposed three Prometheus-derived numbers and a
+flat list of internal-daemon incidents. It could answer whether a local metric
+was unhealthy, but it did not provide customer-facing capabilities, durable
+timelines, maintenance scheduling, trustworthy historical uptime, or stable
+public permalinks. It also coupled the public vocabulary to daemon names.
 
-1. **"Is the platform currently healthy?"** — operators today
-   answer from a Twitter search, a customer ticket, or by
-   running `kubectl` queries against their mental model of
-   what "healthy" means. There is no canonical surface.
-2. **"What components are degraded right now?"** — the
-   apid/meterd/vmmd/schedd/gatewayd tower has no per-component
-   health summary. Each daemon has its own `/healthz` (or
-   doesn't), but the aggregate is invisible.
-3. **"What's the customer-facing impact of an incident?"** —
-   operators today narrate an outage in Slack / a tweet / a
-   customer email. There's no canonical artifact the status
-   page can render without manual curation.
-
-The current observability surfaces are inadequate:
-
-- **No status-incidents store.** Status updates today are
-  written by hand on Twitter / a static blog. No canonical
-  source of truth.
-- **gatewayd-internal has no `/v1/internal/slo.json`** endpoint.
-  The public-facing `/v1/apps/{slug}` etc. don't expose SLOs.
-- **`deploy/statuspage/index.html` doesn't exist.** The status
-  page is currently a third-party (Statuspage.io / BetterStack)
-  that operators update manually.
-
-The closed-vocab precedent (ADR-016) for the incidents
-vocabulary — component ∈ {apid, schedd, vmmd, gatewayd, meterd,
-imaged, builderd, faas-control-plane}, severity ∈ {degraded,
-partial_outage, full_outage, maintenance} — bounds the cartesian
-at 8 × 4 = 32 cells. The 1024-char message cap (CHECK) prevents
-a paste of a 50 KB stack trace from bloating the response.
+Gregale is currently single-region. Published measurements are error-budget
+indicators, not an SLA. The status surface must remain useful when Prometheus
+is missing or stale and must never turn missing telemetry into green history.
 
 ## Decision
 
-### 1. `status_incidents` table (migrations/00412)
+### Public contract
 
-A Postgres table with:
+`apid` owns two unauthenticated JSON routes:
 
-- `id BIGSERIAL PRIMARY KEY` — surrogate key for the CLI.
-- `component TEXT NOT NULL` — closed-set (apid, schedd, vmmd,
-  gatewayd, meterd, imaged, builderd, faas-control-plane),
-  enforced by `status_incidents_component_chk` CHECK.
-- `severity TEXT NOT NULL` — closed-set (degraded,
-  partial_outage, full_outage, maintenance), enforced by
-  `status_incidents_severity_chk` CHECK.
-- `message TEXT NOT NULL` — operator-authored free-text, capped
-  at 1024 chars by `status_incidents_message_len_chk` CHECK.
-- `posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`.
-- `resolved_at TIMESTAMPTZ NULL`.
-- Partial index `status_incidents_open ON status_incidents(component)
-  WHERE resolved_at IS NULL` — for the hot read path.
+- `GET /v1/status` returns overall state and freshness, five capability rows,
+  exactly 30 UTC daily observations per row, three current indicators, active
+  events, maintenance scheduled in the next 30 days, and at most 20 resolved
+  incidents updated in the last 90 days.
+- `GET /v1/status/incidents/{public_id}` returns a public event and its
+  chronological, append-only timeline.
 
-Replay-safe (every CREATE / ALTER uses IF NOT EXISTS guards so
-a partial-apply replay is idempotent — same convention as 00411
-and 00264).
+Responses use `Cache-Control: public, max-age=15,
+stale-while-revalidate=45`. The legacy `/status/slo.json` response remains a
+projection from the same evaluator and always returns valid JSON.
 
-### 2. `Store` interface triple
+The stable capability IDs are `api_console`, `deployments`, `app_execution`,
+`networking`, and `observability`. Public states are `operational`,
+`maintenance`, `degraded`, `partial_outage`, `major_outage`, and `unknown`.
+Severity precedence is major outage, partial outage, degraded, maintenance,
+then operational. `unknown` describes insufficient telemetry, not severity.
 
-`pkg/state/store.go` adds three methods to the `Store`
-interface, implemented by both `PgStore` and `MemStore`:
+### Persistence and lifecycle
 
-- `InsertStatusIncident(ctx, component, severity, message) (StatusIncident, error)`
-- `ResolveStatusIncident(ctx, id int64) error` — idempotent;
-  re-issuing on an already-resolved row returns nil.
-- `ListOpenStatusIncidents(ctx) ([]StatusIncident, error)` —
-  uses the partial index.
+`status_incidents` is extended additively with a public UUID, event kind,
+title, impact, affected public capabilities, lifecycle state, schedule/start
+timestamps, update timestamp, actor, and create-idempotency key. Existing rows
+are backfilled and retain their legacy columns. A control-plane legacy row maps
+to all public capabilities.
 
-`pkg/state/types.go` adds the `StatusIncident` struct + the
-closed-set vocabulary as named constants so the CLI can
-range-check before hitting the SQL CHECK.
+`status_incident_updates` is append-only. A database trigger rejects UPDATE or
+DELETE, and the parent incident uses `ON DELETE RESTRICT`. Titles and update
+messages are stored and rendered as plain text, with limits of 160 and 1,024
+characters respectively.
 
-### 3. `gatewayd-internal` `/v1/internal/slo.json` endpoint
+Incident transitions are `investigating`, `identified`, or `monitoring` among
+the non-terminal states, followed by `resolved`. Maintenance transitions are
+`scheduled → in_progress → completed` or `scheduled → cancelled`. Terminal
+events cannot reopen. Store methods enforce the same transition rules in
+Postgres and MemStore.
 
-`cmd/gatewayd-internal/handlers/slo.go` (new) handles
-`GET /v1/internal/slo.json`. The response composes:
+### Evaluation and history
 
-```json
-{
-  "api_availability": {"ratio": 0.9987, "target": 0.999},
-  "wake_latency": {"p95_seconds": 0.31, "target": 0.35},
-  "build_success": {"ratio": 0.992, "target": 0.99},
-  "degraded": false,
-  "incidents": [...]
-}
-```
+An in-process `apid` loop evaluates immediately at boot and every five minutes.
+It queries labeled firing-alert vectors, maps daemon/component labels to public
+capabilities, maps `warn` to degraded and `page` to partial outage, and overlays
+operator incidents and in-progress maintenance using worst-state precedence.
+Only operators can declare a major outage. A generic control-plane alert with
+no usable daemon label affects all capabilities.
 
-The SLO ratios come from meterd's loopback Prometheus exporter
-(port 9100 on the meterd cgroup). `degraded: true` fires when
-any SLO ratio is below target OR any open incident is in the
-list. The handler caches for 15s via `Cache-Control: max-age=15`
-so a status-page refresh doesn't hammer the DB.
+Each successful fresh evaluation inserts one idempotent, UTC-aligned five-minute
+bucket per capability. Days with less than 80% coverage are `unknown`; aggregate
+30-day coverage below 80% withholds uptime as “Collecting data.” Pre-launch days
+remain no-data rather than synthetic operational days. Data older than 90
+seconds is stale and stale evaluations do not count as covered rollup buckets.
 
-### 4. `gregalectl status incident` CLI
+### Publishing and audit
 
-`cmd/gregalectl/incident.go` (new) adds two subcommands:
+Admin create, list, and append-update routes live under
+`/v1/admin/status/incidents`. Mutations require admin scope, operator allowlist
+membership, MFA, recent step-up authentication, same-origin checks, and an
+`Idempotency-Key`. Rejections use stable RFC 7807 codes for invalid components,
+schedules, transitions, terminal events, titles, and messages.
 
-- `gregale status incident post --component=<X> --severity=<Y> --message=<Z>`
-- `gregale status incident resolve <id>`
+Every successful mutation emits a durable audit event containing actor, public
+event ID, action, prior/new state, and affected capabilities. `gregalectl`
+provides incident create/update/resolve/list and maintenance
+schedule/update/start/complete/cancel/list workflows, and prints the public
+permalink after every write.
 
-The CLI range-checks against the closed-set constants in
-`pkg/state/types.go` BEFORE hitting the SQL CHECK, so a typo
-prints a friendly error instead of the SQL 23514.
+### Operations and presentation
 
-### 5. `deploy/statuspage/index.html`
+Metrics expose bounded evaluator outcomes, last complete rollup time, and event
+mutation outcomes. `FaasPublicStatusEvaluationStalled` pages when the evaluator
+has not persisted a complete bucket set for 15 minutes.
 
-A static HTML page that:
-
-- Fetches `/v1/internal/slo.json` on load (with a 15s refresh
-  interval).
-- Renders a green / yellow / red banner based on the
-  `degraded` flag.
-- Renders the open incidents list with `component`,
-  `severity`, `message`, `posted_at`.
-- Inline SVG (no JS chart deps) for the three SLO ratio
-  sparklines.
-
-### 6. `docs/runbooks/StatusPageDegraded.md`
-
-Mirrors the `FaasApidAuditWriteFailures.md` template
-(Symptom · Why now · Triage 3-signal ladder · Mitigate ·
-Follow-up). Names the four recurring failure modes:
-
-- **Operator filed an incident** — verify the underlying
-  trigger, resolve when fixed.
-- **Automated post** (degraded: true flag) — check which SLO
-  is below target, investigate.
-- **Stale incident** — operator forgot to resolve; clean up
-  weekly.
-- **Multiple components in one incident** — file a separate
-  incident per component OR link via the `message` field.
+The React site owns `/status` and `/status/incidents/:id`. The overview is
+prerendered and indexed; incident details are `noindex` and excluded from the
+sitemap. The page polls every 30 seconds only while visible, preserves its last
+snapshot on a refresh failure, and distinguishes initial unavailability from a
+delayed refresh. `api.gregale.dev/status` remains the minimal fallback page.
 
 ## Consequences
 
-- The closed-set vocabulary (8 components × 4 severities)
-  bounds the table's vocabulary surface — operators can't
-  invent new values at the CLI without updating both the
-  Go constant AND the SQL CHECK (canonical DROP+ADD pair).
-- The 1024-char message cap prevents a paste-bomb attack at
-  the CLI surface.
-- `degraded: true` flag on the endpoint lets a downstream
-  consumer (the status page, a Slack webhook, an on-call
-  routing engine) react to the binary "is the platform
-  healthy right now" signal without parsing the SLO ratios.
-- The partial index `status_incidents_open` keeps the hot
-  read path (every status-page load) bounded — closed
-  incidents stay in the table for audit but don't bloat the
-  working set.
-- The `gregalectl` CLI surface replaces manual Twitter /
-  blog updates — one canonical artifact, fully
-  version-controlled, fully replay-able via `gregale status
-  incident resolve <id>`.
-
-## Out of scope
-
-- **Automated posting of incidents** when the alertmanager
-  `severity: page` route group fires. A follow-on ADR +
-  PR wires the alertmanager webhook to the CLI surface.
-- **Customer notification email** — separate from the
-  status page; out of scope here.
-- **Multi-region status pages** — single-region today;
-  multi-region is a separate ADR (ADR-066 follow-on).
-- **Resolved-incident retention** — closed rows stay in
-  the table forever. A vacuum job is a separate ops
-  decision.
+- Customer language is insulated from daemon topology.
+- Operators own public narratives while telemetry supplies bounded automatic
+  evidence; alert names, daemon labels, and actors never leak publicly.
+- Historical uptime starts only when real samples exist.
+- There is no hard-delete path for published events or timeline updates.
+- Email/webhook subscriptions, a separate status daemon, third-party status
+  providers, and multi-region presentation remain out of scope.
 
 ## References
 
-- ADR-016 (closed-set label vocabulary).
-- ADR-127 / ADR-128 / ADR-129 / ADR-131 (sibling ADRs; same
-  mega-PR boundary).
-- `migrations/00412_status_incidents.sql` (the table).
-- `pkg/state/types.go` `StatusIncident*` constants (the Go
-  vocabulary).
-- `cmd/gatewayd-internal/handlers/slo.go` (the endpoint).
+- `migrations/20260912133000000_status_public_v2.sql`
+- `pkg/publicstatus`
+- `cmd/apid/status.go`
+- `docs/runbooks/StatusPageDegraded.md`

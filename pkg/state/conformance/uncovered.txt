@@ -406,7 +406,6 @@ ListEnabledAlertRules
 ListEnabledAppLogDrains
 ListEnabledCrons
 ListEnabledTriggers
-ListEvents
 ListEventsBySidecar
 ListEventsByTraceID
 ListEventsByWakeID

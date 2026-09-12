@@ -3789,6 +3789,85 @@ type StatusIncident struct {
 	Summary    string     `json:"summary"`
 }
 
+// PublicStatusOverview is the unauthenticated customer-facing status model
+// served at GET /v1/status. It deliberately contains no operator identities,
+// internal daemon labels, alert names, or PromQL expressions.
+type PublicStatusOverview struct {
+	OverallStatus       string                  `json:"overall_status"`
+	DataStatus          string                  `json:"data_status"`
+	UpdatedAt           time.Time               `json:"updated_at"`
+	RegionScope         string                  `json:"region_scope"`
+	Components          []PublicStatusComponent `json:"components"`
+	Indicators          []PublicStatusIndicator `json:"indicators"`
+	ActiveEvents        []PublicStatusEvent     `json:"active_events"`
+	UpcomingMaintenance []PublicStatusEvent     `json:"upcoming_maintenance"`
+	ResolvedIncidents   []PublicStatusEvent     `json:"resolved_incidents"`
+}
+
+type PublicStatusComponent struct {
+	ID               string              `json:"id"`
+	Name             string              `json:"name"`
+	Status           string              `json:"status"`
+	Uptime30DayPct   *float64            `json:"uptime_30d_pct"`
+	Coverage30DayPct float64             `json:"coverage_30d_pct"`
+	Daily            []PublicStatusDaily `json:"daily"`
+}
+
+type PublicStatusDaily struct {
+	Date        string   `json:"date"`
+	Status      string   `json:"status"`
+	UptimePct   *float64 `json:"uptime_pct"`
+	CoveragePct float64  `json:"coverage_pct"`
+}
+
+type PublicStatusIndicator struct {
+	ID         string   `json:"id"`
+	Label      string   `json:"label"`
+	Value      *float64 `json:"value"`
+	Unit       string   `json:"unit"`
+	Target     float64  `json:"target"`
+	Comparison string   `json:"comparison"`
+}
+
+type PublicStatusEvent struct {
+	ID               string               `json:"id"`
+	Kind             string               `json:"kind"`
+	Title            string               `json:"title"`
+	Impact           string               `json:"impact"`
+	Components       []string             `json:"components"`
+	State            string               `json:"state"`
+	StartsAt         *time.Time           `json:"starts_at,omitempty"`
+	ScheduledStartAt *time.Time           `json:"scheduled_start_at,omitempty"`
+	ScheduledEndAt   *time.Time           `json:"scheduled_end_at,omitempty"`
+	UpdatedAt        time.Time            `json:"updated_at"`
+	ResolvedAt       *time.Time           `json:"resolved_at,omitempty"`
+	Updates          []PublicStatusUpdate `json:"updates"`
+}
+
+type PublicStatusUpdate struct {
+	ID       string    `json:"id"`
+	State    string    `json:"state"`
+	Message  string    `json:"message"`
+	PostedAt time.Time `json:"posted_at"`
+}
+
+type AdminStatusEventCreateRequest struct {
+	Kind             string     `json:"kind"`
+	Title            string     `json:"title"`
+	Impact           string     `json:"impact"`
+	Components       []string   `json:"components"`
+	State            string     `json:"state"`
+	StartsAt         *time.Time `json:"starts_at,omitempty"`
+	ScheduledStartAt *time.Time `json:"scheduled_start_at,omitempty"`
+	ScheduledEndAt   *time.Time `json:"scheduled_end_at,omitempty"`
+	Message          string     `json:"message"`
+}
+
+type AdminStatusEventUpdateRequest struct {
+	State   string `json:"state"`
+	Message string `json:"message"`
+}
+
 // --- Move 2: event-driven surface response shapes ----------------------------
 //
 // AsyncInvokeResponse is the 202-side of POST /v1/apps/{slug}/invoke/async.

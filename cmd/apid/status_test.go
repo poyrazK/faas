@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -195,6 +197,22 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 	}
 }
 
+func TestStatusJSONHandlerWithoutCacheStillReturnsValidJSON(t *testing.T) {
+	s := newServer(state.NewMemStore(), slog.Default(), "gregale.dev", nil)
+	rec := httptest.NewRecorder()
+	s.statusJSONHandler(rec, httptest.NewRequest(http.MethodGet, "/status/slo.json", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var snapshot StatusPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("invalid degraded JSON: %v; body=%s", err, rec.Body.String())
+	}
+	if !strings.HasPrefix(snapshot.Source, "degraded:") {
+		t.Fatalf("source = %q, want degraded prefix", snapshot.Source)
+	}
+}
+
 // TestStatusCacheFreshnessFastPath: a freshly-fetched cache must not
 // re-query Prometheus within the 30s TTL. fetch() runs four PromQL
 // queries per refresh (api avail, wake p95, build success, degraded
@@ -206,7 +224,7 @@ func TestStatusCacheFreshnessFastPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"scalar","result":[{"value":[0,"0"]}]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.5"]}]}}`))
@@ -242,7 +260,7 @@ func TestStatusCacheStaleOnError(t *testing.T) {
 			return
 		}
 		if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"scalar","result":[{"value":[0,"0"]}]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.5"]}]}}`))
@@ -271,6 +289,32 @@ func TestStatusCacheStaleOnError(t *testing.T) {
 	}
 	if !strings.HasPrefix(snap.Source, "degraded:") {
 		t.Errorf("source = %q, want degraded prefix", snap.Source)
+	}
+	healthy = true
+	recovered, err := c.getEvaluation(context.Background())
+	if err != nil {
+		t.Fatalf("recovered refresh: %v", err)
+	}
+	if recovered.dataStatus != "fresh" || recovered.legacy.Source != appmetrics.SourcePrometheus {
+		t.Fatalf("recovered evaluation data=%q source=%q, want fresh prometheus", recovered.dataStatus, recovered.legacy.Source)
+	}
+}
+
+func TestStatusCacheMarksSnapshotOlderThanNinetySecondsStale(t *testing.T) {
+	c := newStatusCache("", slog.Default())
+	c.cached = statusEvaluation{
+		legacy: StatusPage{AsOf: time.Now().UTC()}, states: publicstatus.Evaluate(nil, nil),
+		indicatorAvailable: map[string]bool{}, dataStatus: "fresh",
+		updatedAt: time.Now().UTC().Add(-91 * time.Second), telemetryAvailable: true,
+	}
+	c.lastEval = time.Now()
+	c.hasCached = true
+	evaluation, err := c.getEvaluation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evaluation.dataStatus != "stale" {
+		t.Fatalf("data status=%q, want stale", evaluation.dataStatus)
 	}
 }
 
@@ -324,10 +368,8 @@ func TestStatusHandler_MissingFileFallback(t *testing.T) {
 //
 //  1. Firing alerts present → Degraded=true, Source="degraded: firing alerts".
 //  2. No firing alerts     → Degraded=false, Source="prometheus".
-//  3. Alert query fails    → Degraded=false, Source stays "prometheus"
-//     (graceful degradation — a PromQL hiccup on ALERTS{} must not
-//     poison the public snapshot; the pre-existing full-pipeline
-//     failure path still surfaces via Source="degraded: <error>").
+//  3. Alert query fails    → Degraded=false, Source is degraded because
+//     component health is unknown even though the three SLO queries work.
 //  4. Scalar result shape  → covers the bug where the alert query
 //     `count(ALERTS{...}) > 0` returns resultType=scalar (not vector)
 //     and the previous parser required vector and rejected the
@@ -341,9 +383,7 @@ func TestStatus_DegradedFlag(t *testing.T) {
 	t.Run("firing", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
-				// Prometheus emits `resultType: "scalar"` for
-				// comparison expressions like `count(...) > 0`.
-				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"scalar","result":[{"value":[0,"1"]}]}}`))
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"component":"apid","severity":"warn"},"value":[0,"1"]}]}}`))
 				return
 			}
 			primary(w)
@@ -366,7 +406,7 @@ func TestStatus_DegradedFlag(t *testing.T) {
 	t.Run("not_firing", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
-				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"scalar","result":[{"value":[0,"0"]}]}}`))
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
 				return
 			}
 			primary(w)
@@ -404,21 +444,40 @@ func TestStatus_DegradedFlag(t *testing.T) {
 		if snap.Degraded {
 			t.Errorf("Degraded = true, want false when alert query fails (graceful degradation)")
 		}
-		if snap.Source != "prometheus" {
-			t.Errorf("Source = %q, want %q (graceful degradation)", snap.Source, "prometheus")
+		if !strings.HasPrefix(snap.Source, "degraded:") {
+			t.Errorf("Source = %q, want degraded prefix for missing alert telemetry", snap.Source)
 		}
 	})
 
-	// Regression for the scalar-shape bug: previously the alert query
-	// response used `resultType: "vector"` in the fixture, which masked
-	// the real PromQL behaviour. `count(ALERTS{...}) > 0` is a
-	// comparison expression and Prometheus emits it as a scalar. A
-	// pure-scalar test (no ALERTS branch in the handler) pins the
-	// contract.
-	t.Run("scalar_response_pure", func(t *testing.T) {
+	t.Run("alerts_available_primary_indicators_missing", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
-				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"scalar","result":[{"value":[0,"1"]}]}}`))
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+				return
+			}
+			http.Error(w, "indicator unavailable", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		c := newStatusCache(srv.URL, slog.Default())
+		evaluation, err := c.getEvaluation(context.Background())
+		if err != nil {
+			t.Fatalf("alert telemetry should keep component status usable: %v", err)
+		}
+		if !evaluation.telemetryAvailable || evaluation.dataStatus != "stale" {
+			t.Fatalf("evaluation availability=%v data=%q, want component telemetry with stale indicators", evaluation.telemetryAvailable, evaluation.dataStatus)
+		}
+		if !strings.HasPrefix(evaluation.legacy.Source, "degraded:") {
+			t.Fatalf("legacy source=%q, want degraded partial-telemetry marker", evaluation.legacy.Source)
+		}
+	})
+
+	// The evaluator needs the original labels, not a scalar count, so it can
+	// map each firing alert to the customer-facing capability ledger.
+	t.Run("labeled_vector", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
+				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"component":"gatewayd-public","severity":"page"},"value":[0,"1"]}]}}`))
 				return
 			}
 			primary(w)
@@ -428,10 +487,10 @@ func TestStatus_DegradedFlag(t *testing.T) {
 		c := newStatusCache(srv.URL, slog.Default())
 		snap, err := c.Get(context.Background())
 		if err != nil {
-			t.Fatalf("scalar-shaped alert query should parse; got err=%v", err)
+			t.Fatalf("labeled alert vector should parse; got err=%v", err)
 		}
 		if !snap.Degraded {
-			t.Errorf("Degraded = false, want true for scalar firing count")
+			t.Errorf("Degraded = false, want true for firing alert vector")
 		}
 	})
 }

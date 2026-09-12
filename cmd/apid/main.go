@@ -1506,6 +1506,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		resolvePrometheusURL(deps.getenv, cfg.Role),
 		deps.getenv("FAAS_STATUSPAGE_PATH"),
 	)
+	go srv.runStatusEvaluator(ctx)
 
 	// G2: load the host age recipient so the secrets PUT handler can seal.
 	// vmmd owns the private half; we only need the public recipient string.

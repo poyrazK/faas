@@ -464,12 +464,16 @@ var codeExclude = map[string]bool{
 // Either inline anonymous structs in handlers, or pure-documentation shapes
 // (error envelopes that don't directly mirror a Go type).
 var schemaSpecOnly = map[string]bool{
-	"ChangePlanRequest":      true, // inline {Plan string} in cmd/apid/handlers_ext.go
-	"CreateKeyRequest":       true, // inline {Label string} in cmd/apid/handlers_ext.go
-	"RateLimitPlain":         true, // documentation-only shape for the authlimiter 429
-	"Trace":                  true, // issue #555: gatewayd-public GET /v1/traces/{trace_id} response; gateway-internal type, not a pkg/api DTO
-	"TraceSpan":              true, // issue #555: subtree of Trace; gateway-internal type
-	"RaiseOverageCapRequest": true, // issue #561: inline {OverageCapCents *int64} in cmd/apid/handlers_ext.go
+	// Status create is decoded into the shared Go request DTO, while the
+	// OpenAPI discriminator exposes stricter kind-specific SDK request shapes.
+	"AdminStatusIncidentCreateRequest":    true,
+	"AdminStatusMaintenanceCreateRequest": true,
+	"ChangePlanRequest":                   true, // inline {Plan string} in cmd/apid/handlers_ext.go
+	"CreateKeyRequest":                    true, // inline {Label string} in cmd/apid/handlers_ext.go
+	"RateLimitPlain":                      true, // documentation-only shape for the authlimiter 429
+	"Trace":                               true, // issue #555: gatewayd-public GET /v1/traces/{trace_id} response; gateway-internal type, not a pkg/api DTO
+	"TraceSpan":                           true, // issue #555: subtree of Trace; gateway-internal type
+	"RaiseOverageCapRequest":              true, // issue #561: inline {OverageCapCents *int64} in cmd/apid/handlers_ext.go
 	// Issue #757 / ADR-100 — trigger-enum schemas. Each is the
 	// typed string from pkg/api/trigger.go (TriggerKind,
 	// TriggerRecordState, TriggerRoutedTo, TriggerDeadLetterReason).

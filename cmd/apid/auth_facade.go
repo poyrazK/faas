@@ -133,6 +133,25 @@ func (s *server) requireAdminMutation(next accountHandler) accountHandler {
 	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUpStrict(5 * time.Minute)(s.requireSameOrigin(s.requireIdempotency(next)))))
 }
 
+// requireSessionPrincipal rejects bearer/API-key principals without imposing
+// the mutation-only five-minute step-up freshness window. It is used for
+// sensitive operator reads that require an MFA-completed browser/CLI session.
+func (s *server) requireSessionPrincipal(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		_, key, ok := middleware.AccountFromContext(r)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("authenticated principal missing"))
+			return
+		}
+		if key != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+				"operator session required", "this endpoint requires an MFA-completed operator session"))
+			return
+		}
+		next(w, r, acct)
+	}
+}
+
 // requireSameOrigin is a defense-in-depth browser boundary for provider
 // mutations. API clients and CLI callers generally omit Origin, so an absent
 // header is allowed; when a browser supplies Origin or Sec-Fetch-Site, the

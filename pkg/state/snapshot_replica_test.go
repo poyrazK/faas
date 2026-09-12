@@ -204,6 +204,68 @@ func TestMemStoreSnapshotReplicaLeaseRenewalValidatesInputs(t *testing.T) {
 	}
 }
 
+func TestMemStoreSnapshotReplicaLeaseCompletionValidatesInputs(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	if err := m.MarkSnapshotReplicaReadyWithLease(ctx, "snapshot", "node", ""); err == nil {
+		t.Fatal("empty ready lease unexpectedly succeeded")
+	}
+	if err := m.MarkSnapshotReplicaFailedWithLease(ctx, "snapshot", "node", "", errors.New("failure")); err == nil {
+		t.Fatal("empty failed lease unexpectedly succeeded")
+	}
+	if err := m.MarkSnapshotReplicaReadyWithLease(ctx, "snapshot", "node", "lease"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing ready row error = %v, want ErrNotFound", err)
+	}
+	if err := m.MarkSnapshotReplicaFailedWithLease(ctx, "snapshot", "node", "lease", errors.New("failure")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing failed row error = %v, want ErrNotFound", err)
+	}
+
+	wrapped := errors.New("immutable object missing")
+	classified := PermanentSnapshotReplicaError(wrapped)
+	if !errors.Is(classified, wrapped) || !isPermanentSnapshotReplicaError(classified) {
+		t.Fatalf("permanent error classification lost cause: %v", classified)
+	}
+	if snapshotTier(Snapshot{Tier: SnapshotTierWarm}) != SnapshotTierWarm {
+		t.Fatal("warm snapshot tier was not preserved")
+	}
+	if snapshotTier(Snapshot{}) != SnapshotTierInit {
+		t.Fatal("default snapshot tier was not init")
+	}
+}
+
+func TestMemStoreSnapshotReplicaQueueValidation(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	if err := m.RecordSnapshotOrigin(ctx, "", ""); err == nil {
+		t.Fatal("empty snapshot origin unexpectedly succeeded")
+	}
+	if err := m.RecordSnapshotOrigin(ctx, "snapshot", "missing-node"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing origin node error = %v, want ErrNotFound", err)
+	}
+	if _, err := m.EnqueueSnapshotReplicasForNode(ctx, "missing-node"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing enqueue node error = %v, want ErrNotFound", err)
+	}
+
+	m.computeNodes["inactive-node"] = ComputeNode{ID: "inactive-node", Active: false}
+	if added, err := m.EnqueueSnapshotReplicasForNode(ctx, "inactive-node"); err != nil || added != 0 {
+		t.Fatalf("inactive enqueue = (%d, %v), want (0, nil)", added, err)
+	}
+
+	if _, err := m.ClaimSnapshotReplica(ctx, "missing-node"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("empty claim error = %v, want ErrNotFound", err)
+	}
+	m.snapshots = append(m.snapshots,
+		Snapshot{ID: "stale", StorageKey: "snapshot", Stale: true},
+		Snapshot{ID: "empty-storage"},
+		Snapshot{ID: "missing-deployment", DeploymentID: "missing", StorageKey: "snapshot"},
+	)
+	if _, err := m.ClaimSnapshotReplica(ctx, "inactive-node"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("filtered claim error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestMemStoreSnapshotReplicaPermanentFailureStopsRetry(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()

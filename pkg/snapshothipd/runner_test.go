@@ -63,12 +63,16 @@ func (f *fakeReplicaStore) ClaimSnapshotReplica(context.Context, string) (state.
 	return f.job, nil
 }
 
-func (f *fakeReplicaStore) MarkSnapshotReplicaReady(context.Context, string, string) error {
+func (f *fakeReplicaStore) RenewSnapshotReplicaLease(context.Context, string, string, string) error {
+	return nil
+}
+
+func (f *fakeReplicaStore) MarkSnapshotReplicaReadyWithLease(context.Context, string, string, string) error {
 	f.ready = true
 	return nil
 }
 
-func (f *fakeReplicaStore) MarkSnapshotReplicaFailed(_ context.Context, _, _ string, err error) error {
+func (f *fakeReplicaStore) MarkSnapshotReplicaFailedWithLease(_ context.Context, _, _, _ string, err error) error {
 	f.failed = err
 	return nil
 }
