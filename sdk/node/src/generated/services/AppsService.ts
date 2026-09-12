@@ -1169,6 +1169,72 @@ export class AppsService {
     });
   }
   /**
+   * Export retained request telemetry.
+   * Downloads a bounded, metadata-only request-log artifact for the app.
+   * The default format is newline-delimited JSON (`ndjson`); `csv` is
+   * available for spreadsheet and support workflows. The export uses the
+   * same plan retention boundary as the debugger list, never includes
+   * request bodies, headers, source IPs, or raw span attributes, and is
+   * capped at 10,000 rows. `X-Faas-Request-Log-Window` and
+   * `X-Faas-Request-Log-Retention-Clamped` describe the effective window
+   * applied to the artifact.
+   *
+   * @returns binary Metadata-only request telemetry export.
+   * @throws ApiError
+   */
+  public static exportAppDebugRequests({
+    slug,
+    since,
+    route,
+    format = 'ndjson',
+    limit,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lookback duration (for example `24h` or `3d`). Defaults to `24h` and is clamped to plan retention.
+     */
+    since?: string | null,
+    /**
+     * Filter the exported rows by exact route template.
+     */
+    route?: string | null,
+    /**
+     * Export encoding.
+     */
+    format?: 'ndjson' | 'csv',
+    /**
+     * Maximum number of retained rows to export.
+     */
+    limit?: number | null,
+  }): CancelablePromise<Blob> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/requests/export',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'route': route,
+        'format': format,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Observed debugger signal coverage (ADR-127 follow-up).
    * Returns bounded, weighted coverage for the debugger signals
    * attached to retained request telemetry in the requested window.

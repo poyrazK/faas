@@ -48,6 +48,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -73,7 +78,7 @@ def sync_detailed(
     """List tenant surfaces on an app.
 
      Returns every active tenant surface on the app. Soft-deleted
-    surfaces are filtered out server-side. Returns 402 when the
+    surfaces are filtered out server-side. Returns 503 when the
     `FAAS_TENANT_SURFACES_ENABLED` flag is off (the cluster ships
     dark until the cert-engine real-mint ADR lands).
 
@@ -107,7 +112,7 @@ def sync(
     """List tenant surfaces on an app.
 
      Returns every active tenant surface on the app. Soft-deleted
-    surfaces are filtered out server-side. Returns 402 when the
+    surfaces are filtered out server-side. Returns 503 when the
     `FAAS_TENANT_SURFACES_ENABLED` flag is off (the cluster ships
     dark until the cert-engine real-mint ADR lands).
 
@@ -136,7 +141,7 @@ async def asyncio_detailed(
     """List tenant surfaces on an app.
 
      Returns every active tenant surface on the app. Soft-deleted
-    surfaces are filtered out server-side. Returns 402 when the
+    surfaces are filtered out server-side. Returns 503 when the
     `FAAS_TENANT_SURFACES_ENABLED` flag is off (the cluster ships
     dark until the cert-engine real-mint ADR lands).
 
@@ -168,7 +173,7 @@ async def asyncio(
     """List tenant surfaces on an app.
 
      Returns every active tenant surface on the app. Soft-deleted
-    surfaces are filtered out server-side. Returns 402 when the
+    surfaces are filtered out server-side. Returns 503 when the
     `FAAS_TENANT_SURFACES_ENABLED` flag is off (the cluster ships
     dark until the cert-engine real-mint ADR lands).
 

@@ -7511,6 +7511,16 @@ type DebugTelemetryListOptions struct {
 	Limit        int
 }
 
+// DebugTelemetryExportOptions controls the bounded request-log export. The
+// server applies the plan retention cap before reading rows and accepts only
+// ndjson or csv as the format.
+type DebugTelemetryExportOptions struct {
+	Since  string
+	Route  string
+	Format string
+	Limit  int
+}
+
 // DebugTelemetryListResponse is the wire envelope for the debug
 // requests list endpoint. `Since` echoes the effective window
 // applied (after the plan's DebugTelemetryRetentionDays clamp) so

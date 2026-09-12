@@ -3965,6 +3965,64 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/debug/requests/export:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: exportAppDebugRequests
+      summary: Export retained request telemetry.
+      description: |
+        Downloads a bounded, metadata-only request-log artifact for the app.
+        The default format is newline-delimited JSON (`ndjson`); `csv` is
+        available for spreadsheet and support workflows. The export uses the
+        same plan retention boundary as the debugger list, never includes
+        request bodies, headers, source IPs, or raw span attributes, and is
+        capped at 10,000 rows. `X-Faas-Request-Log-Window` and
+        `X-Faas-Request-Log-Retention-Clamped` describe the effective window
+        applied to the artifact.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: [string, 'null'] }
+          description: "Lookback duration (for example `24h` or `3d`). Defaults to `24h` and is clamped to plan retention."
+        - name: route
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 256 }
+          description: "Filter the exported rows by exact route template."
+        - name: format
+          in: query
+          required: false
+          schema: { type: string, enum: [ndjson, csv], default: ndjson }
+          description: "Export encoding."
+        - name: limit
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 1, maximum: 10000, default: 10000 }
+          description: "Maximum number of retained rows to export."
+      responses:
+        '200':
+          description: Metadata-only request telemetry export.
+          content:
+            application/x-ndjson:
+              schema: { type: string, format: binary }
+            text/csv:
+              schema: { type: string, format: binary }
+          headers:
+            X-Faas-Request-Log-Window:
+              schema: { type: string }
+              description: Effective lookback window after retention clamping.
+            X-Faas-Request-Log-Retention-Clamped:
+              schema: { type: boolean }
+              description: Whether the requested window exceeded plan retention.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/debug/coverage:
     parameters:
       - $ref: '#/components/parameters/Slug'

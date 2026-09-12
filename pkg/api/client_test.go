@@ -620,6 +620,36 @@ func TestListAppDebugRequestsAll_WalksCursor(t *testing.T) {
 	}
 }
 
+func TestExportAppDebugRequests_EncodesOptionsAndReturnsBytes(t *testing.T) {
+	var gotQuery string
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte("{\"id\":\"r1\"}\n"))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	got, err := c.ExportAppDebugRequests(context.Background(), "debug-app", DebugTelemetryExportOptions{
+		Since: "3d", Route: "GET /checkout", Format: "ndjson", Limit: 42,
+	})
+	if err != nil {
+		t.Fatalf("ExportAppDebugRequests: %v", err)
+	}
+	if string(got) != "{\"id\":\"r1\"}\n" {
+		t.Fatalf("body = %q", got)
+	}
+	if gotAuth != "Bearer fp_test" {
+		t.Fatalf("Authorization = %q, want bearer token", gotAuth)
+	}
+	want := "format=ndjson&limit=42&route=GET+%2Fcheckout&since=3d"
+	if gotQuery != want {
+		t.Fatalf("RawQuery = %q, want %q", gotQuery, want)
+	}
+}
+
 // --- SSE ---------------------------------------------------------------------
 
 // TestStreamAppLogs_HappyPath verifies the SDK opens a text/event-stream,
