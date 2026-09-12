@@ -1,16 +1,31 @@
 # SSD snapshot restore canary — 2026-09-05
 
-> **Current release-gate boundary (2026-09-09):** the sub-350 ms p95 target is
-> platform-only: `wake.boot_started` through `wake.boot_completed`, with
-> `wake.restore_breakdown.total_ms` as the VMMD corroboration. Public-edge,
-> proxy-first-byte, application response, client network, and physical-distance
-> timings below are diagnostic and do not pass or fail that restore gate.
+> **Current release-gate boundary:** the sub-350 ms p95 target is platform-only:
+> gateway capacity-admission/`wake.boot_started` through the first upstream
+> byte, with `wake.restore_breakdown.total_ms` reported separately as the VMMD
+> corroboration. It includes Gregale's scheduler, restore, and internal proxy.
+> Cloudflare, public TLS, Internet transit, client distance, and the remaining
+> application response are excluded.
+
+Run the reusable gate against correlated wake NDJSON. Release evidence needs at
+least 100 successful, zero-queue SSD restores and every supported runtime class:
+
+```bash
+scripts/ops/wake_performance_gate.py evidence.ndjson \
+  --node-id "$SSD_NODE_ID" \
+  --require-runtime node --require-runtime python --require-runtime go
+```
+
+The command reports min, average, p50, p90, p95, p99, and max for the full
+platform wake and raw VM restore. It exits non-zero unless full-wake p95 is
+strictly below 350 ms.
 
 The deployed `v0.1.18-rc.94` release completed **100/100 distinct snapshot
-restores** on the authoritative SSD node. The canonical schedd platform
-interval measured **p50 94.795 ms / p95 137.756 ms / p99 148.229 ms / max
-149.067 ms**, with zero samples at or above 350 ms. Kernel, base and main
-artifacts were cache hits in every sample.
+restores** on the authoritative SSD node. Its historical schedd boot interval
+measured **p50 94.795 ms / p95 137.756 ms / p99 148.229 ms / max 149.067 ms**.
+That remains useful phase evidence, but does not by itself pass the current
+first-upstream-byte release gate. Kernel, base and main artifacts were cache
+hits in every sample.
 
 The normal ten-second idle reaper parked the only live instance between
 samples; no operator cold eviction was used. This is an idle sequential cohort

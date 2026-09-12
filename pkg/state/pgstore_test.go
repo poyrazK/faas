@@ -159,6 +159,26 @@ func TestPg_SetInstanceRuntimeAndRunningLookup(t *testing.T) {
 	}
 }
 
+func TestPg_PublishInstanceRuntimeCAS(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, appID, depID := seedLiveDeploy(t, s, ctx, "-publish", "publish")
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateColdBooting), 512, resolveDefaultLocal(t, ctx, s), "")
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	published, err := s.PublishInstanceRuntime(ctx, ins.ID, string(state.StateColdBooting), "fc-"+ins.ID, "10.100.0.8", 20008)
+	if err != nil {
+		t.Fatalf("PublishInstanceRuntime: %v", err)
+	}
+	if published.State != string(state.StateRunning) || published.HostIP != "10.100.0.8" || published.GuestUID != 20008 {
+		t.Fatalf("published instance = %+v", published)
+	}
+	if _, err := s.PublishInstanceRuntime(ctx, ins.ID, string(state.StateColdBooting), "stale", "10.100.0.9", 20009); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale PublishInstanceRuntime error = %v, want ErrConflict", err)
+	}
+}
+
 func TestPg_TouchInstancesLastSeen(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, depID := seedLiveDeploy(t, s, ctx)

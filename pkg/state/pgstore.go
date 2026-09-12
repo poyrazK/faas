@@ -14008,6 +14008,26 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 	return nil
 }
 
+func (s *PgStore) PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error) {
+	row := s.pool.QueryRow(ctx,
+		`update instances
+		    set netns = $3,
+		        host_ip = $4::inet,
+		        guest_uid = $5,
+		        started_at = now(),
+		        state = 'running'
+		  where id = $1
+		    and state = $2
+		 returning id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count`,
+		id, expectedState, netns, hostIP, guestUID)
+	ins, err := scanInstance(row)
+	if errors.Is(err, ErrNotFound) {
+		return Instance{}, ErrConflict
+	}
+	return ins, err
+}
+
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
 	row := s.pool.QueryRow(ctx,
 		`select i.id, coalesce(i.app_id::text, ''), coalesce(i.deployment_id::text, ''), i.state, coalesce(i.netns,''), coalesce(i.guest_uid,0),

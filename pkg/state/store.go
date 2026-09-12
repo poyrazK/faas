@@ -4142,6 +4142,12 @@ type Store interface {
 	// calls this between a successful vmmd boot and the RUNNING transition so the
 	// gateway can route to host_ip:8080 (spec §7).
 	SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error
+	// PublishInstanceRuntime atomically records vmmd's runtime identity and
+	// moves an instance from expectedState to RUNNING. The successful wake
+	// path uses this single compare-and-swap instead of a read, runtime write,
+	// second read, and state write. It returns ErrConflict when the watchdog or
+	// another reconciler changed/deleted the row during the vmmd call.
+	PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error)
 	// RunningInstanceForApp returns the newest RUNNING instance attached to a
 	// currently live deployment with positive traffic, or ErrNotFound when none
 	// is routable. A VM on a superseded or zero-weight generation must not make

@@ -714,6 +714,20 @@ groups:
           description: "End-to-end cold-wake latency has exceeded the §12 page threshold (1.5s) at p95 for 10m. Cross-check FaasColdBootFallbackHigh — snapshot rot is the most likely cause."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWakeLatencyHigh.md"
 
+      - alert: FaasPlatformWakeLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[15m])) by (le)) >= 0.35
+          and sum(increase(gateway_platform_wake_latency_seconds_count[15m])) >= 20
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: platform_wake_latency
+        annotations:
+          summary: "SSD platform wake p95 is not below 350ms"
+          description: "The platform-only capacity-admission to first-upstream-byte boundary has breached the public-beta p95 gate with at least 20 recent samples. Check schedd wake phases, VMMD restore breakdown, and the persistent forwarding bridge. CDN and client latency are excluded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWakeLatencyHigh.md"
+
       # ─────────────────────────────────────────────────────────────────
       # Cold-boot fallback rate (vmmd / vmmd_cold_boot_fallback_total)
       # Spec §12 row: "cold_boot_fallback_pct < 2% target, > 10% warn".

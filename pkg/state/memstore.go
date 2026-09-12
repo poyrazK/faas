@@ -10984,6 +10984,22 @@ func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP strin
 	return nil
 }
 
+func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok || ins.State != expectedState {
+		return Instance{}, ErrConflict
+	}
+	ins.Netns = netns
+	ins.HostIP = hostIP
+	ins.GuestUID = guestUID
+	ins.StartedAt = time.Now().UTC()
+	ins.State = string(StateRunning)
+	m.instances[id] = ins
+	return ins, nil
+}
+
 func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Instance, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
