@@ -20,7 +20,8 @@ severity fires on `> 0.5%` fleet-wide drift for `> 1h` — a real
 Polar, Paddle, or Stripe outage has the potential to silently lose
 invoices. The per-account `warn` alert catches single-customer
 drift early so an operator can investigate before the customer
-notices.
+notices. These alerts carry `public_status="internal"`: they remain
+operator-actionable but do not mark the customer request plane degraded.
 
 ## Symptom
 

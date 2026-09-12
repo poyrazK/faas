@@ -48,6 +48,7 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 func TestLoadConfig_RoutingEnvironmentOverrides(t *testing.T) {
 	t.Setenv("FAAS_GATEWAY_SYNTH_TARGET", "tcp://compute.faas:8080")
 	t.Setenv("FAAS_GATEWAY_METRICS_URL", "http://compute.faas:9090/metrics")
+	t.Setenv("FAAS_HOST_AGE_IDENTITY_PATH", "/run/credentials/schedd/host.age")
 
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
@@ -58,6 +59,9 @@ func TestLoadConfig_RoutingEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.GatewayMetricsURL != "http://compute.faas:9090/metrics" {
 		t.Errorf("GatewayMetricsURL = %q", cfg.GatewayMetricsURL)
+	}
+	if cfg.HostAgeIdentityPath != "/run/credentials/schedd/host.age" {
+		t.Errorf("HostAgeIdentityPath = %q", cfg.HostAgeIdentityPath)
 	}
 }
 

@@ -127,6 +127,21 @@
     state: file
   when: gatewayd_app_errors_target | default('') | length > 0
 
+# Pre-PR-C builds left two retired egress keypairs behind after the canonical
+# leaves moved to egress/egress.{crt,key} and meterd/egress-client.{crt,key}.
+# Neither path is referenced by current daemon config. Remove the obsolete
+# private keys instead of leaving still-valid CA-signed identities readable by
+# unrelated host service users on upgraded compute nodes.
+- name: gatewayd_internal_service — remove retired egress keypair paths
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/faas/tls/gatewayd/egress.crt
+    - /etc/faas/tls/gatewayd/egress.key
+    - /etc/faas/tls/meterd/gatewayd-egress-client.crt
+    - /etc/faas/tls/meterd/gatewayd-egress-client.key
+
 - name: gatewayd_internal_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true

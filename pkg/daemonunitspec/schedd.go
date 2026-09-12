@@ -80,11 +80,16 @@ func UnitSchedd() daemonunit.Unit {
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/schedd/schedd.env -/etc/faas/storage.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "TMPDIR", Value: "/var/lib/faas/oci-tmp"},
+			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/host.age"},
 			// ADR-143: public-beta units enable the runtimes that their API
 			// and CLI advertise. The vmmd JobColdBoot RPC and durable workflow
 			// executor are both wired before the loop starts.
 			{Key: "FAAS_JOBS_DISPATCH", Value: "1"},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
+		},
+		LoadCredential: []daemonunit.LoadCred{
+			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
+			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 		},
 
 		NoNewPrivileges:       true,

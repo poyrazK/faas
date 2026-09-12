@@ -225,7 +225,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GRACE_INTERVAL", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GRYPE_BIN", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GUEST_INIT", Owners: []string{"imaged", "shared"}, Source: EnvSourceDropin},
-	{Name: "FAAS_HOST_AGE_IDENTITY_PATH", Owners: []string{"apid", "githubd", "imaged", "meterd", "s3-gatewayd", "shared"}, Source: EnvSourceUnit},
+	{Name: "FAAS_HOST_AGE_IDENTITY_PATH", Owners: []string{"apid", "githubd", "imaged", "meterd", "s3-gatewayd", "schedd", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_HOST_AGE_KEY", Owners: []string{"githubd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH", Owners: []string{"s3-gatewayd"}, Source: EnvSourceUnit, Note: "optional systemd credential path during host-age rotation overlap"},
 	{Name: "FAAS_HOST_AGE_PUB", Owners: []string{"githubd"}, Source: EnvSourceDefault},

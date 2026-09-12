@@ -436,6 +436,12 @@ func LoadConfig(path string) (*Config, error) {
 		if v, ok := os.LookupEnv("FAAS_GATEWAY_METRICS_URL"); ok {
 			c.GatewayMetricsURL = v
 		}
+		// Production delivers the root-owned host.age identity through
+		// systemd LoadCredential. The credential path is host-specific and
+		// therefore overrides the portable TOML value when present.
+		if v := os.Getenv("FAAS_HOST_AGE_IDENTITY_PATH"); v != "" {
+			c.HostAgeIdentityPath = v
+		}
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
