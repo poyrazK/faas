@@ -11,7 +11,9 @@ export type PlanWorkload = {
   root_dir: string;
   dockerfile?: string;
   command: Array<string>;
-  /** Compose service dependencies. */
+  /**
+   * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies.
+   */
   depends_on?: Array<string>;
   class?: 'http' | 'graphql' | 'grpc' | 'job' | 'worker' | 'server' | 'unknown';
   /**
@@ -38,3 +40,4 @@ export type PlanWorkload = {
   existing_app_id?: string;
   detected_by?: PlanDetectedBy;
 };
+
