@@ -503,6 +503,18 @@ func run(args []string) (status int) {
 }
 
 func printLocalCommandHelp(w io.Writer, command cliCommand) {
+	// Release-management commands use verb-first syntax with the slug on
+	// the leaf. The generic manifest renderer cannot express that shape
+	// (it would print `rollouts <slug> <command>`), so keep these two
+	// public help paths aligned with their actual dispatchers.
+	switch command.Name {
+	case "rollback":
+		PrintUsage(w, rollbackUsage, command.DocSlug)
+		return
+	case "rollouts":
+		PrintUsage(w, rolloutsUsage, command.DocSlug)
+		return
+	}
 	usage := "gregale " + command.Name
 	for _, positional := range command.Positionals {
 		usage += " " + positional
