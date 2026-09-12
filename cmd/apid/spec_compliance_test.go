@@ -429,6 +429,9 @@ var dtoExclude = map[string]bool{
 	// ADR-127: debug request filters are represented as inline query
 	// parameters rather than a standalone OpenAPI schema.
 	"DebugTelemetryListOptions": true,
+	// Export options are encoded as inline query parameters on the binary
+	// export endpoint, not as a standalone wire object.
+	"DebugTelemetryExportOptions": true,
 }
 
 // codeExclude lists Code* constants that are intentionally not in the

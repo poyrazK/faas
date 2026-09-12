@@ -687,6 +687,7 @@ var methodRouteMap = map[string]string{
 	// list family (ListAlertRules, ListEdgeRules, ListAppWebhooks)
 	// — drop the slug placeholder from the verb.
 	"GET /v1/apps/{slug}/debug/requests":                   "ListAppDebugRequests",
+	"GET /v1/apps/{slug}/debug/requests/export":            "ExportAppDebugRequests",
 	"GET /v1/apps/{slug}/debug/requests/{req_id}":          "GetAppDebugRequest",
 	"GET /v1/apps/{slug}/debug/requests/{req_id}/evidence": "GetAppDebugRequestEvidence",
 	"GET /v1/apps/{slug}/debug/coverage":                   "GetAppDebugCoverage",

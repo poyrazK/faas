@@ -4653,6 +4653,34 @@ func (c *Client) ListAppDebugRequestsAll(ctx context.Context, slug string, opts 
 	}
 }
 
+// ExportAppDebugRequests downloads a bounded, metadata-only request-log
+// artifact for an app. The default server format is NDJSON; callers may set
+// Format to "csv" for spreadsheet/support workflows. Since and Route have the
+// same retention-clamped semantics as ListAppDebugRequestsWithOptions, and
+// Limit is capped by the server at 10,000 rows. Request bodies, headers, and
+// raw span attributes are never included.
+func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts DebugTelemetryExportOptions) ([]byte, error) {
+	path := "/v1/apps/" + slug + "/debug/requests/export"
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Route != "" {
+		q.Set("route", opts.Route)
+	}
+	if opts.Format != "" {
+		q.Set("format", opts.Format)
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out []byte
+	return out, c.doBytes(ctx, http.MethodGet, path, nil, &out)
+}
+
 // GetAppDebugCoverage returns observed debugger signal coverage for one app.
 // The response distinguishes collapsed telemetry rows from represented
 // requests and reports percentages only for signals attached to persisted
