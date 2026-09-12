@@ -18,7 +18,10 @@ import (
 )
 
 const (
-	publicStatusPreviousMigrationVersion int64 = 20260912130000001
+	// Keep the rollback assertion pinned to the migration immediately before
+	// the v2 status migration. Newer migrations may be added between the
+	// original fixture point and this migration's timestamp.
+	publicStatusPreviousMigrationVersion int64 = 20260912134233953
 	publicStatusMigrationVersion         int64 = 20260912144727207
 )
 

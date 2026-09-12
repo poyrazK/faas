@@ -1103,6 +1103,10 @@ object-storage-gateway-smoke: ## Operator-only: exercise s3.gregale.dev and dele
 object-storage-release-preflight: ## Read-only gate for object-storage config and compute-binding routes
 	@deploy/scripts/object-storage-release-preflight.sh
 
+.PHONY: disposable-execution-release-smoke
+disposable-execution-release-smoke: ## Operator-only: compare disposable-runs capability with a production run
+	@deploy/scripts/disposable-execution-release-smoke.sh
+
 .PHONY: managed-postgres-qualify
 managed-postgres-qualify: ## Operator-only: run the explicit staging managed PostgreSQL provider qualification
 	@$(GO) run ./cmd/managed-postgres-qualify
