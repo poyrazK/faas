@@ -27,5 +27,17 @@ export type AccountResponse = {
   plan_change_status?: string;
   requested_plan?: 'free' | 'hobby' | 'pro' | 'scale';
   effective_at?: string;
+  /**
+   * Legal business name used on future invoices.
+   */
+  business_name?: string;
+  /**
+   * Free-form billing address used on future invoices.
+   */
+  billing_address?: string;
+  /**
+   * Customer tax/VAT identifier used on future invoices.
+   */
+  tax_id?: string;
 };
 

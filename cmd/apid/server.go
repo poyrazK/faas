@@ -1123,6 +1123,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/orgs/{slug}/invitations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgInvitations)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/seat_usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrgSeatUsage)))))
 	mux.HandleFunc("PATCH /v1/account/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.idempotent(s.changePlan)))))))
+	// Billing identity is customer-owned legal metadata used on future
+	// invoices. Keep the mutation behind the same admin + MFA + recent
+	// step-up chain as plan changes, and persist an idempotent response so a
+	// retried browser request cannot create duplicate audit noise.
+	mux.HandleFunc("PATCH /v1/account/billing", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.idempotent(s.updateAccountBillingInfo)))))))
 	// Issue #561 — spend cap pause-workload. Account-self-scoped
 	// (mirror restoreAccount: any authenticated principal on the
 	// account may set / clear the cap). MFA gate is intentional —

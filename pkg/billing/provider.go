@@ -342,6 +342,14 @@ type InvoicePDFRequester interface {
 	RequestInvoicePDF(ctx context.Context, providerInvoiceID string) error
 }
 
+// CustomerBillingInfoProvider is an optional provider surface for syncing
+// the account's mutable legal identity to an existing billing customer.
+// Providers that do not expose customer metadata updates keep the local
+// account projection and may ignore this surface.
+type CustomerBillingInfoProvider interface {
+	SyncCustomerBillingInfo(ctx context.Context, acct state.Account) error
+}
+
 // CatalogProvider is an optional operator surface for inspecting and
 // revalidating the active provider's configured product catalog. The API
 // endpoint retains its historical billing-paddle-catalog path for client

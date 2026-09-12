@@ -1538,6 +1538,34 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/account/billing:
+    patch:
+      tags: [account]
+      operationId: updateAccountBillingInfo
+      summary: Update the account's invoice billing identity.
+      description: |
+        Updates the legal business name, billing address, and tax identifier
+        used for future provider-issued invoices. Omitted fields are kept;
+        an explicitly empty string clears a field. The audit event records
+        only changed field names, never the submitted values.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAccountBillingInfoRequest' }
+      responses:
+        '200':
+          description: Updated account profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/slo:
     get:
       tags: [account]
@@ -15615,6 +15643,9 @@ components:
         plan_change_status: { type: string }
         requested_plan: { type: string, enum: [free, hobby, pro, scale] }
         effective_at: { type: string, format: date-time }
+        business_name: { type: string, maxLength: 256, description: "Legal business name used on future invoices." }
+        billing_address: { type: string, maxLength: 1000, description: "Free-form billing address used on future invoices." }
+        tax_id: { type: string, maxLength: 128, description: "Customer tax/VAT identifier used on future invoices." }
 
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
@@ -15649,6 +15680,15 @@ components:
       required: [plan]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
+
+    UpdateAccountBillingInfoRequest:
+      description: "Partial legal billing identity update. Empty strings clear fields."
+      type: object
+      minProperties: 1
+      properties:
+        business_name: { type: string, maxLength: 256 }
+        billing_address: { type: string, maxLength: 1000 }
+        tax_id: { type: string, maxLength: 128 }
 
     AccountExportResponse:
       description: "GDPR export bundle: the account itself, every owned app, deployment, build, instance, usage record, domain, cron, API key, and sealed-secret envelope, plus the audit trail."

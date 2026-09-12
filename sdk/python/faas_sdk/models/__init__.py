@@ -252,6 +252,8 @@ from .create_deployment_request_tag_type_3_type_1 import CreateDeploymentRequest
 from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
+from .create_execution_request import CreateExecutionRequest
+from .create_execution_request_runtime import CreateExecutionRequestRuntime
 from .create_job_request import CreateJobRequest
 from .create_job_request_env_overrides import CreateJobRequestEnvOverrides
 from .create_job_request_kind import CreateJobRequestKind
@@ -271,6 +273,7 @@ from .create_object_s3_credential_request import CreateObjectS3CredentialRequest
 from .create_object_s3_credential_request_permission import CreateObjectS3CredentialRequestPermission
 from .create_object_storage_compute_binding_request import CreateObjectStorageComputeBindingRequest
 from .create_object_storage_compute_binding_request_permission import CreateObjectStorageComputeBindingRequestPermission
+from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
@@ -446,6 +449,17 @@ from .env_diff_response import EnvDiffResponse
 from .env_diff_row import EnvDiffRow
 from .env_diff_row_cells import EnvDiffRowCells
 from .error_new_webhook_payload import ErrorNewWebhookPayload
+from .execution_failure import ExecutionFailure
+from .execution_limit_request import ExecutionLimitRequest
+from .execution_limit_request_cpu_millicores import ExecutionLimitRequestCpuMillicores
+from .execution_limit_request_ephemeral_disk_mb import ExecutionLimitRequestEphemeralDiskMb
+from .execution_limit_request_memory_mb import ExecutionLimitRequestMemoryMb
+from .execution_network_policy import ExecutionNetworkPolicy
+from .execution_network_policy_mode import ExecutionNetworkPolicyMode
+from .execution_response import ExecutionResponse
+from .execution_response_runtime import ExecutionResponseRuntime
+from .execution_response_status import ExecutionResponseStatus
+from .execution_usage import ExecutionUsage
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .field_error import FieldError
 from .filter_criteria import FilterCriteria
@@ -480,6 +494,8 @@ from .get_deployment_stages_response_200_history_item_status import GetDeploymen
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .git_hub_deployment_policy import GitHubDeploymentPolicy
+from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
 from .git_hub_install_mutation_request import GitHubInstallMutationRequest
 from .git_hub_install_status import GitHubInstallStatus
 from .git_hub_install_status_health import GitHubInstallStatusHealth
@@ -654,6 +670,8 @@ from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_report import ObjectStorageUsageReport
 from .object_storage_usage_response import ObjectStorageUsageResponse
 from .object_storage_usage_response_billing_mode import ObjectStorageUsageResponseBillingMode
+from .object_upload_route import ObjectUploadRoute
+from .object_upload_route_list import ObjectUploadRouteList
 from .obs_health_response import ObsHealthResponse
 from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
@@ -786,6 +804,7 @@ from .request_analytics_timeseries_response_group_by import RequestAnalyticsTime
 from .request_analytics_timeseries_response_method import RequestAnalyticsTimeseriesResponseMethod
 from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSeries
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
+from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .retry_deployment_request import RetryDeploymentRequest
@@ -845,6 +864,9 @@ from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
 from .source_ref_deploy_request_tag import SourceRefDeployRequestTag
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
+from .status_incident import StatusIncident
+from .status_incident_severity import StatusIncidentSeverity
+from .status_uptime_bucket import StatusUptimeBucket
 from .storage_usage_list_response import StorageUsageListResponse
 from .storage_usage_response import StorageUsageResponse
 from .stream_app_logs_archive import StreamAppLogsArchive
@@ -884,6 +906,7 @@ from .trigger_source_type_1 import TriggerSourceType1
 from .trigger_source_type_2_type_1 import TriggerSourceType2Type1
 from .trigger_source_type_3_type_1 import TriggerSourceType3Type1
 from .trusted_signer import TrustedSigner
+from .update_account_billing_info_request import UpdateAccountBillingInfoRequest
 from .update_alert_rule_request import UpdateAlertRuleRequest
 from .update_alert_rule_request_action import UpdateAlertRuleRequestAction
 from .update_alert_rule_request_comparison import UpdateAlertRuleRequestComparison
@@ -1231,6 +1254,8 @@ __all__ = (
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestValidateMode",
+    "CreateExecutionRequest",
+    "CreateExecutionRequestRuntime",
     "CreateJobRequest",
     "CreateJobRequestEnvOverrides",
     "CreateJobRequestKind",
@@ -1250,6 +1275,7 @@ __all__ = (
     "CreateObjectS3CredentialRequestPermission",
     "CreateObjectStorageComputeBindingRequest",
     "CreateObjectStorageComputeBindingRequestPermission",
+    "CreateObjectUploadRouteRequest",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
@@ -1417,6 +1443,17 @@ __all__ = (
     "EnvDiffRow",
     "EnvDiffRowCells",
     "ErrorNewWebhookPayload",
+    "ExecutionFailure",
+    "ExecutionLimitRequest",
+    "ExecutionLimitRequestCpuMillicores",
+    "ExecutionLimitRequestEphemeralDiskMb",
+    "ExecutionLimitRequestMemoryMb",
+    "ExecutionNetworkPolicy",
+    "ExecutionNetworkPolicyMode",
+    "ExecutionResponse",
+    "ExecutionResponseRuntime",
+    "ExecutionResponseStatus",
+    "ExecutionUsage",
     "ExportAppDebugRequestsFormat",
     "FieldError",
     "FilterCriteria",
@@ -1453,6 +1490,8 @@ __all__ = (
     "GetOpenAPISpecJSONResponse200",
     "GithubCheckUpdateRecord",
     "GithubCheckUpdateRecordStatus",
+    "GitHubDeploymentPolicy",
+    "GitHubDeploymentPolicyPatch",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusHealth",
@@ -1625,6 +1664,8 @@ __all__ = (
     "ObjectStorageUsageReport",
     "ObjectStorageUsageResponse",
     "ObjectStorageUsageResponseBillingMode",
+    "ObjectUploadRoute",
+    "ObjectUploadRouteList",
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",
@@ -1755,6 +1796,7 @@ __all__ = (
     "RequestAnalyticsTimeseriesResponseMethod",
     "RequestAnalyticsTimeseriesSeries",
     "RequestAnalyticsTimeseriesSeriesMethod",
+    "ResolvedExecutionLimits",
     "ResourceProfile",
     "RestoreManagedPostgresDatabaseRequest",
     "RetryDeploymentRequest",
@@ -1812,6 +1854,9 @@ __all__ = (
     "SourceRefDeployRequestTag",
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
+    "StatusIncident",
+    "StatusIncidentSeverity",
+    "StatusUptimeBucket",
     "StorageUsageListResponse",
     "StorageUsageResponse",
     "StreamAppLogsArchive",
@@ -1851,6 +1896,7 @@ __all__ = (
     "TriggerSourceType2Type1",
     "TriggerSourceType3Type1",
     "TrustedSigner",
+    "UpdateAccountBillingInfoRequest",
     "UpdateAlertRuleRequest",
     "UpdateAlertRuleRequestAction",
     "UpdateAlertRuleRequestComparison",

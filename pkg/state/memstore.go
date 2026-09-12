@@ -1726,6 +1726,22 @@ func (m *MemStore) UpdateAccountProviderCustomerID(_ context.Context, id, provid
 	return nil
 }
 
+// UpdateAccountBillingInfo mirrors PgStore's nullable billing-identity
+// update. Empty strings represent a cleared field in the in-memory model.
+func (m *MemStore) UpdateAccountBillingInfo(_ context.Context, id, businessName, billingAddress, taxID string) (Account, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return Account{}, ErrNotFound
+	}
+	a.BusinessName = businessName
+	a.BillingAddress = billingAddress
+	a.TaxID = taxID
+	m.accounts[id] = a
+	return a, nil
+}
+
 func billingProviderForCustomerID(customerID string) string {
 	switch {
 	case strings.HasPrefix(customerID, "cus_"):

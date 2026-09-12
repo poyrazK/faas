@@ -922,11 +922,14 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 func (s *server) accountResponse(ctx context.Context, acct state.Account, r *http.Request) api.AccountResponse {
 	l := api.MustLimitsFor(acct.Plan)
 	resp := api.AccountResponse{
-		ID:            acct.ID,
-		Email:         acct.Email,
-		EmailVerified: acct.EmailVerified(),
-		Plan:          string(acct.Plan),
-		Status:        string(acct.Status),
+		ID:             acct.ID,
+		Email:          acct.Email,
+		EmailVerified:  acct.EmailVerified(),
+		Plan:           string(acct.Plan),
+		Status:         string(acct.Status),
+		BusinessName:   acct.BusinessName,
+		BillingAddress: acct.BillingAddress,
+		TaxID:          acct.TaxID,
 		Limits: api.AccountLimits{
 			Plan:                        string(acct.Plan),
 			RAMMB:                       l.RAMMB,

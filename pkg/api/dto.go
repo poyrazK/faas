@@ -2531,6 +2531,12 @@ type AccountResponse struct {
 	PlanChangeStatus string     `json:"plan_change_status,omitempty"`
 	RequestedPlan    string     `json:"requested_plan,omitempty"`
 	EffectiveAt      *time.Time `json:"effective_at,omitempty"`
+	// Billing identity is mutable account metadata used on future
+	// provider-issued invoices. Empty values are omitted for backwards
+	// compatibility with clients created before billing identity existed.
+	BusinessName   string `json:"business_name,omitempty"`
+	BillingAddress string `json:"billing_address,omitempty"`
+	TaxID          string `json:"tax_id,omitempty"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
