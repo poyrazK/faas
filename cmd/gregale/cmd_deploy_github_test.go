@@ -43,7 +43,9 @@ func TestGithubDeployActionCompositeOutputsAreMapped(t *testing.T) {
 		Runs struct {
 			Using string `yaml:"using"`
 			Steps []struct {
-				ID string `yaml:"id"`
+				ID   string `yaml:"id"`
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
 			} `yaml:"steps"`
 		} `yaml:"runs"`
 	}
@@ -62,6 +64,24 @@ func TestGithubDeployActionCompositeOutputsAreMapped(t *testing.T) {
 	}
 	if !foundDeployStep {
 		t.Fatal("composite Action has no deploy step id for output mappings")
+	}
+	wantRuns := map[string]string{
+		"Validate inputs":     `bash "$ACTION_PATH/src/run.sh" validate`,
+		"Deploy":              `bash "$ACTION_PATH/src/run.sh" deploy`,
+		"Annotate on failure": `bash "$ACTION_PATH/src/annotate.sh"`,
+	}
+	for _, step := range metadata.Runs.Steps {
+		want, ok := wantRuns[step.Name]
+		if !ok {
+			continue
+		}
+		if step.Run != want {
+			t.Errorf("composite Action step %q run = %q, want %q; scripts are stored non-executable and must be invoked through bash", step.Name, step.Run, want)
+		}
+		delete(wantRuns, step.Name)
+	}
+	for name := range wantRuns {
+		t.Errorf("composite Action step %q is missing", name)
 	}
 	for _, name := range []string{"deployment-id", "app-slug", "status", "url", "check-run-id", "cli-version"} {
 		output, ok := metadata.Outputs[name]
