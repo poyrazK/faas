@@ -308,6 +308,23 @@ inspection path, and a runbook link. Use the existing `deployments`, `jobs`,
 and `compute-nodes` commands for explicit retry, cancellation, or drain
 actions after reviewing the inbox.
 
+### Fleet overview and capacity
+
+Read the provider-wide KPI and placement snapshots without querying the
+database directly. Both commands are bounded, read-only views and use the
+same admin/MFA gate as the incident inbox:
+
+```
+gregalectl obs overview
+gregalectl obs capacity
+gregalectl obs capacity --json | jq '.summary.admission_margin_mb'
+```
+
+`overview` combines account, application, node-health, activation-funnel, and
+recent-failure counters. `capacity` reports aggregate headroom plus safe
+per-node counters; it does not return customer workload rows or change the
+deployment path.
+
 ### GitHub recovery
 
 Inspect and retry failed GitHub webhook or Check Run work without SSH or
