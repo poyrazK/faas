@@ -238,8 +238,12 @@ bound to the report SHA-256, backend placement fingerprint, expiry, and canary
 allowlist. `managed-postgres-qualify --verify` performs a read-only check of
 that artifact against the configured single default backend and returns stable
 readiness reasons; it never contacts the provider or enables provisioning.
-This removes manual backend/fingerprint copy errors while preserving the
-explicit staging-only gate.
+When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
+the same artifact is loaded at startup and becomes the authoritative staging
+provisioning input; the legacy qualification environment variables are only a
+fallback when no artifact path is configured. Replacing the artifact requires
+an `apid` restart. This removes manual backend/fingerprint copy errors while
+preserving the explicit staging-only gate.
 
 ## Staging canary account follow-up
 
