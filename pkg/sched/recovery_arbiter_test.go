@@ -13,6 +13,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -245,6 +246,99 @@ func TestArbiter_Tick_NilDispatchers(t *testing.T) {
 	}
 	if recreate != 1 {
 		t.Errorf("recreate = %d, want 1", recreate)
+	}
+}
+
+// TestArbiter_Tick_UnhealthyMigrationFailureFallsBackToRecreate pins the
+// failure-safe landing for a running row whose source node cannot complete a
+// live handoff. A healthy drain must keep retry semantics, while unavailable
+// and force-draining sources can safely park the row for service convergence.
+func TestArbiter_Tick_UnhealthyMigrationFailureFallsBackToRecreate(t *testing.T) {
+	t.Parallel()
+	for _, lifecycle := range []state.NodeLifecycle{
+		state.NodeLifecycleUnavailable,
+		state.NodeLifecycleForceDraining,
+	} {
+		lifecycle := lifecycle
+		t.Run(string(lifecycle), func(t *testing.T) {
+			t.Parallel()
+			recreate := &noopDispatcher{}
+			migrationErr := errors.New("source vmmd unavailable")
+			a := NewArbiter(MigrationDispatcherFunc(func(context.Context, string) error {
+				return migrationErr
+			}), recreate)
+
+			liveMig, recreated, skipped, err := a.Tick(context.Background(),
+				[]state.ComputeNode{{ID: "n1", Lifecycle: lifecycle}},
+				map[string][]state.RecoveryInstance{
+					"n1": {{ID: "i1", State: string(state.StateRunning)}},
+				})
+			if err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			if liveMig != 0 || recreated != 1 || skipped != 0 {
+				t.Fatalf("counts = (%d, %d, %d), want (0, 1, 0)", liveMig, recreated, skipped)
+			}
+			if len(recreate.recreateCalls) != 1 || recreate.recreateCalls[0] != "i1" {
+				t.Fatalf("recreate calls = %v, want [i1]", recreate.recreateCalls)
+			}
+		})
+	}
+}
+
+func TestArbiter_Tick_HealthyMigrationFailureRetries(t *testing.T) {
+	t.Parallel()
+	for _, lifecycle := range []state.NodeLifecycle{
+		state.NodeLifecycleDraining,
+		state.NodeLifecycleRecovering,
+	} {
+		lifecycle := lifecycle
+		t.Run(string(lifecycle), func(t *testing.T) {
+			t.Parallel()
+			recreate := &noopDispatcher{}
+			migrationErr := errors.New("temporary migration failure")
+			a := NewArbiter(MigrationDispatcherFunc(func(context.Context, string) error {
+				return migrationErr
+			}), recreate)
+
+			liveMig, recreated, skipped, err := a.Tick(context.Background(),
+				[]state.ComputeNode{{ID: "n1", Lifecycle: lifecycle}},
+				map[string][]state.RecoveryInstance{
+					"n1": {{ID: "i1", State: string(state.StateRunning)}},
+				})
+			if !errors.Is(err, migrationErr) {
+				t.Fatalf("Tick error = %v, want migration error", err)
+			}
+			if liveMig != 0 || recreated != 0 || skipped != 0 {
+				t.Fatalf("counts = (%d, %d, %d), want (0, 0, 0)", liveMig, recreated, skipped)
+			}
+			if len(recreate.recreateCalls) != 0 {
+				t.Fatalf("recreate calls = %v, want none", recreate.recreateCalls)
+			}
+		})
+	}
+}
+
+func TestArbiter_Tick_ConflictDoesNotFallback(t *testing.T) {
+	t.Parallel()
+	recreate := &noopDispatcher{}
+	a := NewArbiter(MigrationDispatcherFunc(func(context.Context, string) error {
+		return state.ErrConflict
+	}), recreate)
+
+	_, recreated, _, err := a.Tick(context.Background(),
+		[]state.ComputeNode{{ID: "n1", Lifecycle: state.NodeLifecycleUnavailable}},
+		map[string][]state.RecoveryInstance{
+			"n1": {{ID: "i1", State: string(state.StateRunning)}},
+		})
+	if !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("Tick error = %v, want ErrConflict", err)
+	}
+	if recreated != 0 {
+		t.Fatalf("recreated = %d, want 0", recreated)
+	}
+	if len(recreate.recreateCalls) != 0 {
+		t.Fatalf("recreate calls = %v, want none", recreate.recreateCalls)
 	}
 }
 
