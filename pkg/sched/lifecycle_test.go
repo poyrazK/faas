@@ -54,6 +54,7 @@ func TestClassifyServiceReplicasSeparatesReadiness(t *testing.T) {
 	}
 }
 
+// adr: 137 — service replica readiness and desired-capacity projection.
 func TestObserveServiceReplicaStatusProjectsCapacity(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, deployment := seedApp(t, store, api.PlanPro, 128, 5)
