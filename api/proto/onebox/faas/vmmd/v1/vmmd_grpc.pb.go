@@ -25,6 +25,8 @@ const (
 	Vmmd_CreateFromSnapshot_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
 	Vmmd_CreateColdBoot_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
 	Vmmd_JobColdBoot_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
+	Vmmd_ExecuteExecution_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
+	Vmmd_RestoreExecution_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
 	Vmmd_WaitJobExit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_WarmSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
@@ -72,6 +74,15 @@ type VmmdClient interface {
 	// command, environment, and timeout, so they use a dedicated flat wire
 	// shape instead of AppSpec and never enter the snapshot/readiness path.
 	JobColdBoot(ctx context.Context, in *JobColdBootRequest, opts ...grpc.CallOption) (*JobColdBootResponse, error)
+	// ExecuteExecution sends exactly one caller payload to an already restored
+	// disposable execution VM. Restore/cold-boot is intentionally a separate
+	// RPC so source and input never cross the restore boundary. vmmd enforces
+	// the networkless guest contract and destroys the instance before returning.
+	ExecuteExecution(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (*ExecuteExecutionResponse, error)
+	// RestoreExecution creates a fresh, networkless disposable execution VM.
+	// The envelope contains only immutable machine/artifact metadata; caller
+	// source and input cross the boundary later through ExecuteExecution.
+	RestoreExecution(ctx context.Context, in *RestoreExecutionRequest, opts ...grpc.CallOption) (*RestoreExecutionResponse, error)
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error)
@@ -425,6 +436,26 @@ func (c *vmmdClient) JobColdBoot(ctx context.Context, in *JobColdBootRequest, op
 	return out, nil
 }
 
+func (c *vmmdClient) ExecuteExecution(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (*ExecuteExecutionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExecuteExecutionResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ExecuteExecution_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) RestoreExecution(ctx context.Context, in *RestoreExecutionRequest, opts ...grpc.CallOption) (*RestoreExecutionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreExecutionResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RestoreExecution_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JobExitResponse)
@@ -719,6 +750,15 @@ type VmmdServer interface {
 	// command, environment, and timeout, so they use a dedicated flat wire
 	// shape instead of AppSpec and never enter the snapshot/readiness path.
 	JobColdBoot(context.Context, *JobColdBootRequest) (*JobColdBootResponse, error)
+	// ExecuteExecution sends exactly one caller payload to an already restored
+	// disposable execution VM. Restore/cold-boot is intentionally a separate
+	// RPC so source and input never cross the restore boundary. vmmd enforces
+	// the networkless guest contract and destroys the instance before returning.
+	ExecuteExecution(context.Context, *ExecuteExecutionRequest) (*ExecuteExecutionResponse, error)
+	// RestoreExecution creates a fresh, networkless disposable execution VM.
+	// The envelope contains only immutable machine/artifact metadata; caller
+	// source and input cross the boundary later through ExecuteExecution.
+	RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error)
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error)
@@ -1051,6 +1091,12 @@ func (UnimplementedVmmdServer) CreateColdBoot(context.Context, *CreateColdBootRe
 func (UnimplementedVmmdServer) JobColdBoot(context.Context, *JobColdBootRequest) (*JobColdBootResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method JobColdBoot not implemented")
 }
+func (UnimplementedVmmdServer) ExecuteExecution(context.Context, *ExecuteExecutionRequest) (*ExecuteExecutionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExecuteExecution not implemented")
+}
+func (UnimplementedVmmdServer) RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreExecution not implemented")
+}
 func (UnimplementedVmmdServer) WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitJobExit not implemented")
 }
@@ -1200,6 +1246,42 @@ func _Vmmd_JobColdBoot_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).JobColdBoot(ctx, req.(*JobColdBootRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ExecuteExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteExecutionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ExecuteExecution(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ExecuteExecution_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ExecuteExecution(ctx, req.(*ExecuteExecutionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RestoreExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreExecutionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RestoreExecution(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RestoreExecution_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RestoreExecution(ctx, req.(*RestoreExecutionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1661,6 +1743,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "JobColdBoot",
 			Handler:    _Vmmd_JobColdBoot_Handler,
+		},
+		{
+			MethodName: "ExecuteExecution",
+			Handler:    _Vmmd_ExecuteExecution_Handler,
+		},
+		{
+			MethodName: "RestoreExecution",
+			Handler:    _Vmmd_RestoreExecution_Handler,
 		},
 		{
 			MethodName: "WaitJobExit",

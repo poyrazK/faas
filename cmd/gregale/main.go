@@ -400,6 +400,13 @@ func run(args []string) (status int) {
 		// the status_url). Same handler the dashboard's "Test" button
 		// uses; auth + MFA + deploy:write scope.
 		return cmdInvoke(args[1:])
+	case "run":
+		// ADR-171: execute untrusted source in a fresh, networkless
+		// disposable microVM and tear it down after the terminal result.
+		return cmdRun(args[1:])
+	case "runs":
+		// ADR-171 lifecycle reads/cancellation for disposable runs.
+		return cmdRuns(args[1:])
 	case "invocations":
 		// Tier C: per-account invocation ledger (issue #394 follow-up).
 		// Mirrors `audit-events` for dispatcher shape.

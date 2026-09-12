@@ -59,6 +59,7 @@ const (
 	uploadSessionFile     = "upload_session.go"  // issue #1182 §P1 PR-1 — resumable upload session DTOs
 	managedPostgresFile   = "managed_postgres.go"
 	openapiContractFile   = "openapi_contract.go"
+	executionsFile        = "executions.go" // ADR-171 — disposable one-shot execution DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -276,6 +277,8 @@ var dtoExclude = map[string]bool{
 	"StatusPage":                   true, // GET /status/slo.json (public status)
 	"SessionsRevokeRequest":        true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
 	"ManagedPostgresPlanLimits":    true, // internal plan policy, not a wire DTO
+	"ExecutionSnapshotShape":       true, // internal snapshot compatibility key, not a wire DTO
+	"ResolvedExecutionRequest":     true, // sealed scheduler intent, not a public DTO
 	"AlertRuleRow":                 true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
 	"RotateAlertRuleSecretRequest": true, // PR 3 / ADR-045: server-mints the secret; request body is empty, not in spec
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
@@ -912,6 +915,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
+		filepath.Join(root, "pkg", "api", executionsFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

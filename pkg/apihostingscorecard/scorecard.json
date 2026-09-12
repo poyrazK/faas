@@ -16,6 +16,15 @@
       ]
     },
     {
+      "id": "disposable-runs",
+      "name": "Disposable isolated execution",
+      "category": "security",
+      "description": "Untrusted source is admitted only through authenticated, bounded, networkless disposable execution and its payload is not returned in customer reads.",
+      "capabilities": ["disposable-runs"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [{"kind": "test", "locator": "cmd/apid/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection"}]
+    },
+    {
       "id": "first-healthy-api",
       "name": "Time to first healthy API",
       "category": "activation",
