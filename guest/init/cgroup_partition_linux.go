@@ -159,7 +159,7 @@ func leafDir(typ, name string) string {
 	return filepath.Join(cgroupRoot, safe)
 }
 
-// partitionInto (issue #463 / ADR-069 / PR-B AC #4) sets up
+// partitionIntoWithIO (issue #463 / ADR-069 / PR-B AC #4) sets up
 // the per-workload cgroup v2 leaf BEFORE the workload is
 // exec'd:
 //
@@ -177,11 +177,7 @@ func leafDir(typ, name string) string {
 // cgroup v2 must be mounted at cgroupRoot for the writes
 // to land. mountCgroup2 (main_linux.go) is called between
 // pivotInto and the supervisor's first workload, so by the
-// time partitionInto runs the leaf path is reachable.
-func partitionInto(leaf string, ramMB int, cpuMillicoresOpt ...int) error {
-	return partitionIntoWithIO(leaf, ramMB, firstCPUOption(cpuMillicoresOpt), "")
-}
-
+// time partitionIntoWithIO runs the leaf path is reachable.
 func partitionIntoWithIO(leaf string, ramMB, cpuMillicores int, diskIOProfile string) error {
 	if leaf == "" {
 		return errors.New("cgroup partition: empty leaf")
