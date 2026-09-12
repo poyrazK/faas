@@ -1,5 +1,7 @@
 package sched
 
+// adr: 028 — scheduler ownership and per-app admission across nodes.
+
 import (
 	"context"
 	"testing"
