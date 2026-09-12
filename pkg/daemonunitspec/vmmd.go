@@ -63,8 +63,16 @@ func UnitVmmd() daemonunit.Unit {
 			`/usr/bin/chown root:faas /run/faas`,
 			`/usr/bin/chmod 0775 /run/faas`,
 		},
-		Restart:            "on-failure",
-		RestartSec:         "2s",
+		Restart: "on-failure",
+		// vmmd opens Postgres before it binds its serving sockets so a
+		// compute node never advertises itself without a durable identity.
+		// During a simultaneous fleet boot, the control-plane database can
+		// still be replaying WAL when this node reaches self-registration.
+		// A 2s retry exhausted systemd's default five-start burst before
+		// Postgres became reachable and left the node failed permanently.
+		// Fifteen seconds keeps transient recovery automatic without turning a
+		// permanent configuration error into a tight restart loop.
+		RestartSec:         "15s",
 		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
 
 		Slice: "faas-cp.slice",
