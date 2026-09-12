@@ -2207,40 +2207,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err != nil {
 			return printErr("Apply failed", err)
 		}
+		applyStatus := summarizeProjectApply(apply)
 		if jsonOutput {
-			return jsonOut(writeJSON(apply))
-		}
-		PrintOK(osStdout, "Created project %s with %d app(s) and %d cron(s)",
-			apply.ProjectID, len(apply.Apps), len(plan.Crons))
-		// ADR-124 follow-up #1 (post-apply rescue signal). The wire
-		// invariant from cmd/apid/scan_service.go:864 is
-		// `gateRescuedByExclude := !preCanApply && canApply` so this
-		// fires only when the post-exclude apply succeeded but the
-		// pre-exclude gate would have blocked. Extracted into a
-		// helper so unit tests can pin the wire shape without
-		// standing up the full deploy command. The render is
-		// suppressed under --json (the jsonOutput branch returns
-		// above with a byte-shape write; the human-readable note
-		// would otherwise duplicate the JSON for those operators).
-		renderApplyRescue(osStdout, apply)
-		// Per-workload build lines (PR-A, repo decomposition Phase 5
-		// close-the-loop). The apply path enqueued one (deployment,
-		// build) per added/changed workload; surface them so the
-		// operator can `faas logs <build_id>` to follow progress.
-		// Partial-failure rows have Error populated and no IDs.
-		// We ignore Fprintf errors: stdout is the only sink and a
-		// closed pipe (e.g. `... | head`) would otherwise flip the
-		// exit code on a successful apply — matches the
-		// commands_decompose_test stub which drops Fprintf errors
-		// on the same path.
-		for _, b := range apply.Builds {
-			if b.Error != "" {
-				_, _ = fmt.Fprintf(osStdout, "  ! %s: %s\n", b.Slug, b.Error)
-				continue
+			if code := jsonOut(writeJSON(apply)); code != 0 {
+				return code
 			}
-			_, _ = fmt.Fprintf(osStdout, "  ✓ %s: deployment=%s build=%s\n", b.Slug, b.DeploymentID, b.BuildID)
+			if applyStatus.buildsFailed > 0 {
+				reportProjectApplyFailure(osStderr, applyStatus)
+				return 1
+			}
+			return 0
 		}
-		return 0
+		return renderProjectApplyResult(osStdout, plan, apply)
 	}
 
 	var workflowDefs []api.WorkflowSpec

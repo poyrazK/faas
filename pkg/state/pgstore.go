@@ -4676,10 +4676,10 @@ func insertProjectAppInTx(ctx context.Context, tx pgx.Tx, app App) (App, error) 
 	}
 	row := tx.QueryRow(ctx, `insert into apps
 		(account_id, slug, type, runtime, ram_mb, max_concurrency, status, manifest,
-		 project_id, root_dir, workload_name, start_command, min_instances,
-		 streaming_enabled, eviction_priority, require_authn, public_auth_mode,
-		 websocket_enabled, route_metrics_enabled, maintenance_mode, app_protocol,
-		 consumer_auth_mode, cpu_millicores, workload_class)
+			 project_id, root_dir, workload_name, start_command, min_instances,
+			 streaming_enabled, eviction_priority, require_authn, public_auth_mode,
+			 websocket_enabled, route_metrics_enabled, maintenance_mode, app_protocol,
+			 consumer_auth_mode, cpu_millicores, workload_class)
 		values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 		returning `+appsSelectColumns,
 		app.AccountID, app.Slug, string(appType), nullString(app.Runtime), ramMB,
