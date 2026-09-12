@@ -1491,6 +1491,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the local realtimed owner. Split-box deployments leave this unset until
 	// the leased cross-node registrar is configured.
 	srv.WithRealtimeSocket(deps.getenv("FAAS_REALTIME_SOCKET"))
+	if ownerStore, ok := store.(state.ManagedRealtimeConnectionOwnerStore); ok {
+		localNodeID := ""
+		if cfg.NodeName != "" {
+			if node, nodeErr := store.ComputeNodeByName(ctx, cfg.NodeName); nodeErr == nil {
+				localNodeID = node.ID
+			}
+		}
+		if localNodeID == "" {
+			if node, nodeErr := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName); nodeErr == nil {
+				localNodeID = node.ID
+			}
+		}
+		var local realtimeNodeOperator
+		if srv.realtimeOwner != nil && srv.realtimeClient != nil {
+			local = localRealtimeNodeOperator{owner: srv.realtimeOwner, client: srv.realtimeClient}
+		}
+		resolver := newLeasedRealtimeOwner(ownerStore, store, localNodeID, local, log)
+		// The fleet adapter owns both public operations and endpoint
+		// reconciliation. It retains the local Unix fast path when present.
+		srv.realtimeOwner = resolver
+		srv.realtimeRegistrar = resolver
+		log.Info("apid: managed realtime leased owner resolver armed", "local_node_id", localNodeID)
+	}
 
 	// ADR-126 / issue #975 item #2: the in-process LRU backing
 	// the `?source=auto` OpenAPI generation. Constructed once

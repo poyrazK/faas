@@ -1897,6 +1897,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	var realtimeControlProxy http.Handler
 	// Managed realtime is an opt-in data plane. When the local realtimed
 	// daemon socket is configured, reserve its namespace before ordinary
 	// host lookup/wake so a quiet client connection does not keep an app VM
@@ -1907,6 +1908,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			handler.WithManagedRealtime(proxy)
 			log.Info("gatewayd-internal: managed realtime proxy armed", "socket", socket)
 		}
+		realtimeControlProxy = newRealtimedControlProxy(socket, log)
 	}
 	// The backend above owns invalidation; the handler owns lookup/store. Both
 	// sides intentionally share deps.responseCache so a deploy or rule update
@@ -2907,6 +2909,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// without also updating the unified-mux test in
 		// pkg/gateway/synth_test.go (TestSynthServer_UnifiedMux_RoutesPathsCorrectly).
 		unifiedMux.Handle("/", publicHandler)
+		if realtimeControlProxy != nil {
+			unifiedMux.Handle("/v1/internal/realtime/", realtimeControlProxy)
+		}
 		// Pull the synth mux out of the SynthServer via a small
 		// accessor; the server exposes SetHandler so the caller
 		// owns the unified mux. The synth mux itself carries
@@ -2958,6 +2963,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// is gone.
 		deps.synth.SetHandler(unifiedMux)
 		publicListenerHandler = unifiedMux
+	} else if realtimeControlProxy != nil {
+		// Legacy/test wiring without SynthServer still needs the private
+		// control hop; keep ordinary customer routing as the catch-all.
+		mux := http.NewServeMux()
+		mux.Handle("/", publicHandler)
+		mux.Handle("/v1/internal/realtime/", realtimeControlProxy)
+		publicListenerHandler = mux
 	}
 	// addSrv is the closure for the public :8080 + control listeners
 	// below; declared above so the unified-mux block above can run
