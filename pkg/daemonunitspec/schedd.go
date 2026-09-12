@@ -66,6 +66,10 @@ func UnitSchedd() daemonunit.Unit {
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
+		// Read-only conntrack enumeration uses nfnetlink, which the kernel
+		// gates behind CAP_NET_ADMIN. Keep the unit and capsDecl identical.
+		CapabilityBoundingSet: []string{"CAP_NET_ADMIN"},
+		AmbientCapabilities:   []string{"CAP_NET_ADMIN"},
 
 		// Issue #585 / ADR-127: sealed.env dropped; per-daemon
 		// schedd.env (FAAS_INTERNAL_SVC_KEY_SEALED_BLOB=<base64>)

@@ -296,9 +296,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// DEPLOY-1 / ADR-075 capdecl gate. schedd's capsDecl is
-	// the empty declaration (no Allow, no Deny) — schedd is
-	// unprivileged. The capCheck seam (review finding M2)
+	// DEPLOY-1 / ADR-075 capdecl gate. schedd permits only CAP_NET_ADMIN for
+	// read-only conntrack enumeration. The capCheck seam (review finding M2)
 	// lets tests stub the live /proc/self/status check.
 	capCheck := deps.capCheck
 	if capCheck == nil {
