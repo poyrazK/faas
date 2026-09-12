@@ -3,9 +3,22 @@
 -- Provider-qualified receipts make object-storage month-close delivery
 -- idempotent across retries and preserve shadow/pre-activation decisions when
 -- rollout mode changes later.
-ALTER TABLE object_storage_billing_periods
-    ADD CONSTRAINT object_storage_billing_periods_delivery_identity_key
-    UNIQUE (id, account_id, period_start);
+-- PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS. Guard the addition so a
+-- deploy can safely resume when the DDL landed but the goose ledger update
+-- did not.
+DO $$
+BEGIN
+   IF NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_constraint
+        WHERE conname = 'object_storage_billing_periods_delivery_identity_key'
+          AND conrelid = 'object_storage_billing_periods'::regclass
+    ) THEN
+        ALTER TABLE object_storage_billing_periods
+            ADD CONSTRAINT object_storage_billing_periods_delivery_identity_key
+            UNIQUE (id, account_id, period_start);
+    END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS object_storage_billing_deliveries (
     provider text NOT NULL CHECK (provider <> ''),
     billing_record_id uuid NOT NULL,
