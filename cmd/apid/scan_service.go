@@ -854,7 +854,7 @@ func (s *server) stageApplyTarball(
 // the apply-time build enqueue loop; the handler renders them in the
 // apply response.
 func (s *server) scanService(
-	w http.ResponseWriter, r *http.Request, acct state.Account,
+	r *http.Request, acct state.Account,
 	planToken string, apply bool,
 ) (*scanPlanResponse, state.Project, []state.App, []state.App, []string, []appliedBuild, *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
@@ -970,11 +970,10 @@ func (s *server) scanService(
 			_ = json.Unmarshal(b, &pt)
 		}
 		if pt.AccountID != acct.ID || pt.Hash != req.SourceSHA256 {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
+			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 				"plan_token_stale",
 				"plan_token does not match uploaded source",
-				"re-run scan and apply in one flow"))
-			return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal("plan_token stale")
+				"re-run scan and apply in one flow")
 		}
 	}
 
