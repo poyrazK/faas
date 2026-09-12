@@ -838,6 +838,10 @@ const (
 	// split at line 533/534.
 	CodePlanDataUpstreamsNotAllowed = "plan_data_upstreams_not_allowed" // 402, Free
 	CodePlanLimitDataUpstreams      = "plan_limit_data_upstreams"       // 403, per-app cap reached
+	// CodeDataUpstreamsDisabled distinguishes an operator runtime switch
+	// from a customer plan entitlement. It prevents an entitled Scale
+	// account from receiving impossible downgrade guidance.
+	CodeDataUpstreamsDisabled = "data_upstreams_disabled"
 
 	// ADR-098 §D4 + §11: explicit-upstream write surface validation.
 	// Distinct codes from CodeEnvVarInvalidKey / CodeEnvVarValueTooLarge
@@ -1683,7 +1687,7 @@ func StatusForCode(code string) int {
 	case CodeCapacity, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled:
 		return http.StatusServiceUnavailable
-	case CodeAPIContractDiffDisabled:
+	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -3918,6 +3922,16 @@ func ErrPlanDataUpstreamsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanDataUpstreamsNotAllowed,
 		"Data-placement hints unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include data-placement hints; upgrade to Hobby or above to capture upstreams.", p)).
+		WithDocs(docsBase + "/plans#data-placement")
+}
+
+// ErrDataUpstreamsDisabled reports cluster configuration independently of
+// plan entitlement. Operators can enable the runtime switch without asking an
+// already-entitled customer to change plans.
+func ErrDataUpstreamsDisabled() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeDataUpstreamsDisabled,
+		"Data placement is disabled",
+		"data-placement APIs are not enabled on this cluster; contact the platform operator").
 		WithDocs(docsBase + "/plans#data-placement")
 }
 
