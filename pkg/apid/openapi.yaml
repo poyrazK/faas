@@ -4498,6 +4498,10 @@ paths:
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
                   description: "Optional repository-relative directory to build from when source contains a workspace context. Empty or omitted means the archive root."
+                scope:
+                  type: string
+                  pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+                  description: "Named environment scope read by the deployment; omitted uses default."
                 source_url:
                   type: string
                   maxLength: 1024
@@ -4630,6 +4634,10 @@ paths:
                   type: string
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
+                scope:
+                  type: string
+                  pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
+                  description: "Named environment scope read by the deployment; omitted uses default."
                 workflows:
                   type: string
                   description: "Optional JSON workflow-definition array attached to this developer deployment."
@@ -17463,6 +17471,7 @@ components:
         handler: { type: string }
         dockerfile: { type: boolean }
         source_root: { type: string }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', description: "Named environment scope read by the deployment; omitted uses default." }
         source_url:
           { type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by apid." }
         commit_sha:

@@ -269,6 +269,7 @@ from .create_object_s3_credential_request import CreateObjectS3CredentialRequest
 from .create_object_s3_credential_request_permission import CreateObjectS3CredentialRequestPermission
 from .create_object_storage_compute_binding_request import CreateObjectStorageComputeBindingRequest
 from .create_object_storage_compute_binding_request_permission import CreateObjectStorageComputeBindingRequestPermission
+from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
@@ -652,6 +653,8 @@ from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_report import ObjectStorageUsageReport
 from .object_storage_usage_response import ObjectStorageUsageResponse
 from .object_storage_usage_response_billing_mode import ObjectStorageUsageResponseBillingMode
+from .object_upload_route import ObjectUploadRoute
+from .object_upload_route_list import ObjectUploadRouteList
 from .obs_health_response import ObsHealthResponse
 from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
@@ -1246,6 +1249,7 @@ __all__ = (
     "CreateObjectS3CredentialRequestPermission",
     "CreateObjectStorageComputeBindingRequest",
     "CreateObjectStorageComputeBindingRequestPermission",
+    "CreateObjectUploadRouteRequest",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
@@ -1621,6 +1625,8 @@ __all__ = (
     "ObjectStorageUsageReport",
     "ObjectStorageUsageResponse",
     "ObjectStorageUsageResponseBillingMode",
+    "ObjectUploadRoute",
+    "ObjectUploadRouteList",
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",
