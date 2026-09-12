@@ -46,6 +46,10 @@ from .api_consumer_usage_bucket_response import APIConsumerUsageBucketResponse
 from .api_consumer_usage_quote_bucket_response import APIConsumerUsageQuoteBucketResponse
 from .api_consumer_usage_quote_response import APIConsumerUsageQuoteResponse
 from .api_consumer_usage_response import APIConsumerUsageResponse
+from .api_consumer_usage_statement_bucket_response import APIConsumerUsageStatementBucketResponse
+from .api_consumer_usage_statement_list_response import APIConsumerUsageStatementListResponse
+from .api_consumer_usage_statement_response import APIConsumerUsageStatementResponse
+from .api_consumer_usage_statement_response_status import APIConsumerUsageStatementResponseStatus
 from .api_key_export_response import APIKeyExportResponse
 from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
@@ -210,6 +214,7 @@ from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
 from .create_api_consumer_rate_card_request import CreateAPIConsumerRateCardRequest
 from .create_api_consumer_request import CreateAPIConsumerRequest
+from .create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
 from .create_app_log_drain_request import CreateAppLogDrainRequest
 from .create_app_log_drain_request_kind import CreateAppLogDrainRequestKind
 from .create_app_request import CreateAppRequest
@@ -1014,6 +1019,10 @@ __all__ = (
     "APIConsumerUsageQuoteBucketResponse",
     "APIConsumerUsageQuoteResponse",
     "APIConsumerUsageResponse",
+    "APIConsumerUsageStatementBucketResponse",
+    "APIConsumerUsageStatementListResponse",
+    "APIConsumerUsageStatementResponse",
+    "APIConsumerUsageStatementResponseStatus",
     "APIKeyExportResponse",
     "APIKeyExportResponseScopesItem",
     "APIKeyResponse",
@@ -1178,6 +1187,7 @@ __all__ = (
     "CreateAlertRuleRequestWindowSpec",
     "CreateAPIConsumerRateCardRequest",
     "CreateAPIConsumerRequest",
+    "CreateAPIConsumerUsageStatementRequest",
     "CreateAppLogDrainRequest",
     "CreateAppLogDrainRequestKind",
     "CreateAppRequest",

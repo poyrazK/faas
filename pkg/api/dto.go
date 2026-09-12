@@ -600,6 +600,48 @@ type APIConsumerUsageQuoteResponse struct {
 	AsOf             string                                `json:"as_of"`
 }
 
+// CreateAPIConsumerUsageStatementRequest snapshots the usage quote for an
+// explicit UTC-minute period. The natural period key makes retries safe.
+type CreateAPIConsumerUsageStatementRequest struct {
+	PeriodStart *time.Time `json:"period_start"`
+	PeriodEnd   *time.Time `json:"period_end"`
+}
+
+// APIConsumerUsageStatementBucketResponse is one bucket in a durable usage
+// statement. Empty pricing fields indicate explicitly unpriced usage.
+type APIConsumerUsageStatementBucketResponse struct {
+	WindowStart            time.Time `json:"window_start"`
+	BillableUnits          int64     `json:"billable_units"`
+	RateCardID             string    `json:"rate_card_id,omitempty"`
+	Currency               string    `json:"currency,omitempty"`
+	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
+	AmountMillicents       int64     `json:"amount_millicents"`
+}
+
+// APIConsumerUsageStatementResponse is an immutable, auditable usage
+// snapshot that can be exported to a payment system in a later slice.
+type APIConsumerUsageStatementResponse struct {
+	ID               string                                    `json:"id"`
+	ConsumerID       string                                    `json:"consumer_id"`
+	PeriodStart      time.Time                                 `json:"period_start"`
+	PeriodEnd        time.Time                                 `json:"period_end"`
+	Status           string                                    `json:"status"`
+	Currency         string                                    `json:"currency,omitempty"`
+	BillableUnits    int64                                     `json:"billable_units"`
+	UnpricedUnits    int64                                     `json:"unpriced_units"`
+	AmountMillicents int64                                     `json:"amount_millicents"`
+	Priced           bool                                      `json:"priced"`
+	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
+	AsOf             string                                    `json:"as_of"`
+	CreatedAt        time.Time                                 `json:"created_at"`
+	FinalizedAt      *time.Time                                `json:"finalized_at,omitempty"`
+}
+
+// APIConsumerUsageStatementListResponse wraps statements newest-period first.
+type APIConsumerUsageStatementListResponse struct {
+	Statements []APIConsumerUsageStatementResponse `json:"statements"`
+}
+
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
 // Validated server-side via the same validSlug regex used at CreateApp
 // time; rejected on conflict with 409 CodeAppRenameFailed when another

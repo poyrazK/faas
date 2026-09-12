@@ -2851,6 +2851,111 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose durable usage statements are returned.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerUsageStatements
+      summary: List durable API consumer usage statements.
+      description: Returns immutable quote snapshots newest period first.
+      responses:
+        '200':
+          description: Durable usage statements for the consumer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: createAPIConsumerUsageStatement
+      summary: Snapshot an API consumer usage quote.
+      description: Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period returns the original snapshot.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerUsageStatementRequest' }
+      responses:
+        '200':
+          description: The existing statement for this consumer and period.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
+        '201':
+          description: The newly created usage statement snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose statement is being read.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Durable usage statement UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsageStatement
+      summary: Fetch one durable API consumer usage statement.
+      responses:
+        '200':
+          description: The immutable usage statement snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/finalize:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity owning the statement.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Durable usage statement UUID to finalize.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [consumers]
+      operationId: finalizeAPIConsumerUsageStatement
+      summary: Finalize a fully priced API consumer usage statement.
+      description: Records the payable lifecycle transition; repeated calls are idempotent.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The finalized usage statement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/apps/{slug}/rate-cards:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -16343,6 +16448,57 @@ components:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerUsageQuoteBucketResponse' }
         as_of: { type: string, format: date-time }
+
+    CreateAPIConsumerUsageStatementRequest:
+      description: "Explicit UTC-minute period to snapshot as an immutable usage statement."
+      type: object
+      required: [period_start, period_end]
+      properties:
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+
+    APIConsumerUsageStatementBucketResponse:
+      description: "One UTC minute captured in a durable usage statement."
+      type: object
+      required: [window_start, billable_units, amount_millicents]
+      properties:
+        window_start: { type: string, format: date-time }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        rate_card_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerUsageStatementResponse:
+      description: "Immutable, auditable API consumer usage snapshot."
+      type: object
+      required: [id, consumer_id, period_start, period_end, status, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        status: { type: string, enum: [draft, finalized] }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        priced: { type: boolean }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerUsageStatementBucketResponse' }
+        as_of: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        finalized_at: { type: [string, "null"], format: date-time }
+
+    APIConsumerUsageStatementListResponse:
+      description: "Durable API consumer usage statements, newest period first."
+      type: object
+      required: [statements]
+      properties:
+        statements:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
 
     AppRestartResponse:
       description: "Correlation handle for an accepted app restart."
