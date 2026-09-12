@@ -857,6 +857,9 @@ type runDeps struct {
 	// newGatewaydEdgeRules in run() so the cache + state.Store
 	// loader share the same instance.
 	edgeRulesMatcher *gatewaydEdgeRules
+	// declaredRoutesMatcher enforces the opt-in OpenAPI/explicit route
+	// contract before the handler reaches authentication or wake admission.
+	declaredRoutesMatcher *declaredRoutesMatcher
 	// edgeJWKSAdapter (ADR-091 PR 5) is the JWT verifier handle
 	// consulted by applyEdgeRuleJWT. nil = JWT kind disabled
 	// (pre-PR-5 + dev posture; matches edgeRulesAudit nil
@@ -1136,7 +1139,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return gateway.App{}, false, err
 			}
 			favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
-			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1627,6 +1630,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// db.NotifyEdgeRuleChanged is wired via PGBackend.WithEdgeRules
 	// below.
 	deps.edgeRulesMatcher = newGatewaydEdgeRules(pgStore, log, deps.edgeValidateAdapter, deps.metrics)
+	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
 	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(deps.pgStore, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
 	// DB-IP Lite .mmdb file at FAAS_GEOIP_DB_PATH. The Reader
@@ -1893,10 +1897,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	// Managed realtime is an opt-in data plane. When the local realtimed
+	// daemon socket is configured, reserve its namespace before ordinary
+	// host lookup/wake so a quiet client connection does not keep an app VM
+	// resident. Leaving the variable unset preserves the existing raw
+	// Upgrade-bridge-only behavior for development and older deployments.
+	if socket := strings.TrimSpace(osGetenv("FAAS_REALTIME_SOCKET")); socket != "" {
+		if proxy := newRealtimedProxy(socket, log); proxy != nil {
+			handler.WithManagedRealtime(proxy)
+			log.Info("gatewayd-internal: managed realtime proxy armed", "socket", socket)
+		}
+	}
 	// The backend above owns invalidation; the handler owns lookup/store. Both
 	// sides intentionally share deps.responseCache so a deploy or rule update
 	// invalidates the exact cache serving customer traffic.
 	handler.WithResponseCache(deps.responseCache)
+	handler.WithDeclaredRouteMatcher(deps.declaredRoutesMatcher)
+	if deps.declaredRoutesMatcher != nil && deps.pool != nil {
+		go watchDeclaredRouteInvalidations(ctx, deps.pool, deps.declaredRoutesMatcher, log)
+	}
 	// ADR-104 amendment 5 / issue #881 Phase 4 C3: opt-in
 	// central-mode rate-limit counter (the [ratelimit] mode TOML
 	// knob added in C2). mode = "local" (default) leaves every
@@ -2037,7 +2056,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// the WebSocketEnabled plumbing above — the same
 			// routeSetFor gate in Handler.ServeHTTP reads this
 			// alongside the operator kill-switch.
-			RouteMetricsEnabled: app.RouteMetricsEnabled,
+			RouteMetricsEnabled:     app.RouteMetricsEnabled,
+			OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
+			DeclaredRoutes:          gatewayDeclaredRoutes(app.DeclaredRoutes),
 			// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
 			// maintenance flag (apps.maintenance_mode).
 			MaintenanceMode: app.MaintenanceMode,

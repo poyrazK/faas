@@ -21,3 +21,11 @@
   changed_when: true
   listen: restart faas-gatewayd-internal
   when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: restart faas-realtimed
+  ansible.builtin.systemd:
+    name: faas-realtimed
+    state: restarted
+    daemon_reload: true
+  listen: restart faas-realtimed
+  when: not (faas_join_defer_service_handlers | default(false) | bool)

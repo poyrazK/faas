@@ -630,6 +630,31 @@ func (c *Client) GetAPIConsumerUsageQuote(ctx context.Context, slug, consumerID 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// CreateAPIConsumerUsageStatement snapshots a consumer's quote for a period.
+// Repeating the same period returns the original immutable statement.
+func (c *Client) CreateAPIConsumerUsageStatement(ctx context.Context, slug, consumerID string, req CreateAPIConsumerUsageStatementRequest) (APIConsumerUsageStatementResponse, error) {
+	var out APIConsumerUsageStatementResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements", req, &out)
+}
+
+// ListAPIConsumerUsageStatements returns durable statements newest period first.
+func (c *Client) ListAPIConsumerUsageStatements(ctx context.Context, slug, consumerID string) (APIConsumerUsageStatementListResponse, error) {
+	var out APIConsumerUsageStatementListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements", nil, &out)
+}
+
+// GetAPIConsumerUsageStatement returns one durable statement by ID.
+func (c *Client) GetAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementResponse, error) {
+	var out APIConsumerUsageStatementResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID, nil, &out)
+}
+
+// FinalizeAPIConsumerUsageStatement marks a fully priced statement payable.
+func (c *Client) FinalizeAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementResponse, error) {
+	var out APIConsumerUsageStatementResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/finalize", struct{}{}, &out)
+}
+
 // RevokeAPIConsumer revokes an end-customer identity and all future key issuance for it.
 func (c *Client) RevokeAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
 	var out APIConsumerResponse

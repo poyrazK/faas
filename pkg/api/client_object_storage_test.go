@@ -9,7 +9,7 @@ import (
 )
 
 func TestClientObjectStorage(t *testing.T) {
-	for _, method := range []string{"list", "create", "delete-bucket", "list-s3-credentials", "create-s3-credential", "revoke-s3-credential", "list-compute-bindings", "create-compute-binding", "delete-compute-binding", "rotate-compute-binding", "objects", "delete-object", "sign", "create-multipart", "list-multipart", "get-multipart", "list-parts", "sign-part", "complete-multipart", "abort-multipart", "usage", "report"} {
+	for _, method := range []string{"list", "create", "delete-bucket", "list-upload-routes", "create-upload-route", "delete-upload-route", "list-s3-credentials", "create-s3-credential", "revoke-s3-credential", "list-compute-bindings", "create-compute-binding", "delete-compute-binding", "rotate-compute-binding", "objects", "delete-object", "sign", "create-multipart", "list-multipart", "get-multipart", "list-parts", "sign-part", "complete-multipart", "abort-multipart", "usage", "report"} {
 		t.Run(method, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer gregale-test-token" {
@@ -52,6 +52,14 @@ func TestClientObjectStorage(t *testing.T) {
 						t.Error(r.URL.Path)
 					}
 				}
+				if method == "list-upload-routes" || method == "create-upload-route" {
+					if r.URL.Path != "/v1/apps/demo/upload-routes" {
+						t.Error(r.URL.Path)
+					}
+				}
+				if method == "delete-upload-route" && r.URL.Path != "/v1/apps/demo/upload-routes/avatar" {
+					t.Error(r.URL.Path)
+				}
 				if method == "revoke-s3-credential" && r.URL.Path != "/v1/apps/demo/buckets/bucket/s3-credentials/credential" {
 					t.Error(r.URL.Path)
 				}
@@ -66,14 +74,14 @@ func TestClientObjectStorage(t *testing.T) {
 				if method == "rotate-compute-binding" && r.URL.Path != "/v1/apps/demo/buckets/bucket/compute-bindings/binding/rotate" {
 					t.Error(r.URL.Path)
 				}
-				if method == "delete-bucket" || method == "delete-object" || method == "abort-multipart" || method == "revoke-s3-credential" || method == "delete-compute-binding" {
+				if method == "delete-bucket" || method == "delete-object" || method == "abort-multipart" || method == "revoke-s3-credential" || method == "delete-compute-binding" || method == "delete-upload-route" {
 					if r.Method != http.MethodDelete {
 						t.Error(r.Method)
 					}
 					w.WriteHeader(204)
 					return
 				}
-				if method == "create" || method == "create-s3-credential" || method == "create-compute-binding" || method == "rotate-compute-binding" || method == "sign" || method == "create-multipart" || method == "sign-part" || method == "complete-multipart" {
+				if method == "create" || method == "create-upload-route" || method == "create-s3-credential" || method == "create-compute-binding" || method == "rotate-compute-binding" || method == "sign" || method == "create-multipart" || method == "sign-part" || method == "complete-multipart" {
 					if r.Method != http.MethodPost {
 						t.Error(r.Method)
 					}
@@ -95,6 +103,12 @@ func TestClientObjectStorage(t *testing.T) {
 				_, err = client.ListObjectBuckets(ctx, "demo")
 			case "create":
 				_, err = client.CreateObjectBucket(ctx, "demo", CreateObjectBucketRequest{Name: "assets"})
+			case "list-upload-routes":
+				_, err = client.ListObjectUploadRoutes(ctx, "demo")
+			case "create-upload-route":
+				_, err = client.CreateObjectUploadRoute(ctx, "demo", CreateObjectUploadRouteRequest{Name: "avatar", BucketID: "bucket", MaxBytes: 1 << 20})
+			case "delete-upload-route":
+				err = client.DeleteObjectUploadRoute(ctx, "demo", "avatar")
 			case "delete-bucket":
 				err = client.DeleteObjectBucket(ctx, "demo", "bucket")
 			case "list-s3-credentials":

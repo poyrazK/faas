@@ -22,7 +22,7 @@ var envLiteral = regexp.MustCompile(`"(FAAS_[A-Z0-9_]+)"`)
 var daemonDirs = []string{
 	"cmd/apid", "cmd/schedd", "cmd/vmmd", "cmd/imaged", "cmd/builderd",
 	"cmd/meterd", "cmd/githubd", "cmd/gatewayd-internal", "cmd/gatewayd-public", "cmd/s3-gatewayd",
-	"cmd/vmmd-stream-bridge", "cmd/vmmd-raw-bridge",
+	"cmd/vmmd-stream-bridge", "cmd/vmmd-raw-bridge", "cmd/realtimed",
 }
 
 func repoRoot(t *testing.T) string {

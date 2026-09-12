@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { PublicAuthBlock } from './PublicAuthBlock.js';
 import type { ResourceProfile } from './ResourceProfile.js';
 import type { ScalingPolicy } from './ScalingPolicy.js';
@@ -90,6 +91,14 @@ export type UpdateAppRequest = {
    * Per-app per-route observability flag (ADR-093). Omitted → no change. Free PATCHing true is 403 plan_route_metrics_not_allowed.
    */
   route_metrics_enabled?: boolean | null;
+  /**
+   * Enable or disable gateway-side rejection of paths not declared by the app. Enabling requires declared_routes or an imported OpenAPI document.
+   */
+  only_allow_declared_routes?: boolean | null;
+  /**
+   * Replace the explicit route contract. An empty array clears it and makes the gateway use the imported OpenAPI document.
+   */
+  declared_routes?: Array<DeclaredRoute>;
   /**
    * Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → no change. PATCH true pins the app for maintenance (every request 503 + Retry-After); PATCH false restores normal handling. Free-tier allowed; no plan gate. The apps_maintenance_mode_notify trigger (migration 00237) fires pg_notify on flip.
    */

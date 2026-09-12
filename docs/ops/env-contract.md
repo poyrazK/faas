@@ -240,6 +240,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_POLAR_HOBBY_INCLUDED_EGRESS_GIB` | shared | `secrets-env` |  |  | `` | Hobby monthly allowance; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_HOBBY_PRODUCT_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_METER_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM` | shared | `secrets-env` |  |  | `` | UTC-month activation boundary; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE` | shared | `secrets-env` |  |  | `` | off (default), shadow, or live; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_OBJECT_STORAGE_METER_ID` | shared | `secrets-env` |  |  | `` | separate Polar meter UUID summing charge_millicents; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME` | shared | `secrets-env` |  |  | `` | defaults to faas_object_storage_usage; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_PRO_INCLUDED_EGRESS_GIB` | shared | `secrets-env` |  |  | `` | Pro monthly allowance; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_PRO_PRODUCT_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_RETURN_URL` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
@@ -264,6 +268,17 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PUBLIC_IFACE` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible |
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `envfile` |  |  | `` |  |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_REALTIME_CALLBACK_TIMEOUT` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_HEALTH_LISTEN` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_HEARTBEAT` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_PONG_WAIT` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_ROLE` | realtimed, shared | `dropin` |  |  | `` |  |
+| `FAAS_REALTIME_SOCKET` | gatewayd-internal, realtimed, shared | `unit` |  |  | `` |  |
+| `FAAS_REALTIME_WRITE_WAIT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_COOLDOWN_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
 | `FAAS_RECONCILE_INTERVAL` | meterd | `default` |  |  | `` |  |
@@ -297,7 +312,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SIGN_PUB` | schedd | `default` |  |  | `` |  |
 | `FAAS_SKIP_PG_TESTS` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SKIP_SOCKET_GROUP` | shared | `dev-only` |  |  | `` | must never be set on a production host |
-| `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` |  |
+| `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` | defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments |
 | `FAAS_SPOOL_ROOT` | apid, builderd | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_ENABLED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_INTERVAL_MS` | gatewayd-public | `default` |  |  | `` |  |

@@ -312,6 +312,12 @@ type UpdateAppRequest struct {
 	// true → false to opt out. Pointer distinguishes "don't
 	// touch" (nil) from "explicit false" (*bool=false).
 	RouteMetricsEnabled *bool `json:"route_metrics_enabled,omitempty"`
+	// OnlyAllowDeclaredRoutes makes the gateway enforce the app's declared
+	// endpoint contract before waking an instance. When enabled, use the
+	// optional DeclaredRoutes list for an explicit contract; when omitted or
+	// empty the imported per-app OpenAPI document is used.
+	OnlyAllowDeclaredRoutes *bool            `json:"only_allow_declared_routes,omitempty"`
+	DeclaredRoutes          *[]DeclaredRoute `json:"declared_routes,omitempty"`
 	// MaintenanceMode (ADR-091 amendment) opts the app into
 	// 503 + Retry-After mode via PATCH. Pointer distinguishes
 	// "don't touch" (nil) from "explicit false" (*bool=false).
@@ -472,6 +478,14 @@ type UpdateAppRequest struct {
 	SetScalingPolicy bool           `json:"-"`
 }
 
+// DeclaredRoute is an explicit pre-wake route declaration. Path parameters
+// use OpenAPI's `{name}` segment syntax; methods are HTTP verbs (for example
+// ["GET", "POST"]).
+type DeclaredRoute struct {
+	Path    string   `json:"path"`
+	Methods []string `json:"methods"`
+}
+
 // CreateAPIConsumerRequest creates a stable API consumer identity within an app.
 type CreateAPIConsumerRequest struct {
 	ExternalRef string `json:"external_ref"`
@@ -598,6 +612,49 @@ type APIConsumerUsageQuoteResponse struct {
 	Priced           bool                                  `json:"priced"`
 	Buckets          []APIConsumerUsageQuoteBucketResponse `json:"buckets"`
 	AsOf             string                                `json:"as_of"`
+}
+
+// CreateAPIConsumerUsageStatementRequest snapshots the usage quote for an
+// explicit UTC-minute period. The natural period key makes retries safe.
+type CreateAPIConsumerUsageStatementRequest struct {
+	PeriodStart *time.Time `json:"period_start"`
+	PeriodEnd   *time.Time `json:"period_end"`
+}
+
+// APIConsumerUsageStatementBucketResponse is one bucket in a durable usage
+// statement. Empty pricing fields indicate explicitly unpriced usage.
+type APIConsumerUsageStatementBucketResponse struct {
+	WindowStart            time.Time `json:"window_start"`
+	BillableUnits          int64     `json:"billable_units"`
+	RateCardID             string    `json:"rate_card_id,omitempty"`
+	Currency               string    `json:"currency,omitempty"`
+	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
+	AmountMillicents       int64     `json:"amount_millicents"`
+}
+
+// APIConsumerUsageStatementResponse is an immutable, auditable usage
+// snapshot that can be exported to a customer's payment system through the
+// usage_statement.finalized webhook.
+type APIConsumerUsageStatementResponse struct {
+	ID               string                                    `json:"id"`
+	ConsumerID       string                                    `json:"consumer_id"`
+	PeriodStart      time.Time                                 `json:"period_start"`
+	PeriodEnd        time.Time                                 `json:"period_end"`
+	Status           string                                    `json:"status"`
+	Currency         string                                    `json:"currency,omitempty"`
+	BillableUnits    int64                                     `json:"billable_units"`
+	UnpricedUnits    int64                                     `json:"unpriced_units"`
+	AmountMillicents int64                                     `json:"amount_millicents"`
+	Priced           bool                                      `json:"priced"`
+	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
+	AsOf             string                                    `json:"as_of"`
+	CreatedAt        time.Time                                 `json:"created_at"`
+	FinalizedAt      *time.Time                                `json:"finalized_at,omitempty"`
+}
+
+// APIConsumerUsageStatementListResponse wraps statements newest-period first.
+type APIConsumerUsageStatementListResponse struct {
+	Statements []APIConsumerUsageStatementResponse `json:"statements"`
 }
 
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
@@ -875,6 +932,9 @@ type AppResponse struct {
 	// show "route metrics on / off" alongside the streaming/WS
 	// pills.
 	RouteMetricsEnabled bool `json:"route_metrics_enabled"`
+	// OnlyAllowDeclaredRoutes reflects the opt-in gateway route contract.
+	OnlyAllowDeclaredRoutes bool            `json:"only_allow_declared_routes"`
+	DeclaredRoutes          []DeclaredRoute `json:"declared_routes,omitempty"`
 	// MaintenanceMode (ADR-091 amendment) is the coarse-grained
 	// maintenance toggle for the whole app. When true the
 	// gatewayd applier (applyAppsMaintenanceMode, §4.1.2.0)
@@ -3651,6 +3711,20 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
+	// Uptime30dPct is the weighted success rate of terminal invocations
+	// observed over the last 30 calendar days. Days without traffic are
+	// represented as 100% in the daily buckets and do not add to the
+	// weighted denominator.
+	Uptime30dPct float64 `json:"uptime_30d_pct"`
+	// Uptime30d contains one bucket for each of the last 30 calendar
+	// days, oldest first. Successful and Total make the no-traffic case
+	// distinguishable from a day with observed failures.
+	Uptime30d []StatusUptimeBucket `json:"uptime_30d"`
+	// Incidents contains status incidents posted in the last 30 days,
+	// plus any still-open incident posted earlier. Results are newest
+	// first and intentionally contain only operator-authored summary
+	// text suitable for a public page.
+	Incidents []StatusIncident `json:"incidents"`
 	// Degraded is true when at least one fleet/platform page- or warn-severity
 	// alert is currently firing on the local Prometheus. Per-account alert
 	// preset signals stay private to their customer and do not change the
@@ -3670,6 +3744,25 @@ type StatusPage struct {
 	// "degraded: <reason>" so an operator tailing the JSON can tell
 	// at a glance why a snapshot is or isn't trustworthy.
 	Source string `json:"source"`
+}
+
+// StatusUptimeBucket is one daily point in StatusPage.Uptime30d.
+type StatusUptimeBucket struct {
+	Date       time.Time `json:"date"`
+	UptimePct  float64   `json:"uptime_pct"`
+	Successful int64     `json:"successful"`
+	Total      int64     `json:"total"`
+}
+
+// StatusIncident is the public projection of the operator status-incidents
+// ledger. Component is included as useful context while the four core fields
+// form the stable public incident contract.
+type StatusIncident struct {
+	Component  string     `json:"component,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	ResolvedAt *time.Time `json:"resolved_at"`
+	Severity   string     `json:"severity"`
+	Summary    string     `json:"summary"`
 }
 
 // --- Move 2: event-driven surface response shapes ----------------------------

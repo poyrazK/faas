@@ -16,6 +16,7 @@ type snapshotReplicaKey struct {
 type snapshotReplicaRow struct {
 	region        string
 	state         SnapshotReplicaState
+	createdAt     time.Time
 	attempts      int
 	lastError     string
 	nextAttemptAt time.Time
@@ -86,14 +87,16 @@ func (m *MemStore) EnqueueSnapshotReplicasForNode(_ context.Context, nodeID stri
 				row.state = SnapshotReplicaPending
 				row.readyAt = time.Time{}
 				row.updatedAt = time.Now()
+				row.createdAt = row.updatedAt
 				m.snapshotReplicas[key] = row
 				created++
 			}
 			continue
 		}
 		m.snapshotReplicas[key] = snapshotReplicaRow{
-			region: nodeRegion(node),
-			state:  SnapshotReplicaPending,
+			region:    nodeRegion(node),
+			state:     SnapshotReplicaPending,
+			createdAt: time.Now(),
 		}
 		created++
 	}
@@ -173,6 +176,7 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 		NodeID:            nodeID,
 		Region:            nodeRegion(node),
 		Attempts:          chosenRow.attempts,
+		QueuedAt:          chosenRow.createdAt,
 	}, nil
 }
 

@@ -109,22 +109,24 @@ type auditEventOutboxRow struct {
 // (unique email, unique slug, unique key hash) so tests exercise real error
 // paths. It is NOT durable — production uses the Postgres store.
 type MemStore struct {
-	objectBuckets          map[string]ObjectBucket
-	objectUsage            map[string]ObjectBucketUsage
-	objectGrants           map[string]map[string]int64
-	objectReports          []api.ObjectStorageUsageReport
-	objectAuthorizations   map[string]int64
-	objectProviderRequests map[string]int64
-	objectAccessGrants     map[string]ObjectBucketAccessGrant
-	objectS3Credentials    map[string]ObjectS3Credential
-	objectMultipartUploads map[string]ObjectMultipartUpload
-	mu                     sync.Mutex
-	accounts               map[string]Account
-	keys                   map[string]APIKey
-	keyByHash              map[string]APIKey
-	deployTokens           map[string]DeployToken
-	deployTokenByHash      map[string]DeployToken
-	apps                   map[string]App
+	objectBuckets           map[string]ObjectBucket
+	objectUsage             map[string]ObjectBucketUsage
+	objectGrants            map[string]map[string]int64
+	objectReports           []api.ObjectStorageUsageReport
+	objectAuthorizations    map[string]int64
+	objectProviderRequests  map[string]int64
+	objectAccessGrants      map[string]ObjectBucketAccessGrant
+	objectS3Credentials     map[string]ObjectS3Credential
+	objectMultipartUploads  map[string]ObjectMultipartUpload
+	objectUploadRoutes      map[string]ObjectUploadRoute
+	objectUploadCompletions map[string]ObjectUploadCompletion
+	mu                      sync.Mutex
+	accounts                map[string]Account
+	keys                    map[string]APIKey
+	keyByHash               map[string]APIKey
+	deployTokens            map[string]DeployToken
+	deployTokenByHash       map[string]DeployToken
+	apps                    map[string]App
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -476,6 +478,9 @@ type MemStore struct {
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
 	// both invariants for handler tests.
 	apiConsumerRateCards map[string]APIConsumerRateCard
+	// apiConsumerUsageStatements is keyed by statement ID. statement keys
+	// enforce one immutable snapshot per (app, consumer, period).
+	apiConsumerUsageStatements map[string]APIConsumerUsageStatement
 	// networkUsageCheckpoints mirrors meter_network_checkpoints. Values are
 	// the last cumulative interface counters atomically reflected in usage.
 	networkUsageCheckpoints map[string]networkUsageCheckpoint
@@ -497,7 +502,8 @@ type MemStore struct {
 	billingUsageDeliveries map[string]struct{}
 	// objectStorageBilling is the in-memory mirror of the finalized
 	// object-storage month-close ledger.
-	objectStorageBilling map[string]ObjectStorageBillingRecord
+	objectStorageBilling           map[string]ObjectStorageBillingRecord
+	objectStorageBillingDeliveries map[string]ObjectStorageBillingDelivery
 	// accountCredits is the in-memory mirror of the `account_credits`
 	// table (migration 00049, issue #279). Keyed by credit id. The
 	// handler is the only writer in production; meterd never reads
@@ -789,19 +795,21 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		objectAccessGrants:     map[string]ObjectBucketAccessGrant{},
-		objectS3Credentials:    map[string]ObjectS3Credential{},
-		objectMultipartUploads: map[string]ObjectMultipartUpload{},
-		accounts:               map[string]Account{},
-		keys:                   map[string]APIKey{},
-		keyByHash:              map[string]APIKey{},
-		deployTokens:           map[string]DeployToken{},
-		deployTokenByHash:      map[string]DeployToken{},
-		apps:                   map[string]App{},
-		githubDeployBranches:   map[string]map[string]string{},
-		githubDeployPolicies:   map[string]GitHubDeployPolicy{},
-		githubBindings:         map[string]GitHubBinding{},
-		githubInstalls:         map[string]GitHubInstall{},
+		objectAccessGrants:      map[string]ObjectBucketAccessGrant{},
+		objectS3Credentials:     map[string]ObjectS3Credential{},
+		objectMultipartUploads:  map[string]ObjectMultipartUpload{},
+		objectUploadRoutes:      map[string]ObjectUploadRoute{},
+		objectUploadCompletions: map[string]ObjectUploadCompletion{},
+		accounts:                map[string]Account{},
+		keys:                    map[string]APIKey{},
+		keyByHash:               map[string]APIKey{},
+		deployTokens:            map[string]DeployToken{},
+		deployTokenByHash:       map[string]DeployToken{},
+		apps:                    map[string]App{},
+		githubDeployBranches:    map[string]map[string]string{},
+		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
+		githubBindings:          map[string]GitHubBinding{},
+		githubInstalls:          map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
 		githubWebhookSecrets:    map[int64][]byte{},
@@ -902,22 +910,23 @@ func NewMemStore() *MemStore {
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
-		deploymentSidecarLayers: map[string]DeploymentSidecarLayer{},
-		snapshots:               []Snapshot{},
-		snapshotStorage:         map[string]StorageUsage{},
-		snapshotReplicas:        map[snapshotReplicaKey]snapshotReplicaRow{},
-		snapshotOrigins:         map[string]snapshotOriginRow{},
-		events:                  []Event{},
-		auditOutbox:             map[int64]auditEventOutboxRow{},
-		auditOutboxByKey:        map[string]int64{},
-		nextAuditOutboxID:       1,
-		usage:                   []usageMinute{},
-		usageByMonth:            []Usage{},
-		apiConsumerUsage:        map[string]APIConsumerUsageBucket{},
-		apiConsumerUsageEvents:  map[string]struct{}{},
-		apiConsumerRateCards:    map[string]APIConsumerRateCard{},
-		networkUsageCheckpoints: map[string]networkUsageCheckpoint{},
-		idem:                    map[string]idemEntry{},
+		deploymentSidecarLayers:    map[string]DeploymentSidecarLayer{},
+		snapshots:                  []Snapshot{},
+		snapshotStorage:            map[string]StorageUsage{},
+		snapshotReplicas:           map[snapshotReplicaKey]snapshotReplicaRow{},
+		snapshotOrigins:            map[string]snapshotOriginRow{},
+		events:                     []Event{},
+		auditOutbox:                map[int64]auditEventOutboxRow{},
+		auditOutboxByKey:           map[string]int64{},
+		nextAuditOutboxID:          1,
+		usage:                      []usageMinute{},
+		usageByMonth:               []Usage{},
+		apiConsumerUsage:           map[string]APIConsumerUsageBucket{},
+		apiConsumerUsageEvents:     map[string]struct{}{},
+		apiConsumerRateCards:       map[string]APIConsumerRateCard{},
+		apiConsumerUsageStatements: map[string]APIConsumerUsageStatement{},
+		networkUsageCheckpoints:    map[string]networkUsageCheckpoint{},
+		idem:                       map[string]idemEntry{},
 		// stripeByCustomer is the reverse-lookup map AccountByProviderCustomerID
 		// walks; populated by UpdateAccountProviderCustomerID.
 
@@ -925,10 +934,11 @@ func NewMemStore() *MemStore {
 		billingIdentities: map[string]BillingIdentity{},
 		// invoices starts empty; PR A reads it via ListInvoicesForAccount,
 		// PR B writes via UpsertInvoice (webhook ingestion).
-		invoices:               map[string]Invoice{},
-		invoiceRefunds:         map[string]InvoiceRefund{},
-		billingUsageDeliveries: map[string]struct{}{},
-		objectStorageBilling:   map[string]ObjectStorageBillingRecord{},
+		invoices:                       map[string]Invoice{},
+		invoiceRefunds:                 map[string]InvoiceRefund{},
+		billingUsageDeliveries:         map[string]struct{}{},
+		objectStorageBilling:           map[string]ObjectStorageBillingRecord{},
+		objectStorageBillingDeliveries: map[string]ObjectStorageBillingDelivery{},
 		// accountCredits starts empty; the operator-only
 		// POST /v1/admin/accounts/{id}/credits path is the sole writer.
 		accountCredits: map[string]AccountCredit{},
@@ -4131,6 +4141,16 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	// store is a plain column write.
 	if p.SetRouteMetricsEnabled {
 		a.RouteMetricsEnabled = boolOrFalse(p.RouteMetricsEnabled)
+	}
+	if p.SetOnlyAllowDeclaredRoutes {
+		a.OnlyAllowDeclaredRoutes = boolOrFalse(p.OnlyAllowDeclaredRoutes)
+	}
+	if p.SetDeclaredRoutes {
+		src := derefDeclaredRoutes(p.DeclaredRoutes)
+		a.DeclaredRoutes = append([]DeclaredRoute(nil), src...)
+		for i := range a.DeclaredRoutes {
+			a.DeclaredRoutes[i].Methods = append([]string(nil), a.DeclaredRoutes[i].Methods...)
+		}
 	}
 	// Issue #462 / ADR-058 / PR-A: per-app scaling policy. The
 	// Set bit is the canonical "unset vs explicit zero" signal;
@@ -11692,6 +11712,23 @@ func (m *MemStore) ListComputeNodes(_ context.Context, includeInactive bool) ([]
 	return out, nil
 }
 
+// ListComputeNodesPage is the bounded node-list variant used by operator
+// projections that compose fleet signals into one page. It mirrors
+// ListComputeNodes ordering while enforcing the caller's source cap.
+func (m *MemStore) ListComputeNodesPage(ctx context.Context, includeInactive bool, limit int) ([]ComputeNode, error) {
+	if limit <= 0 {
+		return []ComputeNode{}, nil
+	}
+	rows, err := m.ListComputeNodes(ctx, includeInactive)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
+
 // DeleteComputeNode hard-deletes an unused row by id. App ownership and
 // physical instance references make the row historical rather than mistaken,
 // so deletion refuses them with ErrConflict.
@@ -14261,6 +14298,13 @@ func boolOrFalse(p *bool) bool {
 	return *p
 }
 
+func derefDeclaredRoutes(p *[]DeclaredRoute) []DeclaredRoute {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
 // IssueLoginToken stores a magic-link token hash → account_id mapping
 // with the given expiry. The hash is the SHA-256 of the raw token
 // (32-byte hex); see pkg/api.HashAPIKey for the canonical hash fn.
@@ -15792,6 +15836,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.apiConsumers, cid)
 		}
 	}
+	for sid, statement := range m.apiConsumerUsageStatements {
+		if statement.AccountID == id {
+			delete(m.apiConsumerUsageStatements, sid)
+		}
+	}
 	for did, d := range m.deployments {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			deletedDeployments[did] = struct{}{}
@@ -15891,6 +15940,16 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key := range m.billingUsageDeliveries {
 		if strings.Contains(key, "\x00"+id+"\x00") {
 			delete(m.billingUsageDeliveries, key)
+		}
+	}
+	for key, record := range m.objectStorageBilling {
+		if record.AccountID == id {
+			delete(m.objectStorageBilling, key)
+		}
+	}
+	for key, delivery := range m.objectStorageBillingDeliveries {
+		if delivery.AccountID == id {
+			delete(m.objectStorageBillingDeliveries, key)
 		}
 	}
 	for instanceID, checkpoint := range m.networkUsageCheckpoints {

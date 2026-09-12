@@ -89,6 +89,8 @@ daemons:
       cert_path: /etc/faas/tls/egress/egress.crt
       key_path: /etc/faas/tls/egress/egress.key
       ca_path: /etc/faas/tls/ca/ca.crt
+  realtimed:
+    bind: unix:///run/faas/realtimed.sock
   imaged:
     # imaged has no primary RPC listener, but a non-empty bind declares the
     # daemon in the manifest so the renderer emits its per-host private

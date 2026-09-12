@@ -290,6 +290,41 @@ environment values, and log-spool locations. These actions use the existing
 deployment queue state machine; they do not require direct SQL and do not
 change the deployment hot path.
 
+### Incident inbox
+
+Start triage from one bounded, read-only view that correlates deployment,
+job-run, compute-node, and Prometheus alert signals. The response is cursor
+paginated and can be filtered by signal family or severity:
+
+```
+gregalectl obs incidents
+gregalectl obs incidents --severity error
+gregalectl obs incidents --type deployment --since 2026-09-12T00:00:00Z
+gregalectl obs incidents --json
+```
+
+Each row carries a stable incident/dedupe ID, safe resource identifiers, an
+inspection path, and a runbook link. Use the existing `deployments`, `jobs`,
+and `compute-nodes` commands for explicit retry, cancellation, or drain
+actions after reviewing the inbox.
+
+### Fleet overview and capacity
+
+Read the provider-wide KPI and placement snapshots without querying the
+database directly. Both commands are bounded, read-only views and use the
+same admin/MFA gate as the incident inbox:
+
+```
+gregalectl obs overview
+gregalectl obs capacity
+gregalectl obs capacity --json | jq '.summary.admission_margin_mb'
+```
+
+`overview` combines account, application, node-health, activation-funnel, and
+recent-failure counters. `capacity` reports aggregate headroom plus safe
+per-node counters; it does not return customer workload rows or change the
+deployment path.
+
 ### GitHub recovery
 
 Inspect and retry failed GitHub webhook or Check Run work without SSH or

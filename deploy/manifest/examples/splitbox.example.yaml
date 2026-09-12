@@ -149,6 +149,8 @@ daemons:
       cert_path: /etc/faas/tls/egress/egress.crt
       key_path: /etc/faas/tls/egress/egress.key
       ca_path: /etc/faas/tls/ca/ca.crt
+  realtimed:
+    bind: unix:///run/faas/realtimed.sock
   builderd:
     bind: tcp://127.0.0.1:9091
     outbound:

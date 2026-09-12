@@ -538,6 +538,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("gatewayd-public: public object storage handler: %w", publicErr)
 		}
 		rootHandler = publicHandler
+		if routes, routeStoreOK := any(pgStore).(state.ObjectUploadRouteStore); routeStoreOK {
+			if buckets, bucketStoreOK := any(pgStore).(state.ObjectBucketStore); bucketStoreOK {
+				if authenticator, authOK := any(pgStore).(objectstorage.UploadAuthenticator); authOK {
+					upload, uploadErr := objectstorage.NewUploadHandler(objectstorage.UploadConfig{
+						Store: pgStore, Routes: routes, Buckets: buckets, Authenticator: authenticator,
+						Registry: publicStorageRegistry, Accounting: accounting, RequestMetrics: requestMetrics, Enabled: s3Flag.Load,
+						AppsDomain: os.Getenv("FAAS_APPS_DOMAIN"), Next: publicHandler, Log: log,
+					})
+					if uploadErr != nil {
+						return fmt.Errorf("gatewayd-public: object upload handler: %w", uploadErr)
+					}
+					rootHandler = upload
+					log.Info("gatewayd-public: policy-controlled object uploads enabled")
+				}
+			}
+		}
 		log.Info("gatewayd-public: public object storage reads enabled")
 	}
 	traceMux.Handle("/", rootHandler)

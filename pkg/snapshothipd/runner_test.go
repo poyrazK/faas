@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/expfmt"
@@ -87,10 +88,17 @@ func (f *fakeLocalBackend) LocalPath(key string) (string, bool, error) {
 	return "", false, nil
 }
 
-type fakeMetrics struct{ outcomes []string }
+type fakeMetrics struct {
+	outcomes  []string
+	latencies []time.Duration
+}
 
 func (f *fakeMetrics) ObserveFanout(outcome, region string) {
 	f.outcomes = append(f.outcomes, outcome+":"+region)
+}
+
+func (f *fakeMetrics) ObserveFanoutLatency(_ string, latency time.Duration) {
+	f.latencies = append(f.latencies, latency)
 }
 
 func TestRunnerTickPrepositionsCompleteRestoreClosure(t *testing.T) {
@@ -98,6 +106,7 @@ func TestRunnerTickPrepositionsCompleteRestoreClosure(t *testing.T) {
 		SnapshotID: "snap-1", DeploymentID: "dep-1", NodeID: "node-2", Region: "europe-west3",
 		StorageKey: "snap/dep-1/mem", VMStateStorageKey: "snap/dep-1/vmstate",
 		LayerStorageKeys: []string{"apps/acme/dep-1.ext4", "apps/acme/dep-1-metrics.ext4"}, Attempts: 1,
+		QueuedAt: time.Now().Add(-50 * time.Millisecond),
 	}}
 	backend := &fakeBackend{objects: map[string][]byte{
 		"snap/dep-1/mem":               []byte("memory"),
@@ -117,6 +126,18 @@ func TestRunnerTickPrepositionsCompleteRestoreClosure(t *testing.T) {
 	}
 	if got, want := metrics.outcomes, []string{"ready:europe-west3"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("metrics = %v, want %v", got, want)
+	}
+	if len(metrics.latencies) != 1 || metrics.latencies[0] < 50*time.Millisecond {
+		t.Fatalf("latencies = %v, want one queue-to-ready sample >= 50ms", metrics.latencies)
+	}
+}
+
+func TestRunnerDefaultIntervalFitsPrepositionedWakeBudget(t *testing.T) {
+	if DefaultInterval >= 200*time.Millisecond {
+		t.Fatalf("DefaultInterval = %s, want < 200ms prepositioned-wake budget", DefaultInterval)
+	}
+	if got := New(nil, nil, "node", nil).Interval(); got != DefaultInterval {
+		t.Fatalf("Interval() = %s, want default %s", got, DefaultInterval)
 	}
 }
 
@@ -323,6 +344,34 @@ func TestPrometheusMetricsPreinstantiatesClosedOutcomes(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing pre-instantiated metric %q in:\n%s", want, body)
+		}
+	}
+}
+
+func TestPrometheusMetricsRecordsFanoutLatency(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	metrics, err := NewPrometheusMetrics(reg, "europe-west3")
+	if err != nil {
+		t.Fatalf("NewPrometheusMetrics: %v", err)
+	}
+	metrics.ObserveFanoutLatency("europe-west3", 125*time.Millisecond)
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	var b strings.Builder
+	for _, mf := range mfs {
+		if _, err := expfmt.MetricFamilyToText(&b, mf); err != nil {
+			t.Fatalf("MetricFamilyToText: %v", err)
+		}
+	}
+	body := b.String()
+	for _, want := range []string{
+		`snapshothipd_fanout_latency_seconds_bucket{region="europe-west3",le="0.2"} 1`,
+		`snapshothipd_fanout_latency_seconds_count{region="europe-west3"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing latency metric %q in:\n%s", want, body)
 		}
 	}
 }

@@ -15,7 +15,7 @@ export type AppWebhookDeliveryResponse = {
   webhook_id: string;
   app_id: string;
   account_id: string;
-  event: 'cron.fired' | 'cron.fired.manually' | 'app.created' | 'app.deleted' | 'app.deployed' | 'app.scaled' | 'app.parked' | 'app.woken' | 'build.succeeded' | 'build.failed' | 'deployment.failed' | 'rollout.aborted' | 'error.new' | 'job.finished' | 'preview.created' | 'budget.threshold';
+  event: 'cron.fired' | 'cron.fired.manually' | 'app.created' | 'app.deleted' | 'app.deployed' | 'app.scaled' | 'app.parked' | 'app.woken' | 'build.succeeded' | 'build.failed' | 'deployment.failed' | 'rollout.aborted' | 'error.new' | 'job.finished' | 'preview.created' | 'budget.threshold' | 'usage_statement.finalized';
   /**
    * The original event payload (omitted on rows past the first attempt; the customer has already seen it).
    */

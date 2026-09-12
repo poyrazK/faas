@@ -6408,6 +6408,17 @@ const (
 	ObsAdminPaginationDefault = 200
 	ObsAdminPaginationMax     = 500
 
+	// ObsIncidentLimitDefault / ObsIncidentLimitMax bound the unified
+	// operator incident inbox. The inbox composes several already-bounded
+	// read paths, so its page stays small enough for a terminal or console
+	// poll while leaving the larger fleet list caps unchanged.
+	ObsIncidentLimitDefault = 50
+	ObsIncidentLimitMax     = 200
+	// ObsIncidentWindowDefaultHours is the look-back used when an operator
+	// does not provide ?since. The API clamps explicit windows to the shared
+	// seven-day operator observability budget.
+	ObsIncidentWindowDefaultHours = 24
+
 	// ObsAdminWindowMaxHours bounds the ?since= window on time-series
 	// operator queries. 168h = 7d is the longest the operator can scan
 	// without breaking the read-amplification budget; longer windows

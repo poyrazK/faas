@@ -875,3 +875,40 @@ var ObsHealthKindVocabulary = []string{
 	"node_force_drain",
 	"node_activate",
 }
+
+// ObsIncident is one row of the bounded operator incident inbox. It is a
+// correlation projection over existing deployment, job-run, compute-node,
+// and Prometheus alert signals; it is not a second source of truth. Resource
+// identifiers are safe operational handles, while customer inputs, image
+// references, environment values, and raw log paths stay out of the shape.
+type ObsIncident struct {
+	ID           string    `json:"id"`
+	Type         string    `json:"type"`
+	Severity     string    `json:"severity"`
+	Status       string    `json:"status"`
+	Summary      string    `json:"summary"`
+	AccountID    string    `json:"account_id,omitempty"`
+	AppID        string    `json:"app_id,omitempty"`
+	ResourceID   string    `json:"resource_id"`
+	ResourceName string    `json:"resource_name,omitempty"`
+	ObservedAt   time.Time `json:"observed_at"`
+	DedupeKey    string    `json:"dedupe_key"`
+	ActionPath   string    `json:"action_path,omitempty"`
+	AuditPath    string    `json:"audit_path,omitempty"`
+	RunbookURL   string    `json:"runbook_url,omitempty"`
+}
+
+// ObsIncidentListResponse is the body of GET /v1/admin/obs/incidents. The
+// response is cursor-paginated after all source signals are merged and
+// deterministically ordered by observed_at DESC, id DESC. Items is always a
+// non-nil slice so an empty fleet has a stable JSON shape.
+type ObsIncidentListResponse struct {
+	GeneratedAt  time.Time     `json:"generated_at"`
+	Items        []ObsIncident `json:"items"`
+	Limit        int           `json:"limit"`
+	Since        time.Time     `json:"since"`
+	SinceClamped bool          `json:"since_clamped"`
+	Type         string        `json:"type,omitempty"`
+	Severity     string        `json:"severity,omitempty"`
+	NextCursor   string        `json:"next_cursor"`
+}

@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/geoip"
+	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sched"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -86,6 +87,14 @@ type App struct {
 	// Function/default budget posture by limits.RequestBudgetForType.
 	Type AppType
 	Plan api.Plan
+	// OnlyAllowDeclaredRoutes enables the pre-wake route contract. When set,
+	// the gateway asks DeclaredRouteMatcher before authentication, rate
+	// limiting, or capacity admission. Undeclared paths are answered directly
+	// by the gateway and never wake an application.
+	OnlyAllowDeclaredRoutes bool
+	// DeclaredRoutes is an optional explicit route list. When non-empty it is
+	// preferred over the imported OpenAPI document by the matcher.
+	DeclaredRoutes []DeclaredRoute
 	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
 	MaxConcurrency int
 	// AutoscaleTargetRPS is the configured per-instance request-rate target.
@@ -279,6 +288,21 @@ type App struct {
 	// fall through to the normal wake path for real probes.
 	HealthPath      string
 	HealthPathWakes bool
+}
+
+// DeclaredRoute is the gateway-local projection of an explicitly declared
+// route. Path templates use the same `{parameter}` segment syntax as OpenAPI.
+type DeclaredRoute struct {
+	Path    string
+	Methods []string
+}
+
+// DeclaredRouteMatcher resolves an app's declared route contract. Implementations
+// must be safe for concurrent use and should cache compiled documents so the
+// request path remains allocation-light. An error is treated as a fail-closed
+// policy-unavailable response by Handler.ServeHTTP.
+type DeclaredRouteMatcher interface {
+	MatchDeclaredRoute(ctx context.Context, app App, path, method string) (bool, error)
 }
 
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
@@ -642,8 +666,9 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
-	backend Backend
-	limiter *Limiter
+	backend        Backend
+	declaredRoutes DeclaredRouteMatcher
+	limiter        *Limiter
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -789,6 +814,10 @@ type Handler struct {
 	// gate (Free defaults off; Hobby/Pro/Scale default on via
 	// Plan.WebSocketEnabled / WebSocketResponseAllowed).
 	rawByNode func(t Target) http.Handler
+	// managedRealtime owns the opt-in managed WebSocket namespace. It is
+	// deliberately checked before host/app lookup and VM wake: the realtime
+	// daemon, rather than an application VM, owns these long-lived sockets.
+	managedRealtime http.Handler
 	// topNSample is the per-request bump for the gateway-side
 	// top-N sampler (cmd/gatewayd-internal/topn.go, issue #300). Set via
 	// SetTopNSample from cmd/gatewayd-internal/main.go. nil in unit
@@ -1332,6 +1361,15 @@ func (h *Handler) WithStreamingEnabled(enabled bool) *Handler {
 	return h
 }
 
+// WithManagedRealtime installs the managed realtime handler. Requests under
+// realtime.ManagedPathPrefix are dispatched to it before ordinary app
+// routing, authentication, admission, or VM wake. Passing nil disables the
+// reserved namespace.
+func (h *Handler) WithManagedRealtime(handler http.Handler) *Handler {
+	h.managedRealtime = handler
+	return h
+}
+
 // WithRouteMetricsEnabled (ADR-093) arms the operator kill-switch
 // for the per-route observability surface. When false, every
 // per-app routeSetFor lookup returns nil regardless of
@@ -1395,6 +1433,49 @@ func (h *Handler) WithEdgeRules(matcher EdgeRuleMatcher, resolve ResolveTargetAp
 	h.resolveTargetApp = resolve
 	h.edgeRuleAudit = audit
 	return h
+}
+
+// WithDeclaredRouteMatcher arms the opt-in pre-wake route contract. The
+// matcher is deliberately a narrow seam so the gateway package does not need
+// to import state or OpenAPI parsing code. A nil matcher is treated as a
+// configuration error for apps that have OnlyAllowDeclaredRoutes enabled.
+func (h *Handler) WithDeclaredRouteMatcher(matcher DeclaredRouteMatcher) *Handler {
+	h.declaredRoutes = matcher
+	return h
+}
+
+// enforceDeclaredRoute applies the app's declared-route contract. It runs
+// after gateway-owned CORS preflight handling (which may answer OPTIONS
+// without an application) but before authentication, rate limiting, and the
+// wake/admission path. The original public path is supplied by ServeHTTP so a
+// rewrite cannot accidentally broaden or narrow the OpenAPI contract.
+func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, app App, requestPath, requestMethod string) bool {
+	if !app.OnlyAllowDeclaredRoutes {
+		return false
+	}
+	if h.declaredRoutes == nil {
+		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
+			"Declared route policy unavailable", "the gateway has no declared-route matcher configured"))
+		return true
+	}
+	allowed, err := h.declaredRoutes.MatchDeclaredRoute(r.Context(), app, requestPath, requestMethod)
+	if err != nil {
+		if h.log != nil {
+			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", requestPath, "method", requestMethod, "err", err)
+		}
+		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
+			"Declared route policy unavailable", "the configured OpenAPI document or route list could not be loaded"))
+		return true
+	}
+	if allowed {
+		return false
+	}
+	w.Header().Set("x-faas-error-reason", api.CodeUndeclaredRoute)
+	api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeUndeclaredRoute,
+		"Route not declared", fmt.Sprintf("%s %s is not declared for this app", requestMethod, requestPath)))
+	return true
 }
 
 // WithGeoReader (ADR-091 D21 / §4.1.2.8b) arms the per-rule
@@ -4901,6 +4982,14 @@ func (h *Handler) writeWebSocketNotAllowed(w http.ResponseWriter, appID string, 
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Managed realtime is a separate connection owner. Route it before the
+	// normal request bookkeeping and drain tracker so a quiet socket does not
+	// hold an application request slot or wake/parking lease for its lifetime.
+	if h.managedRealtime != nil && strings.HasPrefix(r.URL.Path, realtime.ManagedPathPrefix) {
+		h.managedRealtime.ServeHTTP(w, r)
+		return
+	}
+
 	// The edge-rule budget is stamped after app resolution, so its timer
 	// cancellation must be deferred against the final request context rather
 	// than inside stampRequestBudget itself. This keeps cold-start and proxy
@@ -5011,6 +5100,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	// Preserve the customer-facing route identity before any edge rewrite.
+	// Declared-route matching is against the public OpenAPI contract, not the
+	// internal path a rewrite rule may later produce.
+	declaredPath, declaredMethod := r.URL.Path, r.Method
 	requestSpan.SetAttributes(
 		attribute.String("app_id", app.ID),
 		attribute.String("app_plan", string(app.Plan)),
@@ -5143,6 +5236,13 @@ haveApp:
 	// circuits with 204 + Access-Control-Allow-* headers; the
 	// caller MUST `return` to skip the auth gates.
 	if h.applyEdgeRuleCORS(w, r, app, rec) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	// Only-allow-declared-routes gate. This is intentionally before JWT/IP/
+	// auth/rate-limit and, critically, before the wake gate below. A request to
+	// an undeclared path is answered by the gateway and cannot create app work.
+	if h.enforceDeclaredRoute(w, r, app, declaredPath, declaredMethod) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}

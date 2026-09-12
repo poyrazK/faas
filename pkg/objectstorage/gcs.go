@@ -179,6 +179,38 @@ func (s *googleGCSStore) DeleteObject(ctx context.Context, bucket, key string) e
 	return s.client.Bucket(bucket).Object(key).Delete(ctx)
 }
 
+func (s *googleGCSStore) WriteObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
+	attrs, err := gcsMetadataForObject(metadata)
+	if err != nil {
+		return UploadResult{}, err
+	}
+	w := s.client.Bucket(bucket).Object(key).NewWriter(ctx)
+	w.ContentType = metadata.ContentType
+	w.CacheControl = metadata.CacheControl
+	w.ContentDisposition = metadata.ContentDisposition
+	w.ContentEncoding = metadata.ContentEncoding
+	w.ContentLanguage = metadata.ContentLanguage
+	w.Metadata = attrs
+	n, copyErr := io.Copy(w, io.LimitReader(body, size+1))
+	closeErr := w.Close()
+	if copyErr != nil {
+		_ = s.client.Bucket(bucket).Object(key).Delete(context.WithoutCancel(ctx))
+		return UploadResult{}, normalizeGCS(copyErr)
+	}
+	if closeErr != nil {
+		return UploadResult{}, normalizeGCS(closeErr)
+	}
+	if n != size {
+		_ = s.client.Bucket(bucket).Object(key).Delete(context.WithoutCancel(ctx))
+		return UploadResult{}, ErrInvalid
+	}
+	out, err := s.client.Bucket(bucket).Object(key).Attrs(ctx)
+	if err != nil {
+		return UploadResult{}, normalizeGCS(err)
+	}
+	return UploadResult{ETag: out.Etag}, nil
+}
+
 func (s *googleGCSStore) ObjectState(ctx context.Context, bucket, key string) (gcsObjectState, error) {
 	attr, err := s.client.Bucket(bucket).Object(key).Attrs(ctx)
 	if err != nil {
@@ -322,6 +354,22 @@ func (p *GCS) ObjectSize(ctx context.Context, bucket, key string) (int64, error)
 		return 0, ErrUnavailable
 	}
 	return object.Size, nil
+}
+
+func (p *GCS) WriteObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
+	if !ValidKey(key) || size < 0 || size > api.MaxObjectSinglePutBytes {
+		return UploadResult{}, ErrInvalid
+	}
+	if err := ValidateObjectMetadata(metadata); err != nil {
+		return UploadResult{}, err
+	}
+	writer, ok := p.store.(interface {
+		WriteObject(context.Context, string, string, io.Reader, int64, ObjectMetadata) (UploadResult, error)
+	})
+	if !ok {
+		return UploadResult{}, ErrUnsupported
+	}
+	return writer.WriteObject(ctx, bucket, key, body, size, metadata)
 }
 
 func (p *GCS) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest) (CopyObjectResult, error) {

@@ -31,6 +31,61 @@ type ObjectStorageBillingRecord struct {
 	FinalizedAt                  time.Time
 }
 
+// ObjectStorageBillingDelivery is the provider-qualified receipt for one
+// immutable month-close record. A receipt is written for pre-activation,
+// plan-ineligible, shadow, and live handling so changing rollout mode or plan
+// later can never replay an older period as a new customer charge.
+type ObjectStorageBillingDelivery struct {
+	Provider           string
+	BillingRecordID    string
+	AccountID          string
+	PeriodStart        time.Time
+	Mode               string
+	QuantityMillicents int64
+	DeliveredAt        time.Time
+}
+
+const (
+	ObjectStorageDeliveryPreActivation  = "preactivation"
+	ObjectStorageDeliveryPlanIneligible = "plan_ineligible"
+	ObjectStorageDeliveryShadow         = "shadow"
+	ObjectStorageDeliveryLive           = "live"
+)
+
+func (d ObjectStorageBillingDelivery) valid() bool {
+	if d.Provider == "" || d.BillingRecordID == "" || d.AccountID == "" ||
+		d.PeriodStart.IsZero() || !d.PeriodStart.Equal(ObjectStoragePeriod(d.PeriodStart)) ||
+		d.DeliveredAt.IsZero() || d.QuantityMillicents < 0 || d.QuantityMillicents > api.MaxObjectStoragePolicyValue {
+		return false
+	}
+	switch d.Mode {
+	case ObjectStorageDeliveryPreActivation, ObjectStorageDeliveryPlanIneligible:
+		return d.QuantityMillicents == 0
+	case ObjectStorageDeliveryShadow, ObjectStorageDeliveryLive:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeObjectStorageBillingDelivery(d ObjectStorageBillingDelivery) ObjectStorageBillingDelivery {
+	d.PeriodStart = ObjectStoragePeriod(d.PeriodStart)
+	d.DeliveredAt = d.DeliveredAt.UTC()
+	return d
+}
+
+func sameObjectStorageBillingDelivery(a, b ObjectStorageBillingDelivery) bool {
+	a.DeliveredAt, b.DeliveredAt = time.Time{}, time.Time{}
+	return a == b
+}
+
+func validateObjectStorageBillingDelivery(d ObjectStorageBillingDelivery) error {
+	if !d.valid() {
+		return errors.New("state: invalid object storage billing delivery")
+	}
+	return nil
+}
+
 func (r ObjectStorageBillingRecord) pricing() api.ObjectStoragePricing {
 	return api.ObjectStoragePricing{
 		Currency:                     r.Currency,
@@ -64,6 +119,13 @@ func (r ObjectStorageBillingRecord) valid() bool {
 		return false
 	}
 	return r.TotalMillicents == sum+r.EgressMillicents
+}
+
+// ValidObjectStorageBillingRecord reports whether a record is a complete,
+// internally consistent month-close financial snapshot. Provider adapters use
+// it as a final trust-boundary check before emitting a charge.
+func ValidObjectStorageBillingRecord(r ObjectStorageBillingRecord) bool {
+	return r.valid()
 }
 
 func sameObjectStorageBillingRecord(a, b ObjectStorageBillingRecord) bool {

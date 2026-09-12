@@ -1,8 +1,10 @@
 package reposcan
 
 import (
+	"fmt"
 	"io/fs"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -63,6 +65,7 @@ func detectServerless(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	}
 	sort.Strings(names)
 
+	warnings := make([]string, 0, len(names))
 	for _, n := range names {
 		fn := d.Functions[n]
 		cls := ClassUnknown
@@ -91,6 +94,16 @@ func detectServerless(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			s.schedule = schedules[0] // primary schedule
 		}
 		seeds = append(seeds, s)
+		handler := strings.TrimSpace(fn.Handler)
+		if handler == "" {
+			warnings = append(warnings, fmt.Sprintf(
+				"reposcan: %s: function %q is not applicable to project apply: no Serverless handler was declared; create a function app and deploy its handler explicitly",
+				src, n))
+		} else {
+			warnings = append(warnings, fmt.Sprintf(
+				"reposcan: %s: function %q is not applicable to project apply: Serverless handler %q has no execution adapter; create a function app and deploy the handler explicitly",
+				src, n, handler))
+		}
 	}
-	return seeds, nil, nil, nil
+	return seeds, nil, warnings, nil
 }

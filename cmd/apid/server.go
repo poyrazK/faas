@@ -434,7 +434,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 // degraded — statusCache returns "no source", the metrics handler
 // returns zeroed fields with Source="degraded".
 func (s *server) WithStatusCache(promURL, htmlPath string) *server {
-	s.statusCache = newStatusCache(promURL, s.log)
+	s.statusCache = newStatusCacheWithStore(promURL, s.store, s.log)
 	if promURL != "" {
 		s.promqlClient = promql.NewClient(promURL, nil)
 	}
@@ -1001,6 +1001,9 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageListSurface...)(s.listBuckets))))
+	mux.HandleFunc("GET /v1/apps/{slug}/upload-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageListSurface...)(s.listObjectUploadRoutes))))
+	mux.HandleFunc("POST /v1/apps/{slug}/upload-routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.createObjectUploadRoute))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/upload-routes/{route}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.deleteObjectUploadRoute))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.createBucket))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.deleteBucket))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/access-grants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.listBucketAccessGrants))))
@@ -1190,6 +1193,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerRateCard)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/rate-cards/{rate_card_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerRateCard))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageQuote))))
+	// Durable API consumer usage statements snapshot the quote for an explicit
+	// period. Creation is naturally idempotent on (consumer, period); finalize
+	// is an idempotent lifecycle transition once all units are priced.
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerUsageStatements))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerUsageStatement)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageStatement))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/finalize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.finalizeAPIConsumerUsageStatement)))))
 	// Issue #273 / ADR-042 — per-app metrics endpoint. Read-only,
 	// no MFA required (the primary caller is an API key with
 	// ScopesReadSurface). Mirrors getApp's IDOR-safe loadApp so a
@@ -2062,6 +2072,11 @@ func (s *server) handler() http.Handler {
 	// because the snapshot exposes alert-state metadata.
 	mux.HandleFunc("GET /v1/admin/obs/health",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsHealthHandler))))
+	// Unified incident inbox. This is a read-only correlation projection over
+	// the existing deployment, job-run, compute-node, and alert surfaces;
+	// it keeps operator triage out of the deployment request path.
+	mux.HandleFunc("GET /v1/admin/obs/incidents",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidents))))
 
 	// P2a + P2b + P2d — operator recovery primitives. All three
 	// routes mount under requireScope(admin-only) so the admin

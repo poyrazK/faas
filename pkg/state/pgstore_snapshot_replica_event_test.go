@@ -140,6 +140,9 @@ func TestPgSnapshotReplicaEventCursorAndOriginFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSnapshotReplica: %v", err)
 	}
+	if job.QueuedAt.IsZero() {
+		t.Fatal("ClaimSnapshotReplica returned an empty durable queue timestamp")
+	}
 	if got, want := job.LayerStorageKeys, []string{
 		"apps/pg-app/" + deploymentID + ".ext4",
 		"apps/pg-app/" + deploymentID + "-metrics.ext4",

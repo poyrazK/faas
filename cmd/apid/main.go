@@ -1370,6 +1370,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("apid: load billing provider: %w", err)
 	}
+	if err := validateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
+		return err
+	}
 	if billingProv != nil {
 		srv.WithBillingProvider(billingProv)
 	}

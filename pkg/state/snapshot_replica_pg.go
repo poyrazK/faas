@@ -196,7 +196,8 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		       coalesce(sn.tier, 'init'),
 		       r.node_id::text,
 		       coalesce(cn.region, ''),
-		       r.attempts
+		       r.attempts,
+		       r.created_at
 		from snapshot_replicas r
 		join snapshots sn on sn.id = r.snapshot_id
 		join deployments d on d.id = sn.deployment_id
@@ -223,7 +224,7 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		for update of r skip locked
 		limit 1`, nodeID)
 	if err := row.Scan(&job.SnapshotID, &job.DeploymentID, &job.StorageKey,
-		&job.VMStateStorageKey, &job.LayerStorageKeys, &job.Tier, &job.NodeID, &job.Region, &job.Attempts); err != nil {
+		&job.VMStateStorageKey, &job.LayerStorageKeys, &job.Tier, &job.NodeID, &job.Region, &job.Attempts, &job.QueuedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SnapshotReplicaJob{}, ErrNotFound
 		}
