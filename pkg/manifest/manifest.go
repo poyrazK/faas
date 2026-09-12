@@ -928,7 +928,7 @@ func (d *Daemons) validate() Errors {
 		"imaged":            d.Imaged,
 		"builderd":          d.Builderd,
 		"realtimed":         d.Realtimed,
-		"outboundd":          d.Outboundd,
+		"outboundd":         d.Outboundd,
 	} {
 		if dc == nil {
 			continue
