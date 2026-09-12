@@ -77,6 +77,11 @@ func TestRenderTOML_Schedd(t *testing.T) {
 func TestRenderTOML_ScheddSplitBoxOutbound(t *testing.T) {
 	dc := &manifest.DaemonConfig{
 		Bind: "tcp://0.0.0.0:9091",
+		TLS: &manifest.TLSMaterial{
+			CertPath: "/etc/faas/tls/schedd/server.crt",
+			KeyPath:  "/etc/faas/tls/schedd/server.key",
+			CAPath:   "/etc/faas/tls/ca/ca.crt",
+		},
 		Outbound: &manifest.OutboundConfig{
 			Target: "tcp://vmmd.faas:50051",
 			TLS: &manifest.TLSMaterial{
@@ -94,7 +99,10 @@ func TestRenderTOML_ScheddSplitBoxOutbound(t *testing.T) {
 	}
 	text := string(body)
 	for _, want := range []string{
-		`listen_addr = "0.0.0.0:9091"`,
+		`listen_addr = "tcp://0.0.0.0:9091"`,
+		`tls_cert_path = "/etc/faas/tls/schedd/server.crt"`,
+		`tls_key_path = "/etc/faas/tls/schedd/server.key"`,
+		`tls_ca_path = "/etc/faas/tls/ca/ca.crt"`,
 		`vmmd_target = "tcp://vmmd.faas:50051"`,
 		`vmmd_tls_cert_path = "/etc/faas/tls/schedd/vmmd-client.crt"`,
 		`vmmd_tls_key_path = "/etc/faas/tls/schedd/vmmd-client.key"`,
@@ -302,6 +310,7 @@ func TestRenderTOML_VmmdSplitBoxClientTLS(t *testing.T) {
 		t.Fatalf("renderTOML: %v", err)
 	}
 	for _, want := range []string{
+		`listen_addr = "tcp://0.0.0.0:50051"`,
 		`schedd_client_cert_path = "/etc/faas/tls/vmmd/schedd-client.crt"`,
 		`schedd_client_key_path = "/etc/faas/tls/vmmd/schedd-client.key"`,
 		`schedd_client_ca_path = "/etc/faas/tls/ca/ca.crt"`,
