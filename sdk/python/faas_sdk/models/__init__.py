@@ -640,6 +640,7 @@ from .object_storage_pricing import ObjectStoragePricing
 from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_report import ObjectStorageUsageReport
 from .object_storage_usage_response import ObjectStorageUsageResponse
+from .object_storage_usage_response_billing_mode import ObjectStorageUsageResponseBillingMode
 from .obs_health_response import ObsHealthResponse
 from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
@@ -1597,6 +1598,7 @@ __all__ = (
     "ObjectStorageUsage",
     "ObjectStorageUsageReport",
     "ObjectStorageUsageResponse",
+    "ObjectStorageUsageResponseBillingMode",
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",

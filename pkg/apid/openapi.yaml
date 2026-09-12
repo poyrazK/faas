@@ -14539,8 +14539,14 @@ components:
         usage: { $ref: '#/components/schemas/ObjectStorageUsage' }
         policy: { $ref: '#/components/schemas/ObjectStoragePolicy' }
         charges: { $ref: '#/components/schemas/ObjectStorageCharge' }
-        billing_mode: { type: string, enum: [off, shadow, live], description: Whether finalized object-storage charges are disabled, audited locally, or sent to the billing provider. }
-        billing_from: { type: string, format: date-time, description: UTC month boundary at which shadow/live handling starts. Periods before it are never charged. }
+        billing_mode:
+          type: string
+          enum: [off, shadow, live]
+          description: Whether finalized object-storage charges are disabled, audited locally, or sent to the billing provider.
+        billing_from:
+          type: string
+          format: date-time
+          description: UTC month boundary at which shadow/live handling starts. Periods before it are never charged.
     ObjectStorageUsageReport:
       description: Authoritative cumulative provider usage for one account, backend and UTC month. Missing data is not zero; costs are EUR millicents.
       type: object
