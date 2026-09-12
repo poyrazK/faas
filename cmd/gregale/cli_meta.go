@@ -980,9 +980,10 @@ var cliCommands = []cliCommand{
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
 	},
 	{
-		Name:    "postgres",
-		DocSlug: "postgres",
-		Short:   "Manage managed PostgreSQL (postgres list|usage|create|get|delete|restore|bindings ...)",
+		Name:     "postgres",
+		DocSlug:  "postgres",
+		Short:    "Operator preview: manage PostgreSQL databases and bindings",
+		Audience: cliAudienceOperator,
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},

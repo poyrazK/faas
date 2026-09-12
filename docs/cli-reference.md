@@ -54,7 +54,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
-| [`postgres`](#postgres) | Manage managed PostgreSQL (postgres list\|usage\|create\|get\|delete\|restore\|bindings ...) |
+| [`postgres`](#postgres) | Operator preview: manage PostgreSQL databases and bindings |
 | [`ps`](#ps) | Show live instances + state for an app |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
@@ -1291,7 +1291,7 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 
 ## postgres
 
-Manage managed PostgreSQL (postgres list|usage|create|get|delete|restore|bindings ...)
+Operator preview: manage PostgreSQL databases and bindings
 
 `gregale postgres [<subcommand>]`
 
