@@ -525,6 +525,10 @@ jobs:
           files: coverage/cover-shard1.out
           flags: unittests
           use_oidc: true
+          # Pin the CLI instead of following the mutable `latest` alias. The
+          # alias can briefly publish the binary before its signature, which
+          # makes otherwise-green jobs fail during integrity verification.
+          version: v11.3.1
           fail_ci_if_error: true
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
@@ -646,6 +650,7 @@ jobs:
           files: coverage/${{ matrix.coverage_file }}
           flags: unittests
           use_oidc: true
+          version: v11.3.1
           fail_ci_if_error: true
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
@@ -723,6 +728,7 @@ jobs:
           files: coverage/cover-shard3.out
           flags: unittests
           use_oidc: true
+          version: v11.3.1
           fail_ci_if_error: true
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
@@ -799,6 +805,7 @@ jobs:
           files: coverage/cover-shard4.out
           flags: unittests
           use_oidc: true
+          version: v11.3.1
           fail_ci_if_error: true
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
