@@ -109,8 +109,8 @@ var Registry = []Entry{
 	{Name: "gatewayd-internal", Unit: UnitGatewaydInternal, Role: RoleComputeOnly, Critical: true, Lifecycle: Lifecycle{After: []string{"schedd", "apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9090", ReadyzURL: "http://127.0.0.1:9090/readyz"}},
 	{Name: "gatewayd-public", Unit: UnitGatewaydPublic, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8080", ReadyzURL: "http://127.0.0.1:9092/readyz"}},
 	{Name: "meterd", Unit: UnitMeterd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd, ReadyzURL: "http://127.0.0.1:9106/readyz"}},
-	{Name: "outboundd", Unit: UnitOutboundd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd, ReadyzURL: "http://127.0.0.1:8095/readyz"}},
 	{Name: "githubd", Unit: UnitGithubd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd, ReadyzURL: "http://127.0.0.1:8083/readyz"}},
+	{Name: "outboundd", Unit: UnitOutboundd, Role: RoleControlPlane, Critical: true, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd, ReadyzURL: "http://127.0.0.1:8095/readyz"}},
 	{Name: "imaged", Unit: UnitImaged, Role: RoleComputeOnly, Critical: false, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9102", ReadyzURL: "http://127.0.0.1:9102/readyz"}},
 	// Mega-PR-C (issue #911 / ADR-110): builderd is the build
 	// orchestrator on fsn-2 (compute-only). Spawns ephemeral

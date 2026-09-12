@@ -288,9 +288,9 @@
   ansible.builtin.include_tasks: ../../_shared/tasks/sealed_env_split_perm_asserts.yml
 
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
-# through to the three control-plane daemons (apid, schedd,
-# meterd) via FAAS_<DAEMON>_ROLE. One drop-in per daemon — the
-# template sets three Environment= lines so the single render
+# through to the four control-plane daemons (apid, schedd,
+# meterd, outboundd) via FAAS_<DAEMON>_ROLE. One drop-in per daemon — the
+# template sets four Environment= lines so the single render
 # covers all three daemons' env-var contracts. See
 # roles/control_plane_service/templates/99-faas-role.conf.j2
 # for the full rationale.
@@ -299,6 +299,7 @@
     - restart faas-apid
     - restart faas-schedd
     - restart faas-meterd
+    - restart faas-outboundd
   ansible.builtin.template:
     src: 99-faas-role.conf.j2
     dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-role.conf"
@@ -309,6 +310,7 @@
     - faas-apid
     - faas-schedd
     - faas-meterd
+    - faas-outboundd
 
 - name: control_plane_service — create runtime dirs (logs, spool, statuspage)
   ansible.builtin.file:

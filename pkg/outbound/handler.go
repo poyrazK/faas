@@ -57,6 +57,9 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		client.Transport = http.DefaultTransport
 	}
 	return &Handler{Resolver: resolver, Backend: backend, Client: client, MaxBodyBytes: 25 << 20}, nil
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/readyz" {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			writeProblem(w, http.StatusMethodNotAllowed, "outbound_method_not_allowed", "Only GET and HEAD are supported for readiness", "")
@@ -69,9 +72,6 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		}
 		return
 	}
-}
-
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
 		writeProblem(w, http.StatusMethodNotAllowed, "outbound_method_not_allowed", "CONNECT is not supported", "")
 		return
@@ -236,7 +236,7 @@ func writeProblem(w http.ResponseWriter, status int, code, title, retryAfter str
 	p := api.NewProblem(status, code, title, title)
 	p.Type = "https://docs.gregale.dev/errors/" + code
 	if retryAfter != "" {
-		p = *p.WithHeader("Retry-After", retryAfter)
+		p = p.WithHeader("Retry-After", retryAfter)
 	}
 	api.WriteProblem(w, p)
 }

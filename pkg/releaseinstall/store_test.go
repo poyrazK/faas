@@ -331,7 +331,7 @@ func sampleBundle(sha string) Bundle {
 	// we list all 10. Order doesn't matter to a map.
 	keys := []string{
 		"apid", "builderd", "gatewayd_internal", "gatewayd_public",
-		"githubd", "imaged", "meterd", "realtimed", "schedd", "vmmd",
+		"githubd", "imaged", "meterd", "outboundd", "realtimed", "schedd", "vmmd",
 	}
 	for i, k := range keys {
 		hashes[k] = "sha256:" + patterns[i]
