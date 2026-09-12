@@ -593,10 +593,16 @@ func testOperatorDeploymentListing(t *testing.T, fx *Fixture) {
 	stamp := time.Date(2032, 3, 4, 5, 6, 7, 0, time.UTC)
 	failed, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
 		AppID: fx.App.ID, CreatedAt: stamp, Kind: state.DeploymentKindImage,
-		Status: state.DeployFailed, ErrorCode: "builder_failed",
+		Status: state.DeployPending,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment(failed): %v", err)
+	}
+	// CreateDeployment's PostgreSQL implementation inserts a pending row;
+	// transition it through the store API so both backends exercise the same
+	// failed-state listing behavior.
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, failed.ID, state.DeployFailed, "builder failed"); err != nil {
+		t.Fatalf("UpdateDeploymentStatus(failed): %v", err)
 	}
 	pending, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
 		AppID: fx.App.ID, CreatedAt: stamp.Add(time.Minute), Kind: state.DeploymentKindImage,
