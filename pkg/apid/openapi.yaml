@@ -4501,7 +4501,7 @@ paths:
                 scope:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
-                  description: "Named environment scope read by the deployment; omitted uses default."
+                  description: "Named environment scope read by the developer deployment; omitted uses default."
                 source_url:
                   type: string
                   maxLength: 1024
@@ -17471,7 +17471,7 @@ components:
         handler: { type: string }
         dockerfile: { type: boolean }
         source_root: { type: string }
-        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', description: "Named environment scope read by the deployment; omitted uses default." }
+        scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', description: "Named environment scope applied when the upload is committed; omitted uses default." }
         source_url:
           { type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by apid." }
         commit_sha:
