@@ -115,6 +115,21 @@ API lookup.
   torn-down PR-{N} that reopens with a fresh head SHA gets
   a fresh `apps` row at the same slug.
 
+## Project GitHub deployment policy
+
+Customers can read and update the project policy through
+`/v1/apps/{slug}/github/deployment-policy` with the `github:manage` scope.
+The policy supports a repository-relative root directory for root workloads,
+ignored change paths (exact paths, one-segment globs, and trailing `/**`
+directory patterns), a preview enable switch, and a preview TTL from 1 hour
+to 30 days. Existing projects default to previews enabled, a 7-day TTL, no
+ignored paths, and the repository root, so adopting the policy is additive.
+
+When all changed files match ignored paths, githubd records the delivery as a
+successful no-op and does not enqueue builds. Compare-API failures still use
+the existing safe full-fan-out fallback, because an unavailable GitHub API
+must not be mistaken for an ignored change set.
+
 ## Related
 
 - ADR-095 (decision + schema + state machine rationale).

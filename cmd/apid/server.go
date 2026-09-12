@@ -2558,6 +2558,8 @@ func (s *server) handler() http.Handler {
 	// can manage a connection without weakening the browser CSRF contract.
 	mux.HandleFunc("GET /v1/github/repos", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.listGitHubRepositories)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/github", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.getGitHubConnection)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/github/deployment-policy", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.getGitHubDeployPolicy)))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/github/deployment-policy", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.patchGitHubDeployPolicy)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/github/bind", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.bindGitHubConnection))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/github/sync", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.syncGitHubConnection))))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/github", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.disconnectGitHubConnection))))))

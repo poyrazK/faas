@@ -620,6 +620,9 @@ type MemStore struct {
 	// githubDeployBranches stores the optional branch→scope rules keyed by
 	// project ID. It mirrors github_deploy_branches in Postgres.
 	githubDeployBranches map[string]map[string]string
+	// githubDeployPolicies stores the optional project-level GitHub policy.
+	// Missing entries resolve to DefaultGitHubDeployPolicy.
+	githubDeployPolicies map[string]GitHubDeployPolicy
 	// clock is the seam CurrentMonthOverageCents uses to compute the
 	// UTC month-start cutoff. Default is time.Now (production); tests
 	// install a fixture via SetClockForTest so a usage row planted at
@@ -796,6 +799,7 @@ func NewMemStore() *MemStore {
 		deployTokenByHash:      map[string]DeployToken{},
 		apps:                   map[string]App{},
 		githubDeployBranches:   map[string]map[string]string{},
+		githubDeployPolicies:   map[string]GitHubDeployPolicy{},
 		githubBindings:         map[string]GitHubBinding{},
 		githubInstalls:         map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
