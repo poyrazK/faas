@@ -149,13 +149,13 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 				err = state.PermanentSnapshotReplicaError(err)
 			}
 			r.metricsObserve("failed", job.Region)
-			if markErr := r.store.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, job.NodeID, err); markErr != nil {
+			if markErr := r.markReplicaFailed(ctx, job, err); markErr != nil {
 				r.log.Warn("snapshothipd: mark failed", "snapshot_id", job.SnapshotID, "node_id", job.NodeID, "err", markErr)
 			}
 			r.log.Warn("snapshothipd: snapshot preposition failed", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "node_id", job.NodeID, "attempt", job.Attempts, "err", err)
 			continue
 		}
-		if err := r.store.MarkSnapshotReplicaReady(ctx, job.SnapshotID, job.NodeID); err != nil {
+		if err := r.markReplicaReady(ctx, job); err != nil {
 			r.metricsObserve("failed", job.Region)
 			r.log.Warn("snapshothipd: mark ready failed", "snapshot_id", job.SnapshotID, "node_id", job.NodeID, "err", err)
 			continue
@@ -168,6 +168,20 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 		}
 		r.log.Debug("snapshothipd: snapshot prepositioned", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "node_id", job.NodeID, "attempt", job.Attempts)
 	}
+}
+
+func (r *Runner) markReplicaReady(ctx context.Context, job state.SnapshotReplicaJob) error {
+	if leased, ok := r.store.(state.SnapshotReplicaLeaseStore); ok {
+		return leased.MarkSnapshotReplicaReadyWithLease(ctx, job.SnapshotID, job.NodeID, job.LeaseToken)
+	}
+	return r.store.MarkSnapshotReplicaReady(ctx, job.SnapshotID, job.NodeID)
+}
+
+func (r *Runner) markReplicaFailed(ctx context.Context, job state.SnapshotReplicaJob, cause error) error {
+	if leased, ok := r.store.(state.SnapshotReplicaLeaseStore); ok {
+		return leased.MarkSnapshotReplicaFailedWithLease(ctx, job.SnapshotID, job.NodeID, job.LeaseToken, cause)
+	}
+	return r.store.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, job.NodeID, cause)
 }
 
 func (r *Runner) metricsObserve(outcome, region string) {
