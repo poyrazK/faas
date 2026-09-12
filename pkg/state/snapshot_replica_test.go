@@ -147,6 +147,63 @@ func TestMemStoreSnapshotReplicaStaleLeaseCannotCompleteNewAttempt(t *testing.T)
 	}
 }
 
+func TestMemStoreSnapshotReplicaLeaseRenewalFencesOwnership(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	region := DefaultLocalityLabel
+	node := ComputeNode{
+		ID: "node-renew", Name: "compute-renew", TargetURL: "unix:///run/faas/compute-renew.sock",
+		AdmissionCeilingMB: 4096, VCPUBudget: 16, Active: true, Region: &region,
+	}
+	if _, err := m.CreateComputeNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	_, dep := seedMemReplicaDeployment(t, m, "dep-renew", "replica-renew")
+	snap, err := m.CreateSnapshot(ctx, Snapshot{
+		ID: "snap-renew", DeploymentID: dep.ID, FCVersion: "fc-1", StorageKey: SnapMemKey(dep.ID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.EnqueueSnapshotReplicasForNode(ctx, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	first, err := m.ClaimSnapshotReplica(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := snapshotReplicaKey{snapshotID: snap.ID, nodeID: node.ID}
+	m.mu.Lock()
+	old := time.Now().Add(-6 * time.Minute)
+	row := m.snapshotReplicas[key]
+	row.updatedAt = old
+	m.snapshotReplicas[key] = row
+	m.mu.Unlock()
+	if err := m.RenewSnapshotReplicaLease(ctx, snap.ID, node.ID, first.LeaseToken); err != nil {
+		t.Fatalf("renew lease: %v", err)
+	}
+	m.mu.Lock()
+	renewed := m.snapshotReplicas[key].updatedAt
+	m.mu.Unlock()
+	if !renewed.After(old) {
+		t.Fatalf("renewed updated_at = %s, want after %s", renewed, old)
+	}
+	if err := m.RenewSnapshotReplicaLease(ctx, snap.ID, node.ID, "stale-token"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale renewal error = %v, want ErrConflict", err)
+	}
+}
+
+func TestMemStoreSnapshotReplicaLeaseRenewalValidatesInputs(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	if err := m.RenewSnapshotReplicaLease(ctx, "snap", "node", ""); err == nil {
+		t.Fatal("empty lease token unexpectedly renewed")
+	}
+	if err := m.RenewSnapshotReplicaLease(ctx, "missing-snapshot", "missing-node", "lease"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing row renewal error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestMemStoreSnapshotReplicaPermanentFailureStopsRetry(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
