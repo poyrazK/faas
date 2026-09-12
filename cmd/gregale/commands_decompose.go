@@ -124,7 +124,7 @@ func cmdScan(args []string) int {
 	return printPlanTextWithExplain(osStdout, plan, excludeList, *showAffected, *explain)
 }
 
-// runProjectDeployPreview is the read-only preview path for
+// runProjectDeployPreviewWithMode is the read-only preview path for
 // `gregale deploy --dry-run/--diff --project-slug ...` and the
 // corresponding `--only` form. Project apply is planned by ScanProject,
 // not by the single-app deploy-diff engine, so using the same endpoint here
@@ -135,21 +135,9 @@ func cmdScan(args []string) int {
 // managed services, warnings, and the optional affected-set partition. The
 // scan endpoint is read-only even when the apply-only `--persist-exclude` flag
 // was present; this helper deliberately does not have access to that flag so a
-// preview cannot accidentally persist state.
-func runProjectDeployPreview(
-	ctx context.Context,
-	client *api.Client,
-	tarball, projectSlug, only, exclude string,
-	showAffected, emitJSON bool,
-) int {
-	return runProjectDeployPreviewWithMode(ctx, client, tarball, projectSlug, only, exclude,
-		showAffected, emitJSON, true)
-}
-
-// runProjectDeployPreviewWithMode is the strict/lenient implementation used
-// by deploy previews. The legacy wrapper above keeps direct callers on the
-// documented strict default while the deploy flag parser can opt into
-// --lenient without changing the ScanProject wire request.
+// preview cannot accidentally persist state. Strict previews return a
+// non-zero status when the plan cannot be applied; lenient previews retain the
+// rendered plan and return zero.
 func runProjectDeployPreviewWithMode(
 	ctx context.Context,
 	client *api.Client,
