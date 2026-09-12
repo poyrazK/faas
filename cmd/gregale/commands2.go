@@ -4044,7 +4044,11 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			// side). Move 3's `not_implemented` shape is dead code;
 			// removed.
 			if e.Event == "degraded" {
-				fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
+				if jsonOutput {
+					_ = writeJSONProblem(appLogsDegradedProblem(e.Data))
+				} else {
+					fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
+				}
 				if collector != nil {
 					collector.flush(os.Stdout)
 				}

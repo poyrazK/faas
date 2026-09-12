@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdLogsDocumentedArgumentOrder(t *testing.T) {
@@ -65,5 +68,37 @@ func TestCmdLogsDegradedReason(t *testing.T) {
 				t.Fatalf("stderr=%q, want %q", stderr.String(), tc.want)
 			}
 		})
+	}
+}
+
+func TestCmdLogsDegradedReason_JSONProblem(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: degraded\ndata: {\"code\":\"not_found\",\"error\":\"no live instance\"}\n\n")
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	resetJSONOutput()
+	t.Cleanup(resetJSONOutput)
+	jsonOutput = true
+
+	stderr, restore := captureStderr(t)
+	defer restore()
+	if code := cmdLogs([]string{"myapp"}); code != 3 {
+		t.Fatalf("exit=%d, want 3", code)
+	}
+	var problem api.Problem
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stderr.String())), &problem); err != nil {
+		t.Fatalf("stderr is not RFC 7807 JSON: %v\nraw=%q", err, stderr.String())
+	}
+	if problem.Status != http.StatusServiceUnavailable {
+		t.Errorf("status=%d, want %d", problem.Status, http.StatusServiceUnavailable)
+	}
+	if problem.Code != api.CodeNotFound {
+		t.Errorf("code=%q, want %q", problem.Code, api.CodeNotFound)
+	}
+	if problem.Title == "" || problem.Detail == "" {
+		t.Errorf("problem missing title/detail: %+v", problem)
 	}
 }

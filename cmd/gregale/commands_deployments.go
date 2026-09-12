@@ -290,15 +290,16 @@ func cmdDeploymentsExcludeClear(args []string) int {
 
 // cmdDeploymentsAll walks every page via the SDK helper and renders the
 // full list. Refuses to share a single envelope with the one-page path
-// (no `next_before` to surface), so JSON output is the bare slice —
-// matching how apps/crons/keys emit NDJSON for non-paginated lists.
+// (no `next_before` to surface), so JSON output is NDJSON — matching
+// how the other non-paginated list commands stream records. An empty
+// result therefore emits zero records instead of a synthetic `null`.
 func cmdDeploymentsAll(ctx context.Context, client *api.Client, wide bool) int {
 	items, err := client.ListDeploymentsAll(ctx)
 	if err != nil {
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(items))
+		return jsonOut(writeNDJSON(items))
 	}
 	if len(items) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "No deployments yet.")
@@ -320,7 +321,7 @@ func cmdAppDeploymentsAll(ctx context.Context, client *api.Client, slug string, 
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(items))
+		return jsonOut(writeNDJSON(items))
 	}
 	if len(items) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "No deployments yet for app %q.\n", slug)
