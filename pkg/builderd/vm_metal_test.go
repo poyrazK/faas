@@ -23,13 +23,19 @@ import (
 type warmSnapshotFailureClient struct {
 	vmmdpb.VmmdClient
 	snapshotErr  error
+	readyErr     error
 	stopErr      error
+	destroyErr   error
+	deleteErr    error
 	stopCalls    int
 	destroyCalls int
 	deleteCalls  int
 }
 
 func (c *warmSnapshotFailureClient) WaitBuilderReady(context.Context, *vmmdpb.WaitBuilderReadyRequest, ...grpc.CallOption) (*vmmdpb.WaitBuilderReadyResponse, error) {
+	if c.readyErr != nil {
+		return nil, c.readyErr
+	}
 	return &vmmdpb.WaitBuilderReadyResponse{Ready: true}, nil
 }
 
@@ -51,11 +57,17 @@ func (c *warmSnapshotFailureClient) StopInstance(context.Context, *vmmdpb.StopIn
 
 func (c *warmSnapshotFailureClient) Destroy(context.Context, *vmmdpb.DestroyRequest, ...grpc.CallOption) (*vmmdpb.DestroyResponse, error) {
 	c.destroyCalls++
+	if c.destroyErr != nil {
+		return nil, c.destroyErr
+	}
 	return &vmmdpb.DestroyResponse{ExitCode: 0}, nil
 }
 
 func (c *warmSnapshotFailureClient) DeleteWarmSnapshot(context.Context, *vmmdpb.DeleteWarmSnapshotRequest, ...grpc.CallOption) (*vmmdpb.DeleteWarmSnapshotResponse, error) {
 	c.deleteCalls++
+	if c.deleteErr != nil {
+		return nil, c.deleteErr
+	}
 	return &vmmdpb.DeleteWarmSnapshotResponse{}, nil
 }
 
@@ -184,7 +196,10 @@ func TestWaitForWarmCompletionKeepsDriveUntilExportWhenStopFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := &warmSnapshotFailureClient{stopErr: errors.New("stop unavailable")}
+	client := &warmSnapshotFailureClient{
+		stopErr:   errors.New("stop unavailable"),
+		deleteErr: errors.New("delete unavailable"),
+	}
 	driver := &VMMDriver{cli: client}
 	out, snapshot, err := driver.WaitForWarmCompletion(context.Background(), BuildHandle{
 		Instance:     "build-build-2",
@@ -200,11 +215,73 @@ func TestWaitForWarmCompletionKeepsDriveUntilExportWhenStopFails(t *testing.T) {
 	if out.ExitCode != 0 || out.OCIImage != imagePath || !strings.Contains(out.WarmSnapshotError, "stop unavailable") {
 		t.Fatalf("outcome = %+v, want successful export with stop diagnostic", out)
 	}
-	if snapshot.StorageKey != "" || client.deleteCalls != 1 || client.destroyCalls != 1 {
-		t.Fatalf("snapshot/delete/destroy = %+v/%d/%d, want empty/1/1", snapshot, client.deleteCalls, client.destroyCalls)
+	if snapshot.StorageKey == "" || snapshot.LayerPath != "" || client.deleteCalls != 1 || client.destroyCalls != 1 {
+		t.Fatalf("snapshot/delete/destroy = %+v/%d/%d, want storage key without layer path/1/1", snapshot, client.deleteCalls, client.destroyCalls)
+	}
+	if !strings.Contains(out.WarmSnapshotError, "delete unavailable") {
+		t.Fatalf("WarmSnapshotError = %q, want cleanup diagnostic", out.WarmSnapshotError)
 	}
 	if _, statErr := os.Stat(drivePath); !os.IsNotExist(statErr) {
 		t.Fatalf("fallback drive stat error = %v, want removed after export", statErr)
+	}
+}
+
+func TestWaitForWarmCompletionReturnsSnapshotWhenPostWaitCleanupFails(t *testing.T) {
+	exportDir := t.TempDir()
+	drivePath := filepath.Join(t.TempDir(), "builder.ext4")
+	if err := os.WriteFile(drivePath, []byte("drive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &warmSnapshotFailureClient{
+		destroyErr: errors.New("export unavailable"),
+		deleteErr:  errors.New("delete unavailable"),
+	}
+	driver := &VMMDriver{cli: client}
+	_, snapshot, err := driver.WaitForWarmCompletion(context.Background(), BuildHandle{
+		Instance:     "build-build-3",
+		HostDrive1:   drivePath,
+		ExportDir:    exportDir,
+		BuildID:      "build-3",
+		TimeoutSec:   30,
+		WarmScopeKey: "scope-3",
+	})
+	if err == nil || !strings.Contains(err.Error(), "export unavailable") || !strings.Contains(err.Error(), "delete unavailable") {
+		t.Fatalf("error = %v, want export and cleanup failures", err)
+	}
+	if snapshot.StorageKey == "" || snapshot.VMStateStorageKey == "" || snapshot.LayerPath != drivePath {
+		t.Fatalf("snapshot = %+v, want complete cleanup metadata", snapshot)
+	}
+	if client.deleteCalls != 1 {
+		t.Fatalf("delete calls = %d, want 1", client.deleteCalls)
+	}
+	if _, statErr := os.Stat(drivePath); !os.IsNotExist(statErr) {
+		t.Fatalf("drive stat error = %v, want removed during cleanup", statErr)
+	}
+}
+
+func TestWaitForWarmCompletionReadinessFailureRemovesDrive(t *testing.T) {
+	drivePath := filepath.Join(t.TempDir(), "builder.ext4")
+	if err := os.WriteFile(drivePath, []byte("drive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &warmSnapshotFailureClient{readyErr: errors.New("readiness unavailable")}
+	driver := &VMMDriver{cli: client}
+	_, _, err := driver.WaitForWarmCompletion(context.Background(), BuildHandle{
+		Instance:   "build-build-4",
+		HostDrive1: drivePath,
+		BuildID:    "build-4",
+		TimeoutSec: 30,
+	})
+	if err == nil || !strings.Contains(err.Error(), "readiness unavailable") {
+		t.Fatalf("error = %v, want readiness failure", err)
+	}
+	if client.stopCalls != 1 || client.destroyCalls != 1 {
+		t.Fatalf("stop/destroy calls = %d/%d, want 1/1", client.stopCalls, client.destroyCalls)
+	}
+	if _, statErr := os.Stat(drivePath); !os.IsNotExist(statErr) {
+		t.Fatalf("drive stat error = %v, want removed after readiness failure", statErr)
 	}
 }
 

@@ -173,6 +173,20 @@ the job JWT is exchanged through `/v1/auth/oidc/exchange` for a five-minute
 deploy bearer. The optional `api-key` input remains available for installations
 that have not configured an OIDC subject binding yet.
 
+### Repository discovery for automation
+
+Customers with a `github:manage` API key can list the repositories visible to
+their connected GitHub App installation without copying an installation id:
+
+```http
+GET /v1/github/repos
+Authorization: Bearer <key-with-github:manage>
+```
+
+The response contains repository id, full name, default branch, and visibility.
+If no GitHub App installation exists, the API returns
+`github_install_not_found`; complete `gregale connect github` once, then retry.
+
 ### What's not automated by the Action
 - **PR-preview environments.** Each deploy is a fresh
   deployment id; the action does not create or tear down

@@ -3316,6 +3316,12 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		scalingPolicyBytes, _ = json.Marshal(*p.ScalingPolicy)
 		keepMinInstancesInSync = true
 	}
+	declaredRoutesBytes := []byte("[]")
+	if p.SetDeclaredRoutes {
+		if encoded, err := json.Marshal(derefDeclaredRoutes(p.DeclaredRoutes)); err == nil {
+			declaredRoutesBytes = encoded
+		}
+	}
 	upd := `update apps set
 		   ram_mb          = coalesce($2, ram_mb),
 		   idle_timeout_s  = case when $3 then $4 else idle_timeout_s end,
@@ -3452,7 +3458,9 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 				   -- Hobby+) before reaching this UPDATE.
 				   app_protocol = case when $61 then $62 else app_protocol end,
 				   cpu_millicores = coalesce($63, cpu_millicores),
-				   consumer_auth_mode = case when $64 then $65 else consumer_auth_mode end
+				   consumer_auth_mode = case when $64 then $65 else consumer_auth_mode end,
+				   only_declared_routes = case when $66 then $67 else only_declared_routes end,
+				   declared_routes = case when $68 then $69::jsonb else declared_routes end
 		 where id = $1
 		 returning ` + appsSelectColumns
 	// `policyMinInstances` is the value to push into the legacy
@@ -3574,7 +3582,9 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 		// "don't touch" from "explicit http1".
 		p.SetAppProtocol, derefString(p.AppProtocol),
 		p.CPUMillicores,
-		p.SetConsumerAuthMode, derefString(p.ConsumerAuthMode))
+		p.SetConsumerAuthMode, derefString(p.ConsumerAuthMode),
+		p.SetOnlyAllowDeclaredRoutes, boolOrFalse(p.OnlyAllowDeclaredRoutes),
+		p.SetDeclaredRoutes, declaredRoutesBytes)
 	return scanApp(row)
 }
 
@@ -14675,6 +14685,42 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 	return out, rows.Err()
 }
 
+// ListComputeNodesPage is the bounded node-list variant used by operator
+// projections that compose fleet signals into one page. The LIMIT is pushed
+// into Postgres so a large fleet never materializes every node in apid.
+func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool, limit int) ([]ComputeNode, error) {
+	if limit <= 0 {
+		return []ComputeNode{}, nil
+	}
+	q := `
+		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
+		       region, zone, schedd_target_url, gateway_target_url,
+		       public_ip, public_ip_set_at,
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
+		  from compute_nodes
+	`
+	if !includeInactive {
+		q += ` where active = true`
+	}
+	q += ` order by name limit $1`
+	rows, err := s.pool.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list compute_nodes page (inactive=%t): %w", includeInactive, err)
+	}
+	defer rows.Close()
+	var out []ComputeNode
+	for rows.Next() {
+		node, err := scanComputeNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, node)
+	}
+	return out, rows.Err()
+}
+
 // nodeRowToComputeNode converts a sqlc.NodeGetByNameRow / NodeGetRow
 // (the field set is identical for the lifecycle-projection queries in
 // queries.sql) back to the legacy ComputeNode model. The legacy
@@ -18819,6 +18865,8 @@ func scanAppInto(a *App, row pgx.Row) error {
 	// at scan time; the *bool field is built by lifting
 	// this local below.
 	var corsDefaultEnabled bool
+	var onlyAllowDeclaredRoutes bool
+	var declaredRoutesBytes []byte
 	if err := row.Scan(&a.ID, &a.AccountID, &a.Slug, &typeStr, &a.Runtime, &a.RAMMB, &a.IdleTimeoutS,
 		&a.MaxConcurrency, &statusStr, &manifestBytes, &a.CreatedAt, &a.MinInstances, &allowlistText,
 		&publicAuthIPAllowlistText,
@@ -18926,7 +18974,8 @@ func scanAppInto(a *App, row pgx.Row) error {
 		// targets are populated by the Set*/CASE branch on the
 		// write side.
 		&a.StaticEgressIP, &a.StaticEgressIPSetAt,
-		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil); err != nil {
+		&a.CPUMillicores, &a.DeletedAt, &a.DeleteGraceUntil,
+		&onlyAllowDeclaredRoutes, &declaredRoutesBytes); err != nil {
 		return mapErr(err)
 	}
 	if overflowNodeStr != "" {
@@ -18942,6 +18991,15 @@ func scanAppInto(a *App, row pgx.Row) error {
 	// opt-out hydrates identically to *false — the
 	// three-state lives on the write path only).
 	a.CORSDefaultEnabled = &corsDefaultEnabled
+	a.OnlyAllowDeclaredRoutes = onlyAllowDeclaredRoutes
+	if len(declaredRoutesBytes) > 0 {
+		_ = json.Unmarshal(declaredRoutesBytes, &a.DeclaredRoutes)
+		// Keep the empty contract canonical across the PG and memory
+		// stores. An explicit empty list means "fall back to OpenAPI".
+		if len(a.DeclaredRoutes) == 0 {
+			a.DeclaredRoutes = nil
+		}
+	}
 	a.Type = AppType(typeStr)
 	a.Status = AppStatus(statusStr)
 	a.WorkloadClass = WorkloadClass(workloadClassStr)
@@ -19092,7 +19150,10 @@ const appsSelectColumns = `
 	static_egress_ip, static_egress_ip_set_at,
 	-- Configured sustained CPU quota. Appended to keep the positional scan stable.
 	cpu_millicores,
-	deleted_at, delete_grace_until`
+	deleted_at, delete_grace_until,
+	-- Only-allow-declared-routes policy. Appended so older positional
+	-- columns remain stable for every existing scan site.
+	only_declared_routes, coalesce(declared_routes, '[]'::jsonb)`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`

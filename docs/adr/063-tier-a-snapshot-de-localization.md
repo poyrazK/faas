@@ -105,6 +105,11 @@ Issue #1054's first implementation is wired in PR-A:
 - `pkg/snapshothipd` performs bounded, retryable cache warming from vmmd;
 - `snapshothipd_fanout_total{outcome,region}` exposes the pre-instantiated
   closed `{ready, failed}` outcome set;
+- `snapshothipd_fanout_latency_seconds{region}` records durable queue-to-ready
+  latency, with a 100 ms reconciliation cadence so the ≤200 ms acceptance
+  target is observable rather than hidden behind a one-second poll;
+- reclaimed replica jobs carry a per-claim lease token, so a late worker
+  cannot mark a newer retry ready or failed;
 - scheduler placement prefers ready replicas without making them a
   correctness dependency.
 

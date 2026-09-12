@@ -294,6 +294,7 @@ func daemonunitspecRegistry() []string {
 	// fails first.
 	return []string{
 		"vmmd",
+		"realtimed",
 		"apid",
 		"schedd",
 		"meterd",

@@ -59,6 +59,26 @@ func (c *Client) DeleteObjectBucket(ctx context.Context, slug, bucket string) er
 	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket), nil, nil)
 }
 
+// ListObjectUploadRoutes returns the policy-controlled upload endpoints for an app.
+func (c *Client) ListObjectUploadRoutes(ctx context.Context, slug string) (ObjectUploadRouteList, error) {
+	var out ObjectUploadRouteList
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/upload-routes", nil, &out)
+	return out, err
+}
+
+// CreateObjectUploadRoute creates or updates an authenticated upload endpoint.
+func (c *Client) CreateObjectUploadRoute(ctx context.Context, slug string, req CreateObjectUploadRouteRequest) (ObjectUploadRoute, error) {
+	var out ObjectUploadRoute
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/upload-routes", req, &out)
+	return out, err
+}
+
+// DeleteObjectUploadRoute stops new uploads for the named endpoint without
+// deleting objects already written through it.
+func (c *Client) DeleteObjectUploadRoute(ctx context.Context, slug, route string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/upload-routes/"+url.PathEscape(route), nil, nil)
+}
+
 func (c *Client) ListObjectS3Credentials(ctx context.Context, slug, bucket string) (ObjectS3CredentialList, error) {
 	var out ObjectS3CredentialList
 	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/s3-credentials"

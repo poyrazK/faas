@@ -74,7 +74,7 @@ func syntheticExclusionAppID(accountID, projectID, slug string) string {
 // is the same scanPlanResponse that the apply endpoint emits so the
 // CLI's `--json` mode passes the bytes through verbatim.
 func (s *server) scanProject(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	resp, _, _, _, _, _, prob := s.scanService(w, r, acct, "", false)
+	resp, _, _, _, _, _, prob := s.scanService(r, acct, "", false)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -106,7 +106,7 @@ func (s *server) scanProject(w http.ResponseWriter, r *http.Request, acct state.
 //     build Z" per workload (PR-A, Phase 5 close-the-loop).
 func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	planToken := r.URL.Query().Get("plan_token")
-	resp, insertedProject, added, changed, removedSlugs, builds, prob := s.scanService(w, r, acct, planToken, true)
+	resp, insertedProject, added, changed, removedSlugs, builds, prob := s.scanService(r, acct, planToken, true)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return

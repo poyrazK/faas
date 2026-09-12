@@ -2,7 +2,10 @@ package managedpostgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +187,102 @@ func TestNewStagingProvisioningGateRequiresExactQualification(t *testing.T) {
 				t.Fatal("unqualified staging gate opened")
 			}
 		})
+	}
+}
+
+func TestNewStagingProvisioningGateUsesApprovalArtifact(t *testing.T) {
+	provider := &qualificationProvider{capabilities: testCapabilities()}
+	registry := testRegistry(t, provider, func(config *Config) { config.ProvisioningEnabled = true })
+	backend, err := registry.Default(registry.DefaultRegion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := QualifyProvider(context.Background(), provider, QualificationOptions{
+		ProviderName: backend.Driver,
+		ResourceID:   "qualification-gate-artifact",
+		Spec:         testSpec(),
+		Mutating:     true,
+	})
+	if err != nil {
+		t.Fatalf("QualifyProvider: %v", err)
+	}
+	lifecycle := passingLifecycleQualificationReport()
+	now := report.CompletedAt.Add(time.Minute)
+	approval, err := BuildQualificationApproval(report, &lifecycle, backend.ID, backend.Fingerprint, []string{"account-a"}, now, time.Hour)
+	if err != nil {
+		t.Fatalf("BuildQualificationApproval: %v", err)
+	}
+	artifact := QualificationArtifact{
+		Version:            QualificationArtifactVersion,
+		BackendID:          backend.ID,
+		BackendFingerprint: backend.Fingerprint,
+		Spec:               testSpec(),
+		Report:             report,
+		Lifecycle:          &lifecycle,
+		Approval:           &approval,
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "approval.json")
+	encoded, err := json.Marshal(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{
+		EnvironmentEnv:               QualificationStagingEnvironment,
+		QualificationApprovalPathEnv: path,
+		CanaryAccountsEnv:            "account-a",
+		QualificationEnv:             "false",
+		QualificationBackendEnv:      "wrong-backend",
+		QualificationFingerprintEnv:  "wrong-fingerprint",
+	}
+	getenv := func(key string) string { return values[key] }
+	if !NewStagingProvisioningGate(registry, getenv, func() time.Time { return now })() {
+		t.Fatal("valid approval artifact kept the staging gate closed")
+	}
+
+	for name, mutate := range map[string]func(*QualificationArtifact){
+		"tampered report": func(candidate *QualificationArtifact) {
+			candidate.Approval.ReportSHA256 = "tampered"
+		},
+		"wrong backend": func(candidate *QualificationArtifact) {
+			candidate.BackendID = "other-backend"
+		},
+		"expired": func(candidate *QualificationArtifact) {
+			candidate.Approval.ExpiresAt = now.Add(-time.Minute)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := artifact
+			approvalCopy := *artifact.Approval
+			candidate.Approval = &approvalCopy
+			mutate(&candidate)
+			candidateBytes, marshalErr := json.Marshal(candidate)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			if writeErr := os.WriteFile(path, candidateBytes, 0o600); writeErr != nil {
+				t.Fatal(writeErr)
+			}
+			if NewStagingProvisioningGate(registry, getenv, func() time.Time { return now })() {
+				t.Fatal("invalid approval artifact opened the staging gate")
+			}
+		})
+		if err := os.WriteFile(path, encoded, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestLoadQualificationArtifactRejectsTrailingData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "approval.json")
+	if err := os.WriteFile(path, []byte("{\"version\":1}\n{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadQualificationArtifact(path); err == nil {
+		t.Fatal("trailing artifact data was accepted")
 	}
 }
 

@@ -3,7 +3,7 @@ package main
 // Status page handlers (spec §12, M8 acceptance).
 //
 // Two routes, both unauthenticated by design:
-//   GET /status         → static HTML (three progress bars)
+//   GET /status         → static HTML (live metrics, uptime history, incidents)
 //   GET /status/slo.json → JSON snapshot the HTML reads
 //
 // Why unauthenticated: the status page is a public surface
@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // StatusPage is the JSON shape the public status page reads. Defined
@@ -75,10 +76,7 @@ func (s *server) statusJSONHandler(w http.ResponseWriter, r *http.Request) {
 		// transient Prometheus hiccup doesn't make the status page 5xx.
 		// We do still surface the error in `Source` so an operator can
 		// tell the snapshot is degraded.
-		fallback := StatusPage{
-			AsOf:   time.Now().UTC(),
-			Source: appmetrics.SourceDegradedPrefix + err.Error(),
-		}
+		fallback := emptyStatusPage(time.Now().UTC(), appmetrics.SourceDegradedPrefix+err.Error())
 		writeJSON(w, http.StatusOK, fallback)
 		return
 	}
@@ -94,6 +92,7 @@ func (s *server) statusJSONHandler(w http.ResponseWriter, r *http.Request) {
 // from external monitoring (e.g. statuspage.io).
 type statusCache struct {
 	client *promql.Client
+	store  state.Store
 	log    *slog.Logger
 
 	mu        sync.Mutex
@@ -124,11 +123,18 @@ const (
 // issue #273 / ADR-042 can reuse the client for the per-app metrics
 // endpoint.
 func newStatusCache(promURL string, log *slog.Logger) *statusCache {
+	return newStatusCacheWithStore(promURL, nil, log)
+}
+
+func newStatusCacheWithStore(promURL string, store state.Store, log *slog.Logger) *statusCache {
 	var c *promql.Client
 	if promURL != "" {
 		c = promql.NewClient(promURL, nil)
 	}
-	return &statusCache{client: c, log: log}
+	if log == nil {
+		log = slog.Default()
+	}
+	return &statusCache{client: c, store: store, log: log}
 }
 
 // Get returns the current snapshot, refreshing if the cache is stale
@@ -181,7 +187,7 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 		return StatusPage{}, fmt.Errorf("no prometheus URL configured")
 	}
 
-	snap := StatusPage{AsOf: time.Now().UTC(), Source: appmetrics.SourcePrometheus}
+	snap := emptyStatusPage(time.Now().UTC(), appmetrics.SourcePrometheus)
 	var firstErr error
 	okCount := 0
 
@@ -249,6 +255,11 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 		c.log.Warn("status: alert query failed (treating as not-degraded)", "err", err)
 	}
 
+	// History is deliberately best-effort. A database hiccup must not turn a
+	// healthy live SLI snapshot into a public outage; the current-state
+	// Prometheus queries remain the authoritative availability signal.
+	c.populateHistory(ctx, &snap)
+
 	// If no primary query succeeded, surface the first error so the
 	// caller can serve the stale cache. Otherwise the snapshot is real
 	// data even if some fields happen to be 0 (idle-box case).
@@ -256,4 +267,84 @@ func (c *statusCache) fetch(ctx context.Context) (StatusPage, error) {
 		return snap, firstErr
 	}
 	return snap, nil
+}
+
+const statusHistoryDays = 30
+
+func emptyStatusPage(asOf time.Time, source string) StatusPage {
+	return StatusPage{
+		AsOf:      asOf,
+		Source:    source,
+		Uptime30d: make([]api.StatusUptimeBucket, 0, statusHistoryDays),
+		Incidents: make([]api.StatusIncident, 0),
+	}
+}
+
+// populateHistory projects the optional state read seam into the public API
+// DTO. Missing days are emitted with zero counts and 100% uptime so clients
+// can render a stable 30-point sparkline and still distinguish idle from bad.
+func (c *statusCache) populateHistory(ctx context.Context, snap *StatusPage) {
+	history, ok := c.store.(state.StatusHistoryStore)
+	if !ok || history == nil {
+		return
+	}
+	now := time.Now().UTC()
+	since := time.Date(now.Year(), now.Month(), now.Day()-statusHistoryDays+1,
+		0, 0, 0, 0, time.UTC)
+	historyCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	buckets, err := history.StatusUptimeBuckets(historyCtx, since)
+	if err != nil {
+		c.log.Warn("status: uptime history query failed", "err", err)
+	} else {
+		byDay := make(map[time.Time]state.StatusUptimeBucket, len(buckets))
+		var successful, total int64
+		for _, bucket := range buckets {
+			day := bucket.Day.UTC()
+			byDay[day] = bucket
+			successful += bucket.Successful
+			total += bucket.Total
+		}
+		if total > 0 {
+			snap.Uptime30dPct = float64(successful) / float64(total) * 100
+		} else {
+			snap.Uptime30dPct = 100
+		}
+		snap.Uptime30d = make([]api.StatusUptimeBucket, 0, statusHistoryDays)
+		for i := statusHistoryDays - 1; i >= 0; i-- {
+			day := time.Date(now.Year(), now.Month(), now.Day()-i, 0, 0, 0, 0, time.UTC)
+			bucket := byDay[day]
+			pct := 100.0
+			if bucket.Total > 0 {
+				pct = float64(bucket.Successful) / float64(bucket.Total) * 100
+			}
+			snap.Uptime30d = append(snap.Uptime30d, api.StatusUptimeBucket{
+				Date:       day,
+				UptimePct:  pct,
+				Successful: bucket.Successful,
+				Total:      bucket.Total,
+			})
+		}
+	}
+
+	incidents, err := history.ListStatusIncidentsSince(historyCtx, since, 100)
+	if err != nil {
+		c.log.Warn("status: incident history query failed", "err", err)
+		return
+	}
+	snap.Incidents = make([]api.StatusIncident, 0, len(incidents))
+	for _, incident := range incidents {
+		projected := api.StatusIncident{
+			Component: incident.Component,
+			StartedAt: incident.PostedAt.UTC(),
+			Severity:  incident.Severity,
+			Summary:   incident.Message,
+		}
+		if incident.ResolvedAt != nil {
+			resolved := incident.ResolvedAt.UTC()
+			projected.ResolvedAt = &resolved
+		}
+		snap.Incidents = append(snap.Incidents, projected)
+	}
 }

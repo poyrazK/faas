@@ -191,11 +191,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MAIL_TRANSPORT` | apid, meterd, shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS` | shared | `default` |  |  | `` | optional comma-separated exact account IDs eligible for managed PostgreSQL staging provisioning; malformed or oversized lists fail closed |
 | `FAAS_MANAGED_POSTGRES_CONFIG` | shared | `default` |  |  | `` | optional provider-registry JSON path; apid loads the dark-wired Neon adapter and reconciler, while the file's provisioning_enabled flag defaults false (ADR-155) |
-| `FAAS_MANAGED_POSTGRES_QUALIFIED` | shared | `default` |  |  | `` | explicit staging-only provider qualification approval; provisioning stays disabled unless true and the remaining qualification gates match |
-| `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` | shared | `default` |  |  | `` | exact managed PostgreSQL backend ID approved by the isolated qualification run |
-| `FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT` | shared | `default` |  |  | `` | exact non-secret backend fingerprint approved by the isolated qualification run |
-| `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` | shared | `default` |  |  | `` | RFC3339 expiry for the staging qualification approval; expired approvals fail closed |
-| `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` | shared | `default` |  |  | `` | operator-owned JSON qualification artifact path used by managed-postgres-qualify --verify; verification is read-only and staging-only |
+| `FAAS_MANAGED_POSTGRES_QUALIFIED` | shared | `default` |  |  | `` | legacy explicit staging-only provider qualification approval; used only when no approval artifact path is configured, and provisioning stays disabled unless true and the remaining qualification gates match |
+| `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` | shared | `default` |  |  | `` | legacy exact managed PostgreSQL backend ID; used by the fallback env gate when no approval artifact path is configured |
+| `FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT` | shared | `default` |  |  | `` | legacy exact non-secret backend fingerprint; used by the fallback env gate when no approval artifact path is configured |
+| `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` | shared | `default` |  |  | `` | legacy RFC3339 expiry for the staging qualification approval; used by the fallback env gate when no approval artifact path is configured and expired approvals fail closed |
+| `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` | shared | `default` |  |  | `` | operator-owned JSON qualification artifact path used by managed-postgres-qualify --verify and, when configured, apid's authoritative staging provisioning gate; reload requires an apid restart |
 | `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL` | shared | `default` |  |  | `` | optional approval lifetime for a qualification artifact; must be positive and no longer than 90 days |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |  | `` |  |
@@ -240,6 +240,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_POLAR_HOBBY_INCLUDED_EGRESS_GIB` | shared | `secrets-env` |  |  | `` | Hobby monthly allowance; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_HOBBY_PRODUCT_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_METER_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM` | shared | `secrets-env` |  |  | `` | UTC-month activation boundary; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE` | shared | `secrets-env` |  |  | `` | off (default), shadow, or live; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_OBJECT_STORAGE_METER_ID` | shared | `secrets-env` |  |  | `` | separate Polar meter UUID summing charge_millicents; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME` | shared | `secrets-env` |  |  | `` | defaults to faas_object_storage_usage; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_PRO_INCLUDED_EGRESS_GIB` | shared | `secrets-env` |  |  | `` | Pro monthly allowance; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_PRO_PRODUCT_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_RETURN_URL` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
@@ -264,6 +268,17 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PUBLIC_IFACE` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible |
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `envfile` |  |  | `` |  |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_REALTIME_CALLBACK_TIMEOUT` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_HEALTH_LISTEN` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_HEARTBEAT` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_PONG_WAIT` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_ROLE` | realtimed, shared | `dropin` |  |  | `` |  |
+| `FAAS_REALTIME_SOCKET` | gatewayd-internal, realtimed, shared | `unit` |  |  | `` |  |
+| `FAAS_REALTIME_WRITE_WAIT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_COOLDOWN_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
 | `FAAS_RECONCILE_INTERVAL` | meterd | `default` |  |  | `` |  |
@@ -297,7 +312,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SIGN_PUB` | schedd | `default` |  |  | `` |  |
 | `FAAS_SKIP_PG_TESTS` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SKIP_SOCKET_GROUP` | shared | `dev-only` |  |  | `` | must never be set on a production host |
-| `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` |  |
+| `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` | defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments |
 | `FAAS_SPOOL_ROOT` | apid, builderd | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_ENABLED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_INTERVAL_MS` | gatewayd-public | `default` |  |  | `` |  |

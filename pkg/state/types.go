@@ -695,6 +695,65 @@ type APIConsumerRateCard struct {
 	CreatedAt              time.Time
 }
 
+// APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
+// snapshot. Draft statements can be finalized once all usage is priced.
+type APIConsumerUsageStatementStatus string
+
+const (
+	APIConsumerUsageStatementDraft     APIConsumerUsageStatementStatus = "draft"
+	APIConsumerUsageStatementFinalized APIConsumerUsageStatementStatus = "finalized"
+)
+
+// APIConsumerUsageStatementBucket is the priced snapshot for one UTC minute.
+// Empty RateCardID/Currency denotes an explicitly unpriced bucket.
+type APIConsumerUsageStatementBucket struct {
+	WindowStart            time.Time `json:"window_start"`
+	BillableUnits          int64     `json:"billable_units"`
+	RateCardID             string    `json:"rate_card_id,omitempty"`
+	Currency               string    `json:"currency,omitempty"`
+	PriceMillicentsPerUnit int64     `json:"price_millicents_per_unit,omitempty"`
+	AmountMillicents       int64     `json:"amount_millicents"`
+}
+
+// APIConsumerUsageStatement is a durable, auditable snapshot of a consumer's
+// usage quote for one period. Once created, its buckets and totals never
+// change; finalization only records the payable lifecycle transition.
+type APIConsumerUsageStatement struct {
+	ID               string
+	AccountID        string
+	AppID            string
+	ConsumerID       string
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	Status           APIConsumerUsageStatementStatus
+	Currency         string
+	BillableUnits    int64
+	UnpricedUnits    int64
+	AmountMillicents int64
+	Priced           bool
+	Buckets          []APIConsumerUsageStatementBucket
+	AsOf             time.Time
+	CreatedAt        time.Time
+	FinalizedAt      *time.Time
+}
+
+// APIConsumerUsageStatementInput contains the quote to persist. The handler
+// builds it from the usage ledger and immutable rate-card versions.
+type APIConsumerUsageStatementInput struct {
+	AccountID        string
+	AppID            string
+	ConsumerID       string
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	Currency         string
+	BillableUnits    int64
+	UnpricedUnits    int64
+	AmountMillicents int64
+	Priced           bool
+	Buckets          []APIConsumerUsageStatementBucket
+	AsOf             time.Time
+}
+
 // Active reports whether the key is in an authentication-eligible
 // state (not revoked, not expired). The gatewayd-internal
 // middleware reads this on every inbound request.
@@ -950,6 +1009,13 @@ type App struct {
 	// the gatewayd-internal apps LRU cache can be flushed without
 	// waking up on every unrelated app update.
 	MaintenanceMode bool
+	// OnlyAllowDeclaredRoutes enables gateway-side OpenAPI/route-list
+	// enforcement before an application wake. It is deliberately opt-in;
+	// legacy apps keep the historical "forward then let the app 404" path.
+	OnlyAllowDeclaredRoutes bool
+	// DeclaredRoutes is an optional explicit route list. When populated, the
+	// gateway uses it instead of the imported OpenAPI document.
+	DeclaredRoutes []DeclaredRoute
 	// RequireSigned gates OCI image deploys (issue #472 / ADR-054) on
 	// a valid cosign signature from a trusted publisher. When true,
 	// imaged's buildImageLayer calls pkg/cosign.VerifyImageSignature
@@ -1224,6 +1290,14 @@ type App struct {
 	// 00215_apps_cors_defaults.sql for the rationale.
 	CORSDefaultOrigins []string
 	CreatedAt          time.Time
+}
+
+// DeclaredRoute is the persisted explicit route-list shape used by the
+// only-declared-routes policy. Path parameters use OpenAPI's `{name}` segment
+// syntax and Methods contains uppercase HTTP verbs.
+type DeclaredRoute struct {
+	Path    string   `json:"path"`
+	Methods []string `json:"methods"`
 }
 
 // IsDeveloperApp reports whether an app is the expiring environment created
@@ -2729,22 +2803,23 @@ func (e *AlertRuleQuotaError) Error() string {
 type AppWebhookEvent string
 
 const (
-	AppWebhookEventCronFired         AppWebhookEvent = "cron.fired"
-	AppWebhookEventCronFiredManually AppWebhookEvent = "cron.fired.manually"
-	AppWebhookEventAppCreated        AppWebhookEvent = "app.created"
-	AppWebhookEventAppDeleted        AppWebhookEvent = "app.deleted"
-	AppWebhookEventAppDeployed       AppWebhookEvent = "app.deployed"
-	AppWebhookEventAppScaled         AppWebhookEvent = "app.scaled"
-	AppWebhookEventAppParked         AppWebhookEvent = "app.parked"
-	AppWebhookEventAppWoken          AppWebhookEvent = "app.woken"
-	AppWebhookEventBuildSucceeded    AppWebhookEvent = "build.succeeded"
-	AppWebhookEventBuildFailed       AppWebhookEvent = "build.failed"
-	AppWebhookEventDeploymentFailed  AppWebhookEvent = "deployment.failed"
-	AppWebhookEventRolloutAborted    AppWebhookEvent = "rollout.aborted"
-	AppWebhookEventErrorNew          AppWebhookEvent = "error.new"
-	AppWebhookEventJobFinished       AppWebhookEvent = "job.finished"
-	AppWebhookEventPreviewCreated    AppWebhookEvent = "preview.created"
-	AppWebhookEventBudgetThreshold   AppWebhookEvent = "budget.threshold"
+	AppWebhookEventCronFired               AppWebhookEvent = "cron.fired"
+	AppWebhookEventCronFiredManually       AppWebhookEvent = "cron.fired.manually"
+	AppWebhookEventAppCreated              AppWebhookEvent = "app.created"
+	AppWebhookEventAppDeleted              AppWebhookEvent = "app.deleted"
+	AppWebhookEventAppDeployed             AppWebhookEvent = "app.deployed"
+	AppWebhookEventAppScaled               AppWebhookEvent = "app.scaled"
+	AppWebhookEventAppParked               AppWebhookEvent = "app.parked"
+	AppWebhookEventAppWoken                AppWebhookEvent = "app.woken"
+	AppWebhookEventBuildSucceeded          AppWebhookEvent = "build.succeeded"
+	AppWebhookEventBuildFailed             AppWebhookEvent = "build.failed"
+	AppWebhookEventDeploymentFailed        AppWebhookEvent = "deployment.failed"
+	AppWebhookEventRolloutAborted          AppWebhookEvent = "rollout.aborted"
+	AppWebhookEventErrorNew                AppWebhookEvent = "error.new"
+	AppWebhookEventJobFinished             AppWebhookEvent = "job.finished"
+	AppWebhookEventPreviewCreated          AppWebhookEvent = "preview.created"
+	AppWebhookEventBudgetThreshold         AppWebhookEvent = "budget.threshold"
+	AppWebhookEventUsageStatementFinalized AppWebhookEvent = "usage_statement.finalized"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -2767,6 +2842,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventJobFinished,
 	AppWebhookEventPreviewCreated,
 	AppWebhookEventBudgetThreshold,
+	AppWebhookEventUsageStatementFinalized,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed
@@ -4479,6 +4555,14 @@ type UpdateAppParams struct {
 	// that does not want the per-route cardinality on the box).
 	RouteMetricsEnabled    *bool
 	SetRouteMetricsEnabled bool
+	// OnlyAllowDeclaredRoutes enables the gateway-side declared-route
+	// contract. SetOnlyAllowDeclaredRoutes distinguishes an explicit false
+	// (disable) from an omitted field. DeclaredRoutes is an optional explicit
+	// route list; when non-empty it takes precedence over OpenAPI at the edge.
+	OnlyAllowDeclaredRoutes    *bool
+	SetOnlyAllowDeclaredRoutes bool
+	DeclaredRoutes             *[]DeclaredRoute
+	SetDeclaredRoutes          bool
 	// AppProtocol (ADR-124) is the per-app wire-protocol
 	// selector stored on the apps row as text NOT NULL DEFAULT
 	// 'http1'. Closed set {http1, http2, grpc} enforced by
@@ -6594,6 +6678,16 @@ type StatusIncident struct {
 	Message    string
 	PostedAt   time.Time
 	ResolvedAt *time.Time
+}
+
+// StatusUptimeBucket is the daily terminal-invocation rollup used by the
+// public status page. It deliberately lives in state so both PgStore and
+// MemStore can expose the same optional read seam without widening Store's
+// large compatibility interface.
+type StatusUptimeBucket struct {
+	Day        time.Time
+	Successful int64
+	Total      int64
 }
 
 // StatusIncidentComponent* are the closed-set vocabulary for the

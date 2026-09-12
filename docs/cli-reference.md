@@ -247,7 +247,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
 
-`gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>]`
+`gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -255,6 +255,8 @@ Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|-
 | `--ram <MB>` | set RAM in MB |  |
 | `--max-concurrency <N>` | set max_concurrency |  |
 | `--require-signed <value>` | toggle require_signed | one of `true` · `false` |
+| `--only-declared-routes` | reject undeclared paths before waking the app (OpenAPI or explicit route list) |  |
+| `--no-only-declared-routes` | disable the declared-route pre-wake gate |  |
 
 ### app scale
 
@@ -391,13 +393,17 @@ Show the GitHub connection health for &lt;slug&gt;
 
 Reconcile repository access with GitHub
 
+### github repos
+
+List repositories visible to the connected GitHub installation for &lt;slug&gt;
+
 ### github bind
 
 Bind &lt;slug&gt; to a visible GitHub repository
 
 | Flag | Meaning | |
 |---|---|---|
-| `--installation-id <ID>` | GitHub App installation id | required |
+| `--installation-id <ID>` | GitHub App installation id (auto-resolved when omitted) |  |
 | `--repo <OWNER/NAME>` | GitHub repository OWNER/NAME | required |
 | `--branch <BRANCH>` | production branch |  |
 | `--deploy-branches <MAPPINGS>` | branch=scope mappings |  |
@@ -1477,7 +1483,12 @@ Remove a registry credential
 
 Re-promote the previous deployment
 
-`gregale rollback`
+`gregale rollback <slug> [--to <deployment_id>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to <deployment_id>` | target deployment id |  |
+| `--json` | machine-readable output |  |
 
 
 ## rollouts
@@ -1671,7 +1682,7 @@ Per-route throttle recommendations + dry-run preview (gregale throttle-suggestio
 
 | Flag | Meaning | |
 |---|---|---|
-| `--range <WINDOW>` | observation window (e.g. 5m\|1h\|24h) | one of `5m` · `15m` · `1h` · `6h` · `24h` |
+| `--range <WINDOW>` | observation window (5m\|15m\|1h\|6h\|24h\|7d\|15d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` · `15d` |
 | `--dry-run` | enable the dry-run preview pass (requires --candidate-rps) |  |
 | `--candidate-rps <N>` | candidate rate-limit rps for the dry-run preview |  |
 | `--candidate-burst <N>` | candidate burst for the dry-run preview |  |

@@ -8,10 +8,17 @@ const (
 	// DefaultEgressUsageEventName is the event name reserved for canonical
 	// host-interface egress. It is inert while EgressBillingMode is off.
 	DefaultEgressUsageEventName = "faas_egress_usage"
+	// DefaultObjectStorageUsageEventName is the event name reserved for
+	// immutable UTC-month object-storage charges.
+	DefaultObjectStorageUsageEventName = "faas_object_storage_usage"
 
 	EgressBillingOff    = "off"
 	EgressBillingShadow = "shadow"
 	EgressBillingLive   = "live"
+
+	ObjectStorageBillingOff    = "off"
+	ObjectStorageBillingShadow = "shadow"
+	ObjectStorageBillingLive   = "live"
 )
 
 // Config is the Polar on-disk settings. Polar product, meter, and webhook
@@ -66,6 +73,19 @@ type Config struct {
 	HobbyIncludedEgressGiB int64 `toml:"hobby_included_egress_gib"`
 	ProIncludedEgressGiB   int64 `toml:"pro_included_egress_gib"`
 	ScaleIncludedEgressGiB int64 `toml:"scale_included_egress_gib"`
+
+	// ObjectStorageBillingMode independently gates month-close object-storage
+	// charges. Shadow records the would-be charge locally, while live emits one
+	// idempotent event per immutable billing record.
+	ObjectStorageBillingMode string `toml:"object_storage_billing_mode"`
+	// ObjectStorageBillingFrom is an RFC3339 UTC-month activation boundary.
+	// Closed periods before it are acknowledged and never sent later.
+	ObjectStorageBillingFrom string `toml:"object_storage_billing_from"`
+	// ObjectStorageUsageEventName and ObjectStorageMeterID identify a third
+	// Polar meter that sums metadata.charge_millicents. Each meter unit costs
+	// 0.001 euro cents, preserving Gregale's integer-millicent ledger exactly.
+	ObjectStorageUsageEventName string `toml:"object_storage_usage_event_name"`
+	ObjectStorageMeterID        string `toml:"object_storage_meter_id"`
 	// SuccessURL and ReturnURL are optional hosted-checkout redirects.
 	SuccessURL string `toml:"success_url"`
 	ReturnURL  string `toml:"return_url"`
@@ -91,5 +111,11 @@ func (c *Config) Defaults() {
 	}
 	if c.EgressUsageEventName == "" {
 		c.EgressUsageEventName = DefaultEgressUsageEventName
+	}
+	if c.ObjectStorageBillingMode == "" {
+		c.ObjectStorageBillingMode = ObjectStorageBillingOff
+	}
+	if c.ObjectStorageUsageEventName == "" {
+		c.ObjectStorageUsageEventName = DefaultObjectStorageUsageEventName
 	}
 }

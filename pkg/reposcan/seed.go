@@ -105,6 +105,7 @@ type workloadSeed struct {
 	rootDir    string
 	dockerfile string
 	command    []string
+	dependsOn  []string
 	class      Class
 	schedule   string
 	ports      []int

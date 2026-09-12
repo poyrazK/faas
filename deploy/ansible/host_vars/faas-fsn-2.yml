@@ -1,5 +1,5 @@
 # Gate-B (issue #297 / ADR-025 §Tier 2) compute-only box.
-# fsn-2 runs vmmd, schedd, gatewayd-internal, builderd, imaged.
+# fsn-2 runs vmmd, schedd, realtimed, gatewayd-internal, builderd, imaged.
 # Postgres + the Tier 1 PKI CA live on fsn-1; this box runs its own schedd
 # beside vmmd and reaches the control plane over the overlay network.
 # M9 also consumes the shared schedd

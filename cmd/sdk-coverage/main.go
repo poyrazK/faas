@@ -90,6 +90,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/nodes/wake-latency":      true, // ADR-092 — operator-only per-node wake-latency quantiles (PR #4)
 	"GET /v1/admin/obs/builder-heartbeats":      true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
 	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
+	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
 
 	// Operator-side observability mega-PR (PR #1099) P2 recovery
 	// primitives. Same operator-only posture as the ADR-091
@@ -257,6 +258,7 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"GET /v1/github/repos":                         "ListGitHubRepositories",
 	"DELETE /v1/keys/{id}":                         "DeleteKey",
 	"POST /v1/keys/{id}/rotate":                    "RotateKey",
 	"PATCH /v1/account/keys/grace_window_days":     "SetGraceWindow",
@@ -307,73 +309,77 @@ var methodRouteMap = map[string]string{
 	// underscore survives title-case), so the explicit map drops the
 	// underscore and aligns with the SDK's Get*EgressAllowlistExtra
 	// method names.
-	"GET /v1/account/egress_allowlist_extra":                       "GetEgressAllowlistExtra",
-	"PATCH /v1/account/egress_allowlist_extra":                     "SetEgressAllowlistExtra",
-	"GET /v1/account/managed-postgres-usage":                       "GetManagedPostgresUsage",
-	"GET /v1/account/usage":                                        "AccountUsage",
-	"GET /v1/postgres/databases":                                   "ListManagedPostgresDatabases",
-	"POST /v1/postgres/databases":                                  "CreateManagedPostgresDatabase",
-	"GET /v1/postgres/databases/{id}":                              "GetManagedPostgresDatabase",
-	"DELETE /v1/postgres/databases/{id}":                           "DeleteManagedPostgresDatabase",
-	"POST /v1/postgres/databases/{id}/restore":                     "RestoreManagedPostgresDatabase",
-	"GET /v1/postgres/databases/{id}/bindings":                     "ListManagedPostgresBindings",
-	"POST /v1/postgres/databases/{id}/bindings":                    "CreateManagedPostgresBinding",
-	"GET /v1/postgres/bindings/{id}":                               "GetManagedPostgresBinding",
-	"DELETE /v1/postgres/bindings/{id}":                            "DeleteManagedPostgresBinding",
-	"GET /v1/apps/{slug}/logs":                                     "StreamAppLogs",
-	"GET /v1/deployments/{id}/logs":                                "StreamDeploymentLogs",
-	"GET /v1/deployments/{id}/scan":                                "GetDeploymentScan",              // issue #464 / ADR-055; per-deploy grype CVE drill-down
-	"GET /v1/deployments/{id}/secret-scan":                         "GetDeploymentSecretScan",        // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
-	"GET /v1/deployments/{id}/stages":                              "GetDeploymentStages",            // ADR-117 follow-on; post-stream closed-stage summary for `gregale deploys show <id>`
-	"GET /v1/deployments/{id}/audit":                               "ListDeploymentAudit",            // issue #976 / ADR-122 SAFE-RELEASES-E.2 + production-leveling Stream A; per-deployment audit timeline drill-down
-	"POST /v1/deployments/{id}/canary/advance":                     "AdvanceCanary",                  // issue #976 / ADR-122; APID-owned atomic canary CAS + traffic + audit
-	"POST /v1/deployments/{id}/retry":                              "RetryDeploymentFromStage",       // ADR-117 §Production-ready follow-on C2; per-stage retry
-	"GET /v1/deployments/{id}/url":                                 "GetDeploymentURL",               // issue #976 / ADR-122 SAFE-RELEASES-C.2; per-deployment preview URL (deploy-N.slug.gregale.dev)
-	"GET /v1/apps/{slug}/deployments/{deployment}/openapi":         "GetAppsDeploymentOpenAPIDoc",    // issue #975 item #1 / ADR-122 — captured OpenAPI doc per deployment
-	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":       "PatchAppsDeploymentOpenAPIDoc",  // manual upload; same store as cold-boot capture
-	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi":      "DeleteAppsDeploymentOpenAPIDoc", // wipe the captured doc; re-captures on next cold boot
-	"GET /v1/apps/{slug}/env-diff":                                 "GetAppEnvDiff",                  // ADR-117 PR-C: env vars + secrets × scopes matrix; matches operationId `getAppEnvDiff` (auto-derivation would produce `GetAppsSlugEnv-diff` because of the literal hyphen in the path segment — the explicit map drops the slug placeholder + the hyphen for Go SDK hygiene, mirroring the `GetAppMetrics` / `GetAppSLO` / `GetAppDataUpstream` precedent above)
-	"GET /v1/apps/{slug}/openapi":                                  "GetAppOpenAPI",                  // issue #975 item #2 / ADR-126 — imported or auto-generated OpenAPI doc per app
-	"POST /v1/apps/{slug}/openapi":                                 "ImportAppOpenAPI",               // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc
-	"DELETE /v1/apps/{slug}/openapi":                               "DeleteAppOpenAPI",               // idempotent wipe of the imported doc (item #2 D5 emits pg_notify)
-	"POST /v1/apps/{slug}/openapi/dry-run":                         "DryRunAppOpenAPI",               // read-only edge-rule suggestions (item #2 D3)
-	"GET /v1/apps/{slug}/openapi/preview":                          "PreviewAppOpenAPIPolicy",        // read-only declared-vs-observed route-policy preview (roadmap item 11)
-	"POST /v1/apps/{slug}/openapi/apply":                           "ApplyAppOpenAPIPolicy",          // explicit plan/confirm policy apply
-	"GET /v1/apps/{slug}/openapi/diff":                             "DiffAppOpenAPIContract",         // ADR-121 production contract gate preview
-	"GET /v1/apps/{slug}/github":                                   "GetGitHubConnection",
-	"POST /v1/apps/{slug}/github/bind":                             "BindGitHubConnection",
-	"POST /v1/apps/{slug}/github/sync":                             "SyncGitHubConnection",
-	"DELETE /v1/apps/{slug}/github":                                "DisconnectGitHubConnection",
-	"GET /v1/deployments/{id}":                                     "GetDeployment",
-	"PATCH /v1/deployments/{id}":                                   "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override
-	"DELETE /v1/deployments/{id}":                                  "ClearDeployment", // ADR-124 PR-A; soft-delete (status untouched)
-	"GET /v1/deployments":                                          "ListDeployments",
-	"GET /v1/deployments/latest-by-app":                            "ListLatestDeploymentsByApp",
-	"POST /v1/deployments/{id}/reorder":                            "ReorderDeployment",        // ADR-124 PR-A; priority bump on pending deploy
-	"POST /v1/apps/{slug}/deployments/{id}/cancel":                 "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
-	"POST /v1/apps/{slug}/deployments/clear-obsolete":              "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows
-	"GET /v1/apps":                                                 "ListApps",
-	"POST /v1/apps":                                                "CreateApp",
-	"GET /v1/apps/{slug}/consumers":                                "ListAPIConsumers",
-	"POST /v1/apps/{slug}/consumers":                               "CreateAPIConsumer",
-	"GET /v1/apps/{slug}/consumers/{consumer_id}":                  "GetAPIConsumer",
-	"GET /v1/apps/{slug}/rate-cards":                               "ListAPIConsumerRateCards",
-	"POST /v1/apps/{slug}/rate-cards":                              "CreateAPIConsumerRateCard",
-	"GET /v1/apps/{slug}/rate-cards/{rate_card_id}":                "GetAPIConsumerRateCard",
-	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage":            "GetAPIConsumerUsage",
-	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote":      "GetAPIConsumerUsageQuote",
-	"DELETE /v1/apps/{slug}/consumers/{consumer_id}":               "RevokeAPIConsumer",
-	"GET /v1/apps/{slug}/consumers/{consumer_id}/keys":             "ListConsumerKeys",
-	"POST /v1/apps/{slug}/consumers/{consumer_id}/keys":            "CreateConsumerKey",
-	"DELETE /v1/apps/{slug}/consumers/{consumer_id}/keys/{key_id}": "RevokeConsumerKey",
-	"GET /status/slo.json":                                         "GetStatusSLO",
-	"PATCH /v1/crons/{id}":                                         "UpdateCron",
-	"POST /v1/crons":                                               "CreateCron",
-	"GET /v1/crons":                                                "ListCrons",
-	"GET /v1/crons/{id}/runs":                                      "ListCronRuns",       // issue #791 — per-cron execution history
-	"POST /v1/crons/{id}/run":                                      "FireCron",           // issue #791 — manual fire-now (PR-C)
-	"GET /v1/cron-fire-now-requests/{request_id}":                  "GetFireCronRequest", // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
-	"GET /v1/crons/{id}":                                           "GetCron",            // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
+	"GET /v1/account/egress_allowlist_extra":                                                "GetEgressAllowlistExtra",
+	"PATCH /v1/account/egress_allowlist_extra":                                              "SetEgressAllowlistExtra",
+	"GET /v1/account/managed-postgres-usage":                                                "GetManagedPostgresUsage",
+	"GET /v1/account/usage":                                                                 "AccountUsage",
+	"GET /v1/postgres/databases":                                                            "ListManagedPostgresDatabases",
+	"POST /v1/postgres/databases":                                                           "CreateManagedPostgresDatabase",
+	"GET /v1/postgres/databases/{id}":                                                       "GetManagedPostgresDatabase",
+	"DELETE /v1/postgres/databases/{id}":                                                    "DeleteManagedPostgresDatabase",
+	"POST /v1/postgres/databases/{id}/restore":                                              "RestoreManagedPostgresDatabase",
+	"GET /v1/postgres/databases/{id}/bindings":                                              "ListManagedPostgresBindings",
+	"POST /v1/postgres/databases/{id}/bindings":                                             "CreateManagedPostgresBinding",
+	"GET /v1/postgres/bindings/{id}":                                                        "GetManagedPostgresBinding",
+	"DELETE /v1/postgres/bindings/{id}":                                                     "DeleteManagedPostgresBinding",
+	"GET /v1/apps/{slug}/logs":                                                              "StreamAppLogs",
+	"GET /v1/deployments/{id}/logs":                                                         "StreamDeploymentLogs",
+	"GET /v1/deployments/{id}/scan":                                                         "GetDeploymentScan",              // issue #464 / ADR-055; per-deploy grype CVE drill-down
+	"GET /v1/deployments/{id}/secret-scan":                                                  "GetDeploymentSecretScan",        // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
+	"GET /v1/deployments/{id}/stages":                                                       "GetDeploymentStages",            // ADR-117 follow-on; post-stream closed-stage summary for `gregale deploys show <id>`
+	"GET /v1/deployments/{id}/audit":                                                        "ListDeploymentAudit",            // issue #976 / ADR-122 SAFE-RELEASES-E.2 + production-leveling Stream A; per-deployment audit timeline drill-down
+	"POST /v1/deployments/{id}/canary/advance":                                              "AdvanceCanary",                  // issue #976 / ADR-122; APID-owned atomic canary CAS + traffic + audit
+	"POST /v1/deployments/{id}/retry":                                                       "RetryDeploymentFromStage",       // ADR-117 §Production-ready follow-on C2; per-stage retry
+	"GET /v1/deployments/{id}/url":                                                          "GetDeploymentURL",               // issue #976 / ADR-122 SAFE-RELEASES-C.2; per-deployment preview URL (deploy-N.slug.gregale.dev)
+	"GET /v1/apps/{slug}/deployments/{deployment}/openapi":                                  "GetAppsDeploymentOpenAPIDoc",    // issue #975 item #1 / ADR-122 — captured OpenAPI doc per deployment
+	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":                                "PatchAppsDeploymentOpenAPIDoc",  // manual upload; same store as cold-boot capture
+	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi":                               "DeleteAppsDeploymentOpenAPIDoc", // wipe the captured doc; re-captures on next cold boot
+	"GET /v1/apps/{slug}/env-diff":                                                          "GetAppEnvDiff",                  // ADR-117 PR-C: env vars + secrets × scopes matrix; matches operationId `getAppEnvDiff` (auto-derivation would produce `GetAppsSlugEnv-diff` because of the literal hyphen in the path segment — the explicit map drops the slug placeholder + the hyphen for Go SDK hygiene, mirroring the `GetAppMetrics` / `GetAppSLO` / `GetAppDataUpstream` precedent above)
+	"GET /v1/apps/{slug}/openapi":                                                           "GetAppOpenAPI",                  // issue #975 item #2 / ADR-126 — imported or auto-generated OpenAPI doc per app
+	"POST /v1/apps/{slug}/openapi":                                                          "ImportAppOpenAPI",               // manual upload (item #2 D2/D6); persists via UpsertAppOpenAPIDoc
+	"DELETE /v1/apps/{slug}/openapi":                                                        "DeleteAppOpenAPI",               // idempotent wipe of the imported doc (item #2 D5 emits pg_notify)
+	"POST /v1/apps/{slug}/openapi/dry-run":                                                  "DryRunAppOpenAPI",               // read-only edge-rule suggestions (item #2 D3)
+	"GET /v1/apps/{slug}/openapi/preview":                                                   "PreviewAppOpenAPIPolicy",        // read-only declared-vs-observed route-policy preview (roadmap item 11)
+	"POST /v1/apps/{slug}/openapi/apply":                                                    "ApplyAppOpenAPIPolicy",          // explicit plan/confirm policy apply
+	"GET /v1/apps/{slug}/openapi/diff":                                                      "DiffAppOpenAPIContract",         // ADR-121 production contract gate preview
+	"GET /v1/apps/{slug}/github":                                                            "GetGitHubConnection",
+	"POST /v1/apps/{slug}/github/bind":                                                      "BindGitHubConnection",
+	"POST /v1/apps/{slug}/github/sync":                                                      "SyncGitHubConnection",
+	"DELETE /v1/apps/{slug}/github":                                                         "DisconnectGitHubConnection",
+	"GET /v1/deployments/{id}":                                                              "GetDeployment",
+	"PATCH /v1/deployments/{id}":                                                            "PatchDeployment", // ADR-072 / issue #557 closure; min_instances override
+	"DELETE /v1/deployments/{id}":                                                           "ClearDeployment", // ADR-124 PR-A; soft-delete (status untouched)
+	"GET /v1/deployments":                                                                   "ListDeployments",
+	"GET /v1/deployments/latest-by-app":                                                     "ListLatestDeploymentsByApp",
+	"POST /v1/deployments/{id}/reorder":                                                     "ReorderDeployment",        // ADR-124 PR-A; priority bump on pending deploy
+	"POST /v1/apps/{slug}/deployments/{id}/cancel":                                          "CancelDeployment",         // ADR-124 PR-A; status flip + cascade
+	"POST /v1/apps/{slug}/deployments/clear-obsolete":                                       "ClearObsoleteDeployments", // ADR-124 PR-A; bulk soft-delete terminal rows
+	"GET /v1/apps":                                                                          "ListApps",
+	"POST /v1/apps":                                                                         "CreateApp",
+	"GET /v1/apps/{slug}/consumers":                                                         "ListAPIConsumers",
+	"POST /v1/apps/{slug}/consumers":                                                        "CreateAPIConsumer",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}":                                           "GetAPIConsumer",
+	"GET /v1/apps/{slug}/rate-cards":                                                        "ListAPIConsumerRateCards",
+	"POST /v1/apps/{slug}/rate-cards":                                                       "CreateAPIConsumerRateCard",
+	"GET /v1/apps/{slug}/rate-cards/{rate_card_id}":                                         "GetAPIConsumerRateCard",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage":                                     "GetAPIConsumerUsage",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote":                               "GetAPIConsumerUsageQuote",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                          "ListAPIConsumerUsageStatements",
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                         "CreateAPIConsumerUsageStatement",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}":           "GetAPIConsumerUsageStatement",
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/finalize": "FinalizeAPIConsumerUsageStatement",
+	"DELETE /v1/apps/{slug}/consumers/{consumer_id}":                                        "RevokeAPIConsumer",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/keys":                                      "ListConsumerKeys",
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/keys":                                     "CreateConsumerKey",
+	"DELETE /v1/apps/{slug}/consumers/{consumer_id}/keys/{key_id}":                          "RevokeConsumerKey",
+	"GET /status/slo.json":                                                                  "GetStatusSLO",
+	"PATCH /v1/crons/{id}":                                                                  "UpdateCron",
+	"POST /v1/crons":                                                                        "CreateCron",
+	"GET /v1/crons":                                                                         "ListCrons",
+	"GET /v1/crons/{id}/runs":                                                               "ListCronRuns",       // issue #791 — per-cron execution history
+	"POST /v1/crons/{id}/run":                                                               "FireCron",           // issue #791 — manual fire-now (PR-C)
+	"GET /v1/cron-fire-now-requests/{request_id}":                                           "GetFireCronRequest", // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
+	"GET /v1/crons/{id}":                                                                    "GetCron",            // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
 	// Issue #1184 Workstream A — run-to-completion jobs. Same
 	// resource-noun convention as crons + alerts + edge-rules:
 	// auto-derivation produces verb+placeholder concatenation
@@ -517,6 +523,9 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/upstreams/{id}":                                                    "DeleteAppDataUpstream",
 	"GET /v1/keys":                                                                             "ListKeys",
 	"GET /v1/apps/{slug}/buckets":                                                              "ListObjectBuckets",
+	"GET /v1/apps/{slug}/upload-routes":                                                        "ListObjectUploadRoutes",
+	"POST /v1/apps/{slug}/upload-routes":                                                       "CreateObjectUploadRoute",
+	"DELETE /v1/apps/{slug}/upload-routes/{route}":                                             "DeleteObjectUploadRoute",
 	"GET /v1/account/object-storage-usage":                                                     "GetObjectStorageUsage",
 	"POST /v1/admin/object-storage/usage-reports":                                              "RecordObjectStorageUsage",
 	"POST /v1/apps/{slug}/buckets":                                                             "CreateObjectBucket",
@@ -691,6 +700,7 @@ var methodRouteMap = map[string]string{
 	// list family (ListAlertRules, ListEdgeRules, ListAppWebhooks)
 	// — drop the slug placeholder from the verb.
 	"GET /v1/apps/{slug}/debug/requests":                   "ListAppDebugRequests",
+	"GET /v1/apps/{slug}/debug/requests/export":            "ExportAppDebugRequests",
 	"GET /v1/apps/{slug}/debug/requests/{req_id}":          "GetAppDebugRequest",
 	"GET /v1/apps/{slug}/debug/requests/{req_id}/evidence": "GetAppDebugRequestEvidence",
 	"GET /v1/apps/{slug}/debug/coverage":                   "GetAppDebugCoverage",

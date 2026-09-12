@@ -1,0 +1,4 @@
+[Service]
+# realtimed is a compute-only (or single-box) daemon. Keep the role gate in
+# systemd rather than relying on the single-box default in cmd/realtimed.
+Environment=FAAS_REALTIME_ROLE={{ faas_box_role }}

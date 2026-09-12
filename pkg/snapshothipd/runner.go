@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	// DefaultInterval keeps newly-created fan-out jobs moving quickly. The
-	// steady-state reconciliation is event-cursor based, so it does not scan
-	// the complete snapshots table.
-	DefaultInterval = time.Second
+	// DefaultInterval keeps queue wait below the 200 ms prepositioned-wake
+	// budget. Reconciliation is event-cursor based, so this tighter cadence
+	// does not rescan the complete snapshots table.
+	DefaultInterval = 100 * time.Millisecond
 	// DefaultMaxPerTick avoids making a registry outage or a large snapshot
 	// backlog monopolise a schedd process.
 	DefaultMaxPerTick = 4
@@ -149,25 +149,52 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 				err = state.PermanentSnapshotReplicaError(err)
 			}
 			r.metricsObserve("failed", job.Region)
-			if markErr := r.store.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, job.NodeID, err); markErr != nil {
+			if markErr := r.markReplicaFailed(ctx, job, err); markErr != nil {
 				r.log.Warn("snapshothipd: mark failed", "snapshot_id", job.SnapshotID, "node_id", job.NodeID, "err", markErr)
 			}
 			r.log.Warn("snapshothipd: snapshot preposition failed", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "node_id", job.NodeID, "attempt", job.Attempts, "err", err)
 			continue
 		}
-		if err := r.store.MarkSnapshotReplicaReady(ctx, job.SnapshotID, job.NodeID); err != nil {
+		if err := r.markReplicaReady(ctx, job); err != nil {
 			r.metricsObserve("failed", job.Region)
 			r.log.Warn("snapshothipd: mark ready failed", "snapshot_id", job.SnapshotID, "node_id", job.NodeID, "err", err)
 			continue
 		}
 		r.metricsObserve("ready", job.Region)
+		if !job.QueuedAt.IsZero() {
+			if latency := time.Since(job.QueuedAt); latency >= 0 {
+				r.metricsObserveLatency(job.Region, latency)
+			}
+		}
 		r.log.Debug("snapshothipd: snapshot prepositioned", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "node_id", job.NodeID, "attempt", job.Attempts)
 	}
+}
+
+func (r *Runner) markReplicaReady(ctx context.Context, job state.SnapshotReplicaJob) error {
+	if leased, ok := r.store.(state.SnapshotReplicaLeaseStore); ok {
+		return leased.MarkSnapshotReplicaReadyWithLease(ctx, job.SnapshotID, job.NodeID, job.LeaseToken)
+	}
+	return r.store.MarkSnapshotReplicaReady(ctx, job.SnapshotID, job.NodeID)
+}
+
+func (r *Runner) markReplicaFailed(ctx context.Context, job state.SnapshotReplicaJob, cause error) error {
+	if leased, ok := r.store.(state.SnapshotReplicaLeaseStore); ok {
+		return leased.MarkSnapshotReplicaFailedWithLease(ctx, job.SnapshotID, job.NodeID, job.LeaseToken, cause)
+	}
+	return r.store.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, job.NodeID, cause)
 }
 
 func (r *Runner) metricsObserve(outcome, region string) {
 	if r.metrics != nil {
 		r.metrics.ObserveFanout(outcome, region)
+	}
+}
+
+func (r *Runner) metricsObserveLatency(region string, latency time.Duration) {
+	if metrics, ok := r.metrics.(interface {
+		ObserveFanoutLatency(region string, latency time.Duration)
+	}); ok {
+		metrics.ObserveFanoutLatency(region, latency)
 	}
 }
 

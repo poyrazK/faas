@@ -212,7 +212,16 @@ func (s *server) listInstallableRepos(w http.ResponseWriter, r *http.Request) {
 			"Could not reach GitHub", "retry in a minute: https://docs/connect-github"))
 		return
 	}
-	writeJSON(w, http.StatusOK, repos)
+	out := make([]api.RepoResponse, 0, len(repos))
+	for _, repo := range repos {
+		out = append(out, api.RepoResponse{
+			ID:            repo.ID,
+			FullName:      repo.FullName,
+			DefaultBranch: repo.DefaultBranch,
+			Private:       repo.Private,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // bindAppToRepo persists the (account, app, install, repo, branch)

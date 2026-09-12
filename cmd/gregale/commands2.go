@@ -262,6 +262,11 @@ func cmdApp(args []string) int {
 	// problem code.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL unless --public-auth is also set")
+	// Only-allow-declared-routes is a plan-agnostic pre-wake gate. The
+	// positive/negative pair mirrors require-authn: explicit false is useful
+	// when temporarily rolling back a contract without deleting the document.
+	onlyDeclaredRoutes := fs.Bool("only-declared-routes", false, "reject paths not declared by the OpenAPI document (or explicit route list) before wake")
+	noOnlyDeclaredRoutes := fs.Bool("no-only-declared-routes", false, "disable the declared-route pre-wake gate")
 	headWakes := fs.Bool("head-wakes", false, "wake a parked app for HEAD / instead of using the cached edge answer")
 	crawlerPolicy := fs.String("crawler-policy", "", "known monitor/crawler policy: wake|cached|block")
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
@@ -319,6 +324,9 @@ func cmdApp(args []string) int {
 	// CLI's job is to keep the flag pair consistent.
 	if *requireAuthn && *noRequireAuthn {
 		return printErr("Invalid flags", fmt.Errorf("--require-authn and --no-require-authn are mutually exclusive"))
+	}
+	if *onlyDeclaredRoutes && *noOnlyDeclaredRoutes {
+		return printErr("Invalid flags", fmt.Errorf("--only-declared-routes and --no-only-declared-routes are mutually exclusive"))
 	}
 	// Issue #559: --concurrency fast path. Refuse to mix with
 	// update flags (mixing a read-only query with a write would
@@ -451,6 +459,14 @@ func cmdApp(args []string) int {
 			req.PublicAuth = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
 		}
 	}
+	if explicit["only-declared-routes"] {
+		v := true
+		req.OnlyAllowDeclaredRoutes = &v
+	}
+	if explicit["no-only-declared-routes"] {
+		v := false
+		req.OnlyAllowDeclaredRoutes = &v
+	}
 	if explicit["head-wakes"] {
 		v := *headWakes
 		req.HeadWakes = &v
@@ -543,7 +559,7 @@ func cmdApp(args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.OverflowNode == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil {
+		req.OverflowNode == nil && req.AppProtocol == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil {
 		a, err := client.GetApp(ctx, slug)
 		if err != nil {
 			return printErr("Could not fetch app", err)
@@ -653,6 +669,11 @@ func cmdApp(args []string) int {
 		fmt.Printf("%-30s %s\n", "crawler policy:", a.Manifest.EffectiveCrawlerPolicy())
 		fmt.Printf("%-30s %s\n", "health path:", a.Manifest.HealthPath)
 		fmt.Printf("%-30s %t\n", "health path wakes:", a.Manifest.HealthPathWakes)
+		if a.OnlyAllowDeclaredRoutes {
+			fmt.Printf("%-30s %s\n", "only declared routes:", "enabled")
+		} else {
+			fmt.Printf("%-30s %s\n", "only declared routes:", "disabled")
+		}
 		// Tier A10 / ADR-088: surface the resolved overflow_node
 		// preference (the UUID apid returns) so the customer can
 		// verify their PATCH round-tripped. nil on the wire means
@@ -2223,7 +2244,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 
 	if *tarball != "" {
+		sourceURL, commitSHA := zeroConfigSourceProvenance(prov)
 		ann := api.DeployAnnotations{
+			SourceURL:      sourceURL,
+			CommitSHA:      commitSHA,
 			Reason:         *reason,
 			Tag:            *tag,
 			DeployedBy:     resolveDeployedBy(*deployedBy),
@@ -2256,7 +2280,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		} else if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: *runtime, Handler: *handler, Dockerfile: *dockerfile,
-				SourceRoot: sourceRoot, Reason: ann.Reason, Tag: ann.Tag,
+				SourceRoot: sourceRoot, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
+				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs,
 			}
 			var progress resumableUploadProgress
@@ -2324,7 +2349,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 0
 		}
 		if jsonWait {
-			return writeWaitedDeploymentReceiptUntil(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256, time.Duration(*waitTimeoutSeconds)*time.Second)
+			return writeWaitedDeploymentReceiptUntil(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
 		return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 			onStage:         execution.onStage,
@@ -2385,7 +2410,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return 0
 	}
 	if jsonWait {
-		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", time.Duration(*waitTimeoutSeconds)*time.Second)
+		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", slug, time.Duration(*waitTimeoutSeconds)*time.Second)
 	}
 	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 		onStage:         execution.onStage,
@@ -2397,6 +2422,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	})
 }
 
+const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id>] [--json]"
+
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
 // SAFE-RELEASES-G (issue #976, PR-G): cmdRollback now honours an
@@ -2407,8 +2434,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 // superseded deployment. --json (top-level) emits the
 // DeploymentResponse on stdout for SDK / e2e consumers.
 func cmdRollback(args []string) int {
+	if hasHelpFlag(args) {
+		PrintUsage(osStdout, rollbackUsage, "rollback")
+		return 0
+	}
 	if len(args) < 1 {
-		PrintUsage(os.Stderr, "usage: gregale rollback <slug> [--to <deployment_id>] [--json]", "rollback")
+		PrintUsage(os.Stderr, rollbackUsage, "rollback")
 		return 1
 	}
 	slug := args[0]

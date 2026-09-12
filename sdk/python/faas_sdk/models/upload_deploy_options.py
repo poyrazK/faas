@@ -22,6 +22,10 @@ class UploadDeployOptions:
     handler: str | Unset = UNSET
     dockerfile: bool | Unset = UNSET
     source_root: str | Unset = UNSET
+    source_url: str | Unset = UNSET
+    """Informational repository provenance URL; never fetched by apid."""
+    commit_sha: str | Unset = UNSET
+    """Lowercase hexadecimal Git commit identifier."""
     reason: str | Unset = UNSET
     tag: str | Unset = UNSET
     deployed_by: str | Unset = UNSET
@@ -36,6 +40,10 @@ class UploadDeployOptions:
         dockerfile = self.dockerfile
 
         source_root = self.source_root
+
+        source_url = self.source_url
+
+        commit_sha = self.commit_sha
 
         reason = self.reason
 
@@ -63,6 +71,10 @@ class UploadDeployOptions:
             field_dict["dockerfile"] = dockerfile
         if source_root is not UNSET:
             field_dict["source_root"] = source_root
+        if source_url is not UNSET:
+            field_dict["source_url"] = source_url
+        if commit_sha is not UNSET:
+            field_dict["commit_sha"] = commit_sha
         if reason is not UNSET:
             field_dict["reason"] = reason
         if tag is not UNSET:
@@ -89,6 +101,10 @@ class UploadDeployOptions:
 
         source_root = d.pop("source_root", UNSET)
 
+        source_url = d.pop("source_url", UNSET)
+
+        commit_sha = d.pop("commit_sha", UNSET)
+
         reason = d.pop("reason", UNSET)
 
         tag = d.pop("tag", UNSET)
@@ -111,6 +127,8 @@ class UploadDeployOptions:
             handler=handler,
             dockerfile=dockerfile,
             source_root=source_root,
+            source_url=source_url,
+            commit_sha=commit_sha,
             reason=reason,
             tag=tag,
             deployed_by=deployed_by,

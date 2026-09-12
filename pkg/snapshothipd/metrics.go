@@ -6,6 +6,7 @@ package snapshothipd
 
 import (
 	"errors"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -21,7 +22,8 @@ type Metrics interface {
 // existing registry. The region label is intentionally the node's configured
 // locality, never an IP address or an arbitrary storage key.
 type PrometheusMetrics struct {
-	fanoutTotal *prometheus.CounterVec
+	fanoutTotal   *prometheus.CounterVec
+	fanoutLatency *prometheus.HistogramVec
 }
 
 // NewPrometheusMetrics registers the exact operator-facing metric name on an
@@ -45,6 +47,14 @@ func NewPrometheusMetrics(reg *prometheus.Registry, regions ...string) (*Prometh
 	if err := reg.Register(c); err != nil {
 		return nil, err
 	}
+	h := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "snapshothipd_fanout_latency_seconds",
+		Help:    "Snapshot fan-out queue-to-ready latency by compute-node region (issue #1054).",
+		Buckets: []float64{.01, .025, .05, .1, .2, .5, 1, 2, 5, 10, 30, 60},
+	}, []string{"region"})
+	if err := reg.Register(h); err != nil {
+		return nil, err
+	}
 	if len(regions) == 0 {
 		regions = []string{""}
 	}
@@ -57,8 +67,18 @@ func NewPrometheusMetrics(reg *prometheus.Registry, regions ...string) (*Prometh
 		for _, outcome := range []string{"ready", "failed"} {
 			c.WithLabelValues(outcome, region)
 		}
+		h.WithLabelValues(region)
 	}
-	return &PrometheusMetrics{fanoutTotal: c}, nil
+	return &PrometheusMetrics{fanoutTotal: c, fanoutLatency: h}, nil
+}
+
+// ObserveFanoutLatency records the durable queue-to-ready latency used by the
+// M9 prepositioned-wake acceptance gate.
+func (m *PrometheusMetrics) ObserveFanoutLatency(region string, latency time.Duration) {
+	if m == nil || m.fanoutLatency == nil || latency < 0 {
+		return
+	}
+	m.fanoutLatency.WithLabelValues(region).Observe(latency.Seconds())
 }
 
 func (m *PrometheusMetrics) ObserveFanout(outcome, region string) {

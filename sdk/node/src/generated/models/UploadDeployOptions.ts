@@ -11,6 +11,14 @@ export type UploadDeployOptions = {
   handler?: string;
   dockerfile?: boolean;
   source_root?: string;
+  /**
+   * Informational repository provenance URL; never fetched by apid.
+   */
+  source_url?: string;
+  /**
+   * Lowercase hexadecimal Git commit identifier.
+   */
+  commit_sha?: string;
   reason?: string;
   tag?: string;
   deployed_by?: string;

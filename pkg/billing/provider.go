@@ -676,6 +676,11 @@ const (
 	// egress meter and implements MeterUsageProvider. Shadow configurations do
 	// not advertise this capability and therefore cannot emit billable events.
 	CapEgressUsage
+
+	// CapObjectStorageUsage means the provider has a separately configured,
+	// live object-storage charge meter and implements ObjectStorageLineItemSink.
+	// Shadow configurations retain local receipts without this capability.
+	CapObjectStorageUsage
 )
 
 // CapabilitySet is the bitmask of capabilities a Provider exposes.
@@ -697,7 +702,7 @@ func (s CapabilitySet) String() string {
 	if s == 0 {
 		return "none"
 	}
-	parts := make([]string, 0, 7)
+	parts := make([]string, 0, 8)
 	for _, c := range []struct {
 		cap  Capability
 		name string
@@ -709,6 +714,7 @@ func (s CapabilitySet) String() string {
 		{CapUsageMetered, "usage_metered"},
 		{CapUsageLineItem, "usage_line_item"},
 		{CapEgressUsage, "egress_usage"},
+		{CapObjectStorageUsage, "object_storage_usage"},
 	} {
 		if s.Has(c.cap) {
 			parts = append(parts, c.name)

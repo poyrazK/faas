@@ -261,6 +261,23 @@ type zeroConfigProvenance struct {
 	DeployedBy string // `git config user.name` ("" if unset)
 }
 
+// zeroConfigSourceProvenance converts the local Git facts into the
+// provider-neutral metadata accepted by both source upload transports.
+// CommitSHA is useful for every Git origin; SourceURL is only emitted for a
+// parsed GitHub origin because the deployment history uses the canonical
+// github://<owner>/<repo>@<sha> form and must never echo an arbitrary remote
+// URL supplied by a customer.
+func zeroConfigSourceProvenance(prov *zeroConfigProvenance) (sourceURL, commitSHA string) {
+	if prov == nil || prov.SHA == "" {
+		return "", ""
+	}
+	commitSHA = prov.SHA
+	if prov.Owner != "" && prov.Repo != "" {
+		sourceURL = fmt.Sprintf("github://%s/%s@%s", prov.Owner, prov.Repo, prov.SHA)
+	}
+	return sourceURL, commitSHA
+}
+
 // resolveZeroConfigProvenance inspects cwd for git metadata and
 // returns a provenance bundle for the refactored zero-config
 // deploy path. The return contract is:

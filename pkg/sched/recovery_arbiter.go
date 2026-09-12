@@ -27,6 +27,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -136,12 +137,14 @@ func NewArbiter(lm MigrationDispatcher, rp RecreateDispatcher) *Arbiter {
 //	                                  (already terminal; nothing
 //	                                  to recover)
 //
-// A future extension would consult HasSnapshotHistory per
-// instance to swap a "running on unavailable with no usable
-// snapshot" → Recreate (today: LiveMigrate, with a
-// follow-up recreate pass if the migration fails). The
-// SnapshotReplication column lands in Task #64's
-// snapshot_backoff companion migration.
+// Running rows on an unavailable or force-draining node start with a
+// LiveMigrate verdict so the normal handoff can preserve state when the
+// source is still reachable. If that handoff fails for a reason other than a
+// peer winning the row, Tick falls back to RecreateInstance. This is the
+// failure-safe landing for a source that cannot complete a handoff: the row
+// is parked, its reservation is released, and the service reconciler can
+// admit a replacement on a healthy node. Healthy draining/recovering nodes
+// retain retry semantics because their source VM is still trusted.
 func (a *Arbiter) Decide(node state.ComputeNode, instance state.RecoveryInstance) Decision {
 	instanceState := strings.ToLower(instance.State)
 	switch instanceState {
@@ -221,6 +224,15 @@ func (a *Arbiter) Tick(ctx context.Context, nodes []state.ComputeNode, instances
 			case DecisionLiveMigrate:
 				if a.liveMig != nil {
 					if e := a.liveMig.Enqueue(ctx, instance.ID); e != nil {
+						if recoveryMigrationFallback(node, e, a.recreate) {
+							if fallbackErr := a.recreate.RecreateInstance(ctx, instance.ID); fallbackErr == nil {
+								recreate++
+								continue
+							} else {
+								err = errors.Join(e, fallbackErr)
+								continue
+							}
+						}
 						err = e
 						continue
 					}
@@ -238,4 +250,21 @@ func (a *Arbiter) Tick(ctx context.Context, nodes []state.ComputeNode, instances
 		}
 	}
 	return liveMig, recreate, skipped, err
+}
+
+// recoveryMigrationFallback reports whether a failed migration should be
+// converted into a recreate attempt. Only unhealthy source lifecycles qualify:
+// a failed migration during a normal drain/recovery is retryable and should
+// not discard a still-healthy VM. Conflicts and missing rows are benign peer
+// races, while canceled contexts must not start new work during shutdown.
+func recoveryMigrationFallback(node state.ComputeNode, migrationErr error, recreate RecreateDispatcher) bool {
+	if recreate == nil || migrationErr == nil ||
+		errors.Is(migrationErr, state.ErrConflict) ||
+		errors.Is(migrationErr, state.ErrNotFound) ||
+		errors.Is(migrationErr, context.Canceled) ||
+		errors.Is(migrationErr, context.DeadlineExceeded) {
+		return false
+	}
+	return node.Lifecycle == state.NodeLifecycleUnavailable ||
+		node.Lifecycle == state.NodeLifecycleForceDraining
 }

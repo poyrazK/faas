@@ -620,6 +620,36 @@ func TestListAppDebugRequestsAll_WalksCursor(t *testing.T) {
 	}
 }
 
+func TestExportAppDebugRequests_EncodesOptionsAndReturnsBytes(t *testing.T) {
+	var gotQuery string
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte("{\"id\":\"r1\"}\n"))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "fp_test")
+	got, err := c.ExportAppDebugRequests(context.Background(), "debug-app", DebugTelemetryExportOptions{
+		Since: "3d", Route: "GET /checkout", Format: "ndjson", Limit: 42,
+	})
+	if err != nil {
+		t.Fatalf("ExportAppDebugRequests: %v", err)
+	}
+	if string(got) != "{\"id\":\"r1\"}\n" {
+		t.Fatalf("body = %q", got)
+	}
+	if gotAuth != "Bearer fp_test" {
+		t.Fatalf("Authorization = %q, want bearer token", gotAuth)
+	}
+	want := "format=ndjson&limit=42&route=GET+%2Fcheckout&since=3d"
+	if gotQuery != want {
+		t.Fatalf("RawQuery = %q, want %q", gotQuery, want)
+	}
+}
+
 // --- SSE ---------------------------------------------------------------------
 
 // TestStreamAppLogs_HappyPath verifies the SDK opens a text/event-stream,
@@ -784,7 +814,7 @@ func TestProjectMultipartRequestsTerminateAtCleanEOF(t *testing.T) {
 }
 
 func TestDeployMultipartWithSourceRoot_EmitsSourceRoot(t *testing.T) {
-	var gotRoot string
+	var gotRoot, gotSourceURL, gotCommitSHA string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reader, err := r.MultipartReader()
 		if err != nil {
@@ -805,6 +835,12 @@ func TestDeployMultipartWithSourceRoot_EmitsSourceRoot(t *testing.T) {
 			if part.FormName() == "source_root" {
 				gotRoot = string(body)
 			}
+			if part.FormName() == "source_url" {
+				gotSourceURL = string(body)
+			}
+			if part.FormName() == "commit_sha" {
+				gotCommitSHA = string(body)
+			}
 			_ = part.Close()
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -815,12 +851,21 @@ func TestDeployMultipartWithSourceRoot_EmitsSourceRoot(t *testing.T) {
 	c := NewClientWithDeployTimeout(srv.URL, "fp_test", 30*time.Second)
 	if _, err := c.DeployMultipartWithSourceRoot(
 		context.Background(), "x", bytes.NewReader([]byte("tarball bytes")),
-		"src.tar.gz", "", "", false, "apps/api", DeployAnnotations{},
+		"src.tar.gz", "", "", false, "apps/api", DeployAnnotations{
+			SourceURL: "github://acme/demo@0123456789abcdef0123456789abcdef01234567",
+			CommitSHA: "0123456789abcdef0123456789abcdef01234567",
+		},
 	); err != nil {
 		t.Fatalf("DeployMultipartWithSourceRoot: %v", err)
 	}
 	if gotRoot != "apps/api" {
 		t.Fatalf("source_root = %q, want apps/api", gotRoot)
+	}
+	if gotSourceURL != "github://acme/demo@0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("source_url = %q, want canonical GitHub provenance", gotSourceURL)
+	}
+	if gotCommitSHA != "0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("commit_sha = %q, want canonical commit", gotCommitSHA)
 	}
 }
 

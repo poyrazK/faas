@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -109,6 +111,37 @@ type QualificationArtifact struct {
 	Approval           *QualificationApproval        `json:"approval,omitempty"`
 	ApprovalEnv        map[string]string             `json:"approval_env,omitempty"`
 	Readiness          QualificationReadiness        `json:"readiness"`
+}
+
+// LoadQualificationArtifact reads one operator-owned qualification artifact
+// without contacting a provider. The size, JSON shape, and trailing-data
+// checks are shared by the CLI verifier and the apid provisioning gate so a
+// deployment cannot validate a different document from the one it consumes.
+func LoadQualificationArtifact(path string) (QualificationArtifact, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return QualificationArtifact{}, ErrInvalid
+	}
+	file, err := os.Open(path) //nolint:forbidigo // operator-owned deployment artifact
+	if err != nil {
+		return QualificationArtifact{}, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || info.Size() > 1<<20 {
+		return QualificationArtifact{}, ErrInvalid
+	}
+	decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
+	decoder.DisallowUnknownFields()
+	var artifact QualificationArtifact
+	if err := decoder.Decode(&artifact); err != nil {
+		return QualificationArtifact{}, ErrInvalid
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return QualificationArtifact{}, ErrInvalid
+	}
+	return artifact, nil
 }
 
 // BuildQualificationApproval creates an approval envelope from a successful

@@ -68,7 +68,7 @@ type cliFlag struct {
 //   - artifact        (publish | verify)
 //   - compute-nodes   (add | list | show | drain | drain-status | activate | force-drain | retire)
 //   - deploy          (join-node | add-node)
-//   - obs             (health)
+//   - obs             (health | incidents | overview | capacity)
 //   - debug           (otel-smoke; ADR-127 PR-D)
 //   - github          (status | retry-delivery | retry-check)
 //   - jobs            (active | inspect | cancel)
@@ -792,15 +792,14 @@ var cliCommands = []cliCommand{
 	},
 	{
 		// Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side
-		// meta-obs health snapshot. Dials apid's
-		// GET /v1/admin/obs/health (admin scope + MFA +
-		// FAAS_ADMIN_EMAILS allowlist) and emits the closed-set
-		// snapshot. `--json` / `$FAAS_JSON=1` overrides the
-		// human-readable summary. Out-of-scope subcommands
-		// (events / incidents) reserve room for follow-on PRs.
+		// operator observability surfaces. `obs health` reads the
+		// meta-health snapshot, `obs incidents` reads the bounded
+		// cross-resource triage projection, and `obs overview` /
+		// `obs capacity` expose the existing fleet snapshots; all
+		// are read-only and admin/MFA gated by apid.
 		Name:    dispatchObs,
 		DocSlug: "obs",
-		Short:   "Operator-side meta-obs health snapshot (obs health; Obs-Meta + Trace-IDs Mega-PR / C8)",
+		Short:   "Operator incident inbox, health, fleet overview, and capacity",
 		Subcommands: []cliSub{
 			{
 				Name:  subObsHealth,
@@ -808,6 +807,38 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "json", Short: "emit raw JSON snapshot (overrides human summary)"},
 					{Name: "admin-token", Short: "admin bearer for the FAAS_ADMIN_EMAILS allowlist (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout for the apid round-trip (default 10s)"},
+				},
+			},
+			{
+				Name:  subObsIncidents,
+				Short: "List bounded deployment, job, node, and alert incidents",
+				Flags: []cliFlag{
+					{Name: "type", Short: "filter by deployment|job_run|compute_node|platform_alert"},
+					{Name: "severity", Short: "filter by warning|error|critical"},
+					{Name: "since", Short: "RFC 3339 lower bound (default last 24h; capped at 7d)"},
+					{Name: "cursor", Short: "opaque next_cursor from a prior page"},
+					{Name: "limit", Short: "maximum incidents (1..200; default 50)"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout for the apid round-trip (default 10s)"},
+				},
+			},
+			{
+				Name:  subObsOverview,
+				Short: "Fetch GET /v1/admin/obs/overview (admin scope + MFA required)",
+				Flags: []cliFlag{
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout for the apid round-trip (default 10s)"},
+				},
+			},
+			{
+				Name:  subObsCapacity,
+				Short: "Fetch GET /v1/admin/obs/capacity (admin scope + MFA required)",
+				Flags: []cliFlag{
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
 					{Name: "timeout", Short: "HTTP timeout for the apid round-trip (default 10s)"},
 				},
 			},

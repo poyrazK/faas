@@ -49,6 +49,33 @@ export class GithubService {
     });
   }
   /**
+   * List repositories visible to the account's GitHub App installation.
+   * Bearer API-key surface for customer automation. Requires the
+   * dedicated `github:manage` scope. The account's durable GitHub App
+   * installation is resolved server-side, so callers do not need to
+   * copy or provide an installation id. Installation credentials are
+   * never returned.
+   *
+   * @returns RepoResponse Repositories currently visible to the account's GitHub App installation.
+   * @throws ApiError
+   */
+  public static listGitHubRepositories(): CancelablePromise<Array<RepoResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/github/repos',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `The account has not completed GitHub App installation.`,
+        502: `GitHub could not be reached while listing repositories.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Read the GitHub installation and repository binding for an app.
    * Bearer API-key surface for customer automation. Requires the
    * dedicated `github:manage` scope and never returns a CSRF token or

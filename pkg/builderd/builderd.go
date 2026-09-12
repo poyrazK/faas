@@ -881,6 +881,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			// cleanupWarmSnapshot logs failures; the cold retry remains authoritative.
 			_ = b.cleanupWarmSnapshot(ctx, warmVM, warmSnapshot)
 			handle, err = b.vm.Spawn(vmCtx, vmReq)
+		} else {
+			// A successful restore has consumed the old memory/vmstate pair.
+			// Keep the retained drive for the live builder, but release the old
+			// snapshot objects so every warm build does not leak another pair.
+			consumed := warmSnapshot
+			consumed.LayerPath = ""
+			if cleanupErr := b.cleanupWarmSnapshot(ctx, warmVM, consumed); cleanupErr != nil {
+				b.log.Warn("builderd: consumed warm snapshot cleanup failed", "build", build.ID, "err", cleanupErr)
+			}
 		}
 	} else {
 		handle, err = b.vm.Spawn(vmCtx, vmReq)

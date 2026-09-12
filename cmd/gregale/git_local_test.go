@@ -244,6 +244,28 @@ func TestResolveHEAD(t *testing.T) {
 	})
 }
 
+func TestZeroConfigSourceProvenance(t *testing.T) {
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+	cases := []struct {
+		name string
+		prov *zeroConfigProvenance
+		url  string
+		want string
+	}{
+		{name: "github", prov: &zeroConfigProvenance{Owner: "acme", Repo: "demo", SHA: sha}, url: "github://acme/demo@" + sha, want: sha},
+		{name: "non-github", prov: &zeroConfigProvenance{SHA: sha}, url: "", want: sha},
+		{name: "missing", prov: nil, url: "", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotURL, gotSHA := zeroConfigSourceProvenance(tc.prov)
+			if gotURL != tc.url || gotSHA != tc.want {
+				t.Fatalf("zeroConfigSourceProvenance() = (%q, %q), want (%q, %q)", gotURL, gotSHA, tc.url, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsDirtyWorkdir(t *testing.T) {
 	t.Run("clean", func(t *testing.T) {
 		root := initTestRepo(t)

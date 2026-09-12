@@ -18,10 +18,16 @@ package api
 // deterministic and prevents the resumable path from silently dropping CLI
 // metadata.
 type UploadDeployOptions struct {
-	Runtime    string         `json:"runtime,omitempty"`
-	Handler    string         `json:"handler,omitempty"`
-	Dockerfile bool           `json:"dockerfile,omitempty"`
-	SourceRoot string         `json:"source_root,omitempty"`
+	Runtime    string `json:"runtime,omitempty"`
+	Handler    string `json:"handler,omitempty"`
+	Dockerfile bool   `json:"dockerfile,omitempty"`
+	SourceRoot string `json:"source_root,omitempty"`
+	// SourceURL and CommitSHA preserve local Git provenance across the
+	// resumable session boundary. The values are informational only; the
+	// uploaded archive remains the source of truth and apid never fetches
+	// SourceURL during commit.
+	SourceURL  string         `json:"source_url,omitempty"`
+	CommitSHA  string         `json:"commit_sha,omitempty"`
 	Reason     string         `json:"reason,omitempty"`
 	Tag        string         `json:"tag,omitempty"`
 	DeployedBy string         `json:"deployed_by,omitempty"`

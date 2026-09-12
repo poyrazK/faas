@@ -263,6 +263,8 @@ type App struct {
 	StaticEgressIpSetAt       pgtype.Timestamptz
 	PreviewDestroyCommentedAt pgtype.Timestamptz
 	AppProtocol               string
+	OnlyDeclaredRoutes        bool
+	DeclaredRoutes            []byte
 	DeletedAt                 pgtype.Timestamptz
 	DeleteGraceUntil          pgtype.Timestamptz
 }
@@ -1368,6 +1370,16 @@ type ObjectStorageAuthorization struct {
 	AccountID   pgtype.UUID
 	PeriodStart pgtype.Timestamptz
 	Count       int64
+}
+
+type ObjectStorageBillingDelivery struct {
+	Provider           string
+	BillingRecordID    pgtype.UUID
+	AccountID          pgtype.UUID
+	PeriodStart        pgtype.Timestamptz
+	Mode               string
+	QuantityMillicents int64
+	DeliveredAt        pgtype.Timestamptz
 }
 
 type ObjectStorageBillingPeriod struct {

@@ -19,11 +19,9 @@
 // CSRF envelopes are minted at GET time and verified on POST
 // (renderAppNew's pattern, handlers_dashboard_apps_new.go:78-94).
 //
-// The scan service is the v1 endpoint's core; we reuse it via a
-// discard http.ResponseWriter so its one direct write (the
-// plan_token_stale branch in scan_service.go:516) does not leak
-// into the HTML response. The discardRW struct is a no-op
-// ResponseWriter — see its doc for the methods it satisfies.
+// The scan service is the v1 endpoint's core; it returns structured
+// problems without writing to the response, so the dashboard can render
+// the same failures inline without a second response body.
 package main
 
 import (
@@ -41,27 +39,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
-
-// discardRW is a no-op http.ResponseWriter used to capture the
-// one direct write scanService makes (plan_token_stale at
-// scan_service.go:516) without leaking it into the dashboard
-// HTML response. The struct satisfies http.ResponseWriter
-// minimally: Header() returns a never-written header map,
-// Write() returns success without buffering, WriteHeader() is a
-// no-op. Hijacker/Flusher/Pusher are intentionally NOT
-// implemented — scanService never calls them.
-type discardRW struct {
-	header http.Header
-}
-
-func (d *discardRW) Header() http.Header {
-	if d.header == nil {
-		d.header = make(http.Header)
-	}
-	return d.header
-}
-func (d *discardRW) Write(b []byte) (int, error) { return len(b), nil }
-func (d *discardRW) WriteHeader(int)             {}
 
 // projectPreviewAction is the CSRF action binding for the preview
 // form. Same shape as dashboardFireCronAction
@@ -142,8 +119,7 @@ func (s *server) renderProjectPreview(w http.ResponseWriter, r *http.Request, lo
 }
 
 // submitProjectPreview is the POST handler for the multipart
-// preview form. Verifies CSRF, runs scanService via a discard
-// http.ResponseWriter, and renders the populated preview
+// preview form. Verifies CSRF, runs scanService, and renders the populated preview
 // template. Never applies — the apply handler is the separate
 // POST /preview/apply route.
 //
@@ -161,7 +137,7 @@ func (s *server) submitProjectPreview(w http.ResponseWriter, r *http.Request, lo
 		ProjectSlug: slug,
 		Preview:     true,
 	}
-	resp, _, _, _, _, _, prob := s.scanService(&discardRW{}, r, acct, "", false)
+	resp, _, _, _, _, _, prob := s.scanService(r, acct, "", false)
 	if prob != nil {
 		// Pre-scan rejection (e.g. secret scan, source invalid,
 		// exclude_unknown_slug, exclude_only_overlap). Render the
@@ -316,7 +292,7 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 		ProjectSlug: slug,
 		Preview:     true,
 	}
-	resp, _, added, changed, removedSlugs, _, prob := s.scanService(&discardRW{}, synthReq, acct, planToken, true)
+	resp, _, added, changed, removedSlugs, _, prob := s.scanService(synthReq, acct, planToken, true)
 	if prob != nil {
 		log.Warn("dashboard project_preview apply: scan problem",
 			"account_id", acct.ID, "slug", slug, "code", prob.Code, "detail", prob.Detail)

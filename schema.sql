@@ -135,6 +135,23 @@ $$;
 
 
 --
+-- Name: apps_declared_routes_policy_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_declared_routes_policy_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.only_declared_routes IS DISTINCT FROM OLD.only_declared_routes
+       OR NEW.declared_routes IS DISTINCT FROM OLD.declared_routes THEN
+        PERFORM pg_notify('app_changed', NEW.id::text);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: apps_public_auth_ip_allowlist_cidr_check(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1443,6 +1460,8 @@ CREATE TABLE public.apps (
     static_egress_ip_set_at timestamp with time zone,
     preview_destroy_commented_at timestamp with time zone,
     app_protocol text DEFAULT 'http1'::text NOT NULL,
+    only_declared_routes boolean DEFAULT false NOT NULL,
+    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
     deleted_at timestamp with time zone,
     delete_grace_until timestamp with time zone,
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
@@ -1461,6 +1480,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
     CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
     CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
+    CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
     CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
     CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
@@ -7250,6 +7270,13 @@ CREATE TRIGGER apps_maintenance_mode_notify AFTER UPDATE ON public.apps FOR EACH
 
 
 --
+-- Name: apps apps_declared_routes_policy_notify_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_declared_routes_policy_notify_trg AFTER UPDATE OF only_declared_routes, declared_routes ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_declared_routes_policy_notify();
+
+
+--
 -- Name: apps apps_public_auth_ip_allowlist_cidr; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -9075,10 +9102,31 @@ CREATE TABLE IF NOT EXISTS object_storage_billing_periods (
     total_millicents bigint NOT NULL CHECK (total_millicents BETWEEN 0 AND 1152921504606846976),
     finalized_at timestamptz NOT NULL DEFAULT now(),
     CHECK (total_millicents = storage_millicents + requests_millicents + egress_millicents),
-    UNIQUE (account_id, period_start)
+    UNIQUE (account_id, period_start),
+    CONSTRAINT object_storage_billing_periods_delivery_identity_key UNIQUE (id, account_id, period_start)
 );
 CREATE INDEX IF NOT EXISTS object_storage_billing_periods_account_period_idx
     ON object_storage_billing_periods (account_id, period_start DESC);
+
+CREATE TABLE IF NOT EXISTS object_storage_billing_deliveries (
+    provider text NOT NULL CHECK (provider <> ''),
+    billing_record_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    period_start timestamptz NOT NULL CHECK (
+        period_start = date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    ),
+    mode text NOT NULL CHECK (mode IN ('preactivation', 'plan_ineligible', 'shadow', 'live')),
+    quantity_millicents bigint NOT NULL CHECK (quantity_millicents BETWEEN 0 AND 1152921504606846976),
+    delivered_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (provider, billing_record_id),
+    UNIQUE (provider, account_id, period_start),
+    CHECK (mode NOT IN ('preactivation', 'plan_ineligible') OR quantity_millicents = 0),
+    FOREIGN KEY (billing_record_id, account_id, period_start)
+        REFERENCES object_storage_billing_periods(id, account_id, period_start)
+        ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS object_storage_billing_deliveries_account_period_idx
+    ON object_storage_billing_deliveries (account_id, period_start DESC);
 
 CREATE TABLE IF NOT EXISTS object_storage_multipart_uploads (
     id uuid PRIMARY KEY,

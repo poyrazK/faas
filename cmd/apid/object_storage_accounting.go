@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -13,6 +14,27 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+func validateObjectStorageBillingSetup(provider billing.Provider, registry *objectstorage.Registry) error {
+	sink, ok := provider.(billing.ObjectStorageLineItemSink)
+	if !ok {
+		return nil
+	}
+	policy, enabled := sink.ObjectStorageLineItemPolicy()
+	if !enabled {
+		return nil
+	}
+	if registry == nil || registry.Pricing == nil {
+		return errors.New("apid: object storage billing requires object-storage pricing")
+	}
+	if !registry.Pricing.Valid() {
+		return errors.New("apid: object storage billing requires a valid object-storage rate card")
+	}
+	if policy.Provider == "polar" && registry.Pricing.Currency != "EUR" {
+		return fmt.Errorf("apid: Polar object storage billing requires EUR pricing, got %q", registry.Pricing.Currency)
+	}
+	return nil
+}
 
 func (s *server) admitObjectURL(ctx context.Context, b state.ObjectBucket, r objectstorage.SignRequest) error {
 	st, ok := s.store.(state.ObjectStorageAccountingStore)
@@ -56,7 +78,24 @@ func (s *server) getObjectStorageUsage(w http.ResponseWriter, r *http.Request, a
 		bucketProblem(w, err)
 		return
 	}
-	writeJSON(w, 200, api.ObjectStorageUsageResponse{Usage: usage, Policy: s.objectStorage.Accounting, Charges: charges})
+	writeJSON(w, 200, s.objectStorageUsageResponse(usage, charges))
+}
+
+func (s *server) objectStorageUsageResponse(usage api.ObjectStorageUsage, charges *api.ObjectStorageCharge) api.ObjectStorageUsageResponse {
+	out := api.ObjectStorageUsageResponse{
+		Usage:       usage,
+		Policy:      s.objectStorage.Accounting,
+		Charges:     charges,
+		BillingMode: "off",
+	}
+	if sink, ok := s.billingProvider.(billing.ObjectStorageLineItemSink); ok {
+		if policy, enabled := sink.ObjectStorageLineItemPolicy(); enabled {
+			out.BillingMode = string(policy.Mode)
+			effectiveFrom := policy.EffectiveFrom
+			out.BillingFrom = &effectiveFrom
+		}
+	}
+	return out
 }
 
 func (s *server) recordObjectStorageUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {

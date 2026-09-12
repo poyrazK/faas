@@ -93,12 +93,17 @@ type Workload struct {
 	RootDir    string   // build context relative to repo root; "" = root
 	Dockerfile string   // explicit path if declared (relative to RootDir)
 	Command    []string // start-command override (compose `command:`, Procfile rhs)
-	Class      Class    // http|graphql|grpc|job|worker|server|unknown
-	Schedule   string   // cron expression when declared (CronJob, render, serverless)
-	Ports      []int
-	EnvKeys    []string // KEYS only — never values; spec §11 forbids logging secrets
-	Source     string   // "compose.yaml: api" (provenance; shown in confirm)
-	Tier       Tier
+	// DependsOn contains service names declared by Compose's depends_on.
+	// Conditions are intentionally normalized to a name-only edge here; the
+	// deploy planner uses the graph for deterministic ordering while runtime
+	// readiness is provided by the private service proxy.
+	DependsOn []string
+	Class     Class  // http|graphql|grpc|job|worker|server|unknown
+	Schedule  string // cron expression when declared (CronJob, render, serverless)
+	Ports     []int
+	EnvKeys   []string // KEYS only — never values; spec §11 forbids logging secrets
+	Source    string   // "compose.yaml: api" (provenance; shown in confirm)
+	Tier      Tier
 	// DetectedBy is the explainability trace (issue #742). Source
 	// already carries human-readable provenance ("compose.yaml: api");
 	// this is the STRUCTURED form a client can branch on without

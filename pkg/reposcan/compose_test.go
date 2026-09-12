@@ -139,6 +139,39 @@ func TestDetectCompose_SkipsPrebuiltWithoutBuild(t *testing.T) {
 	}
 }
 
+func TestDetectCompose_ExtractsDependsOn(t *testing.T) {
+	t.Parallel()
+	body := `services:
+  api:
+    build: ./api
+    depends_on:
+      db:
+        condition: service_healthy
+      cache: {}
+  worker:
+    build: ./worker
+    depends_on: [db, api, db]
+  db:
+    build: ./db
+`
+	seeds, _, _, err := detectCompose(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(body)},
+	})
+	if err != nil {
+		t.Fatalf("detectCompose: %v", err)
+	}
+	got := make(map[string][]string, len(seeds))
+	for _, seed := range seeds {
+		got[seed.name] = seed.dependsOn
+	}
+	if !equalSet(got["api"], []string{"cache", "db"}) {
+		t.Fatalf("api depends_on = %v", got["api"])
+	}
+	if !equalSet(got["worker"], []string{"api", "db"}) {
+		t.Fatalf("worker depends_on = %v", got["worker"])
+	}
+}
+
 // TestDetectCompose_PrefersComposeYAML confirms the file-pick order:
 // compose.yaml > compose.yml > docker-compose.yml > docker-compose.yaml.
 func TestDetectCompose_PrefersComposeYAML(t *testing.T) {

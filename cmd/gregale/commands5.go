@@ -606,11 +606,17 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
+const appScaleUsage = "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Mirrors cmdApp (commands2.go:53-126) but with no --plan — plan
 // changes live on `gregale plan`. Uses the same fs.Visit pattern so 0 is
 // distinguishable from "unset".
 func cmdAppScale(slug string, args []string) int {
+	if hasHelpFlag(args) {
+		PrintUsage(osStdout, appScaleUsage, "apps")
+		return 0
+	}
 	fs := flag.NewFlagSet("app scale", flag.ContinueOnError)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
@@ -770,7 +776,7 @@ func cmdAppScale(slug string, args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil &&
 		req.RequireAuthn == nil && req.PublicAuth == nil && req.AppProtocol == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> scale [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--idle SEC] [--min N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, appScaleUsage, "apps")
 		return 1
 	}
 	client, err := authedClient()

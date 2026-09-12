@@ -72,7 +72,7 @@ func TestSubset(t *testing.T) {
 		{
 			"compute-only subset",
 			RoleComputeOnly,
-			[]string{"vmmd", "schedd", "gatewayd-internal", "imaged", "builderd"},
+			[]string{"vmmd", "realtimed", "schedd", "gatewayd-internal", "imaged", "builderd"},
 		},
 	}
 	for _, tt := range tests {
@@ -120,6 +120,7 @@ func TestSubsetHonorsDaemonRoleGates(t *testing.T) {
 		"imaged":            {RoleSingleBox: true, RoleComputeOnly: true},
 		"gatewayd-internal": {RoleSingleBox: true, RoleComputeOnly: true},
 		"builderd":          {RoleSingleBox: true, RoleComputeOnly: true},
+		"realtimed":         {RoleSingleBox: true, RoleComputeOnly: true},
 	}
 	for dmn, want := range dmnAllows {
 		for _, r := range AllowedRoles {
@@ -157,6 +158,7 @@ func TestDropInEnvVarMatchesDaemon(t *testing.T) {
 		{"imaged", "FAAS_IMAGED_ROLE", RoleComputeOnly},
 		{"gatewayd-internal", "FAAS_GATEWAYD_ROLE", RoleComputeOnly},
 		{"builderd", "FAAS_BUILDERD_ROLE", RoleComputeOnly},
+		{"realtimed", "FAAS_REALTIME_ROLE", RoleComputeOnly},
 	}
 	for _, tt := range cases {
 		t.Run(tt.daemon, func(t *testing.T) {
@@ -401,11 +403,11 @@ func TestMutateControlPlaneToComputeOnly(t *testing.T) {
 		t.Errorf("Mutate stopped %d daemons (%v), want exactly %v", len(stopped), stopped, wantStopped)
 	}
 
-	// Start: 4 compute-only daemons (vmmd, imaged, builderd,
+	// Start: 5 compute-only daemons (vmmd, realtimed, imaged, builderd,
 	// gatewayd-internal). gatewayd-public is NOT started because
 	// it's not in the compute-only role allow-list.
 	wantStarted := map[string]bool{
-		"vmmd": true, "imaged": true, "builderd": true, "gatewayd-internal": true,
+		"vmmd": true, "realtimed": true, "imaged": true, "builderd": true, "gatewayd-internal": true,
 	}
 	for _, d := range started {
 		if !wantStarted[d] {
@@ -433,11 +435,11 @@ func TestMutateComputeOnlyToControlPlane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mutate error: %v", err)
 	}
-	// Stop: vmmd, imaged, builderd, gatewayd-internal — the 4
+	// Stop: vmmd, realtimed, imaged, builderd, gatewayd-internal — the 5
 	// compute-only daemons. gatewayd-public is NOT in the stop
 	// list because it doesn't allow compute-only.
 	wantStopped := map[string]bool{
-		"vmmd": true, "imaged": true, "builderd": true, "gatewayd-internal": true,
+		"vmmd": true, "realtimed": true, "imaged": true, "builderd": true, "gatewayd-internal": true,
 	}
 	for _, d := range stopped {
 		if !wantStopped[d] {

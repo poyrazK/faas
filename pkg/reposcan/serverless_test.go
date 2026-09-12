@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -31,7 +32,7 @@ functions:
 	fsys := fstest.MapFS{
 		"serverless.yml": &fstest.MapFile{Data: []byte(body)},
 	}
-	seeds, _, _, err := detectServerless(fsys)
+	seeds, _, warnings, err := detectServerless(fsys)
 	if err != nil {
 		t.Fatalf("detectServerless: %v", err)
 	}
@@ -59,6 +60,15 @@ functions:
 		}
 		if s.schedule != c.sch {
 			t.Errorf("function %q schedule = %q, want %q", c.name, s.schedule, c.sch)
+		}
+	}
+	if len(warnings) != len(cases) {
+		t.Fatalf("warnings = %d, want %d", len(warnings), len(cases))
+	}
+	for _, warning := range warnings {
+		if !strings.Contains(warning, "not applicable to project apply") ||
+			!strings.Contains(warning, "no execution adapter") {
+			t.Errorf("warning = %q, want an explicit migration instruction", warning)
 		}
 	}
 }

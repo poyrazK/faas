@@ -62,7 +62,7 @@ func (s *Service) reconcile(
 	if err != nil {
 		return out, fmt.Errorf("reconcile: validate workload admission: %w", err)
 	}
-	if err := validateWorkloadAdmission(scan.Workloads, accountApps, project.ID); err != nil {
+	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID); err != nil {
 		return out, err
 	}
 
@@ -97,7 +97,7 @@ func (s *Service) reconcile(
 	// so the quota pre-check inside applyActions reuses the same
 	// slice the diff just consumed — no second round-trip, no
 	// race window between the count and the create Tx.
-	applied, err := s.applyActions(ctx, project, actions, existing, commitSHA)
+	applied, err := s.applyActions(ctx, project, actions, existing, commitSHA, scan)
 	if err != nil {
 		return out, err
 	}

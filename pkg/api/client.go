@@ -630,6 +630,31 @@ func (c *Client) GetAPIConsumerUsageQuote(ctx context.Context, slug, consumerID 
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// CreateAPIConsumerUsageStatement snapshots a consumer's quote for a period.
+// Repeating the same period returns the original immutable statement.
+func (c *Client) CreateAPIConsumerUsageStatement(ctx context.Context, slug, consumerID string, req CreateAPIConsumerUsageStatementRequest) (APIConsumerUsageStatementResponse, error) {
+	var out APIConsumerUsageStatementResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements", req, &out)
+}
+
+// ListAPIConsumerUsageStatements returns durable statements newest period first.
+func (c *Client) ListAPIConsumerUsageStatements(ctx context.Context, slug, consumerID string) (APIConsumerUsageStatementListResponse, error) {
+	var out APIConsumerUsageStatementListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements", nil, &out)
+}
+
+// GetAPIConsumerUsageStatement returns one durable statement by ID.
+func (c *Client) GetAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementResponse, error) {
+	var out APIConsumerUsageStatementResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID, nil, &out)
+}
+
+// FinalizeAPIConsumerUsageStatement marks a fully priced statement payable.
+func (c *Client) FinalizeAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementResponse, error) {
+	var out APIConsumerUsageStatementResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/finalize", struct{}{}, &out)
+}
+
 // RevokeAPIConsumer revokes an end-customer identity and all future key issuance for it.
 func (c *Client) RevokeAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
 	var out APIConsumerResponse
@@ -4685,6 +4710,34 @@ func (c *Client) ListAppDebugRequestsAll(ctx context.Context, slug string, opts 
 			return out, err
 		}
 	}
+}
+
+// ExportAppDebugRequests downloads a bounded, metadata-only request-log
+// artifact for an app. The default server format is NDJSON; callers may set
+// Format to "csv" for spreadsheet/support workflows. Since and Route have the
+// same retention-clamped semantics as ListAppDebugRequestsWithOptions, and
+// Limit is capped by the server at 10,000 rows. Request bodies, headers, and
+// raw span attributes are never included.
+func (c *Client) ExportAppDebugRequests(ctx context.Context, slug string, opts DebugTelemetryExportOptions) ([]byte, error) {
+	path := "/v1/apps/" + slug + "/debug/requests/export"
+	q := url.Values{}
+	if opts.Since != "" {
+		q.Set("since", opts.Since)
+	}
+	if opts.Route != "" {
+		q.Set("route", opts.Route)
+	}
+	if opts.Format != "" {
+		q.Set("format", opts.Format)
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out []byte
+	return out, c.doBytes(ctx, http.MethodGet, path, nil, &out)
 }
 
 // GetAppDebugCoverage returns observed debugger signal coverage for one app.

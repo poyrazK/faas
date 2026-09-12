@@ -1,6 +1,6 @@
 # ADR-156 · Direct object storage accounting and safety budgets
 
-- **Status:** accepted for the accounting milestone; paid launch remains gated.
+- **Status:** accepted; Polar month-close billing extension implemented, with paid launch still gated on live provider qualification.
 - **Date:** 2026-09-05
 - **Decision:** retain direct S3 transfers and the single hot `s3_enabled` flag; add durable capacity reservations, inventory observations, provider usage reports, and fail-closed URL admission.
 - **Why:** direct reusable URLs cannot enforce an instantaneous request/egress spending ceiling. The user accepted delayed budget cutoffs without introducing a Gregale transfer proxy.
@@ -59,11 +59,19 @@ erase the month's costs.
   validity, and in-flight transfers. There is **no bounded monetary overshoot**.
   Retained data continues to cost money, and cleanup calls can incur charges.
 - An optional provider-neutral rate card may expose a deterministic estimate in
-  the usage API, but no plan allowances or invoice lines ship in this
-  milestone. Reported costs remain operator cost accounting, not permission to
-  charge customers those amounts.
+  the usage API. A separately gated Polar adapter can publish the finalized
+  customer charge; reported upstream cost remains operator cost accounting,
+  not permission to charge customers that amount.
 - These records follow existing account hard-deletion semantics. They are not
   a substitute for a legally retained invoice ledger.
+
+The 2026-09-12 billing extension adds immutable month-close records plus
+provider-qualified pre-activation, shadow, and live receipts. Polar receives
+the exact calculated customer-charge total in millicents through a separate
+meter; detailed usage and charge components stay in the local record and event
+metadata. Non-paid plans receive a permanent zero-quantity ineligible receipt.
+The billing mode defaults to off; shadow/live require an explicit UTC-month
+activation boundary.
 
 ## Rejected alternatives
 

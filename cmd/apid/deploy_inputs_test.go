@@ -104,6 +104,29 @@ func mustProblem(t *testing.T, prob *api.Problem) *api.Problem {
 	return prob
 }
 
+func TestValidateSourceProvenance(t *testing.T) {
+	validSHA := "0123456789abcdef0123456789abcdef01234567"
+	cases := []struct {
+		name      string
+		sourceURL string
+		commitSHA string
+		wantErr   bool
+	}{
+		{name: "empty", wantErr: false},
+		{name: "github metadata", sourceURL: "github://acme/demo@" + validSHA, commitSHA: validSHA, wantErr: false},
+		{name: "short sha", commitSHA: "abc123", wantErr: true},
+		{name: "uppercase sha", commitSHA: strings.ToUpper(validSHA), wantErr: true},
+		{name: "control url", sourceURL: "github://acme/demo\n@" + validSHA, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validateSourceProvenance(tc.sourceURL, tc.commitSHA); (got != nil) != tc.wantErr {
+				t.Fatalf("validateSourceProvenance() = %v, wantErr=%v", got, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestValidateTarballShape_RejectsAbsolutePath covers the existing
 // `hdr.Name` check that pre-dates PR-A. Pinned here so the PR-A
 // refactor (which moves the symlink check ABOVE the file-count
@@ -617,6 +640,8 @@ func TestCreateDeploymentMultipart_WorkspaceSourceRootRoundTrip(t *testing.T) {
 	body, ct := multipartUpload(t, map[string]multipartPart{
 		"source":      {filename: "src.tar.gz", body: raw},
 		"source_root": {body: []byte("apps/api")},
+		"source_url":  {body: []byte("github://acme/workspace@0123456789abcdef0123456789abcdef01234567")},
+		"commit_sha":  {body: []byte("0123456789abcdef0123456789abcdef01234567")},
 	})
 	req := httptest.NewRequest("POST", "/v1/apps/workspace-app/deployments", body)
 	req.Header.Set("Authorization", "Bearer "+e.key)
@@ -634,12 +659,18 @@ func TestCreateDeploymentMultipart_WorkspaceSourceRootRoundTrip(t *testing.T) {
 	if out.SourceRoot != "apps/api" {
 		t.Fatalf("response source_root = %q, want apps/api", out.SourceRoot)
 	}
+	if out.SourceURL != "github://acme/workspace@0123456789abcdef0123456789abcdef01234567" || out.CommitSHA != "0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("response provenance = source_url %q commit_sha %q", out.SourceURL, out.CommitSHA)
+	}
 	dep, err := e.store.LatestDeployment(t.Context(), out.AppID)
 	if err != nil {
 		t.Fatalf("LatestDeployment: %v", err)
 	}
 	if dep.SourceRoot != "apps/api" {
 		t.Fatalf("stored source_root = %q, want apps/api", dep.SourceRoot)
+	}
+	if dep.SourceURL != "github://acme/workspace@0123456789abcdef0123456789abcdef01234567" || dep.CommitSHA != "0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("stored provenance = source_url %q commit_sha %q", dep.SourceURL, dep.CommitSHA)
 	}
 }
 

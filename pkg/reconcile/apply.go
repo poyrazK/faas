@@ -57,7 +57,13 @@ func (s *Service) applyActions(
 	actions []Action,
 	existing []state.App,
 	commitSHA string,
+	scans ...reposcan.Result,
 ) (Result, error) {
+	var scan reposcan.Result
+	if len(scans) > 0 {
+		scan = scans[0]
+	}
+	availableServices := workloadNameSet(scan.Workloads)
 	var out Result
 
 	// Partition by op so we can run them in the documented order
@@ -100,7 +106,7 @@ func (s *Service) applyActions(
 
 	// 2. Updates first (no quota concern).
 	for _, u := range updates {
-		changed, err := s.applyUpdate(ctx, project, u, commitSHA)
+		changed, err := s.applyUpdate(ctx, project, u, commitSHA, availableServices)
 		if err != nil {
 			return out, err
 		}
@@ -159,7 +165,7 @@ func (s *Service) applyActions(
 	// Tx is the apid path, not the reconcile path).
 	newApps := make([]state.App, 0, len(creates))
 	for _, c := range creates {
-		app := workloadToDraftApp(project, c.Workload, c.StartCommand, acct.Plan)
+		app := workloadToDraftApp(project, c.Workload, c.StartCommand, acct.Plan, availableServices)
 		newApps = append(newApps, app)
 	}
 	added := make([]state.App, 0, len(newApps))
@@ -219,13 +225,21 @@ func (s *Service) applyUpdate(
 	project state.Project,
 	a Action,
 	commitSHA string,
+	available ...map[string]struct{},
 ) (state.App, error) {
 	rootDir := a.Workload.RootDir
 	workloadName := a.Workload.Name
+	manifest := a.App.Manifest
+	var serviceNames map[string]struct{}
+	if len(available) > 0 {
+		serviceNames = available[0]
+	}
+	manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, a.Workload, serviceNames)
 	params := state.UpdateAppParams{
 		RootDir:      &rootDir,
 		WorkloadName: &workloadName,
 		StartCommand: &a.StartCommand,
+		Manifest:     &manifest,
 	}
 	updated, err := s.Store.UpdateApp(ctx, a.App.ID, params)
 	if err != nil {
@@ -267,7 +281,7 @@ func (s *Service) applyRemove(
 // and a Pro customer gets a public-by-default app via `faas project
 // sync` while direct POST /v1/apps on the same plan returns
 // bearer-by-default — same plan, two different defaults.
-func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd string, plan api.Plan) state.App {
+func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd string, plan api.Plan, available ...map[string]struct{}) state.App {
 	class := state.WorkloadClass(string(w.Class))
 	if class == "" {
 		class = state.WorkloadClassHTTP
@@ -277,6 +291,10 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		// re-derive the authoritative class.
 		class = state.WorkloadClassHTTP
 	}
+	var serviceNames map[string]struct{}
+	if len(available) > 0 {
+		serviceNames = available[0]
+	}
 	return state.App{
 		AccountID:      project.AccountID,
 		ProjectID:      project.ID,
@@ -285,6 +303,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		WorkloadName:   w.Name,
 		WorkloadClass:  class,
 		StartCommand:   startCmd,
+		Manifest:       state.AppManifest{Env: serviceEnvForWorkloadWithAvailable(nil, w, serviceNames)},
 		RequireAuthn:   plan.RequireAuthnDefault(),
 		PublicAuthMode: plan.PublicAuthModeDefault(),
 	}

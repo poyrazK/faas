@@ -29,7 +29,12 @@
 
 package main
 
-import "github.com/onebox-faas/faas/pkg/api"
+import (
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
+)
 
 // cliAudience controls how a command is presented in the customer binary.
 // The complete manifest remains authoritative for dispatch, man pages, and
@@ -331,6 +336,8 @@ var cliCommands = []cliCommand{
 			{Name: "ram", Short: "set RAM in MB", Value: "MB"},
 			{Name: "max-concurrency", Short: "set max_concurrency", Value: "N"},
 			{Name: "require-signed", Short: "toggle require_signed", ClosedSet: []string{"true", "false"}},
+			{Name: "only-declared-routes", Short: "reject undeclared paths before waking the app (OpenAPI or explicit route list)"},
+			{Name: "no-only-declared-routes", Short: "disable the declared-route pre-wake gate"},
 		},
 	},
 	// operator-side "backup" verb moved to gregalectl in PR-6.5
@@ -396,8 +403,9 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "status", Short: "Show the GitHub connection health for <slug>"},
 			{Name: "sync", Short: "Reconcile repository access with GitHub"},
+			{Name: "repos", Short: "List repositories visible to the connected GitHub installation for <slug>"},
 			{Name: "bind", Short: "Bind <slug> to a visible GitHub repository", Flags: []cliFlag{
-				{Name: "installation-id", Short: "GitHub App installation id", Value: "ID", Req: true},
+				{Name: "installation-id", Short: "GitHub App installation id (auto-resolved when omitted)", Value: "ID"},
 				{Name: "repo", Short: "GitHub repository OWNER/NAME", Value: "OWNER/NAME", Req: true},
 				{Name: "branch", Short: "production branch", Value: "BRANCH"},
 				{Name: "deploy-branches", Short: "branch=scope mappings", Value: "MAPPINGS"},
@@ -1062,9 +1070,14 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true}},
 	},
 	{
-		Name:    "rollback",
-		DocSlug: "rollback",
-		Short:   "Re-promote the previous deployment",
+		Name:        "rollback",
+		DocSlug:     "rollback",
+		Short:       "Re-promote the previous deployment",
+		Positionals: []string{"<slug>"},
+		Flags: []cliFlag{
+			{Name: "to", Short: "target deployment id", Value: "deployment_id"},
+			{Name: "json", Short: "machine-readable output"},
+		},
 	},
 	{
 		// SAFE-RELEASES-R (issue #976 / ADR-122): the
@@ -1217,7 +1230,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "throttle-suggestions",
 		Short:   "Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions <slug> [--range 5m] [--dry-run --candidate-rps N --candidate-burst N])",
 		Flags: []cliFlag{
-			{Name: "range", Short: "observation window (e.g. 5m|1h|24h)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h"}},
+			{Name: "range", Short: "observation window (" + strings.Join(appmetrics.Ranges(), "|") + ")", Value: "WINDOW", ClosedSet: appmetrics.Ranges()},
 			{Name: "dry-run", Short: "enable the dry-run preview pass (requires --candidate-rps)"},
 			{Name: "candidate-rps", Short: "candidate rate-limit rps for the dry-run preview", Value: "N"},
 			{Name: "candidate-burst", Short: "candidate burst for the dry-run preview", Value: "N"},

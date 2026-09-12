@@ -539,6 +539,7 @@
       loop:
         - faas-vmmd.service
         - faas-schedd.service
+        - faas-realtimed.service
         - faas-gatewayd-internal.service
         - faas-builderd.service
         - faas-imaged.service
@@ -756,6 +757,7 @@
       loop:
         - faas-vmmd.service
         - faas-schedd.service
+        - faas-realtimed.service
         - faas-gatewayd-internal.service
         - faas-builderd.service
         - faas-imaged.service
@@ -773,6 +775,11 @@
         timeout: 60
       when: faas_vmmd_target_url is match('^tcp://')
 
+    - name: Wait for the managed realtime socket
+      ansible.builtin.wait_for:
+        path: /run/faas/realtimed.sock
+        timeout: 60
+
     - name: Wait for the internal gateway listener
       ansible.builtin.wait_for:
         host: 127.0.0.1
@@ -785,6 +792,7 @@
       loop:
         - faas-vmmd.service
         - faas-schedd.service
+        - faas-realtimed.service
         - faas-gatewayd-internal.service
         - faas-builderd.service
         - faas-imaged.service

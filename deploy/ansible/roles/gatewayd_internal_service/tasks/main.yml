@@ -18,6 +18,32 @@
     mode: "0644"
   register: gatewayd_internal_unit
 
+- name: gatewayd_internal_service — install managed realtime systemd unit
+  ansible.builtin.copy:
+    src: faas-realtimed.service
+    dest: /etc/systemd/system/faas-realtimed.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: realtimed_unit
+
+- name: gatewayd_internal_service — create realtimed drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-realtimed.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: gatewayd_internal_service — install FAAS_REALTIME_ROLE drop-in
+  ansible.builtin.template:
+    src: 99-faas-realtimed-role.conf.j2
+    dest: /etc/systemd/system/faas-realtimed.service.d/99-faas-role.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-realtimed
+
 - name: gatewayd_internal_service — ensure 'faas' group exists
   ansible.builtin.group:
     name: faas
@@ -145,7 +171,7 @@
 - name: gatewayd_internal_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
-  when: gatewayd_internal_unit.changed
+  when: gatewayd_internal_unit.changed or realtimed_unit.changed
 
 - name: gatewayd_internal_service — create systemd drop-in directory
   ansible.builtin.file:

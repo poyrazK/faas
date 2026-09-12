@@ -28,6 +28,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
@@ -194,7 +195,7 @@ const throttleSuggestionsCmdDocsTopic = "throttle-suggestions"
 // locally so a malformed command doesn't waste an HTTP round-trip.
 func cmdThrottleSuggestions(args []string) int {
 	fs := flag.NewFlagSet("throttle-suggestions", flag.ContinueOnError)
-	rng := fs.String("range", "5m", "time window (5m, 15m, 1h, 6h, 24h)")
+	rng := fs.String("range", appmetrics.DefaultRange, "time window ("+strings.Join(appmetrics.Ranges(), ", ")+")")
 	dryRun := fs.Bool("dry-run", false, "preview pass: ask the server to count sub-windows where observed rps exceeds --candidate-rps")
 	candidateRPS := fs.Float64("candidate-rps", 0, "candidate rps (required when --dry-run; positive float)")
 	candidateBurst := fs.Int("candidate-burst", 0, "candidate burst (optional when --dry-run; non-negative int)")
@@ -204,6 +205,10 @@ func cmdThrottleSuggestions(args []string) int {
 	}
 	if len(pos) != 1 {
 		PrintUsage(os.Stderr, throttleSuggestionsCmdUsage, throttleSuggestionsCmdDocsTopic)
+		return 1
+	}
+	if !appmetrics.IsValidRange(*rng) {
+		PrintUsage(os.Stderr, throttleSuggestionsCmdUsage+"\nerror: --range must be one of "+strings.Join(appmetrics.Ranges(), ", "), throttleSuggestionsCmdDocsTopic)
 		return 1
 	}
 	// Local validation — fail fast before the HTTP round-trip so a

@@ -584,6 +584,69 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/upload-routes:
+    parameters:
+      - { name: slug, description: App whose edge upload routes are being managed., in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listObjectUploadRoutes
+      summary: List policy-controlled upload routes
+      description: Routes are served by Gregale's public edge and do not wake the application. Requires storage:read, storage:write, storage:manage, or admin.
+      tags: [storage]
+      responses:
+        '200':
+          description: Upload route policies without provider credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectUploadRouteList' }
+        default:
+          description: Unable to list upload routes because of an authentication, authorization, or storage failure.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      operationId: createObjectUploadRoute
+      summary: Create or update an authenticated upload route
+      description: Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object key, enforces the byte/content-type policy, streams directly to the selected provider, and records a completion receipt.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateObjectUploadRouteRequest' }
+      responses:
+        '201':
+          description: Upload route created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectUploadRoute' }
+        '200':
+          description: Existing upload route updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectUploadRoute' }
+        default:
+          description: Invalid policy, bucket unavailable, access denied, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/upload-routes/{route}:
+    parameters:
+      - { name: slug, description: 'App owning the edge upload route.', in: path, required: true, schema: { type: string } }
+      - { name: route, description: 'Stable upload route name used at /uploads/{route}.', in: path, required: true, schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' } }
+    delete:
+      operationId: deleteObjectUploadRoute
+      summary: Delete an authenticated upload route
+      description: Stops new uploads immediately. Existing objects are not deleted.
+      tags: [storage]
+      responses:
+        '204': { description: Upload route deleted }
+        default:
+          description: Route missing, access denied, or storage unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}:
     parameters:
       - { name: slug, description: App that owns the bucket to remove., in: path, required: true, schema: { type: string } }
@@ -2851,6 +2914,111 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose durable usage statements are returned.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: listAPIConsumerUsageStatements
+      summary: List durable API consumer usage statements.
+      description: Returns immutable quote snapshots newest period first.
+      responses:
+        '200':
+          description: Durable usage statements for the consumer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [consumers]
+      operationId: createAPIConsumerUsageStatement
+      summary: Snapshot an API consumer usage quote.
+      description: Creates an immutable, auditable statement for the explicit UTC-minute period; repeating the period returns the original snapshot.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerUsageStatementRequest' }
+      responses:
+        '200':
+          description: The existing statement for this consumer and period.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
+        '201':
+          description: The newly created usage statement snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity whose statement is being read.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Durable usage statement UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerUsageStatement
+      summary: Fetch one durable API consumer usage statement.
+      responses:
+        '200':
+          description: The immutable usage statement snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/finalize:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer identity owning the statement.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Durable usage statement UUID to finalize.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [consumers]
+      operationId: finalizeAPIConsumerUsageStatement
+      summary: Finalize a fully priced API consumer usage statement.
+      description: Records the payable lifecycle transition; repeated calls are idempotent. A new transition emits a durable, signed usage_statement.finalized app webhook when a matching subscription exists.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The finalized usage statement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/apps/{slug}/rate-cards:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -3965,6 +4133,64 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/debug/requests/export:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: exportAppDebugRequests
+      summary: Export retained request telemetry.
+      description: |
+        Downloads a bounded, metadata-only request-log artifact for the app.
+        The default format is newline-delimited JSON (`ndjson`); `csv` is
+        available for spreadsheet and support workflows. The export uses the
+        same plan retention boundary as the debugger list, never includes
+        request bodies, headers, source IPs, or raw span attributes, and is
+        capped at 10,000 rows. `X-Faas-Request-Log-Window` and
+        `X-Faas-Request-Log-Retention-Clamped` describe the effective window
+        applied to the artifact.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: [string, 'null'] }
+          description: "Lookback duration (for example `24h` or `3d`). Defaults to `24h` and is clamped to plan retention."
+        - name: route
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 256 }
+          description: "Filter the exported rows by exact route template."
+        - name: format
+          in: query
+          required: false
+          schema: { type: string, enum: [ndjson, csv], default: ndjson }
+          description: "Export encoding."
+        - name: limit
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 1, maximum: 10000, default: 10000 }
+          description: "Maximum number of retained rows to export."
+      responses:
+        '200':
+          description: Metadata-only request telemetry export.
+          content:
+            application/x-ndjson:
+              schema: { type: string, format: binary }
+            text/csv:
+              schema: { type: string, format: binary }
+          headers:
+            X-Faas-Request-Log-Window:
+              schema: { type: string }
+              description: Effective lookback window after retention clamping.
+            X-Faas-Request-Log-Retention-Clamped:
+              schema: { type: boolean }
+              description: Whether the requested window exceeded plan retention.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/debug/coverage:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -4311,6 +4537,16 @@ paths:
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
                   description: "Optional repository-relative directory to build from when source contains a workspace context. Empty or omitted means the archive root."
+                source_url:
+                  type: string
+                  maxLength: 1024
+                  description: "Optional informational repository provenance URL. The server never fetches this value; the uploaded archive remains the source of truth."
+                commit_sha:
+                  type: string
+                  minLength: 7
+                  maxLength: 64
+                  pattern: '^[0-9a-f]+$'
+                  description: "Optional lowercase hexadecimal Git commit identifier for deployment provenance."
                 workflows:
                   type: string
                   description: "JSON array of workflow definitions (plan-gated)."
@@ -5558,6 +5794,41 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/github/repos:
+    get:
+      tags: [github]
+      operationId: listGitHubRepositories
+      summary: List repositories visible to the account's GitHub App installation.
+      description: |
+        Bearer API-key surface for customer automation. Requires the
+        dedicated `github:manage` scope. The account's durable GitHub App
+        installation is resolved server-side, so callers do not need to
+        copy or provide an installation id. Installation credentials are
+        never returned.
+      security:
+        - bearerAuth: [github:manage]
+      responses:
+        '200':
+          description: Repositories currently visible to the account's GitHub App installation.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/RepoResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: The account has not completed GitHub App installation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: GitHub could not be reached while listing repositories.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/apps/{slug}/github:
     parameters:
@@ -14288,6 +14559,25 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    StatusUptimeBucket:
+      description: Daily public status uptime point.
+      type: object
+      required: [date, uptime_pct, successful, total]
+      properties:
+        date: { type: string, format: date-time }
+        uptime_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        successful: { type: integer, format: int64, minimum: 0 }
+        total: { type: integer, format: int64, minimum: 0 }
+    StatusIncident:
+      description: Public operator-authored status incident.
+      type: object
+      required: [started_at, resolved_at, severity, summary]
+      properties:
+        component: { type: string }
+        started_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        severity: { type: string, enum: [degraded, partial_outage, full_outage, maintenance] }
+        summary: { type: string }
     ManagedPostgresDatabase:
       description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
       type: object
@@ -14450,6 +14740,38 @@ components:
         default_region: { type: string }
         max_upload_bytes: { type: integer, format: int64 }
         max_buckets_per_app: { type: integer }
+    ObjectUploadRoute:
+      description: Policy-controlled edge upload route. The edge generates the final object key and never exposes provider placement.
+      type: object
+      required: [id, name, bucket_id, max_bytes, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        bucket_id: { type: string, format: uuid }
+        key_prefix: { type: string, maxLength: 256 }
+        max_bytes: { type: integer, format: int64, minimum: 1 }
+        allowed_content_types: { type: array, items: { type: string }, maxItems: 32 }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ObjectUploadRouteList:
+      description: Policy-controlled edge upload routes for one app.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ObjectUploadRoute' } }
+    CreateObjectUploadRouteRequest:
+      description: Upload policy declaration for POST /uploads/{name}.
+      type: object
+      additionalProperties: false
+      required: [name, bucket_id]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        bucket_id: { type: string, format: uuid }
+        key_prefix: { type: string, maxLength: 256 }
+        max_bytes: { type: integer, format: int64, minimum: 1 }
+        allowed_content_types: { type: array, items: { type: string }, maxItems: 32 }
+        enabled: { type: boolean, default: true }
     ObjectBucketAccessGrant:
       description: Provider-independent access binding between one Gregale API key and one logical bucket.
       type: object
@@ -14598,13 +14920,21 @@ components:
         egress_millicents: { type: integer, format: int64, minimum: 0 }
         total_millicents: { type: integer, format: int64, minimum: 0 }
     ObjectStorageUsageResponse:
-      description: Current UTC-month accounting and operator safety policy.
+      description: Current UTC-month accounting, customer charge estimate, billing rollout state, and operator safety policy.
       type: object
-      required: [usage, policy]
+      required: [usage, policy, billing_mode]
       properties:
         usage: { $ref: '#/components/schemas/ObjectStorageUsage' }
         policy: { $ref: '#/components/schemas/ObjectStoragePolicy' }
         charges: { $ref: '#/components/schemas/ObjectStorageCharge' }
+        billing_mode:
+          type: string
+          enum: [off, shadow, live]
+          description: Whether finalized object-storage charges are disabled, audited locally, or sent to the billing provider.
+        billing_from:
+          type: string
+          format: date-time
+          description: UTC month boundary at which shadow/live handling starts. Periods before it are never charged.
     ObjectStorageUsageReport:
       description: Authoritative cumulative provider usage for one account, backend and UTC month. Missing data is not zero; costs are EUR millicents.
       type: object
@@ -15815,6 +16145,19 @@ components:
       type: string
       enum: [micro, small, medium, large, xlarge]
 
+    DeclaredRoute:
+      description: "One gateway route declaration. Path parameters use OpenAPI {name} segments."
+      type: object
+      required: [path, methods]
+      properties:
+        path: { type: string, pattern: '^/[^?#]*$' }
+        methods:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, CONNECT, TRACE]
+
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172)."
       type: object
@@ -15932,6 +16275,15 @@ components:
           description: "Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes. Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed."
           type: boolean
           example: false
+        only_allow_declared_routes:
+          description: "When true, gatewayd rejects paths not present in declared_routes or the imported OpenAPI document before waking an app."
+          type: boolean
+          example: false
+        declared_routes:
+          description: "Optional explicit route contract. When non-empty it takes precedence over the imported OpenAPI document."
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclaredRoute'
         # ADR-091 amendment: apps.maintenance_mode is the
         # coarse-grained "whole app in maintenance" toggle. When
         # true the gatewayd-internal hot-path short-circuits
@@ -16280,6 +16632,57 @@ components:
           items: { $ref: '#/components/schemas/APIConsumerUsageQuoteBucketResponse' }
         as_of: { type: string, format: date-time }
 
+    CreateAPIConsumerUsageStatementRequest:
+      description: "Explicit UTC-minute period to snapshot as an immutable usage statement."
+      type: object
+      required: [period_start, period_end]
+      properties:
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+
+    APIConsumerUsageStatementBucketResponse:
+      description: "One UTC minute captured in a durable usage statement."
+      type: object
+      required: [window_start, billable_units, amount_millicents]
+      properties:
+        window_start: { type: string, format: date-time }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        rate_card_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerUsageStatementResponse:
+      description: "Immutable, auditable API consumer usage snapshot."
+      type: object
+      required: [id, consumer_id, period_start, period_end, status, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        status: { type: string, enum: [draft, finalized] }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        priced: { type: boolean }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerUsageStatementBucketResponse' }
+        as_of: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        finalized_at: { type: [string, "null"], format: date-time }
+
+    APIConsumerUsageStatementListResponse:
+      description: "Durable API consumer usage statements, newest period first."
+      type: object
+      required: [statements]
+      properties:
+        statements:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
+
     AppRestartResponse:
       description: "Correlation handle for an accepted app restart."
       type: object
@@ -16601,6 +17004,15 @@ components:
           description: "Per-app per-route observability flag (ADR-093). Omitted → no change. Free PATCHing true is 403 plan_route_metrics_not_allowed."
           type: [boolean, "null"]
           example: false
+        only_allow_declared_routes:
+          description: "Enable or disable gateway-side rejection of paths not declared by the app. Enabling requires declared_routes or an imported OpenAPI document."
+          type: [boolean, "null"]
+          example: true
+        declared_routes:
+          description: "Replace the explicit route contract. An empty array clears it and makes the gateway use the imported OpenAPI document."
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclaredRoute'
         # ADR-091 amendment: partial-update nullable boolean.
         # Omitted → no change. Free-tier allowed; no plan gate.
         # PATCH true → every request to this app 503 + Retry-After.
@@ -17109,6 +17521,10 @@ components:
         handler: { type: string }
         dockerfile: { type: boolean }
         source_root: { type: string }
+        source_url:
+          { type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by apid." }
+        commit_sha:
+          { type: string, minLength: 7, maxLength: 64, pattern: '^[0-9a-f]+$', description: "Lowercase hexadecimal Git commit identifier." }
         reason: { type: string, maxLength: 280 }
         tag: { type: string }
         deployed_by: { type: string }
@@ -20172,6 +20588,10 @@ components:
         command:
           type: array
           items: { type: string }
+        depends_on:
+          type: array
+          items: { type: string }
+          description: "Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL for workload dependencies."
         class:
           type: string
           enum: [http, graphql, grpc, job, worker, server, unknown]
@@ -25827,6 +26247,28 @@ components:
         period: { type: string }
       additionalProperties: true
 
+    APIConsumerUsageStatementFinalizedWebhookPayload:
+      type: object
+      description: Complete payable usage statement delivered with usage_statement.finalized.
+      required: [app_id, consumer_id, statement_id, period_start, period_end, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of, finalized_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        statement_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        priced: { type: boolean }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerUsageStatementBucketResponse' }
+        as_of: { type: string, format: date-time }
+        finalized_at: { type: string, format: date-time }
+      additionalProperties: true
+
     AppWebhookResponse:
       description: |
         An outbound webhook subscription. Carries the masked HMAC secret;
@@ -25843,7 +26285,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold"]
+            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         enabled: { type: boolean }
@@ -25980,7 +26422,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold"]
+            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         enabled: { type: boolean, default: true }
@@ -26004,7 +26446,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold"]
+            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         enabled: { type: boolean }
@@ -26054,7 +26496,7 @@ components:
         account_id: { type: string, format: uuid }
         event:
           type: string
-          enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold"]
+          enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold", "usage_statement.finalized"]
         payload:
           type: object
           additionalProperties: true

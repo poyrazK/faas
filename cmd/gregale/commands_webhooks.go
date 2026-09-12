@@ -425,29 +425,30 @@ var webhookIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-
 // migrations/20260906171000000_webhook_event_allowlist_b5.sql and the
 // `app_webhook_deliveries_event_chk` migration tests.
 var validAppWebhookEvents = map[string]struct{}{
-	"cron.fired":          {},
-	"cron.fired.manually": {},
-	"app.created":         {},
-	"app.deleted":         {},
-	"app.deployed":        {},
-	"app.scaled":          {},
-	"app.parked":          {},
-	"app.woken":           {},
-	"build.succeeded":     {},
-	"build.failed":        {},
-	"deployment.failed":   {},
-	"rollout.aborted":     {},
-	"error.new":           {},
-	"job.finished":        {},
-	"preview.created":     {},
-	"budget.threshold":    {},
+	"cron.fired":                {},
+	"cron.fired.manually":       {},
+	"app.created":               {},
+	"app.deleted":               {},
+	"app.deployed":              {},
+	"app.scaled":                {},
+	"app.parked":                {},
+	"app.woken":                 {},
+	"build.succeeded":           {},
+	"build.failed":              {},
+	"deployment.failed":         {},
+	"rollout.aborted":           {},
+	"error.new":                 {},
+	"job.finished":              {},
+	"preview.created":           {},
+	"budget.threshold":          {},
+	"usage_statement.finalized": {},
 }
 
 var webhookEventVocab = []string{
 	"cron.fired", "cron.fired.manually",
 	"app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken",
 	"build.succeeded", "build.failed",
-	"deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold",
+	"deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold", "usage_statement.finalized",
 }
 
 func validAppWebhookEvent(s string) bool {

@@ -93,3 +93,64 @@ returning id, account_id, period_start, period_end, currency,
 	}
 	return existing, nil
 }
+
+const objectStorageBillingDeliverySelect = `
+select provider, billing_record_id, account_id, period_start, mode,
+       quantity_millicents, delivered_at
+  from object_storage_billing_deliveries
+ where provider = $1 and billing_record_id = $2`
+
+func (s *PgStore) GetObjectStorageBillingDelivery(ctx context.Context, provider, billingRecordID string) (ObjectStorageBillingDelivery, error) {
+	var delivery ObjectStorageBillingDelivery
+	err := s.pool.QueryRow(ctx, objectStorageBillingDeliverySelect, provider, billingRecordID).Scan(
+		&delivery.Provider, &delivery.BillingRecordID, &delivery.AccountID,
+		&delivery.PeriodStart, &delivery.Mode, &delivery.QuantityMillicents,
+		&delivery.DeliveredAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ObjectStorageBillingDelivery{}, ErrNotFound
+	}
+	if err != nil {
+		return ObjectStorageBillingDelivery{}, err
+	}
+	return delivery, nil
+}
+
+func (s *PgStore) RecordObjectStorageBillingDelivery(ctx context.Context, delivery ObjectStorageBillingDelivery) (ObjectStorageBillingDelivery, error) {
+	delivery = normalizeObjectStorageBillingDelivery(delivery)
+	if err := validateObjectStorageBillingDelivery(delivery); err != nil {
+		return ObjectStorageBillingDelivery{}, err
+	}
+	const insert = `
+insert into object_storage_billing_deliveries (
+    provider, billing_record_id, account_id, period_start, mode,
+    quantity_millicents, delivered_at
+) values ($1,$2,$3,$4,$5,$6,$7)
+on conflict (provider, billing_record_id) do nothing
+returning provider, billing_record_id, account_id, period_start, mode,
+          quantity_millicents, delivered_at`
+	var stored ObjectStorageBillingDelivery
+	err := s.pool.QueryRow(ctx, insert,
+		delivery.Provider, delivery.BillingRecordID, delivery.AccountID,
+		delivery.PeriodStart, delivery.Mode, delivery.QuantityMillicents,
+		delivery.DeliveredAt,
+	).Scan(
+		&stored.Provider, &stored.BillingRecordID, &stored.AccountID,
+		&stored.PeriodStart, &stored.Mode, &stored.QuantityMillicents,
+		&stored.DeliveredAt,
+	)
+	if err == nil {
+		return stored, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return ObjectStorageBillingDelivery{}, err
+	}
+	existing, err := s.GetObjectStorageBillingDelivery(ctx, delivery.Provider, delivery.BillingRecordID)
+	if err != nil {
+		return ObjectStorageBillingDelivery{}, err
+	}
+	if !sameObjectStorageBillingDelivery(existing, delivery) {
+		return ObjectStorageBillingDelivery{}, ErrObjectBillingConflict
+	}
+	return existing, nil
+}

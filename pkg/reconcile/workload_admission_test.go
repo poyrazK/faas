@@ -23,6 +23,14 @@ func TestWorkloadAdmissionReasons(t *testing.T) {
 			workloads: []reposcan.Workload{{Name: "valid-service", RootDir: "services/api"}},
 		},
 		{
+			name: "serverless requires explicit function deploy",
+			workloads: []reposcan.Workload{{
+				Name:       "api",
+				DetectedBy: reposcan.Detection{Detector: "serverless"},
+			}},
+			want: []string{"without an execution adapter"},
+		},
+		{
 			name:      "intended member update",
 			workloads: []reposcan.Workload{{Name: "member-api", RootDir: "services/api"}},
 			apps:      []state.App{{Slug: "member-api", WorkloadName: "member-api", RootDir: "services/api", ProjectID: "project-1"}},

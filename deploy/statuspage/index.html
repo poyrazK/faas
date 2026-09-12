@@ -53,6 +53,21 @@
   }
   .bar.warn > span { background: var(--yellow); }
   .bar.bad > span { background: var(--red); }
+  .sparkline-wrap { margin-top: 14px; padding: 8px 0 2px; }
+  .sparkline { display: block; width: 100%; height: 96px; }
+  .sparkline .track { fill: var(--bar-bg); }
+  .sparkline .line { fill: none; stroke: var(--green); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .sparkline .point { stroke: var(--card); stroke-width: 2; }
+  .sparkline-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
+  details.row summary { cursor: pointer; list-style-position: outside; }
+  details.row summary::marker { color: var(--muted); }
+  .incidents-list { margin-top: 16px; }
+  .incident { border-top: 1px solid var(--border); padding: 12px 0 0; margin-top: 12px; }
+  .incident:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+  .incident-title { display: flex; justify-content: space-between; gap: 12px; font-weight: 600; }
+  .incident-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .incident-summary { margin: 7px 0 0; }
+  .incident-empty { color: var(--muted); margin: 14px 0 0; }
   /* Degraded pill: visible only when s.degraded is true. The pill
      surfaces customer-impacting page/warn alerts. Internal operator
      alerts remain visible in Prometheus and Alertmanager without
@@ -110,6 +125,25 @@
     <div class="bar" id="build-bar"><span></span></div>
   </div>
 
+  <div class="row">
+    <div class="label">
+      <span class="name">30-day uptime</span>
+      <span class="value" id="uptime-v">—</span>
+    </div>
+    <div class="sparkline-wrap">
+      <svg id="uptime-sparkline" class="sparkline" viewBox="0 0 600 100" role="img" aria-label="30-day uptime history"></svg>
+    </div>
+    <div class="sparkline-labels"><span>30 days ago</span><span id="uptime-traffic">—</span><span>Today</span></div>
+  </div>
+
+  <details class="row" id="incidents-card">
+    <summary class="label">
+      <span class="name">Incident history</span>
+      <span class="value" id="incidents-v">—</span>
+    </summary>
+    <div id="incidents-list" class="incidents-list"></div>
+  </details>
+
   <div class="foot">
     Source: <a href="/status/slo.json">/status/slo.json</a>
     · auto-refreshes every 30s
@@ -127,6 +161,8 @@ const WARN_WAKE_MS = 350;
 const RED_WAKE_MS = 800;
 const WARN_BUILD = 95;
 const RED_BUILD = 80;
+const SPARKLINE_WIDTH = 600;
+const SPARKLINE_HEIGHT = 100;
 
 function setBar(barId, valueId, pct, formatted, lowerIsBetter, warnThreshold, redThreshold) {
   const bar = document.getElementById(barId);
@@ -149,6 +185,99 @@ function setBar(barId, valueId, pct, formatted, lowerIsBetter, warnThreshold, re
     if (pct < redThreshold) bar.classList.add('bad');
     else if (pct < warnThreshold) bar.classList.add('warn');
   }
+}
+
+function formatTime(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return 'unknown time';
+  return date.toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'});
+}
+
+function renderUptime(buckets) {
+  const svg = document.getElementById('uptime-sparkline');
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  if (!Array.isArray(buckets) || buckets.length === 0) {
+    document.getElementById('uptime-traffic').textContent = 'No traffic';
+    return;
+  }
+
+  const width = SPARKLINE_WIDTH;
+  const height = SPARKLINE_HEIGHT;
+  const points = buckets.map((bucket, index) => {
+    const pct = Math.max(0, Math.min(100, Number(bucket.uptime_pct) || 0));
+    const x = buckets.length === 1 ? width / 2 : index * width / (buckets.length - 1);
+    const y = height - (pct / 100) * (height - 8) - 4;
+    return {x, y, pct, total: Number(bucket.total) || 0, date: bucket.date};
+  });
+
+  const track = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  track.setAttribute('class', 'track');
+  track.setAttribute('x', '0');
+  track.setAttribute('y', '0');
+  track.setAttribute('width', String(width));
+  track.setAttribute('height', String(height));
+  track.setAttribute('rx', '5');
+  svg.appendChild(track);
+
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  line.setAttribute('class', 'line');
+  line.setAttribute('points', points.map(p => `${p.x},${p.y}`).join(' '));
+  svg.appendChild(line);
+
+  let observed = 0;
+  points.forEach(point => {
+    observed += point.total;
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('class', 'point');
+    circle.setAttribute('cx', String(point.x));
+    circle.setAttribute('cy', String(point.y));
+    circle.setAttribute('r', '4');
+    circle.setAttribute('fill', point.total === 0 ? '#707781' : point.pct < RED_API ? 'var(--red)' : point.pct < WARN_API ? 'var(--yellow)' : 'var(--green)');
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = `${formatTime(point.date)}: ${point.total === 0 ? 'no traffic' : point.pct.toFixed(2) + '% uptime'}`;
+    circle.appendChild(title);
+    svg.appendChild(circle);
+  });
+  document.getElementById('uptime-traffic').textContent = observed + ' requests observed';
+}
+
+function renderIncidents(incidents) {
+  const list = document.getElementById('incidents-list');
+  list.replaceChildren();
+  if (!Array.isArray(incidents) || incidents.length === 0) {
+    document.getElementById('incidents-v').textContent = 'None';
+    const empty = document.createElement('p');
+    empty.className = 'incident-empty';
+    empty.textContent = 'No incidents reported in the last 30 days.';
+    list.appendChild(empty);
+    return;
+  }
+  document.getElementById('incidents-v').textContent = incidents.length + (incidents.length === 1 ? ' incident' : ' incidents');
+  incidents.forEach(incident => {
+    const article = document.createElement('article');
+    article.className = 'incident';
+    const title = document.createElement('div');
+    title.className = 'incident-title';
+    const severity = document.createElement('span');
+    severity.textContent = incident.severity || 'incident';
+    const state = document.createElement('span');
+    state.textContent = incident.resolved_at ? 'Resolved' : 'Ongoing';
+    title.append(severity, state);
+    article.appendChild(title);
+
+    const meta = document.createElement('div');
+    meta.className = 'incident-meta';
+    const component = incident.component ? incident.component + ' · ' : '';
+    meta.textContent = component + 'Started ' + formatTime(incident.started_at) +
+      (incident.resolved_at ? ' · resolved ' + formatTime(incident.resolved_at) : '');
+    article.appendChild(meta);
+
+    const summary = document.createElement('p');
+    summary.className = 'incident-summary';
+    summary.textContent = incident.summary || 'No summary provided.';
+    article.appendChild(summary);
+    list.appendChild(article);
+  });
 }
 
 async function refresh() {
@@ -178,8 +307,19 @@ async function refresh() {
       Math.round(s.wake_p95_ms || 0) + ' ms', true, WARN_WAKE_MS, RED_WAKE_MS);
     setBar('build-bar', 'build-v', s.build_success_pct || 0,
       (s.build_success_pct || 0).toFixed(2) + '%', false, WARN_BUILD, RED_BUILD);
+    const uptimeHistory = Array.isArray(s.uptime_30d) ? s.uptime_30d : [];
+    if (uptimeHistory.length === 0 || s.uptime_30d_pct == null) {
+      document.getElementById('uptime-v').textContent = '—';
+    } else {
+      document.getElementById('uptime-v').textContent = Number(s.uptime_30d_pct).toFixed(2) + '%';
+    }
+    renderUptime(uptimeHistory);
+    renderIncidents(s.incidents);
   } catch (e) {
     sub.textContent = 'Status source unavailable: ' + e.message;
+    document.getElementById('uptime-v').textContent = '—';
+    renderUptime([]);
+    renderIncidents([]);
     // If we can't reach the JSON endpoint at all, hide the pill —
     // we can't claim degraded without evidence.
     pill.classList.add('hidden');

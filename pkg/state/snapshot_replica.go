@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // SnapshotReplicaState is the durable state of one snapshot's local
@@ -79,6 +80,14 @@ type SnapshotReplicaJob struct {
 	NodeID           string
 	Region           string
 	Attempts         int
+	// QueuedAt is the durable enqueue timestamp. Workers use it to expose
+	// end-to-end prepositioning latency (queue wait plus artifact reads), not
+	// just the time spent copying bytes after a claim.
+	QueuedAt time.Time
+	// LeaseToken identifies this specific claim. Completion must present the
+	// same token so a worker whose lease was reclaimed cannot overwrite the
+	// newer attempt.
+	LeaseToken string
 }
 
 // SnapshotOriginStore records the node/locality that produced a snapshot.
@@ -103,9 +112,22 @@ type SnapshotReplicaStore interface {
 	// ClaimSnapshotReplica atomically leases one pending/retryable job for the
 	// node. ErrNotFound means the queue is empty.
 	ClaimSnapshotReplica(ctx context.Context, nodeID string) (SnapshotReplicaJob, error)
+	// These legacy completion methods remain for older stores. Production
+	// stores reject unscoped completion; callers should use
+	// SnapshotReplicaLeaseStore when available.
 	MarkSnapshotReplicaReady(ctx context.Context, snapshotID, nodeID string) error
 	MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nodeID string, cause error) error
 	// ReadySnapshotReplicaNodes returns nodes whose local cache has a complete
 	// copy of the snapshot's restore blobs.
 	ReadySnapshotReplicaNodes(ctx context.Context, snapshotID string) ([]string, error)
+}
+
+// SnapshotReplicaLeaseStore is implemented by stores that protect completion
+// writes with the claim lease. SnapshotReplicaStore remains unchanged so
+// external test stores and older integrations remain source-compatible; the
+// production PgStore and MemStore implement this stronger interface.
+type SnapshotReplicaLeaseStore interface {
+	SnapshotReplicaStore
+	MarkSnapshotReplicaReadyWithLease(ctx context.Context, snapshotID, nodeID, leaseToken string) error
+	MarkSnapshotReplicaFailedWithLease(ctx context.Context, snapshotID, nodeID, leaseToken string, cause error) error
 }

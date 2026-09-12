@@ -111,6 +111,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/rate-limits":             true, // ADR-091 — operator-only (PR #2)
 	"GET /v1/admin/obs/builder-heartbeats":      true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
 	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
+	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
 
 	// Operator-side observability mega-PR (PR #1099) P2 recovery
 	// primitives. Mirror the cmd/sdk-coverage/main.go::routeExclude
@@ -382,6 +383,8 @@ var dtoExclude = map[string]bool{
 	"ObsTraceLookupResponse":          true,
 	"ObsBuilderHeartbeatListResponse": true,
 	"ObsBuilderHeartbeatRow":          true,
+	"ObsIncident":                     true,
+	"ObsIncidentListResponse":         true,
 	// P2d / C5/C7 mega-PR follow-on DTOs (Obs-Meta + Trace-IDs
 	// Mega-PR / PR #1111): admin-only shapes for /v1/admin/obs/*
 	// surface; intentionally undocumented for public consumers.
@@ -440,6 +443,9 @@ var dtoExclude = map[string]bool{
 	// ADR-127: debug request filters are represented as inline query
 	// parameters rather than a standalone OpenAPI schema.
 	"DebugTelemetryListOptions": true,
+	// Export options are encoded as inline query parameters on the binary
+	// export endpoint, not as a standalone wire object.
+	"DebugTelemetryExportOptions": true,
 }
 
 // codeExclude lists Code* constants that are intentionally not in the

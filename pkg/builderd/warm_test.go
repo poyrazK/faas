@@ -3,8 +3,15 @@ package builderd
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/imaged"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type warmBuilderTestVM struct {
@@ -12,6 +19,24 @@ type warmBuilderTestVM struct {
 	deletedCh  chan struct{}
 	deleteErr  error
 	deleteCall int
+}
+
+type warmRestoreTestVM struct {
+	warmBuilderTestVM
+	restored     WarmSnapshot
+	restoreCalls int
+	warmOut      BuildOutcome
+	warmCaptured WarmSnapshot
+}
+
+func (v *warmRestoreTestVM) RestoreWarmBuilder(_ context.Context, req VMRequest, snapshot WarmSnapshot) (BuildHandle, error) {
+	v.restoreCalls++
+	v.restored = snapshot
+	return BuildHandle{Instance: "build-" + req.BuildID, BuildID: req.BuildID, TimeoutSec: req.TimeoutSec}, nil
+}
+
+func (v *warmRestoreTestVM) WaitForWarmCompletion(context.Context, BuildHandle) (BuildOutcome, WarmSnapshot, error) {
+	return v.warmOut, v.warmCaptured, nil
 }
 
 func (v *warmBuilderTestVM) Spawn(context.Context, VMRequest) (BuildHandle, error) {
@@ -98,6 +123,56 @@ func TestPrepareWarmBuilderDiscardsForeignScope(t *testing.T) {
 	}
 	if len(vm.deleted) != 1 || vm.deleted[0].ScopeKey != "foreign-scope" {
 		t.Fatalf("deleted snapshots = %+v, want the foreign scope", vm.deleted)
+	}
+}
+
+func TestProcessOneCleansConsumedWarmSnapshotAfterRestore(t *testing.T) {
+	store := state.NewMemStore()
+	source := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, source, []string{"package.json", "index.js"})
+	buildID, _, appID := seedDeployment(t, store, source)
+	app, err := store.AppByID(context.Background(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layerPath := filepath.Join(t.TempDir(), "produced.ext4")
+	if err := os.WriteFile(layerPath, []byte("produced layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vm := &warmRestoreTestVM{warmOut: BuildOutcome{OCIImage: layerPath, ExitCode: 0}}
+	b := New(store, &fakeNotifier{}, vm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	now := time.Now()
+	if _, _, err := b.StartWarmBuilder(now, "firecracker-1.8.0"); err != nil {
+		t.Fatal(err)
+	}
+	old := testStorageWarmSnapshot()
+	old.ScopeKey = builderWarmScopeKey(app.AccountID, app.ID, FrameworkNode, imaged.BaseRefMinimal)
+	old.CreatedAt = now
+	old.LastUsedAt = now
+	if err := b.CompleteWarmBuilder(now, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	if vm.restoreCalls != 1 || vm.restored != old {
+		t.Fatalf("restore calls/snapshot = %d/%+v, want 1/%+v", vm.restoreCalls, vm.restored, old)
+	}
+	if len(vm.deleted) != 1 {
+		t.Fatalf("deleted snapshots = %+v, want one consumed snapshot", vm.deleted)
+	}
+	if vm.deleted[0] != func() WarmSnapshot {
+		consumed := old
+		consumed.LayerPath = ""
+		return consumed
+	}() {
+		t.Fatalf("deleted snapshot = %+v, want old storage objects without retained drive", vm.deleted[0])
+	}
+	if got := b.WarmState(); got != WarmCold {
+		t.Fatalf("WarmState() = %q, want %q after no replacement capture", got, WarmCold)
 	}
 }
 

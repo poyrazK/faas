@@ -34,6 +34,9 @@ func TestResumableUploadClient_WireContract(t *testing.T) {
 			if req.AppSlug != "demo" || req.TotalSize != 6 || req.Sha256Hex != nil || req.DeployOptions == nil || req.DeployOptions.SourceRoot != "apps/api" {
 				t.Errorf("start request = %+v", req)
 			}
+			if req.DeployOptions.SourceURL != "github://acme/demo@0123456789abcdef0123456789abcdef01234567" || req.DeployOptions.CommitSHA != "0123456789abcdef0123456789abcdef01234567" {
+				t.Errorf("provenance options = %+v", req.DeployOptions)
+			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(resumableUploadStartResponse{
 				UploadID: "upload-1", ChunkSize: 3, TotalSize: 6, ExpiresAt: "2030-01-01T00:00:00Z",
@@ -58,7 +61,11 @@ func TestResumableUploadClient_WireContract(t *testing.T) {
 
 	c := NewClient(srv.URL, "fp_test").SetCompletionCache(nil)
 	ctx := context.Background()
-	session, err := c.StartUpload(ctx, "demo", 6, "", UploadDeployOptions{SourceRoot: "apps/api"})
+	session, err := c.StartUpload(ctx, "demo", 6, "", UploadDeployOptions{
+		SourceRoot: "apps/api",
+		SourceURL:  "github://acme/demo@0123456789abcdef0123456789abcdef01234567",
+		CommitSHA:  "0123456789abcdef0123456789abcdef01234567",
+	})
 	if err != nil {
 		t.Fatalf("StartUpload: %v", err)
 	}

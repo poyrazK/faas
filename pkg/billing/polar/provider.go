@@ -46,33 +46,38 @@ type usageDedupe interface {
 
 // Provider is the Polar implementation of billing.Provider.
 type Provider struct {
-	apiKey         string
-	webhookSecret  string
-	baseURL        string
-	usageEvent     string
-	meterID        string
-	egressMode     string
-	egressFrom     time.Time
-	egressEvent    string
-	egressMeterID  string
-	egressPrice    int64
-	egressIncluded map[api.Plan]int64
-	products       map[api.Plan]string
-	successURL     string
-	returnURL      string
-	client         *http.Client
-	log            *slog.Logger
-	dedupe         usageDedupe
-	webhookTol     time.Duration
-	now            func() time.Time
-	catalogMu      sync.RWMutex
-	lastSyncAt     time.Time
+	apiKey               string
+	webhookSecret        string
+	baseURL              string
+	usageEvent           string
+	meterID              string
+	egressMode           string
+	egressFrom           time.Time
+	egressEvent          string
+	egressMeterID        string
+	egressPrice          int64
+	egressIncluded       map[api.Plan]int64
+	objectStorageMode    string
+	objectStorageFrom    time.Time
+	objectStorageEvent   string
+	objectStorageMeterID string
+	products             map[api.Plan]string
+	successURL           string
+	returnURL            string
+	client               *http.Client
+	log                  *slog.Logger
+	dedupe               usageDedupe
+	webhookTol           time.Duration
+	now                  func() time.Time
+	catalogMu            sync.RWMutex
+	lastSyncAt           time.Time
 }
 
 var _ billing.Provider = (*Provider)(nil)
 var _ billing.Classifier = (*Provider)(nil)
 var _ billing.MeterUsageProvider = (*Provider)(nil)
 var _ billing.MeterUsagePolicyProvider = (*Provider)(nil)
+var _ billing.ObjectStorageLineItemSink = (*Provider)(nil)
 
 // PolarCapabilities returns the static capabilities of this provider.
 func PolarCapabilities() billing.CapabilitySet {
@@ -105,7 +110,11 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 	if err := validateEgressConfig(cfg); err != nil {
 		return nil, err
 	}
+	if err := validateObjectStorageConfig(cfg); err != nil {
+		return nil, err
+	}
 	egressFrom, _ := time.Parse(time.RFC3339, cfg.EgressBillingFrom)
+	objectStorageFrom, _ := time.Parse(time.RFC3339, cfg.ObjectStorageBillingFrom)
 	if log == nil {
 		log = slog.Default()
 	}
@@ -132,6 +141,10 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 			api.PlanPro:   cfg.ProIncludedEgressGiB * bytesPerGiB,
 			api.PlanScale: cfg.ScaleIncludedEgressGiB * bytesPerGiB,
 		},
+		objectStorageMode:    cfg.ObjectStorageBillingMode,
+		objectStorageFrom:    objectStorageFrom.UTC(),
+		objectStorageEvent:   cfg.ObjectStorageUsageEventName,
+		objectStorageMeterID: cfg.ObjectStorageMeterID,
 		products: map[api.Plan]string{
 			api.PlanHobby: cfg.HobbyProductID,
 			api.PlanPro:   cfg.ProProductID,
@@ -145,6 +158,34 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 		webhookTol: time.Duration(cfg.ToleranceSeconds) * time.Second,
 		now:        time.Now,
 	}, nil
+}
+
+func validateObjectStorageConfig(cfg Config) error {
+	switch cfg.ObjectStorageBillingMode {
+	case ObjectStorageBillingOff:
+		return nil
+	case ObjectStorageBillingShadow, ObjectStorageBillingLive:
+	default:
+		return fmt.Errorf("polar: invalid object storage billing mode %q (want off, shadow, or live)", cfg.ObjectStorageBillingMode)
+	}
+	effectiveFrom, err := time.Parse(time.RFC3339, cfg.ObjectStorageBillingFrom)
+	_, utcOffset := effectiveFrom.Zone()
+	if err != nil || utcOffset != 0 || !effectiveFrom.Equal(state.ObjectStoragePeriod(effectiveFrom)) {
+		return errors.New("polar: object storage billing from must be an RFC3339 UTC-month boundary")
+	}
+	if strings.TrimSpace(cfg.ObjectStorageMeterID) == "" {
+		return errors.New("polar: object storage meter id missing")
+	}
+	if cfg.ObjectStorageMeterID == cfg.MeterID || cfg.ObjectStorageMeterID == cfg.EgressMeterID {
+		return errors.New("polar: object storage meter must be separate from compute and egress meters")
+	}
+	if strings.TrimSpace(cfg.ObjectStorageUsageEventName) == "" {
+		return errors.New("polar: object storage usage event name is empty")
+	}
+	if cfg.ObjectStorageUsageEventName == cfg.UsageEventName || cfg.ObjectStorageUsageEventName == cfg.EgressUsageEventName {
+		return errors.New("polar: object storage usage event must be separate from compute and egress usage events")
+	}
+	return nil
 }
 
 func validateEgressConfig(cfg Config) error {
@@ -215,7 +256,28 @@ func (p *Provider) Capabilities() billing.CapabilitySet {
 	if p != nil && p.egressMode == EgressBillingLive {
 		caps |= billing.CapabilitySet(billing.CapEgressUsage)
 	}
+	if p != nil && p.objectStorageMode == ObjectStorageBillingLive {
+		caps |= billing.CapabilitySet(billing.CapObjectStorageUsage)
+	}
 	return caps
+}
+
+// ObjectStorageLineItemPolicy exposes the month-close rollout boundary to
+// apid. Off returns ok=false, so merely deploying the code cannot acknowledge
+// or publish any object-storage periods.
+func (p *Provider) ObjectStorageLineItemPolicy() (billing.ObjectStorageLineItemPolicy, bool) {
+	if p == nil || p.objectStorageMode == ObjectStorageBillingOff {
+		return billing.ObjectStorageLineItemPolicy{}, false
+	}
+	mode := billing.MeterDeliveryShadow
+	if p.objectStorageMode == ObjectStorageBillingLive {
+		mode = billing.MeterDeliveryLive
+	}
+	return billing.ObjectStorageLineItemPolicy{
+		Provider:      "polar",
+		Mode:          mode,
+		EffectiveFrom: p.objectStorageFrom,
+	}, true
 }
 
 // MeterUsagePolicy exposes the explicitly configured per-plan egress policy
@@ -337,6 +399,7 @@ type catalogAggregation struct {
 
 func (p *Provider) validateCatalog(ctx context.Context) error {
 	validateEgressMeter := false
+	validateObjectStorageMeter := false
 	for plan, productID := range p.products {
 		var product catalogProduct
 		path := "/v1/products/" + url.PathEscape(productID)
@@ -353,7 +416,7 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 			return fmt.Errorf("polar: validate %s product %q requires an active monthly recurring product", plan, productID)
 		}
 
-		fixed, computeMetered, egressMetered := 0, 0, 0
+		fixed, computeMetered, egressMetered, objectStorageMetered := 0, 0, 0, 0
 		expectedFixedCents := billing.PlanMonthlyMillicents(plan) / api.MillicentsPerCent
 		for _, price := range product.Prices {
 			if price.IsArchived {
@@ -385,6 +448,12 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 					if price.PriceCurrency != "eur" || !decimalEquals(price.UnitAmount, wantCents) {
 						return fmt.Errorf("polar: validate %s product %q egress price must be EUR %d cents per GiB on meter %q", plan, productID, wantCents, p.egressMeterID)
 					}
+				case p.objectStorageMeterID:
+					objectStorageMetered++
+					validateObjectStorageMeter = true
+					if price.PriceCurrency != "eur" || !decimalEqualsRatio(price.UnitAmount, 1, api.MillicentsPerCent) {
+						return fmt.Errorf("polar: validate %s product %q object storage price must be EUR 0.001 cents per charge millicent on meter %q", plan, productID, p.objectStorageMeterID)
+					}
 				default:
 					return fmt.Errorf("polar: validate %s product %q has an unexpected metered price on meter %q", plan, productID, price.MeterID)
 				}
@@ -396,8 +465,12 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 		if p.egressMode == EgressBillingOff {
 			validEgressCount = egressMetered <= 1
 		}
-		if fixed != 1 || computeMetered != 1 || !validEgressCount {
-			return fmt.Errorf("polar: validate %s product %q requires one fixed price, one compute price, and one egress price when egress billing is enabled", plan, productID)
+		validObjectStorageCount := objectStorageMetered == 1
+		if p.objectStorageMode == ObjectStorageBillingOff {
+			validObjectStorageCount = objectStorageMetered <= 1
+		}
+		if fixed != 1 || computeMetered != 1 || !validEgressCount || !validObjectStorageCount {
+			return fmt.Errorf("polar: validate %s product %q requires one fixed price, one compute price, and one price for each enabled secondary meter", plan, productID)
 		}
 		for _, benefit := range product.Benefits {
 			if !benefit.IsDeleted && benefit.Type == "meter_credit" {
@@ -410,6 +483,11 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 	}
 	if validateEgressMeter {
 		if err := p.validateMeter(ctx, p.egressMeterID, p.egressEvent, "egress_gib"); err != nil {
+			return err
+		}
+	}
+	if validateObjectStorageMeter {
+		if err := p.validateMeter(ctx, p.objectStorageMeterID, p.objectStorageEvent, "charge_millicents"); err != nil {
 			return err
 		}
 	}
@@ -435,8 +513,12 @@ func (p *Provider) validateMeter(ctx context.Context, meterID, eventName, proper
 }
 
 func decimalEquals(value string, want int64) bool {
+	return decimalEqualsRatio(value, want, 1)
+}
+
+func decimalEqualsRatio(value string, numerator, denominator int64) bool {
 	ratio, ok := new(big.Rat).SetString(strings.TrimSpace(value))
-	return ok && ratio.Cmp(big.NewRat(want, 1)) == 0
+	return ok && ratio.Cmp(big.NewRat(numerator, denominator)) == 0
 }
 
 func filterHasEventClause(filter catalogFilter, eventName string) bool {
@@ -612,6 +694,50 @@ func (p *Provider) PushMeterUsageRecord(ctx context.Context, acct state.Account,
 	}
 	if result.Inserted == 0 && result.Duplicates == 0 {
 		return fmt.Errorf("polar: ingest egress account=%s hour=%s returned no inserted or duplicate events", acct.ID, window.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// PublishObjectStorageLineItem emits one immutable month-close charge event.
+// Polar's catalog price is 0.001 cents per charge_millicent, so the integer
+// quantity reproduces Gregale's exact customer ledger without float money.
+func (p *Provider) PublishObjectStorageLineItem(ctx context.Context, record state.ObjectStorageBillingRecord) error {
+	if p == nil || p.objectStorageMode != ObjectStorageBillingLive || !p.Capabilities().Has(billing.CapObjectStorageUsage) {
+		return errors.New("polar: object storage usage delivery is not live")
+	}
+	if record.ID == "" || record.Currency != "EUR" || !state.ValidObjectStorageBillingRecord(record) {
+		return errors.New("polar: invalid object storage billing record")
+	}
+	if record.TotalMillicents == 0 {
+		return nil
+	}
+	externalID := "faas-object-storage-" + record.ID
+	body := ingestRequest{Events: []usageEvent{{
+		ExternalID:         externalID,
+		Name:               p.objectStorageEvent,
+		ExternalCustomerID: record.AccountID,
+		Metadata: map[string]any{
+			"faas_account_id":          record.AccountID,
+			"billing_record_id":        record.ID,
+			"period_start":             record.PeriodStart.Format(time.RFC3339),
+			"period_end":               record.PeriodEnd.Format(time.RFC3339),
+			"stored_byte_hours":        record.StoredByteHours,
+			"request_count":            record.RequestCount,
+			"egress_bytes":             record.EgressBytes,
+			"provider_cost_millicents": record.ProviderCostMillicents,
+			"storage_millicents":       record.StorageMillicents,
+			"requests_millicents":      record.RequestsMillicents,
+			"egress_millicents":        record.EgressMillicents,
+			"charge_millicents":        record.TotalMillicents,
+		},
+		Timestamp: record.PeriodEnd.Format(time.RFC3339),
+	}}}
+	var result ingestResponse
+	if err := p.doJSON(ctx, http.MethodPost, "/v1/events/ingest", body, &result, externalID); err != nil {
+		return fmt.Errorf("polar: ingest object storage account=%s period=%s: %w", record.AccountID, record.PeriodStart.Format("2006-01"), err)
+	}
+	if result.Inserted == 0 && result.Duplicates == 0 {
+		return fmt.Errorf("polar: ingest object storage account=%s period=%s returned no inserted or duplicate events", record.AccountID, record.PeriodStart.Format("2006-01"))
 	}
 	return nil
 }

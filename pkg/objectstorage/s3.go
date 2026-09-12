@@ -205,6 +205,39 @@ func (p *S3) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser,
 	return out.Body, nil
 }
 
+// WriteObject is the server-side streaming path used by authenticated upload
+// routes. The SDK receives the caller's reader directly; no request-sized
+// buffer is created here.
+func (p *S3) WriteObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
+	if !ValidKey(key) || size < 0 || size > api.MaxObjectSinglePutBytes {
+		return UploadResult{}, ErrInvalid
+	}
+	if err := ValidateObjectMetadata(metadata); err != nil {
+		return UploadResult{}, err
+	}
+	tagging, err := EncodeObjectTags(metadata.Tags)
+	if err != nil {
+		return UploadResult{}, err
+	}
+	in := &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(key), Body: body, ContentLength: aws.Int64(size),
+		ContentType: stringPtrOrNil(metadata.ContentType), ContentEncoding: stringPtrOrNil(metadata.ContentEncoding),
+		ContentLanguage: stringPtrOrNil(metadata.ContentLanguage), CacheControl: stringPtrOrNil(metadata.CacheControl),
+		ContentDisposition: stringPtrOrNil(metadata.ContentDisposition), Metadata: metadata.Metadata,
+	}
+	if tagging != "" {
+		in.Tagging = aws.String(tagging)
+	}
+	out, err := p.client.PutObject(ctx, in)
+	if err != nil {
+		return UploadResult{}, normalize(err)
+	}
+	if out == nil {
+		return UploadResult{}, ErrUnavailable
+	}
+	return UploadResult{ETag: aws.ToString(out.ETag)}, nil
+}
+
 func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) {
 	if !ValidKey(key) {
 		return 0, ErrInvalid

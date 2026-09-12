@@ -32,3 +32,24 @@ func TestScheddServerVerifierDisabledWithoutMultiBoxRegistry(t *testing.T) {
 		t.Fatalf("scheddServerVerifier(nil) = %T, want nil", got)
 	}
 }
+
+func TestScheddVMMVerifierKeepsLocalRecoveryIdentity(t *testing.T) {
+	registered := wire.NewInmemNodeVerifier()
+	registered.Set([]string{"other-node.faas"})
+	verifier := scheddVMMVerifier(registered, "fsn-2.faas")
+
+	for _, cn := range []string{"other-node.faas", "fsn-2.faas"} {
+		if err := verifier.LookupCN(cn); err != nil {
+			t.Errorf("LookupCN(%q) = %v, want nil", cn, err)
+		}
+	}
+	if err := verifier.LookupCN("retired-node.faas"); !errors.Is(err, wire.ErrNodeVerifierCNMismatch) {
+		t.Fatalf("LookupCN(retired-node.faas) = %v, want ErrNodeVerifierCNMismatch", err)
+	}
+}
+
+func TestScheddVMMVerifierDisabledWithoutMultiBoxRegistry(t *testing.T) {
+	if got := scheddVMMVerifier(nil, "fsn-2.faas"); got != nil {
+		t.Fatalf("scheddVMMVerifier(nil, owner) = %T, want nil", got)
+	}
+}

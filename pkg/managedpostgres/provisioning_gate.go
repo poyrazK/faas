@@ -22,11 +22,25 @@ const (
 // provisioning. Configuration opt-in alone is insufficient: the daemon must
 // run in staging, an operator must explicitly approve qualification, the
 // approval must be unexpired, and it must name the exact configured backend
-// fingerprint. A single qualified default backend is required while the
-// preview is being rolled out so an unqualified region cannot receive writes.
+// fingerprint. When an approval artifact path is configured, that artifact is
+// authoritative; the legacy qualification environment variables are only a
+// fallback. A single qualified default backend is required while the preview
+// is being rolled out so an unqualified region cannot receive writes.
 func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, now func() time.Time) func() bool {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
+	}
+	var approval *QualificationArtifact
+	var approvalErr error
+	if getenv != nil {
+		if path := strings.TrimSpace(getenv(QualificationApprovalPathEnv)); path != "" {
+			loaded, err := LoadQualificationArtifact(path)
+			if err != nil {
+				approvalErr = err
+			} else {
+				approval = &loaded
+			}
+		}
 	}
 	return func() bool {
 		if registry == nil || !registry.ProvisioningEnabled || getenv == nil {
@@ -34,6 +48,16 @@ func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, 
 		}
 		if !strings.EqualFold(strings.TrimSpace(getenv(EnvironmentEnv)), QualificationStagingEnvironment) {
 			return false
+		}
+		if approval != nil || approvalErr != nil {
+			if approvalErr != nil || approval == nil {
+				return false
+			}
+			canaryAccounts, err := ParseStagingCanaryAccounts(getenv(CanaryAccountsEnv))
+			if err != nil {
+				return false
+			}
+			return registry.VerifyQualificationArtifact(*approval, canaryAccounts, now().UTC()).Ready
 		}
 		approved, err := strconv.ParseBool(strings.TrimSpace(getenv(QualificationEnv)))
 		if err != nil || !approved {
