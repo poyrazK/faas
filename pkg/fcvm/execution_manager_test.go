@@ -164,6 +164,12 @@ func TestManagerWakeExecutionRestoreSkipsAppReadiness(t *testing.T) {
 	if spec.Tap != "" {
 		t.Fatalf("restore spec Tap = %q, want empty for execution guest", spec.Tap)
 	}
+	vmm.mu.Lock()
+	resumeHookCalls := len(vmm.resumeHookCalls)
+	vmm.mu.Unlock()
+	if resumeHookCalls != 1 {
+		t.Fatalf("execution restore resume-hook calls = %d, want 1", resumeHookCalls)
+	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("network commands = %#v, want none", runner.commands)
 	}

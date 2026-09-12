@@ -107,6 +107,14 @@ func boot() error {
 	// powers the VM off on every path.
 	if mode == modeExecution {
 		guestStage("before-execution")
+		// Runtime snapshots resume into this same execution mode. Install the
+		// post-restore hook before waiting for the one-shot execution stream so
+		// vmmd can re-seed entropy and step the clock across snapshot restores.
+		// Cold boots tolerate a missing AF_VSOCK device; restore then fails
+		// closed at vmmd instead of silently reusing snapshot state.
+		if err := listenResumeHook(slog.Default()); err != nil {
+			slog.Default().Warn("execution resume hook unavailable", "err", err)
+		}
 		return runExecutionGuest(slog.Default())
 	}
 	if mode == modeApp {
