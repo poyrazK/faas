@@ -1,0 +1,249 @@
+# native_acceptance_host — make a node able to run the native CI gates.
+#
+# Ordering is load-bearing: the designation marker is written LAST, after the
+# toolchain and the database exist. A half-provisioned host must never be
+# designated — the runners treat the marker as "this host consents to having
+# its services stopped", and they check it before anything else.
+
+- name: native_acceptance_host — require explicit opt-in
+  ansible.builtin.assert:
+    that:
+      - nah_enabled | bool
+    fail_msg: >-
+      native_acceptance_host is opt-in. Set nah_enabled=true from the dedicated
+      acceptance playbook; bootstrap.yml and node_join.yml never enable it.
+
+- name: native_acceptance_host — require Linux x86_64
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == 'Linux'
+      - (not (nah_require_x86_64 | bool)) or ansible_facts.architecture in ['x86_64', 'amd64']
+    fail_msg: >-
+      The native gates require a Linux x86_64 host; got
+      {{ ansible_facts.system }}/{{ ansible_facts.architecture }}.
+
+- name: native_acceptance_host — inspect /dev/kvm
+  ansible.builtin.stat:
+    path: /dev/kvm
+  register: nah_kvm_stat
+
+- name: native_acceptance_host — require /dev/kvm
+  ansible.builtin.assert:
+    that:
+      - (not (nah_require_kvm | bool)) or (nah_kvm_stat.stat.exists and nah_kvm_stat.stat.ischr)
+    fail_msg: >-
+      /dev/kvm is unavailable. This role designates a host for Firecracker
+      acceptance tests; do not run it on a node without KVM.
+
+- name: native_acceptance_host — install runner host tooling
+  ansible.builtin.apt:
+    name: "{{ nah_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Verify rather than trust the package manager: the runners resolve these from
+# PATH, and a package that installs to an unexpected location is the same
+# outage as a package that is absent.
+- name: native_acceptance_host — locate the tools the runners resolve from PATH
+  # shell, not command: `command -v` is a shell builtin, and reporting every
+  # missing tool in one failure beats making an operator rerun the play once
+  # per package.
+  ansible.builtin.shell: |
+    set -u
+    missing=""
+    for tool in {{ nah_required_tools | join(' ') }}; do
+      command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+    done
+    if [ -n "$missing" ]; then
+      echo "missing from PATH:$missing" >&2
+      exit 1
+    fi
+    echo "all runner tools present"
+  args:
+    executable: /bin/bash
+  register: nah_tool_check
+  changed_when: false
+
+# ---------------------------------------------------------------------------
+# Postgres for the e2e gate — a local, dedicated cluster (see defaults).
+# ---------------------------------------------------------------------------
+- name: native_acceptance_host — install PostgreSQL for the e2e cluster
+  ansible.builtin.apt:
+    name: "{{ nah_postgres_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: nah_postgres_enabled | bool
+
+- name: native_acceptance_host — discover installed cluster directories
+  ansible.builtin.find:
+    paths: /etc/postgresql
+    file_type: directory
+    recurse: false
+  register: nah_cluster_dirs
+  changed_when: false
+  failed_when: false
+  when: nah_postgres_enabled | bool
+
+- name: native_acceptance_host — derive the active cluster config directory
+  ansible.builtin.set_fact:
+    nah_postgres_config_dir: >-
+      /etc/postgresql/{{ (nah_cluster_dirs.files | default([])
+      | map(attribute='path') | map('basename') | list | sort | last)
+      | default('16', true) }}/main
+  when: nah_postgres_enabled | bool
+
+- name: native_acceptance_host — start + enable PostgreSQL
+  ansible.builtin.service:
+    name: postgresql
+    enabled: true
+    state: started
+  when: nah_postgres_enabled | bool
+
+# Unix socket only. The gate's DSN is host={{ nah_postgres_socket_dir }}; a TCP
+# listener on a compute node would be a new attack surface for no benefit.
+# listen_addresses is PGC_POSTMASTER, hence the restart handler.
+- name: native_acceptance_host — bind the e2e cluster to the unix socket only
+  ansible.builtin.lineinfile:
+    path: "{{ nah_postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?listen_addresses\\s*="
+    line: "listen_addresses = ''"
+    create: false
+  notify: restart e2e postgresql
+  when: nah_postgres_enabled | bool
+
+# Written wholesale rather than appended: Ubuntu's stock pg_hba.conf ends with
+# `local all all peer`, which matches FIRST and would shadow any rule added at
+# the end. This cluster is ours alone, so owning the file is the honest move.
+- name: native_acceptance_host — write pg_hba.conf for the e2e cluster
+  ansible.builtin.copy:
+    dest: "{{ nah_postgres_config_dir }}/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+    content: |
+      # Dedicated e2e acceptance cluster (deploy/ansible/roles/native_acceptance_host).
+      # Unix socket only; no password lives on this host.
+      local   all             postgres                                peer
+      # The native runner executes as root and connects as `{{ nah_postgres_role }}`;
+      # the ident map below maps root onto that role.
+      local   all             {{ nah_postgres_role }}                 peer map={{ nah_postgres_ident_map }}
+      host    all             all             127.0.0.1/32            reject
+      host    all             all             ::1/128                 reject
+  notify: reload e2e postgresql
+  when: nah_postgres_enabled | bool
+
+- name: native_acceptance_host — map root onto the e2e database role
+  ansible.builtin.blockinfile:
+    path: "{{ nah_postgres_config_dir }}/pg_ident.conf"
+    create: true
+    owner: postgres
+    group: postgres
+    mode: "0640"
+    marker: "# {mark} faas e2e acceptance peer map"
+    block: |
+      {{ nah_postgres_ident_map }} root  {{ nah_postgres_role }}
+      {{ nah_postgres_ident_map }} {{ nah_postgres_role }}  {{ nah_postgres_role }}
+  notify: reload e2e postgresql
+  when: nah_postgres_enabled | bool
+
+- name: native_acceptance_host — apply pending PostgreSQL config now
+  ansible.builtin.meta: flush_handlers
+
+- name: native_acceptance_host — ensure the socket directory is traversable
+  ansible.builtin.file:
+    path: "{{ nah_postgres_socket_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0755"
+  when: nah_postgres_enabled | bool
+
+- name: native_acceptance_host — create the e2e database role
+  community.postgresql.postgresql_user:
+    name: "{{ nah_postgres_role }}"
+    role_attr_flags: LOGIN
+    state: present
+  become: true
+  become_user: postgres
+  when: nah_postgres_enabled | bool
+
+# Owner, not superuser: pgtest creates a schema per test and installs citext,
+# and citext has been a trusted extension since PostgreSQL 13, so the database
+# owner is sufficient. Least privilege keeps a runaway test from reaching the
+# rest of the cluster.
+- name: native_acceptance_host — create the e2e database
+  community.postgresql.postgresql_db:
+    name: "{{ nah_postgres_database }}"
+    owner: "{{ nah_postgres_role }}"
+    state: present
+  become: true
+  become_user: postgres
+  when: nah_postgres_enabled | bool
+
+# Prove the DSN the runner will use actually works, with the same privileges
+# pgtest needs. Without this the role can report success while the gate still
+# dies in pre-flight — and pgtest's own failure mode is a silent skip.
+- name: native_acceptance_host — verify the runner's DSN can create a schema and citext
+  ansible.builtin.command:
+    argv:
+      - psql
+      - "-v"
+      - "ON_ERROR_STOP=1"
+      - "-d"
+      - "postgres:///{{ nah_postgres_database }}?host={{ nah_postgres_socket_dir }}&user={{ nah_postgres_role }}"
+      - "-c"
+      - "create schema nah_probe"
+      - "-c"
+      - "create extension if not exists citext with schema public"
+      - "-c"
+      - "drop schema nah_probe cascade"
+  changed_when: false
+  when: nah_postgres_enabled | bool
+
+- name: native_acceptance_host — ensure /etc/faas exists
+  ansible.builtin.file:
+    path: /etc/faas
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The runner refuses this file unless it is root-owned 0600, because it holds a
+# DSN and is sourced by a root process. Keeping the DSN here rather than on the
+# CI command line keeps it out of the node's process list.
+- name: native_acceptance_host — write the e2e DSN env file
+  ansible.builtin.copy:
+    dest: "{{ nah_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # Consumed by scripts/ci/run-native-e2e.sh. Managed by Ansible
+      # (deploy/ansible/roles/native_acceptance_host).
+      FAAS_E2E_DATABASE_URL=postgres:///{{ nah_postgres_database }}?host={{ nah_postgres_socket_dir }}&user={{ nah_postgres_role }}
+  when: nah_postgres_enabled | bool
+
+# LAST. Everything the runners need now exists, so the host can consent.
+- name: native_acceptance_host — designate this host for disruptive acceptance tests
+  ansible.builtin.copy:
+    dest: "{{ nah_marker_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # This host is designated for disruptive native CI acceptance runs.
+      #
+      # Its presence authorizes scripts/ci/run-native-e2e.sh and
+      # scripts/ci/run-native-metal-smoke.sh to stop the local Gregale daemons,
+      # boot Firecracker microVMs, and run the acceptance suites. Both refuse to
+      # touch a host without it, so deleting this file is the immediate kill
+      # switch — it takes effect before any service state changes.
+      #
+      # Managed by deploy/ansible/roles/native_acceptance_host. A reprovision
+      # that does not run that role will drop this file and silently disable
+      # both gates; that is exactly what happened on 2026-09-12.
+      designated_by=ansible
+      role=native_acceptance_host
+  when: nah_designate | bool

@@ -1,0 +1,71 @@
+# native_acceptance_host — provision a node designated for the disruptive
+# native CI gates (builder-native.yml, e2e-native.yml).
+#
+# Deliberately NOT included by bootstrap.yml or node_join.yml. The marker this
+# role writes authorizes CI to stop production daemons and boot microVMs on the
+# host; that must never be a side effect of a normal compute bootstrap.
+
+nah_enabled: false
+nah_require_kvm: true
+nah_require_x86_64: true
+
+# Host tooling the native runners require. scripts/ci/run-native-e2e.sh and
+# scripts/ci/run-native-metal-smoke.sh both pre-flight these and refuse to run
+# when one is missing — which is how a reprovision silently disabled the gates:
+# `make` and `gcc` were absent and every dispatch died at the tool check.
+#
+# build-essential rather than bare gcc: `go test -race` needs cgo, which needs
+# a working C toolchain and libc headers, not just the compiler binary.
+# Verified from PATH after the packages install, because the runners resolve
+# them that way. Package-present is not the same claim as on-PATH.
+nah_required_tools:
+  - make
+  - gcc
+  - mkfs.ext4
+  - e2fsck
+  - debugfs
+  - ip
+  - tc
+  - nft
+  - iptables
+  - flock
+  - tar
+  - truncate
+
+nah_packages:
+  - build-essential
+  - e2fsprogs          # mkfs.ext4, e2fsck, debugfs
+  - iproute2           # ip, tc
+  - iptables
+  - nftables           # nft
+  - util-linux         # flock
+  - tar
+
+# Postgres for the e2e gate. cmd/e2e is database-backed and pgtest.Open SKIPS
+# rather than fails when the DSN is unreachable, so a node without a cluster
+# would make e2e-native.yml a green run of almost no tests.
+#
+# This is a LOCAL, dedicated cluster. Do not point the gate at the
+# control-plane cluster: on 2026-09-12 that cluster hit max_connections with 88
+# of 96 backends idle, and a test suite that opens a schema per test is the
+# last thing it needs. A test cluster also must not share a failure domain
+# with production rows.
+nah_postgres_enabled: true
+nah_postgres_packages:
+  - postgresql
+  - postgresql-client
+nah_postgres_database: faas_e2e
+nah_postgres_role: faas
+# The runner executes as root (jailer needs it) but connects as the `faas`
+# database role over the unix socket, so peer auth needs an ident map from
+# root. No password is stored anywhere as a result.
+nah_postgres_ident_map: e2e_map
+nah_postgres_socket_dir: /run/postgresql
+
+nah_env_file: /etc/faas/e2e-acceptance.env
+nah_marker_file: /etc/faas/builder-acceptance-host
+
+# The designation marker is written LAST and only when this is true. Set it to
+# false to provision the tooling without authorizing CI to run disruptive tests
+# on the host yet.
+nah_designate: true
