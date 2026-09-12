@@ -50,7 +50,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	}
 	u, err := url.Parse(origin)
 	if err != nil {
-		return Integration{}, fmt.Errorf("%w: invalid origin: %v", ErrInvalidIntegration, err)
+		return Integration{}, fmt.Errorf("%w: invalid origin: %w", ErrInvalidIntegration, err)
 	}
 	if len(tokenHash) != sha256.Size {
 		return Integration{}, fmt.Errorf("%w: token hash has invalid length", ErrInvalidIntegration)

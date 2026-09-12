@@ -146,7 +146,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadGateway, "outbound_upstream_unavailable", "Outbound provider could not be reached", "1")
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	for k, values := range resp.Header {
 		if isHopByHop(resp.Header, k) {
 			continue
@@ -234,9 +234,9 @@ func retryAfterSeconds(d time.Duration) string {
 
 func writeProblem(w http.ResponseWriter, status int, code, title, retryAfter string) {
 	p := api.NewProblem(status, code, title, title)
-	p.Type = "https://docs.gregale.dev/problems/" + code
+	p.Type = "https://docs.gregale.dev/errors/" + code
 	if retryAfter != "" {
-		p.WithHeader("Retry-After", retryAfter)
+		p = *p.WithHeader("Retry-After", retryAfter)
 	}
 	api.WriteProblem(w, p)
 }

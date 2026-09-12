@@ -43,7 +43,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if err != nil {
 		return Decision{}, err
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var now time.Time
 	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {

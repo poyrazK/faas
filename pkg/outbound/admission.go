@@ -49,7 +49,7 @@ func NewIntegration(id, origin, token string, appIDs []string, ratePerSecond flo
 	}
 	u, err := url.Parse(origin)
 	if err != nil {
-		return Integration{}, fmt.Errorf("%w: origin: %v", ErrInvalidIntegration, err)
+		return Integration{}, fmt.Errorf("%w: origin: %w", ErrInvalidIntegration, err)
 	}
 	apps := make(map[string]struct{}, len(appIDs))
 	for _, appID := range appIDs {

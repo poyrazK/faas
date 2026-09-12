@@ -39,7 +39,7 @@ func EnsureIntegration(ctx context.Context, pool *pgxpool.Pool, record Integrati
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	defer func() { _ = tx.Rollback(ctx) }()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO outbound_integrations
 		    (id, account_id, name, origin, token_hash, rate_per_second, burst,
