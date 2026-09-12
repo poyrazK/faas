@@ -300,6 +300,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG", Owners: []string{"postgres"}, Source: EnvSourceScript, Note: "LoadCredential= path on the postgresql@.service drop-in; consumed by the archive_command shell in the postgres role"},
 	{Name: "FAAS_OTEL_FLUSH_INTERVAL", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_OTEL_SPANS_WRITER_ENABLED", Owners: []string{"apid", "gatewayd-public"}, Source: EnvSourceDefault},
+	{Name: "FAAS_OUTBOUNDD_ROLE", Owners: []string{"outboundd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_OVERLAY_INTERFACE", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PADDLE_API_KEY", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_PADDLE_SANDBOX", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},

@@ -67,7 +67,7 @@ func TestSubset(t *testing.T) {
 		{
 			"control-plane subset",
 			RoleControlPlane,
-			[]string{"apid", "schedd", "gatewayd-public", "meterd", "githubd"},
+			[]string{"apid", "schedd", "gatewayd-public", "meterd", "githubd", "outboundd"},
 		},
 		{
 			"compute-only subset",
@@ -116,6 +116,7 @@ func TestSubsetHonorsDaemonRoleGates(t *testing.T) {
 		"schedd":            {RoleSingleBox: true, RoleControlPlane: true, RoleComputeOnly: true},
 		"meterd":            {RoleSingleBox: true, RoleControlPlane: true},
 		"githubd":           {RoleSingleBox: true, RoleControlPlane: true},
+		"outboundd":         {RoleSingleBox: true, RoleControlPlane: true},
 		"gatewayd-public":   {RoleSingleBox: true, RoleControlPlane: true},
 		"imaged":            {RoleSingleBox: true, RoleComputeOnly: true},
 		"gatewayd-internal": {RoleSingleBox: true, RoleComputeOnly: true},
@@ -154,6 +155,7 @@ func TestDropInEnvVarMatchesDaemon(t *testing.T) {
 		{"schedd", "FAAS_SCHEDD_ROLE", RoleControlPlane},
 		{"meterd", "FAAS_METERD_ROLE", RoleControlPlane},
 		{"githubd", "FAAS_GITHUBD_ROLE", RoleControlPlane},
+		{"outboundd", "FAAS_OUTBOUNDD_ROLE", RoleControlPlane},
 		{"gatewayd-public", "FAAS_GATEWAYD_PUBLIC_ROLE", RoleControlPlane},
 		{"imaged", "FAAS_IMAGED_ROLE", RoleComputeOnly},
 		{"gatewayd-internal", "FAAS_GATEWAYD_ROLE", RoleComputeOnly},
@@ -319,6 +321,7 @@ func TestApplyWritesAllDropIns(t *testing.T) {
 		"== /etc/systemd/system/faas-gatewayd-public.service.d ==\n[Service]\nEnvironment=FAAS_BOX_ROLE=control-plane\nEnvironment=FAAS_GATEWAYD_PUBLIC_ROLE=control-plane\n\n",
 		"== /etc/systemd/system/faas-meterd.service.d ==\n[Service]\nEnvironment=FAAS_BOX_ROLE=control-plane\nEnvironment=FAAS_METERD_ROLE=control-plane\n\n",
 		"== /etc/systemd/system/faas-githubd.service.d ==\n[Service]\nEnvironment=FAAS_BOX_ROLE=control-plane\nEnvironment=FAAS_GITHUBD_ROLE=control-plane\n\n",
+		"== /etc/systemd/system/faas-outboundd.service.d ==\n[Service]\nEnvironment=FAAS_BOX_ROLE=control-plane\nEnvironment=FAAS_OUTBOUNDD_ROLE=control-plane\n\n",
 	}
 	got := buf.String()
 	for _, want := range wantBodies {
@@ -383,8 +386,8 @@ func TestMutateControlPlaneToComputeOnly(t *testing.T) {
 		t.Fatalf("Mutate error: %v", err)
 	}
 
-	// Stop: 4 control-plane-only daemons (apid, gatewayd-public,
-	// meterd, githubd). schedd is shared by both roles and remains
+	// Stop: 5 control-plane-only daemons (apid, gatewayd-public,
+	// meterd, githubd, outboundd). schedd is shared by both roles and remains
 	// active while the host transitions to a compute-only node.
 	// Note gatewayd-public
 	// REJECTS compute-only (per cmd/gatewayd-public/main.go:144),
@@ -392,7 +395,7 @@ func TestMutateControlPlaneToComputeOnly(t *testing.T) {
 	// pre-review expectation was wrong.
 	wantStopped := map[string]bool{
 		"apid": true, "gatewayd-public": true,
-		"meterd": true, "githubd": true,
+		"meterd": true, "githubd": true, "outboundd": true,
 	}
 	for _, d := range stopped {
 		if !wantStopped[d] {
@@ -449,11 +452,11 @@ func TestMutateComputeOnlyToControlPlane(t *testing.T) {
 	if len(stopped) != len(wantStopped) {
 		t.Errorf("Mutate stopped %d daemons (%v), want exactly %v", len(stopped), stopped, wantStopped)
 	}
-	// Start: 4 control-plane-only daemons (apid, gatewayd-public,
-	// meterd, githubd). schedd is already running on the compute node.
+	// Start: 5 control-plane-only daemons (apid, gatewayd-public,
+	// meterd, githubd, outboundd). schedd is already running on the compute node.
 	wantStarted := map[string]bool{
 		"apid": true, "gatewayd-public": true,
-		"meterd": true, "githubd": true,
+		"meterd": true, "githubd": true, "outboundd": true,
 	}
 	for _, d := range started {
 		if !wantStarted[d] {

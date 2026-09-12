@@ -290,6 +290,7 @@ type Daemons struct {
 	Imaged           *DaemonConfig `yaml:"imaged,omitempty"`
 	Builderd         *DaemonConfig `yaml:"builderd,omitempty"`
 	Realtimed        *DaemonConfig `yaml:"realtimed,omitempty"`
+	Outboundd        *DaemonConfig `yaml:"outboundd,omitempty"`
 }
 
 // DaemonConfig is the per-daemon configuration. `tls` carries the
@@ -927,6 +928,7 @@ func (d *Daemons) validate() Errors {
 		"imaged":            d.Imaged,
 		"builderd":          d.Builderd,
 		"realtimed":         d.Realtimed,
+		"outboundd":         d.Outboundd,
 	} {
 		if dc == nil {
 			continue
