@@ -32,10 +32,25 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 		status, code, title = http.StatusServiceUnavailable, "managed_postgres_usage_stale", "Managed PostgreSQL usage is stale"
 	}
 	detail := err.Error()
-	if status >= 500 {
+	if errors.Is(err, managedpostgres.ErrUnavailable) {
+		detail = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
+	} else if status >= 500 {
 		detail = "The managed PostgreSQL operation could not be completed."
 	}
-	api.WriteProblem(w, api.NewProblem(status, code, title, detail))
+	problem := api.NewProblem(status, code, title, detail)
+	if errors.Is(err, managedpostgres.ErrUnavailable) {
+		problem = problem.WithDocs("https://gregale.dev/docs/managed-postgres")
+	}
+	api.WriteProblem(w, problem)
+}
+
+func managedPostgresNotConfiguredProblem(w http.ResponseWriter) {
+	api.WriteProblem(w, api.NewProblem(
+		http.StatusServiceUnavailable,
+		"managed_postgres_unavailable",
+		"Managed PostgreSQL unavailable",
+		"Managed PostgreSQL is an operator preview and is not configured for this environment. The platform operator must qualify and configure a provider before this command can be used.",
+	).WithDocs("https://gregale.dev/docs/managed-postgres"))
 }
 
 func managedPostgresPlanDenied(w http.ResponseWriter, plan api.Plan, detail string) {
@@ -115,7 +130,7 @@ func managedPostgresBindingView(binding managedpostgres.Binding) api.ManagedPost
 
 func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if s.managedPostgres == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	databases, err := s.managedPostgres.List(r.Context(), acct.ID)
@@ -170,7 +185,7 @@ func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.M
 func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	if s.managedPostgres == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
@@ -228,7 +243,7 @@ func (s *server) getManagedPostgresUsageOperator(w http.ResponseWriter, r *http.
 		return
 	}
 	if s.managedPostgres == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	targetID := strings.TrimSpace(r.PathValue("account_id"))
@@ -265,7 +280,7 @@ func (s *server) getManagedPostgresUsageOperator(w http.ResponseWriter, r *http.
 
 func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if s.managedPostgres == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
@@ -301,7 +316,7 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 
 func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if s.managedPostgres == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	database, err := s.managedPostgres.Get(r.Context(), acct.ID, r.PathValue("id"))
@@ -314,7 +329,7 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 
 func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if s.managedPostgres == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	database, err := s.managedPostgres.Delete(r.Context(), acct.ID, r.PathValue("id"))
@@ -330,7 +345,7 @@ func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 
 func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if s.managedPostgres == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
@@ -371,7 +386,7 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 
 func (s *server) listManagedPostgresBindings(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if s.managedPostgresBindings == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	bindings, err := s.managedPostgresBindings.List(r.Context(), acct.ID, r.PathValue("id"))
@@ -388,7 +403,7 @@ func (s *server) listManagedPostgresBindings(w http.ResponseWriter, r *http.Requ
 
 func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if s.managedPostgresBindings == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	var req api.CreateManagedPostgresBindingRequest
@@ -415,7 +430,7 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 
 func (s *server) getManagedPostgresBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if s.managedPostgresBindings == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	binding, err := s.managedPostgresBindings.Get(r.Context(), acct.ID, r.PathValue("id"))
@@ -428,7 +443,7 @@ func (s *server) getManagedPostgresBinding(w http.ResponseWriter, r *http.Reques
 
 func (s *server) deleteManagedPostgresBinding(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if s.managedPostgresBindings == nil {
-		managedPostgresProblem(w, managedpostgres.ErrUnavailable)
+		managedPostgresNotConfiguredProblem(w)
 		return
 	}
 	binding, err := s.managedPostgresBindings.Delete(r.Context(), acct.ID, r.PathValue("id"))

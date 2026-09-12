@@ -21,7 +21,7 @@ func TestTopLevelUsageGroupsCustomerCommands(t *testing.T) {
 			t.Errorf("default help missing %q", want)
 		}
 	}
-	for _, hidden := range []string{"admin", "mail", "rollouts", "github-webhook-secret"} {
+	for _, hidden := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret"} {
 		if strings.Contains(out, "  "+hidden+" ") {
 			t.Errorf("default help exposes hidden command %q:\n%s", hidden, out)
 		}
@@ -38,7 +38,7 @@ func TestTopLevelUsageAllKeepsCompatibilityAliasesDiscoverable(t *testing.T) {
 	if !strings.Contains(out, "Advanced/operator compatibility:") {
 		t.Fatalf("--all help missing advanced section:\n%s", out)
 	}
-	for _, command := range []string{"admin", "mail", "rollouts", "github-webhook-secret"} {
+	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret"} {
 		if !strings.Contains(out, "  "+command+" ") {
 			t.Errorf("--all help omits compatibility command %q", command)
 		}

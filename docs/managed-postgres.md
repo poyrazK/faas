@@ -1,5 +1,10 @@
 # Managed PostgreSQL operator preview
 
+> Managed PostgreSQL is not available to public-beta customers. The CLI keeps
+> its command callable for qualified operator canaries, but hides it from the
+> default customer help and completion surfaces until a provider is qualified
+> and the capability leaves internal maturity.
+
 Managed PostgreSQL now has a customer-facing, provider-neutral API while
 remaining an opt-in operator preview. The API exposes account-scoped database
 CRUD/status, restore-to-new-database, and workload bindings under
