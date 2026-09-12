@@ -23,6 +23,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 177 | [Durable container host-port leasing](177-container-host-port-leasing.md) | accepted | Node-local, restart-safe listener allocation for declared container ports |
 | 175 | [Sidecar scratch and disk-I/O policy](175-sidecar-scratch-and-disk-io-policy.md) | accepted | Customer-selectable ephemeral scratch and guest I/O isolation for sidecars |
 | 174 | [Terminal compute-node retirement](174-compute-node-retirement.md) | accepted | operator safety follow-up to ADR-137 |
 | 173 | [Plan CPU/RAM coupling](173-cpu-ram-coupling.md): canonical plan RAM/vCPU pairs with an additive create-time assertion | accepted | issue #563; Cloud Run gap analysis |
