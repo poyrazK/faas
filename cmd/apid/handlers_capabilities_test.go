@@ -12,6 +12,7 @@ import (
 )
 
 func TestGetCapabilitiesReturnsPlanResolvedRegistry(t *testing.T) {
+	t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", "1")
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
 	(&server{}).getCapabilities(recorder, request, state.Account{Plan: api.PlanPro})
@@ -35,4 +36,25 @@ func TestGetCapabilitiesReturnsPlanResolvedRegistry(t *testing.T) {
 	if len(response.Capabilities) == 0 {
 		t.Fatal("expected customer capabilities")
 	}
+}
+
+func TestGetCapabilitiesDisablesDarkLaunchedContractPreview(t *testing.T) {
+	t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", "")
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	(&server{}).getCapabilities(recorder, request, state.Account{Plan: api.PlanScale})
+
+	var response api.CapabilitiesResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range response.Capabilities {
+		if capability.Key == "openapi-contract-preview" {
+			if capability.Enabled {
+				t.Fatal("openapi-contract-preview enabled while runtime flag is off")
+			}
+			return
+		}
+	}
+	t.Fatal("openapi-contract-preview capability missing")
 }
