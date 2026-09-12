@@ -137,7 +137,11 @@ func migrateDownPublicStatus(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	if err := pool.QueryRow(ctx, `select coalesce(max(version_id), 0) from goose_db_version where is_applied`).Scan(&got); err != nil {
 		t.Fatalf("migrateDownPublicStatus: read ledger: %v", err)
 	}
-	if got != publicStatusPreviousMigrationVersion {
-		t.Fatalf("migration ledger at %d after rollback, want %d", got, publicStatusPreviousMigrationVersion)
+	// Timestamp migrations may be inserted between the prefix used to seed
+	// this test and the migration under test. Rolling back one step should
+	// therefore leave the ledger somewhere in that interval, rather than at
+	// the old hard-coded predecessor.
+	if got < publicStatusPreviousMigrationVersion || got >= publicStatusMigrationVersion {
+		t.Fatalf("migration ledger at %d after rollback, want a version in [%d, %d)", got, publicStatusPreviousMigrationVersion, publicStatusMigrationVersion)
 	}
 }
