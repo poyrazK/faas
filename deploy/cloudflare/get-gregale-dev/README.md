@@ -26,31 +26,30 @@ clean failure from `curl -f`.
 
 ## First deploy
 
-1. **DNS.** `gregale.dev` has a wildcard record pointing at
-   `gatewayd-public`, so `get.gregale.dev` currently resolves and returns
-   the platform's `no app is routed to "get.gregale.dev"` 404. A Worker
-   route takes precedence over that origin, so you do not need to remove
-   the wildcard — but confirm a **proxied** (orange-cloud) record covers
-   the hostname, or the route will not attach.
+1. **DNS.** `get.gregale.dev` is already a proxied Cloudflare hostname, but
+   it currently serves a **redirect rule to `scripts/install.sh` on the
+   default branch** — so deploying this Worker *replaces* that rule rather
+   than filling a gap. Remove or disable the redirect rule when the Worker
+   route goes live, or the redirect wins and the Worker never runs.
 
-2. **Cut a tag first.** `scripts/install.sh` landed after the newest
-   existing tag, so **no tag contains the installer yet** and there is
-   nothing valid to pin to. Cut a release (`v0.1.18-rc.120` or later), then
-   continue.
+   That existing rule is the reason this Worker exists: a redirect to `main`
+   means anything merged there immediately becomes what `curl | sh` executes
+   on users' machines. This Worker pins a tag and verifies a digest instead.
+   If you are happy with the redirect, you do not need this at all.
 
-3. **Pin that release.**
+2. **Pin a release.** Already done: `wrangler.toml.example` ships pinned to
+   `v0.1.18-rc.145`. Re-pin only when `scripts/install.sh` itself changes:
 
    ```bash
-   deploy/cloudflare/get-gregale-dev/pin.sh v0.1.18-rc.120
+   deploy/cloudflare/get-gregale-dev/pin.sh v0.1.18-rc.160
    ```
 
-   Review the diff and commit it. `wrangler.toml.example` ships with both values set
-   to `REPLACE_ME_RUN_PIN_SH`, so an unpinned deploy fails closed with 503
-   rather than serving something unverified. `pin.sh` refuses `main` and
-   rejects a tag whose `install.sh` is missing or does not look like the
-   installer.
+   Review the diff and commit it. Both values must move together, and an
+   unpinned or stale pair fails closed with 503 rather than serving
+   something unverified. `pin.sh` refuses `main` and rejects a tag whose
+   `install.sh` is missing or does not look like the installer.
 
-4. **Deploy.**
+3. **Deploy.**
 
    ```bash
    cd deploy/cloudflare/get-gregale-dev
@@ -58,7 +57,7 @@ clean failure from `curl -f`.
    wrangler deploy
    ```
 
-5. **Verify end to end.**
+4. **Verify end to end.**
 
    ```bash
    curl -fsSI https://get.gregale.dev | grep -i x-installer-ref

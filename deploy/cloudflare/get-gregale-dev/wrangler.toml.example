@@ -12,8 +12,8 @@ workers_dev = false
 #
 #   deploy/cloudflare/get-gregale-dev/pin.sh v0.1.19
 [vars]
-INSTALLER_REF = "REPLACE_ME_RUN_PIN_SH"
-INSTALLER_SHA256 = "REPLACE_ME_RUN_PIN_SH"
+INSTALLER_REF = "v0.1.18-rc.145"
+INSTALLER_SHA256 = "25076dcc59f7778e49566f959695ffefacbe2a10bd05f82b8794282a0d21199f"
 
 # Configure the route in the Cloudflare dashboard or your deployment pipeline:
 #   get.gregale.dev/*
