@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -44,6 +45,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := role.Require("s3-gatewayd", role.FromConfig("", "FAAS_S3_GATEWAY_ROLE"), role.RoleSingleBox, role.RoleControlPlane); err != nil {
 		return err
 	}
+	ops := wire.NewOpsMetrics("s3_gateway")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "s3-gatewayd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
+	if traceErr != nil {
+		return fmt.Errorf("s3-gatewayd: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("s3-gatewayd: trace shutdown failed", "err", err)
+		}
+	}()
+	wire.BootStamps(ctx, "s3-gatewayd", ops)
+	wire.RegisterDefaultOps(ops)
 	registry, err := objectstorage.Load(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("s3-gatewayd: load object storage: %w", err)
@@ -65,7 +80,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if !ok {
 		return errors.New("s3-gatewayd: state store lacks object-storage request metrics")
 	}
-	ops := wire.NewOpsMetrics("s3_gateway")
 	usageJobs, err := usageExportJobs(registry, requestMetrics, os.Getenv)
 	if err != nil {
 		return err
@@ -149,7 +163,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}()
 
 	dataServer := &http.Server{
-		Handler:           handler,
+		Handler:           trace.HTTPHandler("s3-gatewayd", wire.HTTPMetricsHandler(ops, "s3_request", handler)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       api.ObjectTransferTimeout,
 		WriteTimeout:      api.ObjectTransferTimeout,
@@ -165,7 +179,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	})
 	defer readyProbe.Drain("s3-gatewayd", log)
 	wire.ControlReadyMuxLite(controlMux, readyProbe.ReadyFunc(), readyProbe.ReasonFunc())
-	controlServer := &http.Server{Handler: controlMux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+	controlServer := &http.Server{Handler: trace.HTTPHandler("s3-gatewayd.control", controlMux), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 
 	log.Info("s3-gatewayd: listening", "data_addr", dataListener.Addr().String(), "control_addr", controlListener.Addr().String(), "endpoint", registry.PublicEndpoint, "region", registry.PublicRegion)
 	errorsCh := make(chan error, 2)

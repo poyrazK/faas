@@ -71,6 +71,11 @@ GREGALE_APP_SLUG=storage-smoke \
 make object-storage-gateway-smoke
 ```
 
+When enabled, Prometheus scrapes `s3-gatewayd` on its loopback control listener
+(`127.0.0.1:9096`). The daemon exposes readiness, OTLP exporter health, and
+bounded request status-class/latency metrics; request labels do not contain
+bucket names, object keys, credentials, or raw provider status codes.
+
 The smoke creates a uniquely named bucket and credential, exercises HEAD,
 PUT, GET, LIST and DELETE through `s3.gregale.dev`, verifies revocation, then
 deletes the credential and bucket. Its exit trap repeats cleanup after a

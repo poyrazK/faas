@@ -46,3 +46,9 @@ when the rate or concurrency budget is exhausted; inspect
 Callers decide whether and how to retry. Gregale makes no automatic retries,
 does not follow redirects, and does not transparently intercept encrypted
 egress. Provider responses (including provider `429`s) pass through.
+
+The loopback listener also serves `/metrics` and `/readyz` on port `8095` by
+default. Prometheus records bounded request status classes (`1xx` through
+`5xx`), request latency, readiness, and the standard OTLP exporter health
+metrics. The request metrics intentionally do not include integration IDs,
+URLs, or raw provider status codes as labels.

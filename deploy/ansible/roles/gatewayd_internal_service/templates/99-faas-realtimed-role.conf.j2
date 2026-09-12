@@ -2,3 +2,9 @@
 # realtimed is a compute-only (or single-box) daemon. Keep the role gate in
 # systemd rather than relying on the single-box default in cmd/realtimed.
 Environment=FAAS_REALTIME_ROLE={{ faas_box_role }}
+{% if (faas_box_role | default('single-box')) == 'compute-only' %}
+# The control-plane Prometheus discovers this listener through apid's active
+# compute-node registry. The nftables role restricts port 9107 to the
+# configured control-plane CIDRs; do not expose it through the public rule.
+Environment=FAAS_REALTIME_HEALTH_LISTEN=0.0.0.0:9107
+{% endif %}

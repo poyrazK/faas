@@ -154,10 +154,11 @@ propagator in the parent image doesn't silently drop the join.
 - **No auto-detection.** Set `OTEL_EXPORTER_OTLP_ENDPOINT` in
   `app.json`'s `env` (or rely on the platform's default if the
   operator has set one at the cluster level) to turn on export.
-  Without it, spans are still joined to the platform's
-  `gateway.handler` trace and visible via
-  `GET /v1/traces/{trace_id}` — you just don't get the
-  collector-side view.
+  Without it, the platform's gateway span is still available in
+  the local trace ring, but customer-created child spans are not
+  persisted by `GET /v1/traces/{trace_id}`. Export to the platform
+  OTLP endpoint is required for customer spans to reach the
+  configured collector.
 - **No head-based sampling override.** The platform samples
   100% for the first 100 root spans of every new deployment
   (acceptance #5), then falls back to the head ratio in
@@ -166,15 +167,20 @@ propagator in the parent image doesn't silently drop the join.
   parent's `SampledFlag=true` is what reaches your SDK, so
   every child span you create is recorded.
 
-## Cross-daemon trace query
+## Platform trace query
 
 If you have observer access to the box, `GET /v1/traces/{trace_id}`
-returns the full span tree for any wake within the last 24 hours
-(PR #617 ring buffer, default 100k entries). The shape is the
-[`Trace` schema](../../api/openapi.yaml) — every span carries
+returns the gatewayd-public platform span tree retained by that
+instance's bounded in-memory ring (24 hours or 100k entries, whichever
+comes first). It is not a durable or fleet-wide trace store. The shape
+is the [`Trace` schema](../../api/openapi.yaml) — every platform span carries
 `trace_id`, `span_id`, `parent_span_id`, `name`, `start_time`,
 `end_time`, `status`, and an `attributes` map (`app_id`,
 `deployment_id`, `instance_id`, etc.).
+
+Customer-created spans require OTLP export and are inspected in the
+configured collector. The customer OTLP ingest path summarizes those
+spans into request telemetry rather than adding them to this local ring.
 
 ```bash
 curl -sH "X-Faas-Trace-Auth: $OBSERVER_TOKEN" \
