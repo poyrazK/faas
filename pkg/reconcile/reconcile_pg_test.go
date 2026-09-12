@@ -135,10 +135,15 @@ func TestPgReconcile_FullCycle(t *testing.T) {
 
 func TestPgReconcile_Quota_BlocksCreateSet(t *testing.T) {
 	store, svc, pool, ctx := pgReconcileStore(t)
-	_, proj := seedAccountProject(t, store, state.ProjectScanSourceCompose)
+	acct, proj := seedAccountProject(t, store, state.ProjectScanSourceCompose)
+	// Use the one-app Free cap so this remains deterministic even if the
+	// paid-plan quota table changes independently of this regression test.
+	if err := store.UpdateAccountPlan(ctx, acct.ID, api.PlanFree); err != nil {
+		t.Fatalf("UpdateAccountPlan: %v", err)
+	}
 
-	// Hobby plan cap = 5. Seed 4 existing apps, then attempt 3
-	// creates → projected 7 > 5 → quota_blocked alert.
+	// Free plan cap = 1. Seed 4 existing apps, then attempt 3
+	// creates → projected 7 > 1 → quota_blocked alert.
 	for _, n := range []string{"app-a", "app-b", "app-c", "app-d"} {
 		app := state.App{
 			AccountID:     proj.AccountID,
