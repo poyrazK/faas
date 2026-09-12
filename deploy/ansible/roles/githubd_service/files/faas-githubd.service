@@ -13,7 +13,6 @@ Group=faas
 ExecStart=/opt/faas/current/bin/githubd --config /etc/faas/githubd.toml
 Restart=on-failure
 RestartSec=2s
-RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
 Slice=faas-cp.slice
 MemoryMax=256M
 CapabilityBoundingSet=

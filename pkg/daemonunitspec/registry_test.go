@@ -4,10 +4,22 @@ import (
 	"net"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/manifest"
 )
+
+func TestGeneratedUnitsContainOnlySupportedRestartDirectives(t *testing.T) {
+	for _, entry := range UnitEntries() {
+		t.Run(entry.Name, func(t *testing.T) {
+			rendered := entry.Unit().Render()
+			if strings.Contains(string(rendered), "RestartCountExport=") {
+				t.Fatal("unit contains unsupported RestartCountExport directive")
+			}
+		})
+	}
+}
 
 func TestRegistryEntriesHaveBootProbes(t *testing.T) {
 	for _, entry := range Registry {

@@ -14,7 +14,6 @@ ExecStartPre=/opt/faas/current/bin/schedd-brokerq-apply
 ExecStart=/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml
 Restart=on-failure
 RestartSec=2s
-RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
 Slice=faas-cp.slice
 MemoryMax=256M
 EnvironmentFile=-/etc/faas/compute-db.env

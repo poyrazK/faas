@@ -107,12 +107,9 @@ func BootStamps(ctx context.Context, name string, ops *OpsMetrics) {
 	if ops == nil {
 		return
 	}
-	// Issue #573 / ADR-128: record systemd-driven restart count.
-	// The systemd unit (deploy/ansible/roles/<daemon>/files/<daemon>.service)
-	// sets Environment=SYSTEMD_RESTARTS_ON_FAILURE=<n> via the
-	// RestartCountExport pattern (systemd 254+); when that env
-	// var is unset (older systemd, dev runs without a unit, etc.)
-	// SystemdRestartCount returns 0 and the counter stays at 0.
+	// Issue #573 / ADR-128: record a restart count when an external launcher
+	// explicitly supplies one. Production systemd units use node-exporter's
+	// node_systemd_restart_count as the authoritative restart signal.
 	ops.RecordDaemonRestart(name, Version, SystemdRestartCount())
 
 	// Issue #586 / ADR-129: stamp the build info gauge so the
@@ -378,9 +375,9 @@ func recordUptimeWithOps(ctx context.Context, name string, startedAt time.Time, 
 // SystemdRestartCount returns the systemd-driven restart count
 // for the current process, or 0 if the env var
 // $SYSTEMD_RESTARTS_ON_FAILURE is unset / unparseable. The systemd
-// unit's Restart=on-failure + RestartCountExport pattern (systemd
-// 254+) sets this env var on every restart; absence is a benign
-// signal of either an older systemd or a dev run without a unit.
+// systemd does not provide RestartCountExport; production units therefore do
+// not set this variable. Absence is benign and node-exporter's systemd
+// collector remains the authoritative restart source.
 // Callers use the value to populate OpsMetrics.daemonRestartCount
 // at boot — see cmd/vmmd/main.go and the other cmd/<daemon>/main.go
 // files for the call sites (issue #573 / ADR-128).

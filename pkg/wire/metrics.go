@@ -156,9 +156,8 @@ type OpsMetrics struct {
 	// daemonRestartCount (issue #573 / ADR-128) is the per-(daemon,
 	// version) counter that records how many times systemd has
 	// restarted THIS process in its lifetime. The producer is the
-	// wire.Daemon() boot path, which reads the
-	// $SYSTEMD_RESTARTS_ON_FAILURE env var (set by the systemd unit
-	// Restart=on-failure + RestartCountExport logic) and calls
+	// wire.Daemon() boot path, which reads an optional externally supplied
+	// $SYSTEMD_RESTARTS_ON_FAILURE env var and calls
 	// RecordDaemonRestart(name, Version) once at startup. The
 	// counter's purpose is to backstop node_exporter's
 	// node_systemd_restart_count{name=~"faas-.*\\.service"} metric
@@ -4824,9 +4823,8 @@ func (m *OpsMetrics) SetServiceReplicaStatus(app string, desired, ready, startin
 
 // RecordDaemonRestart (issue #573 / ADR-128) records the systemd
 // restart count for the calling daemon. The wire.Daemon() boot
-// path reads $SYSTEMD_RESTARTS_ON_FAILURE (set by the systemd
-// unit's Restart=on-failure + RestartCountExport logic — see
-// deploy/ansible/roles/<daemon>/files/<daemon>.service) and calls
+// path reads an optional externally supplied
+// $SYSTEMD_RESTARTS_ON_FAILURE value and calls
 // this accessor once at startup. Add(1) is called n-1 times where
 // n is the systemd restart count, so the counter ends at n minus
 // the increment at the boot immediately after — operators see
