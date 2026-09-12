@@ -574,6 +574,11 @@ Manage jobs (run-to-completion workloads)
 
 List jobs in this account
 
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..200; 0 = server default) |  |
+| `--offset <N>` | number of jobs to skip |  |
+
 ### jobs add
 
 Create a new job
