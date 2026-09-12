@@ -59,6 +59,8 @@ type ObjectStorageBillingStore interface {
 	ObjectUsageForPeriod(context.Context, string, time.Time) (ObjectUsageSnapshot, error)
 	GetObjectStorageBillingPeriod(context.Context, string, time.Time) (ObjectStorageBillingRecord, error)
 	RecordObjectStorageBillingPeriod(context.Context, ObjectStorageBillingRecord) (ObjectStorageBillingRecord, error)
+	GetObjectStorageBillingDelivery(context.Context, string, string) (ObjectStorageBillingDelivery, error)
+	RecordObjectStorageBillingDelivery(context.Context, ObjectStorageBillingDelivery) (ObjectStorageBillingDelivery, error)
 }
 
 func ObjectStoragePeriod(now time.Time) time.Time {

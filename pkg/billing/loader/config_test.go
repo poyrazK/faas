@@ -173,6 +173,10 @@ egress_millicents_per_gib = 2000
 hobby_included_egress_gib = 10
 pro_included_egress_gib = 100
 scale_included_egress_gib = 1000
+object_storage_billing_mode = "shadow"
+object_storage_billing_from = "2026-09-01T00:00:00Z"
+object_storage_usage_event_name = "object_storage_usage"
+object_storage_meter_id = "meter-object-storage"
 `)
 	cfg, err := LoadBillingConfig(body)
 	if err != nil {
@@ -190,6 +194,10 @@ scale_included_egress_gib = 1000
 	if cfg.Polar.EgressBillingMode != polar.EgressBillingShadow || cfg.Polar.EgressBillingFrom != "2026-09-01T00:00:00Z" || cfg.Polar.EgressMeterID != "meter-egress" ||
 		cfg.Polar.EgressMillicentsPerGiB != 2_000 || cfg.Polar.ScaleIncludedEgressGiB != 1_000 {
 		t.Fatalf("polar egress settings not loaded: %+v", cfg.Polar)
+	}
+	if cfg.Polar.ObjectStorageBillingMode != polar.ObjectStorageBillingShadow || cfg.Polar.ObjectStorageBillingFrom != "2026-09-01T00:00:00Z" ||
+		cfg.Polar.ObjectStorageUsageEventName != "object_storage_usage" || cfg.Polar.ObjectStorageMeterID != "meter-object-storage" {
+		t.Fatalf("polar object storage settings not loaded: %+v", cfg.Polar)
 	}
 }
 
@@ -307,6 +315,24 @@ func TestApplyBillingEnvOverlay_PolarEgress(t *testing.T) {
 	if cfg.Polar.EgressMillicentsPerGiB != 3_000 || cfg.Polar.HobbyIncludedEgressGiB != 20 ||
 		cfg.Polar.ProIncludedEgressGiB != 200 || cfg.Polar.ScaleIncludedEgressGiB != 2_000 {
 		t.Fatalf("polar egress numeric overlay = %+v", cfg.Polar)
+	}
+}
+
+func TestApplyBillingEnvOverlay_PolarObjectStorage(t *testing.T) {
+	values := map[string]string{
+		"FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE":     "live",
+		"FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM":     "2026-10-01T00:00:00Z",
+		"FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME": "object_storage_event",
+		"FAAS_POLAR_OBJECT_STORAGE_METER_ID":         "meter-object-storage",
+	}
+	cfg := ApplyBillingEnvOverlay(&RootBillingConfig{}, func(key string) string { return values[key] })
+	if cfg.Polar.ObjectStorageBillingMode != "live" || cfg.Polar.ObjectStorageBillingFrom != "2026-10-01T00:00:00Z" ||
+		cfg.Polar.ObjectStorageUsageEventName != "object_storage_event" || cfg.Polar.ObjectStorageMeterID != "meter-object-storage" {
+		t.Fatalf("polar object storage overlay = %+v", cfg.Polar)
+	}
+	resolved := resolvedPolarConfig(cfg, func(key string) string { return values[key] })
+	if resolved.ObjectStorageBillingMode != "live" || resolved.ObjectStorageMeterID != "meter-object-storage" {
+		t.Fatalf("resolved Polar object storage config = %+v", resolved)
 	}
 }
 

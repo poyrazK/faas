@@ -277,6 +277,18 @@ func ApplyBillingEnvOverlay(cfg *RootBillingConfig, env func(string) string) *Ro
 			cfg.Polar.ScaleIncludedEgressGiB = n
 		}
 	}
+	if v := env("FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE"); v != "" {
+		cfg.Polar.ObjectStorageBillingMode = v
+	}
+	if v := env("FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM"); v != "" {
+		cfg.Polar.ObjectStorageBillingFrom = v
+	}
+	if v := env("FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME"); v != "" {
+		cfg.Polar.ObjectStorageUsageEventName = v
+	}
+	if v := env("FAAS_POLAR_OBJECT_STORAGE_METER_ID"); v != "" {
+		cfg.Polar.ObjectStorageMeterID = v
+	}
 	if v := env("FAAS_POLAR_SUCCESS_URL"); v != "" {
 		cfg.Polar.SuccessURL = v
 	}

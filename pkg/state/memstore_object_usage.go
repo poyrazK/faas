@@ -91,6 +91,41 @@ func objectBillingKey(account string, periodStart time.Time) string {
 	return account + "\x00" + ObjectStoragePeriod(periodStart).Format(time.RFC3339)
 }
 
+func (m *MemStore) GetObjectStorageBillingDelivery(_ context.Context, provider, billingRecordID string) (ObjectStorageBillingDelivery, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record, ok := m.objectStorageBillingDeliveries[objectStorageBillingDeliveryKey(provider, billingRecordID)]
+	if !ok {
+		return ObjectStorageBillingDelivery{}, ErrNotFound
+	}
+	return record, nil
+}
+
+func (m *MemStore) RecordObjectStorageBillingDelivery(_ context.Context, delivery ObjectStorageBillingDelivery) (ObjectStorageBillingDelivery, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delivery = normalizeObjectStorageBillingDelivery(delivery)
+	if err := validateObjectStorageBillingDelivery(delivery); err != nil {
+		return ObjectStorageBillingDelivery{}, err
+	}
+	if m.objectStorageBillingDeliveries == nil {
+		m.objectStorageBillingDeliveries = map[string]ObjectStorageBillingDelivery{}
+	}
+	key := objectStorageBillingDeliveryKey(delivery.Provider, delivery.BillingRecordID)
+	if existing, ok := m.objectStorageBillingDeliveries[key]; ok {
+		if sameObjectStorageBillingDelivery(existing, delivery) {
+			return existing, nil
+		}
+		return ObjectStorageBillingDelivery{}, ErrObjectBillingConflict
+	}
+	m.objectStorageBillingDeliveries[key] = delivery
+	return delivery, nil
+}
+
+func objectStorageBillingDeliveryKey(provider, billingRecordID string) string {
+	return provider + "\x00" + billingRecordID
+}
+
 func (m *MemStore) AdmitObjectURL(_ context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -63,3 +63,7 @@
 # hobby_included_egress_gib = 0
 # pro_included_egress_gib   = 0
 # scale_included_egress_gib = 0
+# object_storage_billing_mode = "off" # catalog parity with apid; apid owns month-close delivery
+# object_storage_billing_from = "" # RFC3339 UTC-month boundary required for shadow/live
+# object_storage_meter_id = "" # separate meter summing metadata.charge_millicents
+# object_storage_usage_event_name = "faas_object_storage_usage"

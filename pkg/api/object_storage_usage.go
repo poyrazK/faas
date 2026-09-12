@@ -121,7 +121,9 @@ type ObjectStorageCharge struct {
 }
 
 type ObjectStorageUsageResponse struct {
-	Usage   ObjectStorageUsage   `json:"usage"`
-	Policy  ObjectStoragePolicy  `json:"policy"`
-	Charges *ObjectStorageCharge `json:"charges,omitempty"`
+	Usage       ObjectStorageUsage   `json:"usage"`
+	Policy      ObjectStoragePolicy  `json:"policy"`
+	Charges     *ObjectStorageCharge `json:"charges,omitempty"`
+	BillingMode string               `json:"billing_mode"`
+	BillingFrom *time.Time           `json:"billing_from,omitempty"`
 }

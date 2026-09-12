@@ -1,3 +1,4 @@
+// ADR-156: object-storage month close and provider delivery rollout.
 package billing
 
 import (
@@ -21,6 +22,18 @@ func (s objectStorageBillingAccounts) ListAllAccounts(context.Context) ([]state.
 type objectStorageLineItemRecorder struct {
 	records []state.ObjectStorageBillingRecord
 	err     error
+	policy  ObjectStorageLineItemPolicy
+}
+
+func (s *objectStorageLineItemRecorder) ObjectStorageLineItemPolicy() (ObjectStorageLineItemPolicy, bool) {
+	if s.policy.Provider == "" {
+		return ObjectStorageLineItemPolicy{
+			Provider:      "test",
+			Mode:          MeterDeliveryLive,
+			EffectiveFrom: time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
+		}, true
+	}
+	return s.policy, true
 }
 
 func (s *objectStorageLineItemRecorder) PublishObjectStorageLineItem(_ context.Context, record state.ObjectStorageBillingRecord) error {
@@ -32,8 +45,29 @@ func (s *objectStorageLineItemRecorder) PublishObjectStorageLineItem(_ context.C
 }
 
 type objectStorageBillingStore struct {
-	snapshots map[string]state.ObjectUsageSnapshot
-	records   map[string]state.ObjectStorageBillingRecord
+	snapshots  map[string]state.ObjectUsageSnapshot
+	records    map[string]state.ObjectStorageBillingRecord
+	deliveries map[string]state.ObjectStorageBillingDelivery
+}
+
+func (s *objectStorageBillingStore) GetObjectStorageBillingDelivery(_ context.Context, provider, recordID string) (state.ObjectStorageBillingDelivery, error) {
+	delivery, ok := s.deliveries[provider+recordID]
+	if !ok {
+		return state.ObjectStorageBillingDelivery{}, state.ErrNotFound
+	}
+	return delivery, nil
+}
+
+func (s *objectStorageBillingStore) RecordObjectStorageBillingDelivery(_ context.Context, delivery state.ObjectStorageBillingDelivery) (state.ObjectStorageBillingDelivery, error) {
+	if s.deliveries == nil {
+		s.deliveries = map[string]state.ObjectStorageBillingDelivery{}
+	}
+	key := delivery.Provider + delivery.BillingRecordID
+	if existing, ok := s.deliveries[key]; ok {
+		return existing, nil
+	}
+	s.deliveries[key] = delivery
+	return delivery, nil
 }
 
 func (s *objectStorageBillingStore) ObjectUsageForPeriod(_ context.Context, account string, _ time.Time) (state.ObjectUsageSnapshot, error) {
@@ -96,7 +130,7 @@ func TestFinalizeObjectStoragePeriodsPublishesOnlyActiveAccounts(t *testing.T) {
 		"empty":  {},
 	}}
 	sink := &objectStorageLineItemRecorder{}
-	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active"}, {ID: "empty"}}}
+	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}, {ID: "empty", Plan: api.PlanHobby}}}
 	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
 	records, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink)
 	if err != nil {
@@ -114,7 +148,7 @@ func TestFinalizeObjectStoragePeriodsPublishesExistingRecordOnRetry(t *testing.T
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, time.September, 6, 0, 0, 0, 0, time.UTC)
 	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": objectStorageBillingSnapshot("active", "backend", period)}}
-	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active"}}}
+	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}}}
 	sink := &objectStorageLineItemRecorder{}
 	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
 	if _, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink); err != nil {
@@ -123,7 +157,80 @@ func TestFinalizeObjectStoragePeriodsPublishesExistingRecordOnRetry(t *testing.T
 	if _, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now.Add(time.Hour), sink); err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.records) != 2 || sink.records[0].ID != sink.records[1].ID {
-		t.Fatalf("retry published IDs = %#v, want same durable id", sink.records)
+	if len(sink.records) != 1 {
+		t.Fatalf("retry published %d records, want durable receipt to suppress duplicate", len(sink.records))
+	}
+}
+
+func TestFinalizeObjectStoragePeriodsShadowsWithoutPublishing(t *testing.T) {
+	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, time.September, 6, 0, 0, 0, 0, time.UTC)
+	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": objectStorageBillingSnapshot("active", "backend", period)}}
+	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}}}
+	sink := &objectStorageLineItemRecorder{policy: ObjectStorageLineItemPolicy{Provider: "polar", Mode: MeterDeliveryShadow, EffectiveFrom: period}}
+	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	records, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || len(sink.records) != 0 {
+		t.Fatalf("records=%d published=%d, want one local record and no event", len(records), len(sink.records))
+	}
+	delivery := store.deliveries["polar"+records[0].ID]
+	if delivery.Mode != state.ObjectStorageDeliveryShadow || delivery.QuantityMillicents != records[0].TotalMillicents {
+		t.Fatalf("shadow delivery = %+v", delivery)
+	}
+}
+
+func TestFinalizeObjectStoragePeriodsNeverPublishesBeforeActivation(t *testing.T) {
+	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, time.September, 6, 0, 0, 0, 0, time.UTC)
+	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": objectStorageBillingSnapshot("active", "backend", period)}}
+	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}}}
+	sink := &objectStorageLineItemRecorder{policy: ObjectStorageLineItemPolicy{Provider: "polar", Mode: MeterDeliveryLive, EffectiveFrom: period.AddDate(0, 1, 0)}}
+	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	records, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery := store.deliveries["polar"+records[0].ID]
+	if len(sink.records) != 0 || delivery.Mode != state.ObjectStorageDeliveryPreActivation || delivery.QuantityMillicents != 0 {
+		t.Fatalf("published=%d preactivation delivery=%+v", len(sink.records), delivery)
+	}
+}
+
+func TestFinalizeObjectStoragePeriodsNeverBillsIneligiblePlan(t *testing.T) {
+	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, time.September, 6, 0, 0, 0, 0, time.UTC)
+	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"free": objectStorageBillingSnapshot("free", "backend", period)}}
+	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "free", Plan: api.PlanFree}}}
+	sink := &objectStorageLineItemRecorder{policy: ObjectStorageLineItemPolicy{Provider: "polar", Mode: MeterDeliveryLive, EffectiveFrom: period}}
+	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	records, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery := store.deliveries["polar"+records[0].ID]
+	if len(sink.records) != 0 || delivery.Mode != state.ObjectStorageDeliveryPlanIneligible || delivery.QuantityMillicents != 0 {
+		t.Fatalf("published=%d ineligible delivery=%+v", len(sink.records), delivery)
+	}
+}
+
+func TestFinalizeObjectStoragePeriodsRetriesFailedLiveDelivery(t *testing.T) {
+	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, time.September, 6, 0, 0, 0, 0, time.UTC)
+	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": objectStorageBillingSnapshot("active", "backend", period)}}
+	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}}}
+	sink := &objectStorageLineItemRecorder{err: errors.New("provider unavailable")}
+	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	if _, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now, sink); err == nil {
+		t.Fatal("failed live delivery returned nil error")
+	}
+	if len(store.deliveries) != 0 {
+		t.Fatalf("failed live delivery recorded receipt: %+v", store.deliveries)
+	}
+	sink.err = nil
+	if records, err := FinalizeObjectStoragePeriods(context.Background(), accounts, store, pricing, period, now.Add(time.Minute), sink); err != nil || len(records) != 1 || len(sink.records) != 1 {
+		t.Fatalf("retry records=%d published=%d err=%v", len(records), len(sink.records), err)
 	}
 }

@@ -1,13 +1,16 @@
+// ADR-156: customer-visible object-storage accounting and billing state.
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -45,7 +48,12 @@ func TestObjectStorageAccountingAPIGates(t *testing.T) {
 	if r.Code != 200 {
 		t.Fatal(r.Code, r.Body.String())
 	}
-	if err := json.Unmarshal(r.Body.Bytes(), &usage); err != nil || usage.Usage.CapacityBytes != 100 || usage.Usage.ObservedBytes != 0 {
+	if err := json.Unmarshal(r.Body.Bytes(), &usage); err != nil || usage.Usage.CapacityBytes != 100 || usage.Usage.ObservedBytes != 0 || usage.BillingMode != "off" {
+		t.Fatal(usage, err)
+	}
+	e.s.WithBillingProvider(&objectStorageBillingStatusProvider{})
+	r = e.do(t, "GET", "/v1/account/object-storage-usage", nil, nil)
+	if err := json.Unmarshal(r.Body.Bytes(), &usage); err != nil || usage.BillingMode != "live" || usage.BillingFrom == nil || !usage.BillingFrom.Equal(time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Fatal(usage, err)
 	}
 	e.s.objectStorage.Accounting.MaxMonthlyAuthorizations = 1
@@ -54,6 +62,36 @@ func TestObjectStorageAccountingAPIGates(t *testing.T) {
 	}
 	if r := e.do(t, "DELETE", path+"/"+bucket.ID+"/objects?key=file", nil, nil); r.Code != 204 {
 		t.Fatal("cleanup blocked", r.Code)
+	}
+}
+
+type objectStorageBillingStatusProvider struct{ fakeBillingProvider }
+
+func (*objectStorageBillingStatusProvider) ObjectStorageLineItemPolicy() (billing.ObjectStorageLineItemPolicy, bool) {
+	return billing.ObjectStorageLineItemPolicy{
+		Provider:      "polar",
+		Mode:          billing.MeterDeliveryLive,
+		EffectiveFrom: time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC),
+	}, true
+}
+
+func (*objectStorageBillingStatusProvider) PublishObjectStorageLineItem(context.Context, state.ObjectStorageBillingRecord) error {
+	return nil
+}
+
+func TestValidateObjectStorageBillingSetupRequiresEURPricing(t *testing.T) {
+	provider := &objectStorageBillingStatusProvider{}
+	if err := validateObjectStorageBillingSetup(provider, nil); err == nil || !strings.Contains(err.Error(), "requires object-storage pricing") {
+		t.Fatalf("missing pricing error = %v", err)
+	}
+	registry := objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external")
+	registry.Pricing = &api.ObjectStoragePricing{Currency: "USD"}
+	if err := validateObjectStorageBillingSetup(provider, registry); err == nil || !strings.Contains(err.Error(), "requires EUR") {
+		t.Fatalf("USD pricing error = %v", err)
+	}
+	registry.Pricing = &api.ObjectStoragePricing{Currency: "EUR"}
+	if err := validateObjectStorageBillingSetup(provider, registry); err != nil {
+		t.Fatalf("EUR pricing error = %v", err)
 	}
 }
 

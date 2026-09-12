@@ -43,6 +43,9 @@
 //	FAAS_POLAR_WEBHOOK_SECRET required when Polar is active (apid only)
 //	FAAS_POLAR_SANDBOX      "1" / "true" to use sandbox-api.polar.sh (apid + meterd)
 //	FAAS_POLAR_METER_ID    required when Polar is active; usage meter + reconciliation
+//	FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE  off | shadow | live; default off
+//	FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM  UTC-month activation boundary for shadow/live
+//	FAAS_POLAR_OBJECT_STORAGE_METER_ID      separate charge_millicents meter for shadow/live
 //	FAAS_POLAR_BASE_URL    optional; private API proxy / contract-test endpoint
 //
 // TOML config precedence: env > TOML > Defaults. The daemon's
@@ -184,6 +187,18 @@ func resolvedPolarConfig(cfg *RootBillingConfig, env func(string) string) polar.
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			out.ScaleIncludedEgressGiB = n
 		}
+	}
+	if v := env("FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE"); v != "" {
+		out.ObjectStorageBillingMode = v
+	}
+	if v := env("FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM"); v != "" {
+		out.ObjectStorageBillingFrom = v
+	}
+	if v := env("FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME"); v != "" {
+		out.ObjectStorageUsageEventName = v
+	}
+	if v := env("FAAS_POLAR_OBJECT_STORAGE_METER_ID"); v != "" {
+		out.ObjectStorageMeterID = v
 	}
 	if v := env("FAAS_POLAR_SUCCESS_URL"); v != "" {
 		out.SuccessURL = v
@@ -368,6 +383,8 @@ func Providers() []ProviderMeta {
 				"FAAS_POLAR_EGRESS_METER_ID", "FAAS_POLAR_EGRESS_MILLICENTS_PER_GIB",
 				"FAAS_POLAR_HOBBY_INCLUDED_EGRESS_GIB", "FAAS_POLAR_PRO_INCLUDED_EGRESS_GIB",
 				"FAAS_POLAR_SCALE_INCLUDED_EGRESS_GIB",
+				"FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE", "FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM",
+				"FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME", "FAAS_POLAR_OBJECT_STORAGE_METER_ID",
 			},
 			BuildAPID: func(cfg *RootBillingConfig, env func(string) string, log *slog.Logger) (any, error) {
 				p, err := polar.NewProvider(resolvedPolarConfig(cfg, env), log)

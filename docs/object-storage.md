@@ -372,12 +372,26 @@ without changing the safety policy:
 ```
 
 `GET /v1/account/object-storage-usage` then includes `charges` with the
-storage, request, egress and total estimate for the current UTC month. Storage
-uses a 730-hour month; request and egress units are rounded up independently
-to one millicent. Omit `pricing` while qualifying providers to keep the
-existing usage-only response. This rate card is intentionally separate from
-upstream `cost_millicents`; a later billing-provider adapter must post invoice
-line items and apply any plan allowances before paid launch.
+storage, request, egress and total estimate for the current UTC month, plus
+`billing_mode` (`off`, `shadow`, or `live`) and the optional UTC-month
+`billing_from` boundary. Storage uses a 730-hour month; request and egress
+units are rounded up independently to one millicent. Omit `pricing` while
+qualifying providers to keep charges disabled. The rate card is intentionally
+separate from upstream `cost_millicents`.
+
+Polar billing is independently default-off. In `shadow`, Gregale finalizes the
+completed UTC month and records the would-be charge without sending an event.
+In `live`, it sends one idempotent event per immutable billing record. The
+event quantity is the exact total customer charge in millicents; detailed
+storage, request, egress, and upstream-cost values remain in metadata and the
+local ledger. A durable provider receipt records pre-activation, shadow, or
+live handling; accounts that are not on a paid plan receive a permanent
+zero-quantity ineligible receipt. Changing modes, plans, or restarting cannot
+retroactively charge an older period. Configure the Polar meter to sum `charge_millicents` at EUR
+`0.001` cents per unit, and follow the billing provider switch runbook for the
+required environment variables and catalog checks. Polar bills the month-close
+event in the provider cycle in which it is received; its metadata preserves the
+UTC usage month rather than implying a retroactive invoice adjustment.
 
 Before issuing PUT, an account-serialized transaction reserves the maximum
 authorized size for its bucket/key and one key slot. Reissuing the same size
@@ -506,14 +520,13 @@ usage exporter and explicit limits, confirm fresh observations, then enable.
 Rollback must disable signing first; old binaries bypass these guards.
 Do not drop accounting tables while serving customer storage.
 
-No plan allowances or invoice lines are introduced by the accounting surface.
-The optional rate card is an estimate only; compute billing is unchanged. A
-`apid` closes the prior UTC month once per deployment period and stores an
-immutable per-account billing snapshot. A billing provider may implement the
-optional line-item sink to publish that snapshot idempotently; without one,
-the snapshot remains an internal preview ledger. Provider usage exporters,
-plan allowances, invoice lines, and month-end reconciliation are still
-required for paid launch; see [ADR-156](adr/156-object-storage-accounting.md).
+No plan allowances are introduced by the accounting surface; compute billing
+is unchanged. `apid` closes the prior UTC month once per deployment period and
+stores an immutable per-account billing snapshot. Polar can publish that
+snapshot idempotently when its independent rollout gate is live; other billing
+providers retain the internal ledger only. A qualified provider usage exporter
+and live month-close verification remain required for paid launch; see
+[ADR-156](adr/156-object-storage-accounting.md).
 
 ## Provider configuration
 
