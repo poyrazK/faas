@@ -81,9 +81,9 @@ var goldenPlan = api.PlanResponse{
 	CanApply:      true,
 	PlanToken:     "tok-stable",
 	Workloads: []api.PlanWorkload{
-		{Name: "api", RootDir: "/api", Class: "http"},
-		{Name: "nightly", RootDir: "/nightly", Class: "worker", Schedule: "0 3 * * *"},
-		{Name: "worker", RootDir: "/worker", Class: "worker"},
+		{Name: "api", RootDir: "/api", Class: "http", Action: "create"},
+		{Name: "nightly", RootDir: "/nightly", Class: "worker", Schedule: "0 3 * * *", Action: "create"},
+		{Name: "worker", RootDir: "/worker", Class: "worker", Action: "create"},
 	},
 	Managed: []api.PlanManaged{
 		{Name: "postgres", Kind: "postgres", EnvHint: "postgresql://...", Image: "postgres:16"},
@@ -98,6 +98,11 @@ var goldenApply = api.ApplyResponse{
 		{Slug: "api", ID: "a-1"},
 		{Slug: "nightly", ID: "a-2"},
 		{Slug: "worker", ID: "a-3"},
+	},
+	Builds: []api.AppliedBuild{
+		{Slug: "api", AppID: "a-1", DeploymentID: "dep-1", BuildID: "build-1"},
+		{Slug: "nightly", AppID: "a-2", DeploymentID: "dep-2", BuildID: "build-2"},
+		{Slug: "worker", AppID: "a-3", DeploymentID: "dep-3", BuildID: "build-3"},
 	},
 }
 
