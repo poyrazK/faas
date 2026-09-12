@@ -23,7 +23,7 @@ func UnitOutboundd() daemonunit.Unit {
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
 
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/outboundd/outboundd.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/outboundd/outboundd.env -/etc/faas/otel.env",
 
 		NoNewPrivileges:       true,
 		ProtectSystem:         "strict",

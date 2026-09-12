@@ -4466,43 +4466,18 @@ type AppMetricsResponse struct {
 	// cmd/apid/handlers_dashboard.go:2659.
 	Wakes24h int64 `json:"wakes_24h,omitempty"`
 
-	// CacheHitRatePct is the share of cache-eligible requests
-	// served from gateway_response_cache (ADR-122) over the
-	// window. Field is ALWAYS present on the wire so the SDK
-	// can rely on the documented schema — 0 means either
-	// "feature off" (no cache rule attached) or "feature on,
-	// zero traffic". The dashboard distinguishes the two via
-	// the existence of the `Routes` block, not via field
-	// absence. Mirrors the response-cache wakes-avoided count
-	// in `pkg/appmetrics.Fetch` for the operator-side view;
-	// the customer-facing denominator is "requests that hit a
-	// cache-eligible route" rather than the fleet-wide total
-	// so a customer with a single cacheable path sees a
-	// meaningful percentage rather than 0.0001%.
-	//
-	// Implementation note: the PromQL query against
-	// gateway_response_cache_total{app_id, outcome=hit/miss}
-	// is out of scope for this PR; the field stays 0 until
-	// the response-cache consumer-facing metric lands.
-	CacheHitRatePct float64 `json:"cache_hit_rate_pct"`
+	// CacheHitRatePct is the share of cache-eligible requests served
+	// from gateway_response_cache (ADR-122) over the window. It is
+	// omitted until the response-cache consumer-facing metric lands;
+	// an absent value is intentionally distinct from an observed 0%.
+	CacheHitRatePct *float64 `json:"cache_hit_rate_pct,omitempty"`
 
-	// ErrorBudgetPct is the remaining API-availability error
-	// budget as a percentage (0 = exhausted, 100 = full).
-	// Field is ALWAYS present on the wire so the SDK can rely
-	// on the documented schema — 0 renders as "—" on the
-	// dashboard rather than a misleading "budget exhausted"
-	// message. Window is the trailing 30 days (the §12 SLO
-	// evaluation period). Computed as
-	// `100 - (observed_error_rate_pct × 30d_window_factor)`
-	// against the plan's API-availability SLO target
-	// (99.5% per spec §12). Best-effort: 0 when the
-	// `apid_request_total{account_id, route, code}` series is
-	// degraded or the per-plan SLO target is unknown.
-	//
-	// Implementation note: the per-plan SLO target is not
-	// yet exposed on the Limits struct (issue TBD); the
-	// field stays 0 until that lands.
-	ErrorBudgetPct float64 `json:"error_budget_pct"`
+	// ErrorBudgetPct is the remaining API-availability error budget
+	// as a percentage (0 = exhausted, 100 = full). It is omitted
+	// until the per-plan SLO target and trailing-window query are
+	// wired; an absent value is intentionally distinct from an
+	// observed exhausted budget.
+	ErrorBudgetPct *float64 `json:"error_budget_pct,omitempty"`
 }
 
 // RouteRow is the per-route detail row returned by the

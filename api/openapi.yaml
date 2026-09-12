@@ -3654,8 +3654,6 @@ paths:
                 cold_start_pct: 8.5
                 wake_p95_ms: 380.2
                 wakes_24h: 47
-                cache_hit_rate_pct: 0.0
-                error_budget_pct: 0.0
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402':
@@ -16658,9 +16656,9 @@ components:
 
     # Obs-Meta + Trace-IDs Mega-PR / C7 — meta-obs health
     # snapshot. Wire shape for GET /v1/admin/obs/health.
-    # Closed-set fields: every response carries the same key
-    # names; absent data is 0 (counters) or 1.0 (ratios), never
-    # null, so the dashboard renders without per-field nil-checks.
+    # Closed-set fields: every response carries the same key names.
+    # Prometheus-derived numeric fallbacks remain stable for compatibility,
+    # while prometheus_available tells consumers whether they are live data.
     ObsHealthResponse:
       description: |
         Wire shape for GET /v1/admin/obs/health (admin scope +
@@ -16677,6 +16675,7 @@ components:
       required:
         [
           generated_at,
+          prometheus_available,
           audit_log_write_total_5m,
           audit_log_write_failures_5m,
           audit_log_coverage_ratio_5m,
@@ -16689,22 +16688,28 @@ components:
           type: string
           format: date-time
           description: Snapshot timestamp (UTC, RFC 3339).
+        prometheus_available:
+          type: boolean
+          description: |
+            True only when every PromQL query used for this snapshot
+            completed successfully. False means Prometheus-derived numeric
+            fields are fallback values and must not be interpreted as
+            observed telemetry.
         audit_log_write_total_5m:
           type: integer
           format: int64
           minimum: 0
           description: |
             Sum of audit_log_write_total over the trailing 5m
-            window. 0 when apid's Prometheus is unreachable or
-            the audit pipeline has been silent in the window.
+            window. 0 when the audit pipeline has been silent in the
+            window. Check `prometheus_available` before interpreting it.
         audit_log_write_failures_5m:
           type: integer
           format: int64
           minimum: 0
           description: |
             Sum of audit_log_write_failures_total over the trailing
-            5m window. Same nil-promql posture as the success
-            counter.
+            5m window. Check `prometheus_available` before interpreting it.
         audit_log_coverage_ratio_5m:
           type: number
           format: double
@@ -16713,9 +16718,9 @@ components:
           description: |
             Ratio of audit_log writes with a non-NULL trace_id
             over all audit_log writes in the window. 1.0
-            (vacuous truth) when apid's Prometheus is
-            unreachable or the audit pipeline has been silent
-            in the window.
+            (vacuous truth) when the audit pipeline has been silent
+            in the window. Check `prometheus_available` before
+            interpreting it.
         operator_intent_outcome_missing_total:
           type: object
           description: |
@@ -16756,8 +16761,8 @@ components:
           minimum: 0
           description: |
             Count of Prometheus alert rules in the firing state
-            via PromQL ALERTS{alertstate="firing"}. 0 when
-            apid's Prometheus is unreachable.
+            via PromQL ALERTS{alertstate="firing"}. Check
+            `prometheus_available` before interpreting a zero value.
       x-since: "2026-08"
       x-pr-cluster: "obs-meta-trace-ids"
 
@@ -24160,15 +24165,9 @@ components:
           description: |
             Share of cache-eligible requests served from
             `gateway_response_cache` (ADR-122) over the window.
-            ALWAYS present on the wire (the SDK can rely on the
-            documented schema) — 0 means either "feature off" (no
-            cache rule attached) or "feature on, zero traffic". The
-            dashboard distinguishes the two via the existence of the
-            `routes` block, not via field absence. The field stays 0
-            until the response-cache consumer-facing metric lands
-            (the current per-app dashboard surfaces the
-            `gateway_response_cache_total{outcome=hit/miss}` rollup
-            through the operator-side §12 panel, not this field).
+            This field is omitted until the response-cache
+            consumer-facing metric lands. Absence means unavailable,
+            not an observed 0% hit rate.
           x-since: "2026-08"
           x-issue: "TBD"
         error_budget_pct:
@@ -24176,17 +24175,10 @@ components:
           minimum: 0
           maximum: 100
           description: |
-            Trailing-30d API-availability error budget remaining (0 =
-            exhausted, 100 = full). ALWAYS present on the wire so the
-            SDK can rely on the documented schema — 0 renders as "—"
-            on the dashboard rather than a misleading "budget
-            exhausted" message. Computed against the plan's
-            API-availability SLO target (99.5% per spec §12). The
-            field stays 0 until the per-plan SLO target lands on the
-            `Limits` struct (issue TBD); once wired, the field is
-            computed against `apid_request_total{account_id, code}`
-            over the trailing 30d, scaled by the per-plan SLO
-            target.
+            Trailing-30d API-availability error budget remaining. This
+            field is omitted until the per-plan SLO target and
+            trailing-window query are wired. Absence means unavailable,
+            not an observed exhausted budget.
           x-since: "2026-08"
           x-issue: "TBD"
 

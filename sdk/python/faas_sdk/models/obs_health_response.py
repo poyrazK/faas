@@ -34,22 +34,27 @@ class ObsHealthResponse:
 
     generated_at: datetime.datetime
     """Snapshot timestamp (UTC, RFC 3339)."""
+    prometheus_available: bool
+    """True only when every PromQL query used for this snapshot
+    completed successfully. False means Prometheus-derived numeric
+    fields are fallback values and must not be interpreted as
+    observed telemetry.
+    """
     audit_log_write_total_5m: int
     """Sum of audit_log_write_total over the trailing 5m
-    window. 0 when apid's Prometheus is unreachable or
-    the audit pipeline has been silent in the window.
+    window. 0 when the audit pipeline has been silent in the
+    window. Check `prometheus_available` before interpreting it.
     """
     audit_log_write_failures_5m: int
     """Sum of audit_log_write_failures_total over the trailing
-    5m window. Same nil-promql posture as the success
-    counter.
+    5m window. Check `prometheus_available` before interpreting it.
     """
     audit_log_coverage_ratio_5m: float
     """Ratio of audit_log writes with a non-NULL trace_id
     over all audit_log writes in the window. 1.0
-    (vacuous truth) when apid's Prometheus is
-    unreachable or the audit pipeline has been silent
-    in the window.
+    (vacuous truth) when the audit pipeline has been silent
+    in the window. Check `prometheus_available` before
+    interpreting it.
     """
     operator_intent_outcome_missing_total: ObsHealthResponseOperatorIntentOutcomeMissingTotal
     """Per-kind count of operator_intents rows stuck in
@@ -68,13 +73,15 @@ class ObsHealthResponse:
     """
     alerts_firing: int
     """Count of Prometheus alert rules in the firing state
-    via PromQL ALERTS{alertstate="firing"}. 0 when
-    apid's Prometheus is unreachable.
+    via PromQL ALERTS{alertstate="firing"}. Check
+    `prometheus_available` before interpreting a zero value.
     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         generated_at = self.generated_at.isoformat()
+
+        prometheus_available = self.prometheus_available
 
         audit_log_write_total_5m = self.audit_log_write_total_5m
 
@@ -93,6 +100,7 @@ class ObsHealthResponse:
         field_dict.update(
             {
                 "generated_at": generated_at,
+                "prometheus_available": prometheus_available,
                 "audit_log_write_total_5m": audit_log_write_total_5m,
                 "audit_log_write_failures_5m": audit_log_write_failures_5m,
                 "audit_log_coverage_ratio_5m": audit_log_coverage_ratio_5m,
@@ -114,6 +122,8 @@ class ObsHealthResponse:
         d = dict(src_dict)
         generated_at = datetime.datetime.fromisoformat(d.pop("generated_at"))
 
+        prometheus_available = d.pop("prometheus_available")
+
         audit_log_write_total_5m = d.pop("audit_log_write_total_5m")
 
         audit_log_write_failures_5m = d.pop("audit_log_write_failures_5m")
@@ -132,6 +142,7 @@ class ObsHealthResponse:
 
         obs_health_response = cls(
             generated_at=generated_at,
+            prometheus_available=prometheus_available,
             audit_log_write_total_5m=audit_log_write_total_5m,
             audit_log_write_failures_5m=audit_log_write_failures_5m,
             audit_log_coverage_ratio_5m=audit_log_coverage_ratio_5m,

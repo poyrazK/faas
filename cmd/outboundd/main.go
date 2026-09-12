@@ -14,19 +14,32 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func main() { wire.Daemon("outboundd", run) }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	ops := wire.NewOpsMetrics("outboundd")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "outboundd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
+	if traceErr != nil {
+		return fmt.Errorf("outboundd: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("outboundd: trace shutdown failed", "err", err)
+		}
+	}()
+	wire.BootStamps(ctx, "outboundd", ops)
+	wire.RegisterDefaultOps(ops)
+
 	cfg, err := LoadConfig(defaultConfigPath())
 	if err != nil {
 		return err
 	}
-	ops := wire.NewOpsMetrics("outboundd")
-	wire.BootStamps(ctx, "outboundd", ops)
-	wire.RegisterDefaultOps(ops)
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "outboundd")
 	if err != nil {
 		return fmt.Errorf("outboundd: open db: %w", err)
@@ -59,9 +72,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
+	readyProbe := &wire.ReadyzProbe{}
+	pgSignal, stopPGSignal := wire.NewPGPingSignal(ctx, pool, 5*time.Second)
+	readyProbe.RegisterSignal(pgSignal, stopPGSignal)
+	readyProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("outboundd", ready, reason)
+	})
+	defer readyProbe.Drain("outboundd", log)
+	controlMux := http.NewServeMux()
+	controlMux.Handle("GET /metrics", ops.Handler())
+	wire.ControlMuxLite(controlMux, readyProbe.ReadyFunc(), readyProbe.ReasonFunc())
+	controlMux.Handle("/", trace.HTTPHandler("outboundd", wire.HTTPMetricsHandler(ops, "http_request", handler)))
 	server := &http.Server{
 		Addr:         cfg.ListenAddr,
-		Handler:      handler,
+		Handler:      controlMux,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 		IdleTimeout:  cfg.IdleTimeout,

@@ -15,6 +15,7 @@ Slice=faas-cp.slice
 MemoryMax=256M
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/outboundd/outboundd.env
+EnvironmentFile=-/etc/faas/otel.env
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

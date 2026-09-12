@@ -55,6 +55,16 @@ curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/stats
 curl --unix-socket /run/faas/realtimed.sock http://localhost/internal/connections
 ```
 
+Prometheus scrapes the node-local health listener on `127.0.0.1:9107` in a
+single-box deployment. A compute-only deployment binds the same port on the
+private node address (restricted to control-plane CIDRs by nftables), or the
+value set by `FAAS_REALTIME_HEALTH_LISTEN`. The fixed-cardinality metrics include
+`realtimed_current_connections`, accepted/rejected connections, sent/received
+messages and bytes, dropped messages, and callback errors. In a split
+deployment, the control-plane Prometheus discovers active realtime owners from
+apid; sum counters across nodes and sum the current-connection gauge only when
+you want a fleet total.
+
 Set `FAAS_REALTIME_MAX_CONNECTIONS`,
 `FAAS_REALTIME_MAX_MESSAGE_BYTES`, `FAAS_REALTIME_OUTBOUND_QUEUE`,
 `FAAS_REALTIME_HEARTBEAT`, `FAAS_REALTIME_PONG_WAIT`,

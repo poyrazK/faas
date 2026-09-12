@@ -46,7 +46,7 @@ faas_compute_allowed_ports:
 # Control-plane ingress to compute services. The manifest generator sets
 # these only on compute-only hosts; an empty list keeps the one-box policy.
 faas_control_plane_allowed_cidrs: []
-# Compute-side TCP services reached by the control plane. The three metrics
+# Compute-side TCP services reached by the control plane. The four metrics
 # listeners remain limited to the private control-plane CIDRs; they are not
 # opened by the public 22/80/443 rule.
 faas_control_plane_allowed_ports:
@@ -56,3 +56,4 @@ faas_control_plane_allowed_ports:
   - 9102
   - 9104
   - 9105
+  - 9107

@@ -63,6 +63,7 @@
       - prom_compute_vmmd_discovery_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?/v1/internal/metrics/vmmd-targets$')
       - prom_compute_imaged_discovery_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?/v1/internal/metrics/imaged-targets$')
       - prom_compute_builderd_discovery_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?/v1/internal/metrics/builderd-targets$')
+      - prom_compute_realtimed_discovery_url is regex('^https?://(127\.0\.0\.1|\[?::1\]?)(:\d+)?/v1/internal/metrics/realtimed-targets$')
     fail_msg: >-
       Compute daemon discovery URLs must remain their loopback apid HTTP-SD
       endpoints. Compute registry metadata must not be fetched over a public

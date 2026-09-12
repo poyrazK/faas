@@ -34,7 +34,7 @@ func UnitS3Gateway() daemonunit.Unit {
 		Slice:     FaasCPSlice,
 		MemoryMax: "512M",
 
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/object-storage/provider.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/object-storage/provider.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_OBJECT_STORAGE_CONFIG", Value: "/etc/faas/object-storage.json"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},

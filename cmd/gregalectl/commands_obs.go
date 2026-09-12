@@ -127,6 +127,7 @@ func apidBase() string {
 //	  force_cold_boot:   1.00
 //	  force_restart:     1.00
 //	alerts_firing:                       0
+//	prometheus_available:                true
 //
 // --json / FAAS_JSON=1 overrides the human format. Both paths
 // emit stable, greppable output (no ANSI codes; the operator's
@@ -523,9 +524,11 @@ func isTerminal(w *os.File) bool {
 // handler stays ≤50 lines and the human-shape contract has
 // its own focused test file (commands_obs_test.go).
 //
-// Field order matches api.ObsHealthResponse JSON tags so a
-// `jq` consumer can pin the order too.
+// Field order follows api.ObsHealthResponse JSON tags (excluding
+// generated_at, which is not rendered) so a `jq` consumer can pin
+// the order too.
 func writeObsHealthHuman(w io.Writer, snap map[string]any) {
+	_, _ = fmt.Fprintln(w, "prometheus_available:", snap["prometheus_available"])
 	_, _ = fmt.Fprintln(w, "audit_log_write_total_5m:", snap["audit_log_write_total_5m"])
 	_, _ = fmt.Fprintln(w, "audit_log_write_failures_5m:", snap["audit_log_write_failures_5m"])
 	_, _ = fmt.Fprintln(w, "audit_log_coverage_ratio_5m:", snap["audit_log_coverage_ratio_5m"])

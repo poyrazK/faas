@@ -17,9 +17,9 @@
 //
 // The PromQL-derived fields (audit_log_write_total_5m,
 // audit_log_write_failures_5m, audit_log_coverage_ratio_5m,
-// alerts_firing) return 0/1.0 on nil-promql or query failure — the
-// endpoint surfaces "no data" rather than a 500 so a Prometheus
-// outage doesn't page the on-call about an unrelated apid bug.
+// alerts_firing) retain stable numeric fallbacks on nil-promql or query
+// failure. prometheus_available makes that degraded state explicit so a
+// dashboard cannot render the fallback as observed telemetry.
 // SQL-derived fields (operator_intent_outcome_missing_total,
 // trace_id_completeness_ratio) DO surface store errors as 503
 // because the local DB is the source of truth — a failure there
@@ -68,13 +68,18 @@ func (s *server) obsHealthHandler(w http.ResponseWriter, r *http.Request, acct s
 	for kind, r := range storeRatios {
 		ratios[kind] = r
 	}
+	auditWrites, auditWritesOK := s.auditLogWrite5mStatus(ctx)
+	auditFailures, auditFailuresOK := s.auditLogWriteFailures5mStatus(ctx)
+	auditCoverage, auditCoverageOK := s.auditLogCoverageRatio5mStatus(ctx)
+	alerts, alertsOK := s.alertsFiringStatus(ctx)
 	writeJSON(w, http.StatusOK, api.ObsHealthResponse{
 		GeneratedAt:                        time.Now().UTC(),
-		AuditLogWriteTotal5m:               s.auditLogWrite5m(ctx),
-		AuditLogWriteFailures5m:            s.auditLogWriteFailures5m(ctx),
-		AuditLogCoverageRatio5m:            s.auditLogCoverageRatio5m(ctx),
+		PrometheusAvailable:                auditWritesOK && auditFailuresOK && auditCoverageOK && alertsOK,
+		AuditLogWriteTotal5m:               auditWrites,
+		AuditLogWriteFailures5m:            auditFailures,
+		AuditLogCoverageRatio5m:            auditCoverage,
 		OperatorIntentOutcomeMissingCounts: missing,
 		TraceIDCompletenessRatio:           ratios,
-		AlertsFiring:                       s.alertsFiring(ctx),
+		AlertsFiring:                       alerts,
 	})
 }

@@ -15,6 +15,7 @@ RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
 Slice=faas-cp.slice
 MemoryMax=512M
 EnvironmentFile=-/etc/faas/secrets/realtimed/realtimed.env
+EnvironmentFile=-/etc/faas/otel.env
 Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
 NoNewPrivileges=yes
 ProtectSystem=strict

@@ -279,6 +279,7 @@ func TestComputeDaemonMetricsDiscoveryUsesCanonicalPorts(t *testing.T) {
 		{name: "vmmd", path: vmmdMetricsDiscoveryPath, handler: srv.vmmdMetricsDiscovery, want: "192.0.2.2:9104", job: "vmmd"},
 		{name: "imaged", path: imagedMetricsDiscoveryPath, handler: srv.imagedMetricsDiscovery, want: "192.0.2.2:9102", job: "imaged"},
 		{name: "builderd", path: builderdMetricsDiscoveryPath, handler: srv.builderdMetricsDiscovery, want: "192.0.2.2:9105", job: "builderd"},
+		{name: "realtimed", path: realtimedMetricsDiscoveryPath, handler: srv.realtimedMetricsDiscovery, want: "192.0.2.2:9107", job: "realtimed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

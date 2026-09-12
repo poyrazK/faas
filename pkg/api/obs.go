@@ -844,11 +844,13 @@ type ObsBuilderHeartbeatRow struct {
 //     state via PromQL ALERTS{alertstate="firing"} (existing
 //     Alertmanager integration).
 //
-// All fields are non-nullable on the wire; absent data is
-// represented as 0 (counters) or 1.0 (ratios), never as null, so
-// the dashboard can render without per-field nil-checks.
+// Prometheus-derived fields retain stable numeric fallbacks for compatibility,
+// but PrometheusAvailable explicitly tells consumers whether those values came
+// from a live query. SQL-derived fields still fail the endpoint when the local
+// source of truth is unavailable.
 type ObsHealthResponse struct {
 	GeneratedAt                        time.Time          `json:"generated_at"`
+	PrometheusAvailable                bool               `json:"prometheus_available"`
 	AuditLogWriteTotal5m               int64              `json:"audit_log_write_total_5m"`
 	AuditLogWriteFailures5m            int64              `json:"audit_log_write_failures_5m"`
 	AuditLogCoverageRatio5m            float64            `json:"audit_log_coverage_ratio_5m"`
