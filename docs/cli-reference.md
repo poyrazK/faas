@@ -55,7 +55,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
-| [`postgres`](#postgres) | Operator preview: manage PostgreSQL databases and bindings |
+| [`postgres`](#postgres) | Manage managed PostgreSQL databases and app bindings |
 | [`ps`](#ps) | Show live instances + state for an app |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
@@ -1358,7 +1358,7 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 
 ## postgres
 
-Operator preview: manage PostgreSQL databases and bindings
+Manage managed PostgreSQL databases and app bindings
 
 `gregale postgres [<subcommand>]`
 
@@ -1404,6 +1404,16 @@ Restore a database to a new database
 ### postgres bindings
 
 Manage app database bindings
+
+### postgres attach
+
+Attach a database to an app
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+| `--env <KEY>` | connection environment variable |  |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` |
 
 
 ## ps

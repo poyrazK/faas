@@ -780,6 +780,55 @@ func TestValidate_FilterCriteria_CronKindSkips(t *testing.T) {
 	}
 }
 
+func TestValidate_DatabaseDependencyDefaults(t *testing.T) {
+	m := &Manifest{Databases: []DatabaseDependency{{Database: "orders"}}}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	dependency := m.Databases[0]
+	if dependency.EffectiveScope() != api.DefaultEnvScope {
+		t.Fatalf("scope = %q, want %q", dependency.EffectiveScope(), api.DefaultEnvScope)
+	}
+	if dependency.EffectiveEnvironmentKey() != "DATABASE_URL" {
+		t.Fatalf("environment key = %q, want DATABASE_URL", dependency.EffectiveEnvironmentKey())
+	}
+	if dependency.EffectiveAccess() != "read_write" {
+		t.Fatalf("access = %q, want read_write", dependency.EffectiveAccess())
+	}
+}
+
+func TestValidate_DatabaseDependencyRejectsInvalidShape(t *testing.T) {
+	tests := []struct {
+		name string
+		deps []DatabaseDependency
+		want string
+	}{
+		{name: "missing database", deps: []DatabaseDependency{{}}, want: "database is required"},
+		{name: "invalid app", deps: []DatabaseDependency{{Database: "orders", App: "Bad_App"}}, want: "must match"},
+		{name: "invalid scope", deps: []DatabaseDependency{{Database: "orders", Scope: "Production"}}, want: "scope"},
+		{name: "invalid env", deps: []DatabaseDependency{{Database: "orders", EnvironmentKey: "database_url"}}, want: "env"},
+		{name: "invalid access", deps: []DatabaseDependency{{Database: "orders", Access: "admin"}}, want: "access"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (&Manifest{Databases: tt.deps}).Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidate_DatabaseDependencyRejectsDuplicate(t *testing.T) {
+	m := &Manifest{Databases: []DatabaseDependency{
+		{Database: "orders", App: "api"},
+		{Database: "orders", App: "api"},
+	}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("err = %v, want duplicate dependency", err)
+	}
+}
+
 // jsonRaw is a tiny helper that returns a json.RawMessage from a
 // literal. Keeps the table-driven fixtures readable.
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }

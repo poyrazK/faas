@@ -640,6 +640,7 @@ func TestCreateDeploymentMultipart_WorkspaceSourceRootRoundTrip(t *testing.T) {
 	body, ct := multipartUpload(t, map[string]multipartPart{
 		"source":      {filename: "src.tar.gz", body: raw},
 		"source_root": {body: []byte("apps/api")},
+		"scope":       {body: []byte("production")},
 		"source_url":  {body: []byte("github://acme/workspace@0123456789abcdef0123456789abcdef01234567")},
 		"commit_sha":  {body: []byte("0123456789abcdef0123456789abcdef01234567")},
 	})
@@ -659,6 +660,9 @@ func TestCreateDeploymentMultipart_WorkspaceSourceRootRoundTrip(t *testing.T) {
 	if out.SourceRoot != "apps/api" {
 		t.Fatalf("response source_root = %q, want apps/api", out.SourceRoot)
 	}
+	if out.Scope != "production" {
+		t.Fatalf("response scope = %q, want production", out.Scope)
+	}
 	if out.SourceURL != "github://acme/workspace@0123456789abcdef0123456789abcdef01234567" || out.CommitSHA != "0123456789abcdef0123456789abcdef01234567" {
 		t.Fatalf("response provenance = source_url %q commit_sha %q", out.SourceURL, out.CommitSHA)
 	}
@@ -668,6 +672,9 @@ func TestCreateDeploymentMultipart_WorkspaceSourceRootRoundTrip(t *testing.T) {
 	}
 	if dep.SourceRoot != "apps/api" {
 		t.Fatalf("stored source_root = %q, want apps/api", dep.SourceRoot)
+	}
+	if dep.Scope != "production" {
+		t.Fatalf("stored scope = %q, want production", dep.Scope)
 	}
 	if dep.SourceURL != "github://acme/workspace@0123456789abcdef0123456789abcdef01234567" || dep.CommitSHA != "0123456789abcdef0123456789abcdef01234567" {
 		t.Fatalf("stored provenance = source_url %q commit_sha %q", dep.SourceURL, dep.CommitSHA)

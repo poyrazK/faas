@@ -19,7 +19,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|usage|create|get|delete|restore|bindings>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|usage|create|get|delete|restore|bindings|attach>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -37,10 +37,100 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresRestore(args[1:])
 	case "bindings":
 		return cmdPostgresBindings(args[1:])
+	case "attach", "bind":
+		return cmdPostgresAttach(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown postgres subcommand %q\n", args[0])
 		return 1
 	}
+}
+
+// cmdPostgresAttach is the short, customer-facing path for connecting a
+// logical database to an app. The lower-level `bindings create` command stays
+// available for API-ID-oriented automation, while this command accepts the
+// app slug and database name customers already use in their project.
+func cmdPostgresAttach(args []string) int {
+	args = normalizePostgresAttachArgs(args)
+	fs := flag.NewFlagSet("postgres attach", flag.ContinueOnError)
+	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
+	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
+	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
+	access := fs.String("access", "read_write", "credential access: read_write|read_only")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
+		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
+		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only]", "postgres")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	app, err := client.GetApp(context.Background(), fs.Arg(1))
+	if err != nil {
+		return printErr("Could not find app", err)
+	}
+	database, err := resolveManagedPostgresDatabase(context.Background(), client, fs.Arg(0))
+	if err != nil {
+		return printErr("Could not find managed PostgreSQL database", err)
+	}
+	binding, err := client.CreateManagedPostgresBinding(context.Background(), database.ID, api.CreateManagedPostgresBindingRequest{
+		AppID: app.ID, Scope: *scope, EnvironmentKey: *environmentKey, Access: *access,
+	})
+	if err != nil {
+		return printErr("Could not attach managed PostgreSQL database", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(binding))
+	}
+	renderPostgresBinding(osStdout, binding)
+	if binding.State == "ready" {
+		_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s.\n", database.Name, app.Slug, binding.EnvironmentKey)
+	}
+	return 0
+}
+
+// normalizePostgresAttachArgs permits both of the natural CLI forms:
+// `attach DATABASE APP --scope production` and
+// `attach --scope production DATABASE APP`.
+func normalizePostgresAttachArgs(args []string) []string {
+	var flags, positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			flags = append(flags, arg)
+			if !strings.Contains(arg, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				flags = append(flags, args[i+1])
+				i++
+			}
+			continue
+		}
+		positionals = append(positionals, arg)
+	}
+	return append(flags, positionals...)
+}
+
+// stringAlias lets --env and --environment-key share one destination while
+// retaining the short flag in the primary user-facing syntax.
+type stringAlias struct{ target *string }
+
+func newStringAlias(target *string) *stringAlias { return &stringAlias{target: target} }
+
+func (a *stringAlias) String() string {
+	if a == nil || a.target == nil {
+		return ""
+	}
+	return *a.target
+}
+
+func (a *stringAlias) Set(value string) error {
+	if a == nil || a.target == nil {
+		return fmt.Errorf("environment key alias is not initialized")
+	}
+	*a.target = value
+	return nil
 }
 
 func cmdPostgresUsage(args []string) int {
