@@ -91,7 +91,7 @@ func verifySnapshotObject(ctx context.Context, backend storage.StorageBackend, h
 	if reader == nil {
 		return fmt.Errorf("%w: %s object returned no reader", ErrRuntimeSnapshotCorrupt, name)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	_, _ = io.WriteString(h, name)
 	_, _ = io.WriteString(h, "\x00")
