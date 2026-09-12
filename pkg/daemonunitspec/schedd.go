@@ -46,7 +46,11 @@ func UnitSchedd() daemonunit.Unit {
 		User:  "faas-schedd",
 		Group: "faas",
 		ExecStartPre: []string{
-			`/usr/bin/install -d -o faas-schedd -g faas -m 0770 /var/lib/faas/oci-tmp`,
+			// The parent is root-owned 0750, so the unprivileged service
+			// user cannot recreate this directory after host cleanup. The
+			// '+' prefix elevates only this preparation command; ExecStart
+			// still runs as faas-schedd with the full sandbox below.
+			`+/usr/bin/install -d -o faas-schedd -g faas -m 0770 /var/lib/faas/oci-tmp`,
 			// Apply the broker-egress tc qdisc on the brokerq
 			// host interface before schedd starts polling. The
 			// actual command is synthesised by

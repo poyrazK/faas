@@ -170,6 +170,9 @@ var HostKeys = map[string]HostBlock{
 		PrivateKeys: []string{
 			"socket_path",
 			"listen_addr",
+			"tls_cert_path",
+			"tls_key_path",
+			"tls_ca_path",
 			"vmmd_socket",
 			"vmmd_target",
 			"vmmd_tls_cert_path",

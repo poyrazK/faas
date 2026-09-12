@@ -169,6 +169,12 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		return "", nil
 	case "listen_addr":
 		if strings.HasPrefix(dc.Bind, "tcp://") {
+			// gRPC daemons consume location-transparent wire targets and
+			// require the scheme at runtime. HTTP daemons consume a plain
+			// net.Listen address, so retain their existing host:port shape.
+			if daemon == "schedd" || daemon == "vmmd" {
+				return dc.Bind, nil
+			}
 			return strings.TrimPrefix(dc.Bind, "tcp://"), nil
 		}
 		// unix:// binds use socket_path, not listen_addr.
