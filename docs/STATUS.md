@@ -379,16 +379,16 @@ spinner) and PR #51 (the closeout batch):
   now emit from the build lifecycle, and `apid /status` computes the
   build-success SLO from real build data instead of the old vmmd
   cold-boot proxy (which measured wake, not build).
-- **§12 public status page** — `apid` serves `GET /status` (static
-  HTML, `deploy/statuspage/index.html`) and `GET /status/slo.json`
-  (4 PromQL queries against the local Prometheus with a 30 s
-  in-process cache and graceful degradation on transient failures;
-  never 5xx the route). The JSON also includes a bounded 30-day
-  terminal-invocation rollup and recent operator incidents from Postgres;
-  history reads are best-effort and cannot block current SLI reporting.
-  The fourth query drives the `degraded` flag
-  surfaced by the alert pipeline — see
-  [M8 — alert pipeline](#m8--alert-pipeline--this-pr) below.
+- **§12 public status page** — `apid` serves the unauthenticated
+  `GET /v1/status` overview and `GET /v1/status/incidents/{public_id}`
+  timeline. A five-minute evaluator maps labeled alerts into five public
+  capabilities, overlays operator incidents/maintenance, and persists real
+  UTC rollup buckets for 30-day uptime and coverage. Admin publishing is
+  guarded by admin scope, allowlist, MFA, recent step-up, same-origin, and
+  idempotency checks. `GET /status/slo.json` remains a compatible, always-JSON
+  projection with its existing best-effort 30-day invocation rollup and recent
+  operator incident history, while `GET /status` remains the minimal API-host fallback. The
+  indexed React experience is served by `faas-web` at `/status`; see ADR-130.
 - **§14 restore drill wired** —
   `deploy/scripts/faas-m8-restore-drill.sh` plus WAL-archiving
   knobs in the postgres ansible role. The drill now extracts the tar-format

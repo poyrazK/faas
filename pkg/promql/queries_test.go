@@ -19,6 +19,45 @@ import (
 	"time"
 )
 
+func TestQueryVectorPreservesLabelsAndDropsMalformedSamples(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"alertname":"APIErrorRate","component":"apid","severity":"page"},"value":[1700000000,"1"]},{"metric":{"component":"builderd"},"value":[1700000000,9]}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	got, err := NewClient(srv.URL, srv.Client()).QueryVector(context.Background(), `ALERTS{alertstate="firing"}`)
+	if err != nil {
+		t.Fatalf("QueryVector: %v", err)
+	}
+	if len(got) != 1 || got[0].Value != 1 || got[0].Labels["component"] != "apid" || got[0].Labels["severity"] != "page" {
+		t.Fatalf("QueryVector() = %#v, want one labeled apid/page sample", got)
+	}
+}
+
+func TestQueryVectorDropsNonFiniteSamples(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"daemon":"apid"},"value":[1,"NaN"]},{"metric":{"daemon":"builderd"},"value":[1,"+Inf"]}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	got, err := NewClient(srv.URL, srv.Client()).QueryVector(context.Background(), "ALERTS")
+	if err != nil {
+		t.Fatalf("QueryVector: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("QueryVector non-finite samples = %#v, want none", got)
+	}
+}
+
+func TestQueryVectorRejectsNonVectorResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"scalar","result":[]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	if _, err := NewClient(srv.URL, srv.Client()).QueryVector(context.Background(), "foo"); err == nil {
+		t.Fatal("expected scalar response to be rejected")
+	}
+}
+
 // TestQueryRange_Happy covers the query_range happy path: matrix
 // result with two series, two samples each, parsed values numeric
 // not string-as-numeric.

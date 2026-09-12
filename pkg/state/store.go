@@ -2690,6 +2690,12 @@ type Store interface {
 	InsertStatusIncident(ctx context.Context, component, severity, message string) (StatusIncident, error)
 	ResolveStatusIncident(ctx context.Context, id int64) error
 	ListOpenStatusIncidents(ctx context.Context) ([]StatusIncident, error)
+	CreatePublicStatusEvent(ctx context.Context, input StatusEventCreate) (StatusIncident, error)
+	AppendPublicStatusUpdate(ctx context.Context, publicID string, input StatusEventUpdateInput) (StatusIncident, error)
+	StatusEventByPublicID(ctx context.Context, publicID string) (StatusIncident, error)
+	ListPublicStatusEvents(ctx context.Context, options StatusEventListOptions) ([]StatusIncident, error)
+	RecordStatusBucket(ctx context.Context, bucket StatusBucket) error
+	ListStatusBuckets(ctx context.Context, from, to time.Time) ([]StatusBucket, error)
 
 	// ADR-122 / issue #975 item #1: per-deployment OpenAPI
 	// document capture. The surface is paid-only (Free plan

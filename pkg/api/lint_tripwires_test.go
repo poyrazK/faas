@@ -38,6 +38,7 @@ func TestCookieOnlyRouteTripwire_NoLiteralOutsideGuard(t *testing.T) {
 		// today, but the prefix is enough to fire on any literal
 		// that future code might compose.
 		"/v1/auth/capabilities",
+		"/v1/admin/status/incidents",
 	}
 
 	// The single allowed home for the literal is the guard file
@@ -45,10 +46,6 @@ func TestCookieOnlyRouteTripwire_NoLiteralOutsideGuard(t *testing.T) {
 	// variable includes the same URL fragments, but the comment
 	// is parsed as a *ast.Comment, not a *ast.BasicLit, so the
 	// AST walker never sees those.
-	allowedFiles := map[string]struct{}{
-		"pkg/api/client.go": {},
-	}
-
 	// Walk pkg/api/*.go. The tripwire is scoped to this package
 	// because the cookie-only policy is purely a pkg/api concern
 	// (no other package composes bearer-key paths into these
@@ -56,6 +53,9 @@ func TestCookieOnlyRouteTripwire_NoLiteralOutsideGuard(t *testing.T) {
 	root, err := findRepoRootAPI(".")
 	if err != nil {
 		t.Fatalf("locate repo root: %v", err)
+	}
+	allowedFiles := map[string]struct{}{
+		filepath.Join(root, "pkg", "api", "client.go"): {},
 	}
 	pkgDir := filepath.Join(root, "pkg", "api")
 

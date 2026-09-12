@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dispatch"
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 )
 
 // Domain types mirroring the schema (spec §5). These are the rows apid and
@@ -6711,6 +6712,106 @@ type StatusIncident struct {
 	Message    string
 	PostedAt   time.Time
 	ResolvedAt *time.Time
+
+	PublicID         string
+	Kind             publicstatus.Kind
+	Title            string
+	Impact           publicstatus.State
+	Components       []publicstatus.Component
+	State            publicstatus.Lifecycle
+	StartsAt         *time.Time
+	ScheduledStartAt *time.Time
+	ScheduledEndAt   *time.Time
+	UpdatedAt        time.Time
+	Updates          []StatusIncidentUpdate
+}
+
+type StatusIncidentUpdate struct {
+	ID             string
+	State          publicstatus.Lifecycle
+	Message        string
+	At             time.Time
+	Actor          string
+	IdempotencyKey string
+}
+
+type StatusEventCreate struct {
+	IdempotencyKey   string
+	Actor            string
+	Kind             publicstatus.Kind
+	Title            string
+	Impact           publicstatus.State
+	Components       []publicstatus.Component
+	State            publicstatus.Lifecycle
+	StartsAt         *time.Time
+	ScheduledStartAt *time.Time
+	ScheduledEndAt   *time.Time
+	Message          string
+}
+
+type StatusEventUpdateInput struct {
+	IdempotencyKey string
+	Actor          string
+	State          publicstatus.Lifecycle
+	Message        string
+	At             time.Time
+}
+
+type StatusEventListOptions struct {
+	Kind       publicstatus.Kind
+	ActiveOnly bool
+	Since      time.Time
+	Limit      int
+}
+
+type StatusBucket struct {
+	Component    publicstatus.Component
+	BucketAt     time.Time
+	State        publicstatus.State
+	HasTelemetry bool
+}
+
+func legacyIncidentPublicComponents(component string) []publicstatus.Component {
+	if component == StatusIncidentComponentFaasControlPlane {
+		return publicstatus.AllComponents()
+	}
+	switch component {
+	case StatusIncidentComponentBuilderd, StatusIncidentComponentImaged:
+		return []publicstatus.Component{publicstatus.ComponentDeployments}
+	case StatusIncidentComponentSchedd, StatusIncidentComponentVmmd:
+		return []publicstatus.Component{publicstatus.ComponentAppExecution}
+	case StatusIncidentComponentGatewayd:
+		return []publicstatus.Component{publicstatus.ComponentNetworking}
+	case StatusIncidentComponentMeterd:
+		return []publicstatus.Component{publicstatus.ComponentObservability}
+	default:
+		return []publicstatus.Component{publicstatus.ComponentAPIConsole}
+	}
+}
+
+func legacyIncidentPublicImpact(severity string) publicstatus.State {
+	switch severity {
+	case StatusIncidentSeverityFullOutage:
+		return publicstatus.StateMajorOutage
+	case StatusIncidentSeverityPartialOutage:
+		return publicstatus.StatePartialOutage
+	case StatusIncidentSeverityMaintenance:
+		return publicstatus.StateMaintenance
+	default:
+		return publicstatus.StateDegraded
+	}
+}
+
+func legacyIncidentTitle(message string) string {
+	title := strings.TrimSpace(message)
+	if title == "" {
+		return "Service incident"
+	}
+	runes := []rune(title)
+	if len(runes) > 160 {
+		return string(runes[:160])
+	}
+	return title
 }
 
 // StatusUptimeBucket is the daily terminal-invocation rollup used by the

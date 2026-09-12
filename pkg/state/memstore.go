@@ -24,6 +24,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -174,8 +175,11 @@ type MemStore struct {
 	// Append-only + resolved_at-stamped; the partial-index read
 	// (status_incidents_open WHERE resolved_at IS NULL) is mirrored
 	// by the ListOpenStatusIncidents loop filter.
-	statusIncidents []StatusIncident
-	builds          map[string]Build
+	statusIncidents  []StatusIncident
+	statusCreateKeys map[string]string
+	statusUpdateKeys map[string]string
+	statusBuckets    map[string]StatusBucket
+	builds           map[string]Build
 	// builderVMCleanup mirrors builder_vm_cleanup. Rows are durable in
 	// production and intentionally private here; tests exercise the same
 	// claim/complete capability through the state interface.
@@ -822,6 +826,9 @@ func NewMemStore() *MemStore {
 		mailSuppressions:    map[string]mailSuppressionRow{},
 		deployFailedEmailAt: map[string]time.Time{},
 		deployments:         map[string]Deployment{},
+		statusCreateKeys:    map[string]string{},
+		statusUpdateKeys:    map[string]string{},
+		statusBuckets:       map[string]StatusBucket{},
 		builds:              map[string]Build{},
 		builderVMCleanup:    map[string]builderVMCleanupRow{},
 		// buildProvenance is the ADR-038 "what ran?" map keyed by
@@ -7044,14 +7051,20 @@ func (m *MemStore) InsertStatusIncident(_ context.Context, component, severity, 
 	if len(message) > 1024 {
 		return StatusIncident{}, ErrNotFound
 	}
+	now := time.Now().UTC()
+	publicID := uuid.NewString()
+	updateKey := "legacy-create:" + publicID
 	inc := StatusIncident{
-		ID:        int64(len(m.statusIncidents) + 1),
-		Component: component,
-		Severity:  severity,
-		Message:   message,
-		PostedAt:  time.Now(),
+		ID: int64(len(m.statusIncidents) + 1), Component: component, Severity: severity,
+		Message: message, PostedAt: now, PublicID: publicID, Kind: publicstatus.KindIncident,
+		Title: legacyIncidentTitle(message), Impact: legacyIncidentPublicImpact(severity),
+		Components: legacyIncidentPublicComponents(component), State: publicstatus.LifecycleInvestigating,
+		StartsAt: &now, UpdatedAt: now,
+		Updates: []StatusIncidentUpdate{{ID: uuid.NewString(), State: publicstatus.LifecycleInvestigating,
+			Message: message, At: now, Actor: "legacy-api", IdempotencyKey: updateKey}},
 	}
 	m.statusIncidents = append(m.statusIncidents, inc)
+	m.statusCreateKeys[updateKey] = publicID
 	return inc, nil
 }
 
@@ -7063,8 +7076,16 @@ func (m *MemStore) ResolveStatusIncident(_ context.Context, id int64) error {
 	for i := range m.statusIncidents {
 		if m.statusIncidents[i].ID == id {
 			if m.statusIncidents[i].ResolvedAt == nil {
-				now := time.Now()
+				now := time.Now().UTC()
 				m.statusIncidents[i].ResolvedAt = &now
+				m.statusIncidents[i].State = publicstatus.LifecycleResolved
+				m.statusIncidents[i].UpdatedAt = now
+				key := fmt.Sprintf("legacy-resolve:%d", id)
+				m.statusIncidents[i].Updates = append(m.statusIncidents[i].Updates, StatusIncidentUpdate{
+					ID: uuid.NewString(), State: publicstatus.LifecycleResolved, Message: "Resolved",
+					At: now, Actor: "legacy-api", IdempotencyKey: key,
+				})
+				m.statusUpdateKeys[key] = m.statusIncidents[i].PublicID
 			}
 			return nil
 		}
@@ -7084,6 +7105,183 @@ func (m *MemStore) ListOpenStatusIncidents(_ context.Context) ([]StatusIncident,
 		}
 	}
 	return out, nil
+}
+
+func (m *MemStore) CreatePublicStatusEvent(_ context.Context, input StatusEventCreate) (StatusIncident, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if publicID, ok := m.statusCreateKeys[input.IdempotencyKey]; ok {
+		return m.statusEventByPublicIDLocked(publicID)
+	}
+	if input.IdempotencyKey == "" {
+		return StatusIncident{}, &publicstatus.ValidationError{Code: "status_invalid_idempotency_key", Message: "idempotency key is required"}
+	}
+	if err := publicstatus.ValidateEvent(publicstatus.EventInput{
+		Kind: input.Kind, Title: input.Title, Impact: input.Impact, Components: input.Components,
+		State: input.State, StartsAt: input.StartsAt, ScheduledStartAt: input.ScheduledStartAt,
+		ScheduledEndAt: input.ScheduledEndAt,
+	}); err != nil {
+		return StatusIncident{}, err
+	}
+	if err := publicstatus.ValidateMessage(input.Message); err != nil {
+		return StatusIncident{}, err
+	}
+	now := time.Now().UTC()
+	inc := StatusIncident{
+		ID: int64(len(m.statusIncidents) + 1), PublicID: uuid.NewString(), Kind: input.Kind,
+		Title: strings.TrimSpace(input.Title), Impact: input.Impact,
+		Components: slices.Clone(input.Components), State: input.State,
+		StartsAt: cloneTimePtr(input.StartsAt), ScheduledStartAt: cloneTimePtr(input.ScheduledStartAt),
+		ScheduledEndAt: cloneTimePtr(input.ScheduledEndAt), PostedAt: now, UpdatedAt: now,
+		Message: input.Message,
+	}
+	inc.Updates = []StatusIncidentUpdate{{
+		ID: uuid.NewString(), State: input.State, Message: input.Message, At: now,
+		Actor: input.Actor, IdempotencyKey: input.IdempotencyKey,
+	}}
+	m.statusIncidents = append(m.statusIncidents, inc)
+	m.statusCreateKeys[input.IdempotencyKey] = inc.PublicID
+	m.appendStatusMutationAuditLocked("status.event.created", input.Actor, inc, "create", "", input.State)
+	return cloneStatusIncident(inc), nil
+}
+
+func (m *MemStore) AppendPublicStatusUpdate(_ context.Context, publicID string, input StatusEventUpdateInput) (StatusIncident, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existingPublicID, ok := m.statusUpdateKeys[input.IdempotencyKey]; ok {
+		if existingPublicID != publicID {
+			return StatusIncident{}, &publicstatus.ValidationError{Code: publicstatus.CodeIdempotencyConflict, Message: "idempotency key belongs to a different status event"}
+		}
+		return m.statusEventByPublicIDLocked(existingPublicID)
+	}
+	if input.IdempotencyKey == "" {
+		return StatusIncident{}, &publicstatus.ValidationError{Code: "status_invalid_idempotency_key", Message: "idempotency key is required"}
+	}
+	if err := publicstatus.ValidateMessage(input.Message); err != nil {
+		return StatusIncident{}, err
+	}
+	for i := range m.statusIncidents {
+		inc := &m.statusIncidents[i]
+		if inc.PublicID != publicID {
+			continue
+		}
+		if err := publicstatus.ValidateTransition(inc.Kind, inc.State, input.State); err != nil {
+			return StatusIncident{}, err
+		}
+		oldState := inc.State
+		at := input.At.UTC()
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		if at.Before(inc.UpdatedAt) {
+			at = inc.UpdatedAt
+		}
+		inc.State = input.State
+		inc.Message = input.Message
+		inc.UpdatedAt = at
+		if input.State == publicstatus.LifecycleResolved || input.State == publicstatus.LifecycleCompleted || input.State == publicstatus.LifecycleCancelled {
+			inc.ResolvedAt = &at
+		}
+		inc.Updates = append(inc.Updates, StatusIncidentUpdate{
+			ID: uuid.NewString(), State: input.State, Message: input.Message, At: at,
+			Actor: input.Actor, IdempotencyKey: input.IdempotencyKey,
+		})
+		m.statusUpdateKeys[input.IdempotencyKey] = publicID
+		m.appendStatusMutationAuditLocked("status.event.updated", input.Actor, *inc, "update", oldState, input.State)
+		return cloneStatusIncident(*inc), nil
+	}
+	return StatusIncident{}, ErrNotFound
+}
+
+func (m *MemStore) appendStatusMutationAuditLocked(eventKind, actor string, event StatusIncident, action string, prior, next publicstatus.Lifecycle) {
+	payload, _ := json.Marshal(map[string]any{
+		"actor": actor, "event_id": event.PublicID, "event_kind": event.Kind, "action": action,
+		"prior_state": prior, "new_state": next, "affected_capabilities": componentStrings(event.Components),
+	})
+	m.events = append(m.events, Event{
+		ID: int64(len(m.events) + 1), At: time.Now().UTC(), Actor: "apid", Kind: eventKind,
+		Subject: parseSubjectID(actor), Data: payload,
+	})
+}
+
+func (m *MemStore) StatusEventByPublicID(_ context.Context, publicID string) (StatusIncident, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.statusEventByPublicIDLocked(publicID)
+}
+
+func (m *MemStore) statusEventByPublicIDLocked(publicID string) (StatusIncident, error) {
+	for _, inc := range m.statusIncidents {
+		if inc.PublicID == publicID {
+			return cloneStatusIncident(inc), nil
+		}
+	}
+	return StatusIncident{}, ErrNotFound
+}
+
+func (m *MemStore) ListPublicStatusEvents(_ context.Context, options StatusEventListOptions) ([]StatusIncident, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]StatusIncident, 0)
+	for i := len(m.statusIncidents) - 1; i >= 0; i-- {
+		inc := m.statusIncidents[i]
+		if options.Kind != "" && inc.Kind != options.Kind {
+			continue
+		}
+		if options.ActiveOnly && inc.ResolvedAt != nil {
+			continue
+		}
+		if !options.Since.IsZero() && inc.UpdatedAt.Before(options.Since) {
+			continue
+		}
+		out = append(out, cloneStatusIncident(inc))
+		if options.Limit > 0 && len(out) >= options.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) RecordStatusBucket(_ context.Context, bucket StatusBucket) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !publicstatus.ValidComponent(bucket.Component) {
+		return ErrNotFound
+	}
+	bucket.BucketAt = bucket.BucketAt.UTC().Truncate(5 * time.Minute)
+	key := string(bucket.Component) + "\x00" + bucket.BucketAt.Format(time.RFC3339)
+	if _, exists := m.statusBuckets[key]; !exists {
+		m.statusBuckets[key] = bucket
+	}
+	return nil
+}
+
+func (m *MemStore) ListStatusBuckets(_ context.Context, from, to time.Time) ([]StatusBucket, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]StatusBucket, 0)
+	for _, bucket := range m.statusBuckets {
+		if !bucket.BucketAt.Before(from) && bucket.BucketAt.Before(to) {
+			out = append(out, bucket)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].BucketAt.Equal(out[j].BucketAt) {
+			return out[i].Component < out[j].Component
+		}
+		return out[i].BucketAt.Before(out[j].BucketAt)
+	})
+	return out, nil
+}
+
+func cloneStatusIncident(in StatusIncident) StatusIncident {
+	in.Components = slices.Clone(in.Components)
+	in.Updates = slices.Clone(in.Updates)
+	in.StartsAt = cloneTimePtr(in.StartsAt)
+	in.ScheduledStartAt = cloneTimePtr(in.ScheduledStartAt)
+	in.ScheduledEndAt = cloneTimePtr(in.ScheduledEndAt)
+	in.ResolvedAt = cloneTimePtr(in.ResolvedAt)
+	return in
 }
 
 // ---------------------------------------------------------------------------
