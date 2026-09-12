@@ -1058,6 +1058,11 @@ explicitly open issues that the doc otherwise implies are closed.
   app's sticky-warm hint and choose by current fleet headroom, so a two-node
   fleet can keep desired replicas on separate compute nodes. The scheduler
   coverage lives in `TestConvergeServiceReplicasSpreadsAcrossComputeNodes`.
+- **Replica lifecycle observability** — schedd now exports the bounded
+  `schedd_service_replicas{app,state}` gauge with desired, ready, starting,
+  draining, and unavailable capacity. Terminal and parked history rows are
+  excluded from the live projection, so operators can see rollout or
+  recovery shortfalls without inferring them from scheduler logs.
 - **Workload networking** — the gateway exposes a deterministic cross-VM
   service endpoint registry (ADR-167), a trusted node-local service proxy
   (ADR-168), and a tenant-bridge guest listener with HostIP caller binding

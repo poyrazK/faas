@@ -2,11 +2,13 @@ package sched
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func TestInstanceModeForApp(t *testing.T) {
@@ -49,6 +51,37 @@ func TestClassifyServiceReplicasSeparatesReadiness(t *testing.T) {
 	}
 	if got.inFlight() != 4 || got.managed() != 5 {
 		t.Fatalf("service replica capacity = in_flight:%d managed:%d, want in_flight:4 managed:5", got.inFlight(), got.managed())
+	}
+}
+
+func TestObserveServiceReplicaStatusProjectsCapacity(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, deployment := seedApp(t, store, api.PlanPro, 128, 5)
+	app.Manifest = state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 4, Desired: 4},
+	}
+	for i, replicaState := range []state.State{state.StateRunning, state.StateColdBooting, state.StateFailed} {
+		if _, err := store.CreateInstanceWithMode(context.Background(), app.ID, deployment.ID,
+			string(replicaState), app.RAMMB, "node-1", "status-wake-"+string(rune('1'+i)), string(state.InstanceModeService)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ops := wire.NewOpsMetrics("schedd")
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	e.observeServiceReplicaStatus(context.Background(), app, []state.Deployment{deployment})
+
+	body := getMetricsBody(t, ops)
+	for _, want := range []string{
+		`schedd_service_replicas{app="` + app.ID + `",state="desired"} 4`,
+		`schedd_service_replicas{app="` + app.ID + `",state="ready"} 1`,
+		`schedd_service_replicas{app="` + app.ID + `",state="starting"} 1`,
+		`schedd_service_replicas{app="` + app.ID + `",state="draining"} 0`,
+		`schedd_service_replicas{app="` + app.ID + `",state="unavailable"} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in /metrics:\n%s", want, body)
+		}
 	}
 }
 

@@ -147,6 +147,12 @@ type OpsMetrics struct {
 	// path issues. Cardinality bounds match livenessRestarts (per-app
 	// deployment count).
 	workloadOOMKills *prometheus.CounterVec
+	// serviceReplicaStatus is the scheduler's current service-capacity
+	// projection, labelled by bounded app identifier and a closed state
+	// set {desired, ready, starting, draining, unavailable}. It lets
+	// operators distinguish a healthy rollout from a service that is
+	// below its desired serving capacity without scraping scheduler logs.
+	serviceReplicaStatus *prometheus.GaugeVec
 	// daemonRestartCount (issue #573 / ADR-128) is the per-(daemon,
 	// version) counter that records how many times systemd has
 	// restarted THIS process in its lifetime. The producer is the
@@ -1946,6 +1952,19 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Count of workload OOM-kill detections on the customer's per-VM cgroup v2 leaf (Cluster C / ADR-121), labelled by (app, deployment). The producer chain is guest-init cgroup.events listener → vsock DGRAM type 0x05 → Manager.ReportWorkloadOOM → Engine.DestroyForWorkloadOOMFailure. The dashboard panel pairs this with liveness_restarts_total to distinguish 'healthz is bad' (liveness) from 'RAM cap is too low' (workload OOM). Per-deployment cardinality is bounded by the plan's deployed_apps cap (same as livenessRestarts).",
 	}, []string{"app", "deployment"})
 	workloadOOMKills.WithLabelValues("other", "other")
+	// Service replica capacity (container lifecycle observability). The
+	// app label is admitted through the shared bounded app-label set at
+	// observation time; the state label is closed and pre-instantiated so
+	// an idle schedd still exposes a complete metric family.
+	serviceReplicaStatus := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_service_replicas",
+		Help: "Current service replica capacity projection, labelled by bounded app identifier and state in {desired, ready, starting, draining, unavailable}. desired is the configured target; ready is serving capacity; starting and draining are in-flight lifecycle rows; unavailable is the desired-capacity shortfall after accounting for in-flight rows.",
+	}, []string{"app", "state"})
+	for _, app := range []string{labelAppUnknown, otherAppLabel} {
+		for _, state := range serviceReplicaMetricStates {
+			serviceReplicaStatus.WithLabelValues(app, state)
+		}
+	}
 	// Issue #573 / ADR-128: per-(daemon, version) restart counter.
 	// Closed daemon set mirrors the cmd/ tree (Tier A7 split kept
 	// gatewayd-public and gatewayd-internal as distinct units per
@@ -3258,7 +3277,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
-		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal, residentGBPerCustomer, billingCapExceededTotal,
@@ -4494,6 +4513,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		writeRedirectLatency:                       writeRedirectLatency,
 		livenessRestarts:                           livenessRestarts,
 		workloadOOMKills:                           workloadOOMKills,
+		serviceReplicaStatus:                       serviceReplicaStatus,
 		daemonRestartCount:                         daemonRestartCount,
 		daemonBuildInfo:                            daemonBuildInfo,
 		daemonUptimeSeconds:                        daemonUptimeSeconds,
@@ -4769,6 +4789,37 @@ func (m *OpsMetrics) WorkloadOOMKills(app, deployment string) prometheus.Counter
 		deployment = labelUnknown
 	}
 	return m.workloadOOMKills.WithLabelValues(app, deployment)
+}
+
+// SetServiceReplicaStatus publishes the scheduler's current service
+// capacity projection for one app. The app label uses the shared bounded
+// admission set; state is a closed vocabulary. Values are gauges because a
+// reconciliation can both add and remove capacity. Nil-safe so scheduler
+// unit fixtures can omit the metrics bundle.
+func (m *OpsMetrics) SetServiceReplicaStatus(app string, desired, ready, starting, draining, unavailable int) {
+	if m == nil || m.serviceReplicaStatus == nil {
+		return
+	}
+	if desired < 0 {
+		desired = 0
+	}
+	if ready < 0 {
+		ready = 0
+	}
+	if starting < 0 {
+		starting = 0
+	}
+	if draining < 0 {
+		draining = 0
+	}
+	if unavailable < 0 {
+		unavailable = 0
+	}
+	values := [...]int{desired, ready, starting, draining, unavailable}
+	app = m.appLabel(app)
+	for i, state := range serviceReplicaMetricStates {
+		m.serviceReplicaStatus.WithLabelValues(app, state).Set(float64(values[i]))
+	}
 }
 
 // RecordDaemonRestart (issue #573 / ADR-128) records the systemd
@@ -8223,6 +8274,12 @@ const anonymousIPLabel = "anonymous"
 // here keeps goconst at 0 occurrences (golangci-lint v2.4.0 fires on
 // repeated string literals ≥ 3×).
 const labelUnknown = "unknown"
+
+// serviceReplicaMetricStates is the closed label vocabulary for the
+// scheduler's service-capacity gauge. Keep this list in one place so the
+// constructor and setter cannot drift and accidentally create unbounded
+// state labels.
+var serviceReplicaMetricStates = [...]string{"desired", "ready", "starting", "draining", "unavailable"}
 
 // otherIPLabel is the reserved IP for traffic whose IP exceeded the
 // admission cap. Same contract as otherAccountLabel — operators must
