@@ -167,6 +167,13 @@ func workflowsEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_WORKFLOWS_ENABLED")) == "1"
 }
 
+// executionAPIEnabledFromEnv is a separate explicit opt-in for the public
+// disposable execution API. The scheduler and VM protocol must be deployed
+// and tested before operators set this flag; the default is fail-closed.
+func executionAPIEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_EXECUTION_API_ENABLED")) == "1"
+}
+
 // resolveMetricsAddr reads FAAS_APID_METRICS_ADDR via the test seam
 // (deps.getenv). Empty string disables the listener (this is the
 // deliberately-distinct envOr path: envOr() collapses empty→unset→
@@ -1286,7 +1293,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv := newServerWithDeps(store, log, cfg.GetAppsDomain(deps.getenv), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv)).
 		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv)).
-		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv))
+		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
+		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv))
 	objectRegistry, err := objectstorage.Load(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
