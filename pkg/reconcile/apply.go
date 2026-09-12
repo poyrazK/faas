@@ -131,6 +131,7 @@ func (s *Service) applyActions(
 				manifest.Env = serviceEnvForWorkloadWithAvailable(manifest.Env, action.Workload, availableServices)
 				app.RootDir = action.Workload.RootDir
 				app.WorkloadName = action.Workload.Name
+				app.WorkloadClass = workloadClassFromScan(action.Workload)
 				app.StartCommand = action.StartCommand
 				app.Manifest = manifest
 			}
