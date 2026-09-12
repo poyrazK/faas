@@ -3,6 +3,7 @@
 -- in-progress rollout. Repair legacy rows before installing the invariant.
 -- The trigger keeps older apid/imaged binaries compatible during a rolling
 -- deploy while enforcing the same transition at the database boundary.
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION enforce_failed_deployment_traffic_fence() RETURNS trigger AS $$
 BEGIN
     IF NEW.status = 'failed' THEN
@@ -15,6 +16,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 DROP TRIGGER IF EXISTS deployments_failed_traffic_fence ON deployments;
 CREATE TRIGGER deployments_failed_traffic_fence

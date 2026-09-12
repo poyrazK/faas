@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE account_deploy_rate_limits (
+CREATE TABLE IF NOT EXISTS account_deploy_rate_limits (
     account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     deploys_used INTEGER NOT NULL DEFAULT 0 CHECK (deploys_used >= 0),
     deploys_window_start TIMESTAMPTZ NOT NULL DEFAULT now(),

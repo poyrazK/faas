@@ -24,11 +24,11 @@ DECLARE
     tenant_table text;
 BEGIN
     FOREACH tenant_table IN ARRAY ARRAY[
-        'apps', 'projects', 'custom_domains', 'instances',
+        'apps', 'projects',
         'usage_minutes', 'usage_daily', 'invoices',
         'stripe_push_dedupe', 'paddle_overage_dedupe',
         'app_secrets', 'app_envs', 'alert_rules',
-        'recent_build_claims', 'builder_usage', 'crons',
+        'recent_build_claims', 'builder_usage',
         'invocations', 'github_installations', 'gdpr_requests'
     ] LOOP
         EXECUTE format(
@@ -36,6 +36,29 @@ BEGIN
             tenant_table);
     END LOOP;
 END$$;
+
+-- These app-owned tables have no account_id. Inherit the tenant from their
+-- parent app instead of treating them as account-owned roots.
+UPDATE custom_domains t
+   SET org_id = a.org_id
+  FROM apps a
+ WHERE t.org_id IS NULL
+   AND t.app_id = a.id
+   AND a.org_id IS NOT NULL;
+
+UPDATE instances t
+   SET org_id = a.org_id
+  FROM apps a
+ WHERE t.org_id IS NULL
+   AND t.app_id = a.id
+   AND a.org_id IS NOT NULL;
+
+UPDATE crons t
+   SET org_id = a.org_id
+  FROM apps a
+ WHERE t.org_id IS NULL
+   AND t.app_id = a.id
+   AND a.org_id IS NOT NULL;
 
 -- api_keys were made NOT NULL and backfilled by migration 00134. Retain an
 -- idempotent repair for databases that partially applied that transition.
