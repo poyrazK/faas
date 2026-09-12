@@ -63,7 +63,7 @@ Commands:
   jobs         Cross-account job-run diagnosis and guarded cancellation (active|inspect|cancel)
   deployments  Cross-account deployment diagnosis and guarded retry/cancellation (active|inspect|cancel|retry)
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
-  obs           Operator incident inbox and meta-obs health (obs incidents|health)
+  obs           Operator incident inbox, health, fleet overview, and capacity (obs incidents|health|overview|capacity)
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
   github        GitHub delivery + Check Run recovery (status|retry-delivery|retry-check)
   version      Print the CLI version
@@ -222,14 +222,9 @@ func run(args []string) int {
 		return cmdDeployDispatch(args[1:])
 	case dispatchObs:
 		// Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side
-		// meta-obs health snapshot. `gregalectl obs health` dials
-		// apid's GET /v1/admin/obs/health (admin scope + MFA +
-		// FAAS_ADMIN_EMAILS allowlist), prints the closed-set
-		// snapshot in human-readable form by default, or raw JSON
-		// with --json / $FAAS_JSON=1. Mirrors the existing
-		// `gregalectl admin` subcommand's HTTP-dial pattern.
-		// Future subcommands (events / incidents) reserve the
-		// `obs` dispatcher for follow-on PRs.
+		// meta-obs and fleet snapshots. All `obs` subcommands dial
+		// apid's read-only /v1/admin/obs/* surface (admin scope + MFA +
+		// FAAS_ADMIN_EMAILS allowlist), and support human or JSON output.
 		return cmdObsDispatch(args[1:])
 	case dispatchDebug:
 		// ADR-127 PR-D — operator-side smoke harness for the
