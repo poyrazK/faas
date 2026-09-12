@@ -2401,6 +2401,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	})
 }
 
+const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id>] [--json]"
+
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
 // SAFE-RELEASES-G (issue #976, PR-G): cmdRollback now honours an
@@ -2411,8 +2413,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 // superseded deployment. --json (top-level) emits the
 // DeploymentResponse on stdout for SDK / e2e consumers.
 func cmdRollback(args []string) int {
+	if hasHelpFlag(args) {
+		PrintUsage(osStdout, rollbackUsage, "rollback")
+		return 0
+	}
 	if len(args) < 1 {
-		PrintUsage(os.Stderr, "usage: gregale rollback <slug> [--to <deployment_id>] [--json]", "rollback")
+		PrintUsage(os.Stderr, rollbackUsage, "rollback")
 		return 1
 	}
 	slug := args[0]

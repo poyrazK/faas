@@ -25,10 +25,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+const (
+	rolloutsUsage        = "usage: gregale rollouts recover <slug> --action advance|promote|abort [--reason <text>]"
+	rolloutsRecoverUsage = rolloutsUsage
+)
+
 func cmdRollouts(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale rollouts recover <slug> --action advance|promote|abort [--reason <text>]", "rollouts")
+		PrintUsage(os.Stderr, rolloutsUsage, "rollouts")
 		return 1
+	}
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		PrintUsage(osStdout, rolloutsUsage, "rollouts")
+		return 0
 	}
 	switch args[0] {
 	case "recover":
@@ -67,6 +76,10 @@ func cmdRollouts(args []string) int {
 // post-recovery deployment + audit id on stdout (or the JSON
 // shape via --json).
 func cmdRolloutsRecover(args []string) int {
+	if hasHelpFlag(args) {
+		PrintUsage(osStdout, rolloutsRecoverUsage, "rollouts")
+		return 0
+	}
 	fs := flag.NewFlagSet("rollouts recover", flag.ContinueOnError)
 	action := fs.String("action", "", "recover action (advance|promote|abort)")
 	reason := fs.String("reason", "", "operator-supplied reason (logged to deployment_audit)")
@@ -88,7 +101,7 @@ func cmdRolloutsRecover(args []string) int {
 		slug = fs.Arg(0)
 	}
 	if slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale rollouts recover <slug> --action advance|promote|abort [--reason <text>]", "rollouts")
+		PrintUsage(os.Stderr, rolloutsRecoverUsage, "rollouts")
 		return 1
 	}
 	if *action == "" {

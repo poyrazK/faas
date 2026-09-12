@@ -1067,9 +1067,14 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true}},
 	},
 	{
-		Name:    "rollback",
-		DocSlug: "rollback",
-		Short:   "Re-promote the previous deployment",
+		Name:        "rollback",
+		DocSlug:     "rollback",
+		Short:       "Re-promote the previous deployment",
+		Positionals: []string{"<slug>"},
+		Flags: []cliFlag{
+			{Name: "to", Short: "target deployment id", Value: "deployment_id"},
+			{Name: "json", Short: "machine-readable output"},
+		},
 	},
 	{
 		// SAFE-RELEASES-R (issue #976 / ADR-122): the
