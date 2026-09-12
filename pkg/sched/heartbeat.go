@@ -237,12 +237,12 @@ func NewHeartbeat(store state.Store, dialer HeartbeatDialer, tlsCfg *tls.Config,
 // select is Loop.Run, same as the watchdog/retention tickers). One
 // Ping error must not abort the sweep — we log + flip and move on.
 //
-// Tick honours the staleness gate (issue #98 / ADR-028): a row
-// whose last_heartbeat_at has aged past h.Staleness is flipped
-// inactive even if Ping just succeeded (defence-in-depth — Ping
-// racing with a half-shut vmmd might return OK once after the box
-// was already dead). Re-activation happens on the next successful
-// ping post-recovery, same as PR #114's pre-#98 behaviour.
+// Tick honours the staleness gate (issue #98 / ADR-028), but the
+// current probe is authoritative. A stale database timestamp can
+// also mean the scheduler loop was delayed during startup or a long
+// maintenance sweep. A node that answers Ping is kept available and
+// gets a fresh timestamp; a stale node is demoted only when its
+// current probe also fails.
 func (h *Heartbeat) Tick(ctx context.Context) error {
 	staleness := h.Staleness
 	if staleness <= 0 {
@@ -416,41 +416,24 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		return false
 	}
 
-	// Staleness gate (issue #98): even if Ping below succeeds,
-	// a node whose last_heartbeat_at is older than the
-	// threshold is stale and gets flipped unavailable. The
-	// CAS-or union {active, recovering, draining} → unavailable
-	// covers all three lifecycle sources (clean node, post-
-	// recovery node, operator-drained node). Unavailable rows
-	// are exempt: their old timestamp is expected, and the probe
-	// below is the only path that can discover recovery.
+	// A stale timestamp alone is not proof that the compute node is
+	// unavailable. The scheduler loop can be delayed by startup work
+	// or another bounded sweep, while vmmd remains healthy. Probe
+	// first so a reachable node is refreshed instead of triggering a
+	// false failure, rebalancing its apps back onto itself, and
+	// rejecting customer wakes during the recovery cycle.
 	wasUnavailable := n.Lifecycle == state.NodeLifecycleUnavailable
-	// Legacy row whose lifecycle enum hasn't been read yet
-	// (pre-fix-#1 pgstore deploys, MemStore seeds with no enum
-	// yet) falls through to the staleness gate + CAS-or loop
-	// below; the union includes "" as a valid expected state.
-	if !wasUnavailable && !n.LastHeartbeatAt.IsZero() && tickNow.Sub(n.LastHeartbeatAt) > staleness {
-		h.log.Info("heartbeat: node stale, marking unavailable",
-			"node_id", n.ID, "node_name", n.Name,
-			"last_seen", n.LastHeartbeatAt.Format(time.RFC3339),
-			"prior_lifecycle", string(n.Lifecycle),
-			"staleness", staleness.String())
-		if markUnavailableIfEligible() && !wasUnavailable {
-			h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
-		}
-		if h.nodeRegistry != nil {
-			h.nodeRegistry.Remove(n.ID)
-		}
-		return
-	}
 	if _, err := h.heartbeatPing(ctx, n); err != nil {
 		// A dead node gets flipped unavailable so placement
 		// skips it on the next Wake. We don't fail the
 		// sweep — one bad node must not block the others.
 		// Same expected-state fan-out as the staleness gate.
+		stale := !n.LastHeartbeatAt.IsZero() && tickNow.Sub(n.LastHeartbeatAt) > staleness
 		h.log.Warn("heartbeat: ping failed; marking unavailable",
 			"node_id", n.ID, "node_name", n.Name,
-			"prior_lifecycle", string(n.Lifecycle), "err", err)
+			"prior_lifecycle", string(n.Lifecycle),
+			"last_seen", n.LastHeartbeatAt.Format(time.RFC3339),
+			"stale", stale, "staleness", staleness.String(), "err", err)
 		if markUnavailableIfEligible() && !wasUnavailable {
 			h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
 		}

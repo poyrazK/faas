@@ -230,6 +230,41 @@ func TestHeartbeat_HealthyNodeStampsTimestamp(t *testing.T) {
 	}
 }
 
+func TestHeartbeat_StaleHealthyNodeIsProbedBeforeDemotion(t *testing.T) {
+	store := state.NewMemStore()
+	oldHeartbeat := time.Now().Add(-10 * time.Minute)
+	node, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+		Name:            "stale-but-healthy",
+		TargetURL:       "tcp://10.0.0.8:50051",
+		Lifecycle:       state.NodeLifecycleActive,
+		Active:          true,
+		LastHeartbeatAt: oldHeartbeat,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	dialer := &heartbeatFakeDialer{}
+	h := NewHeartbeat(store, dialer, nil, nil).WithOwnerNodeID(node.ID)
+	h.Staleness = time.Minute
+
+	if err := h.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if got := len(dialer.dials); got != 1 {
+		t.Fatalf("Dial calls = %d, want 1 for stale healthy node", got)
+	}
+	got, err := store.ComputeNodeByID(context.Background(), node.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	if got.Lifecycle != state.NodeLifecycleActive || !got.Active {
+		t.Fatalf("node lifecycle=%q active=%v, want active/true", got.Lifecycle, got.Active)
+	}
+	if !got.LastHeartbeatAt.After(oldHeartbeat) {
+		t.Fatalf("last heartbeat = %s, want after %s", got.LastHeartbeatAt, oldHeartbeat)
+	}
+}
+
 func TestHeartbeat_ProbesAreBoundedAndConcurrent(t *testing.T) {
 	store := state.NewMemStore()
 	for i := 0; i < 7; i++ {
