@@ -285,6 +285,30 @@ func TestWaitForWarmCompletionReadinessFailureRemovesDrive(t *testing.T) {
 	}
 }
 
+func TestDeleteWarmSnapshotRemovesLegacyLocalState(t *testing.T) {
+	layerPath := filepath.Join(t.TempDir(), "builder.ext4")
+	vmstatePath := filepath.Join(t.TempDir(), "builder.vmstate")
+	for _, path := range []string{layerPath, vmstatePath} {
+		if err := os.WriteFile(path, []byte("warm state"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	driver := &VMMDriver{cli: &warmSnapshotFailureClient{}}
+	err := driver.DeleteWarmSnapshot(context.Background(), WarmSnapshot{
+		LayerPath:   layerPath,
+		VMStatePath: vmstatePath,
+	})
+	if err != nil {
+		t.Fatalf("DeleteWarmSnapshot: %v", err)
+	}
+	for _, path := range []string{layerPath, vmstatePath} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("local warm state %q still exists: %v", path, statErr)
+		}
+	}
+}
+
 func TestBuildManifestForRequestCarriesWarmInputs(t *testing.T) {
 	manifest, err := buildManifestForRequest(VMRequest{
 		BuildID:            "build-1",
