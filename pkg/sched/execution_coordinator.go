@@ -109,11 +109,19 @@ type ExecutionBackend interface {
 // leases, fences payload dispatch, and acknowledges terminal state only after
 // the disposable VM has been destroyed.
 type ExecutionCoordinator struct {
-	store   state.ExecutionStore
-	backend ExecutionBackend
-	config  ExecutionCoordinatorConfig
-	log     *slog.Logger
-	now     func() time.Time
+	store         state.ExecutionStore
+	backend       ExecutionBackend
+	claimResolver ExecutionClaimRequestResolver
+	config        ExecutionCoordinatorConfig
+	log           *slog.Logger
+	now           func() time.Time
+}
+
+// ExecutionClaimRequestResolver supplies the trusted machine envelope for a
+// claimed execution. Keeping this as an optional seam preserves the narrow
+// coordinator tests while allowing schedd to attach catalog/plan resolution.
+type ExecutionClaimRequestResolver interface {
+	ResolveExecutionClaim(context.Context, state.ExecutionClaim) (ExecutionRestoreRequest, error)
 }
 
 // NewExecutionCoordinator constructs a disabled-by-default scheduler. Callers
@@ -125,6 +133,16 @@ func NewExecutionCoordinator(store state.ExecutionStore, backend ExecutionBacken
 	return &ExecutionCoordinator{
 		store: store, backend: backend, config: normalizeExecutionCoordinatorConfig(config), log: log, now: time.Now,
 	}
+}
+
+// WithClaimResolver attaches the scheduler-owned claim-to-machine resolver.
+// A nil resolver leaves the legacy request projection in place; production
+// execution dispatch supplies one before enabling the coordinator.
+func (c *ExecutionCoordinator) WithClaimResolver(resolver ExecutionClaimRequestResolver) *ExecutionCoordinator {
+	if c != nil {
+		c.claimResolver = resolver
+	}
+	return c
 }
 
 func normalizeExecutionCoordinatorConfig(config ExecutionCoordinatorConfig) ExecutionCoordinatorConfig {
@@ -255,6 +273,20 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 	request := ExecutionRestoreRequest{
 		ID: claim.ID, AccountID: claim.AccountID, Runtime: claim.Runtime,
 		NetworkMode: claim.NetworkMode, Limits: claim.Limits, DeadlineAt: claim.DeadlineAt,
+	}
+	var resolveErr error
+	if c.claimResolver != nil {
+		request, resolveErr = c.claimResolver.ResolveExecutionClaim(workCtx, claim)
+	}
+	if resolveErr != nil {
+		signal := stopLeaseMonitor()
+		if handled, err := c.finishInterrupted(parent, workCtx, claim, signal); handled {
+			return err
+		}
+		c.log.Warn("schedd: execution claim resolution failed", "execution_id", claim.ID, "err", resolveErr)
+		return c.complete(parent, claim, executionFailure(
+			"restore_failed", "execution environment could not be prepared",
+		), c.now().UTC())
 	}
 	session, restoreErr := c.backend.Restore(workCtx, request)
 	if restoreErr != nil || session == nil {
