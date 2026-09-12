@@ -1136,7 +1136,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// Phase 3 (repo decomposition) — one-key provision flags. Presence
 	// of --only or --project-slug short-circuits the existing CreateApp
 	// + DeployTarball path and routes through ScanProject →
-	// ApplyProjectPlan. --yes / --json are absorbed by the global
+	// ApplyProjectPlan. --project is the discoverable opt-in for the
+	// same path when the project slug should be derived from --name or
+	// the selected source; explicit --project-slug remains available for
+	// stable CI names. --yes / --json are absorbed by the global
 	// json_flag.go layer and live alongside the others so a single
 	// `gregale deploy --tarball X --yes --json --project-slug S` works.
 	yes := fs.Bool("yes", false, "skip the apply confirmation prompt")
@@ -1166,6 +1169,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// the 90-day active window; ADR-127 §1 documents the no-FK
 	// posture.
 	deployPersistExclude := fs.Bool("persist-exclude", false, "record --exclude slugs into deployment_scope_exclusions for future deploys (ADR-124 follow-up #3)")
+	projectDeploy := fs.Bool("project", false, "deploy all detected workloads as one project (slug defaults from --name or source)")
 	projectSlug := fs.String("project-slug", "", "kebab slug for the project (triggers one-key provision)")
 	// SAFE-RELEASES production-leveling Stream F: canary ladder
 	// selectors. --canary-preset picks a catalog entry
@@ -1344,8 +1348,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *doctorStrict && *noDoctor {
 		return printErr("Invalid flags", fmt.Errorf("--doctor-strict and --no-doctor are mutually exclusive"))
 	}
-	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "" || *deployOnly != "" || *projectSlug != "") {
-		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, --repo, --only, or --project-slug"))
+	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "" || *deployOnly != "" || *projectDeploy || *projectSlug != "") {
+		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, --repo, --only, --project, or --project-slug"))
+	}
+	if *projectDeploy {
+		if *image != "" {
+			return printErr("Invalid flags", errors.New("--project requires a source archive; --image deploys one app"))
+		}
+		if *githubSnippet {
+			return printErr("Invalid flags", errors.New("--project cannot be combined with --github"))
+		}
+		if *function || *app || *runtime != "" || *handler != "" {
+			return printErr("Invalid flags", errors.New("--project cannot be combined with --function, --app, --runtime, or --handler"))
+		}
+		if _, _, ok := templateFunctionConfig(*templateName); ok {
+			return printErr("Invalid flags", errors.New("--project cannot be combined with a function template"))
+		}
 	}
 	if *profile != "" {
 		if _, ok := api.ResourceProfileSpecFor(*profile); !ok {
@@ -1416,7 +1434,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customers see no behaviour change.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if *deployOnly != "" || *projectSlug != "" {
+	if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "canary-preset", "canary-stages",
@@ -1428,7 +1446,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if len(unsupported) > 0 {
 			return printErr("Unsupported project deploy flags", fmt.Errorf(
-				"%s cannot be combined with --project-slug or --only; project deploy policy is not yet supported",
+				"%s cannot be combined with --project, --project-slug, or --only; project deploy policy is not yet supported",
 				strings.Join(unsupported, ", ")))
 		}
 	}
@@ -1544,8 +1562,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// Phase 3 guard: --repo is the source-ref path; the
 		// one-key provision surface takes --tarball/--path, not
 		// --repo. Mixing them is almost always a mistake.
-		if *deployOnly != "" || *projectSlug != "" {
-			PrintFail(os.Stderr, "--repo cannot be combined with --only or --project-slug")
+		if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
+			PrintFail(os.Stderr, "--repo cannot be combined with --project, --only, or --project-slug")
 			return 1
 		}
 		refIntent := deployIdempotencyIntent{
@@ -1699,6 +1717,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				sourceRoot = selectedRoot
 			}
 		}
+	}
+	// --project is an explicit, safe opt-in to project apply. Keep the
+	// existing single-app slug rules for --name and --path, while making
+	// tarball/template invocations intuitive by using their basename when
+	// no name was supplied. An explicit --project-slug always wins.
+	if *projectDeploy && *projectSlug == "" {
+		projectName := slug
+		switch {
+		case *name == "" && *tarball != "":
+			projectName = defaultProjectSlug(*tarball)
+		case *name == "" && *templateName != "":
+			projectName = *templateName
+		}
+		*projectSlug = sanitizeSlug(projectName)
 	}
 	// Authenticate before any zero-config source scan or archive work. The
 	// zero-config path can inspect the working tree, run doctor checks, and
@@ -2071,9 +2103,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// workload/managed/warning response. Keeping this branch ahead
 		// of runDiff prevents a project preview from silently falling
 		// back to the root-app diff (issue #1976).
-		if *deployOnly != "" || *projectSlug != "" {
+		if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
 			if *profile != "" {
-				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --only or --project-slug"))
+				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --project, --only, or --project-slug"))
 			}
 			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
 				*deployOnly, *deployExclude, *deployShowAffected, *diffJSON,
@@ -2094,12 +2126,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// pack. The plan is fetched via ScanProject, the apply is
 	// transactional on the server (rollback on over-quota per
 	// ADR-050), and the confirm prompt is gated on TTY + --yes.
-	if *deployOnly != "" || *projectSlug != "" {
+	if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
 		if *createOnly {
 			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --only or --project-slug"))
 		}
 		if *profile != "" {
-			return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --only or --project-slug"))
+			return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --project, --only, or --project-slug"))
 		}
 		// Make sure the tarball resolves the same way it does for
 		// the legacy path: --template materialises, zero-config packs
