@@ -9582,6 +9582,24 @@ func (s *PgStore) RequeueBuild(ctx context.Context, id string) error {
 	return nil
 }
 
+// RequeueBuildIfClaim resets a matching running claim back to queued. The
+// deployment and started_at predicates ensure a stale worker cannot requeue a
+// newer claim for the same build.
+func (s *PgStore) RequeueBuildIfClaim(ctx context.Context, claim Build) error {
+	tag, err := s.pool.Exec(ctx,
+		`update builds
+		   set status = 'queued', started_at = NULL
+		 where id = $1 and deployment_id = $2 and status = 'running' and started_at = $3`,
+		claim.ID, claim.DeploymentID, claim.StartedAt)
+	if err != nil {
+		return fmt.Errorf("state: requeue build claim %s: %w", claim.ID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- custom domains ---------------------------------------------------------
 
 func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error) {

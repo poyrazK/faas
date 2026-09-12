@@ -1454,6 +1454,84 @@ func (f *failingRecordStore) RecordRecentBuildClaim(_ context.Context, _, _ stri
 	return errors.New("simulated record failure")
 }
 
+// failingBuildLookupStore makes the claim-status read unavailable while
+// delegating all other store operations to MemStore. It covers the recovery
+// path used when builderd cannot verify that a claimed build is still owned.
+type failingBuildLookupStore struct {
+	*state.MemStore
+	lookupErr error
+}
+
+func (f *failingBuildLookupStore) BuildByID(_ context.Context, _ string) (state.Build, error) {
+	return state.Build{}, f.lookupErr
+}
+
+func TestStopIfBuildCancelled_RequeuesWhenStatusLookupFails(t *testing.T) {
+	base := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+	buildID, _, _ := seedDeployment(t, base, src)
+	claim, err := base.ClaimQueuedBuild(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("ClaimQueuedBuild: %v", err)
+	}
+
+	store := &failingBuildLookupStore{
+		MemStore:  base,
+		lookupErr: errors.New("simulated status lookup failure"),
+	}
+	b := New(store, &fakeNotifier{}, nil, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if !b.stopIfBuildCancelled(context.Background(), claim) {
+		t.Fatal("stopIfBuildCancelled returned false after status lookup failure")
+	}
+
+	got, err := base.BuildByID(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("BuildByID after recovery: %v", err)
+	}
+	if got.Status != state.BuildQueued {
+		t.Errorf("build status = %s, want queued after status lookup failure", got.Status)
+	}
+	if !got.StartedAt.IsZero() {
+		t.Errorf("started_at = %s, want zero after requeue", got.StartedAt)
+	}
+}
+
+func TestRequeueClaim_DoesNotResetNewerClaim(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+	buildID, _, _ := seedDeployment(t, store, src)
+	first, err := store.ClaimQueuedBuild(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("first ClaimQueuedBuild: %v", err)
+	}
+	if err := store.RequeueBuild(context.Background(), buildID); err != nil {
+		t.Fatalf("seed requeue: %v", err)
+	}
+	second, err := store.ClaimQueuedBuild(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("second ClaimQueuedBuild: %v", err)
+	}
+
+	b := New(store, &fakeNotifier{}, nil, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := b.requeueClaim(context.Background(), first); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("stale requeue: got %v, want state.ErrNotFound", err)
+	}
+
+	got, err := store.BuildByID(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("BuildByID after stale requeue: %v", err)
+	}
+	if got.Status != state.BuildRunning {
+		t.Errorf("build status = %s, want running for newer claim", got.Status)
+	}
+	if !got.StartedAt.Equal(second.StartedAt) {
+		t.Errorf("started_at = %s, want newer claim %s", got.StartedAt, second.StartedAt)
+	}
+}
+
 // TestProcessNext_RecordRecentBuildClaim_FailureDoesNotFailBuild pins
 // the B2.2 critical-invariant #2 (record is best-effort): when
 // RecordRecentBuildClaim errors after a successful claim, the build

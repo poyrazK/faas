@@ -8351,6 +8351,22 @@ func (m *MemStore) RequeueBuild(_ context.Context, id string) error {
 	return nil
 }
 
+// RequeueBuildIfClaim resets a matching running claim back to queued. The
+// deployment and started_at checks ensure a stale worker cannot requeue a
+// newer claim for the same build.
+func (m *MemStore) RequeueBuildIfClaim(_ context.Context, claim Build) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.builds[claim.ID]
+	if !ok || b.Status != BuildRunning || b.DeploymentID != claim.DeploymentID || !b.StartedAt.Equal(claim.StartedAt) {
+		return ErrNotFound
+	}
+	b.Status = BuildQueued
+	b.StartedAt = time.Time{}
+	m.builds[claim.ID] = b
+	return nil
+}
+
 // --- Custom domains ---------------------------------------------------------
 
 func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token string) (CustomDomain, error) {

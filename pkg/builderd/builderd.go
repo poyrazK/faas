@@ -544,20 +544,34 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 	return b.processClaimedBuild(ctx, build)
 }
 
-// stopIfBuildCancelled rejects all terminal or unobservable claims. The final
-// CompleteBuild transaction also fences the claim's started_at, closing the
+// stopIfBuildCancelled rejects claims that are no longer running. If the
+// status lookup is unavailable, recover the claim before returning. This
+// prevents a transient store error from leaving it running until the
+// stuck-build reaper fires. The final CompleteBuild transaction also fences
+// the claim's started_at, closing the
 // check-to-publication race with cancellation, reaping, and requeueing.
-func (b *Builderd) stopIfBuildCancelled(ctx context.Context, buildID string) bool {
-	current, err := b.store.BuildByID(ctx, buildID)
+func (b *Builderd) stopIfBuildCancelled(ctx context.Context, claim state.Build) bool {
+	current, err := b.store.BuildByID(ctx, claim.ID)
 	if err != nil {
-		b.log.Warn("builderd: cannot verify running build", "build", buildID, "err", err)
+		b.log.Warn("builderd: cannot verify running build", "build", claim.ID, "err", err)
+		b.recoverClaimAfterLookupFailure(ctx, claim, "verify running build", err)
 		return true
 	}
 	if current.Status == state.BuildRunning {
 		return false
 	}
-	b.emitBuildLog(ctx, buildID, "build no longer running — stopping\n")
+	b.emitBuildLog(ctx, claim.ID, "build no longer running — stopping\n")
 	return true
+}
+
+// requeueClaim returns a worker-owned claim to the durable queue. Production
+// stores implement the claim-fenced capability; the legacy fallback preserves
+// compatibility with older state.Store implementations.
+func (b *Builderd) requeueClaim(ctx context.Context, claim state.Build) error {
+	if fenced, ok := b.store.(state.BuildClaimRecoveryStore); ok {
+		return fenced.RequeueBuildIfClaim(ctx, claim)
+	}
+	return b.store.RequeueBuild(ctx, claim.ID)
 }
 
 // processClaimedBuild runs the canonical pipeline for a build that
@@ -593,7 +607,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.recoverClaimAfterLookupFailure(ctx, build, "load account", acctErr)
 		return BuildResult{}, fmt.Errorf("builderd: load account: %w", acctErr)
 	}
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 	lim, known := api.LimitsFor(acct.Plan)
@@ -685,7 +699,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			return BuildResult{}, err
 		}
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source storage unavailable — requeued (%v)\n", err))
-		if rerr := b.store.RequeueBuild(ctx, build.ID); rerr != nil {
+		if rerr := b.requeueClaim(ctx, build); rerr != nil {
 			b.log.Warn("builderd: requeue on source-storage failure", "build", build.ID, "err", rerr)
 		}
 		return BuildResult{}, err
@@ -697,13 +711,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 				return BuildResult{}, err
 			}
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source spool lag — requeued (%v)\n", err))
-			if rerr := b.store.RequeueBuild(ctx, build.ID); rerr != nil {
+			if rerr := b.requeueClaim(ctx, build); rerr != nil {
 				b.log.Warn("builderd: requeue on source-lag", "build", build.ID, "err", rerr)
 			}
 			return BuildResult{}, err
 		}
 	}
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 	if _, err := validateSourceFile(dep.SourcePath, b.cfg.SourceSpoolDir, validationBytes, maxSourceBytes); err != nil {
@@ -753,7 +767,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// The cache recipe includes the selected member as well as the complete
 	// source context. Sibling apps can share archive bytes without sharing
 	// their produced artifact. Keep srcHash itself for source provenance.
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 	recipe := BuildCacheRecipe{
@@ -772,7 +786,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	cached, cacheOutcome, cacheHit := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID)
 	b.observeCacheOutcome(ctx, build.ID, cacheOutcome, cacheKeySHA256)
 	if cacheHit {
-		if b.stopIfBuildCancelled(ctx, build.ID) {
+		if b.stopIfBuildCancelled(ctx, build) {
 			b.cache.ReleaseLease(cached.Path)
 			return BuildResult{}, nil
 		}
@@ -810,7 +824,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// running state with no live owner; the worker will
 		// never see it again. PR-C follow-up: stuck-running
 		// sweep (ADR-031).
-		if err := b.store.RequeueBuild(ctx, build.ID); err != nil {
+		if err := b.requeueClaim(ctx, build); err != nil {
 			b.log.Warn("builderd: requeue on no-slot", "build", build.ID, "err", err)
 		}
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("no slot (%s) — requeued\n", slot.Reason))
@@ -818,7 +832,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	defer releaseSlot()
 	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("allocated builder slot (%s)\n", slot.Label))
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 
@@ -995,7 +1009,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
 	}
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 	if out.DependencyCacheStoreError != "" {
@@ -1062,7 +1076,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureUserError, msg, buildStart)
 		return BuildResult{}, errors.New("builderd: " + msg)
 	}
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 	if warmStarted {
@@ -1433,7 +1447,7 @@ func (b *Builderd) requeueClaimAfterCancellation(ctx context.Context, claim stat
 	if current.Status != state.BuildRunning || !current.StartedAt.Equal(claim.StartedAt) {
 		return
 	}
-	if err := b.store.RequeueBuild(recoveryCtx, claim.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+	if err := b.requeueClaim(recoveryCtx, claim); err != nil && !errors.Is(err, state.ErrNotFound) {
 		b.log.Warn("builderd: requeue cancelled claim", "build", claim.ID, "err", err)
 		return
 	}
@@ -1461,7 +1475,7 @@ func (b *Builderd) recoverClaimAfterLookupFailure(ctx context.Context, claim sta
 		return
 	}
 	if err := retryStateMutation(ctx, func() error {
-		return b.store.RequeueBuild(ctx, claim.ID)
+		return b.requeueClaim(ctx, claim)
 	}); err != nil && !errors.Is(err, state.ErrNotFound) {
 		b.log.Warn("builderd: requeue after claim lookup failure", "build", claim.ID, "phase", phase, "err", err)
 	}
