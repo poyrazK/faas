@@ -1439,6 +1439,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		for _, name := range []string{
 			"traffic-percent", "canary-preset", "canary-stages",
 			"reason", "tag", "deployed-by", "pr-number",
+			// Project plans currently infer each workload's execution
+			// configuration from the scanned source. Reject single-app
+			// overrides here instead of silently dropping them from both
+			// the scan and apply requests.
+			"function", "app", "runtime", "handler", "dockerfile",
+			"vcpu", "profile", "require-authn", "no-require-authn",
+			"app-protocol",
 		} {
 			if explicit[name] {
 				unsupported = append(unsupported, "--"+name)
