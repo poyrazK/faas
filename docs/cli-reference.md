@@ -1108,6 +1108,10 @@ Per-request telemetry (list/watch filters: deployment, status, cold boot, consum
 
 Observed debugger signal coverage (coverage &lt;slug&gt; [--since D])
 
+### debug running
+
+Explain why an app is still running (running &lt;slug&gt; [--since D] [--limit N])
+
 ### debug regressions
 
 Active regression observations (list|watch [--interval D] [--once])

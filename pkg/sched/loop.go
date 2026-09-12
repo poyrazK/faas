@@ -133,6 +133,11 @@ type Loop struct {
 	// lastFloorByApp > effectiveFloor AND ≥1 instance was parked
 	// by ReapIdle for the app this tick.
 	lastFloorByApp map[string]int
+	// runningReasonStates is the per-app emission cursor for the customer
+	// debugger's "why is this app running?" observations. It is intentionally
+	// process-local: the durable event row is the source of truth and a schedd
+	// restart may emit one fresh observation.
+	runningReasonStates map[string]runningReasonState
 	// brokerAccountor (issue #757 / ADR-118 commit 8) — the
 	// per-tick broker-egress accounting seam. nil opts out
 	// (noop-on-nil semantics; the dispatch hot path guards
@@ -1885,6 +1890,8 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// same and the customer sees a transient bill drop, never
 	// a false floor that keeps garbage resident.
 	appDeploymentFloor := map[string]int{}
+	appConfiguredFloor := map[string]int{}
+	appPrewarmFloor := map[string]int{}
 	// A fired prewarm is a temporary residency floor. Without this overlay,
 	// an early restore could be immediately parked by the idle reaper before
 	// the advertised demand window begins. The store query is optional during
@@ -1894,12 +1901,15 @@ func (l *Loop) runReaper(ctx context.Context) {
 		prewarmStore = candidate
 	}
 	for _, a := range apps {
-		floor := a.EffectiveMinInstances()
+		configuredFloor := a.EffectiveMinInstances()
+		floor := configuredFloor
+		appConfiguredFloor[a.ID] = configuredFloor
 		if prewarmStore != nil {
 			if temporary, floorErr := prewarmStore.ActivePrewarmFloor(ctx, a.ID, now); floorErr != nil {
 				l.log.Warn("reaper: prewarm floor lookup", "app", a.ID, "err", floorErr)
 			} else if temporary > floor {
 				floor = temporary
+				appPrewarmFloor[a.ID] = temporary
 			}
 		}
 		// Floor pushed by per-deployment overrides. We don't have
@@ -1932,10 +1942,12 @@ func (l *Loop) runReaper(ctx context.Context) {
 			// production source; nil/error falls back to 0 so a flow-source
 			// glitch fails open (LastRequest-only path; safe default).
 			var open int64
+			flowCountDegraded := false
 			if l.flowCounts != nil {
 				if v, err := l.flowCounts.Open(ctx, ins.ID); err == nil {
 					open = v
 				} else {
+					flowCountDegraded = true
 					l.log.Warn("reaper: flow count", "instance", ins.ID, "err", err)
 				}
 			}
@@ -1969,8 +1981,11 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// app.min_instances=0 + deployment.min_instances=3
 				// is billed for 3 warm instances but reaped to 0
 				// — a paid warm/park flap on every tick.
-				MinInstances: appDeploymentFloor[a.ID],
-				OpenConns:    open,
+				MinInstances:           appDeploymentFloor[a.ID],
+				ConfiguredMinInstances: appConfiguredFloor[a.ID],
+				PrewarmMinInstances:    appPrewarmFloor[a.ID],
+				OpenConns:              open,
+				FlowCountDegraded:      flowCountDegraded,
 				// Issue #667 / ADR-078: in-flight waitUntil task count.
 				// Sourced from instances.tail_count (PR #671 schema);
 				// the reaper gate keeps RUNNING instances alive while
@@ -2055,6 +2070,10 @@ func (l *Loop) runReaper(ctx context.Context) {
 			snapshot[i].MinInstances = appDeploymentFloor[snapshot[i].AppID]
 		}
 	}
+	// Capture the causal snapshot before any park/eviction mutates the
+	// instance set. The observation is best-effort and never changes the
+	// lifecycle decision if the audit write is unavailable.
+	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
 	resident := l.engine.Ledger().ResidentRAM()
 	// instanceToApp (PR-C review fix): O(N) instance→app map shared
 	// between the idle and aggressive reaper branches. The pre-PR-C

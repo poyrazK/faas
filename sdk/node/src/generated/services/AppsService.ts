@@ -22,6 +22,7 @@ import type { DebugCoverageResponse } from '../models/DebugCoverageResponse.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
 import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
 import type { DebugRequestEvidenceResponse } from '../models/DebugRequestEvidenceResponse.js';
+import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
@@ -1202,6 +1203,59 @@ export class AppsService {
       },
       query: {
         'since': since,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Explain why an app is still running.
+   * Returns observed scheduler causes that prevented an application from
+   * parking during the requested window. Causes are evidence-shaped: the
+   * response reports request activity, open connections, tail tasks,
+   * configured or temporary warm floors, cooldowns, and workload modes
+   * when those signals were observed. It does not estimate a saving or
+   * infer a protocol that was not instrumented. Plan-gated by
+   * `DebugTelemetryEnabled` and clamped to `DebugTelemetryRetentionDays`.
+   *
+   * @returns DebugRunningResponse Observed causes explaining why the app remained resident.
+   * @throws ApiError
+   */
+  public static getAppDebugRunning({
+    slug,
+    since,
+    limit,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lookback duration (e.g. 30m, 24h, 3d). Defaults to 24h and is clamped by plan retention.
+     */
+    since?: string | null,
+    /**
+     * Maximum number of recent observations to return; default 20, max 100.
+     */
+    limit?: number | null,
+  }): CancelablePromise<DebugRunningResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/running',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'limit': limit,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

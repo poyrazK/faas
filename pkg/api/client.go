@@ -4700,6 +4700,42 @@ func (c *Client) GetAppDebugCoverage(ctx context.Context, slug, since string) (D
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppDebugRunning returns the observed scheduler explanations for why an
+// app remains resident. The response includes the newest causes, current
+// floor/idle configuration, and bounded history. It reports observations only
+// and never estimates a hypothetical saving.
+func (c *Client) GetAppDebugRunning(ctx context.Context, slug, since string) (DebugRunningResponse, error) {
+	var out DebugRunningResponse
+	path := "/v1/apps/" + slug + "/debug/running"
+	q := url.Values{}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugRunningWithLimit is the bounded-history form of
+// GetAppDebugRunning. Limit is sent only when positive so the API default is
+// preserved for callers that do not need a custom history size.
+func (c *Client) GetAppDebugRunningWithLimit(ctx context.Context, slug, since string, limit int) (DebugRunningResponse, error) {
+	var out DebugRunningResponse
+	path := "/v1/apps/" + slug + "/debug/running"
+	q := url.Values{}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppDebugRequest returns one request-telemetry row by id. The
 // server scopes the lookup to the app resolved from slug, so a request
 // id from another app is indistinguishable from a missing request.

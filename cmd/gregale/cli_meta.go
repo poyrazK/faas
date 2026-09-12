@@ -867,6 +867,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "requests", Short: "Per-request telemetry (list/watch filters: deployment, status, cold boot, consumer, latency)"},
 			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
+			{Name: "running", Short: "Explain why an app is still running (running <slug> [--since D] [--limit N])"},
 			{Name: "regressions", Short: "Active regression observations (list|watch [--interval D] [--once])"},
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
 			{Name: "bundle", Short: "Export a redacted incident investigation bundle (bundle <slug> <req_id> [--output PATH])"},
