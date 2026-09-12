@@ -4525,7 +4525,7 @@ func (s *PgStore) ApplyProjectReconcile(
 		case "update":
 			app := mutation.App
 			rootDir, workloadName := app.RootDir, app.WorkloadName
-			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, start_command = $4 where id = $1 and project_id = $5 and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, nullString(app.StartCommand), project.ID))
+			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, start_command = $4, workload_class = $5 where id = $1 and project_id = $6 and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, nullString(app.StartCommand), string(app.WorkloadClass), project.ID))
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)
 			}
