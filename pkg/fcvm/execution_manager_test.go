@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
@@ -90,6 +91,82 @@ func TestManagerExecuteExecutionDestroysExecutionOnlyInstance(t *testing.T) {
 	defer vmm.mu.Unlock()
 	if len(vmm.destroyedWithExport) != 1 || vmm.destroyedWithExport[0] != "exec-vm-1" {
 		t.Fatalf("destroy calls = %v, want [exec-vm-1]", vmm.destroyedWithExport)
+	}
+}
+
+type boundedExecutionVMM struct {
+	*fakeVMM
+	deadlines   chan time.Time
+	guestClosed chan struct{}
+}
+
+func (v *boundedExecutionVMM) DialExecution(ctx context.Context, _ Lease) (*ExecutionSession, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil, errors.New("execution dial context has no deadline")
+	}
+	v.deadlines <- deadline
+	host, guest := net.Pipe()
+	go func() {
+		defer close(v.guestClosed)
+		defer guest.Close()
+		var header [8]byte
+		if _, err := io.ReadFull(guest, header[:]); err != nil {
+			return
+		}
+		bodyLen := binary.BigEndian.Uint32(header[4:])
+		if bodyLen > 0 {
+			if _, err := io.CopyN(io.Discard, guest, int64(bodyLen)); err != nil {
+				return
+			}
+		}
+		// Do not produce a result. The host must cancel this exchange at the
+		// request deadline and close the stream before teardown proceeds.
+		_, _ = io.Copy(io.Discard, guest)
+	}()
+	return NewExecutionSession(host)
+}
+
+func TestManagerExecuteExecutionBoundsDirectCallToRequestTimeout(t *testing.T) {
+	vmm := &boundedExecutionVMM{
+		fakeVMM:     &fakeVMM{},
+		deadlines:   make(chan time.Time, 1),
+		guestClosed: make(chan struct{}),
+	}
+	m := NewManager(&fakeRunner{}, vmm, Paths{}, "1.0.0", nil, nil)
+	m.live["exec-timeout-vm"] = &Instance{
+		Lease:         Lease{Instance: "exec-timeout-vm"},
+		ExecutionOnly: true,
+	}
+	started := time.Now()
+	_, err := m.ExecuteExecution(context.Background(), "exec-timeout-vm", executionproto.Request{
+		Version:     executionproto.Version,
+		ExecutionID: "exec-timeout",
+		Runtime:     api.ExecutionRuntimeNode22,
+		Source:      "1",
+		Input:       json.RawMessage(`null`),
+		TimeoutMS:   100,
+		MaxOutput:   1024,
+		NetworkMode: api.ExecutionNetworkNone,
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
+	select {
+	case deadline := <-vmm.deadlines:
+		if deadline.After(started.Add(500 * time.Millisecond)) {
+			t.Fatalf("dial deadline = %s, want within 500ms of call", deadline)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("dialer did not receive a deadline")
+	}
+	select {
+	case <-vmm.guestClosed:
+	case <-time.After(time.Second):
+		t.Fatal("guest stream remained open after request timeout")
+	}
+	if got := m.LiveCount(); got != 0 {
+		t.Fatalf("live count = %d, want 0 after timeout teardown", got)
 	}
 }
 
