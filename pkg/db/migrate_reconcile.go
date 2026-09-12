@@ -39,6 +39,22 @@ func isReservationMigrationSource(source string) bool {
 	return reservationMigrationFilenameRe.MatchString(filepath.Base(source))
 }
 
+// effectiveMigrationVersion returns the highest migration that is currently
+// applied. Goose's GetDBVersionContext returns the most recently inserted
+// applied ledger row. After an allow-missing run applies older timestamp
+// migrations, that row can be lower than migrations which remain applied.
+// Goose's Up path compares gaps against the numeric maximum, so our decision
+// to enable allow-missing must use the same boundary.
+func effectiveMigrationVersion(reported int64, applied map[int64]struct{}) int64 {
+	current := reported
+	for version := range applied {
+		if version > current {
+			current = version
+		}
+	}
+	return current
+}
+
 // migrationOptionsForHistoricalGaps enables Goose's out-of-order mode only
 // for explicitly safe namespaces:
 //   - legacy no-op reservation files, preserving the pre-cutover repair path;
@@ -68,10 +84,15 @@ func migrationOptionsForHistoricalGaps(current int64, known map[int64]struct{}, 
 // allow-missing option only when every historical gap is allowed by
 // migrationOptionsForHistoricalGaps. The caller must hold MigrationLockKey.
 func historicalMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.OptionsFunc, []int64, error) {
-	current, err := goose.GetDBVersionContext(ctx, sqlDB)
+	reportedCurrent, err := goose.GetDBVersionContext(ctx, sqlDB)
 	if err != nil {
 		return nil, nil, err
 	}
+	applied, err := appliedMigrationVersions(ctx, sqlDB)
+	if err != nil {
+		return nil, nil, err
+	}
+	current := effectiveMigrationVersion(reportedCurrent, applied)
 	if current <= 0 {
 		return nil, nil, nil
 	}
