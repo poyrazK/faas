@@ -2482,7 +2482,7 @@ type RollbackRequest struct {
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's
-// current plan entitlement resolved into Enabled.
+// current plan entitlement and serving-host readiness resolved into Enabled.
 type CapabilityStatus struct {
 	Key         string             `json:"key"`
 	Name        string             `json:"name"`

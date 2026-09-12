@@ -34,3 +34,17 @@ never returned by reads.
 The control-plane and scheduler gates are explicit. Set
 `FAAS_EXECUTION_API_ENABLED=1` on apid and `FAAS_EXECUTION_DISPATCH=1` on
 schedd only after the host's restore/execute/destroy isolation checks pass.
+
+## Production smoke
+
+After a release, run the operator smoke with an eligible account token:
+
+```sh
+FAAS_TOKEN=... make disposable-execution-release-smoke
+```
+
+The check first reads `GET /v1/capabilities`. When `disposable-runs` is
+disabled, it verifies that admission fails closed with the documented 501
+problem. When enabled, it submits a bounded Node 24 run and polls its receipt
+until stdout contains the smoke marker. Set `GREGALE_API_URL` for a non-default
+origin and `FAAS_EXECUTION_SMOKE_TIMEOUT_SECONDS` to change the polling limit.
