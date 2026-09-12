@@ -1624,6 +1624,27 @@ WHERE app_id = $1
        OR (received_at, id) < (sqlc.arg('cursor_received_at')::timestamptz,
                                sqlc.arg('cursor_id')::uuid))
   AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text)
+  -- Filters are explicit query parameters so sqlc keeps the generated
+  -- params stable. The cursor stores the same values and the handler
+  -- rejects a page walk when they change.
+  AND (sqlc.arg('deployment_id')::text = ''
+       OR deployment_id = NULLIF(sqlc.arg('deployment_id')::text, '')::uuid)
+  AND (sqlc.arg('status_filter')::int = 0
+       OR status = sqlc.arg('status_filter')::int)
+  AND (sqlc.arg('cold_boot_filter')::int = -1
+       OR cold_boot = (sqlc.arg('cold_boot_filter')::int = 1))
+  AND (
+       (sqlc.arg('consumer_anonymous')::boolean AND consumer_id IS NULL)
+       OR (
+           NOT sqlc.arg('consumer_anonymous')::boolean
+           AND (
+               sqlc.arg('consumer_id')::text = ''
+               OR consumer_id = NULLIF(sqlc.arg('consumer_id')::text, '')::uuid
+           )
+       )
+  )
+  AND (sqlc.arg('min_latency_ms')::int = 0
+       OR latency_ms >= sqlc.arg('min_latency_ms')::int)
 ORDER BY received_at DESC, id DESC
 LIMIT sqlc.arg('limit')::int;
 

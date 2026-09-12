@@ -544,13 +544,16 @@ func TestListAppDebugRequestsWithOptions_EncodesCursor(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "fp_test")
+	coldBoot := false
 	_, err := c.ListAppDebugRequestsWithOptions(context.Background(), "debug-app", DebugTelemetryListOptions{
-		Since: "24h", Route: "GET /checkout", Cursor: "opaque+/=", Limit: 25,
+		Since: "24h", Route: "GET /checkout", DeploymentID: "11111111-1111-4111-8111-111111111111",
+		Status: 503, ColdBoot: &coldBoot, ConsumerID: "__anonymous__", MinLatencyMS: 250,
+		Cursor: "opaque+/=", Limit: 25,
 	})
 	if err != nil {
 		t.Fatalf("ListAppDebugRequestsWithOptions: %v", err)
 	}
-	want := "cursor=opaque%2B%2F%3D&limit=25&route=GET+%2Fcheckout&since=24h"
+	want := "cold_boot=false&consumer_id=__anonymous__&cursor=opaque%2B%2F%3D&deployment_id=11111111-1111-4111-8111-111111111111&limit=25&min_latency_ms=250&route=GET+%2Fcheckout&since=24h&status=503"
 	if gotQuery != want {
 		t.Errorf("RawQuery = %q, want %q", gotQuery, want)
 	}

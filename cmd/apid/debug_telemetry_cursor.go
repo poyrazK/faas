@@ -23,6 +23,11 @@ type debugTelemetryCursor struct {
 	Version          int       `json:"v"`
 	AppID            string    `json:"app_id"`
 	Route            string    `json:"route,omitempty"`
+	DeploymentID     string    `json:"deployment_id,omitempty"`
+	Status           int       `json:"status,omitempty"`
+	ColdBoot         *bool     `json:"cold_boot,omitempty"`
+	ConsumerID       string    `json:"consumer_id,omitempty"`
+	MinLatencyMS     int       `json:"min_latency_ms,omitempty"`
 	WindowStart      time.Time `json:"window_start"`
 	WindowEnd        time.Time `json:"window_end"`
 	RetentionClamped bool      `json:"retention_clamped,omitempty"`
@@ -31,6 +36,10 @@ type debugTelemetryCursor struct {
 }
 
 func encodeDebugTelemetryCursor(appID, route string, windowStart, windowEnd time.Time, retentionClamped bool, row sqlc.ListRequestTelemetryByAppRow) string {
+	return encodeDebugTelemetryCursorWithFilters(appID, route, debugTelemetryCursorFilters{}, windowStart, windowEnd, retentionClamped, row)
+}
+
+func encodeDebugTelemetryCursorWithFilters(appID, route string, filters debugTelemetryCursorFilters, windowStart, windowEnd time.Time, retentionClamped bool, row sqlc.ListRequestTelemetryByAppRow) string {
 	if !row.ID.Valid || !row.ReceivedAt.Valid || appID == "" {
 		return ""
 	}
@@ -42,6 +51,11 @@ func encodeDebugTelemetryCursor(appID, route string, windowStart, windowEnd time
 		Version:          debugTelemetryCursorVersion,
 		AppID:            appID,
 		Route:            route,
+		DeploymentID:     filters.DeploymentID,
+		Status:           filters.Status,
+		ColdBoot:         filters.ColdBoot,
+		ConsumerID:       filters.ConsumerID,
+		MinLatencyMS:     filters.MinLatencyMS,
 		WindowStart:      windowStart.UTC(),
 		WindowEnd:        windowEnd.UTC(),
 		RetentionClamped: retentionClamped,
@@ -76,10 +90,36 @@ func decodeDebugTelemetryCursor(raw string) (debugTelemetryCursor, error) {
 	if _, err := uuid.Parse(cursor.AppID); err != nil {
 		return debugTelemetryCursor{}, fmt.Errorf("cursor app is invalid")
 	}
+	if cursor.DeploymentID != "" {
+		if _, err := uuid.Parse(cursor.DeploymentID); err != nil {
+			return debugTelemetryCursor{}, fmt.Errorf("cursor deployment is invalid")
+		}
+	}
+	if cursor.Status != 0 && (cursor.Status < 100 || cursor.Status > 599) {
+		return debugTelemetryCursor{}, fmt.Errorf("cursor status is invalid")
+	}
+	if cursor.MinLatencyMS < 0 || cursor.MinLatencyMS > 86_400_000 {
+		return debugTelemetryCursor{}, fmt.Errorf("cursor latency filter is invalid")
+	}
+	if cursor.ConsumerID != "" && cursor.ConsumerID != debugTelemetryAnonymousConsumer {
+		if _, err := uuid.Parse(cursor.ConsumerID); err != nil {
+			return debugTelemetryCursor{}, fmt.Errorf("cursor consumer is invalid")
+		}
+	}
 	if _, err := uuid.Parse(cursor.ID); err != nil {
 		return debugTelemetryCursor{}, fmt.Errorf("cursor id is invalid")
 	}
 	return cursor, nil
+}
+
+func (c debugTelemetryCursor) filters() debugTelemetryCursorFilters {
+	return debugTelemetryCursorFilters{
+		DeploymentID: c.DeploymentID,
+		Status:       c.Status,
+		ColdBoot:     c.ColdBoot,
+		ConsumerID:   c.ConsumerID,
+		MinLatencyMS: c.MinLatencyMS,
+	}
 }
 
 func debugTelemetryCursorParams(cursor debugTelemetryCursor) (pgtype.Timestamptz, pgtype.UUID) {

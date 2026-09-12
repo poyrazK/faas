@@ -7483,15 +7483,32 @@ type DebugGuestExecutionEvidence struct {
 	ErrorClass string `json:"error_class,omitempty"`
 }
 
+// DebugTelemetryListFilters is the normalized filter set applied to a request
+// telemetry page. It is echoed by the server so links and automation can
+// verify which subset a cursor represents. ConsumerID accepts the special
+// value "__anonymous__" for requests without a stable consumer identity.
+type DebugTelemetryListFilters struct {
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Status       int    `json:"status,omitempty"`
+	ColdBoot     *bool  `json:"cold_boot,omitempty"`
+	ConsumerID   string `json:"consumer_id,omitempty"`
+	MinLatencyMS int    `json:"min_latency_ms,omitempty"`
+}
+
 // DebugTelemetryListOptions controls the server-side filters and cursor for a
 // request telemetry list. Cursor is opaque and should be copied verbatim from
 // the previous response's NextCursor. Zero values preserve the endpoint
 // defaults. Limit is bounded by the API to 1..200 when supplied.
 type DebugTelemetryListOptions struct {
-	Since  string
-	Route  string
-	Cursor string
-	Limit  int
+	Since        string
+	Route        string
+	DeploymentID string
+	Status       int
+	ColdBoot     *bool
+	ConsumerID   string
+	MinLatencyMS int
+	Cursor       string
+	Limit        int
 }
 
 // DebugTelemetryListResponse is the wire envelope for the debug
@@ -7501,6 +7518,8 @@ type DebugTelemetryListOptions struct {
 // a customer asks for a longer window than their plan permits. WindowStart
 // and WindowEnd are pinned across cursor pages. Complete is true only when
 // the current page contains every retained row in that bounded window.
+// Filters echoes the normalized server-side subset (deployment, status,
+// cold_boot, consumer, and minimum latency) that shaped the page.
 type DebugTelemetryListResponse struct {
 	Since            string                      `json:"since"`
 	WindowStart      string                      `json:"window_start"`
@@ -7508,6 +7527,7 @@ type DebugTelemetryListResponse struct {
 	RetentionClamped bool                        `json:"retention_clamped"`
 	Complete         bool                        `json:"complete"`
 	NextCursor       string                      `json:"next_cursor,omitempty"`
+	Filters          DebugTelemetryListFilters   `json:"filters"`
 	Requests         []DebugTelemetryRequestItem `json:"requests"`
 }
 

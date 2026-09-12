@@ -170,6 +170,7 @@ export type { DebugReplayResponse } from './models/DebugReplayResponse.js';
 export type { DebugRequestCorrelation } from './models/DebugRequestCorrelation.js';
 export type { DebugRequestCorrelationStage } from './models/DebugRequestCorrelationStage.js';
 export type { DebugRequestEvidenceResponse } from './models/DebugRequestEvidenceResponse.js';
+export type { DebugTelemetryListFilters } from './models/DebugTelemetryListFilters.js';
 export type { DebugTelemetryListResponse } from './models/DebugTelemetryListResponse.js';
 export type { DebugTelemetryRequestItem } from './models/DebugTelemetryRequestItem.js';
 export type { DebugTelemetrySpan } from './models/DebugTelemetrySpan.js';

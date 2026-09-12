@@ -164,6 +164,7 @@ export type { DebugReplayResponse } from './DebugReplayResponse.js';
 export type { DebugRequestCorrelation } from './DebugRequestCorrelation.js';
 export type { DebugRequestCorrelationStage } from './DebugRequestCorrelationStage.js';
 export type { DebugRequestEvidenceResponse } from './DebugRequestEvidenceResponse.js';
+export type { DebugTelemetryListFilters } from './DebugTelemetryListFilters.js';
 export type { DebugTelemetryListResponse } from './DebugTelemetryListResponse.js';
 export type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 export type { DebugTelemetrySpan } from './DebugTelemetrySpan.js';

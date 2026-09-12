@@ -148,7 +148,7 @@ New `POST /v1/apps/{slug}/debug/requests/{req_id}/replay`:
 
 | Surface | Verb | Notes |
 |---|---|---|
-| apid | `GET /v1/apps/{slug}/debug/requests` | ListRequestTelemetryByApp — time-windowed, paginated |
+| apid | `GET /v1/apps/{slug}/debug/requests` | ListRequestTelemetryByApp — time-windowed, cursor-paginated, filterable by deployment, status, cold boot, consumer, and minimum latency |
 | apid | `GET /v1/apps/{slug}/debug/requests/{req_id}` | Single row + linked trace spans |
 | apid | `GET /v1/apps/{slug}/debug/regressions` | RequestTelemetryRegression — active regressions since last deploy |
 | apid | `POST /v1/apps/{slug}/debug/compare` | Per-route p50/p95/p99 split between two deployments |
@@ -159,6 +159,13 @@ New `POST /v1/apps/{slug}/debug/requests/{req_id}/replay`:
 | CLI | `gregale debug compare <slug> --source v80 --mirror v81` | |
 | Dashboard | `/dashboard/apps/{slug}/debug` | `pkg/dashboard/templates/app_debug.html` |
 | Prometheus | `FaasDebugTelemetryIngestStalled` page alert | `deploy/ansible/roles/prometheus/files/faas.rules.yml` |
+
+The request list accepts exact server-side filters for `deployment_id`,
+`status` (100–599), `cold_boot`, `consumer_id` (UUID or `__anonymous__`), and
+`min_latency_ms` (0–86,400,000). The response echoes normalized filters and
+the opaque cursor pins them with the retention window and route; changing any
+filter while reusing a cursor is rejected. This keeps incident links and
+dashboard pagination on one deterministic result set.
 
 ## Why now
 

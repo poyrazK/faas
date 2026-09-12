@@ -1084,7 +1084,7 @@ Production debugger (ADR-127)
 
 ### debug requests
 
-Per-request telemetry (list --cursor C for pagination | get | show | evidence | replay | watch)
+Per-request telemetry (list/watch filters: deployment, status, cold boot, consumer, latency)
 
 ### debug coverage
 

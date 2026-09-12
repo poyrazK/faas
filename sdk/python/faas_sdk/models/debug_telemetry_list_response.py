@@ -10,6 +10,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.debug_telemetry_list_filters import DebugTelemetryListFilters
     from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
 
 
@@ -35,6 +36,8 @@ class DebugTelemetryListResponse:
     """True when the requested lookback exceeded the plan retention cap."""
     complete: bool
     """True when this page contains every retained row in the pinned window."""
+    filters: DebugTelemetryListFilters
+    """Normalized server-side filters echoed by a request telemetry page."""
     requests: list[DebugTelemetryRequestItem]
     next_cursor: str | Unset = UNSET
     """Opaque cursor for the next page; omitted when complete is true."""
@@ -50,6 +53,8 @@ class DebugTelemetryListResponse:
         retention_clamped = self.retention_clamped
 
         complete = self.complete
+
+        filters = self.filters.to_dict()
 
         requests = []
         for requests_item_data in self.requests:
@@ -67,6 +72,7 @@ class DebugTelemetryListResponse:
                 "window_end": window_end,
                 "retention_clamped": retention_clamped,
                 "complete": complete,
+                "filters": filters,
                 "requests": requests,
             }
         )
@@ -77,6 +83,7 @@ class DebugTelemetryListResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_telemetry_list_filters import DebugTelemetryListFilters
         from ..models.debug_telemetry_request_item import DebugTelemetryRequestItem
 
         d = dict(src_dict)
@@ -89,6 +96,8 @@ class DebugTelemetryListResponse:
         retention_clamped = d.pop("retention_clamped")
 
         complete = d.pop("complete")
+
+        filters = DebugTelemetryListFilters.from_dict(d.pop("filters"))
 
         requests = []
         _requests = d.pop("requests")
@@ -105,6 +114,7 @@ class DebugTelemetryListResponse:
             window_end=window_end,
             retention_clamped=retention_clamped,
             complete=complete,
+            filters=filters,
             requests=requests,
             next_cursor=next_cursor,
         )

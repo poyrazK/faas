@@ -3898,9 +3898,11 @@ paths:
         effective `since` is returned in the response so the
         dashboard can render a "you widened past the cap" tile. Results are
         cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
-        cursor pins the effective window and route, so callers can safely
+        cursor pins the effective window, route, and every supplied filter, so callers can safely
         walk pages while new telemetry arrives. `complete` is true only when
         every retained row in that bounded window is present in the page.
+        Filters are applied before pagination and echoed in `filters` so an
+        incident link can be reproduced exactly.
         Returns 200 with `requests: []` when no rows exist in the
         window — never 404. Cross-account slug is 404 (IDOR-safe;
         byte-identical to "no such app").
@@ -3920,11 +3922,36 @@ paths:
           required: false
           schema: { type: [string, 'null'], maxLength: 256 }
           description: "Exact route-template filter."
+        - name: deployment_id
+          in: query
+          required: false
+          schema: { type: [string, 'null'], format: uuid }
+          description: "Exact deployment UUID filter."
+        - name: status
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 100, maximum: 599 }
+          description: "Exact HTTP status filter."
+        - name: cold_boot
+          in: query
+          required: false
+          schema: { type: [boolean, 'null'] }
+          description: "Filter cold-start requests when true, or warm requests when false."
+        - name: consumer_id
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 64 }
+          description: "Consumer UUID, or __anonymous__ for requests without a stable consumer identity."
+        - name: min_latency_ms
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 0, maximum: 86400000 }
+          description: "Minimum inclusive latency bucket bound in milliseconds."
         - name: cursor
           in: query
           required: false
           schema: { type: [string, 'null'], maxLength: 8192 }
-          description: "Opaque next_cursor from a previous response. The cursor must be reused with the same app and route."
+          description: "Opaque next_cursor from a previous response. The cursor must be reused with the same app and filters."
       responses:
         '200':
           description: Page of recent request telemetry rows.
@@ -26076,7 +26103,7 @@ components:
         `since` echoes the effective window used (after the plan's
         `DebugTelemetryRetentionDays` clamp) so the dashboard can
         surface a "you widened past the cap" tile.
-      required: [requests, since, window_start, window_end, retention_clamped, complete]
+      required: [requests, since, window_start, window_end, retention_clamped, complete, filters]
       properties:
         since: { type: string, description: "Effective window applied (e.g. '24h', '72h')." }
         window_start: { type: string, format: date-time, description: "Inclusive start of the pinned retention window." }
@@ -26084,9 +26111,20 @@ components:
         retention_clamped: { type: boolean, description: "True when the requested lookback exceeded the plan retention cap." }
         complete: { type: boolean, description: "True when this page contains every retained row in the pinned window." }
         next_cursor: { type: string, description: "Opaque cursor for the next page; omitted when complete is true." }
+        filters: { $ref: '#/components/schemas/DebugTelemetryListFilters' }
         requests:
           type: array
           items: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+
+    DebugTelemetryListFilters:
+      type: object
+      description: "Normalized server-side filters echoed by a request telemetry page."
+      properties:
+        deployment_id: { type: string, format: uuid }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        cold_boot: { type: boolean }
+        consumer_id: { type: string, description: "Consumer UUID, or __anonymous__ for anonymous traffic." }
+        min_latency_ms: { type: integer, minimum: 0, maximum: 86400000 }
 
     DebugTelemetryRequestItem:
       type: object

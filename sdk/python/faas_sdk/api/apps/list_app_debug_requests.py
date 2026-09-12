@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -17,6 +18,11 @@ def _get_kwargs(
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
     route: None | str | Unset = UNSET,
+    deployment_id: None | Unset | UUID = UNSET,
+    status: int | None | Unset = UNSET,
+    cold_boot: bool | None | Unset = UNSET,
+    consumer_id: None | str | Unset = UNSET,
+    min_latency_ms: int | None | Unset = UNSET,
     cursor: None | str | Unset = UNSET,
 ) -> dict[str, Any]:
 
@@ -42,6 +48,43 @@ def _get_kwargs(
     else:
         json_route = route
     params["route"] = json_route
+
+    json_deployment_id: None | str | Unset
+    if isinstance(deployment_id, Unset):
+        json_deployment_id = UNSET
+    elif isinstance(deployment_id, UUID):
+        json_deployment_id = str(deployment_id)
+    else:
+        json_deployment_id = deployment_id
+    params["deployment_id"] = json_deployment_id
+
+    json_status: int | None | Unset
+    if isinstance(status, Unset):
+        json_status = UNSET
+    else:
+        json_status = status
+    params["status"] = json_status
+
+    json_cold_boot: bool | None | Unset
+    if isinstance(cold_boot, Unset):
+        json_cold_boot = UNSET
+    else:
+        json_cold_boot = cold_boot
+    params["cold_boot"] = json_cold_boot
+
+    json_consumer_id: None | str | Unset
+    if isinstance(consumer_id, Unset):
+        json_consumer_id = UNSET
+    else:
+        json_consumer_id = consumer_id
+    params["consumer_id"] = json_consumer_id
+
+    json_min_latency_ms: int | None | Unset
+    if isinstance(min_latency_ms, Unset):
+        json_min_latency_ms = UNSET
+    else:
+        json_min_latency_ms = min_latency_ms
+    params["min_latency_ms"] = json_min_latency_ms
 
     json_cursor: None | str | Unset
     if isinstance(cursor, Unset):
@@ -120,6 +163,11 @@ def sync_detailed(
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
     route: None | str | Unset = UNSET,
+    deployment_id: None | Unset | UUID = UNSET,
+    status: int | None | Unset = UNSET,
+    cold_boot: bool | None | Unset = UNSET,
+    consumer_id: None | str | Unset = UNSET,
+    min_latency_ms: int | None | Unset = UNSET,
     cursor: None | str | Unset = UNSET,
 ) -> Response[DebugTelemetryListResponse | Problem]:
     r"""Per-app request telemetry (ADR-127 / PR-A).
@@ -139,9 +187,11 @@ def sync_detailed(
     effective `since` is returned in the response so the
     dashboard can render a \"you widened past the cap\" tile. Results are
     cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
-    cursor pins the effective window and route, so callers can safely
+    cursor pins the effective window, route, and every supplied filter, so callers can safely
     walk pages while new telemetry arrives. `complete` is true only when
     every retained row in that bounded window is present in the page.
+    Filters are applied before pagination and echoed in `filters` so an
+    incident link can be reproduced exactly.
     Returns 200 with `requests: []` when no rows exist in the
     window — never 404. Cross-account slug is 404 (IDOR-safe;
     byte-identical to \"no such app\").
@@ -151,6 +201,11 @@ def sync_detailed(
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
         route (None | str | Unset):
+        deployment_id (None | Unset | UUID):
+        status (int | None | Unset):
+        cold_boot (bool | None | Unset):
+        consumer_id (None | str | Unset):
+        min_latency_ms (int | None | Unset):
         cursor (None | str | Unset):
 
     Raises:
@@ -166,6 +221,11 @@ def sync_detailed(
         since=since,
         limit=limit,
         route=route,
+        deployment_id=deployment_id,
+        status=status,
+        cold_boot=cold_boot,
+        consumer_id=consumer_id,
+        min_latency_ms=min_latency_ms,
         cursor=cursor,
     )
 
@@ -183,6 +243,11 @@ def sync(
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
     route: None | str | Unset = UNSET,
+    deployment_id: None | Unset | UUID = UNSET,
+    status: int | None | Unset = UNSET,
+    cold_boot: bool | None | Unset = UNSET,
+    consumer_id: None | str | Unset = UNSET,
+    min_latency_ms: int | None | Unset = UNSET,
     cursor: None | str | Unset = UNSET,
 ) -> DebugTelemetryListResponse | Problem | None:
     r"""Per-app request telemetry (ADR-127 / PR-A).
@@ -202,9 +267,11 @@ def sync(
     effective `since` is returned in the response so the
     dashboard can render a \"you widened past the cap\" tile. Results are
     cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
-    cursor pins the effective window and route, so callers can safely
+    cursor pins the effective window, route, and every supplied filter, so callers can safely
     walk pages while new telemetry arrives. `complete` is true only when
     every retained row in that bounded window is present in the page.
+    Filters are applied before pagination and echoed in `filters` so an
+    incident link can be reproduced exactly.
     Returns 200 with `requests: []` when no rows exist in the
     window — never 404. Cross-account slug is 404 (IDOR-safe;
     byte-identical to \"no such app\").
@@ -214,6 +281,11 @@ def sync(
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
         route (None | str | Unset):
+        deployment_id (None | Unset | UUID):
+        status (int | None | Unset):
+        cold_boot (bool | None | Unset):
+        consumer_id (None | str | Unset):
+        min_latency_ms (int | None | Unset):
         cursor (None | str | Unset):
 
     Raises:
@@ -230,6 +302,11 @@ def sync(
         since=since,
         limit=limit,
         route=route,
+        deployment_id=deployment_id,
+        status=status,
+        cold_boot=cold_boot,
+        consumer_id=consumer_id,
+        min_latency_ms=min_latency_ms,
         cursor=cursor,
     ).parsed
 
@@ -241,6 +318,11 @@ async def asyncio_detailed(
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
     route: None | str | Unset = UNSET,
+    deployment_id: None | Unset | UUID = UNSET,
+    status: int | None | Unset = UNSET,
+    cold_boot: bool | None | Unset = UNSET,
+    consumer_id: None | str | Unset = UNSET,
+    min_latency_ms: int | None | Unset = UNSET,
     cursor: None | str | Unset = UNSET,
 ) -> Response[DebugTelemetryListResponse | Problem]:
     r"""Per-app request telemetry (ADR-127 / PR-A).
@@ -260,9 +342,11 @@ async def asyncio_detailed(
     effective `since` is returned in the response so the
     dashboard can render a \"you widened past the cap\" tile. Results are
     cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
-    cursor pins the effective window and route, so callers can safely
+    cursor pins the effective window, route, and every supplied filter, so callers can safely
     walk pages while new telemetry arrives. `complete` is true only when
     every retained row in that bounded window is present in the page.
+    Filters are applied before pagination and echoed in `filters` so an
+    incident link can be reproduced exactly.
     Returns 200 with `requests: []` when no rows exist in the
     window — never 404. Cross-account slug is 404 (IDOR-safe;
     byte-identical to \"no such app\").
@@ -272,6 +356,11 @@ async def asyncio_detailed(
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
         route (None | str | Unset):
+        deployment_id (None | Unset | UUID):
+        status (int | None | Unset):
+        cold_boot (bool | None | Unset):
+        consumer_id (None | str | Unset):
+        min_latency_ms (int | None | Unset):
         cursor (None | str | Unset):
 
     Raises:
@@ -287,6 +376,11 @@ async def asyncio_detailed(
         since=since,
         limit=limit,
         route=route,
+        deployment_id=deployment_id,
+        status=status,
+        cold_boot=cold_boot,
+        consumer_id=consumer_id,
+        min_latency_ms=min_latency_ms,
         cursor=cursor,
     )
 
@@ -302,6 +396,11 @@ async def asyncio(
     since: None | str | Unset = UNSET,
     limit: int | None | Unset = 20,
     route: None | str | Unset = UNSET,
+    deployment_id: None | Unset | UUID = UNSET,
+    status: int | None | Unset = UNSET,
+    cold_boot: bool | None | Unset = UNSET,
+    consumer_id: None | str | Unset = UNSET,
+    min_latency_ms: int | None | Unset = UNSET,
     cursor: None | str | Unset = UNSET,
 ) -> DebugTelemetryListResponse | Problem | None:
     r"""Per-app request telemetry (ADR-127 / PR-A).
@@ -321,9 +420,11 @@ async def asyncio(
     effective `since` is returned in the response so the
     dashboard can render a \"you widened past the cap\" tile. Results are
     cursor-paginated in `(received_at DESC, id DESC)` order. The opaque
-    cursor pins the effective window and route, so callers can safely
+    cursor pins the effective window, route, and every supplied filter, so callers can safely
     walk pages while new telemetry arrives. `complete` is true only when
     every retained row in that bounded window is present in the page.
+    Filters are applied before pagination and echoed in `filters` so an
+    incident link can be reproduced exactly.
     Returns 200 with `requests: []` when no rows exist in the
     window — never 404. Cross-account slug is 404 (IDOR-safe;
     byte-identical to \"no such app\").
@@ -333,6 +434,11 @@ async def asyncio(
         since (None | str | Unset):
         limit (int | None | Unset):  Default: 20.
         route (None | str | Unset):
+        deployment_id (None | Unset | UUID):
+        status (int | None | Unset):
+        cold_boot (bool | None | Unset):
+        consumer_id (None | str | Unset):
+        min_latency_ms (int | None | Unset):
         cursor (None | str | Unset):
 
     Raises:
@@ -350,6 +456,11 @@ async def asyncio(
             since=since,
             limit=limit,
             route=route,
+            deployment_id=deployment_id,
+            status=status,
+            cold_boot=cold_boot,
+            consumer_id=consumer_id,
+            min_latency_ms=min_latency_ms,
             cursor=cursor,
         )
     ).parsed
