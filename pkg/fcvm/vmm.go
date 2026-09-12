@@ -5210,7 +5210,9 @@ func copyFile(src, dst string) (err error) {
 // guest-resume hook no-ops on it (the runner's TRACEPARENT env is
 // simply unset).
 //
-// Format: 32-hex trace_id + "-" + 16-hex span_id + "-" + 2-hex flags.
+// Format: 00-<32-hex trace_id>-<16-hex span_id>-<2-hex flags>.
+// The version field is required by the W3C Trace Context format; omitting it
+// leaves the runner with a value that SDK propagators cannot parse.
 // The flags byte is "01" (sampled) — the guest-side OTel SDK inherits
 // the sampling decision from the parent trace.
 func traceparentFromContext(ctx context.Context) string {
@@ -5218,7 +5220,7 @@ func traceparentFromContext(ctx context.Context) string {
 	if !sc.IsValid() {
 		return ""
 	}
-	return fmt.Sprintf("%s-%s-%02x",
+	return fmt.Sprintf("00-%s-%s-%02x",
 		sc.TraceID().String(),
 		sc.SpanID().String(),
 		uint8(sc.TraceFlags()),
