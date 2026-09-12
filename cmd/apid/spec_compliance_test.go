@@ -70,7 +70,14 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"GET /v1/account/dpa":                       true, // public markdown (no auth)
+	"GET /v1/account/dpa": true, // public markdown (no auth)
+	// ADR-171: execution admission is implemented but remains dark until
+	// the restore/execute/destroy isolation path ships. Keep the routes out
+	// of the public OpenAPI contract while the explicit runtime gate returns
+	// 501 to authenticated callers.
+	"POST /v1/executions":                       true,
+	"GET /v1/executions/{id}":                   true,
+	"DELETE /v1/executions/{id}":                true,
 	"POST /v1/webhooks/stripe":                  true, // HMAC-signed webhook
 	"POST /v1/webhooks/paddle":                  true, // HMAC-signed webhook (PR #3 / ADR-025)
 	"POST /v1/webhooks/polar":                   true, // Standard Webhooks-signed webhook

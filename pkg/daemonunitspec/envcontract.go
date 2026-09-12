@@ -189,6 +189,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_ENVIRONMENT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value"},
 	{Name: "FAAS_EXECUTION_", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1"},
+	{Name: "FAAS_EXECUTION_API_ENABLED", Owners: []string{"apid"}, Source: EnvSourceUnit, Note: "explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes"},
 	{Name: "FAAS_EXECUTION_DISPATCH", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired"},
 	{Name: "FAAS_FLOOR_INTERVAL_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
