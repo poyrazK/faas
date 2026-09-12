@@ -1599,8 +1599,16 @@ func (c *Client) PurgeAppCache(ctx context.Context, slug, pathGlob string) error
 }
 
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResponse, error) {
+	return c.ListInstancesWithHistory(ctx, slug, false)
+}
+
+func (c *Client) ListInstancesWithHistory(ctx context.Context, slug string, history bool) ([]InstanceResponse, error) {
 	var out []InstanceResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/instances", nil, &out)
+	endpoint := "/v1/apps/" + slug + "/instances"
+	if history {
+		endpoint += "?history=true"
+	}
+	return out, c.do(ctx, "GET", endpoint, nil, &out)
 }
 
 // GetInstances returns every live instance across the caller's account

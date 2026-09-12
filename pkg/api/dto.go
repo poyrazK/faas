@@ -2932,6 +2932,9 @@ type InstanceResponse struct {
 	StartedAt     string `json:"started_at,omitempty"`
 	LastRequestAt string `json:"last_request_at,omitempty"`
 	ParkedAt      string `json:"parked_at,omitempty"`
+	// Resident reports whether the row currently holds host memory. Historical
+	// parked/stopped/failed rows return false when explicitly requested.
+	Resident bool `json:"resident"`
 	// WakeID is the per-wake stable identifier minted by schedd at
 	// CreateInstance time (UUIDv7). Distinct from `id` (the row PK):
 	// one row can carry many WakeIDs over its lifetime as the app is

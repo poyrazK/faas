@@ -6794,6 +6794,38 @@ func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID s
 }
 
 func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
+	if status == DeployFailed {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		var appID string
+		tag, err := tx.Exec(ctx, `
+			update deployments
+			   set status = 'failed', error = $2, traffic_percent = 0,
+			       rollout_state = 'aborted', rollout_completed_at = null,
+			       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+			       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
+			 where id = $1 and status <> 'cancelled'`, id, nullString(errMsg))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			var current DeploymentStatus
+			if err := tx.QueryRow(ctx, `select status from deployments where id = $1`, id).Scan(&current); err != nil {
+				return mapErr(err)
+			}
+			return ErrInvalidStateTransition
+		}
+		if err := tx.QueryRow(ctx, `select app_id from deployments where id=$1`, id).Scan(&appID); err != nil {
+			return mapErr(err)
+		}
+		if err := rebalanceTrafficAfterFailure(ctx, tx, appID, id); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		update deployments set status = $2, error = $3
 		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')`, id, string(status), nullString(errMsg))
@@ -6806,6 +6838,35 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 			return mapErr(err)
 		}
 		return ErrInvalidStateTransition
+	}
+	return nil
+}
+
+// rebalanceTrafficAfterFailure restores the most highly weighted surviving
+// live deployment to 100%. It is called in the same transaction that marks a
+// deployment failed so readers can never observe failed traffic or a split
+// rollout with no 100% fallback.
+func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedID string) error {
+	var fallbackID string
+	err := tx.QueryRow(ctx, `
+		select id
+		  from deployments
+		 where app_id=$1 and id<>$2 and status='live' and deleted_at is null
+		 order by traffic_percent desc, created_at desc, id desc
+		 limit 1
+		 for update`, appID, failedID).Scan(&fallbackID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		update deployments set traffic_percent=0
+		 where app_id=$1 and id<>$2 and status='live' and deleted_at is null`, appID, failedID); err != nil {
+		return err
+	}
+	if fallbackID != "" {
+		if _, err := tx.Exec(ctx, `update deployments set traffic_percent=100 where id=$1`, fallbackID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -9087,13 +9148,32 @@ func (s *PgStore) SetDeploymentSourceURL(ctx context.Context, id, sourceURL, com
 // Idempotent on (status='failed') rows: a redeploy after a fix will
 // overwrite both columns.
 func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error) {
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
 		`update deployments
-		    set status = 'failed', error = $2, error_code = $3
+		    set status = 'failed', error = $2, error_code = $3,
+		        traffic_percent = 0, rollout_state = 'aborted',
+		        rollout_completed_at = null,
+		        rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
 		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code))
-	return scanDeploymentWithRootfs(row)
+	failed, err := scanDeploymentWithRootfs(row)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := rebalanceTrafficAfterFailure(ctx, tx, failed.AppID, failed.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, err
+	}
+	return failed, nil
 }
 
 // SetDeploymentFailedEx is the error-explanations cluster (spec §6.4
@@ -9122,17 +9202,36 @@ func (s *PgStore) SetDeploymentFailedEx(
 	ctx context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
 ) (Deployment, error) {
 	logsJSON := logExcerptsJSON(logs)
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
 		`update deployments
 		    set status = 'failed', error = $2, error_code = $3,
 		        error_hint = $4, error_why = $5, error_fix = $6,
-		        error_relevant_logs = $7
+		        error_relevant_logs = $7,
+		        traffic_percent = 0, rollout_state = 'aborted',
+		        rollout_completed_at = null,
+		        rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
 		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code),
 		nullString(hint), nullString(why), nullString(fix),
 		logsJSON)
-	return scanDeploymentWithRootfs(row)
+	failed, err := scanDeploymentWithRootfs(row)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := rebalanceTrafficAfterFailure(ctx, tx, failed.AppID, failed.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, err
+	}
+	return failed, nil
 }
 
 // --- builds ------------------------------------------------------------------
@@ -9202,15 +9301,25 @@ func (s *PgStore) FailSourceDeployment(ctx context.Context, id, message string) 
 	// A commit response may be lost while the queue transaction still owns
 	// this row. Acquire its lock before checking builds on a fresh snapshot.
 	var status DeploymentStatus
-	if err := tx.QueryRow(ctx, `select status from deployments where id=$1 for update`, id).Scan(&status); err != nil {
+	var appID string
+	if err := tx.QueryRow(ctx, `select status,app_id from deployments where id=$1 for update`, id).Scan(&status, &appID); err != nil {
 		return mapErr(err)
 	}
 	if status != DeployPending && status != DeployBuilding {
 		return nil
 	}
-	if _, err := tx.Exec(ctx, `update deployments set status='failed',error=$2 where id=$1
-	and not exists(select 1 from builds where deployment_id=$1)`, id, message); err != nil {
+	tag, err := tx.Exec(ctx, `update deployments set status='failed',error=$2,
+	traffic_percent=0,rollout_state='aborted',rollout_completed_at=null,
+	rollout_aborted_at=coalesce(rollout_aborted_at,now()),
+	rollout_aborted_reason=coalesce(nullif($2,''),'deployment failed') where id=$1
+	and not exists(select 1 from builds where deployment_id=$1)`, id, message)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() > 0 {
+		if err := rebalanceTrafficAfterFailure(ctx, tx, appID, id); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -13295,6 +13404,26 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		 from instances where app_id = $1 order by started_at desc`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
+// ListActiveInstancesForApp is the customer `ps` read path. It filters at the
+// database boundary so years of parked/stopped wake history cannot make a
+// current-state request unbounded.
+func (s *PgStore) ListActiveInstancesForApp(ctx context.Context, appID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
+		 from instances
+		 where app_id = $1 and state in ('waking','cold_booting','running','snapshotting','migrating')
+		 order by started_at desc limit $2`, appID, limit)
 	if err != nil {
 		return nil, err
 	}

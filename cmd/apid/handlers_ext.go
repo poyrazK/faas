@@ -2082,14 +2082,39 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	instances, err := s.store.ListInstancesForApp(r.Context(), app.ID)
+	limit := app.MaxConcurrency
+	if limit <= 0 {
+		if planLimits, found := api.LimitsFor(acct.Plan); found {
+			limit = planLimits.MaxConcurrency
+		}
+	}
+	if limit <= 0 {
+		limit = 1
+	}
+	var instances []state.Instance
+	var err error
+	if r.URL.Query().Get("history") == "true" {
+		// History is explicit and still bounded for old, frequently-woken apps.
+		instances, err = s.store.ListLatestInstancesForApp(r.Context(), app.ID, 100)
+	} else if activeStore, ok := s.store.(interface {
+		ListActiveInstancesForApp(context.Context, string, int) ([]state.Instance, error)
+	}); ok {
+		instances, err = activeStore.ListActiveInstancesForApp(r.Context(), app.ID, limit)
+	} else {
+		instances, err = s.store.ListLatestInstancesForApp(r.Context(), app.ID, limit)
+		instances = slices.DeleteFunc(instances, func(instance state.Instance) bool {
+			return !state.State(instance.State).CountsForRAM()
+		})
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list instances"))
 		return
 	}
 	out := make([]api.InstanceResponse, 0, len(instances))
 	for _, ins := range instances {
-		out = append(out, instanceResponse(ins, app.EffectiveMinInstances()))
+		response := instanceResponse(ins, app.EffectiveMinInstances())
+		response.Resident = state.State(ins.State).CountsForRAM()
+		out = append(out, response)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

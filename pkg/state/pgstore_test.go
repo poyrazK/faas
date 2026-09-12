@@ -764,6 +764,9 @@ func TestPg_SetDeploymentFailed_PersistsCode(t *testing.T) {
 	if got.Error != "oci pull failed: registry returned 404" {
 		t.Errorf("error = %q, want oci-pull message", got.Error)
 	}
+	if got.TrafficPercent != 0 || got.RolloutState != "aborted" || got.RolloutAbortedAt == nil {
+		t.Errorf("failed deployment retained traffic/rollout state: %+v", got)
+	}
 
 	// Round-trip via the read path used by the customer-facing API.
 	read, err := s.DeploymentByID(ctx, depID)

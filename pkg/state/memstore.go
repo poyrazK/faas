@@ -6229,13 +6229,53 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
-	d.Status = status
-	d.Error = errMsg
-	m.deployments[id] = d
+	if status == DeployFailed {
+		m.failDeploymentLocked(d, errMsg)
+	} else {
+		d.Status = status
+		d.Error = errMsg
+		m.deployments[id] = d
+	}
 	if status == DeployFailed || status == DeployCancelled {
 		m.markDeploymentSnapshotsStaleLocked(id)
 	}
 	return nil
+}
+
+func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
+	d.Status = DeployFailed
+	d.Error = message
+	d.TrafficPercent = 0
+	d.RolloutState = "aborted"
+	d.RolloutCompletedAt = nil
+	if d.RolloutAbortedAt == nil {
+		now := time.Now().UTC()
+		d.RolloutAbortedAt = &now
+	}
+	if message == "" {
+		message = "deployment failed"
+	}
+	d.RolloutAbortedReason = message
+	m.deployments[d.ID] = d
+
+	var fallbackID string
+	var fallback Deployment
+	for id, candidate := range m.deployments {
+		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive {
+			continue
+		}
+		if fallbackID == "" || candidate.TrafficPercent > fallback.TrafficPercent ||
+			(candidate.TrafficPercent == fallback.TrafficPercent && candidate.CreatedAt.After(fallback.CreatedAt)) {
+			fallbackID, fallback = id, candidate
+		}
+		candidate.TrafficPercent = 0
+		m.deployments[id] = candidate
+	}
+	if fallbackID != "" {
+		fallback = m.deployments[fallbackID]
+		fallback.TrafficPercent = 100
+		m.deployments[fallbackID] = fallback
+	}
 }
 
 func (m *MemStore) markDeploymentSnapshotsStaleLocked(deploymentID string) {
@@ -7719,10 +7759,9 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
 	}
-	d.Status = DeployFailed
-	d.Error = message
 	d.ErrorCode = code
-	m.deployments[id] = d
+	m.failDeploymentLocked(d, message)
+	d = m.deployments[id]
 	m.markDeploymentSnapshotsStaleLocked(id)
 	return d, nil
 }
@@ -7766,14 +7805,13 @@ func (m *MemStore) SetDeploymentFailedEx(
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
 	}
-	d.Status = DeployFailed
-	d.Error = message
 	d.ErrorCode = code
 	d.ErrorHint = hint
 	d.ErrorWhy = why
 	d.ErrorFix = fix
 	d.ErrorRelevantLogs = logs
-	m.deployments[id] = d
+	m.failDeploymentLocked(d, message)
+	d = m.deployments[id]
 	m.markDeploymentSnapshotsStaleLocked(id)
 	return d, nil
 }
@@ -7903,8 +7941,8 @@ func (m *MemStore) FailSourceDeployment(_ context.Context, id, message string) e
 			return nil
 		}
 	}
-	d.Status, d.Error = DeployFailed, message
-	m.deployments[id] = d
+	m.failDeploymentLocked(d, message)
+	m.markDeploymentSnapshotsStaleLocked(id)
 	return nil
 }
 
@@ -10364,6 +10402,25 @@ func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Insta
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	return out, nil
+}
+
+func (m *MemStore) ListActiveInstancesForApp(_ context.Context, appID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Instance, 0, limit)
+	for _, ins := range m.instances {
+		if ins.AppID == appID && State(ins.State).CountsForRAM() {
+			out = append(out, ins)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 

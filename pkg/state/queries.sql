@@ -146,7 +146,15 @@ where app_id = $1 and status = 'superseded'
 order by created_at desc limit 1;
 
 -- name: UpdateDeploymentStatus :exec
-update deployments set status = $2, error = $3 where id = $1;
+update deployments
+set status = $2,
+    error = $3,
+    traffic_percent = case when $2 = 'failed' then 0 else traffic_percent end,
+    rollout_state = case when $2 = 'failed' then 'aborted' else rollout_state end,
+    rollout_completed_at = case when $2 = 'failed' then null else rollout_completed_at end,
+    rollout_aborted_at = case when $2 = 'failed' then coalesce(rollout_aborted_at, now()) else rollout_aborted_at end,
+    rollout_aborted_reason = case when $2 = 'failed' then coalesce(nullif($3, ''), 'deployment failed') else rollout_aborted_reason end
+where id = $1;
 
 -- name: SetDeploymentFailed :one
 -- ADR-021 (G1, image digest enforcement hardening): durable
@@ -163,7 +171,11 @@ update deployments set status = $2, error = $3 where id = $1;
 -- "no code mapped"; null in the column means "not yet stamped" —
 -- both render as "" on the Go side via the coalesce in the SELECT).
 update deployments
-   set status = 'failed', error = $2, error_code = $3
+   set status = 'failed', error = $2, error_code = $3,
+       traffic_percent = 0, rollout_state = 'aborted',
+       rollout_completed_at = null,
+       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
  where id = $1
 returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
           coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),

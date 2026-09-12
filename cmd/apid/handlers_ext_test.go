@@ -1830,6 +1830,48 @@ func TestListInstances_HappyPath(t *testing.T) {
 	if len(out) != 1 || out[0].State != string(state.StateRunning) {
 		t.Errorf("got %+v, want 1 instance running", out)
 	}
+	if !out[0].Resident {
+		t.Errorf("running instance should be marked resident: %+v", out[0])
+	}
+}
+
+func TestListInstancesDefaultsToBoundedResidentState(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "inst-current")
+	ctx := context.Background()
+	for i := 0; i < 12; i++ {
+		ins, err := e.store.CreateInstance(ctx, dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := e.store.UpdateInstanceState(ctx, ins.ID, string(state.StateParked)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, err := e.store.CreateInstance(ctx, dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/inst-current/instances", nil, nil)
+	var out []api.InstanceResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].ID != current.ID || !out[0].Resident {
+		t.Fatalf("default ps rows = %+v, want only current resident instance", out)
+	}
+
+	rec = e.do(t, http.MethodGet, "/v1/apps/inst-current/instances?history=true", nil, nil)
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 13 {
+		t.Fatalf("explicit history rows = %d, want 13", len(out))
+	}
+	if out[0].ID != current.ID || !out[0].Resident || out[1].Resident {
+		t.Fatalf("history residency projection is incorrect: %+v", out[:2])
+	}
 }
 
 // TestCreateDomain_HappyPath binds a domain to an app.

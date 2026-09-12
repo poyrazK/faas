@@ -80,16 +80,19 @@ func validCLISlug(s string) bool {
 // are rendered as "sleeping" because that's how the dashboard badge
 // (§6) talks about them to humans — the wire value stays unchanged.
 func cmdPS(args []string) int {
-	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale ps <app>", "ps")
+	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	history := fs.Bool("all", false, "include up to 100 historical instance rows")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale ps [--all] <app>", "ps")
 		return 1
 	}
-	slug := args[0]
+	slug := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ins, err := client.ListInstances(context.Background(), slug)
+	ins, err := client.ListInstancesWithHistory(context.Background(), slug, *history)
 	if err != nil {
 		return printErr("Could not list instances", err)
 	}
