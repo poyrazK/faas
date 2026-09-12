@@ -102,8 +102,8 @@ func validProjectRepoFullName(repo string) bool {
 	for _, part := range parts {
 		for _, r := range part {
 			if r != '-' && r != '_' && r != '.' &&
-				!(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') &&
-				!(r >= '0' && r <= '9') {
+				(r < 'a' || r > 'z') && (r < 'A' || r > 'Z') &&
+				(r < '0' || r > '9') {
 				return false
 			}
 		}
