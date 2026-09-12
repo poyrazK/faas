@@ -1,4 +1,4 @@
-// ADR-156: object-storage month close and provider delivery rollout.
+// adr: 156 — object-storage month close and provider delivery rollout.
 package billing
 
 import (
