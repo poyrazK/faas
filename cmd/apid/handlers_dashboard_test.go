@@ -220,6 +220,33 @@ func TestDashboardHandler_AppsList(t *testing.T) {
 	}
 }
 
+func TestDashboardHandler_AppsListShowsDeployRate(t *testing.T) {
+	srv, cookie, store, _ := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for range 4 {
+		if _, err := store.ConsumeAccountDeployRate(t.Context(), acct.ID, 10, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps", nil)
+	r.AddCookie(cookie)
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"4 / 10 deploys this hour", `value="4" max="10"`, "6 remaining", "<time datetime="} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
 // TestDashboardHandler_UsageAndBillingAndAccount probe the three
 // remaining dashboard routes — usage, billing, account. Slice 4 only
 // requires these to render the layout (no data assertions beyond

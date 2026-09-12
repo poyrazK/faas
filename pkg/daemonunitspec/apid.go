@@ -34,6 +34,8 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //   - FAAS_STATUSPAGE_PATH points cmd/apid at the statuspage HTML under
 //     /etc/faas; without this the alert-driven "degraded" pill never
 //     renders.
+//   - FAAS_DPA_PATH points the public account/DPA endpoints at the reviewed
+//     artifact installed by the control-plane role.
 //   - ReadWritePaths includes /var/lib/faas (audit HMAC keys + API key
 //     store; PR-M.3 landed this), /var/log/faas, /var/spool/faas.
 //
@@ -48,27 +50,32 @@ func UnitApid() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "notify",
-		User:               "faas-apid",
-		Group:              "faas",
-		ExecStart:          `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
-		Restart:            "on-failure",
-		RestartSec:         "2s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		Type:       "notify",
+		User:       "faas-apid",
+		Group:      "faas",
+		ExecStart:  `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
+		Restart:    "on-failure",
+		RestartSec: "2s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
 
-		AmbientCapabilities: []string{"CAP_NET_BIND_SERVICE"},
+		// apid serves unix and high loopback ports; it never needs host
+		// capabilities. Emit an empty bounding set so package defaults cannot
+		// silently widen it.
+		CapabilityBoundingSet: []string{},
+		AmbientCapabilities:   []string{""},
 
 		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
+			{Key: "FAAS_BILLING_MODE", Value: "live"},
 			{Key: "FAAS_SESSION_KEY", Value: "%d/faas_session_key"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
 			{Key: "FAAS_HOST_HMAC_KEY_PATH", Value: "%d/faas_host_hmac_key"},
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 			{Key: "FAAS_APID_ADVISORY_SOCK", Value: "/run/faas/apid.sock"},
 			{Key: "FAAS_STATUSPAGE_PATH", Value: "/etc/faas/statuspage/index.html"},
+			{Key: "FAAS_DPA_PATH", Value: "/etc/faas/dpa.md"},
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
 			{Key: "FAAS_EXECUTION_API_ENABLED", Value: "0"},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
@@ -81,13 +88,23 @@ func UnitApid() daemonunit.Unit {
 			{Name: "faas_archive_creds", Path: "/etc/faas/secrets/storage-box/archive-creds.json", Optional: true},
 		},
 
-		NoNewPrivileges:       true,
-		ProtectSystem:         "strict",
-		ProtectHome:           true,
-		PrivateTmp:            daemonunit.BoolPtr(true),
-		ProtectKernelTunables: true,
-		ProtectKernelModules:  true,
-		ProtectControlGroups:  true,
+		NoNewPrivileges:         true,
+		ProtectSystem:           "strict",
+		ProtectHome:             true,
+		PrivateTmp:              daemonunit.BoolPtr(true),
+		PrivateDevices:          true,
+		ProtectKernelTunables:   true,
+		ProtectKernelModules:    true,
+		ProtectControlGroups:    true,
+		SystemCallArchitectures: "native",
+		LockPersonality:         true,
+		RestrictNamespaces:      true,
+		RestrictRealtime:        true,
+		RestrictSUIDSGID:        true,
+		RestrictAddressFamilies: []string{"AF_UNIX", "AF_INET", "AF_INET6"},
+		ProtectHostname:         true,
+		ProtectClock:            true,
+		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
 		ReadWritePaths: []string{"/var/lib/faas", "/var/log/faas", "/var/spool/faas"},

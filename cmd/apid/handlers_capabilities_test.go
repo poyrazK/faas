@@ -11,7 +11,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func capabilityByKey(t *testing.T, response api.CapabilitiesResponse, key string) api.CapabilityStatus {
+	t.Helper()
+	for _, capability := range response.Capabilities {
+		if capability.Key == key {
+			return capability
+		}
+	}
+	t.Fatalf("capability %q missing", key)
+	return api.CapabilityStatus{}
+}
+
 func TestGetCapabilitiesReturnsPlanResolvedRegistry(t *testing.T) {
+	t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", "1")
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
 	(&server{}).getCapabilities(recorder, request, state.Account{Plan: api.PlanPro})
@@ -35,6 +47,57 @@ func TestGetCapabilitiesReturnsPlanResolvedRegistry(t *testing.T) {
 	if len(response.Capabilities) == 0 {
 		t.Fatal("expected customer capabilities")
 	}
+	if got := capabilityByKey(t, response, "disposable-runs"); got.Enabled {
+		t.Fatalf("disposable runs advertised enabled without its runtime: %+v", got)
+	}
+	if got := capabilityByKey(t, response, "object-storage"); got.Enabled {
+		t.Fatalf("object storage advertised enabled without provider configuration: %+v", got)
+	}
+}
+
+func TestGetCapabilitiesRequiresEntitlementAndRuntimeAvailability(t *testing.T) {
+	s := (&server{}).WithExecutionAPIEnabled(true)
+	for _, test := range []struct {
+		name    string
+		plan    api.Plan
+		enabled bool
+	}{
+		{name: "paid and available", plan: api.PlanPro, enabled: true},
+		{name: "free remains unavailable", plan: api.PlanFree, enabled: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			s.getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: test.plan})
+			var response api.CapabilitiesResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if got := capabilityByKey(t, response, "disposable-runs").Enabled; got != test.enabled {
+				t.Fatalf("disposable-runs enabled = %v, want %v", got, test.enabled)
+			}
+		})
+	}
+}
+
+func TestGetCapabilitiesDisablesDarkLaunchedContractPreview(t *testing.T) {
+	t.Setenv("FAAS_API_CONTRACT_DIFF_ENABLED", "")
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	(&server{}).getCapabilities(recorder, request, state.Account{Plan: api.PlanScale})
+
+	var response api.CapabilitiesResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range response.Capabilities {
+		if capability.Key == "openapi-contract-preview" {
+			if capability.Enabled {
+				t.Fatal("openapi-contract-preview enabled while runtime flag is off")
+			}
+			return
+		}
+	}
+	t.Fatal("openapi-contract-preview capability missing")
 }
 
 func TestGetCapabilitiesDisablesDisposableRunsWhenRuntimeIsUnavailable(t *testing.T) {

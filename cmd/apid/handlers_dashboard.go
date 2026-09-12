@@ -499,7 +499,17 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 	// issue 100 PromQL calls per render. nil = no badge.
 	badges := s.fetchDashboardSLOBadges(ctx, log, items, acct)
 	attachSLOBadges(items, badges)
-	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: dashboardAccountView(view, len(apps)), Data: items}
+	accountView := dashboardAccountView(view, len(apps))
+	if snapshot, rateErr := s.readAccountDeployRate(ctx, acct, timeNow().UTC()); rateErr != nil {
+		log.Warn("dashboard renderAppsList: account deploy rate", "account_id", acct.ID, "err", rateErr)
+	} else {
+		accountView.DeployRateUsed = snapshot.Used
+		accountView.DeployRateLimit = snapshot.Limit
+		accountView.DeployRateRemaining = snapshot.Remaining
+		accountView.DeployRateResetsAt = snapshot.WindowResetsAt.UTC().Format(time.RFC3339)
+		accountView.DeployRateResetsLabel = snapshot.WindowResetsAt.UTC().Format("15:04 UTC")
+	}
+	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: accountView, Data: items}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
@@ -1140,6 +1150,9 @@ func (s *server) fetchDashboardPresets(ctx context.Context, log *slog.Logger, ac
 	}
 	out := make([]dashboard.AlertPresetItem, 0, len(rows))
 	for _, p := range rows {
+		if isOperatorOnlyAlertPreset(p.Name) {
+			continue
+		}
 		meetsPlan := api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(p.MinimumPlan))
 		enabled := p.EnabledInCatalog && meetsPlan
 		item := dashboard.AlertPresetItem{

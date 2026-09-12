@@ -23,6 +23,8 @@ class AccountLimits:
     reads."""
     max_concurrency: int
     deployed_apps: int
+    deploys_per_hour: int
+    """Account-wide deployment admissions per fixed one-hour window."""
     developer_apps: int
     """Maximum live `gregale dev` environments for this plan."""
     included_gb_hours: int
@@ -56,6 +58,8 @@ class AccountLimits:
         max_concurrency = self.max_concurrency
 
         deployed_apps = self.deployed_apps
+
+        deploys_per_hour = self.deploys_per_hour
 
         developer_apps = self.developer_apps
 
@@ -95,6 +99,7 @@ class AccountLimits:
                 "vcpu": vcpu,
                 "max_concurrency": max_concurrency,
                 "deployed_apps": deployed_apps,
+                "deploys_per_hour": deploys_per_hour,
                 "developer_apps": developer_apps,
                 "included_gb_hours": included_gb_hours,
                 "app_layer_max_mb": app_layer_max_mb,
@@ -125,6 +130,8 @@ class AccountLimits:
         max_concurrency = d.pop("max_concurrency")
 
         deployed_apps = d.pop("deployed_apps")
+
+        deploys_per_hour = d.pop("deploys_per_hour")
 
         developer_apps = d.pop("developer_apps")
 
@@ -163,6 +170,7 @@ class AccountLimits:
             vcpu=vcpu,
             max_concurrency=max_concurrency,
             deployed_apps=deployed_apps,
+            deploys_per_hour=deploys_per_hour,
             developer_apps=developer_apps,
             included_gb_hours=included_gb_hours,
             app_layer_max_mb=app_layer_max_mb,

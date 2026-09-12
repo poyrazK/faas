@@ -103,8 +103,9 @@ func run(args []string) (status int) {
 	}
 	// Resolve parent-command help before dispatch. These commands otherwise
 	// interpret --help as a subcommand or resource identifier and may perform
-	// authentication or a resource lookup. Nested help remains with the leaf
-	// dispatcher so it can render its more specific usage.
+	// authentication or a resource lookup. Leaf help stays with the leaf parser,
+	// which can render the exact syntax; mutating parsers must intercept help
+	// before validating resource identifiers (see cmdKeys).
 	if len(args) == 2 && hasHelpFlag(args[1:]) {
 		if command, ok := lookupCliCommand(args[0]); ok {
 			printLocalCommandHelp(osStdout, command)
@@ -306,6 +307,8 @@ func run(args []string) (status int) {
 		return cmdMirror(args[1:])
 	case "cache":
 		return cmdCache(args[1:])
+	case dispatchUploadCache:
+		return cmdUploadCache(args[1:])
 	case "domains":
 		return cmdDomains(args[1:])
 	case "tenant-surfaces":
@@ -523,11 +526,14 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 		return
 	}
 	usage := "gregale " + command.Name
+	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals {
+		usage += " <" + command.subcommandChoice() + ">"
+	}
 	for _, positional := range command.Positionals {
 		usage += " " + positional
 	}
-	if len(command.Subcommands) > 0 {
-		usage += " <command>"
+	if len(command.Subcommands) > 0 && command.SubcommandsAfterPositionals {
+		usage += " <" + command.subcommandChoice() + ">"
 	}
 	if len(command.Flags) > 0 {
 		usage += " [flags]"

@@ -37,6 +37,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -81,10 +82,30 @@ type bridgeStubStore struct {
 	createBuildErr error
 
 	updateStatusCalls []state.DeploymentStatus
+	account           state.Account
+	deployRate        state.AccountDeployRateSnapshot
+	deployRateErr     error
 }
 
 func (s *bridgeStubStore) AppByID(_ context.Context, _ string) (state.App, error) {
 	return s.app, s.appErr
+}
+
+func (s *bridgeStubStore) AccountByID(_ context.Context, id string) (state.Account, error) {
+	if s.account.ID != "" {
+		return s.account, nil
+	}
+	return state.Account{ID: id, Plan: api.PlanFree}, nil
+}
+
+func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, _ string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error) {
+	if s.deployRateErr != nil {
+		return state.AccountDeployRateSnapshot{}, s.deployRateErr
+	}
+	if s.deployRate.Limit != 0 || !s.deployRate.WindowResetsAt.IsZero() {
+		return s.deployRate, nil
+	}
+	return state.AccountDeployRateSnapshot{Limit: limit, Remaining: limit - 1, Used: 1, Allowed: true, WindowStart: now, WindowResetsAt: now.Add(time.Hour)}, nil
 }
 
 func (s *bridgeStubStore) LatestDeployment(_ context.Context, _ string) (state.Deployment, error) {

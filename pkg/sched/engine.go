@@ -3080,30 +3080,26 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// capture to scope rpc_to_running.
 	rpcEndedAt := time.Now().UTC()
 
-	// Re-read the row. If a watchdog (commit 3) or a Park or another
-	// Wake moved it out of initState during Phase 3, abort: this Wake
-	// is no longer the canonical owner. Free the reservation and
-	// destroy the VM we just booted.
-	fresh, fresErr := e.store.InstanceByID(ctx, bootInput.insID)
-	if fresErr != nil {
-		// Couldn't re-read — take the conservative path. Destroy and
-		// release; the transition will fail (no row), but the original
-		// row must already be gone too (otherwise re-read wouldn't
-		// fail).
+	// Publish the runtime identity and RUNNING state in one conditional write.
+	// The old success path paid for InstanceByID, SetInstanceRuntime, another
+	// InstanceByID inside transition, and UpdateInstanceState. Besides adding
+	// control-plane latency after a fast SSD restore, that load-then-write shape
+	// left a race between the watchdog check and the state update. The CAS makes
+	// a stolen state a failure without adding a read to the successful path.
+	fresh, publishErr := e.store.PublishInstanceRuntime(ctx, bootInput.insID, string(bootInput.initState), out.Netns, out.HostIP, int(out.LeaseUID))
+	if errors.Is(publishErr, state.ErrConflict) {
 		e.ledger.Release(bootInput.insID)
 		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
-		return WakeResult{}, fmt.Errorf("sched: wake: re-read instance %s: %w", bootInput.insID, fresErr)
-	}
-	if fresh.State != string(bootInput.initState) {
-		e.ledger.Release(bootInput.insID)
-		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
+		actual := "changed or deleted"
+		if current, err := e.store.InstanceByID(ctx, bootInput.insID); err == nil {
+			actual = current.State
+		}
 		e.log.Warn("wake: state stolen during boot, aborting",
 			"app", bootInput.appID, "instance", bootInput.insID, "wake_id", bootInput.wakeID,
-			"expected", bootInput.initState, "got", fresh.State)
-		return WakeResult{}, fmt.Errorf("sched: wake: state stolen by another transition: was %s, now %s", bootInput.initState, fresh.State)
+			"expected", bootInput.initState, "got", actual)
+		return WakeResult{}, fmt.Errorf("sched: wake: state stolen by another transition: was %s, now %s", bootInput.initState, actual)
 	}
-
-	if err := e.store.SetInstanceRuntime(ctx, bootInput.insID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
+	if publishErr != nil {
 		// Booted but unrecordable — destroy to avoid a resource leak,
 		// then fail. Best-effort with a hard ceiling: a hung
 		// Firecracker can't pin the Wake goroutine forever.
@@ -3136,7 +3132,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			e.ops.WakeFailure("", bootInput.appID, "record_runtime_failed").Inc()
 		}
 		e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
-		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", err)
+		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", publishErr)
 	}
 
 	// ADR-051 Phase 4 / PR-D: persist the workload class the
@@ -3181,13 +3177,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 	}
 
-	e.transition(ctx, bootInput.insID, bootInput.appID, state.StateRunning)
+	e.recordCommittedInstanceTransition(ctx, fresh, bootInput.initState, state.StateRunning, bootInput.appID, "state_transition", "")
 	// A completed wake proves that the deployment can boot again. Clear any
 	// expired snapshot-miss backoff so a later miss starts a fresh sequence;
-	// this is idempotent for deployments that never had a backoff row.
-	if err := e.ClearSnapshotBackoff(ctx, bootInput.depID); err != nil {
-		e.log.Warn("wake: clear snapshot backoff after successful boot", "deployment_id", bootInput.depID, "err", err)
-	}
+	// this is idempotent for deployments that never had a backoff row and does
+	// not need to delay the newly routable target.
+	e.clearSnapshotBackoffAfterWake(ctx, bootInput.depID)
 
 	// ADR-097 (P1B): observe the three schedd-side wake phases.
 	//   - admit_to_rpc = rpcStartedAt - bootInput.startedAt.
@@ -3202,8 +3197,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	//     RPC. Cross-process boundary; the only phase that crosses
 	//     a node-local socket.
 	//   - rpc_to_running = time.Since(rpcEndedAt).
-	//     Covers the bootInput re-read + SetInstanceRuntime +
-	//     audit emit + e.transition work.
+	//     Covers the atomic runtime/RUNNING publish plus notification and
+	//     audit emission.
 	//
 	// All three are observed on the success path only — the error
 	// branches above (engine.go:1795-1838) do not produce a
@@ -7693,24 +7688,13 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 	} else if err := updateInstanceStateCAS(ctx, e.store, instanceID, string(from), string(to)); err != nil {
 		return false, err
 	}
-	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
-	// Recovery recreates use this CAS-aware transition to park a
-	// service replica whose source node is gone. Keep the desired-count
-	// reconciler on the same notification path as the non-CAS transition
-	// helper so a no-snapshot recovery does not leave a service below its
-	// configured replica target until an unrelated event arrives.
+	e.recordCommittedInstanceTransition(ctx, ins, from, to, appID, kind, reason)
+	// Recovery recreates use this CAS-aware transition to park a service
+	// replica whose source node is gone. The ordinary transition helper does
+	// not reconcile intentional PARKED edges, so retain this recovery-only
+	// desired-count notification here.
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
-	}
-	subject := instanceID
-	data, _ := json.Marshal(map[string]any{
-		"from": string(from), "to": string(to), "reason": reason, "ts": time.Now().UTC().Format(time.RFC3339Nano),
-	})
-	if err := e.store.AppendEvent(ctx, "schedd", kind, &subject, data); err != nil {
-		e.log.Warn("transition: append event", "instance", instanceID, "from", from, "to", to, "kind", kind, "err", err)
-		if e.ops != nil {
-			e.ops.EventsWriteFailures().Inc()
-		}
 	}
 	return true, nil
 }
@@ -7753,15 +7737,16 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 		e.log.Warn("transition: write", "instance", instanceID, "to", to, "err", err)
 		return
 	}
-	// Surface the row's wake_id in the SSE payload. The audit-log
-	// caller loaded `ins` at the top of this function precisely to
-	// validate the from→to edge, so reusing it here avoids an extra
-	// round-trip — wake_id is on the row already. Review finding #3
-	// (gaps analysis 2026-07-23): previously the payload carried
-	// wake_id="" for every transition, which meant dashboards
-	// subscribed to instance_changed saw the column go empty as
-	// soon as the instance entered RUNNING.
-	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
+	e.recordCommittedInstanceTransition(ctx, ins, from, to, appID, kind, reason)
+}
+
+// recordCommittedInstanceTransition runs the notification, reconciliation,
+// and audit side effects after the caller has committed a legal state edge.
+// Keeping these effects separate from the state write lets Wake publish its
+// runtime identity and RUNNING state with one store CAS while preserving the
+// same observable transition contract as transitionWithKind.
+func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins state.Instance, from, to state.State, appID, kind, reason string) {
+	e.emitInstanceChanged(ctx, ins.ID, appID, to, ins.WakeID)
 	if (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
 		ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
@@ -7772,12 +7757,12 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 	// Audit-log emission (spec §6.1). Best-effort: a failure logs
 	// and counts, never rolls back the transition. The state row is
 	// the source of truth; this is observation.
-	subject := instanceID
+	subject := ins.ID
 	data, _ := json.Marshal(map[string]any{
 		"from": string(from), "to": string(to), "reason": reason, "ts": time.Now().UTC().Format(time.RFC3339Nano),
 	})
 	if err := e.store.AppendEvent(ctx, "schedd", kind, &subject, data); err != nil {
-		e.log.Warn("transition: append event", "instance", instanceID, "from", from, "to", to, "kind", kind, "err", err)
+		e.log.Warn("transition: append event", "instance", ins.ID, "from", from, "to", to, "kind", kind, "err", err)
 		if e.ops != nil {
 			e.ops.EventsWriteFailures().Inc()
 		}

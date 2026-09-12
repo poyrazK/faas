@@ -49,6 +49,7 @@ class AccountSLOResponse:
     gb_hours: float
     """Sum of mb_seconds / 3600 / 1024 across all apps for the account."""
     wake_queue_p95_ms: float
+    """Reserved compatibility field. Zero until the wake-queue histogram can be scoped to the account's apps."""
     requests_total: int
     throttled_total: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

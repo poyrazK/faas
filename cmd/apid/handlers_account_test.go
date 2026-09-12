@@ -145,6 +145,47 @@ func TestExportAccount_FullBundle(t *testing.T) {
 	}
 }
 
+func TestExportAccount_IncludesModernOrgResources(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	org := seedSharedOrgWithOwner(t, e, "export-org", "Export Org", api.PlanScale)
+	ownerID := e.acct.ID
+	if _, err := e.store.CreateOrgInvitation(context.Background(), state.OrgInvitation{
+		OrgID: org.ID, Email: "invitee@example.com", Role: state.OrgRoleDeveloper,
+		TokenHash: []byte("export-invitation-token-hash"), ExpiresAt: time.Now().Add(time.Hour),
+		InvitedByAccountID: &ownerID,
+	}); err != nil {
+		t.Fatalf("create invitation: %v", err)
+	}
+	if _, err := e.store.CreateOrgAPIKey(context.Background(), org.ID, e.acct.ID,
+		[]byte("export-org-key-hash"), "export key", []string{"apps:read"}, nil); err != nil {
+		t.Fatalf("create org key: %v", err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/account/export?include_secrets=false", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body.String())
+	}
+	var bundle api.AccountExportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.SchemaVersion != 2 {
+		t.Errorf("schema_version = %d, want 2", bundle.SchemaVersion)
+	}
+	if len(bundle.Organizations) != 1 || bundle.Organizations[0].ID != org.ID {
+		t.Errorf("organizations = %+v", bundle.Organizations)
+	}
+	if len(bundle.OrgMemberships) != 1 || bundle.OrgMemberships[0].OrgID != org.ID {
+		t.Errorf("org_memberships = %+v", bundle.OrgMemberships)
+	}
+	if len(bundle.OrgInvitations) != 1 || bundle.OrgInvitations[0].Email != "invitee@example.com" {
+		t.Errorf("org_invitations = %+v", bundle.OrgInvitations)
+	}
+	if len(bundle.OrgAPIKeys) != 1 || bundle.OrgAPIKeys[0].OrgID != org.ID || bundle.OrgAPIKeys[0].Plaintext != "" {
+		t.Errorf("org_api_keys = %+v", bundle.OrgAPIKeys)
+	}
+}
+
 // TestExportAccount_RedactionInvariant verifies that plaintext never
 // appears in the bundle — the ciphertext row contains a base64 blob
 // that does NOT decode to the original VALUE. (The plaintext itself
@@ -1472,7 +1513,7 @@ func TestExportAccount_EmitsExportRequestedAudit(t *testing.T) {
 	}
 }
 
-// TestExportBundleV1WireShape (issue #755 / PR-5.6) pins the
+// TestExportBundleV2WireShape pins the versioned
 // top-level section list of the export bundle against the
 // cmd/apid/testdata/export-v1.json fixture. The fixture carries
 // the section names + types (object for account, array for the
@@ -1505,7 +1546,7 @@ func TestExportAccount_EmitsExportRequestedAudit(t *testing.T) {
 //   - section reordering — JSON object key order is not
 //     semantically meaningful and the Go json package does not
 //     preserve it on the wire
-func TestExportBundleV1WireShape(t *testing.T) {
+func TestExportBundleV2WireShape(t *testing.T) {
 	withAccountTestRecipient(t)
 	e := setup(t, api.PlanHobby)
 	seedOneApp(t, e, "wire-shape-app")
@@ -1531,7 +1572,7 @@ func TestExportBundleV1WireShape(t *testing.T) {
 
 	// Load the fixture relative to the test source so the test
 	// doesn't depend on cwd (issue #83 review #7).
-	fixturePath := filepath.Join("testdata", "export-v1.json")
+	fixturePath := filepath.Join("testdata", "export-v2.json")
 	raw, err := os.ReadFile(fixturePath)
 	if err != nil {
 		t.Fatalf("read fixture %s: %v", fixturePath, err)
@@ -1573,6 +1614,10 @@ func TestExportBundleV1WireShape(t *testing.T) {
 	for section, wantType := range fixtureSections {
 		val := live[section]
 		switch wantType {
+		case "integer":
+			if _, ok := val.(float64); !ok {
+				t.Errorf("live %s = %T, want integer", section, val)
+			}
 		case "string":
 			if _, ok := val.(string); !ok {
 				t.Errorf("live %s = %T, want string", section, val)

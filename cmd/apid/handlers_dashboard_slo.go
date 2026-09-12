@@ -163,7 +163,16 @@ func (s *server) fetchDashboardAccountSLO(ctx context.Context, log *slog.Logger,
 	defer cancel()
 
 	scalar, src := s.fetchAccountSLO(dctx, acct, window)
-	rangeSeries := appmetrics.FetchRangeAccount(dctx, s.promqlClient, log, window)
+	var appIDs []string
+	if s.store != nil {
+		if apps, err := s.store.ListApps(dctx, acct.ID); err == nil {
+			appIDs = make([]string, 0, len(apps))
+			for _, app := range apps {
+				appIDs = append(appIDs, app.ID)
+			}
+		}
+	}
+	rangeSeries := appmetrics.FetchRangeAccount(dctx, s.promqlClient, log, appIDs, window)
 
 	view := &views.AccountSLOView{
 		Window:          window,

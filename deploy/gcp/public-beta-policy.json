@@ -1,0 +1,58 @@
+{
+  "project_id": "project-5ae37259-04cf-4070-bef",
+  "operator_account": "hpk.working@gmail.com",
+  "control_plane": {
+    "instance": "faas-control-plane",
+    "require_deletion_protection": true,
+    "retain_boot_disk": true,
+    "require_snapshot_schedule": true,
+    "snapshot_schedule": "gregale-control-daily",
+    "service_account": "gregale-control@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com"
+  },
+  "compute": {
+    "instance_prefix": "faas-compute-node-",
+    "minimum_running": 1,
+    "maximum_stopped_hours_with_disks": 24,
+    "require_deletion_protection": true,
+    "require_ssd_for_running_nodes": true,
+    "service_account": "gregale-compute@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com"
+  },
+  "access": {
+    "forbidden_public_tcp_ports": [22, 3389, 8080],
+    "required_metadata": {
+      "enable-oslogin": "TRUE",
+      "block-project-ssh-keys": "TRUE"
+    }
+  },
+  "logging": {
+    "required_project_roles": ["roles/logging.logWriter"],
+    "require_notification_destination": true,
+    "required_alerts": [
+      "Gregale Ops Agent export failures",
+      "Gregale backup object deletion",
+      "Gregale backup bulk reads",
+      "Gregale infrastructure IAM changes"
+    ]
+  },
+  "backup": {
+    "bucket": "gregale-pg-backups-5ae37259",
+    "writer_service_account": "gregale-backup@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com",
+    "writer_role": "projects/project-5ae37259-04cf-4070-bef/roles/gregaleBackupWriter",
+    "forbidden_service_accounts": [
+      "811654175645-compute@developer.gserviceaccount.com",
+      "gregale-compute@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com"
+    ]
+  },
+  "audit_logs": {
+    "minimum_retention_days": 30,
+    "services": {
+      "storage.googleapis.com": ["DATA_READ", "DATA_WRITE"],
+      "iam.googleapis.com": ["DATA_READ", "DATA_WRITE"]
+    }
+  },
+  "billing": {
+    "budget_display_name": "Gregale public beta",
+    "minimum_thresholds": [0.5, 0.8, 1.0],
+    "require_notification_destination": true
+  }
+}

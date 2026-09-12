@@ -305,7 +305,6 @@ func writegatePath(p string) bool {
 		"/logout",
 		"/auth",
 		"/status",
-		"/healthz",
 		"/cli-auth",
 	}
 	for _, root := range anchoredRoots {

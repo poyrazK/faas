@@ -1,0 +1,33 @@
+{
+  "displayName": "Gregale infrastructure IAM changes",
+  "documentation": {
+    "content": "The production project or backup-bucket IAM policy changed. Review the Admin Activity entry, including audit-log configuration changes, against the active change record.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "enabled": true,
+  "conditions": [
+    {
+      "displayName": "Production project IAM policy changed",
+      "conditionThreshold": {
+        "filter": "resource.type=\"project\" AND metric.type=\"logging.googleapis.com/user/gregale_infrastructure_iam_change\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM"}],
+        "trigger": {"count": 1}
+      }
+    },
+    {
+      "displayName": "Production backup-bucket IAM policy changed",
+      "conditionThreshold": {
+        "filter": "resource.type=\"gcs_bucket\" AND metric.type=\"logging.googleapis.com/user/gregale_infrastructure_iam_change\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM"}],
+        "trigger": {"count": 1}
+      }
+    }
+  ]
+}

@@ -660,6 +660,14 @@ public-endpoint-check: ## Validate the public HTTPS/Caddy endpoint (PUBLIC_ENDPO
 systemd-hardening-check: ## Static release gate for production systemd isolation directives
 	bash scripts/ci/check_systemd_hardening.sh $(CURDIR)
 
+.PHONY: gcp-public-beta-policy-test
+gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer
+	python3 scripts/ops/gcp_public_beta_audit_test.py
+	python3 scripts/ops/gcp_public_beta_iam_test.py
+	bash -n scripts/ops/gcp_public_beta_converge.sh
+	bash -n scripts/ops/gcp_provision_compute.sh
+	bash -n scripts/ops/gcp_retire_compute.sh
+
 .PHONY: otlp-unit-check
 otlp-unit-check: ## Verify every instrumented daemon loads the operator-owned OTLP environment
 	bash scripts/ci/check_otlp_units.sh $(CURDIR)
@@ -1073,6 +1081,11 @@ pricing-check: ## Verify generated customer pricing is in sync
 .PHONY: docs-links-check
 docs-links-check: ## Verify every Gregale docs URL maps to a customer page source
 	@$(GO) run ./cmd/docs-links-check
+	@python3 scripts/ops/check_live_docs_test.py
+
+.PHONY: docs-live-check
+docs-live-check: ## Verify deployed docs headings and require real 404s (DOCS_BASE_URL optional)
+	@python3 scripts/ops/check_live_docs.py $(if $(DOCS_BASE_URL),--base-url "$(DOCS_BASE_URL)")
 
 .PHONY: api-hosting-contract-check
 api-hosting-contract-check: ## Run the metal-free API framework fixture contract

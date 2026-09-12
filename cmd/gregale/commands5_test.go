@@ -281,11 +281,13 @@ func TestCmdPS_EmptyListShowsParkedMessage(t *testing.T) {
 
 // --- status ----------------------------------------------------------------
 
+func statusFloat(value float64) *float64 { return &value }
+
 func TestCmdStatus_RendersFiveFields(t *testing.T) {
 	when := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	sink := &statusSink{resp: api.StatusPage{
 		APIAvailabilityPct: 99.97,
-		WakeP95MS:          312,
+		WakeP95MS:          statusFloat(312),
 		BuildSuccessPct:    98.4,
 		AsOf:               when,
 		Source:             "prometheus",
@@ -310,7 +312,7 @@ func TestCmdStatus_RendersFiveFields(t *testing.T) {
 func TestCmdStatus_DegradedSource(t *testing.T) {
 	sink := &statusSink{resp: api.StatusPage{
 		APIAvailabilityPct: 0,
-		WakeP95MS:          0,
+		WakeP95MS:          nil,
 		BuildSuccessPct:    0,
 		AsOf:               time.Now().UTC(),
 		Source:             "degraded: prometheus timeout",
@@ -339,7 +341,7 @@ func TestCmdStatus_JSONEmitsRawSnapshot(t *testing.T) {
 	when := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	sink := &statusSink{resp: api.StatusPage{
 		APIAvailabilityPct: 99.97,
-		WakeP95MS:          312,
+		WakeP95MS:          statusFloat(312),
 		BuildSuccessPct:    98.4,
 		AsOf:               when,
 		Source:             "prometheus",
@@ -357,7 +359,7 @@ func TestCmdStatus_JSONEmitsRawSnapshot(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("--json output not parseable: %v\n%s", err, stdout.String())
 	}
-	if got.APIAvailabilityPct != 99.97 || got.WakeP95MS != 312 || got.BuildSuccessPct != 98.4 {
+	if got.APIAvailabilityPct != 99.97 || got.WakeP95MS == nil || *got.WakeP95MS != 312 || got.BuildSuccessPct != 98.4 {
 		t.Errorf("JSON round-trip lost fields: %+v", got)
 	}
 	if !got.AsOf.Equal(when) {

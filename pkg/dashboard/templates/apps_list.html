@@ -50,6 +50,9 @@
     .quota-cell.ok { color: #065f46; }
     .quota-cell.warn { color: #92400e; }
     .quota-cell.empty { color: #6b7280; }
+    .deploy-rate { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin: 0 0 1rem; padding: 0.65rem 0.8rem; border: 1px solid #ddd; border-radius: 6px; }
+    .deploy-rate progress { width: 12rem; }
+    .deploy-rate small { color: #6b7280; }
   </style>
 </head>
 <body hx-ext="sse" sse-connect="/v1/events">
@@ -68,6 +71,13 @@
   <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done" hx-get="/dashboard/apps" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
     {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
+    {{with .Account}}{{if gt .DeployRateLimit 0}}
+      <section class="deploy-rate" aria-label="Hourly deploy limit">
+        <span class="badge dim">{{.DeployRateUsed}} / {{.DeployRateLimit}} deploys this hour</span>
+        <progress value="{{.DeployRateUsed}}" max="{{.DeployRateLimit}}" aria-label="{{.DeployRateRemaining}} deploys remaining"></progress>
+        <small>{{.DeployRateRemaining}} remaining · resets <time datetime="{{.DeployRateResetsAt}}">{{.DeployRateResetsLabel}}</time></small>
+      </section>
+    {{end}}{{end}}
     {{if .Data}}
       {{$items := .Data}}
       {{if $items}}

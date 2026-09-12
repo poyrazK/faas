@@ -25,6 +25,12 @@
 # imaged's tripwires (sign.key, sign-pub.pem, imaged's ReadWritePaths=,
 # /srv/fc/snap, /srv/fc/sigs) are now in compute_only_service.
 
+- name: control_plane_service — validate billing mode
+  ansible.builtin.assert:
+    that:
+      - faas_billing_mode in ['disabled', 'live']
+    fail_msg: "faas_billing_mode must be disabled or live"
+
 - name: control_plane_service — ensure per-daemon users exist (non-root, no shell)
   ansible.builtin.user:
     name: "{{ item }}"
@@ -158,6 +164,20 @@
     mode: "0755"
   loop:
     - faas-schedd
+    - faas-apid
+    - faas-meterd
+
+- name: control_plane_service — set public-beta billing mode
+  notify:
+    - restart faas-apid
+    - restart faas-meterd
+  ansible.builtin.template:
+    src: zz-faas-billing-mode.conf.j2
+    dest: "/etc/systemd/system/{{ item }}.service.d/zz-faas-billing-mode.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
     - faas-apid
     - faas-meterd
 
@@ -362,6 +382,15 @@
     owner: root
     group: faas
     mode: "0644"
+
+- name: control_plane_service — install public DPA artifact
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../../docs/DPA.md"
+    dest: /etc/faas/dpa.md
+    owner: root
+    group: faas
+    mode: "0644"
+  notify: restart faas-apid
 
 - name: control_plane_service — note for operators (NOT auto-enabled)
   ansible.builtin.debug:
@@ -681,10 +710,13 @@
     executable: /bin/bash
   changed_when: false
   register: faas_polar_soft_assert
+  when: faas_billing_mode == 'live'
 - name: control_plane_service — debug Polar soft assert
   ansible.builtin.debug:
     msg: "{{ faas_polar_soft_assert.stdout }}"
-  when: faas_polar_soft_assert.stdout != ""
+  when:
+    - faas_billing_mode == 'live'
+    - (faas_polar_soft_assert.stdout | default('')) != ''
 
 # Issue #246 / ADR-115 / spec G4 closure — mail transport must
 # be selected (or dev-mode explicit) before the daemon boots in

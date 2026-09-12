@@ -40,6 +40,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/authcode"
+	"github.com/onebox-faas/faas/pkg/billing"
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
@@ -491,9 +492,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	// DEPLOY-1 / ADR-075 capdecl gate. apid's capsDecl is
-	// cap_net_bind_service (HTTPS listener). A misconfigured
-	// AmbientCapabilities line fails fast at boot. The
+	// DEPLOY-1 / ADR-075 capdecl gate. apid serves only a Unix socket and
+	// high loopback ports behind Caddy, so its allowlist is empty. A future code
+	// path that requires an undeployed capability fails fast at boot. The
 	// capCheck seam lets tests stub the live /proc/self/status
 	// check (review finding M2 — every daemon now has this).
 	capCheck := deps.capCheck
@@ -535,7 +536,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	pool, err := db.Open(ctx, cfg.DBURL)
+	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
 	if err != nil {
 		return fmt.Errorf("apid: open db: %w", err)
 	}
@@ -1295,6 +1296,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv)).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv))
+	billingMode, err := billing.ModeFromEnv(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid: billing mode: %w", err)
+	}
+	srv.WithBillingMode(billingMode)
 	objectRegistry, err := objectstorage.Load(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
@@ -1374,17 +1380,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: load billing config: %w", err)
 	}
 	billingCfg = billingloader.ApplyBillingEnvOverlay(billingCfg, deps.getenv)
-	billingProv, provName, err := billingloader.LoadProviderForAPID(ctx, billingCfg, deps.getenv, log)
-	if err != nil {
-		return fmt.Errorf("apid: load billing provider: %w", err)
+	provName := billingCfg.DefaultProvider()
+	if billingMode.Enabled() {
+		billingProv, loadedName, err := billingloader.LoadProviderForAPID(ctx, billingCfg, deps.getenv, log)
+		if err != nil {
+			return fmt.Errorf("apid: load billing provider: %w", err)
+		}
+		provName = loadedName
+		if err := validateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
+			return err
+		}
+		if billingProv != nil {
+			srv.WithBillingProvider(billingProv)
+		}
+		log.Info("billing provider loaded", "provider", provName)
+	} else {
+		log.Info("billing disabled; provider initialization skipped", "provider", provName)
 	}
-	if err := validateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
-		return err
-	}
-	if billingProv != nil {
-		srv.WithBillingProvider(billingProv)
-	}
-	log.Info("billing provider loaded", "provider", provName)
+	srv.WithBillingProviderName(provName)
 
 	// Issue #299 / ADR-038 Phase 3: imagd stores CycloneDX JSON under
 	// sboms/<buildID>.cdx.json and records that storage key in provenance.

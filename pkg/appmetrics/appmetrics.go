@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -138,7 +139,13 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	}
 
 	// 1. Request count.
-	countQ := fmt.Sprintf(`sum(increase(gateway_requests_total{app=%q}[%s]))`, appID, rng)
+	// Use the request-duration histogram's closed status-class series for
+	// counts as well as latency. gateway_requests_total has a full HTTP-code
+	// label, so the first occurrence of a new code (notably 504) can happen
+	// before Prometheus has scraped the new series and disappear from increase().
+	// The histogram classes are pre-instantiated when the app is resolved and
+	// cover the same Handler.observe population as durable request telemetry.
+	countQ := fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng)
 	if v, err := fetcher.QueryScalar(ctx, countQ); err == nil {
 		resp.RequestCount = int64(SafeRoundNonNeg(v))
 	} else {
@@ -171,8 +178,8 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 
 	// 5. Error rate %.
 	errQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q,code=~"[45].."}[%s]))`, appID, rng),
-		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, appID, rng))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"[45]xx"}[%s]))`, appID, rng),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng))
 	if v, err := fetcher.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = SafePercent(v)
 	} else {
@@ -182,7 +189,7 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	// 6. Cold start %.
 	coldQ := PercentRatioQuery(
 		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
-		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, appID, rng))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng))
 	if v, err := fetcher.QueryScalar(ctx, coldQ); err == nil {
 		resp.ColdStartPct = SafePercent(v)
 	} else {
@@ -267,6 +274,16 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		resp.TxBytes = int64(SafeRoundNonNeg(v))
 	} else {
 		log.Warn("appmetrics: tx_bytes query failed", "app_id", appID, "err", err)
+	}
+
+	// Expose the newest underlying scrape time, rather than the HTTP response
+	// time, so callers can distinguish a complete-looking stale window from a
+	// fresh one. Test doubles retain the handler's request-time fallback.
+	if client, ok := fetcher.(*promql.Client); ok && client != nil {
+		freshnessQ := fmt.Sprintf(`max(timestamp(gateway_request_duration_seconds_count{app=%q}))`, appID)
+		if seconds, err := client.QueryScalar(ctx, freshnessQ); err == nil && seconds > 0 {
+			resp.AsOf = time.Unix(0, int64(seconds*float64(time.Second))).UTC().Format(time.RFC3339Nano)
+		}
 	}
 
 	return resp, SourcePrometheus

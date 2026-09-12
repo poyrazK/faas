@@ -44,8 +44,10 @@ existing `/metrics` endpoints:
 - `GET /v1/account/slo?window=24h` — account-wide flat rollup.
 
 Rationale: the field shapes overlap (latency percentiles, error rate,
-cold-boot rate) but the new endpoints add `wake_queue_p95_ms`,
-`throttled_total`, `instance_hours`, `gb_hours`. Co-locating them on
+cold-boot rate) but the new endpoints add `throttled_total`,
+`instance_hours`, `gb_hours`. `wake_queue_p95_ms` is retained as a
+zero-valued compatibility field until its source histogram gains an app
+label; fleet data is never presented as an account or app value. Co-locating them on
 `/metrics` would force `?range=` and `?window=` to live in the same
 query-param namespace, and the existing 7-range closed vocabulary
 (`5m|15m|1h|6h|24h|7d|15d`) is a SUPERSET of the SLO 3-window closed

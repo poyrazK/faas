@@ -8,8 +8,8 @@
 //
 //   - TestE2E_LoadOrg_PersonalOrg      signup creates a personal org,
 //     GET /v1/orgs/me returns it with role=owner.
-//   - TestE2E_LoadOrg_HeaderMiss       no X-Active-Org / ?org= →
-//     {"org": null} (passthrough — pre-PR-5 routes stay account-scoped).
+//   - TestE2E_LoadOrg_HeaderMissDefaultsToPersonalOrg
+//     no X-Active-Org / ?org= → the caller's personal org.
 //   - TestE2E_LoadOrg_UnknownSlug      unknown slug → 404 org_not_found.
 //   - TestE2E_LoadOrg_NonMember        account B's personal slug from
 //     account A's session → 403 org_role_forbidden (IDOR-safe).
@@ -115,12 +115,11 @@ func TestE2E_LoadOrg_PersonalOrg(t *testing.T) {
 	}
 }
 
-// TestE2E_LoadOrg_HeaderMiss — no X-Active-Org / ?org= hint means
-// the middleware passes through and stamps no Principal.Membership.
-// The handler renders {"org": null} (200) so the rest of the platform
-// stays account-scoped. This is the load-bearing seam that lets
-// every pre-PR-5 route remain unaffected.
-func TestE2E_LoadOrg_HeaderMiss(t *testing.T) {
+// TestE2E_LoadOrg_HeaderMissDefaultsToPersonalOrg — no explicit hint keeps
+// middleware account-scoped, then /v1/orgs/me resolves the caller's canonical
+// personal organization. This makes the endpoint useful to normal CLI clients
+// without requiring them to synthesize an X-Active-Org header.
+func TestE2E_LoadOrg_HeaderMissDefaultsToPersonalOrg(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
@@ -133,14 +132,17 @@ func TestE2E_LoadOrg_HeaderMiss(t *testing.T) {
 
 	raw, status := doReq(t, h, key, http.MethodGet, "/v1/orgs/me", nil)
 	if status != http.StatusOK {
-		t.Fatalf("passthrough status: %d %s", status, raw)
+		t.Fatalf("default-personal-org status: %d %s", status, raw)
 	}
 	var body orgMeWire
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode: %v (body=%s)", err, raw)
 	}
-	if body.Org != nil {
-		t.Errorf("org = %+v, want null (passthrough)", body.Org)
+	if body.Org == nil {
+		t.Fatal("org = null, want caller's personal org")
+	}
+	if !body.Org.Personal || body.Org.Role != string(state.OrgRoleOwner) {
+		t.Errorf("org = %+v, want personal org with owner role", body.Org)
 	}
 }
 

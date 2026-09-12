@@ -23,6 +23,52 @@ units=(
 required=(NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes ProtectKernelModules=yes)
 errors=0
 
+socket_units=(
+  "${root}/deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.socket"
+  "${root}/deploy/systemd/faas-gatewayd-public.socket"
+)
+for socket_unit in "${socket_units[@]}"; do
+  if [[ ! -f "$socket_unit" ]]; then
+    echo "systemd-hardening-check: missing ${socket_unit}" >&2
+    errors=$((errors + 1))
+    continue
+  fi
+  for directive in 'ListenStream=127.0.0.1:8080' 'FileDescriptorName=public' 'Backlog=4096'; do
+    if ! grep -Fqx "$directive" "$socket_unit"; then
+      echo "systemd-hardening-check: ${socket_unit}: missing ${directive}" >&2
+      errors=$((errors + 1))
+    fi
+  done
+done
+
+caddy_dropin="${unit_root}/host_hardening/templates/90-gregale-caddy-hardening.conf.j2"
+if [[ ! -f "$caddy_dropin" ]]; then
+  echo "systemd-hardening-check: missing ${caddy_dropin}" >&2
+  errors=$((errors + 1))
+else
+  caddy_required=(
+    CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+    AmbientCapabilities=CAP_NET_BIND_SERVICE
+    NoNewPrivileges=yes
+    ProtectSystem=strict
+    ProtectHome=yes
+    PrivateDevices=yes
+    ProtectKernelLogs=yes
+    RestrictNamespaces=yes
+    RestrictAddressFamilies=AF_UNIX\ AF_INET\ AF_INET6
+  )
+  for directive in "${caddy_required[@]}"; do
+    if ! grep -Fqx "$directive" "$caddy_dropin"; then
+      echo "systemd-hardening-check: Caddy drop-in: missing ${directive}" >&2
+      errors=$((errors + 1))
+    fi
+  done
+  if grep -Eq '(^|[[:space:]])CAP_NET_ADMIN($|[[:space:]])' "$caddy_dropin"; then
+    echo "systemd-hardening-check: Caddy drop-in must not grant CAP_NET_ADMIN" >&2
+    errors=$((errors + 1))
+  fi
+fi
+
 for rel in "${units[@]}"; do
   file="${unit_root}/${rel}"
   if [[ ! -f "$file" ]]; then

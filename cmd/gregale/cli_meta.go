@@ -122,7 +122,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Advanced"
 	}
 	switch command.Name {
-	case "account", "billing", "capabilities", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "usage", "version", "completion", "man", "whoami":
+	case "account", "billing", "capabilities", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "upload-cache", "usage", "version", "completion", "man", "whoami":
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
@@ -144,6 +144,14 @@ func cliHelpGroup(command cliCommand) string {
 // rather than a hardcoded name list.
 func (c cliCommand) hasSlugFirst() bool {
 	return len(c.Positionals) > 0 && c.Positionals[0] == "<slug>"
+}
+
+func (c cliCommand) subcommandChoice() string {
+	names := make([]string, 0, len(c.Subcommands))
+	for _, sub := range c.Subcommands {
+		names = append(names, sub.Name)
+	}
+	return strings.Join(names, "|")
 }
 
 // completionSubcommandWord and completionSlugWord describe the argument
@@ -301,7 +309,7 @@ var cliCommands = []cliCommand{
 			{Name: "list", Short: "List audit events"},
 			{Name: "get", Short: "Show one audit event"},
 		},
-		Positionals: []string{"<id>"},
+		Positionals: []string{"[<id>]"},
 	},
 	{
 		Name:    dispatchApps,
@@ -315,7 +323,7 @@ var cliCommands = []cliCommand{
 			{Name: "-q", Short: "Delete one app (positional: <slug>)"},
 			{Name: "--quiet", Short: "Delete one app (positional: <slug>)"},
 		},
-		Flags: []cliFlag{{Name: "q", Short: "delete one app"}, {Name: "quiet", Short: "delete one app"}},
+		Flags: []cliFlag{{Name: "quiet", Short: "delete one app without prompting (short form: -q)"}},
 	},
 	{
 		Name:                        appSlugFallback,
@@ -354,10 +362,6 @@ var cliCommands = []cliCommand{
 			{Name: "cancel", Short: "Cancel the subscription at period end"},
 			{Name: "payment-method", Short: "Show the card on file"},
 			{Name: "status", Short: "Show subscription status"},
-			{Name: "price-catalog", Short: "Inspect the price catalog (admin)"},
-			{Name: "reconcile", Short: "Reconcile an invoice with the provider (admin)"},
-			{Name: "reconcile-paddle-overage", Short: "Reconcile Paddle overage charges (admin)"},
-			{Name: "webhook-test", Short: "Send a signed test webhook (operator)"},
 		},
 	},
 	{
@@ -914,7 +918,7 @@ var cliCommands = []cliCommand{
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
 			{Name: "bundle", Short: "Export a redacted incident investigation bundle (bundle <slug> <req_id> [--output PATH])"},
 		},
-		Positionals: []string{"<slug>"},
+		Positionals: []string{"[flags]", "<slug>", "[<request-id>]"},
 	},
 	{
 		Name:    "invitations",
@@ -964,10 +968,18 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "logs",
-		DocSlug: "logs",
-		Short:   "Tail app or deployment logs (--follow)",
-		Flags:   []cliFlag{{Name: "follow", Short: "stream logs until interrupted"}},
+		Name:        "logs",
+		DocSlug:     "logs",
+		Short:       "Read app or deployment logs (logs <slug>; logs tail <slug> is the follow alias)",
+		Positionals: []string{"<slug>"},
+		Flags: []cliFlag{
+			{Name: "follow", Short: "stream logs until interrupted"},
+			{Name: "deployment", Short: "deployment id (default: latest)", Value: "ID"},
+			{Name: "grep", Short: "only show lines containing this substring", Value: "SUBSTR"},
+			{Name: "since", Short: "only show lines at or after this RFC3339 timestamp", Value: "RFC3339"},
+			{Name: "level", Short: "only show lines at this level", Value: "LEVEL", ClosedSet: []string{"info", "warn", "error"}},
+			{Name: "explain", Short: "summarize the last failure and common error patterns"},
+		},
 	},
 	{
 		Name:    "metrics",
@@ -1359,6 +1371,19 @@ var cliCommands = []cliCommand{
 			}},
 		},
 		Positionals: []string{"<slug>"},
+	},
+	{
+		Name:    dispatchUploadCache,
+		DocSlug: "cli",
+		Short:   "Inspect or clean resumable source-upload recovery state",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List resumable, stale, and orphaned cache entries"},
+			{Name: "cleanup", Short: "Remove stale and excess state safely", Flags: []cliFlag{
+				{Name: "older-than", Short: "maximum recovery-state age", Value: "D"},
+				{Name: "max-entries", Short: "maximum recovery records to retain", Value: "N"},
+				{Name: "dry-run", Short: "show actions without deleting files"},
+			}},
+		},
 	},
 	{
 		Name:    "webhooks",

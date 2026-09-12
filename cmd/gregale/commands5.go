@@ -80,16 +80,19 @@ func validCLISlug(s string) bool {
 // are rendered as "sleeping" because that's how the dashboard badge
 // (§6) talks about them to humans — the wire value stays unchanged.
 func cmdPS(args []string) int {
-	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale ps <app>", "ps")
+	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	history := fs.Bool("all", false, "include up to 100 historical instance rows")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale ps [--all] <app>", "ps")
 		return 1
 	}
-	slug := args[0]
+	slug := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ins, err := client.ListInstances(context.Background(), slug)
+	ins, err := client.ListInstancesWithHistory(context.Background(), slug, *history)
 	if err != nil {
 		return printErr("Could not list instances", err)
 	}
@@ -178,7 +181,11 @@ func cmdStatus(args []string) int {
 		return jsonOut(writeJSON(page))
 	}
 	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
-	_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", page.WakeP95MS)
+	if page.WakeP95MS == nil {
+		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (no observations)")
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
+	}
 	_, _ = fmt.Fprintf(osStdout, "builds ok:    %.2f%%\n", page.BuildSuccessPct)
 	_, _ = fmt.Fprintf(osStdout, "as of:        %s\n", page.AsOf.Format("2006-01-02 15:04:05 UTC"))
 	_, _ = fmt.Fprintf(osStdout, "source:       %s\n", page.Source)

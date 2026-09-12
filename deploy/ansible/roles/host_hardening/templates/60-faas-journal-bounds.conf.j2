@@ -1,0 +1,10 @@
+# Managed by Ansible (host_hardening). Local logs are a bounded replay buffer;
+# the optional Promtail/Loki path owns off-host retention.
+[Journal]
+SystemMaxUse={{ faas_hardening_journal_system_max_use }}
+SystemKeepFree={{ faas_hardening_journal_system_keep_free }}
+SystemMaxFileSize={{ faas_hardening_journal_system_max_file_size }}
+RuntimeMaxUse={{ faas_hardening_journal_runtime_max_use }}
+RuntimeKeepFree={{ faas_hardening_journal_runtime_keep_free }}
+RuntimeMaxFileSize={{ faas_hardening_journal_runtime_max_file_size }}
+MaxRetentionSec={{ faas_hardening_journal_max_retention }}

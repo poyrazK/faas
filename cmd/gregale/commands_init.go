@@ -219,16 +219,15 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	}
 
 	// Step 6: surface the customer's next steps. Per-template
-	// `gregale secrets set` hints live in the template README, but we
-	// always print the storage docs link so the customer lands on the
-	// canonical external-storage page (UX spec §8) regardless of which
-	// template they chose.
+	// `gregale secrets set` hints live in the template README. Link to the
+	// guide for the selected runtime/workflow so a plain function scaffold
+	// does not send customers to unrelated storage documentation.
 	PrintProgress(stdout, "Wrote %s template to %s", tpl, absDest)
 	PrintProgress(stdout, "Next:")
 	for _, line := range nextStepsFor(tpl) {
 		_, _ = fmt.Fprintf(stdout, "  %s\n", line)
 	}
-	PrintProgress(stdout, "Docs: %s", storageDocsURL)
+	PrintProgress(stdout, "Docs: %s", docsURLForTemplate(tpl))
 
 	// Step 7: optional deploy chain. When --deploy is set, we hand off
 	// to cmdDeployTarball with --template + --name; cmdDeployTarball
@@ -251,6 +250,21 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 		deployArgs = append(deployArgs, "--secrets-file", secretsFile)
 	}
 	return cmdDeployTarball(deployArgs)
+}
+
+func docsURLForTemplate(name string) string {
+	switch name {
+	case "hello-node", "hello-python", "hello-go":
+		return deployFromSourceDocsURL
+	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "ai-chat":
+		return functionsDocsURL
+	case "cron-example", "cron-worker", "slack-bot", "webhook-receiver":
+		return eventDrivenDocsURL
+	case "s3-uploader", "rest-api-postgres":
+		return storageDocsURL
+	default:
+		return cliDocsURL
+	}
 }
 
 func writeInitJSON(stdout io.Writer, receipt initReceipt) int {

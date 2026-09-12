@@ -81,6 +81,56 @@ func TestGetDomainDoctor_FlagEnabledServesReport(t *testing.T) {
 	}
 }
 
+func TestDoctorReportRemediatesToConfiguredTargetNotObservedTarget(t *testing.T) {
+	previous := appsDomainFunc
+	appsDomainFunc = func() string { return "apps.gregale.dev." }
+	t.Cleanup(func() { appsDomainFunc = previous })
+
+	report := doctorReportFromObs(state.CustomDomain{Domain: "api.customer.test"}, state.DomainDoctorObservation{
+		Domain:          "api.customer.test",
+		ObservedAt:      time.Now().UTC(),
+		DNSRecordFound:  true,
+		PointsToGregale: false,
+		ObservedTarget:  "api.customer.test",
+		DNSCheckedAt:    time.Now().UTC(),
+		CertState:       certStatusPending,
+	}, false)
+	for _, check := range report.Checks {
+		if check.Name != "points_to_gregale" {
+			continue
+		}
+		if want := "Set CNAME api.customer.test → apps.gregale.dev"; check.Remediation != want {
+			t.Fatalf("remediation = %q, want %q", check.Remediation, want)
+		}
+		if strings.Contains(check.Remediation, "→ api.customer.test") {
+			t.Fatalf("remediation creates a self-CNAME: %q", check.Remediation)
+		}
+		return
+	}
+	t.Fatal("points_to_gregale check missing")
+}
+
+func TestDoctorReportNeverSuggestsSelfCNAMEWhenPlatformTargetIsInvalid(t *testing.T) {
+	previous := appsDomainFunc
+	appsDomainFunc = func() string { return "api.customer.test" }
+	t.Cleanup(func() { appsDomainFunc = previous })
+
+	report := doctorReportFromObs(state.CustomDomain{Domain: "api.customer.test"}, state.DomainDoctorObservation{
+		Domain:          "api.customer.test",
+		ObservedAt:      time.Now().UTC(),
+		DNSRecordFound:  true,
+		PointsToGregale: false,
+		ObservedTarget:  "api.customer.test",
+		DNSCheckedAt:    time.Now().UTC(),
+		CertState:       certStatusPending,
+	}, false)
+	for _, check := range report.Checks {
+		if check.Name == "points_to_gregale" && strings.HasPrefix(check.Remediation, "Set CNAME") {
+			t.Fatalf("invalid configured target produced CNAME remediation: %q", check.Remediation)
+		}
+	}
+}
+
 // TestGetDomainDoctor_IDOR (ADR-120 Tier A2) asserts a cross-
 // tenant probe returns 404 (not 403 — no leak that the row
 // exists). The handler's loadDomain helper at

@@ -11,7 +11,7 @@
   "panels": [
     {
       "type": "timeseries",
-      "title": "Wake latency (p50 / p95)",
+      "title": "Wake latency (ingress and platform gate)",
       "id": 1,
       "gridPos": {
         "h": 8,
@@ -31,8 +31,13 @@
         },
         {
           "expr": "histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p95",
+          "legendFormat": "ingress p95",
           "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "platform p95",
+          "refId": "C"
         }
       ],
       "fieldConfig": {

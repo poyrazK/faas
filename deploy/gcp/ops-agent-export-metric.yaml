@@ -1,0 +1,10 @@
+description: Cloud Ops Agent entries reporting dropped export batches.
+filter: >-
+  resource.type="gce_instance" AND
+  (jsonPayload.message:"Exporting failed. Dropping data" OR
+   textPayload:"Exporting failed. Dropping data" OR
+   jsonPayload.error:"IAM_PERMISSION_DENIED")
+metricDescriptor:
+  metricKind: DELTA
+  valueType: INT64
+  unit: "1"

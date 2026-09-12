@@ -123,6 +123,7 @@ type MemStore struct {
 	objectUploadCompletions map[string]ObjectUploadCompletion
 	mu                      sync.Mutex
 	accounts                map[string]Account
+	accountDeployRates      map[string]accountDeployRateRow
 	keys                    map[string]APIKey
 	keyByHash               map[string]APIKey
 	deployTokens            map[string]DeployToken
@@ -810,6 +811,7 @@ func NewMemStore() *MemStore {
 		objectUploadRoutes:      map[string]ObjectUploadRoute{},
 		objectUploadCompletions: map[string]ObjectUploadCompletion{},
 		accounts:                map[string]Account{},
+		accountDeployRates:      map[string]accountDeployRateRow{},
 		keys:                    map[string]APIKey{},
 		keyByHash:               map[string]APIKey{},
 		deployTokens:            map[string]DeployToken{},
@@ -1488,6 +1490,14 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 	}
 	a.Plan = plan
 	m.accounts[id] = a
+	now := time.Now().UTC()
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.Plan = plan
+			org.UpdatedAt = now
+			m.orgs[orgID] = org
+		}
+	}
 	return nil
 }
 
@@ -1500,6 +1510,14 @@ func (m *MemStore) UpdateAccountStatus(_ context.Context, id string, status Acco
 	}
 	a.Status = status
 	m.accounts[id] = a
+	now := time.Now().UTC()
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.Status = OrgStatus(status)
+			org.UpdatedAt = now
+			m.orgs[orgID] = org
+		}
+	}
 	return nil
 }
 
@@ -1712,6 +1730,13 @@ func (m *MemStore) UpdateAccountProviderCustomerID(_ context.Context, id, provid
 	}
 	a.ProviderCustomerID = providerCustomerID
 	m.accounts[id] = a
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.ProviderCustomerID = providerCustomerID
+			org.UpdatedAt = time.Now().UTC()
+			m.orgs[orgID] = org
+		}
+	}
 	// Maintain the reverse-lookup map for AccountByProviderCustomerID.
 	for k, v := range m.stripeByCustomer {
 		if v == id && k != providerCustomerID {
@@ -1759,6 +1784,13 @@ func (m *MemStore) UpdateAccountStripeSubscriptionItem(_ context.Context, id, su
 	}
 	a.StripeSubscriptionItem = subItem
 	m.accounts[id] = a
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.StripeSubscriptionItem = subItem
+			org.UpdatedAt = time.Now().UTC()
+			m.orgs[orgID] = org
+		}
+	}
 	for key, identity := range m.billingIdentities {
 		if identity.AccountID == id && identity.CustomerID == a.ProviderCustomerID {
 			identity.SubscriptionID = subItem
@@ -3035,7 +3067,14 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	if _, ok := m.accounts[app.AccountID]; !ok {
 		return App{}, ErrNotFound
 	}
-	// 1. Authoritative count under the same lock. Mirrors the PgStore
+	// 1. Return the slug collision before quota. Deploy clients use this
+	// signal to fetch and continue with an app they previously reserved.
+	for _, a := range m.apps {
+		if a.Slug == app.Slug && a.Status != AppDeleted {
+			return App{}, ErrConflict
+		}
+	}
+	// 2. Authoritative count under the same lock. Mirrors the PgStore
 	//    predicates, including the separate developer-environment cap.
 	observed := 0
 	developer := IsDeveloperApp(app)
@@ -3060,14 +3099,8 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	if observed >= limit {
 		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
 	}
-	// 2. Conditional insert. Slug uniqueness is enforced by the same
-	//    loop CreateApp uses; returning ErrConflict keeps the wire
-	//    contract identical to PgStore's apps.slug unique-index path.
-	for _, a := range m.apps {
-		if a.Slug == app.Slug && a.Status != AppDeleted {
-			return App{}, ErrConflict
-		}
-	}
+	// 3. Conditional insert. The lock keeps the collision check above and
+	// insert atomic for MemStore.
 	if app.ID == "" {
 		app.ID = newID()
 	}
@@ -6198,13 +6231,53 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
-	d.Status = status
-	d.Error = errMsg
-	m.deployments[id] = d
+	if status == DeployFailed {
+		m.failDeploymentLocked(d, errMsg)
+	} else {
+		d.Status = status
+		d.Error = errMsg
+		m.deployments[id] = d
+	}
 	if status == DeployFailed || status == DeployCancelled {
 		m.markDeploymentSnapshotsStaleLocked(id)
 	}
 	return nil
+}
+
+func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
+	d.Status = DeployFailed
+	d.Error = message
+	d.TrafficPercent = 0
+	d.RolloutState = "aborted"
+	d.RolloutCompletedAt = nil
+	if d.RolloutAbortedAt == nil {
+		now := time.Now().UTC()
+		d.RolloutAbortedAt = &now
+	}
+	if message == "" {
+		message = "deployment failed"
+	}
+	d.RolloutAbortedReason = message
+	m.deployments[d.ID] = d
+
+	var fallbackID string
+	var fallback Deployment
+	for id, candidate := range m.deployments {
+		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive {
+			continue
+		}
+		if fallbackID == "" || candidate.TrafficPercent > fallback.TrafficPercent ||
+			(candidate.TrafficPercent == fallback.TrafficPercent && candidate.CreatedAt.After(fallback.CreatedAt)) {
+			fallbackID, fallback = id, candidate
+		}
+		candidate.TrafficPercent = 0
+		m.deployments[id] = candidate
+	}
+	if fallbackID != "" {
+		fallback = m.deployments[fallbackID]
+		fallback.TrafficPercent = 100
+		m.deployments[fallbackID] = fallback
+	}
 }
 
 func (m *MemStore) markDeploymentSnapshotsStaleLocked(deploymentID string) {
@@ -7688,10 +7761,9 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
 	}
-	d.Status = DeployFailed
-	d.Error = message
 	d.ErrorCode = code
-	m.deployments[id] = d
+	m.failDeploymentLocked(d, message)
+	d = m.deployments[id]
 	m.markDeploymentSnapshotsStaleLocked(id)
 	return d, nil
 }
@@ -7735,14 +7807,13 @@ func (m *MemStore) SetDeploymentFailedEx(
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
 	}
-	d.Status = DeployFailed
-	d.Error = message
 	d.ErrorCode = code
 	d.ErrorHint = hint
 	d.ErrorWhy = why
 	d.ErrorFix = fix
 	d.ErrorRelevantLogs = logs
-	m.deployments[id] = d
+	m.failDeploymentLocked(d, message)
+	d = m.deployments[id]
 	m.markDeploymentSnapshotsStaleLocked(id)
 	return d, nil
 }
@@ -7872,8 +7943,8 @@ func (m *MemStore) FailSourceDeployment(_ context.Context, id, message string) e
 			return nil
 		}
 	}
-	d.Status, d.Error = DeployFailed, message
-	m.deployments[id] = d
+	m.failDeploymentLocked(d, message)
+	m.markDeploymentSnapshotsStaleLocked(id)
 	return nil
 }
 
@@ -9585,6 +9656,7 @@ func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.
 		return ErrNotFound
 	}
 	inv.State = InvocationCompleted
+	inv.LastError = ""
 	if len(result) > 0 {
 		inv.Result = result
 	}
@@ -10335,6 +10407,25 @@ func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Insta
 	return out, nil
 }
 
+func (m *MemStore) ListActiveInstancesForApp(_ context.Context, appID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Instance, 0, limit)
+	for _, ins := range m.instances {
+		if ins.AppID == appID && State(ins.State).CountsForRAM() {
+			out = append(out, ins)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // ListLatestInstancesForApp returns up to `limit` rows for appID
 // ordered by started_at DESC. Mirror of the PgStore method added
 // alongside the dashboard "Recent wakes" feature (gaps analysis
@@ -10891,6 +10982,22 @@ func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP strin
 	ins.StartedAt = time.Now()
 	m.instances[id] = ins
 	return nil
+}
+
+func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok || ins.State != expectedState {
+		return Instance{}, ErrConflict
+	}
+	ins.Netns = netns
+	ins.HostIP = hostIP
+	ins.GuestUID = guestUID
+	ins.StartedAt = time.Now().UTC()
+	ins.State = string(StateRunning)
+	m.instances[id] = ins
+	return ins, nil
 }
 
 func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Instance, error) {
@@ -11976,14 +12083,20 @@ func (m *MemStore) NodeSetLifecycle(_ context.Context, id string, expected, next
 	return nil
 }
 
-// NodeListRecoverable returns every node in
-// ('unavailable','recovering') — the recovery arbiter's input set.
+// NodeListRecoverable excludes terminally stale unavailable inventory while
+// retaining recovering rows until their in-flight sweep completes.
 func (m *MemStore) NodeListRecoverable(_ context.Context) ([]ComputeNode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]ComputeNode, 0, len(m.computeNodes))
+	now := time.Now()
 	for _, n := range m.computeNodes {
-		if n.Lifecycle == NodeLifecycleUnavailable || n.Lifecycle == NodeLifecycleRecovering {
+		lastSeen := n.LastHeartbeatAt
+		if lastSeen.IsZero() {
+			lastSeen = n.CreatedAt
+		}
+		if n.Lifecycle == NodeLifecycleRecovering ||
+			(n.Lifecycle == NodeLifecycleUnavailable && !lastSeen.Before(now.Add(-24*time.Hour))) {
 			out = append(out, n)
 		}
 	}

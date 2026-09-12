@@ -1,0 +1,9 @@
+# Managed by Ansible (vmmd_service). networkd-dispatcher cannot act on a stale
+# D-Bus ifindex after its interface vanished, so discard only those no-action
+# races and the matching Gregale host-veth (`vh<slot>`) status failure.
+# Persistent-interface status failures, hook failures, and networkctl-list
+# failures remain visible at their original level.
+[Service]
+LogFilterPatterns='~^WARNING:Unknown index [0-9]+ seen, reloading interface list$'
+LogFilterPatterns='~^ERROR:Unknown interface index [0-9]+ seen even after reload$'
+LogFilterPatterns='~^ERROR:Failed to get interface "vh[0-9]+" status: '

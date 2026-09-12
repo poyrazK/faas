@@ -77,7 +77,7 @@ func TestStatusHistoryRollup(t *testing.T) {
 		t.Fatalf("uptime buckets = %d, want %d", len(snap.Uptime30d), statusHistoryDays)
 	}
 	want := float64(2) / 3 * 100
-	if snap.Uptime30dPct != want {
+	if snap.Uptime30dPct == nil || *snap.Uptime30dPct != want {
 		t.Fatalf("uptime_30d_pct = %v, want %v", snap.Uptime30dPct, want)
 	}
 	if snap.Uptime30d[0].Total != 3 || snap.Uptime30d[0].Successful != 2 {
@@ -143,8 +143,8 @@ func TestStatusJSONHandlerIdleHistogramEmitsJSON(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
 		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
 	}
-	if snap.APIAvailabilityPct != 100 || snap.WakeP95MS != 0 || snap.BuildSuccessPct != 100 {
-		t.Fatalf("snapshot = %+v, want finite idle API/build=100 and wake=0", snap)
+	if snap.APIAvailabilityPct != 100 || snap.WakeP95MS != nil || snap.BuildSuccessPct != 100 {
+		t.Fatalf("snapshot = %+v, want finite idle API/build=100 and wake unavailable", snap)
 	}
 }
 
@@ -164,7 +164,7 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 		{
 			name:     "wake p95",
 			query:    statusWakeP95Query,
-			fallback: "or vector(0)",
+			fallback: "",
 			guard:    "sum(rate(gateway_wake_latency_seconds_count[5m])) > 0",
 		},
 		{
@@ -179,8 +179,11 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 			if !strings.Contains(tt.query, tt.guard) {
 				t.Fatalf("query %q is missing its non-idle denominator guard %q", tt.query, tt.guard)
 			}
-			if !strings.Contains(tt.query, tt.fallback) {
+			if tt.fallback != "" && !strings.Contains(tt.query, tt.fallback) {
 				t.Fatalf("query %q is missing idle fallback %q", tt.query, tt.fallback)
+			}
+			if tt.name == "wake p95" && strings.Contains(tt.query, "or vector(") {
+				t.Fatalf("query %q synthesizes a wake value for an idle period", tt.query)
 			}
 		})
 	}
@@ -194,6 +197,34 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 	if !strings.Contains(statusAPIAvailabilityQuery, `code=~"2..|5.."`) ||
 		strings.Contains(statusAPIAvailabilityQuery, `code=~"[45].."`) {
 		t.Fatalf("API availability query does not exclude client 4xx outcomes: %q", statusAPIAvailabilityQuery)
+	}
+}
+
+func TestStatusHistoryNoTrafficRemainsUnknown(t *testing.T) {
+	store := state.NewMemStore()
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("query"), "gateway_wake_latency_seconds_bucket") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+	}))
+	t.Cleanup(prom.Close)
+
+	snap, err := newStatusCacheWithStore(prom.URL, store, slog.Default()).Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Uptime30dPct != nil {
+		t.Fatalf("uptime_30d_pct = %v, want null with no observations", snap.Uptime30dPct)
+	}
+	if len(snap.Uptime30d) != statusHistoryDays {
+		t.Fatalf("daily buckets = %d, want %d", len(snap.Uptime30d), statusHistoryDays)
+	}
+	for _, bucket := range snap.Uptime30d {
+		if bucket.UptimePct != nil || bucket.Total != 0 {
+			t.Fatalf("empty day represented as measured uptime: %+v", bucket)
+		}
 	}
 }
 

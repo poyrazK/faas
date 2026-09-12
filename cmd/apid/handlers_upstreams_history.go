@@ -23,7 +23,7 @@ const (
 // bounded even when a Scale app has the full 30-day retention window.
 func (s *server) getUpstreamHistory(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigDataPlacement, s.dataPlacementEnabled) {
-		api.WriteProblem(w, api.ErrPlanFeatureGated("data_upstreams", acct.Plan))
+		api.WriteProblem(w, api.ErrDataUpstreamsDisabled())
 		return
 	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))

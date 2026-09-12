@@ -151,6 +151,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchSignup":            "signup",
 		"dispatchDoctor":            "doctor",
 		"dispatchPostgres":          "postgres",
+		"dispatchUploadCache":       "upload-cache",
 	}
 	caseNames, err := extractMainCaseArms(dispatchConsts)
 	if err != nil {

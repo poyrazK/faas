@@ -550,6 +550,9 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// closed-set CHECK on deployed_via (migration 00303) rejects
 	// any out-of-set value the helper chain might emit.
 	stampDeploymentActor(&dep, acct, r)
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
 	d, err := s.store.CreateDeployment(r.Context(), dep)
 	if err != nil {
 		// ADR-091 / PR-D: per-deployment scope collision. mapErr
@@ -934,6 +937,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 			VCPU:                        l.VCPU,
 			MaxConcurrency:              l.MaxConcurrency,
 			DeployedApps:                l.DeployedApps,
+			DeploysPerHour:              l.DeploysPerHour,
 			DeveloperApps:               l.DeveloperApps,
 			IncludedGBHours:             int64(l.IncludedGBHours),
 			AppLayerMaxMB:               l.AppLayerMaxMB,

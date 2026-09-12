@@ -2,8 +2,8 @@
 // + PR 5.
 //
 // GET /v1/orgs/me returns the caller's currently-active org plus
-// the membership role, or {"org": null} when no X-Active-Org / ?org=
-// hint was supplied. The endpoint exercises pkg/authz.LoadOrg
+// the membership role. With no X-Active-Org / ?org= hint it returns the
+// caller's personal organization. The endpoint exercises pkg/authz.LoadOrg
 // end-to-end and is the load-bearing seam for every org-scoped
 // handler that follows.
 //
@@ -28,12 +28,12 @@
 //	  }
 //	}
 //
-// or {"org": null}. The handler MUST NOT reject a missing header —
-// that's the passthrough case the rest of the platform depends on
-// (every pre-PR-5 route stays account-scoped).
+// A pre-migration account without a personal organization receives
+// {"org": null} for rolling-upgrade compatibility.
 package main
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -46,9 +46,7 @@ import (
 // ADR-061, PR 4) and renders the response.
 //
 // Behaviour:
-//   - no membership on r → {"org": null} (passthrough — LoadOrg
-//     stamps the membership only when X-Active-Org / ?org= was
-//     set).
+//   - no membership on r → resolve the caller's personal organization.
 //   - membership present → fetch the org by id (the membership's
 //     OrgID) so the response carries the slug + name + personal
 //     flag. The role field carries the caller's role on the org.
@@ -56,18 +54,33 @@ import (
 // Errors:
 //   - 500 CodeCapacity if OrgByID fails (a stale membership row —
 //     surfaces in audit).
-func (s *server) whoamiActiveOrg(w http.ResponseWriter, r *http.Request, _ state.Account) {
+func (s *server) whoamiActiveOrg(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	mem, ok := authz.MembershipFrom(r)
 	if !ok || mem == nil {
-		// Apply the same {"org": null} passthrough that LoadOrg
-		// uses when neither the X-Active-Org header nor the ?org=
-		// query is set. Tested by TestE2E_LoadOrg_HeaderMiss
-		// (cmd/e2e/load_org_e2e_test.go).
-		//
-		// The mem == nil check is load-bearing: the principal's
-		// Membership slot is nil-stamped by RequireSession and
-		// only mutated by LoadOrg on a successful resolve.
-		writeJSON(w, http.StatusOK, api.OrgMeResponse{Org: nil})
+		// With no explicit active-org hint, resolve the caller's personal
+		// organization. Every modern account owns one, so returning null here
+		// contradicted GET /v1/orgs and made org-bound key commands unusable
+		// unless clients knew to synthesize an extra header.
+		personal, err := s.store.OrgByPersonalAccount(r.Context(), acct.ID)
+		if err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				// Compatibility for pre-personal-org fixtures during rolling
+				// migration. New accounts never take this branch.
+				writeJSON(w, http.StatusOK, api.OrgMeResponse{Org: nil})
+				return
+			}
+			api.WriteProblem(w, api.ErrCapacity("could not resolve personal organization"))
+			return
+		}
+		membership, err := s.store.OrgMemberByAccount(r.Context(), personal.ID, acct.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not resolve personal organization membership"))
+			return
+		}
+		writeJSON(w, http.StatusOK, api.OrgMeResponse{Org: &api.OrgWithRole{
+			OrgResponse: api.OrgResponseFromRow(orgToRow(personal)),
+			Role:        string(membership.Role),
+		}})
 		return
 	}
 	org, err := s.store.OrgByID(r.Context(), mem.OrgID)

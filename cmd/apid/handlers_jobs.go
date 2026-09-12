@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -444,18 +445,9 @@ func (s *server) listJobRunTasks(w http.ResponseWriter, r *http.Request, acct st
 
 // getJobTaskLogs handles GET /v1/jobs/{name}/runs/{id}/tasks/
 // {idx}/logs. Two-step: resolve run → account; then resolve
-// task by (run_id, task_index); then look up the owning
-// instance via the task's instance_id; then proxy to vmmd's
-// tail endpoint on the compute node that owns the instance.
-//
-// Today this returns a stubbed response because the vmmd tail
-// proxy surface (issue #572) is shared with the app family
-// and not yet wired for jobs. The M11 handler envelope is the
-// Mega-1 deliverable — the actual proxy wiring lands in a
-// follow-up PR once the vmmd job-instance IPC socket (issue
-// #1184 Workstream C) is in place. The handler returns 200
-// with empty content + truncated=false so the SDK can already
-// round-trip the response shape end-to-end.
+// task by (run_id, task_index), then read the durable combined
+// stdout/stderr tail captured by schedd before it destroys the
+// terminal task's microVM.
 //
 // Truncated=true means the tail was capped at MaxBytes;
 // clients re-fetch with a larger limit to see more. Empty
@@ -491,24 +483,26 @@ func (s *server) getJobTaskLogs(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("could not get logs"))
 		return
 	}
-	// MaxBytes is bounded at 64 KiB — same shape as the app
-	// log endpoint at handlers_ext.go:4000+. Larger reads
-	// paginate via ?after=<byte_offset>; not exposed for
-	// jobs yet (will land alongside the vmmd IPC follow-up).
+	// MaxBytes is bounded at 1 MiB and defaults to a compact 64 KiB tail.
 	maxBytes := 64 * 1024
 	if v := r.URL.Query().Get("max_bytes"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1024*1024 {
 			maxBytes = n
 		}
 	}
-	// Stubbed response — see function doc for the vmmd IPC
-	// follow-up. Always returns the task's current status
-	// so the dashboard can render "exit_code=124 / timeout"
-	// even without log content.
+	logContent := task.LogContent
+	truncated := task.LogTruncated
+	if len(logContent) > maxBytes {
+		truncated = true
+		logContent = logContent[len(logContent)-maxBytes:]
+		for len(logContent) > 0 && !utf8.ValidString(logContent) {
+			logContent = logContent[1:]
+		}
+	}
 	writeJSON(w, http.StatusOK, api.JobTaskLogResponse{
 		TaskStatus: task.Status,
-		LogContent: "",
-		Truncated:  false,
+		LogContent: logContent,
+		Truncated:  truncated,
 		MaxBytes:   maxBytes,
 	})
 }

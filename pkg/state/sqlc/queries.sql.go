@@ -6633,7 +6633,8 @@ SELECT
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
     last_recovery_outcome
 FROM compute_nodes
-WHERE lifecycle IN ('unavailable', 'recovering')
+WHERE lifecycle = 'recovering'
+   OR (lifecycle = 'unavailable' AND coalesce(last_heartbeat_at, created_at) >= now() - interval '24 hours')
 ORDER BY name
 `
 
@@ -6675,8 +6676,9 @@ type NodeListRecoverableRow struct {
 //	'recovering'   → first post-failure ping succeeded; sweep to
 //	                 confirm zero stranded instances.
 //
-// Caller is the recovery arbiter; one tick enumerates both classes
-// and applies the same decision matrix.
+// Unavailable rows age out of active polling after 24 hours. They remain in
+// inventory for audit; a returning vmmd re-registers through the heartbeat
+// path and becomes active again.
 func (q *Queries) NodeListRecoverable(ctx context.Context, db DBTX) ([]NodeListRecoverableRow, error) {
 	rows, err := db.Query(ctx, nodeListRecoverable)
 	if err != nil {
@@ -10496,7 +10498,11 @@ func (q *Queries) SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifes
 
 const setDeploymentFailed = `-- name: SetDeploymentFailed :one
 update deployments
-   set status = 'failed', error = $2, error_code = $3
+   set status = 'failed', error = $2, error_code = $3,
+       traffic_percent = 0, rollout_state = 'aborted',
+       rollout_completed_at = null,
+       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
  where id = $1
 returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
           coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -11228,7 +11234,15 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 }
 
 const updateDeploymentStatus = `-- name: UpdateDeploymentStatus :exec
-update deployments set status = $2, error = $3 where id = $1
+update deployments
+set status = $2,
+    error = $3,
+    traffic_percent = case when $2 = 'failed' then 0 else traffic_percent end,
+    rollout_state = case when $2 = 'failed' then 'aborted' else rollout_state end,
+    rollout_completed_at = case when $2 = 'failed' then null else rollout_completed_at end,
+    rollout_aborted_at = case when $2 = 'failed' then coalesce(rollout_aborted_at, now()) else rollout_aborted_at end,
+    rollout_aborted_reason = case when $2 = 'failed' then coalesce(nullif($3, ''), 'deployment failed') else rollout_aborted_reason end
+where id = $1
 `
 
 type UpdateDeploymentStatusParams struct {

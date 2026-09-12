@@ -1,0 +1,5 @@
+# systemd 253 introduced per-unit LogFilterPatterns. Gregale's supported
+# Ubuntu 24.04 hosts ship a newer systemd; fail closed on an older image so a
+# rollout cannot silently reintroduce the dispatcher log storm.
+faas_networkd_dispatcher_ephemeral_filter: true
+faas_networkd_dispatcher_log_filter_min_systemd: 253

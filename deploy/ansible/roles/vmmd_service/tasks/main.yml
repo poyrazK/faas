@@ -134,6 +134,48 @@
     group: root
     mode: "0644"
 
+# networkd-dispatcher receives a D-Bus PropertiesChanged event after a
+# short-lived Firecracker veth has already disappeared. The event contains
+# only the stale ifindex, so the dispatcher cannot associate the first two
+# messages with an interface name. Filter those no-action races plus the
+# status error for Gregale's closed `vh<slot>` host-veth namespace. All other
+# dispatcher errors remain in the journal and feed the vmmd host metric.
+- name: vmmd_service — read systemd version for dispatcher log filtering
+  ansible.builtin.command: systemctl --version
+  register: faas_networkd_dispatcher_systemd_version
+  changed_when: false
+  when: faas_networkd_dispatcher_ephemeral_filter | bool
+
+- name: vmmd_service — require per-unit log filtering support
+  ansible.builtin.assert:
+    that:
+      - (faas_networkd_dispatcher_systemd_version.stdout.split()[1] | int) >=
+        (faas_networkd_dispatcher_log_filter_min_systemd | int)
+    fail_msg: >-
+      systemd {{ faas_networkd_dispatcher_systemd_version.stdout.split()[1] }}
+      cannot safely filter networkd-dispatcher races; Gregale compute nodes
+      require systemd {{ faas_networkd_dispatcher_log_filter_min_systemd }}+.
+  when: faas_networkd_dispatcher_ephemeral_filter | bool
+
+- name: vmmd_service — create networkd-dispatcher drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/networkd-dispatcher.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_networkd_dispatcher_ephemeral_filter | bool
+
+- name: vmmd_service — filter expected Firecracker interface disappearance
+  ansible.builtin.template:
+    src: 60-faas-firecracker-links.conf.j2
+    dest: /etc/systemd/system/networkd-dispatcher.service.d/60-faas-firecracker-links.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart networkd-dispatcher
+  when: faas_networkd_dispatcher_ephemeral_filter | bool
+
 - name: vmmd_service — ensure 'faas' group exists (socket auth group, ADR-015)
   ansible.builtin.group:
     name: faas

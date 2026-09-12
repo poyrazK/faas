@@ -70,7 +70,8 @@ func (s *PgStore) FailBuild(ctx context.Context, claim Build, fc FailureClass, m
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var status DeploymentStatus
-	if err := tx.QueryRow(ctx, `select status from deployments where id=$1 for update`, claim.DeploymentID).Scan(&status); err != nil {
+	var appID string
+	if err := tx.QueryRow(ctx, `select status,app_id from deployments where id=$1 for update`, claim.DeploymentID).Scan(&status, &appID); err != nil {
 		return mapErr(err)
 	}
 	if status != DeployPending && status != DeployBuilding {
@@ -84,7 +85,13 @@ func (s *PgStore) FailBuild(ctx context.Context, claim Build, fc FailureClass, m
 	if tag.RowsAffected() != 1 {
 		return ErrNotFound
 	}
-	if _, err := tx.Exec(ctx, `update deployments set status='failed',error=$2 where id=$1`, claim.DeploymentID, message); err != nil {
+	if _, err := tx.Exec(ctx, `update deployments set status='failed',error=$2,
+	traffic_percent=0,rollout_state='aborted',rollout_completed_at=null,
+	rollout_aborted_at=coalesce(rollout_aborted_at,now()),
+	rollout_aborted_reason=coalesce(nullif($2,''),'deployment failed') where id=$1`, claim.DeploymentID, message); err != nil {
+		return err
+	}
+	if err := rebalanceTrafficAfterFailure(ctx, tx, appID, claim.DeploymentID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

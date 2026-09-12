@@ -748,8 +748,9 @@ var methodRouteMap = map[string]string{
 	// the /metrics entry above which is the 5m dashboard panel.
 	// Per-app pattern mirrors GetAppMetrics; account-scoped
 	// mirrors GetAccountUsage (the usage account-scoped family).
-	"GET /v1/apps/{slug}/slo": "GetAppSLO",
-	"GET /v1/account/slo":     "GetAccountSLO",
+	"GET /v1/apps/{slug}/slo":     "GetAppSLO",
+	"GET /v1/account/slo":         "GetAccountSLO",
+	"GET /v1/account/rate-limits": "GetAccountRateLimits",
 
 	// ADR-093 — per-route observability inside an app. The
 	// auto-derivation would produce GetAppsSlugRoutes

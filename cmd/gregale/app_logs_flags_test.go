@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -65,5 +66,29 @@ func TestCmdLogsDegradedReason(t *testing.T) {
 				t.Fatalf("stderr=%q, want %q", stderr.String(), tc.want)
 			}
 		})
+	}
+}
+
+func TestCmdLogsDegradedJSONIsRFC7807(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: degraded\ndata: {\"code\":\"not_found\"}\n\n")
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	stderr, restore := captureStderr(t)
+	if code := cmdLogs([]string{"myapp"}); code != 3 {
+		t.Fatalf("exit=%d, want 3", code)
+	}
+	restore()
+	var problem map[string]any
+	if err := json.Unmarshal([]byte(stderr.String()), &problem); err != nil {
+		t.Fatalf("stderr is not JSON: %v; raw=%q", err, stderr.String())
+	}
+	if problem["code"] != "app_logs_unavailable" || problem["status"] != float64(http.StatusServiceUnavailable) {
+		t.Fatalf("problem = %#v", problem)
 	}
 }

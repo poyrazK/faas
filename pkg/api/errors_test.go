@@ -546,6 +546,21 @@ func TestErrLongPollTimeout(t *testing.T) {
 	}
 }
 
+func TestErrPlanFeatureGatedUsesCapabilitySpecificGuidance(t *testing.T) {
+	analytics := ErrPlanFeatureGated("analytics", PlanFree)
+	if strings.Contains(analytics.Detail, "event-driven") || !strings.Contains(analytics.Detail, "request analytics") || !strings.Contains(analytics.DocsURL, "#analytics") {
+		t.Fatalf("analytics problem is not capability-specific: %+v", analytics)
+	}
+	invoke := ErrPlanFeatureGated("sync_invoke", PlanFree)
+	if strings.Contains(invoke.Detail, "event-driven") || !strings.Contains(invoke.Detail, "public HTTPS endpoint") || !strings.Contains(invoke.DocsURL, "#synchronous-invocation") {
+		t.Fatalf("sync invoke problem is not capability-specific: %+v", invoke)
+	}
+	events := ErrPlanFeatureGated("queues", PlanFree)
+	if !strings.Contains(events.Detail, "event-driven") {
+		t.Fatalf("event capability lost shared guidance: %+v", events)
+	}
+}
+
 // TestErrInvalidScheduledAt pins the 400 + code for delayed-task create
 // with a past scheduled_at. Distinct code so the CLI can suggest a
 // future timestamp without parsing prose.

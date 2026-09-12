@@ -50,6 +50,17 @@ func TestExecutionAPIIsDisabledByDefault(t *testing.T) {
 	}
 }
 
+func TestExecutionFreePlanRejectedBeforeRuntimeGate(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	rec := e.do(t, http.MethodPost, "/v1/executions", executionRequest(), nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("POST /v1/executions for Free with gate off = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), api.CodeExecutionsNotAllowed) {
+		t.Fatalf("free-plan response missing plan-limit code: %s", rec.Body.String())
+	}
+}
+
 func TestCreateExecutionSealsPayloadAndReturnsQueuedProjection(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	identity := enableExecutionAPIForTest(t, &e)

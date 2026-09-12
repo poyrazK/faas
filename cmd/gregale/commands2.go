@@ -3172,6 +3172,10 @@ func cmdKeys(args []string) int {
 		}
 		return 0
 	case subAdd:
+		if hasHelpFlag(args[1:]) {
+			PrintUsage(osStdout, "usage: gregale keys add <label>", "keys")
+			return 0
+		}
 		if len(args) < 2 {
 			PrintUsage(os.Stderr, "usage: gregale keys add <label>", "keys")
 			return 1
@@ -4044,7 +4048,11 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			// side). Move 3's `not_implemented` shape is dead code;
 			// removed.
 			if e.Event == "degraded" {
-				fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
+				if jsonOutput {
+					_ = writeJSONProblem(appLogsDegradedProblem(e.Data))
+				} else {
+					fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
+				}
 				if collector != nil {
 					collector.flush(os.Stdout)
 				}

@@ -85,6 +85,17 @@ type cliFlag struct {
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
 	{
+		Name:    dispatchBilling,
+		DocSlug: "billing",
+		Short:   "Operator billing catalog, reconciliation, and webhook diagnostics",
+		Subcommands: []cliSub{
+			{Name: "price-catalog", Short: "List, sync, or reset the provider catalog"},
+			{Name: "reconcile", Short: "Reconcile usage for one account"},
+			{Name: "reconcile-paddle-overage", Short: "Check Paddle overage schema readiness"},
+			{Name: "webhook-test", Short: "Send a locally signed Paddle or Stripe webhook"},
+		},
+	},
+	{
 		Name:    "status",
 		DocSlug: "status",
 		Short:   "Publish and inspect public incidents and maintenance",
@@ -198,7 +209,7 @@ var cliCommands = []cliCommand{
 		// tier-1-scaleout pair).
 		Name:    dispatchComputeNodes,
 		DocSlug: "compute-nodes",
-		Short:   "Compute-node state machine (compute-nodes add|list|show|drain|drain-status|activate|force-drain|retire)",
+		Short:   "Compute-node state machine (compute-nodes add|list|show|release-status|drain|drain-status|activate|force-drain|retire)",
 		Subcommands: []cliSub{
 			{
 				Name:  "add",
@@ -235,6 +246,18 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "node", Short: "fqdn / short-hostname of the node to show (required)"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
+					{Name: "break-glass-db", Short: "read directly during an apid outage"},
+				},
+			},
+			{
+				Name:  "release-status",
+				Short: "Wait for every active node to observe a desired release with a fresh heartbeat",
+				Flags: []cliFlag{
+					{Name: "desired-release", Short: "40-character lowercase release git SHA", Req: true},
+					{Name: "timeout", Short: "maximum convergence wait; zero performs one observation"},
+					{Name: "poll-interval", Short: "interval between fleet observations"},
+					{Name: "heartbeat-staleness", Short: "maximum age of a ready node heartbeat"},
+					{Name: "json", Short: "emit desired and observed release state per node"},
 					{Name: "break-glass-db", Short: "read directly during an apid outage"},
 				},
 			},

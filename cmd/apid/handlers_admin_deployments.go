@@ -245,6 +245,14 @@ func (s *server) postOperatorDeploymentRetry(w http.ResponseWriter, r *http.Requ
 			"deployment is not failed", "only failed deployments can be retried"))
 		return
 	}
+	targetAccount, err := s.store.AccountByID(r.Context(), app.AccountID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve deployment owner"))
+		return
+	}
+	if !s.admitAccountDeploy(w, r, targetAccount) {
+		return
+	}
 	deployment, err := s.enqueueRetry(r.Context(), app, prior, fromStage)
 	if err != nil {
 		var problem *api.Problem

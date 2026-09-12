@@ -240,6 +240,10 @@ type server struct {
 	// no *stripe.Client is needed at the apid level). The Paddle path
 	// sets this to a *paddle.Provider at boot.
 	billingProvider billing.Provider
+	// billingProviderName retains the configured provider even for the legacy
+	// Stripe apid path, where billingProvider is intentionally nil.
+	billingProviderName string
+	billingMode         billing.Mode
 	// ops holds the per-daemon Prometheus registry. Wired via
 	// WithOpsMetrics so callers (cmd/apid) control the registry
 	// lifecycle. A dedicated metric observer middleware sits atop
@@ -499,6 +503,19 @@ func (s *server) WithBillingProvider(p billing.Provider) *server {
 	return s
 }
 
+// WithBillingProviderName records the provider selected by the deployment
+// loader. It is separate from WithBillingProvider because Stripe's legacy
+// apid implementation deliberately has no Provider value.
+func (s *server) WithBillingProviderName(name string) *server {
+	s.billingProviderName = strings.TrimSpace(name)
+	return s
+}
+
+func (s *server) WithBillingMode(mode billing.Mode) *server {
+	s.billingMode = mode.Effective()
+	return s
+}
+
 // WithResendWebhookSecret attaches the Svix / Standard Webhooks
 // signing secret Resend uses for bounce / complaint / delivery
 // events (issue #246 acceptance item 8). When empty the
@@ -747,6 +764,9 @@ func (s *server) billingPortalURLFor(acct state.Account) string {
 // used by the legacy Stripe path. The short timeout keeps plan-change and
 // billing reads from hanging on a provider outage.
 func (s *server) billingPortalURLForProvider(ctx context.Context, acct state.Account) string {
+	if !s.billingMode.Effective().Enabled() {
+		return ""
+	}
 	resolved, err := s.accountForActiveBillingProvider(ctx, acct)
 	if err != nil {
 		s.log.Warn("billing portal identity unavailable", "account", acct.ID, "err", err)
@@ -1095,6 +1115,7 @@ func (s *server) handler() http.Handler {
 	// /v1/account carries the method default (read or admin).
 	mux.HandleFunc("GET /v1/capabilities", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCapabilities)))
 	mux.HandleFunc("GET /v1/account", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.whoami))))
+	mux.HandleFunc("GET /v1/account/rate-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAccountRateLimits))))
 	mux.HandleFunc("GET /v1/account/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.accountUsage))))
 	mux.HandleFunc("GET /v1/account/object-storage-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getObjectStorageUsage))))
 	mux.HandleFunc("GET /v1/account/managed-postgres-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getManagedPostgresUsage))))
@@ -1112,8 +1133,7 @@ func (s *server) handler() http.Handler {
 	// adds the spec coverage + the rest of the /v1/orgs/{slug}/...
 	// surface. Loads the org via s.loadOrg (the pkg/authz middleware
 	// that resolves X-Active-Org / ?org=) and returns the membership
-	// role. No header → {"org": null} (passthrough, pre-PR-5 routes
-	// stay account-scoped).
+	// role. No header resolves the caller's personal organization.
 	mux.HandleFunc("GET /v1/orgs/me", s.auth(s.loadOrg(s.whoamiActiveOrg)))
 
 	// Orgs (ADR-061 / IAM-6 / issue #190, PR 5 + PR 7). Customer-
@@ -2394,6 +2414,9 @@ func (s *server) handler() http.Handler {
 	// authenticated Stripe session where the customer can mutate billing.
 	// Email verification therefore applies before the redirect leaves Gregale.
 	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.getBillingPortal))))
+	// Customer billing status is a read-only account projection. It must not
+	// depend on operator allowlists or provider-specific catalog APIs.
+	mux.HandleFunc("GET /v1/billing/status", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.getBillingStatus)))
 
 	// Billing retry (issue #242). Closes the customer-trust lie in
 	// pkg/mail/account.go:107,150 (the dunning email promises

@@ -189,6 +189,9 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, prob)
 		return
 	}
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
 
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{

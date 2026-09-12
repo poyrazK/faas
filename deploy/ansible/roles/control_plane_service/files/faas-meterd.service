@@ -13,12 +13,14 @@ Group=faas
 ExecStart=/opt/faas/current/bin/meterd --config /etc/faas/meterd.toml
 Restart=on-failure
 RestartSec=2s
-RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
 Slice=faas-cp.slice
 MemoryMax=256M
+CapabilityBoundingSet=
+AmbientCapabilities=
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/meterd/billing.env
 EnvironmentFile=-/etc/faas/otel.env
+Environment=FAAS_BILLING_MODE=live
 Environment=FAAS_PROMETHEUS_URL=http://127.0.0.1:9095
 Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_host_age_identity
 LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
@@ -27,9 +29,19 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
 ReadOnlyPaths=/etc/faas
 ReadWritePaths=/var/log/faas
 

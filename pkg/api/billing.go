@@ -15,6 +15,22 @@ package api
 
 import "time"
 
+// BillingStatusResponse is the provider-independent customer projection
+// returned by GET /v1/billing/status. It intentionally carries no provider
+// catalog handles or customer identifiers: callers only need to know whether
+// billing is active for this deployment and whether their account has been
+// attached to the active provider.
+type BillingStatusResponse struct {
+	Mode                       string `json:"mode"`
+	Enabled                    bool   `json:"enabled"`
+	Provider                   string `json:"provider"`
+	Plan                       Plan   `json:"plan"`
+	AccountStatus              string `json:"account_status"`
+	CustomerConfigured         bool   `json:"customer_configured"`
+	SubscriptionConfigured     bool   `json:"subscription_configured"`
+	UsageReconciliationEnabled bool   `json:"usage_reconciliation_enabled"`
+}
+
 // BillingReconcileResponse is the JSON shape POST
 // /v1/admin/billing-reconcile/{id} returns on success (200).
 //

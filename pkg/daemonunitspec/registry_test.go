@@ -4,10 +4,33 @@ import (
 	"net"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/manifest"
 )
+
+func TestGeneratedUnitsContainOnlySupportedRestartDirectives(t *testing.T) {
+	for _, entry := range UnitEntries() {
+		t.Run(entry.Name, func(t *testing.T) {
+			rendered := entry.Unit().Render()
+			if strings.Contains(string(rendered), "RestartCountExport=") {
+				t.Fatal("unit contains unsupported RestartCountExport directive")
+			}
+		})
+	}
+}
+
+func TestScheddHasOnlyConntrackCapability(t *testing.T) {
+	u := UnitSchedd()
+	want := []string{"CAP_NET_ADMIN"}
+	if !reflect.DeepEqual(u.CapabilityBoundingSet, want) {
+		t.Fatalf("schedd CapabilityBoundingSet = %v, want %v", u.CapabilityBoundingSet, want)
+	}
+	if !reflect.DeepEqual(u.AmbientCapabilities, want) {
+		t.Fatalf("schedd AmbientCapabilities = %v, want %v", u.AmbientCapabilities, want)
+	}
+}
 
 func TestRegistryEntriesHaveBootProbes(t *testing.T) {
 	for _, entry := range Registry {

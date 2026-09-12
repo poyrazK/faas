@@ -87,3 +87,33 @@ func Static(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// IsStaticHeader reports whether name is one of the five policy headers owned
+// by the outer public edge. Reverse-proxy hops use this predicate to discard
+// copies emitted by inner daemons before Static writes the canonical value.
+func IsStaticHeader(name string) bool {
+	switch http.CanonicalHeaderKey(name) {
+	case HeaderStrictTransportSecurity,
+		HeaderXFrameOptions,
+		HeaderXContentTypeOptions,
+		HeaderReferrerPolicy,
+		HeaderPermissionsPolicy:
+		return true
+	default:
+		return false
+	}
+}
+
+// StripStaticHeaders removes inner-hop copies of the platform-owned policy
+// headers. The public listener's outer Static middleware remains their sole
+// wire owner.
+func StripStaticHeaders(h http.Header) {
+	if h == nil {
+		return
+	}
+	h.Del(HeaderStrictTransportSecurity)
+	h.Del(HeaderXFrameOptions)
+	h.Del(HeaderXContentTypeOptions)
+	h.Del(HeaderReferrerPolicy)
+	h.Del(HeaderPermissionsPolicy)
+}

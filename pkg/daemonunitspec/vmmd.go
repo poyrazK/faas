@@ -72,8 +72,7 @@ func UnitVmmd() daemonunit.Unit {
 		// Postgres became reachable and left the node failed permanently.
 		// Fifteen seconds keeps transient recovery automatic without turning a
 		// permanent configuration error into a tight restart loop.
-		RestartSec:         "15s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		RestartSec: "15s",
 
 		Slice: "faas-cp.slice",
 

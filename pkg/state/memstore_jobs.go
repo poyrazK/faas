@@ -592,6 +592,16 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 // Returns ErrNotFound when (run_id, task_index) does not resolve OR
 // when the task is already terminal.
 func (m *MemStore) JobTaskMarkTerminal(_ context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage string, finishedAt time.Time) error {
+	return m.jobTaskMarkTerminal(runID, taskIndex, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
+}
+
+// JobTaskMarkTerminalWithLogs is the in-memory mirror of the PostgreSQL
+// atomic terminal transition and log persistence operation.
+func (m *MemStore) JobTaskMarkTerminalWithLogs(_ context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
+	return m.jobTaskMarkTerminal(runID, taskIndex, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+}
+
+func (m *MemStore) jobTaskMarkTerminal(runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	tasks, ok := m.jobTasks[runID]
@@ -612,6 +622,10 @@ func (m *MemStore) JobTaskMarkTerminal(_ context.Context, runID string, taskInde
 	}
 	if errorMessage != "" {
 		t.ErrorMessage = &errorMessage
+	}
+	if persistLogs {
+		t.LogContent = logContent
+		t.LogTruncated = logTruncated
 	}
 	fin := finishedAt.UTC()
 	t.FinishedAt = &fin

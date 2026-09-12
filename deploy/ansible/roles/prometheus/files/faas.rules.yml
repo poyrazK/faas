@@ -20,6 +20,33 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  - name: postgres_capacity
+    interval: 30s
+    rules:
+      - alert: FaasPostgresConnectionsHigh
+        expr: max(faas_postgres_client_connections) / clamp_min(max(faas_postgres_ordinary_connection_capacity), 1) > 0.75
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_capacity
+        annotations:
+          summary: "PostgreSQL ordinary connection use is above 75%"
+          description: "Daemon sessions have consumed more than 75% of PostgreSQL's ordinary-client capacity for 10m. Identify oversized pools by application_name and recover headroom before rollouts or bursts exhaust the remaining slots."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresConnectionsHigh.md"
+
+      - alert: FaasPostgresConnectionsCritical
+        expr: max(faas_postgres_client_connections) / clamp_min(max(faas_postgres_ordinary_connection_capacity), 1) > 0.90
+        for: 5m
+        labels:
+          severity: page
+          component: postgres
+          family: database_capacity
+        annotations:
+          summary: "PostgreSQL ordinary connection use is above 90%"
+          description: "Daemon sessions have consumed more than 90% of PostgreSQL's ordinary-client capacity for 5m. New API, scheduler, restore, backup, and rollout work can fail when the remaining ordinary slots are exhausted."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresConnectionsHigh.md"
+
   - name: public_status
     rules:
       - alert: FaasPublicStatusEvaluationStalled
@@ -32,6 +59,60 @@ groups:
           summary: "Public status evaluation has not succeeded for 15 minutes"
           description: "The five-minute public status evaluator has not persisted a complete capability bucket set for at least 15 minutes. Check apid logs, Prometheus reachability, and Postgres status_observation_buckets writes."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/StatusPageDegraded.md"
+
+  # Compute-host journal pressure (issue #2350). vmmd samples these values
+  # once per minute so the existing active-node HTTP-SD job covers every
+  # compute host without exposing node_exporter on an additional port.
+  - name: faas_host_journal
+    interval: 30s
+    rules:
+      - alert: FaasNetworkdDispatcherErrors
+        expr: vmmd_networkd_dispatcher_errors_last_5m > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: vmmd
+          family: host_journal
+        annotations:
+          summary: "networkd-dispatcher is reporting errors on {{ $labels.node }}"
+          description: "networkd-dispatcher has emitted warning-or-higher journal entries for at least two minutes. Expected disappearing Gregale vh<slot> interfaces are filtered before journald, so remaining entries indicate a persistent interface, hook, or networkctl failure."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+
+      - alert: FaasHostJournalNearLimit
+        expr: vmmd_journal_disk_usage_bytes > 419430400
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: host_journal
+        annotations:
+          summary: "Local journal exceeds 400 MiB on {{ $labels.node }}"
+          description: "The persistent and runtime journals have remained above 400 MiB for ten minutes, approaching Gregale's 512 MiB persistent-journal bound. Check noisy units and off-host shipping before rotation removes incident evidence."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+
+      - alert: FaasHostJournalGrowingFast
+        expr: clamp_min(deriv(vmmd_journal_disk_usage_bytes[30m]), 0) > 34953
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: host_journal
+        annotations:
+          summary: "Local journal is growing rapidly on {{ $labels.node }}"
+          description: "Local journal usage has grown faster than 120 MiB/hour for five minutes. Identify the emitting unit before the bounded journal rotates useful history or creates avoidable off-host ingestion volume."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+
+      - alert: FaasHostJournalMetricsDown
+        expr: vmmd_host_journal_metrics_up == 0
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: host_journal
+        annotations:
+          summary: "Host journal metrics are unavailable on {{ $labels.node }}"
+          description: "vmmd has failed to read networkd-dispatcher errors or local journal disk usage for ten minutes. Check journalctl/du availability and vmmd's privileges before trusting the journal pressure signals."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
 
   # ────────────────────────────────────────────────────────────────────
   # Off-host log pipeline health (issue #274).
@@ -451,34 +532,34 @@ groups:
     interval: 30s
     rules:
       - record: faas_apid_request_rate_3d_baseline:by_route
-        expr: avg_over_time( sum by (route) (rate(apid_request_total[5m])) [3d:5m] )
+        expr: avg_over_time( sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m])) [3d:5m] )
 
       - record: faas_apid_error_rate_3d_baseline:by_route
         expr: |
           avg_over_time(
               (
                   (
-                      sum by (route) (rate(apid_request_total{code!="ok"}[5m]))
+                      sum by (route) (rate(apid_request_total{account_id!="anonymous",code!="ok"}[5m]))
                   )
                   /
                   clamp_min(
-                      sum by (route) (rate(apid_request_total[5m])),
+                      sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m])),
                       1
                   )
               )[3d:5m]
           )
 
       - record: faas_apid_request_rate_5m:by_route
-        expr: sum by (route) (rate(apid_request_total[5m]))
+        expr: sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m]))
 
       - record: faas_apid_error_rate_5m:by_route
         expr: |
           (
-              sum by (route) (rate(apid_request_total{code!="ok"}[5m]))
+              sum by (route) (rate(apid_request_total{account_id!="anonymous",code!="ok"}[5m]))
           )
           /
           clamp_min(
-              sum by (route) (rate(apid_request_total[5m])),
+              sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m])),
               1
           )
 
@@ -685,6 +766,20 @@ groups:
         annotations:
           summary: "Gateway wake p95 > 1.5s"
           description: "End-to-end cold-wake latency has exceeded the §12 page threshold (1.5s) at p95 for 10m. Cross-check FaasColdBootFallbackHigh — snapshot rot is the most likely cause."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWakeLatencyHigh.md"
+
+      - alert: FaasPlatformWakeLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[15m])) by (le)) >= 0.35
+          and sum(increase(gateway_platform_wake_latency_seconds_count[15m])) >= 20
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: platform_wake_latency
+        annotations:
+          summary: "SSD platform wake p95 is not below 350ms"
+          description: "The platform-only capacity-admission to first-upstream-byte boundary has breached the public-beta p95 gate with at least 20 recent samples. Check schedd wake phases, VMMD restore breakdown, and the persistent forwarding bridge. CDN and client latency are excluded."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWakeLatencyHigh.md"
 
       # ─────────────────────────────────────────────────────────────────
@@ -1062,17 +1157,17 @@ groups:
       # A rollout should converge to one daemon release. This catches a
       # partial deploy where systemd is healthy and readiness is green, but
       # different hosts (or different daemons on one host) are serving
-      # incompatible code for longer than the normal rollout window.
+      # incompatible code. The canonical rollout owns a bounded convergence
+      # window; public status must show the mixed fleet while that gate runs.
       - alert: FaasDeployVersionSkew
         expr: count(count by (version) ({__name__=~".*_faas_deploy_version"})) > 1
-        for: 10m
         labels:
           severity: warn
           component: platform
           family: daemon_lifecycle
         annotations:
           summary: "Fleet is running multiple daemon release versions"
-          description: "More than one faas_deploy_version has been visible for 10m. Check daemon_build_info by instance and version, then complete or roll back the interrupted deployment before traffic is split across releases."
+          description: "More than one faas_deploy_version is visible. Check daemon_build_info by instance and version, then complete or roll back the failed deployment before traffic remains split across releases."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDeployVersionSkew.md"
 
       # Long-lived processes are not automatically unhealthy, but a daemon
@@ -1284,10 +1379,10 @@ groups:
       # is more sensitive — a small absolute spike in 5xx is a larger
       # signal than a small absolute spike in 2xx traffic.
       - alert: FaasErrorRateSpike
-        # Anonymous Internet scans land in the unmatched bucket. They are
-        # expected 404s, not evidence that a customer-facing API route has
-        # regressed, and must not turn the public platform status red.
-        expr: max(faas_apid_error_rate_ratio:by_route{route!="unmatched"}) > 2
+        # The recording rules exclude anonymous traffic on every route. Public
+        # probes and failed auth attempts are security telemetry, not evidence
+        # that an authenticated customer-facing API route has regressed.
+        expr: faas_apid_error_rate_ratio:by_route{route!="unmatched"} > 2
         for: 10m
         labels:
           severity: page
@@ -1707,7 +1802,7 @@ groups:
           description: "meterd cannot refresh provider-vs-local billing drift for provider {{ $labels.provider }}. The drift gauges may be stale even when they are below threshold; inspect meterd logs and the reason-labelled meterd_billing_drift_reconcile_failures_total counter."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
       - alert: BillingReconciliationUnavailable
-        expr: meterd_billing_reconcile_supported == 0
+        expr: meterd_billing_mode_enabled == 1 and on(provider) meterd_billing_reconcile_supported == 0
         for: 5m
         labels:
           severity: page
@@ -1716,7 +1811,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Billing reconciliation is unavailable for {{ $labels.provider }}"
-          description: "The active provider does not expose a usable reconciliation surface, so provider-vs-local billing drift cannot be measured. Treat drift gauges as unknown, not healthy, until the provider or deployment configuration is corrected."
+          description: "Live billing is enabled but the active provider does not expose a usable reconciliation surface, so provider-vs-local billing drift cannot be measured. Treat drift gauges as unknown until the provider configuration is corrected."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
 
       # ─────────────────────────────────────────────────────────────────

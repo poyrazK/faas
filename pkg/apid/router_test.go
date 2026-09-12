@@ -33,7 +33,7 @@ func TestIsApidPath(t *testing.T) {
 		{"/auth/reset", true},
 		{"/logout", true},
 		{"/status", true},
-		{"/healthz", true},
+		{"/healthz", false},
 		{"/cli-auth", true},
 		{"/docs", true},
 		{"/docs/", true},

@@ -2,7 +2,7 @@
 # §Open follow-ups, shipped in the issue #303 follow-up PR).
 #
 # What this exercises:
-#   1. FaasErrorRateSpike — `max(faas_apid_error_rate_ratio:by_route)
+#   1. FaasErrorRateSpike — `faas_apid_error_rate_ratio:by_route
 #      > 2` for 10m. The error-rate-ratio recording rule is
 #      `5m / clamp_min(3d_baseline, 0.001)`.
 #   2. FaasErrorRateDrop — `(ratio < 0.5) and (5m > 0.001)` for 15m.
@@ -58,12 +58,6 @@ tests:
       # expression's first true evaluation at t=10h+5m; the alert
       # is now active.
       #
-      # NOTE: the alert's expression is `max(...)` over a vector
-      # with no group-by, so the resulting series carries NO labels
-      # other than the static labels declared in `labels:` (severity,
-      # component, family, mode, direction, metric). The `route`
-      # label is intentionally absent — `max` strips it. The
-      # annotation's `{{ $labels.route }}` interpolates to empty.
       - eval_time: 10h15m
         alertname: FaasErrorRateSpike
         exp_alerts:
@@ -74,9 +68,10 @@ tests:
               mode: fleet
               direction: spike
               metric: error_rate
+              route: "GET /v1/test"
             exp_annotations:
-              summary: "Error rate > 2x 3-day baseline (route )"
-              description: "Route  has had its error rate above 2x its 3d trailing average for 10m. Cross-check apid_request_failures_total{account_id,route,code} for the per-account view. Common causes: upstream dependency (Postgres, Stripe, Paddle) starting to 5xx, customer-deploy regression, or auth-secret rotation that produced a wave of 401s."
+              summary: "Error rate > 2x 3-day baseline (route GET /v1/test)"
+              description: "Route GET /v1/test has had its error rate above 2x its 3d trailing average for 10m. Cross-check apid_request_failures_total{account_id,route,code} for the per-account view. Common causes: upstream dependency (Postgres, Stripe, Paddle) starting to 5xx, customer-deploy regression, or auth-secret rotation that produced a wave of 401s."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
 
   # ──────────────────────────────────────────────────────────────
@@ -163,3 +158,18 @@ tests:
       - eval_time: 10h15m
         alertname: FaasErrorRateDrop
         # No exp_alerts → unmatched scans are excluded.
+
+  # Authentication failures can carry a recognized protected route. Exclude
+  # them at the recording-rule source instead of relying on route="unmatched".
+  - interval: 30s
+    name: "anonymous protected-route burst → neither fleet error-rate alert fires"
+    input_series:
+      - series: 'apid_request_total{account_id="anonymous",route="GET /v1/account",code="err"}'
+        values: '0+0x1200 0+0.3x50'
+      - series: 'apid_request_total{account_id="anonymous",route="GET /v1/account",code="ok"}'
+        values: '0+0x1250'
+    alert_rule_test:
+      - eval_time: 10h15m
+        alertname: FaasErrorRateSpike
+      - eval_time: 10h15m
+        alertname: FaasErrorRateDrop

@@ -622,13 +622,47 @@ func scanAPIKey(row pgx.Row) (APIKey, error) {
 }
 
 func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Plan) error {
-	_, err := s.pool.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set plan = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, string(plan)); err != nil {
+		return fmt.Errorf("state: sync personal org plan: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PgStore) UpdateAccountStatus(ctx context.Context, id string, status AccountStatus) error {
-	_, err := s.pool.Exec(ctx, `update accounts set status = $2 where id = $1`, id, string(status))
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `update accounts set status = $2 where id = $1`, id, string(status))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set status = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, string(status)); err != nil {
+		return fmt.Errorf("state: sync personal org status: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 // UpdateAccountProviderCustomerID records the Stripe `cus_…` ID on the
@@ -648,6 +682,12 @@ func (s *PgStore) UpdateAccountProviderCustomerID(ctx context.Context, id, strip
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set provider_customer_id = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, stripeCustomerID); err != nil {
+		return err
 	}
 	provider := billingProviderForCustomerID(stripeCustomerID)
 	_, err = tx.Exec(ctx,
@@ -679,6 +719,12 @@ func (s *PgStore) UpdateAccountStripeSubscriptionItem(ctx context.Context, id, s
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set stripe_subscription_item = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, subItem); err != nil {
+		return err
 	}
 	_, err = tx.Exec(ctx,
 		`update billing_identities bi
@@ -2084,7 +2130,19 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		return App{}, fmt.Errorf("state: lock account %s: %w", app.AccountID, err)
 	}
 
-	// 2. Authoritative count under the lock. Developer environments use
+	// 2. Preserve idempotent create-or-fetch behavior at the quota boundary.
+	// Callers use ErrConflict to fetch an already-reserved slug and deploy it;
+	// returning the quota error first strands a customer's first app forever
+	// on plans with a single slot.
+	var slugExists bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from apps where slug = $1 and status <> 'deleted')`, app.Slug).Scan(&slugExists); err != nil {
+		return App{}, fmt.Errorf("state: check app slug %s: %w", app.Slug, err)
+	}
+	if slugExists {
+		return App{}, ErrConflict
+	}
+
+	// 3. Authoritative count under the lock. Developer environments use
 	//    their own cap; production apps and PR previews use DeployedApps.
 	//    Keeping both counts inside the account lock closes the same TOCTOU
 	//    window for either quota family.
@@ -2110,7 +2168,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
 	}
 
-	// 3. Conditional insert. The slug unique index surfaces a collision
+	// 4. Conditional insert. The slug unique index surfaces a concurrent collision
 	//    as a pgx unique-violation SQLSTATE; mapErr wraps it in ErrConflict.
 	manifest := app.Manifest
 	if manifest.IsZero() {
@@ -6736,6 +6794,38 @@ func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID s
 }
 
 func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
+	if status == DeployFailed {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		var appID string
+		tag, err := tx.Exec(ctx, `
+			update deployments
+			   set status = 'failed', error = $2, traffic_percent = 0,
+			       rollout_state = 'aborted', rollout_completed_at = null,
+			       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+			       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
+			 where id = $1 and status <> 'cancelled'`, id, nullString(errMsg))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			var current DeploymentStatus
+			if err := tx.QueryRow(ctx, `select status from deployments where id = $1`, id).Scan(&current); err != nil {
+				return mapErr(err)
+			}
+			return ErrInvalidStateTransition
+		}
+		if err := tx.QueryRow(ctx, `select app_id from deployments where id=$1`, id).Scan(&appID); err != nil {
+			return mapErr(err)
+		}
+		if err := rebalanceTrafficAfterFailure(ctx, tx, appID, id); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		update deployments set status = $2, error = $3
 		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')`, id, string(status), nullString(errMsg))
@@ -6748,6 +6838,35 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 			return mapErr(err)
 		}
 		return ErrInvalidStateTransition
+	}
+	return nil
+}
+
+// rebalanceTrafficAfterFailure restores the most highly weighted surviving
+// live deployment to 100%. It is called in the same transaction that marks a
+// deployment failed so readers can never observe failed traffic or a split
+// rollout with no 100% fallback.
+func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedID string) error {
+	var fallbackID string
+	err := tx.QueryRow(ctx, `
+		select id
+		  from deployments
+		 where app_id=$1 and id<>$2 and status='live' and deleted_at is null
+		 order by traffic_percent desc, created_at desc, id desc
+		 limit 1
+		 for update`, appID, failedID).Scan(&fallbackID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		update deployments set traffic_percent=0
+		 where app_id=$1 and id<>$2 and status='live' and deleted_at is null`, appID, failedID); err != nil {
+		return err
+	}
+	if fallbackID != "" {
+		if _, err := tx.Exec(ctx, `update deployments set traffic_percent=100 where id=$1`, fallbackID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -9029,13 +9148,32 @@ func (s *PgStore) SetDeploymentSourceURL(ctx context.Context, id, sourceURL, com
 // Idempotent on (status='failed') rows: a redeploy after a fix will
 // overwrite both columns.
 func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error) {
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
 		`update deployments
-		    set status = 'failed', error = $2, error_code = $3
+		    set status = 'failed', error = $2, error_code = $3,
+		        traffic_percent = 0, rollout_state = 'aborted',
+		        rollout_completed_at = null,
+		        rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
 		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code))
-	return scanDeploymentWithRootfs(row)
+	failed, err := scanDeploymentWithRootfs(row)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := rebalanceTrafficAfterFailure(ctx, tx, failed.AppID, failed.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, err
+	}
+	return failed, nil
 }
 
 // SetDeploymentFailedEx is the error-explanations cluster (spec §6.4
@@ -9064,17 +9202,36 @@ func (s *PgStore) SetDeploymentFailedEx(
 	ctx context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
 ) (Deployment, error) {
 	logsJSON := logExcerptsJSON(logs)
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
 		`update deployments
 		    set status = 'failed', error = $2, error_code = $3,
 		        error_hint = $4, error_why = $5, error_fix = $6,
-		        error_relevant_logs = $7
+		        error_relevant_logs = $7,
+		        traffic_percent = 0, rollout_state = 'aborted',
+		        rollout_completed_at = null,
+		        rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
 		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code),
 		nullString(hint), nullString(why), nullString(fix),
 		logsJSON)
-	return scanDeploymentWithRootfs(row)
+	failed, err := scanDeploymentWithRootfs(row)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := rebalanceTrafficAfterFailure(ctx, tx, failed.AppID, failed.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, err
+	}
+	return failed, nil
 }
 
 // --- builds ------------------------------------------------------------------
@@ -9144,15 +9301,25 @@ func (s *PgStore) FailSourceDeployment(ctx context.Context, id, message string) 
 	// A commit response may be lost while the queue transaction still owns
 	// this row. Acquire its lock before checking builds on a fresh snapshot.
 	var status DeploymentStatus
-	if err := tx.QueryRow(ctx, `select status from deployments where id=$1 for update`, id).Scan(&status); err != nil {
+	var appID string
+	if err := tx.QueryRow(ctx, `select status,app_id from deployments where id=$1 for update`, id).Scan(&status, &appID); err != nil {
 		return mapErr(err)
 	}
 	if status != DeployPending && status != DeployBuilding {
 		return nil
 	}
-	if _, err := tx.Exec(ctx, `update deployments set status='failed',error=$2 where id=$1
-	and not exists(select 1 from builds where deployment_id=$1)`, id, message); err != nil {
+	tag, err := tx.Exec(ctx, `update deployments set status='failed',error=$2,
+	traffic_percent=0,rollout_state='aborted',rollout_completed_at=null,
+	rollout_aborted_at=coalesce(rollout_aborted_at,now()),
+	rollout_aborted_reason=coalesce(nullif($2,''),'deployment failed') where id=$1
+	and not exists(select 1 from builds where deployment_id=$1)`, id, message)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() > 0 {
+		if err := rebalanceTrafficAfterFailure(ctx, tx, appID, id); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -12358,6 +12525,7 @@ func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json
 		       outcome = 'success',
 		       completed_at = now(),
 		       received_at = coalesce(received_at, now()),
+		       last_error = '',
 		       result = coalesce($2, result)
 		 where id = $1 and state = 'dispatching'
 		 returning account_id`, id, nullableJSON(result)).Scan(&accountID); err != nil {
@@ -13243,6 +13411,26 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 	return scanInstances(rows)
 }
 
+// ListActiveInstancesForApp is the customer `ps` read path. It filters at the
+// database boundary so years of parked/stopped wake history cannot make a
+// current-state request unbounded.
+func (s *PgStore) ListActiveInstancesForApp(ctx context.Context, appID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
+		 from instances
+		 where app_id = $1 and state in ('waking','cold_booting','running','snapshotting','migrating')
+		 order by started_at desc limit $2`, appID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
 // ListLatestInstancesForApp returns up to `limit` instance rows for
 // appID, ordered by started_at DESC. Used by the dashboard's app-detail
 // "Recent wakes" table (gaps analysis 2026-07-23). The LIMIT pushdown
@@ -13818,6 +14006,26 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *PgStore) PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error) {
+	row := s.pool.QueryRow(ctx,
+		`update instances
+		    set netns = $3,
+		        host_ip = $4::inet,
+		        guest_uid = $5,
+		        started_at = now(),
+		        state = 'running'
+		  where id = $1
+		    and state = $2
+		 returning id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count`,
+		id, expectedState, netns, hostIP, guestUID)
+	ins, err := scanInstance(row)
+	if errors.Is(err, ErrNotFound) {
+		return Instance{}, ErrConflict
+	}
+	return ins, err
 }
 
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
@@ -15636,8 +15844,8 @@ func (s *PgStore) NodeSetLifecycle(ctx context.Context, id string, expected, nex
 	return nil
 }
 
-// NodeListRecoverable returns every node in ('unavailable','recovering') —
-// the recovery arbiter's input set.
+// NodeListRecoverable returns recovering nodes and recently unavailable nodes;
+// terminally stale unavailable inventory is kept for audit but not polled.
 func (s *PgStore) NodeListRecoverable(ctx context.Context) ([]ComputeNode, error) {
 	rows, err := s.triggerQueries().NodeListRecoverable(ctx, s.pool)
 	if err != nil {

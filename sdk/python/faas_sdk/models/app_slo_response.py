@@ -24,8 +24,10 @@ class AppSLOResponse:
     (1h/24h/7d) summary of the customer-facing SLO signals,
     not a 5m slice for the dashboard. The fields overlap only
     on latency percentiles, error rate, and cold-boot rate — the
-    remaining fields (`wake_queue_p95_ms`, `throttled_total`,
-    `instance_hours`, `gb_hours`) are net-new per the issue.
+    remaining fields (`throttled_total`, `instance_hours`,
+    `gb_hours`) are net-new per the issue. `wake_queue_p95_ms`
+    remains in the wire shape for compatibility and is zero until
+    the underlying histogram has an app label.
 
     On Prometheus failure the endpoint returns 200 with
     zeroed fields and `source: "degraded: <reason>"`. When
@@ -59,7 +61,7 @@ class AppSLOResponse:
     gb_hours: float
     """Sum of mb_seconds / 3600 / 1024 over the window (from `usage_minutes`)."""
     wake_queue_p95_ms: float
-    """FLEET wake-queue p95 (`gateway_wake_queue_wait_seconds` is unlabeled)."""
+    """Reserved compatibility field. Zero until the wake-queue histogram can be scoped to this app."""
     requests_total: int
     throttled_total: int
     """Per-app rate-limit count over the window."""

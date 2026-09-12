@@ -735,8 +735,9 @@ type Querier interface {
 	//   'unavailable'  → heartbeat gap detected; instances stranded.
 	//   'recovering'   → first post-failure ping succeeded; sweep to
 	//                    confirm zero stranded instances.
-	// Caller is the recovery arbiter; one tick enumerates both classes
-	// and applies the same decision matrix.
+	// Unavailable rows age out of active polling after 24 hours. They remain in
+	// inventory for audit; a returning vmmd re-registers through the heartbeat
+	// path and becomes active again.
 	NodeListRecoverable(ctx context.Context, db DBTX) ([]NodeListRecoverableRow, error)
 	// Stamps drain_completed_at + flips lifecycle='maintenance'. Called once
 	// the drain arbiter confirms zero live instances remain on the node.

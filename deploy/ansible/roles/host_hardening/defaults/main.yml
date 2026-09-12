@@ -10,6 +10,21 @@ faas_hardening_fail2ban: true
 faas_hardening_unattended_upgrades: true
 faas_hardening_auditd: true
 faas_hardening_sysctl_enabled: true
+faas_hardening_caddy: true
+faas_hardening_caddy_dropin: /etc/systemd/system/caddy.service.d/90-gregale-hardening.conf
+faas_hardening_journald: true
+
+# Bound the local replay buffer. Logs are shipped off-host when the optional
+# Promtail overlay is enabled, but the journal remains the source of truth while
+# that path is unavailable. Keep enough history for incident triage without
+# allowing expected workload churn to consume an unbounded share of the host.
+faas_hardening_journal_system_max_use: 512M
+faas_hardening_journal_system_keep_free: 2G
+faas_hardening_journal_system_max_file_size: 64M
+faas_hardening_journal_runtime_max_use: 128M
+faas_hardening_journal_runtime_keep_free: 256M
+faas_hardening_journal_runtime_max_file_size: 16M
+faas_hardening_journal_max_retention: 7day
 
 # sshd. Applied as a drop-in so the distro file stays untouched and a
 # provider-rendered Port= line (spec §7: non-standard port, operator-owned)
@@ -19,7 +34,10 @@ faas_hardening_sysctl_enabled: true
 # never cause.
 faas_hardening_sshd_dropin: /etc/ssh/sshd_config.d/99-faas-hardening.conf
 faas_hardening_sshd_password_auth: false
-faas_hardening_sshd_permit_root_login: prohibit-password
+# Public beta uses a named OS Login administrator. The role refuses to apply
+# this value when Ansible itself is connected as root, so an access migration
+# fails before it can lock out the operator.
+faas_hardening_sshd_permit_root_login: "no"
 faas_hardening_sshd_max_auth_tries: 4
 faas_hardening_sshd_client_alive_interval: 300
 faas_hardening_sshd_client_alive_count_max: 2

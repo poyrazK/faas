@@ -60,6 +60,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BASE_EXTRACT_ROOT` | shared | `unit` |  |  | `` |  |
 | `FAAS_BASE_STAGING_ROOT` | shared | `unit` |  |  | `` |  |
 | `FAAS_BASE_TMP_ROOT` | shared | `unit` |  |  | `` |  |
+| `FAAS_BILLING_MODE` | apid, meterd, shared | `unit` |  | live | `` | disabled pauses provider delivery and reconciliation paging; the public-beta control-plane role overrides the unit default to disabled |
 | `FAAS_BILLING_PORTAL_URL` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BILLING_PROVIDER` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BRIDGE_HEADERS` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
@@ -105,7 +106,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DNS_ZONE` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_DOMAIN_DOCTOR_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_DOMAIN_DOCTOR_TTL_SECONDS` | apid | `runtime-config` |  |  | `` |  |
-| `FAAS_DPA_PATH` | apid | `default` |  |  | `` |  |
+| `FAAS_DPA_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_DUNNING_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_E2E_API_HOSTING_SMOKE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |

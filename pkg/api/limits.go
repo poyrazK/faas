@@ -278,6 +278,9 @@ type Limits struct {
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
+	// DeploysPerHour is the account-wide number of deployment admissions in a
+	// fixed one-hour window. It applies across every app and source path.
+	DeploysPerHour int
 	// DeveloperApps is the separate cap for expiring `gregale dev`
 	// environments. These sessions do not consume DeployedApps slots.
 	DeveloperApps      int
@@ -1629,6 +1632,7 @@ var planLimits = map[Plan]Limits{
 	PlanFree: {
 		Plan:           PlanFree,
 		DeployedApps:   1,
+		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
 		RAMMB:          128,
@@ -1983,6 +1987,7 @@ var planLimits = map[Plan]Limits{
 	PlanHobby: {
 		Plan:                  PlanHobby,
 		DeployedApps:          5,
+		DeploysPerHour:        50,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
 		RAMMB:                 256,
@@ -2361,6 +2366,7 @@ var planLimits = map[Plan]Limits{
 	PlanPro: {
 		Plan:                  PlanPro,
 		DeployedApps:          25,
+		DeploysPerHour:        250,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
 		RAMMB:                 512,
@@ -2707,6 +2713,7 @@ var planLimits = map[Plan]Limits{
 	PlanScale: {
 		Plan:                  PlanScale,
 		DeployedApps:          100,
+		DeploysPerHour:        1000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
 		RAMMB:                 1024,
@@ -6226,6 +6233,16 @@ func (p Plan) RateLimitPerAccountRPM() int {
 		return 0
 	}
 	return l.RateLimitPerAccountRPM
+}
+
+// DeploysPerHour returns the account-wide deploy admission budget for the
+// plan. Unknown plans fail closed.
+func (p Plan) DeploysPerHour() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.DeploysPerHour
 }
 
 // ScaleUpTargetRPSAllowed reports whether the plan may set

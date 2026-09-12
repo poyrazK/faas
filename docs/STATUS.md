@@ -1020,13 +1020,12 @@ explicitly open issues that the doc otherwise implies are closed.
   `cmd/gatewayd-public/main.go`; three alert rules land in `faas.rules.yml`;
   operator runbook at `docs/ops/gatewayd-public-tls-cutover.md` (the legacy `docs/ops/gatewayd-tls-cutover.md` retains the pre-PR-A cut-over steps; current process lives in the public-edge runbook).
 - **§14 V2 latency driver** — 100 platform-only park→wake cycles per app class,
-  p95 < 350 ms from `wake.boot_started` through `wake.boot_completed` on
-  the reference SSD node. The internal gateway first-byte cohort now also
-  enforces p99 ≤ 500 ms and p999 ≤ 800 ms in
-  `TestDeployWakeMetal/wake-latency-p99-100cycles`; its per-phase p99/p999
-  view is the `Wake phase latency (p99 / p999)` dashboard panel. The gate is
-  wired via `pkg/fcvm/TestMetalParkWakeCycle`; the internal gateway cohort
-  remains a separate diagnostic. Reference-SSD execution is recorded here
+  p95 < 350 ms from capacity admission/`wake.boot_started` through the first
+  upstream byte on the reference SSD node. The reusable
+  `scripts/ops/wake_performance_gate.py` reports the full-wake and raw-restore
+  p50/p90/p95/p99 distributions and rejects incomplete runtime cohorts. CDN,
+  Internet and client-distance timing stays outside this gate. Reference-SSD
+  execution is recorded here
   when the metal acceptance run is available. Runs on
   `make metal-lima RUN_ARGS='-run TestDeployWakeMetal'`.
 - **Documented timed restore drill** — §14 M8: PG + one app back

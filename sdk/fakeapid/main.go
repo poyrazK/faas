@@ -50,6 +50,7 @@ func accountLimits() map[string]any {
 		"vcpu":                            2,
 		"max_concurrency":                 2,
 		"deployed_apps":                   3,
+		"deploys_per_hour":                50,
 		"developer_apps":                  2,
 		"included_gb_hours":               50,
 		"app_layer_max_mb":                512,

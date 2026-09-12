@@ -130,6 +130,13 @@ func TestStore_CreateAppIfUnderQuota_MemStore(t *testing.T) {
 		t.Errorf("QuotaError = {Limit:%d, Observed:%d}, want {1,1}", qe.Limit, qe.Observed)
 	}
 
+	// A repeated create for the reserved first slug remains discoverable at
+	// the cap, allowing the deploy path to fetch it and consume the slot.
+	_, err = store.CreateAppIfUnderQuota(context.Background(), app, limits)
+	if !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("same slug at quota = %v, want ErrConflict", err)
+	}
+
 	// Slug collision on a fresh account returns ErrConflict (separate
 	// code path from the cap).
 	otherAcct, _ := store.CreateAccount(context.Background(), "h@example.com", api.PlanHobby)

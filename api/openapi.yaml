@@ -1653,6 +1653,22 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictDelete' }
 
+  /v1/account/rate-limits:
+    get:
+      tags: [account]
+      operationId: getAccountRateLimits
+      summary: Read the account's current deploy rate window.
+      description: Returns the durable account-wide deploy count, plan limit, remaining admissions, and fixed-window reset time.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current account rate limits.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountRateLimitsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/plan:
     patch:
       tags: [account]
@@ -9419,8 +9435,8 @@ paths:
       operationId: getJobTaskLogs
       summary: Get tail logs of a task.
       description: |
-        Proxied from vmmd's tail endpoint on the compute node
-        that owns the instance. Empty LogContent with
+        Returns the durable combined stdout/stderr tail captured before
+        the terminal task microVM is destroyed. Empty LogContent with
         Truncated=false means the task never produced output
         (process exited before writing anything — common for
         OOM-killed tasks).
@@ -13214,6 +13230,26 @@ paths:
   # dashboard's billing page both render from the same round-trip.
   # Field is omitempty — operator boxes without a configured payment
   # method still return 200 with payment_method absent.
+  /v1/billing/status:
+    get:
+      tags: [billing]
+      operationId: getBillingStatus
+      summary: Get the authenticated customer's billing status.
+      description: |
+        Returns a provider-independent deployment and account billing
+        projection. This customer endpoint requires usage:read and never
+        calls an operator catalog surface.
+      responses:
+        '200':
+          description: Current deployment billing mode and customer attachment status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingStatusResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/billing/portal:
     get:
       tags: [billing]
@@ -16227,13 +16263,14 @@ components:
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
       type: object
-      required: [plan, ram_mb, vcpu, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
+      required: [plan, ram_mb, vcpu, max_concurrency, deployed_apps, deploys_per_hour, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
         vcpu: { type: integer, minimum: 1, maximum: 4, description: "Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account reads." }
         max_concurrency: { type: integer }
         deployed_apps: { type: integer }
+        deploys_per_hour: { type: integer, minimum: 1, description: "Account-wide deployment admissions per fixed one-hour window." }
         developer_apps: { type: integer, description: "Maximum live `gregale dev` environments for this plan." }
         included_gb_hours: { type: integer, format: int64 }
         app_layer_max_mb: { type: integer }
@@ -16251,6 +16288,23 @@ components:
         trigger_payload_max_bytes: { type: integer, minimum: 0 }
         trigger_tls_skip_verify_allowed: { type: boolean, description: "Whether Kafka tls.skip_verify=true is permitted." }
 
+    AccountDeployRateLimit:
+      description: Current fixed one-hour account deploy window.
+      type: object
+      required: [used, limit, remaining, window_resets_at]
+      properties:
+        used: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1 }
+        remaining: { type: integer, minimum: 0 }
+        window_resets_at: { type: string, format: date-time }
+
+    AccountRateLimitsResponse:
+      description: Account-wide operation rate limits.
+      type: object
+      required: [deploys]
+      properties:
+        deploys: { $ref: '#/components/schemas/AccountDeployRateLimit' }
+
     ChangePlanRequest:
       description: "Target plan for the change."
       type: object
@@ -16259,12 +16313,17 @@ components:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
 
     AccountExportResponse:
-      description: "GDPR export bundle: the account itself, every owned app, deployment, build, instance, usage record, domain, cron, API key, and sealed-secret envelope, plus the audit trail."
+      description: "Versioned GDPR export bundle: the account and organization identity graph, owned runtime resources, redacted key metadata, sealed-secret envelopes, and audit trail."
       type: object
-      required: [exported_at, account, apps, deployments, builds, instances, usage, domains, crons, api_keys, app_secrets]
+      required: [schema_version, exported_at, account, organizations, org_memberships, org_invitations, org_api_keys, apps, deployments, builds, instances, usage, domains, crons, api_keys, app_secrets]
       properties:
+        schema_version: { type: integer, enum: [2], description: "Export schema version used by restore and portability tooling." }
         exported_at: { type: string, format: date-time , example: "2026-07-23T11:25:00Z"}
         account: { $ref: '#/components/schemas/AccountResponse' }
+        organizations: { type: array, items: { $ref: '#/components/schemas/OrgResponse' } }
+        org_memberships: { type: array, items: { $ref: '#/components/schemas/OrgMembershipExportResponse' } }
+        org_invitations: { type: array, items: { $ref: '#/components/schemas/OrgInvitationResponse' } }
+        org_api_keys: { type: array, items: { $ref: '#/components/schemas/APIKeyResponse' }, description: "Org-bound API key metadata; plaintext and hashes are never exported." }
         apps: { type: array, items: { $ref: '#/components/schemas/AppResponse' } }
         deployments: { type: array, items: { $ref: '#/components/schemas/DeploymentResponse' } }
         builds: { type: array, items: { $ref: '#/components/schemas/BuildExportResponse' } }
@@ -16277,6 +16336,20 @@ components:
         audit_trail:
           type: array
           items: { $ref: '#/components/schemas/GdprAuditExportResponse' }
+
+    OrgMembershipExportResponse:
+      description: "Organization membership lifecycle row included in export schema v2."
+      type: object
+      required: [org_id, org_slug, account_id, email, role, joined_at]
+      properties:
+        org_id: { type: string, format: uuid }
+        org_slug: { type: string }
+        account_id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { type: string, enum: [owner, admin, developer, billing, viewer] }
+        invited_by_account_id: { type: string, format: uuid }
+        joined_at: { type: string, format: date-time }
+        removed_at: { type: string, format: date-time }
 
     AccountDeletionResponse:
       description: "Result of staging account deletion: status flips to `deleted_pending` and `restore_until` marks the end of the 30-day grace window."
@@ -18961,6 +19034,20 @@ components:
           items: { $ref: '#/components/schemas/Invoice' }
         next_before: { type: [string, "null"], format: date-time }
 
+    BillingStatusResponse:
+      description: Provider-independent customer billing status (issue #2302).
+      type: object
+      required: [mode, enabled, provider, plan, account_status, customer_configured, subscription_configured, usage_reconciliation_enabled]
+      properties:
+        mode: { type: string, enum: [live, disabled] }
+        enabled: { type: boolean }
+        provider: { type: string, description: 'Configured provider name; no provider-specific identifiers are exposed.' }
+        plan: { type: string, enum: [free, hobby, pro, scale] }
+        account_status: { type: string, enum: [active, past_due, suspended, deleted_pending] }
+        customer_configured: { type: boolean }
+        subscription_configured: { type: boolean }
+        usage_reconciliation_enabled: { type: boolean }
+
     BillingPortalResponse:
       description: |
         Provider-authenticated or operator-configured billing portal URL (issue #253) plus the
@@ -20146,7 +20233,7 @@ components:
     InstanceResponse:
       description: "Read-only instance view: id, deployment, state (waking/running/...), lease uid, and host-side internal endpoint (loopback only)."
       type: object
-      required: [id, app_id, deployment_id, state, ram_mb]
+      required: [id, app_id, deployment_id, state, ram_mb, resident]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
@@ -20154,6 +20241,9 @@ components:
         state: { type: string }
         host_ip: { type: [string, "null"] }
         ram_mb: { type: integer, example: 256 }
+        resident:
+          type: boolean
+          description: "True when this instance currently holds host memory. Historical parked, stopped, and failed rows report false."
         # wake_id is a UUIDv7 (time-ordered) minted by schedd at WAKING.
         # Stable across the lifetime of one wake attempt; a PARK → WAKE
         # cycle mints a new one. Surfaced as the x-faas-wake-id header.
@@ -20593,8 +20683,7 @@ components:
 
     JobTaskLogResponse:
       description: |
-        Per-task log tail. Proxied from vmmd's tail endpoint on
-        the compute node that owns the instance. Truncated=true
+        Durable per-task combined stdout/stderr tail. Truncated=true
         means the tail was capped at MaxBytes; clients re-fetch
         with a larger limit to see more.
       type: object
@@ -25475,8 +25564,10 @@ components:
         (1h/24h/7d) summary of the customer-facing SLO signals,
         not a 5m slice for the dashboard. The fields overlap only
         on latency percentiles, error rate, and cold-boot rate — the
-        remaining fields (`wake_queue_p95_ms`, `throttled_total`,
-        `instance_hours`, `gb_hours`) are net-new per the issue.
+        remaining fields (`throttled_total`, `instance_hours`,
+        `gb_hours`) are net-new per the issue. `wake_queue_p95_ms`
+        remains in the wire shape for compatibility and is zero until
+        the underlying histogram has an app label.
 
         On Prometheus failure the endpoint returns 200 with
         zeroed fields and `source: "degraded: <reason>"`. When
@@ -25503,7 +25594,7 @@ components:
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 over the window (from `usage_minutes`)." }
         wake_queue_p95_ms:
           type: number
-          description: "FLEET wake-queue p95 (`gateway_wake_queue_wait_seconds` is unlabeled)."
+          description: "Reserved compatibility field. Zero until the wake-queue histogram can be scoped to this app."
         requests_total: { type: integer, format: int64 }
         throttled_total: { type: integer, format: int64, description: "Per-app rate-limit count over the window." }
       x-since: "2026-08"
@@ -25651,7 +25742,7 @@ components:
         cold_boot_rate_pct: { type: number }
         instance_hours: { type: number, description: "Sum of instance-minutes / 60 across all apps for the account." }
         gb_hours: { type: number, description: "Sum of mb_seconds / 3600 / 1024 across all apps for the account." }
-        wake_queue_p95_ms: { type: number }
+        wake_queue_p95_ms: { type: number, description: "Reserved compatibility field. Zero until the wake-queue histogram can be scoped to the account's apps." }
         requests_total: { type: integer, format: int64 }
         throttled_total: { type: integer, format: int64 }
       x-since: "2026-08"
@@ -26891,9 +26982,9 @@ components:
 
     OrgMeResponse:
       description: |
-        GET /v1/orgs/me response. `org` is null when no X-Active-Org /
-        ?org= hint was supplied (the passthrough case every
-        pre-PR-5 route depends on).
+        GET /v1/orgs/me response. Without an X-Active-Org / ?org= hint,
+        `org` is the caller's personal organization. It is null only for a
+        legacy account that predates the personal-org backfill.
       type: object
       required: [org]
       properties:
@@ -26901,7 +26992,7 @@ components:
           type: [string, "null"]
           allOf:
             - $ref: '#/components/schemas/OrgWithRole'
-          description: null when no active-org hint was supplied; otherwise the active org + caller's role.
+          description: The active org + caller's role, or null only for a legacy account without a personal organization.
 
     OrgMemberResponse:
       description: |
@@ -28309,7 +28400,16 @@ components:
       headers:
         Retry-After:
           schema: { type: integer, example: 60 }
-          description: Seconds until the client may retry. Emitted by the authlimiter (plain-text path).
+          description: Seconds until the client may retry. Emitted by deploy admission and the authlimiter.
+        RateLimit-Limit:
+          schema: { type: integer, example: 10 }
+          description: Account deploy admissions allowed in the current window.
+        RateLimit-Remaining:
+          schema: { type: integer, example: 0 }
+          description: Deploy admissions remaining in the current window.
+        RateLimit-Reset:
+          schema: { type: integer, example: 1800 }
+          description: Seconds until the current deploy window resets.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

@@ -52,7 +52,8 @@ const jobRunSelectCols = `id, job_id, account_id, trigger_kind, env_overrides, t
 // too — same row surface, same scan helper.
 const jobTaskSelectCols = `run_id, task_index, status, attempt, instance_id, error_class,
        error_message, exit_code, started_at, finished_at, created_at,
-       next_attempt_at, lease_token, lease_expires_at, last_lease_node`
+       next_attempt_at, lease_token, lease_expires_at, last_lease_node,
+       log_content, log_truncated`
 
 // scanJobCols reads the jobSelectCols row into a Job. Nullable columns
 // don't apply (every column on jobs is NOT NULL), but env_overrides
@@ -98,7 +99,7 @@ func scanJobTaskCols(scan func(...any) error) (JobTask, error) {
 	if err := scan(&t.RunID, &t.TaskIndex, &t.Status, &t.Attempt, &t.InstanceID,
 		&t.ErrorClass, &t.ErrorMessage, &t.ExitCode, &t.StartedAt, &t.FinishedAt,
 		&t.CreatedAt, &t.NextAttemptAt, &t.LeaseToken, &t.LeaseExpiresAt,
-		&t.LastLeaseNode); err != nil {
+		&t.LastLeaseNode, &t.LogContent, &t.LogTruncated); err != nil {
 		return JobTask{}, err
 	}
 	return t, nil
@@ -797,6 +798,17 @@ func (s *PgStore) JobTaskMarkClaimed(ctx context.Context, runID string, taskInde
 // when the task is already terminal (the WHERE clause gates on
 // status IN ('queued','claimed')).
 func (s *PgStore) JobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage string, finishedAt time.Time) error {
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, status, exitCode, errorClass, errorMessage, "", false, false, finishedAt)
+}
+
+// JobTaskMarkTerminalWithLogs settles a task and persists its retained output
+// in the same UPDATE. The log write is deliberately limited to the guest exit
+// path; reapers continue using JobTaskMarkTerminal and preserve empty output.
+func (s *PgStore) JobTaskMarkTerminalWithLogs(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error {
+	return s.jobTaskMarkTerminal(ctx, runID, taskIndex, status, exitCode, errorClass, errorMessage, logContent, logTruncated, true, finishedAt)
+}
+
+func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated, persistLogs bool, finishedAt time.Time) error {
 	// nullify error_class / error_message when the caller passes
 	// the empty string — the CHECK constraint on error_class has a
 	// closed vocabulary and "" isn't in it.
@@ -815,11 +827,14 @@ func (s *PgStore) JobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 		   error_class   = $4,
 		   error_message = $5,
 		   finished_at   = $6,
+		   log_content   = case when $8 then $9 else log_content end,
+		   log_truncated = case when $8 then $10 else log_truncated end,
 		   lease_token   = null,
 		   lease_expires_at = null
 		 where run_id = $1::uuid and task_index = $7
 		   and status in ('queued', 'claimed')`,
-		runID, status, exitCode, errorClassArg, errorMessageArg, finishedAt.UTC(), taskIndex)
+		runID, status, exitCode, errorClassArg, errorMessageArg, finishedAt.UTC(), taskIndex,
+		persistLogs, logContent, logTruncated)
 	if err != nil {
 		return fmt.Errorf("state: mark task (%s, %d) terminal: %w", runID, taskIndex, err)
 	}
