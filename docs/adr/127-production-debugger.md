@@ -128,7 +128,7 @@ New `POST /v1/otel/v1/traces` endpoint following OTel HTTP/JSON protobuf:
 - Limit: customer span ingest capped at `DebugTelemetrySpansPerTrace` (Hobby=50, Pro=200, Scale=1000); overflow truncated.
 - Reuses `TraceRingExporter` plumbing at `pkg/gateway/trace_setup.go:131` as the seam.
 
-This is what makes the example "PostgreSQL queries 82ms → 191ms" breakdown derivable: the customer emits DB spans tagged with the traceparent Gregale set in `TRACEPARENT` env, Gregale merges them into the persisted request row.
+This is what makes the example "PostgreSQL queries 82ms → 191ms" breakdown derivable: the customer's HTTP/OTel instrumentation extracts the request-scoped trace context forwarded by Gregale, and Gregale merges the resulting DB spans into the persisted request row.
 
 > Writer detail: `docs/adr/adr-127-pr-d.md` — describes the
 > gatewayd-public → apid write path, auth RPC, rate-limit regime,

@@ -151,13 +151,13 @@ func StampOverridePortEnv(env []string, port int) []string {
 // StampTraceparentEnv appends TRACEPARENT=<tp> to env when tp is
 // non-empty (issue #555 PR-4). W3C trace context propagates from the
 // gateway through schedd → vmmd → guest-init via the vsock resume hook
-// JSON body; the guest stamps it onto the runner env so the customer's
-// handler can pick it up via `process.env.TRACEPARENT` and emit its own
-// child spans. Empty traceparent is a no-op (legacy single-box without
-// OTel). The customer can override TRACEPARENT in their manifest env,
-// though that breaks the per-request correlation chain — the platform
-// contract is "use the platform-supplied TRACEPARENT". Exported for
-// tests; the precedence assertion lives in env_linux_test.go.
+// JSON body; the guest stamps it onto the runner env as a boot/wake seed
+// for runtimes that initialize tracing before serving requests. Request
+// correlation for a long-lived warm handler is carried by the per-request
+// traceparent HTTP header instead; process environment cannot be updated
+// safely for each concurrent request. Empty traceparent is a no-op (legacy
+// single-box without OTel). Exported for tests; the precedence assertion
+// lives in env_linux_test.go.
 func StampTraceparentEnv(env []string, tp string) []string {
 	if tp == "" {
 		return env
