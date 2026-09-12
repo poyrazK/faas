@@ -117,10 +117,54 @@ func TestManagerWakeExecutionIsNetworkless(t *testing.T) {
 	if !spec.Networkless || spec.Tap != "" {
 		t.Fatalf("cold-boot spec = %#v, want networkless empty tap", spec)
 	}
+	if !spec.SkipReady {
+		t.Fatalf("cold-boot spec SkipReady = false, want true for execution guest")
+	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("network commands = %#v, want none", runner.commands)
 	}
 	if err := m.Destroy(context.Background(), inst.Lease.Instance); err != nil {
 		t.Fatalf("Destroy: %v", err)
+	}
+}
+
+func TestManagerWakeExecutionRestoreSkipsAppReadiness(t *testing.T) {
+	runner := &fakeRunner{}
+	vmm := &fakeVMM{}
+	m := NewManager(runner, vmm, Paths{Kernel: "kernel/test"}, "1.0.0", nil, nil)
+	inst, err := m.WakeExecution(context.Background(), ExecutionWakeRequest{
+		Instance: "exec-restore-1", AccountID: "acct-1", Plan: api.PlanPro,
+		Runtime: string(api.ExecutionRuntimeNode22), KernelKey: "kernel/test",
+		BaseKey: "base/test", LayerKey: "layer/test", VcpuCount: 2,
+		MemSizeMiB: 256, CPUMillicores: 500,
+		Snapshot: &Snapshot{
+			DeploymentID: "exec-deployment-1", FCVersion: "1.0.0",
+			StorageKey: "snap/exec-deployment-1/mem", VMStatePath: "/snap/state",
+			Networkless: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("WakeExecution restore: %v", err)
+	}
+	defer func() { _ = m.Destroy(context.Background(), inst.Lease.Instance) }()
+
+	vmm.mu.Lock()
+	if len(vmm.restoreSpecs) != 1 {
+		vmm.mu.Unlock()
+		t.Fatalf("restore calls = %d, want 1", len(vmm.restoreSpecs))
+	}
+	spec := vmm.restoreSpecs[0]
+	vmm.mu.Unlock()
+	if !spec.Networkless {
+		t.Fatalf("restore spec Networkless = false, want true")
+	}
+	if !spec.SkipReady {
+		t.Fatalf("restore spec SkipReady = false, want true for execution guest")
+	}
+	if spec.Tap != "" {
+		t.Fatalf("restore spec Tap = %q, want empty for execution guest", spec.Tap)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("network commands = %#v, want none", runner.commands)
 	}
 }

@@ -32,8 +32,9 @@ type VMConfig struct {
 	VsockDevice *VsockDevice `json:"vsock,omitempty"`
 	// EphemeralWritable is true only for builder VMs. Their drive1 is a
 	// unique scratch image deleted immediately after export, so provisioning
-	// may hard-link it instead of copying multi-gigabyte bytes. App VMs keep
-	// the default false and retain copy-on-write isolation.
+	// may hard-link it instead of copying multi-gigabyte bytes. App and
+	// networkless execution VMs keep the default false and retain copy-on-write
+	// isolation.
 	EphemeralWritable bool `json:"-"`
 }
 
@@ -184,6 +185,8 @@ type ColdBootSpec struct {
 	ExecutionMode string
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
+	// Networkless execution guests use the vsock execution protocol instead of
+	// binding port 8080.
 	SkipReady bool
 	// Workloads (issue #463 / ADR-069 / PR-B) is the per-workload
 	// drive set. Non-empty → BootColdBoot emits one FC Drive per
@@ -345,7 +348,10 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 		NetworkInterfaces: network,
 		Entropy:           &Entropy{},
 		VsockDevice:       NewVsockDevice(slot),
-		EphemeralWritable: s.SkipReady,
+		// SkipReady is also used by networkless execution guests, but their
+		// layer is caller-supplied runtime state and must remain private. Only
+		// builder scratch images may use the hard-link optimization.
+		EphemeralWritable: s.SkipReady && !s.Networkless,
 	}
 }
 

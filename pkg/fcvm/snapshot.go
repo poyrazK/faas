@@ -193,9 +193,10 @@ type RestoreSpec struct {
 	// StartupDeadlineS is the per-app readiness budget. 0 means use the
 	// vmmd default, preserving restores from pre-M3 callers.
 	StartupDeadlineS int
-	// SkipReady is set for builder restores. Builder guests do not expose the
-	// application HTTP readiness port; their readiness is the builder-specific
-	// resume handoff instead. App restores keep the normal probe.
+	// SkipReady is set for builder and networkless execution restores. These
+	// guests do not expose the application HTTP readiness port; builders use a
+	// build handoff and executions use the vsock protocol. App restores keep
+	// the normal probe.
 	SkipReady bool
 	// EphemeralWritable is set for warm builder restores. The retained builder
 	// drive is already isolated to one slot, so the VMM may link or bind it
