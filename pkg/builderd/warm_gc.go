@@ -2,6 +2,7 @@ package builderd
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 )
@@ -10,6 +11,43 @@ const (
 	defaultWarmBuilderSweepInterval = time.Minute
 	minWarmBuilderSweepInterval     = time.Second
 )
+
+type warmSnapshotCleanupKey struct {
+	storageKey        string
+	vmStateStorageKey string
+	vmStatePath       string
+	layerPath         string
+}
+
+func warmSnapshotCleanupKeyFor(snapshot WarmSnapshot) warmSnapshotCleanupKey {
+	return warmSnapshotCleanupKey{
+		storageKey:        snapshot.StorageKey,
+		vmStateStorageKey: snapshot.VMStateStorageKey,
+		vmStatePath:       snapshot.VMStatePath,
+		layerPath:         snapshot.LayerPath,
+	}
+}
+
+func (b *Builderd) enqueueWarmSnapshotCleanup(snapshot WarmSnapshot) {
+	if b == nil || snapshot.StorageKey == "" {
+		return
+	}
+	b.warmCleanupMu.Lock()
+	defer b.warmCleanupMu.Unlock()
+	if b.warmCleanupPending == nil {
+		b.warmCleanupPending = make(map[warmSnapshotCleanupKey]WarmSnapshot)
+	}
+	b.warmCleanupPending[warmSnapshotCleanupKeyFor(snapshot)] = snapshot
+}
+
+func (b *Builderd) removeWarmSnapshotCleanup(snapshot WarmSnapshot) {
+	if b == nil {
+		return
+	}
+	b.warmCleanupMu.Lock()
+	defer b.warmCleanupMu.Unlock()
+	delete(b.warmCleanupPending, warmSnapshotCleanupKeyFor(snapshot))
+}
 
 // WarmBuilderSweepInterval returns a bounded cadence that notices an idle
 // warm snapshot before it has been unused for another full idle window.
@@ -37,15 +75,25 @@ func (b *Builderd) SweepExpiredWarmBuilder(ctx context.Context, now time.Time) (
 	if b == nil {
 		return false, nil
 	}
-	snapshot, expired := b.ExpireWarmBuilder(now)
+	b.warmOpMu.Lock()
+	defer b.warmOpMu.Unlock()
+	// A retained or running snapshot may be a newer generation that reuses
+	// the same build-derived storage key. Wait until the warm slot is cold
+	// before retrying old cleanup obligations so a retry cannot delete state
+	// that an active restore or a newly captured snapshot still needs.
+	var cleanupErr error
+	if b.warm.State() == WarmCold {
+		cleanupErr = b.retryWarmSnapshotCleanupLocked(ctx)
+	}
+	snapshot, expired := b.warm.ExpireSnapshot(now)
 	if !expired {
-		return false, nil
+		return false, cleanupErr
 	}
 	warmVM, ok := b.vm.(WarmVM)
 	if !ok {
-		return true, nil
+		return true, cleanupErr
 	}
-	return true, b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
+	return true, errors.Join(cleanupErr, b.cleanupWarmSnapshotLocked(ctx, warmVM, snapshot))
 }
 
 // CleanupWarmBuilder releases a retained warm snapshot during daemon
@@ -55,15 +103,49 @@ func (b *Builderd) CleanupWarmBuilder(ctx context.Context) error {
 	if b == nil {
 		return nil
 	}
-	snapshot, retained := b.InvalidateWarmBuilder()
-	if !retained {
+	b.warmOpMu.Lock()
+	defer b.warmOpMu.Unlock()
+	var cleanupErr error
+	snapshot, retained := b.warm.InvalidateSnapshot()
+	warmVM, ok := b.vm.(WarmVM)
+	if !ok {
+		return nil
+	}
+	if retained {
+		cleanupErr = b.cleanupWarmSnapshotLocked(ctx, warmVM, snapshot)
+	}
+	return errors.Join(cleanupErr, b.retryWarmSnapshotCleanupLocked(ctx))
+}
+
+// retryWarmSnapshotCleanupLocked retries cleanup failures that happened after
+// the lifecycle had already forgotten a snapshot. The queue is deliberately
+// in-memory: the warm snapshot itself is an optimization, and a later
+// process restart cannot safely infer ownership from arbitrary storage keys.
+// Cleanup is retried only while the warm slot is cold so an old failed delete
+// cannot race a restore or a newer capture. The caller holds warmOpMu.
+func (b *Builderd) retryWarmSnapshotCleanupLocked(ctx context.Context) error {
+	if b.warm.State() != WarmCold {
 		return nil
 	}
 	warmVM, ok := b.vm.(WarmVM)
 	if !ok {
 		return nil
 	}
-	return b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
+
+	b.warmCleanupMu.Lock()
+	pending := make([]WarmSnapshot, 0, len(b.warmCleanupPending))
+	for _, snapshot := range b.warmCleanupPending {
+		pending = append(pending, snapshot)
+	}
+	b.warmCleanupMu.Unlock()
+
+	var errs []error
+	for _, snapshot := range pending {
+		if err := b.cleanupWarmSnapshotLocked(ctx, warmVM, snapshot); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // WarmBuilderSweepLoop evicts retained builder state that has exceeded the

@@ -8,8 +8,10 @@ import (
 )
 
 type warmBuilderTestVM struct {
-	deleted   []WarmSnapshot
-	deletedCh chan struct{}
+	deleted    []WarmSnapshot
+	deletedCh  chan struct{}
+	deleteErr  error
+	deleteCall int
 }
 
 func (v *warmBuilderTestVM) Spawn(context.Context, VMRequest) (BuildHandle, error) {
@@ -31,6 +33,10 @@ func (v *warmBuilderTestVM) WaitForWarmCompletion(context.Context, BuildHandle) 
 	return BuildOutcome{}, WarmSnapshot{}, errors.New("unused")
 }
 func (v *warmBuilderTestVM) DeleteWarmSnapshot(_ context.Context, snapshot WarmSnapshot) error {
+	v.deleteCall++
+	if v.deleteErr != nil {
+		return v.deleteErr
+	}
 	v.deleted = append(v.deleted, snapshot)
 	if v.deletedCh != nil {
 		select {
@@ -357,6 +363,109 @@ func TestSweepExpiredWarmBuilderCleansBackingStore(t *testing.T) {
 	}
 	if got := b.WarmState(); got != WarmCold {
 		t.Fatalf("WarmState() = %q, want %q", got, WarmCold)
+	}
+}
+
+func TestSweepExpiredWarmBuilderRetriesFailedCleanup(t *testing.T) {
+	base := time.Unix(100, 0)
+	vm := &warmBuilderTestVM{deleteErr: errors.New("temporary vmmd failure")}
+	b := New(nil, nil, vm, NewCache(t.TempDir()), nil, nil, Config{WarmIdle: time.Minute}, nil)
+
+	if _, _, err := b.StartWarmBuilder(base, "firecracker-1.8.0"); err != nil {
+		t.Fatal(err)
+	}
+	want := testStorageWarmSnapshot()
+	want.CreatedAt = base
+	want.LastUsedAt = base
+	if err := b.CompleteWarmBuilder(base, want); err != nil {
+		t.Fatal(err)
+	}
+
+	expired, err := b.SweepExpiredWarmBuilder(context.Background(), base.Add(time.Minute))
+	if !expired {
+		t.Fatal("SweepExpiredWarmBuilder() = false, want true")
+	}
+	if err == nil {
+		t.Fatal("SweepExpiredWarmBuilder() error = nil, want the cleanup failure")
+	}
+	if vm.deleteCall != 1 || len(vm.deleted) != 0 {
+		t.Fatalf("cleanup calls = (%d, %+v), want one failed call", vm.deleteCall, vm.deleted)
+	}
+
+	vm.deleteErr = nil
+	expired, err = b.SweepExpiredWarmBuilder(context.Background(), base.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("retrying SweepExpiredWarmBuilder() error = %v", err)
+	}
+	if expired {
+		t.Fatal("retrying SweepExpiredWarmBuilder() = true, want false")
+	}
+	if vm.deleteCall != 2 || len(vm.deleted) != 1 || vm.deleted[0] != want {
+		t.Fatalf("retried cleanup = (%d, %+v), want one successful retry for %+v", vm.deleteCall, vm.deleted, want)
+	}
+	b.warmCleanupMu.Lock()
+	pending := len(b.warmCleanupPending)
+	b.warmCleanupMu.Unlock()
+	if pending != 0 {
+		t.Fatalf("pending warm cleanups = %d, want 0", pending)
+	}
+}
+
+func TestDrainRetriesPendingWarmSnapshotCleanup(t *testing.T) {
+	base := time.Unix(100, 0)
+	vm := &warmBuilderTestVM{deleteErr: errors.New("temporary vmmd failure")}
+	b := New(nil, nil, vm, NewCache(t.TempDir()), nil, nil, Config{}, nil)
+
+	if _, _, err := b.StartWarmBuilder(base, "firecracker-1.8.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.CompleteWarmBuilder(base, testStorageWarmSnapshot()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.SweepExpiredWarmBuilder(context.Background(), base.Add(6*time.Minute)); err == nil {
+		t.Fatal("SweepExpiredWarmBuilder() error = nil, want the cleanup failure")
+	}
+
+	vm.deleteErr = nil
+	if err := b.Drain(context.Background()); err != nil {
+		t.Fatalf("Drain() error = %v", err)
+	}
+	if vm.deleteCall != 2 || len(vm.deleted) != 1 {
+		t.Fatalf("Drain cleanup calls = (%d, %+v), want one failed and one successful call", vm.deleteCall, vm.deleted)
+	}
+}
+
+func TestSweepDefersPendingCleanupWhileWarmSlotIsRetained(t *testing.T) {
+	base := time.Unix(100, 0)
+	vm := &warmBuilderTestVM{deleteErr: errors.New("temporary vmmd failure")}
+	b := New(nil, nil, vm, NewCache(t.TempDir()), nil, nil, Config{WarmIdle: time.Minute}, nil)
+
+	if _, _, err := b.StartWarmBuilder(base, "firecracker-1.8.0"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := testStorageWarmSnapshot()
+	snapshot.CreatedAt = base
+	snapshot.LastUsedAt = base
+	if err := b.CompleteWarmBuilder(base, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.SweepExpiredWarmBuilder(context.Background(), base.Add(time.Minute)); err == nil {
+		t.Fatal("SweepExpiredWarmBuilder() error = nil, want the cleanup failure")
+	}
+
+	// A later capture can reuse the same build-derived storage key. It must
+	// remain untouched while the newer snapshot is eligible for restore.
+	if _, _, err := b.StartWarmBuilder(base.Add(2*time.Minute), "firecracker-1.8.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.CompleteWarmBuilder(base.Add(2*time.Minute), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if expired, err := b.SweepExpiredWarmBuilder(context.Background(), base.Add(2*time.Minute+30*time.Second)); expired || err != nil {
+		t.Fatalf("SweepExpiredWarmBuilder() = (%v, %v), want retained snapshot without retry", expired, err)
+	}
+	if vm.deleteCall != 1 {
+		t.Fatalf("cleanup calls while retained = %d, want 1", vm.deleteCall)
 	}
 }
 
