@@ -20,6 +20,8 @@
 
 package daemonunitspec
 
+// spec: §13
+
 import (
 	"strings"
 	"testing"
@@ -435,12 +437,7 @@ func TestUnitByName_UnknownReturnsErrorListingKnown(t *testing.T) {
 
 // --- FaasCPSlice constant -------------------------------------------
 
-func TestFaasCPSlice_HardcodedThreeGigabytes(t *testing.T) {
-	// Per registry.go:104-117 — the comment says the slice is a
-	// known under-utilisation vs the financial model's 6 GB. Pin
-	// the constant value so a future merge that "tweaks" the
-	// memory max surfaces here rather than silently capping the
-	// slice smaller (or larger).
+func TestFaasCPSliceName(t *testing.T) {
 	if FaasCPSlice != "faas-cp.slice" {
 		t.Errorf("FaasCPSlice = %q, want faas-cp.slice", FaasCPSlice)
 	}

@@ -90,7 +90,7 @@ func UnitVmmd() daemonunit.Unit {
 		// bound here constrains only vmmd.
 		//
 		// 2026-09-03: under sustained load vmmd reached 2.1 GB RSS and
-		// the shared 3 GB faas-cp.slice (FaasCPSliceMemoryMax) OOM-killed
+		// the then-3 GB faas-cp.slice OOM-killed
 		// it. systemd restarted it in 2 s, but the node never returned to
 		// rotation — schedd's watchdog had already set
 		// compute_nodes.active=false, and neither the heartbeat (which
@@ -134,7 +134,7 @@ func UnitVmmd() daemonunit.Unit {
 		// same reasoning. The CI hardening gate still sees a MemoryMax.
 		//
 		// The remaining design smell is that jail tmpfs is charged to a
-		// 3 GB control-plane slice at all; sizing that properly (or moving
+		// control-plane slice at all; sizing that properly (or moving
 		// the charge to the tenant scope, which widenSnapshotMemoryCgroup
 		// already does for the mem file) needs an ADR.
 		MemoryMax: FaasCPSliceMemoryMax,

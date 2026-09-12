@@ -395,8 +395,7 @@ func (d *VMMDriver) WaitForWarmCompletion(ctx context.Context, h BuildHandle) (B
 
 	fcVersion, err := d.FirecrackerVersion(ctx)
 	if err != nil {
-		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), h.Instance)
-		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: warm snapshot Firecracker version: %w", err), cleanupErr)
+		return d.finishWithoutWarmSnapshot(ctx, h, fmt.Errorf("Firecracker version: %w", err))
 	}
 	memKey, vmstateKey := warmBuilderSnapshotKeys(h.BuildID)
 	if _, err := d.cli.WarmSnapshot(ctx, &vmmdpb.WarmSnapshotRequest{
@@ -404,8 +403,7 @@ func (d *VMMDriver) WaitForWarmCompletion(ctx context.Context, h BuildHandle) (B
 		StorageKey:        memKey,
 		VmstateStorageKey: vmstateKey,
 	}); err != nil {
-		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), h.Instance)
-		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: warm snapshot: %w", err), cleanupErr)
+		return d.finishWithoutWarmSnapshot(ctx, h, err)
 	}
 	snapshot := WarmSnapshot{
 		StorageKey:        memKey,
@@ -417,10 +415,19 @@ func (d *VMMDriver) WaitForWarmCompletion(ctx context.Context, h BuildHandle) (B
 		LastUsedAt:        time.Now(),
 	}
 	if _, err := d.cli.StopInstance(context.WithoutCancel(ctx), &vmmdpb.StopInstanceRequest{Instance: h.Instance, Signal: 9}); err != nil {
-		cleanupErr := d.stopAndDestroy(context.WithoutCancel(ctx), h.Instance)
-		_ = d.DeleteWarmSnapshot(context.WithoutCancel(ctx), snapshot)
-		_ = os.Remove(h.HostDrive1)
-		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: stop warm builder: %w", err), cleanupErr)
+		// Delete the published memory/vmstate objects, but keep drive1 until
+		// the ordinary Destroy path has exported the completed build.
+		discard := snapshot
+		discard.LayerPath = ""
+		cleanupErr := d.DeleteWarmSnapshot(context.WithoutCancel(ctx), discard)
+		out, empty, fallbackErr := d.finishWithoutWarmSnapshot(ctx, h, fmt.Errorf("stop warm builder: %w", err))
+		if fallbackErr != nil {
+			return BuildOutcome{}, WarmSnapshot{}, errors.Join(fallbackErr, cleanupErr)
+		}
+		if cleanupErr != nil {
+			out.WarmSnapshotError = errors.Join(errors.New(out.WarmSnapshotError), cleanupErr).Error()
+		}
+		return out, empty, nil
 	}
 	out, err := d.waitForCompletion(ctx, h, true)
 	if err != nil {
@@ -429,6 +436,26 @@ func (d *VMMDriver) WaitForWarmCompletion(ctx context.Context, h BuildHandle) (B
 		return BuildOutcome{}, WarmSnapshot{}, err
 	}
 	return out, snapshot, nil
+}
+
+// finishWithoutWarmSnapshot preserves a completed build when the optional
+// warm cache cannot be captured. StopInstance interrupts a resumed or still
+// paused builder, then the ordinary Destroy path exports build-done.json and
+// image.tar. A successful export is authoritative; snapshot-cache failure is
+// returned as diagnostic metadata rather than turning the deployment red.
+func (d *VMMDriver) finishWithoutWarmSnapshot(ctx context.Context, h BuildHandle, cause error) (BuildOutcome, WarmSnapshot, error) {
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), activeVMCancelTimeout)
+	_, stopErr := d.cli.StopInstance(stopCtx, &vmmdpb.StopInstanceRequest{Instance: h.Instance, Signal: 9})
+	cancel()
+	if stopErr != nil {
+		cause = errors.Join(cause, fmt.Errorf("stop builder after snapshot failure: %w", stopErr))
+	}
+	out, err := d.waitForCompletion(ctx, h, false)
+	if err != nil {
+		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: warm snapshot: %w", cause), err)
+	}
+	out.WarmSnapshotError = cause.Error()
+	return out, WarmSnapshot{}, nil
 }
 
 func warmBuilderSnapshotKeys(buildID string) (string, string) {

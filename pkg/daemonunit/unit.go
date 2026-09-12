@@ -340,7 +340,7 @@ func (u Unit) Render() []byte {
 //
 // MemoryMax belongs in [Slice] here, NOT [Service]; systemd silently
 // ignores MemoryMax in a [Service] section if the unit is a slice.
-// Putting it in [Service] (as Render() does) means the 3 GB ceiling
+// Putting it in [Service] (as Render() does) means the configured ceiling
 // the operator declared in the manifest's faas-cp.slice never
 // applies, and tenants can OOM the box.
 //

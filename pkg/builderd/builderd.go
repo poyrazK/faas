@@ -945,6 +945,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, fc, "vm wait: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
+	if out.WarmSnapshotError != "" {
+		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
+		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
+	}
 	if b.stopIfBuildCancelled(ctx, build.ID) {
 		return BuildResult{}, nil
 	}
