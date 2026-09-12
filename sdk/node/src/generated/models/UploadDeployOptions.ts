@@ -12,7 +12,7 @@ export type UploadDeployOptions = {
   dockerfile?: boolean;
   source_root?: string;
   /**
-   * Named environment scope read by the deployment; omitted uses default.
+   * Named environment scope applied when the upload is committed; omitted uses default.
    */
   scope?: string;
   /**
