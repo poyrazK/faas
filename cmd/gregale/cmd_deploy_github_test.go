@@ -76,6 +76,36 @@ func TestGithubDeployActionCompositeOutputsAreMapped(t *testing.T) {
 	}
 }
 
+func TestGithubDeployActionInputMetadataHasNoExpressions(t *testing.T) {
+	root, err := findRepoRoot(".")
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "actions", "deploy", "action.yml"))
+	if err != nil {
+		t.Fatalf("read deploy Action metadata: %v", err)
+	}
+	var metadata struct {
+		Inputs map[string]struct {
+			Description string `yaml:"description"`
+			Default     string `yaml:"default"`
+		} `yaml:"inputs"`
+	}
+	if err := yaml.Unmarshal(raw, &metadata); err != nil {
+		t.Fatalf("parse deploy Action metadata: %v", err)
+	}
+	for name, input := range metadata.Inputs {
+		for field, value := range map[string]string{
+			"description": input.Description,
+			"default":     input.Default,
+		} {
+			if strings.Contains(value, "${{") {
+				t.Errorf("input %q %s contains an expression unsupported by the Action manifest loader: %q", name, field, value)
+			}
+		}
+	}
+}
+
 func TestRenderGithubSnippet(t *testing.T) {
 	cases := []struct {
 		name      string
