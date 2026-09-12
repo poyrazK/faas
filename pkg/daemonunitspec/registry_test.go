@@ -39,7 +39,7 @@ func TestRegistryEntriesHaveBootProbes(t *testing.T) {
 
 func TestActivationOrder(t *testing.T) {
 	got := ActivationOrder()
-	want := []string{"vmmd", "apid", "schedd", "gatewayd-internal", "gatewayd-public", "meterd", "githubd", "imaged", "builderd"}
+	want := []string{"vmmd", "realtimed", "apid", "schedd", "gatewayd-internal", "gatewayd-public", "meterd", "githubd", "imaged", "builderd"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ActivationOrder() = %v, want %v", got, want)
 	}
@@ -138,8 +138,8 @@ func TestRegistryIsSubsetOfHostKeys(t *testing.T) {
 // gatewayd_public; rest are identity.
 func TestRegistryDaemonSet_LockstepWithHostKeys(t *testing.T) {
 	const (
-		wantRegistrySize = 9
-		wantHostKeysSize = 9
+		wantRegistrySize = 10
+		wantHostKeysSize = 10
 	)
 	if got := len(Registry); got != wantRegistrySize {
 		t.Errorf("Registry len = %d, want %d (adding a daemon requires updating manifest.HostKeys too)",

@@ -268,6 +268,17 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PUBLIC_IFACE` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible |
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `envfile` |  |  | `` |  |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_REALTIME_CALLBACK_TIMEOUT` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_HEALTH_LISTEN` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_HEARTBEAT` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_PONG_WAIT` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_ROLE` | realtimed, shared | `dropin` |  |  | `` |  |
+| `FAAS_REALTIME_SOCKET` | gatewayd-internal, realtimed, shared | `unit` |  |  | `` |  |
+| `FAAS_REALTIME_WRITE_WAIT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_COOLDOWN_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
 | `FAAS_RECONCILE_INTERVAL` | meterd | `default` |  |  | `` |  |

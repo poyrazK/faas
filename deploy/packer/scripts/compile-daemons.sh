@@ -20,7 +20,7 @@ set -euo pipefail
 SRC_ROOT="${SRC_ROOT:-/tmp/src}"
 GO_VERSION="${GO_VERSION:-1.25.13}"
 
-DAEMONS=(apid gatewayd-public gatewayd-internal s3-gatewayd schedd vmmd builderd imaged meterd githubd)
+DAEMONS=(apid gatewayd-public gatewayd-internal s3-gatewayd realtimed schedd vmmd builderd imaged meterd githubd)
 CLIS=(gregale gregalectl)
 TOOLS=(vmmd-jail-helper vmmd-raw-bridge vmmd-stream-bridge)
 

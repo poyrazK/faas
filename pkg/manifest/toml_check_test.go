@@ -221,7 +221,7 @@ func TestCoverageTOMLPlacement_AllDaemonsHaveDescriptor(t *testing.T) {
 	knownFromManifest := []string{
 		"vmmd", "schedd", "apid", "meterd", "githubd",
 		"gatewayd_public", "gatewayd_internal",
-		"imaged", "builderd",
+		"imaged", "builderd", "realtimed",
 	}
 	for _, name := range knownFromManifest {
 		hb, ok := HostKeys[name]

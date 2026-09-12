@@ -289,6 +289,7 @@ type Daemons struct {
 	GatewaydInternal *DaemonConfig `yaml:"gatewayd_internal,omitempty"`
 	Imaged           *DaemonConfig `yaml:"imaged,omitempty"`
 	Builderd         *DaemonConfig `yaml:"builderd,omitempty"`
+	Realtimed        *DaemonConfig `yaml:"realtimed,omitempty"`
 }
 
 // DaemonConfig is the per-daemon configuration. `tls` carries the
@@ -925,6 +926,7 @@ func (d *Daemons) validate() Errors {
 		"gatewayd_internal": d.GatewaydInternal,
 		"imaged":            d.Imaged,
 		"builderd":          d.Builderd,
+		"realtimed":         d.Realtimed,
 	} {
 		if dc == nil {
 			continue

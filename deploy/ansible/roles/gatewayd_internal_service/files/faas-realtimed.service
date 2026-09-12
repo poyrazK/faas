@@ -1,0 +1,40 @@
+[Unit]
+Description=onebox-faas realtimed — managed realtime connection owner
+Documentation=https://docs.gregale.dev/ops/realtime
+After=faas-cp.slice faas-vmmd.service
+Wants=faas-cp.slice faas-vmmd.service
+
+[Service]
+Type=simple
+User=faas
+Group=faas
+ExecStart=/opt/faas/current/bin/realtimed
+Restart=on-failure
+RestartSec=2s
+RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
+Slice=faas-cp.slice
+MemoryMax=512M
+Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
+EnvironmentFile=-/etc/faas/secrets/realtimed/realtimed.env
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/run/faas
+
+[Install]
+WantedBy=multi-user.target

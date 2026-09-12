@@ -1893,6 +1893,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	// Managed realtime is an opt-in data plane. When the local realtimed
+	// daemon socket is configured, reserve its namespace before ordinary
+	// host lookup/wake so a quiet client connection does not keep an app VM
+	// resident. Leaving the variable unset preserves the existing raw
+	// Upgrade-bridge-only behavior for development and older deployments.
+	if socket := strings.TrimSpace(osGetenv("FAAS_REALTIME_SOCKET")); socket != "" {
+		if proxy := newRealtimedProxy(socket, log); proxy != nil {
+			handler.WithManagedRealtime(proxy)
+			log.Info("gatewayd-internal: managed realtime proxy armed", "socket", socket)
+		}
+	}
 	// The backend above owns invalidation; the handler owns lookup/store. Both
 	// sides intentionally share deps.responseCache so a deploy or rule update
 	// invalidates the exact cache serving customer traffic.

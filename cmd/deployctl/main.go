@@ -150,6 +150,7 @@ func ansibleRoleSkips() map[string]bool {
 		"gatewayd-public":   true,
 		"gatewayd-internal": true,
 		"s3-gatewayd":       true,
+		"realtimed":         true,
 	}
 }
 
