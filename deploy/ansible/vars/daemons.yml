@@ -8,6 +8,7 @@ faas_control_plane_units:
   - faas-apid.service
   - faas-schedd.service
   - faas-meterd.service
+  - faas-outboundd.service
   - faas-gatewayd-public.service
   - faas-githubd.service
 

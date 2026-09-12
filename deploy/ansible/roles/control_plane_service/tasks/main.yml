@@ -36,6 +36,7 @@
     - faas-apid
     - faas-schedd
     - faas-meterd
+    - faas-outboundd
 
 # schedd reads the non-secret signing public key directly. Keep the shared
 # parent traversable by the faas group while private children and files retain
@@ -59,6 +60,7 @@
   loop:
     - { src: "apid.toml.example", dest: "/etc/faas/apid.toml.example" }
     - { src: "schedd.toml.example", dest: "/etc/faas/schedd.toml.example" }
+    - { src: "outboundd.toml.example", dest: "/etc/faas/outboundd.toml.example" }
     - { src: "meterd.toml.example", dest: "/etc/faas/meterd.toml.example" }
 
 - name: control_plane_service — install shared storage env example
@@ -95,6 +97,7 @@
     mode: "0644"
   loop:
     - { src: "faas-apid.service", dest: "/etc/systemd/system/faas-apid.service" }
+    - { src: "faas-outboundd.service", dest: "/etc/systemd/system/faas-outboundd.service" }
     - { src: "faas-schedd.service", dest: "/etc/systemd/system/faas-schedd.service" }
     - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
   register: cp_units
@@ -362,7 +365,7 @@
   ansible.builtin.debug:
     msg: >-
       cp daemons installed but NOT enabled. Operator runs:
-        systemctl enable --now faas-apid faas-schedd faas-meterd
+        systemctl enable --now faas-apid faas-schedd faas-meterd faas-outboundd
       once /etc/faas/sealed.env has DATABASE_URL (and STRIPE_API_KEY plus
       FAAS_SCHEDD_ADDR=/run/faas/schedd.sock for meterd — meterd refuses to
       start without FAAS_SCHEDD_ADDR per issue #52's strict-exit rule) and
