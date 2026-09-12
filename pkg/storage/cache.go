@@ -197,8 +197,12 @@ type LocalCacheBackend struct {
 	parent       StorageBackend
 	root         string
 	maxBytes     int64
+	cachedBytes  int64 // guarded by mu; refreshed from disk at construction
 	mu           sync.Mutex
 	touchQueue   chan string
+	touchStop    chan struct{}
+	touchDone    chan struct{}
+	touchClose   sync.Once
 	touchPending sync.Map // cache path -> struct{}
 	chtimes      func(string, time.Time, time.Time) error
 	// observer is the optional CacheObserver sink. The field is
@@ -238,10 +242,39 @@ func NewLocalCacheBackend(parent StorageBackend, root string, maxBytes int64) (*
 		root:       root,
 		maxBytes:   maxBytes,
 		touchQueue: make(chan string, cacheTouchQueueSize),
+		touchStop:  make(chan struct{}),
+		touchDone:  make(chan struct{}),
 		chtimes:    os.Chtimes,
+	}
+	// Seed the byte counter once. The previous implementation walked every
+	// cache entry after every write, turning a large but healthy cache into an
+	// O(entries) latency tax on every prewarm miss.
+	if entries, scanErr := cache.snapshotCacheLocked(); scanErr == nil {
+		for _, entry := range entries {
+			cache.cachedBytes += entry.size
+		}
 	}
 	go cache.runCacheTouches()
 	return cache, nil
+}
+
+// Close stops the best-effort cache-touch worker. Cache correctness does not
+// depend on queued mtime updates, so shutdown may discard work still waiting
+// in the queue. It is safe to call Close more than once and is intentionally
+// not part of StorageBackend: callers that own a concrete cache can release
+// its worker without forcing every storage backend to grow a lifecycle API.
+func (c *LocalCacheBackend) Close() error {
+	if c == nil {
+		return nil
+	}
+	if c.touchStop == nil || c.touchDone == nil {
+		return nil
+	}
+	c.touchClose.Do(func() {
+		close(c.touchStop)
+		<-c.touchDone
+	})
+	return nil
 }
 
 // Root returns the on-disk cache root directory. Used by
@@ -406,6 +439,7 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	oldSize := cachePathUsage(path)
 	if err := os.Rename(tmpPath, path); err != nil {
 		return nil // spool file is removed by the deferred cleanup
 	}
@@ -416,8 +450,11 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 		// Sidecar failure is non-fatal but degrades List.
 		_ = err
 	}
-	if err := c.enforceBudgetLocked(); err != nil {
-		_ = err
+	c.cachedBytes += cachePathUsage(path) - oldSize
+	if c.cachedBytes > c.maxBytes {
+		if err := c.enforceBudgetLocked(); err != nil {
+			_ = err
+		}
 	}
 	return nil
 }
@@ -747,6 +784,8 @@ func (c *LocalCacheBackend) touchCacheFile(path string) {
 		return
 	}
 	select {
+	case <-c.touchStop:
+		c.touchPending.Delete(path)
 	case c.touchQueue <- path:
 	default:
 		c.touchPending.Delete(path)
@@ -754,10 +793,21 @@ func (c *LocalCacheBackend) touchCacheFile(path string) {
 }
 
 func (c *LocalCacheBackend) runCacheTouches() {
-	for path := range c.touchQueue {
-		now := time.Now()
-		_ = c.chtimes(path, now, now)
-		c.touchPending.Delete(path)
+	defer close(c.touchDone)
+	for {
+		select {
+		case <-c.touchStop:
+			return
+		default:
+		}
+		select {
+		case <-c.touchStop:
+			return
+		case path := <-c.touchQueue:
+			now := time.Now()
+			_ = c.chtimes(path, now, now)
+			c.touchPending.Delete(path)
+		}
 	}
 }
 
@@ -808,6 +858,7 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	oldSize := cachePathUsage(path)
 	if err := os.Rename(tmpPath, path); err != nil {
 		return nil, fmt.Errorf("cache install %q: %w", path, err)
 	}
@@ -819,8 +870,11 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 		// invisible to List and will be treated as a cache miss later.
 		_ = err
 	}
-	if err := c.enforceBudgetLocked(); err != nil {
-		_ = err
+	c.cachedBytes += cachePathUsage(path) - oldSize
+	if c.cachedBytes > c.maxBytes {
+		if err := c.enforceBudgetLocked(); err != nil {
+			_ = err
+		}
 	}
 	f, err := os.Open(path) //nolint:forbidigo // path is derived from the validated cache key under the backend root.
 	if err != nil {
@@ -850,6 +904,12 @@ func (c *LocalCacheBackend) evictCache(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	path, metaPath := c.cacheFileFor(key)
+	if size := cachePathUsage(path); size > 0 {
+		c.cachedBytes -= size
+		if c.cachedBytes < 0 {
+			c.cachedBytes = 0
+		}
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		_ = err
 	}
@@ -879,6 +939,7 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 		total += e.size
 	}
 	if total <= c.maxBytes {
+		c.cachedBytes = total
 		return nil
 	}
 	// Sort oldest-first; evict until budget restored.
@@ -903,7 +964,16 @@ func (c *LocalCacheBackend) enforceBudgetLocked() error {
 			_ = os.Remove(e.path + ".generation")
 		}
 	}
+	c.cachedBytes = total
 	return nil
+}
+
+func cachePathUsage(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return cacheDiskUsage(info)
 }
 
 // snapshotCacheLocked walks the cache directory and returns

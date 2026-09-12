@@ -733,6 +733,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: %w", err)
 	}
+	if cacheBackend := storage.AsCacheBackend(storageBackend); cacheBackend != nil {
+		defer func() {
+			if err := cacheBackend.Close(); err != nil {
+				log.Warn("vmmd: close storage cache", "err", err)
+			}
+		}()
+	}
 	if envOr("FAAS_STORAGE_BACKEND", "local") == "oci" {
 		log.Info("vmmd: storage backend = oci", "registry", envOr("FAAS_OCI_REGISTRY", ""))
 	} else {

@@ -79,3 +79,21 @@ func TestLocalPathDoesNotWaitForCacheTouch(t *testing.T) {
 	}
 	close(release)
 }
+
+func TestLocalCacheBackendCloseStopsTouchWorker(t *testing.T) {
+	cache, err := NewLocalCacheBackend(cacheTouchParent{}, filepath.Join(t.TempDir(), "cache"), 0)
+	if err != nil {
+		t.Fatalf("NewLocalCacheBackend: %v", err)
+	}
+	if err := cache.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case <-cache.touchDone:
+	default:
+		t.Fatal("cache touch worker is still running after Close")
+	}
+	if err := cache.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
