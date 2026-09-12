@@ -3748,17 +3748,17 @@ type StatusPage struct {
 	// gateway_requests_total, expressed 0..100.
 	APIAvailabilityPct float64 `json:"api_availability_pct"`
 	// WakeP95MS is the p95 of gateway_wake_latency_seconds over the
-	// last 5 minutes, in milliseconds.
-	WakeP95MS float64 `json:"wake_p95_ms"`
+	// last 5 minutes, in milliseconds. It is null when no wake was
+	// observed, so consumers cannot mistake missing data for a 0 ms wake.
+	WakeP95MS *float64 `json:"wake_p95_ms"`
 	// BuildSuccessPct is the rolling 5-minute success rate of
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
 	// Uptime30dPct is the weighted success rate of terminal invocations
-	// observed over the last 30 calendar days. Days without traffic are
-	// represented as 100% in the daily buckets and do not add to the
-	// weighted denominator.
-	Uptime30dPct float64 `json:"uptime_30d_pct"`
+	// observed over the last 30 calendar days. It is null when the period
+	// contains no terminal invocations.
+	Uptime30dPct *float64 `json:"uptime_30d_pct"`
 	// Uptime30d contains one bucket for each of the last 30 calendar
 	// days, oldest first. Successful and Total make the no-traffic case
 	// distinguishable from a day with observed failures.
@@ -3792,7 +3792,7 @@ type StatusPage struct {
 // StatusUptimeBucket is one daily point in StatusPage.Uptime30d.
 type StatusUptimeBucket struct {
 	Date       time.Time `json:"date"`
-	UptimePct  float64   `json:"uptime_pct"`
+	UptimePct  *float64  `json:"uptime_pct"`
 	Successful int64     `json:"successful"`
 	Total      int64     `json:"total"`
 }

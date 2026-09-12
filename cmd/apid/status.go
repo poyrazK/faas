@@ -51,7 +51,7 @@ const (
 	statusWakeP95Query = `(
 		(histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) * 1000)
 		and sum(rate(gateway_wake_latency_seconds_count[5m])) > 0
-	) or vector(0)`
+	)`
 	statusBuildSuccessQuery = `(
 		(sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m])) / sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) * 100)
 		and sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) > 0
@@ -257,8 +257,8 @@ func (c *statusCache) getEvaluation(ctx context.Context) (statusEvaluation, erro
 // error so the caller can fall back to the last cached snapshot.
 //
 // We track per-query success instead of inferring failure from
-// "all values are zero" — a freshly-booted idle box legitimately
-// has 0 ms wake p95. API and build availability use 100% when their
+// "all values are zero". A period with no wake observations has no p95,
+// rather than a synthetic 0 ms value. API and build availability use 100% when their
 // denominator is empty because no request or build failed.
 func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 	if c.client == nil {
@@ -290,7 +290,7 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 
 	// 2. Wake p95 (seconds → ms).
 	if ms, err := c.client.QueryScalar(ctx, statusWakeP95Query); err == nil {
-		snap.legacy.WakeP95MS = ms
+		snap.legacy.WakeP95MS = &ms
 		snap.indicatorAvailable["wake_p95"] = true
 		okCount++
 	} else {
@@ -394,17 +394,17 @@ func (c *statusCache) populateHistory(ctx context.Context, snap *StatusPage) {
 			total += bucket.Total
 		}
 		if total > 0 {
-			snap.Uptime30dPct = float64(successful) / float64(total) * 100
-		} else {
-			snap.Uptime30dPct = 100
+			pct := float64(successful) / float64(total) * 100
+			snap.Uptime30dPct = &pct
 		}
 		snap.Uptime30d = make([]api.StatusUptimeBucket, 0, statusHistoryDays)
 		for i := statusHistoryDays - 1; i >= 0; i-- {
 			day := time.Date(now.Year(), now.Month(), now.Day()-i, 0, 0, 0, 0, time.UTC)
 			bucket := byDay[day]
-			pct := 100.0
+			var pct *float64
 			if bucket.Total > 0 {
-				pct = float64(bucket.Successful) / float64(bucket.Total) * 100
+				value := float64(bucket.Successful) / float64(bucket.Total) * 100
+				pct = &value
 			}
 			snap.Uptime30d = append(snap.Uptime30d, api.StatusUptimeBucket{
 				Date: day, UptimePct: pct, Successful: bucket.Successful, Total: bucket.Total,
@@ -545,7 +545,7 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 		Components: components,
 		Indicators: []api.PublicStatusIndicator{
 			statusIndicator("api_availability", "API availability", evaluation.legacy.APIAvailabilityPct, evaluation.indicatorAvailable["api_availability"], "%", 99.9, "gte"),
-			statusIndicator("wake_p95", "Wake p95", evaluation.legacy.WakeP95MS, evaluation.indicatorAvailable["wake_p95"], "ms", 350, "lte"),
+			statusIndicator("wake_p95", "Wake p95", statusMetricValue(evaluation.legacy.WakeP95MS), evaluation.indicatorAvailable["wake_p95"] && evaluation.legacy.WakeP95MS != nil, "ms", 350, "lte"),
 			statusIndicator("build_success", "Build success", evaluation.legacy.BuildSuccessPct, evaluation.indicatorAvailable["build_success"], "%", 99, "gte"),
 		},
 		ActiveEvents: publicStatusEvents(active), UpcomingMaintenance: publicStatusEvents(upcoming), ResolvedIncidents: publicStatusEvents(resolved),
@@ -593,6 +593,13 @@ func statusIndicator(id, label string, value float64, available bool, unit strin
 		ptr = &value
 	}
 	return api.PublicStatusIndicator{ID: id, Label: label, Value: ptr, Unit: unit, Target: target, Comparison: comparison}
+}
+
+func statusMetricValue(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func publicStatusEvents(events []state.StatusIncident) []api.PublicStatusEvent {

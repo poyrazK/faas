@@ -16,11 +16,18 @@ func (s *server) getCapabilities(w http.ResponseWriter, _ *http.Request, acct st
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Capability registry unavailable", err.Error()))
 		return
 	}
-	// Entitlement alone is insufficient for dark-launched capabilities.
-	// Advertise the operation only when this cluster can serve it.
+	// Entitlement is only one half of availability. A capability must also be
+	// backed by a runtime that is enabled and configured on this control plane;
+	// otherwise clients would advertise a feature whose first request returns
+	// 501/503.
 	for i := range capabilities.Capabilities {
-		if capabilities.Capabilities[i].Key == "openapi-contract-preview" && !api.ApiContractDiffEnabled() {
-			capabilities.Capabilities[i].Enabled = false
+		switch capabilities.Capabilities[i].Key {
+		case "openapi-contract-preview":
+			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && api.ApiContractDiffEnabled()
+		case "disposable-runs":
+			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.executionAPIEnabled
+		case "object-storage":
+			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.objectStorageEnabled()
 		}
 	}
 	writeJSON(w, http.StatusOK, capabilities)

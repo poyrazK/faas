@@ -451,34 +451,34 @@ groups:
     interval: 30s
     rules:
       - record: faas_apid_request_rate_3d_baseline:by_route
-        expr: avg_over_time( sum by (route) (rate(apid_request_total[5m])) [3d:5m] )
+        expr: avg_over_time( sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m])) [3d:5m] )
 
       - record: faas_apid_error_rate_3d_baseline:by_route
         expr: |
           avg_over_time(
               (
                   (
-                      sum by (route) (rate(apid_request_total{code!="ok"}[5m]))
+                      sum by (route) (rate(apid_request_total{account_id!="anonymous",code!="ok"}[5m]))
                   )
                   /
                   clamp_min(
-                      sum by (route) (rate(apid_request_total[5m])),
+                      sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m])),
                       1
                   )
               )[3d:5m]
           )
 
       - record: faas_apid_request_rate_5m:by_route
-        expr: sum by (route) (rate(apid_request_total[5m]))
+        expr: sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m]))
 
       - record: faas_apid_error_rate_5m:by_route
         expr: |
           (
-              sum by (route) (rate(apid_request_total{code!="ok"}[5m]))
+              sum by (route) (rate(apid_request_total{account_id!="anonymous",code!="ok"}[5m]))
           )
           /
           clamp_min(
-              sum by (route) (rate(apid_request_total[5m])),
+              sum by (route) (rate(apid_request_total{account_id!="anonymous"}[5m])),
               1
           )
 
@@ -1254,10 +1254,10 @@ groups:
       # is more sensitive — a small absolute spike in 5xx is a larger
       # signal than a small absolute spike in 2xx traffic.
       - alert: FaasErrorRateSpike
-        # Anonymous Internet scans land in the unmatched bucket. They are
-        # expected 404s, not evidence that a customer-facing API route has
-        # regressed, and must not turn the public platform status red.
-        expr: max(faas_apid_error_rate_ratio:by_route{route!="unmatched"}) > 2
+        # The recording rules exclude anonymous traffic on every route. Public
+        # probes and failed auth attempts are security telemetry, not evidence
+        # that an authenticated customer-facing API route has regressed.
+        expr: faas_apid_error_rate_ratio:by_route{route!="unmatched"} > 2
         for: 10m
         labels:
           severity: page

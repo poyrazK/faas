@@ -187,6 +187,13 @@ function setBar(barId, valueId, pct, formatted, lowerIsBetter, warnThreshold, re
   }
 }
 
+function setUnavailableBar(barId, valueId, label) {
+  const bar = document.getElementById(barId);
+  bar.querySelector('span').style.width = '0%';
+  bar.classList.remove('warn', 'bad');
+  document.getElementById(valueId).textContent = label;
+}
+
 function formatTime(value) {
   const date = value ? new Date(value) : null;
   if (!date || Number.isNaN(date.getTime())) return 'unknown time';
@@ -204,10 +211,12 @@ function renderUptime(buckets) {
   const width = SPARKLINE_WIDTH;
   const height = SPARKLINE_HEIGHT;
   const points = buckets.map((bucket, index) => {
-    const pct = Math.max(0, Math.min(100, Number(bucket.uptime_pct) || 0));
+	const total = Number(bucket.total) || 0;
+	const available = bucket.uptime_pct != null && total > 0 && Number.isFinite(Number(bucket.uptime_pct));
+	const pct = available ? Math.max(0, Math.min(100, Number(bucket.uptime_pct))) : null;
     const x = buckets.length === 1 ? width / 2 : index * width / (buckets.length - 1);
-    const y = height - (pct / 100) * (height - 8) - 4;
-    return {x, y, pct, total: Number(bucket.total) || 0, date: bucket.date};
+	const y = available ? height - (pct / 100) * (height - 8) - 4 : height / 2;
+	return {x, y, pct, available, total, date: bucket.date};
   });
 
   const track = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -219,10 +228,22 @@ function renderUptime(buckets) {
   track.setAttribute('rx', '5');
   svg.appendChild(track);
 
-  const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-  line.setAttribute('class', 'line');
-  line.setAttribute('points', points.map(p => `${p.x},${p.y}`).join(' '));
-  svg.appendChild(line);
+  // Draw separate runs so missing days remain visible gaps instead of a
+  // synthetic plunge to 0% or a line connecting observations across them.
+  let run = [];
+  function appendRun() {
+    if (run.length < 2) { run = []; return; }
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    line.setAttribute('class', 'line');
+    line.setAttribute('points', run.map(p => `${p.x},${p.y}`).join(' '));
+    svg.appendChild(line);
+    run = [];
+  }
+  points.forEach(point => {
+    if (!point.available) { appendRun(); return; }
+    run.push(point);
+  });
+  appendRun();
 
   let observed = 0;
   points.forEach(point => {
@@ -232,9 +253,9 @@ function renderUptime(buckets) {
     circle.setAttribute('cx', String(point.x));
     circle.setAttribute('cy', String(point.y));
     circle.setAttribute('r', '4');
-    circle.setAttribute('fill', point.total === 0 ? '#707781' : point.pct < RED_API ? 'var(--red)' : point.pct < WARN_API ? 'var(--yellow)' : 'var(--green)');
+    circle.setAttribute('fill', !point.available ? '#707781' : point.pct < RED_API ? 'var(--red)' : point.pct < WARN_API ? 'var(--yellow)' : 'var(--green)');
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-    title.textContent = `${formatTime(point.date)}: ${point.total === 0 ? 'no traffic' : point.pct.toFixed(2) + '% uptime'}`;
+    title.textContent = `${formatTime(point.date)}: ${!point.available ? 'no traffic / no data' : point.pct.toFixed(2) + '% uptime'}`;
     circle.appendChild(title);
     svg.appendChild(circle);
   });
@@ -303,8 +324,12 @@ async function refresh() {
 
     setBar('api-bar', 'api-v', s.api_availability_pct || 0,
       (s.api_availability_pct || 0).toFixed(2) + '%', false, WARN_API, RED_API);
-    setBar('wake-bar', 'wake-v', s.wake_p95_ms || 0,
-      Math.round(s.wake_p95_ms || 0) + ' ms', true, WARN_WAKE_MS, RED_WAKE_MS);
+    if (s.wake_p95_ms == null || !Number.isFinite(Number(s.wake_p95_ms))) {
+	  setUnavailableBar('wake-bar', 'wake-v', '—');
+    } else {
+	  setBar('wake-bar', 'wake-v', Number(s.wake_p95_ms),
+		Math.round(Number(s.wake_p95_ms)) + ' ms', true, WARN_WAKE_MS, RED_WAKE_MS);
+    }
     setBar('build-bar', 'build-v', s.build_success_pct || 0,
       (s.build_success_pct || 0).toFixed(2) + '%', false, WARN_BUILD, RED_BUILD);
     const uptimeHistory = Array.isArray(s.uptime_30d) ? s.uptime_30d : [];

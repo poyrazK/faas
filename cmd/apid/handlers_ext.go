@@ -2528,11 +2528,19 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	if !obs.PointsToGregale {
 		ptsStatus = probeFail
 		report.Healthy = false
+		expected := strings.TrimSuffix(strings.TrimSpace(appsDomainFunc()), ".")
 		if ptsObs != "" {
 			ptsDetail = "CNAME does not point at Gregale (observed: " + ptsObs + ")"
-			ptsRem = "Set CNAME " + d.Domain + " → " + ptsObs
 		} else {
-			ptsDetail = "no CNAME at apex; using A/AAAA record instead"
+			ptsDetail = "no Gregale CNAME target was observed"
+		}
+		// The observed target is evidence of the misconfiguration, never a
+		// remediation target. Using it here previously produced self-CNAME
+		// instructions when the customer's record pointed back to itself.
+		if expected != "" && !strings.EqualFold(expected, d.Domain) {
+			ptsRem = "Set CNAME " + d.Domain + " → " + expected
+		} else {
+			ptsRem = "Ask Gregale support for the configured application CNAME target"
 		}
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{

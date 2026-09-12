@@ -178,7 +178,11 @@ func cmdStatus(args []string) int {
 		return jsonOut(writeJSON(page))
 	}
 	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
-	_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", page.WakeP95MS)
+	if page.WakeP95MS == nil {
+		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (no observations)")
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
+	}
 	_, _ = fmt.Fprintf(osStdout, "builds ok:    %.2f%%\n", page.BuildSuccessPct)
 	_, _ = fmt.Fprintf(osStdout, "as of:        %s\n", page.AsOf.Format("2006-01-02 15:04:05 UTC"))
 	_, _ = fmt.Fprintf(osStdout, "source:       %s\n", page.Source)

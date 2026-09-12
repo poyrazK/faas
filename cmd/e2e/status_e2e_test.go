@@ -151,12 +151,12 @@ func TestStatus_GETSloJSON_HasSLOFields(t *testing.T) {
 		t.Fatalf("read body: %v", err)
 	}
 	var payload struct {
-		APIAvailabilityPct float64 `json:"api_availability_pct"`
-		WakeP95MS          float64 `json:"wake_p95_ms"`
-		BuildSuccessPct    float64 `json:"build_success_pct"`
-		Degraded           bool    `json:"degraded"`
-		AsOf               string  `json:"as_of"`
-		Source             string  `json:"source"`
+		APIAvailabilityPct float64  `json:"api_availability_pct"`
+		WakeP95MS          *float64 `json:"wake_p95_ms"`
+		BuildSuccessPct    float64  `json:"build_success_pct"`
+		Degraded           bool     `json:"degraded"`
+		AsOf               string   `json:"as_of"`
+		Source             string   `json:"source"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatalf("unmarshal /status/slo.json: %v\nbody: %s", err, body)
@@ -173,8 +173,10 @@ func TestStatus_GETSloJSON_HasSLOFields(t *testing.T) {
 		name                  string
 	}{
 		{payload.APIAvailabilityPct, 0, 100, "api_availability_pct"},
-		{payload.WakeP95MS, 0, 60_000, "wake_p95_ms"},
 		{payload.BuildSuccessPct, 0, 100, "build_success_pct"},
+	}
+	if payload.WakeP95MS != nil && (*payload.WakeP95MS < 0 || *payload.WakeP95MS > 60_000) {
+		t.Errorf("/status/slo.json.wake_p95_ms = %v, want null or in [0, 60000]", *payload.WakeP95MS)
 	}
 	for _, f := range sloFields {
 		if f.got < f.wantMin || f.got > f.wantMax {

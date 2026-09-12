@@ -34,6 +34,14 @@ func (s *server) requireExecutionAPI(w http.ResponseWriter) bool {
 	return false
 }
 
+func requireExecutionEntitlement(w http.ResponseWriter, acct state.Account) bool {
+	if acct.Plan.ExecutionsAllowed() {
+		return true
+	}
+	api.WriteProblem(w, api.ErrExecutionsNotAllowed(acct.Plan))
+	return false
+}
+
 // executionResponse projects the durable, payload-free state row into the
 // caller-facing DTO. The usage envelope is exposed only after terminal state;
 // source and input never enter this projection.
@@ -88,6 +96,9 @@ func executionResponse(row state.Execution) api.ExecutionResponse {
 // controlled check before sealing or writing durable state, then persists the
 // immutable deadline and encrypted payload in one store call.
 func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireExecutionEntitlement(w, acct) {
+		return
+	}
 	if !s.requireExecutionAPI(w) {
 		return
 	}
@@ -180,6 +191,9 @@ func (s *server) writeExecutionCreateError(w http.ResponseWriter, acct state.Acc
 // getExecution handles GET /v1/executions/{id}. Store lookups are account-
 // scoped, so a cross-account id is indistinguishable from a missing id.
 func (s *server) getExecution(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireExecutionEntitlement(w, acct) {
+		return
+	}
 	if !s.requireExecutionAPI(w) {
 		return
 	}
@@ -205,6 +219,9 @@ func (s *server) getExecution(w http.ResponseWriter, r *http.Request, acct state
 // claimed rows carry a cancellation fence that schedd observes during
 // teardown.
 func (s *server) cancelExecution(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireExecutionEntitlement(w, acct) {
+		return
+	}
 	if !s.requireExecutionAPI(w) {
 		return
 	}
