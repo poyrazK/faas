@@ -415,6 +415,12 @@ type SidecarSpec struct {
 	// cpu_millicores is the per-sidecar sustained CPU quota.
 	// 0 preserves the parent app quota for legacy callers.
 	CpuMillicores int32 `protobuf:"varint,11,opt,name=cpu_millicores,json=cpuMillicores,proto3" json:"cpu_millicores,omitempty"`
+	// scratch_mb is the customer-selected writable /tmp tmpfs ceiling in the
+	// sidecar's private mount namespace. 0 derives the safe platform default.
+	ScratchMb int32 `protobuf:"varint,12,opt,name=scratch_mb,json=scratchMb,proto3" json:"scratch_mb,omitempty"`
+	// disk_io_profile selects the guest cgroup v2 io.weight policy. Empty
+	// inherits the guest default; accepted values are low, standard, and high.
+	DiskIoProfile string `protobuf:"bytes,13,opt,name=disk_io_profile,json=diskIoProfile,proto3" json:"disk_io_profile,omitempty"`
 	// port is the listen port inside the guest netns (1..65535).
 	// 0 means "absent / inherit the main workload's port".
 	Port uint32 `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`
@@ -506,6 +512,20 @@ func (x *SidecarSpec) GetCpuMillicores() int32 {
 		return x.CpuMillicores
 	}
 	return 0
+}
+
+func (x *SidecarSpec) GetScratchMb() int32 {
+	if x != nil {
+		return x.ScratchMb
+	}
+	return 0
+}
+
+func (x *SidecarSpec) GetDiskIoProfile() string {
+	if x != nil {
+		return x.DiskIoProfile
+	}
+	return ""
 }
 
 func (x *SidecarSpec) GetPort() uint32 {
@@ -5332,13 +5352,16 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x12startup_deadline_s\x18\x0f \x01(\x05R\x10startupDeadlineS\x12%\n" +
 	"\x0ecpu_millicores\x18\x10 \x01(\x05R\rcpuMillicores\x12!\n" +
 	"\fapp_protocol\x18\x11 \x01(\tR\vappProtocol\x12%\n" +
-	"\x0eexecution_mode\x18\x12 \x01(\tR\rexecutionMode\"\x85\x03\n" +
+	"\x0eexecution_mode\x18\x12 \x01(\tR\rexecutionMode\"\xcc\x03\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +
 	"\x04type\x18\x03 \x01(\tR\x04type\x12\x15\n" +
 	"\x06ram_mb\x18\x04 \x01(\x05R\x05ramMb\x12%\n" +
-	"\x0ecpu_millicores\x18\v \x01(\x05R\rcpuMillicores\x12\x12\n" +
+	"\x0ecpu_millicores\x18\v \x01(\x05R\rcpuMillicores\x12\x1d\n" +
+	"\n" +
+	"scratch_mb\x18\f \x01(\x05R\tscratchMb\x12&\n" +
+	"\x0fdisk_io_profile\x18\r \x01(\tR\rdiskIoProfile\x12\x12\n" +
 	"\x04port\x18\x05 \x01(\rR\x04port\x12\x1c\n" +
 	"\tessential\x18\x06 \x01(\bR\tessential\x12\x1f\n" +
 	"\vstorage_key\x18\a \x01(\tR\n" +

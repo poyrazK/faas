@@ -453,6 +453,8 @@ func sidecarsFromProto(pbs []*vmmdpb.SidecarSpec) []fcvm.WorkloadSpec {
 			DriveID:       p.GetDriveSlot(),
 			RamMB:         int(p.GetRamMb()),
 			CPUMillicores: int(p.GetCpuMillicores()),
+			ScratchMB:     int(p.GetScratchMb()),
+			DiskIOProfile: p.GetDiskIoProfile(),
 			Port:          int(p.GetPort()),
 			Essential:     p.GetEssential(),
 			SealedEnv:     sealedEnv,

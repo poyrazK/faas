@@ -396,7 +396,7 @@ func TestDiscoverSidecarDevicesCarriesWorkloadNames(t *testing.T) {
 	roster := workloadRoster{
 		Main: workloadSpec{Name: "main", Type: "main"},
 		Sidecars: []workloadSpec{
-			{Name: "metrics", Type: "sidecar", RamMB: 128},
+			{Name: "metrics", Type: "sidecar", RamMB: 128, ScratchMB: 192},
 			{Name: "migrator", Type: "init"},
 		},
 	}
@@ -417,8 +417,24 @@ func TestDiscoverSidecarDevicesCarriesWorkloadNames(t *testing.T) {
 	if got[0].workloadName != "metrics" || got[1].workloadName != "migrator" {
 		t.Fatalf("workload names = %q, %q", got[0].workloadName, got[1].workloadName)
 	}
-	if got[0].tmpfsSizeMB != 128 || got[1].tmpfsSizeMB != defaultSidecarTmpfsSizeMB {
-		t.Fatalf("sidecar tmpfs sizes = %d, %d; want 128, %d", got[0].tmpfsSizeMB, got[1].tmpfsSizeMB, defaultSidecarTmpfsSizeMB)
+	if got[0].tmpfsSizeMB != 192 || got[1].tmpfsSizeMB != defaultSidecarTmpfsSizeMB {
+		t.Fatalf("sidecar tmpfs sizes = %d, %d; want 192, %d", got[0].tmpfsSizeMB, got[1].tmpfsSizeMB, defaultSidecarTmpfsSizeMB)
+	}
+}
+
+func TestSidecarScratchSizeMBBoundsOverrideRAMDefault(t *testing.T) {
+	tests := []struct {
+		scratch, ram, want int
+	}{
+		{scratch: 192, ram: 32, want: 192},
+		{scratch: 0, ram: 128, want: 128},
+		{scratch: 15, ram: 128, want: 128},
+		{scratch: 513, ram: 128, want: 128},
+	}
+	for _, tt := range tests {
+		if got := sidecarScratchSizeMB(tt.scratch, tt.ram); got != tt.want {
+			t.Errorf("sidecarScratchSizeMB(%d, %d) = %d, want %d", tt.scratch, tt.ram, got, tt.want)
+		}
 	}
 }
 
@@ -430,8 +446,9 @@ func TestSidecarTmpfsMountDataClampsInvalidProfiles(t *testing.T) {
 	}{
 		{name: "inherited", ram: 0, want: "mode=1777,size=64M"},
 		{name: "valid minimum", ram: 32, want: "mode=1777,size=32M"},
+		{name: "customer minimum", ram: 16, want: "mode=1777,size=16M"},
 		{name: "valid maximum", ram: 512, want: "mode=1777,size=512M"},
-		{name: "too small", ram: 16, want: "mode=1777,size=64M"},
+		{name: "too small", ram: 15, want: "mode=1777,size=64M"},
 		{name: "too large", ram: 1024, want: "mode=1777,size=64M"},
 	}
 	for _, tt := range tests {

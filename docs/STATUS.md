@@ -1053,8 +1053,11 @@ explicitly open issues that the doc otherwise implies are closed.
   CPU/memory fences are enforced in host and guest cgroups. Sidecar roots are
   read-only and their only platform-owned writable path (`/tmp`) now has an
   explicit tmpfs ceiling derived from the sidecar RAM profile, with a safe
-  64 MiB default for inherited profiles. Per-container disk-I/O policy and a
-  customer-selectable sidecar scratch quota remain follow-up work.
+  64 MiB default for inherited profiles. ADR-175 adds a customer-selectable
+  16..512 MiB sidecar scratch quota and named per-workload guest `io.weight`
+  policies (`low`, `standard`, `high`); omitted values preserve the inherited
+  defaults. Persistent volumes, host-port allocation, and public multi-port
+  routing remain follow-up work.
 
 ### Open security & infrastructure issues
 

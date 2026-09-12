@@ -96,6 +96,7 @@ import (
 type workloadSpec struct {
 	Cmd           []string                 `json:"cmd,omitempty"`
 	CPUMillicores int                      `json:"cpu_millicores,omitempty"`
+	DiskIOProfile string                   `json:"disk_io_profile,omitempty"`
 	DependsOn     []api.WorkloadDependency `json:"depends_on,omitempty"`
 	Entrypoint    []string                 `json:"entrypoint,omitempty"`
 	Essential     bool                     `json:"essential"`
@@ -103,6 +104,7 @@ type workloadSpec struct {
 	Port          int                      `json:"port"`
 	Ports         []api.WorkloadPort       `json:"ports,omitempty"`
 	RamMB         int                      `json:"ram_mb"`
+	ScratchMB     int                      `json:"scratch_mb,omitempty"`
 	Type          string                   `json:"type"` // "main" | "init" | "sidecar"
 }
 
@@ -634,7 +636,7 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 	// invalid safe name or failed write aborts the
 	// workload before exec; otherwise it could run
 	// without its per-workload cap.
-	leaf, cgroupErr := prepareWorkloadCgroup(spec.Type, spec.Name, spec.RamMB, slog.Default(), spec.CPUMillicores)
+	leaf, cgroupErr := prepareWorkloadCgroupWithIO(spec.Type, spec.Name, spec.RamMB, slog.Default(), spec.CPUMillicores, spec.DiskIOProfile)
 	if cgroupErr != nil {
 		return fmt.Errorf("prepare sidecar workload cgroup %q: %w", spec.Name, cgroupErr)
 	}

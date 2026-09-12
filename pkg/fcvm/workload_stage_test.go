@@ -1,4 +1,5 @@
 // Per-workload manifest staging tests (issue #463 / ADR-069 / PR-B).
+// adr: 175
 // These verify the vmmd-side write of /etc/faas/workload.json on
 // each sidecar drive (and the main drive1) before the VM is
 // exposed to the customer. The tests use the in-process fakeVMM
@@ -271,6 +272,14 @@ func TestWorkloadManifest_RoundTripsCmdEntry(t *testing.T) {
 				RamMB: 64, CPUMillicores: 250, Port: 9100, Essential: true,
 			},
 			wantJSON: `{"cpu_millicores":250,"essential":true,"name":"metrics","port":9100,"ram_mb":64,"type":"sidecar"}`,
+		},
+		{
+			name: "scratch and io policy",
+			in: workloadManifest{
+				Name: "metrics", Type: "sidecar", RamMB: 64, ScratchMB: 192,
+				DiskIOProfile: "high", Port: 9100, Essential: true,
+			},
+			wantJSON: `{"disk_io_profile":"high","essential":true,"name":"metrics","port":9100,"ram_mb":64,"scratch_mb":192,"type":"sidecar"}`,
 		},
 		{
 			name: "entrypoint and cmd",

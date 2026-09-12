@@ -80,6 +80,8 @@ func sidecarSpecsFromDeployment(raw json.RawMessage, layers []state.DeploymentSi
 			DriveID:       fmt.Sprintf("%s%d", fcvm.DriveSidecarPrefix, i),
 			RamMB:         sc.RamMB,
 			CPUMillicores: sc.CPUMillicores,
+			ScratchMB:     sc.ScratchMB,
+			DiskIOProfile: sc.DiskIOProfile,
 			Port:          sc.Port,
 			Essential:     essential,
 			SealedEnv:     sealedEnv,
@@ -129,6 +131,12 @@ func validatePersistedSidecar(sc api.Sidecar, seenNames map[string]struct{}, see
 	}
 	if sc.Type != api.SidecarTypeInit && sc.Type != api.SidecarTypeSidecar {
 		return fmt.Errorf("sidecar %q has invalid type %q", sc.Name, sc.Type)
+	}
+	if sc.ScratchMB != 0 && (sc.ScratchMB < api.SidecarScratchMBMin || sc.ScratchMB > api.SidecarScratchMBMax) {
+		return fmt.Errorf("sidecar %q has invalid scratch_mb %d", sc.Name, sc.ScratchMB)
+	}
+	if !api.ValidSidecarDiskIOProfile(sc.DiskIOProfile) {
+		return fmt.Errorf("sidecar %q has invalid disk_io_profile %q", sc.Name, sc.DiskIOProfile)
 	}
 	if _, exists := seenNames[sc.Name]; exists {
 		return fmt.Errorf("duplicate sidecar name %q", sc.Name)

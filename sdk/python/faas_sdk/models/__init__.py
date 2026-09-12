@@ -822,6 +822,7 @@ from .set_password_request import SetPasswordRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
 from .sidecar_cpu_millicores import SidecarCpuMillicores
+from .sidecar_disk_io_profile import SidecarDiskIoProfile
 from .sidecar_env import SidecarEnv
 from .sidecar_type import SidecarType
 from .slo_duration import SLODuration
@@ -1774,6 +1775,7 @@ __all__ = (
     "SeverityCounts",
     "Sidecar",
     "SidecarCpuMillicores",
+    "SidecarDiskIoProfile",
     "SidecarEnv",
     "SidecarType",
     "SLODuration",

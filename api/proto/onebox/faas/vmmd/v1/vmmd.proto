@@ -559,6 +559,12 @@ message SidecarSpec {
   // cpu_millicores is the per-sidecar sustained CPU quota.
   // 0 preserves the parent app quota for legacy callers.
   int32  cpu_millicores = 11;
+  // scratch_mb is the customer-selected writable /tmp tmpfs ceiling in the
+  // sidecar's private mount namespace. 0 derives the safe platform default.
+  int32  scratch_mb = 12;
+  // disk_io_profile selects the guest cgroup v2 io.weight policy. Empty
+  // inherits the guest default; accepted values are low, standard, and high.
+  string disk_io_profile = 13;
   // port is the listen port inside the guest netns (1..65535).
   // 0 means "absent / inherit the main workload's port".
   uint32 port       = 5;

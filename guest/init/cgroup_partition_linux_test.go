@@ -56,6 +56,20 @@ func TestPrepareWorkloadCgroupUsesRequestedMemory(t *testing.T) {
 	if got, want := string(cpuBody), "50000 100000\n"; got != want {
 		t.Fatalf("sidecar cpu.max = %q, want %q", got, want)
 	}
+	ioLeaf, err := prepareWorkloadCgroupWithIO("sidecar", "io", 0, slog.Default(), 0, "high")
+	if err != nil {
+		t.Fatalf("prepareWorkloadCgroup disk io: %v", err)
+	}
+	ioBody, err := os.ReadFile(filepath.Join(ioLeaf, "io.weight"))
+	if err != nil {
+		t.Fatalf("read sidecar io.weight: %v", err)
+	}
+	if got, want := string(ioBody), "200\n"; got != want {
+		t.Fatalf("sidecar io.weight = %q, want %q", got, want)
+	}
+	if _, err := prepareWorkloadCgroupWithIO("sidecar", "bad-profile", 0, slog.Default(), 0, "burst"); err == nil {
+		t.Fatal("invalid disk io profile should fail closed")
+	}
 	if got, err := prepareWorkloadCgroup("main", "app", 0, slog.Default()); err != nil || got != "" {
 		t.Fatalf("zero RAM should skip the child cgroup, got %q", got)
 	}

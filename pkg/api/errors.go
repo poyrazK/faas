@@ -983,7 +983,7 @@ const (
 	CodeMirrorRuleNotFound      = "mirror_rule_not_found"
 	CodeInvalidMirrorWindow     = "invalid_mirror_window"
 
-	// Sidecar containers (issue #463 / ADR-068). Eight RFC 7807
+	// Sidecar containers (issue #463 / ADR-068). RFC 7807
 	// codes for the sidecar surface. The cap and type-uniqueness
 	// codes are the load-bearing 400-class shapes; the stateful
 	// and not-on-plan codes are defence-in-depth for future
@@ -997,7 +997,9 @@ const (
 	CodeSidecarInvalidName          = "sidecar_invalid_name"
 	CodeSidecarInvalidPort          = "sidecar_invalid_port"
 	CodeSidecarInvalidRamMB         = "sidecar_invalid_ram_mb"
+	CodeSidecarInvalidScratchMB     = "sidecar_invalid_scratch_mb"
 	CodeSidecarInvalidCPUMillicores = "sidecar_invalid_cpu_millicores"
+	CodeSidecarInvalidDiskIOProfile = "sidecar_invalid_disk_io_profile"
 	CodeSidecarNotAllowedOnPlan     = "sidecar_not_allowed_on_plan"
 
 	// CodeInitSidecarFailed (issue #463 / ADR-069 / PR-B AC #1) is
@@ -4678,12 +4680,28 @@ func ErrSidecarInvalidRamMB(ramMB int) *Problem {
 		fmt.Sprintf("sidecar ram_mb %d must be 0 (inherit plan RAM) or in [32, 512].", ramMB))
 }
 
+// ErrSidecarInvalidScratchMB is returned when the sidecar's writable /tmp
+// ceiling is outside the bounded customer-selectable range.
+func ErrSidecarInvalidScratchMB(scratchMB int) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeSidecarInvalidScratchMB,
+		"Invalid sidecar scratch_mb",
+		fmt.Sprintf("sidecar scratch_mb %d must be 0 (platform default) or in [%d, %d].", scratchMB, SidecarScratchMBMin, SidecarScratchMBMax))
+}
+
 // ErrSidecarInvalidCPUMillicores is returned when the sidecar
 // cpu_millicores is out of the accepted set.
 func ErrSidecarInvalidCPUMillicores(cpuMillicores int) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSidecarInvalidCPUMillicores,
 		"Invalid sidecar cpu_millicores",
 		fmt.Sprintf("sidecar cpu_millicores %d must be 0 (inherit app cpu) or one of 250, 500, 1000.", cpuMillicores))
+}
+
+// ErrSidecarInvalidDiskIOProfile is returned when a sidecar requests a
+// policy outside the closed disk-I/O profile set.
+func ErrSidecarInvalidDiskIOProfile(profile string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeSidecarInvalidDiskIOProfile,
+		"Invalid sidecar disk_io_profile",
+		fmt.Sprintf("sidecar disk_io_profile %q must be empty or one of low, standard, high.", profile))
 }
 
 // ErrSidecarNotAllowedOnPlan is reserved for a future per-plan
