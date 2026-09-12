@@ -193,6 +193,116 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 	}
 }
 
+func TestCompletion_DeploymentSurfaceManifestMatchesDispatchers(t *testing.T) {
+	tests := []struct {
+		name       string
+		file       string
+		function   string
+		caseConsts map[string]string
+	}{
+		{
+			name:     "deploys",
+			file:     "deploys_show.go",
+			function: "cmdDeploys",
+			caseConsts: map[string]string{
+				"statusLiteral": statusLiteral,
+			},
+		},
+		{
+			name:     "edge-rules",
+			file:     "commands_edge_rules.go",
+			function: "cmdEdgeRules",
+			caseConsts: map[string]string{
+				"subList":   subList,
+				"subCreate": subCreate,
+				"subGet":    subGet,
+				"subUpdate": subUpdate,
+				"subRm":     subRm,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			command, ok := lookupCliCommand(tc.name)
+			if !ok {
+				t.Fatalf("%s is missing from the CLI manifest", tc.name)
+			}
+			dispatched, err := extractFunctionCaseArms(tc.file, tc.function, tc.caseConsts)
+			if err != nil {
+				t.Fatalf("parse %s: %v", tc.file, err)
+			}
+			advertised := make(map[string]struct{}, len(command.Subcommands))
+			for _, sub := range command.Subcommands {
+				advertised[sub.Name] = struct{}{}
+			}
+			for name := range dispatched {
+				if _, ok := advertised[name]; !ok {
+					t.Errorf("dispatcher accepts %q but manifest does not advertise it", name)
+				}
+			}
+			for name := range advertised {
+				if _, ok := dispatched[name]; !ok {
+					t.Errorf("manifest advertises %q but dispatcher does not accept it", name)
+				}
+			}
+		})
+	}
+
+	deployments, ok := lookupCliCommand(dispatchDeployments)
+	if !ok {
+		t.Fatal("deployments is missing from the CLI manifest")
+	}
+	flags := make(map[string]struct{}, len(deployments.Flags))
+	for _, flag := range deployments.Flags {
+		flags[flag.Name] = struct{}{}
+	}
+	for _, name := range []string{"app", "limit", "before", "all", "wide"} {
+		if _, ok := flags[name]; !ok {
+			t.Errorf("deployments manifest omits --%s", name)
+		}
+	}
+}
+
+func extractFunctionCaseArms(filename, functionName string, caseConsts map[string]string) (map[string]struct{}, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	var body *ast.BlockStmt
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == functionName {
+			body = fn.Body
+			break
+		}
+	}
+	if body == nil {
+		return nil, fmt.Errorf("function %s not found", functionName)
+	}
+	cases := make(map[string]struct{})
+	ast.Inspect(body, func(n ast.Node) bool {
+		clause, ok := n.(*ast.CaseClause)
+		if !ok {
+			return true
+		}
+		for _, expr := range clause.List {
+			switch e := expr.(type) {
+			case *ast.BasicLit:
+				if e.Kind == token.STRING {
+					cases[strings.Trim(e.Value, `"`)] = struct{}{}
+				}
+			case *ast.Ident:
+				if value, ok := caseConsts[e.Name]; ok {
+					cases[value] = struct{}{}
+				}
+			}
+		}
+		return true
+	})
+	return cases, nil
+}
+
 func extractMainCaseArms(dispatchConsts map[string]string) (map[string]struct{}, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
