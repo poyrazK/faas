@@ -178,3 +178,16 @@ bash scripts/ops/gcp_provision_compute.sh \
 The final line records `provider_ready_seconds`. Record the later release,
 admission, snapshot, and traffic timestamps beside it; VM creation alone is not
 traffic recovery.
+
+After the replacement is release-current and has passed a snapshot restore and
+public traffic probe, retire the stopped legacy VM and every disk attached to
+it. The retirement tool refuses running nodes and the last remaining active
+compute host. Its apply path requires the completed verification marker and
+then proves that both the VM and retained disks are gone.
+
+```sh
+bash scripts/ops/gcp_retire_compute.sh --instance faas-compute-node-2
+GCP_COMPUTE_RETIRE_VERIFIED=1 \
+  bash scripts/ops/gcp_retire_compute.sh \
+    --instance faas-compute-node-2 --apply
+```
