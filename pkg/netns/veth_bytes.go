@@ -31,8 +31,8 @@ import (
 // The shape (cumulative, interface bytes) mirrors /proc/net/dev
 // and the `ip -s link show` rx_bytes column. Includes Ethernet
 // framing (i.e. the byte count is interface bytes, not IP bytes
-// or payload bytes) — the future egress-billing PR picks the
-// unit; this reader reports the kernel counter verbatim.
+// or payload bytes). This canonical unit is preserved through optional
+// egress billing; this reader reports the kernel counter verbatim.
 func ReadVethRXBytes(vethHost string) (uint64, error) {
 	if vethHost == "" {
 		return 0, ErrVethMissing

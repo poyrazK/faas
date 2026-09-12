@@ -33,6 +33,7 @@ const (
 	maxErrorBody       = 64 << 10
 	maxRequestAttempts = 3
 	retryBaseDelay     = 100 * time.Millisecond
+	bytesPerGiB        = int64(1 << 30)
 )
 
 // usageDedupe is the existing hourly push table exposed by state.Store. The
@@ -45,25 +46,33 @@ type usageDedupe interface {
 
 // Provider is the Polar implementation of billing.Provider.
 type Provider struct {
-	apiKey        string
-	webhookSecret string
-	baseURL       string
-	usageEvent    string
-	meterID       string
-	products      map[api.Plan]string
-	successURL    string
-	returnURL     string
-	client        *http.Client
-	log           *slog.Logger
-	dedupe        usageDedupe
-	webhookTol    time.Duration
-	now           func() time.Time
-	catalogMu     sync.RWMutex
-	lastSyncAt    time.Time
+	apiKey         string
+	webhookSecret  string
+	baseURL        string
+	usageEvent     string
+	meterID        string
+	egressMode     string
+	egressFrom     time.Time
+	egressEvent    string
+	egressMeterID  string
+	egressPrice    int64
+	egressIncluded map[api.Plan]int64
+	products       map[api.Plan]string
+	successURL     string
+	returnURL      string
+	client         *http.Client
+	log            *slog.Logger
+	dedupe         usageDedupe
+	webhookTol     time.Duration
+	now            func() time.Time
+	catalogMu      sync.RWMutex
+	lastSyncAt     time.Time
 }
 
 var _ billing.Provider = (*Provider)(nil)
 var _ billing.Classifier = (*Provider)(nil)
+var _ billing.MeterUsageProvider = (*Provider)(nil)
+var _ billing.MeterUsagePolicyProvider = (*Provider)(nil)
 
 // PolarCapabilities returns the static capabilities of this provider.
 func PolarCapabilities() billing.CapabilitySet {
@@ -93,6 +102,10 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil, fmt.Errorf("polar: %w (set FAAS_POLAR_ACCESS_TOKEN)", ErrNoAPIKey)
 	}
+	if err := validateEgressConfig(cfg); err != nil {
+		return nil, err
+	}
+	egressFrom, _ := time.Parse(time.RFC3339, cfg.EgressBillingFrom)
 	if log == nil {
 		log = slog.Default()
 	}
@@ -109,6 +122,16 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 		baseURL:       base,
 		usageEvent:    cfg.UsageEventName,
 		meterID:       cfg.MeterID,
+		egressMode:    cfg.EgressBillingMode,
+		egressFrom:    egressFrom.UTC(),
+		egressEvent:   cfg.EgressUsageEventName,
+		egressMeterID: cfg.EgressMeterID,
+		egressPrice:   cfg.EgressMillicentsPerGiB,
+		egressIncluded: map[api.Plan]int64{
+			api.PlanHobby: cfg.HobbyIncludedEgressGiB * bytesPerGiB,
+			api.PlanPro:   cfg.ProIncludedEgressGiB * bytesPerGiB,
+			api.PlanScale: cfg.ScaleIncludedEgressGiB * bytesPerGiB,
+		},
 		products: map[api.Plan]string{
 			api.PlanHobby: cfg.HobbyProductID,
 			api.PlanPro:   cfg.ProProductID,
@@ -122,6 +145,45 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 		webhookTol: time.Duration(cfg.ToleranceSeconds) * time.Second,
 		now:        time.Now,
 	}, nil
+}
+
+func validateEgressConfig(cfg Config) error {
+	switch cfg.EgressBillingMode {
+	case EgressBillingOff:
+		return nil
+	case EgressBillingShadow, EgressBillingLive:
+	default:
+		return fmt.Errorf("polar: invalid egress billing mode %q (want off, shadow, or live)", cfg.EgressBillingMode)
+	}
+	effectiveFrom, err := time.Parse(time.RFC3339, cfg.EgressBillingFrom)
+	if err != nil || !effectiveFrom.Equal(effectiveFrom.UTC().Truncate(time.Hour)) {
+		return errors.New("polar: egress billing from must be an RFC3339 UTC-hour boundary")
+	}
+	if strings.TrimSpace(cfg.EgressMeterID) == "" {
+		return errors.New("polar: egress meter id missing")
+	}
+	if cfg.EgressMeterID == cfg.MeterID {
+		return errors.New("polar: egress meter must be separate from compute meter")
+	}
+	if strings.TrimSpace(cfg.EgressUsageEventName) == "" {
+		return errors.New("polar: egress usage event name is empty")
+	}
+	if cfg.EgressUsageEventName == cfg.UsageEventName {
+		return errors.New("polar: egress usage event must be separate from compute usage event")
+	}
+	if cfg.EgressMillicentsPerGiB <= 0 || cfg.EgressMillicentsPerGiB%api.MillicentsPerCent != 0 {
+		return errors.New("polar: egress price must be a positive whole number of euro cents per GiB")
+	}
+	for plan, included := range map[api.Plan]int64{
+		api.PlanHobby: cfg.HobbyIncludedEgressGiB,
+		api.PlanPro:   cfg.ProIncludedEgressGiB,
+		api.PlanScale: cfg.ScaleIncludedEgressGiB,
+	} {
+		if included <= 0 || included > math.MaxInt64/bytesPerGiB {
+			return fmt.Errorf("polar: included egress for plan=%s must be a positive GiB value", plan)
+		}
+	}
+	return nil
 }
 
 // WebhookTolerance returns the configured Standard Webhooks timestamp window.
@@ -150,7 +212,34 @@ func (p *Provider) Capabilities() billing.CapabilitySet {
 	if p != nil && strings.TrimSpace(p.meterID) != "" {
 		caps |= billing.CapabilitySet(billing.CapUsageReconcile)
 	}
+	if p != nil && p.egressMode == EgressBillingLive {
+		caps |= billing.CapabilitySet(billing.CapEgressUsage)
+	}
 	return caps
+}
+
+// MeterUsagePolicy exposes the explicitly configured per-plan egress policy
+// to meterd. Off returns ok=false, so merely upgrading the binary cannot start
+// consuming or acknowledging egress windows.
+func (p *Provider) MeterUsagePolicy(plan api.Plan, meter state.BillingMeter) (billing.MeterUsagePolicy, bool) {
+	if p == nil || meter != state.BillingMeterEgress || p.egressMode == EgressBillingOff {
+		return billing.MeterUsagePolicy{}, false
+	}
+	included, ok := p.egressIncluded[plan]
+	if !ok {
+		return billing.MeterUsagePolicy{}, false
+	}
+	mode := billing.MeterDeliveryShadow
+	if p.egressMode == EgressBillingLive {
+		mode = billing.MeterDeliveryLive
+	}
+	return billing.MeterUsagePolicy{
+		Mode:              mode,
+		EffectiveFrom:     p.egressFrom,
+		IncludedQuantity:  included,
+		UnitQuantity:      bytesPerGiB,
+		MillicentsPerUnit: p.egressPrice,
+	}, true
 }
 
 // UsageMode tells meterd to remove Gregale's included calendar-month quota
@@ -247,6 +336,7 @@ type catalogAggregation struct {
 }
 
 func (p *Provider) validateCatalog(ctx context.Context) error {
+	validateEgressMeter := false
 	for plan, productID := range p.products {
 		var product catalogProduct
 		path := "/v1/products/" + url.PathEscape(productID)
@@ -263,7 +353,7 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 			return fmt.Errorf("polar: validate %s product %q requires an active monthly recurring product", plan, productID)
 		}
 
-		fixed, metered := 0, 0
+		fixed, computeMetered, egressMetered := 0, 0, 0
 		expectedFixedCents := billing.PlanMonthlyMillicents(plan) / api.MillicentsPerCent
 		for _, price := range product.Prices {
 			if price.IsArchived {
@@ -276,19 +366,38 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 					return fmt.Errorf("polar: validate %s product %q fixed price must be EUR %d cents", plan, productID, expectedFixedCents)
 				}
 			case "metered_unit":
-				metered++
-				if price.PriceCurrency != "eur" || price.MeterID != p.meterID || !decimalEquals(price.UnitAmount, billing.PlanOverageMillicentsPerGBHour()/api.MillicentsPerCent) {
-					return fmt.Errorf("polar: validate %s product %q metered price must be EUR 1 cent per unit on meter %q", plan, productID, p.meterID)
-				}
 				if price.CapAmount != nil {
 					return fmt.Errorf("polar: validate %s product %q metered price must not have a cap", plan, productID)
+				}
+				switch price.MeterID {
+				case p.meterID:
+					computeMetered++
+					if price.PriceCurrency != "eur" || !decimalEquals(price.UnitAmount, billing.PlanOverageMillicentsPerGBHour()/api.MillicentsPerCent) {
+						return fmt.Errorf("polar: validate %s product %q compute price must be EUR 1 cent per unit on meter %q", plan, productID, p.meterID)
+					}
+				case p.egressMeterID:
+					egressMetered++
+					validateEgressMeter = true
+					if p.egressPrice <= 0 || p.egressPrice%api.MillicentsPerCent != 0 {
+						return fmt.Errorf("polar: validate %s product %q egress price is attached without a valid configured price", plan, productID)
+					}
+					wantCents := p.egressPrice / api.MillicentsPerCent
+					if price.PriceCurrency != "eur" || !decimalEquals(price.UnitAmount, wantCents) {
+						return fmt.Errorf("polar: validate %s product %q egress price must be EUR %d cents per GiB on meter %q", plan, productID, wantCents, p.egressMeterID)
+					}
+				default:
+					return fmt.Errorf("polar: validate %s product %q has an unexpected metered price on meter %q", plan, productID, price.MeterID)
 				}
 			default:
 				return fmt.Errorf("polar: validate %s product %q has unsupported active price type %q", plan, productID, price.AmountType)
 			}
 		}
-		if fixed != 1 || metered != 1 {
-			return fmt.Errorf("polar: validate %s product %q requires exactly one active fixed price and one active metered price", plan, productID)
+		validEgressCount := egressMetered == 1
+		if p.egressMode == EgressBillingOff {
+			validEgressCount = egressMetered <= 1
+		}
+		if fixed != 1 || computeMetered != 1 || !validEgressCount {
+			return fmt.Errorf("polar: validate %s product %q requires one fixed price, one compute price, and one egress price when egress billing is enabled", plan, productID)
 		}
 		for _, benefit := range product.Benefits {
 			if !benefit.IsDeleted && benefit.Type == "meter_credit" {
@@ -296,19 +405,31 @@ func (p *Provider) validateCatalog(ctx context.Context) error {
 			}
 		}
 	}
+	if err := p.validateMeter(ctx, p.meterID, p.usageEvent, "gb_ram_hours"); err != nil {
+		return err
+	}
+	if validateEgressMeter {
+		if err := p.validateMeter(ctx, p.egressMeterID, p.egressEvent, "egress_gib"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Provider) validateMeter(ctx context.Context, meterID, eventName, property string) error {
 	var meter catalogMeter
-	path := "/v1/meters/" + url.PathEscape(p.meterID)
+	path := "/v1/meters/" + url.PathEscape(meterID)
 	if err := p.doJSON(ctx, http.MethodGet, path, nil, &meter, ""); err != nil {
-		return fmt.Errorf("polar: validate meter %q: %w", p.meterID, err)
+		return fmt.Errorf("polar: validate meter %q: %w", meterID, err)
 	}
-	if meter.ID != p.meterID {
-		return fmt.Errorf("polar: validate meter %q returned mismatched id %q", p.meterID, meter.ID)
+	if meter.ID != meterID {
+		return fmt.Errorf("polar: validate meter %q returned mismatched id %q", meterID, meter.ID)
 	}
-	if meter.ArchivedAt != nil || meter.Unit != "scalar" || meter.Aggregation.Func != "sum" || meter.Aggregation.Property != "gb_ram_hours" {
-		return fmt.Errorf("polar: validate meter %q must be an active scalar sum of gb_ram_hours", p.meterID)
+	if meter.ArchivedAt != nil || meter.Unit != "scalar" || meter.Aggregation.Func != "sum" || meter.Aggregation.Property != property {
+		return fmt.Errorf("polar: validate meter %q must be an active scalar sum of %s", meterID, property)
 	}
-	if !filterHasEventClause(meter.Filter, p.usageEvent) {
-		return fmt.Errorf("polar: validate meter %q must filter event name %q", p.meterID, p.usageEvent)
+	if !filterHasEventClause(meter.Filter, eventName) {
+		return fmt.Errorf("polar: validate meter %q must filter event name %q", meterID, eventName)
 	}
 	return nil
 }
@@ -450,6 +571,47 @@ func (p *Provider) PushUsageRecord(ctx context.Context, acct state.Account, hour
 		if err := p.dedupe.RecordStripePushHour(ctx, acct.ID, window); err != nil {
 			return fmt.Errorf("polar: usage dedupe record account=%s hour=%s: %w", acct.ID, window.Format(time.RFC3339), err)
 		}
+	}
+	return nil
+}
+
+// PushMeterUsageRecord delivers canonical egress bytes to the separate Polar
+// meter. The method fails closed unless live mode granted CapEgressUsage; shadow
+// mode is consumed entirely by meterd and never reaches this boundary.
+func (p *Provider) PushMeterUsageRecord(ctx context.Context, acct state.Account, hour time.Time, meter state.BillingMeter, quantity int64) error {
+	if meter != state.BillingMeterEgress {
+		return fmt.Errorf("polar: unsupported usage meter %q", meter)
+	}
+	if p == nil || p.egressMode != EgressBillingLive || !p.Capabilities().Has(billing.CapEgressUsage) {
+		return errors.New("polar: egress usage delivery is not live")
+	}
+	if quantity < 0 {
+		return fmt.Errorf("polar: egress quantity must be non-negative (account=%s)", acct.ID)
+	}
+	if quantity == 0 || acct.ProviderCustomerID == "" {
+		return nil
+	}
+	window := hour.UTC().Truncate(time.Hour)
+	externalID := fmt.Sprintf("faas-egress-%s-%s", acct.ID, window.Format(time.RFC3339))
+	body := ingestRequest{Events: []usageEvent{{
+		ExternalID:         externalID,
+		Name:               p.egressEvent,
+		ExternalCustomerID: acct.ID,
+		Metadata: map[string]any{
+			"faas_account_id":      acct.ID,
+			"provider_customer_id": acct.ProviderCustomerID,
+			"window_start":         window.Format(time.RFC3339),
+			"egress_bytes":         quantity,
+			"egress_gib":           float64(quantity) / float64(bytesPerGiB),
+		},
+		Timestamp: window.Format(time.RFC3339),
+	}}}
+	var result ingestResponse
+	if err := p.doJSON(ctx, http.MethodPost, "/v1/events/ingest", body, &result, externalID); err != nil {
+		return fmt.Errorf("polar: ingest egress account=%s hour=%s: %w", acct.ID, window.Format(time.RFC3339), err)
+	}
+	if result.Inserted == 0 && result.Duplicates == 0 {
+		return fmt.Errorf("polar: ingest egress account=%s hour=%s returned no inserted or duplicate events", acct.ID, window.Format(time.RFC3339))
 	}
 	return nil
 }

@@ -23,6 +23,8 @@ package billing
 import (
 	"context"
 	"errors"
+	"math"
+	"math/big"
 	"strings"
 	"time"
 
@@ -234,6 +236,61 @@ type Provider interface {
 // compute is MB-seconds and egress is interface bytes.
 type MeterUsageProvider interface {
 	PushMeterUsageRecord(ctx context.Context, acct state.Account, hour time.Time, meter state.BillingMeter, quantity int64) error
+}
+
+// MeterDeliveryMode controls whether a configured secondary meter is only
+// audited locally or is delivered to the billing provider. Off is represented
+// by the provider returning ok=false from MeterUsagePolicy.
+type MeterDeliveryMode string
+
+const (
+	MeterDeliveryShadow MeterDeliveryMode = "shadow"
+	MeterDeliveryLive   MeterDeliveryMode = "live"
+)
+
+// MeterUsagePolicy is the provider-owned commercial policy for a secondary
+// meter. Quantities stay in the meter's canonical integer unit (bytes for
+// egress); UnitQuantity says how many canonical units one provider billing unit
+// represents. IncludedQuantity is removed per UTC calendar month before any
+// live delivery.
+type MeterUsagePolicy struct {
+	Mode              MeterDeliveryMode
+	EffectiveFrom     time.Time
+	IncludedQuantity  int64
+	UnitQuantity      int64
+	MillicentsPerUnit int64
+}
+
+// MeterUsagePolicyProvider is the optional commercial-policy surface used by
+// meterd for secondary meters. It deliberately sits beside MeterUsageProvider:
+// shadow mode exposes a policy and records local receipts without granting the
+// capability that permits an external usage event.
+type MeterUsagePolicyProvider interface {
+	MeterUsagePolicy(plan api.Plan, meter state.BillingMeter) (policy MeterUsagePolicy, ok bool)
+}
+
+// MeterUsageCents returns the provider-policy cost for an already-net
+// secondary-meter quantity, rounded up to the next cent. Rounding up makes the
+// customer overage cap fail closed even when a provider accepts fractional
+// units. Invalid/non-positive inputs cost zero; overflow saturates.
+func MeterUsageCents(policy MeterUsagePolicy, billableQuantity int64) int64 {
+	if billableQuantity <= 0 || policy.UnitQuantity <= 0 || policy.MillicentsPerUnit <= 0 {
+		return 0
+	}
+	numerator := new(big.Int).Mul(big.NewInt(billableQuantity), big.NewInt(policy.MillicentsPerUnit))
+	denominator := new(big.Int).Mul(big.NewInt(policy.UnitQuantity), big.NewInt(api.MillicentsPerCent))
+	if denominator.Sign() <= 0 {
+		return math.MaxInt64
+	}
+	quotient, remainder := new(big.Int), new(big.Int)
+	quotient.QuoRem(numerator, denominator, remainder)
+	if remainder.Sign() != 0 {
+		quotient.Add(quotient, big.NewInt(1))
+	}
+	if !quotient.IsInt64() {
+		return math.MaxInt64
+	}
+	return quotient.Int64()
 }
 
 // UsageModeProvider is an optional provider contract for usage semantics.
@@ -615,10 +672,9 @@ const (
 	// push-model a provider uses.
 	CapUsageLineItem
 
-	// CapEgressUsage means the provider has a separately configured egress
-	// meter and implements MeterUsageProvider. No current provider advertises
-	// this by default; adding the capability is the explicit charge-enable
-	// boundary after pricing and included quota are defined.
+	// CapEgressUsage means the provider has a separately configured, live
+	// egress meter and implements MeterUsageProvider. Shadow configurations do
+	// not advertise this capability and therefore cannot emit billable events.
 	CapEgressUsage
 )
 

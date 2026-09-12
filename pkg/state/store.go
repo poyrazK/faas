@@ -4912,7 +4912,7 @@ type Store interface {
 	// consumption row, and an empty key would dedupe every credit
 	// against every other.
 	ConsumeAccountCredit(ctx context.Context, p ConsumeAccountCreditParams) (ConsumeAccountCreditResult, error)
-	// CurrentMonthOverageCents returns the account's derived overage
+	// CurrentMonthOverageCents returns the account's derived compute overage
 	// in integer cents for the current UTC month. The account plan's
 	// included calendar-month allowance is subtracted before the
 	// €0.01/GB-h conversion (CLAUDE.md: integer cents only, never float).
@@ -4920,6 +4920,8 @@ type Store interface {
 	// overage row should be capped. The PgStore implementation sums
 	// usage_minutes.mb_seconds since the UTC month start and converts
 	// to cents; the MemStore mirrors the formula in Go.
+	// Secondary-meter costs are provider-policy-dependent and are added by the
+	// billing service before comparing against the account cap.
 	CurrentMonthOverageCents(ctx context.Context, accountID string) (int64, error)
 	// UsageByHour returns the per-app usage rows whose minute ∈ [start,
 	// end). The Stripe pusher calls this hourly to compute the billable

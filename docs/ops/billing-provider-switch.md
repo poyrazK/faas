@@ -41,6 +41,29 @@ Optional variables are `FAAS_POLAR_SANDBOX`, `FAAS_POLAR_USAGE_EVENT_NAME`
 `FAAS_POLAR_RETURN_URL`, `FAAS_POLAR_BASE_URL`, and
 `FAAS_POLAR_WEBHOOK_TOLERANCE_SECONDS` (default 300 seconds).
 
+Egress billing is independently gated and defaults to `off`. To stage it,
+configure the same values on `apid` and `meterd`:
+
+| Variable | Purpose |
+|---|---|
+| `FAAS_POLAR_EGRESS_BILLING_MODE` | `off`, `shadow`, or `live` |
+| `FAAS_POLAR_EGRESS_BILLING_FROM` | RFC3339 activation hour; earlier usage is never charged |
+| `FAAS_POLAR_EGRESS_METER_ID` | Separate meter that sums `egress_gib` |
+| `FAAS_POLAR_EGRESS_USAGE_EVENT_NAME` | Event filter; default `faas_egress_usage` |
+| `FAAS_POLAR_EGRESS_MILLICENTS_PER_GIB` | Approved whole-cent price per GiB |
+| `FAAS_POLAR_HOBBY_INCLUDED_EGRESS_GIB` | Hobby monthly allowance |
+| `FAAS_POLAR_PRO_INCLUDED_EGRESS_GIB` | Pro monthly allowance |
+| `FAAS_POLAR_SCALE_INCLUDED_EGRESS_GIB` | Scale monthly allowance |
+
+Use `shadow` first. It calculates net calendar-month overage from canonical
+`usage_minutes.net_tx_bytes`, writes durable shadow receipts, and logs the
+would-be quantities without sending Polar events. The explicit billing-from
+hour prevents direct `off` → `live` activation from replaying older usage;
+shadowed usage is also never charged retroactively. `live`
+requires the separate egress metered price to be attached to every paid product
+and to match the configured price exactly. Switching back to `off` stops egress
+processing without affecting compute billing.
+
 Create one active monthly recurring product per paid plan in the selected
 Polar environment. Each product must contain the fixed monthly price and a
 metered EUR price backed by the configured meter. The meter must sum the

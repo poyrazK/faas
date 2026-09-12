@@ -4,6 +4,7 @@ package meter_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,59 @@ import (
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type recordedMeterCall struct {
+	AccountID string
+	Hour      time.Time
+	Meter     state.BillingMeter
+	Quantity  int64
+}
+
+type recordingEgressProvider struct {
+	recordingStripe
+	mode          billing.MeterDeliveryMode
+	effectiveFrom time.Time
+	meterMu       sync.Mutex
+	meterCalls    []recordedMeterCall
+}
+
+func (r *recordingEgressProvider) Capabilities() billing.CapabilitySet {
+	caps := r.recordingStripe.Capabilities()
+	if r.mode == billing.MeterDeliveryLive {
+		caps |= billing.CapabilitySet(billing.CapEgressUsage)
+	}
+	return caps
+}
+
+func (r *recordingEgressProvider) MeterUsagePolicy(plan api.Plan, meter state.BillingMeter) (billing.MeterUsagePolicy, bool) {
+	if meter != state.BillingMeterEgress || plan == api.PlanFree {
+		return billing.MeterUsagePolicy{}, false
+	}
+	effectiveFrom := r.effectiveFrom
+	if effectiveFrom.IsZero() {
+		effectiveFrom = time.Unix(0, 0).UTC()
+	}
+	return billing.MeterUsagePolicy{
+		Mode:              r.mode,
+		EffectiveFrom:     effectiveFrom,
+		IncludedQuantity:  1 << 30,
+		UnitQuantity:      1 << 30,
+		MillicentsPerUnit: 2_000,
+	}, true
+}
+
+func (r *recordingEgressProvider) PushMeterUsageRecord(_ context.Context, acct state.Account, hour time.Time, meter state.BillingMeter, quantity int64) error {
+	r.meterMu.Lock()
+	defer r.meterMu.Unlock()
+	r.meterCalls = append(r.meterCalls, recordedMeterCall{AccountID: acct.ID, Hour: hour, Meter: meter, Quantity: quantity})
+	return nil
+}
+
+func (r *recordingEgressProvider) MeterCalls() []recordedMeterCall {
+	r.meterMu.Lock()
+	defer r.meterMu.Unlock()
+	return append([]recordedMeterCall(nil), r.meterCalls...)
+}
 
 func TestPushPendingRetriesFailedWindowsFromDurableUsage(t *testing.T) {
 	ctx := context.Background()
@@ -230,5 +284,102 @@ func TestPushPendingSkipsIncompleteBillingIdentity(t *testing.T) {
 	}
 	if pushed != 0 || len(provider.Calls()) != 0 {
 		t.Fatalf("PushPending = (%d, %+v), want no provider call before webhook identity binding", pushed, provider.Calls())
+	}
+}
+
+func TestPushPendingEgressLiveSubtractsMonthlyAllowance(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	const gib = int64(1 << 30)
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "included", now.Add(-2*time.Hour+time.Minute), 0, 0, 0, 0, gib, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "overage", now.Add(-time.Hour+time.Minute), 0, 0, 0, 0, 2*gib, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
+	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	pushed, err := pusher.PushPending(ctx, 24*time.Hour)
+	if err != nil || pushed != 1 {
+		t.Fatalf("PushPending = (%d, %v), want one live egress event", pushed, err)
+	}
+	calls := provider.MeterCalls()
+	if len(calls) != 1 || calls[0].Meter != state.BillingMeterEgress || calls[0].Quantity != 2*gib {
+		t.Fatalf("egress calls = %+v, want one two-GiB overage", calls)
+	}
+}
+
+func TestPushPendingEgressShadowNeverCallsProviderOrReplaysOnLive(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	const gib = int64(1 << 30)
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "shadow", now.Add(-time.Hour+time.Minute), 0, 0, 0, 0, 3*gib, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &recordingEgressProvider{mode: billing.MeterDeliveryShadow}
+	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 0 {
+		t.Fatalf("shadow PushPending = (%d, %v), want no external push", pushed, err)
+	}
+	if calls := provider.MeterCalls(); len(calls) != 0 {
+		t.Fatalf("shadow provider calls = %+v, want none", calls)
+	}
+
+	provider.mode = billing.MeterDeliveryLive
+	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 0 {
+		t.Fatalf("post-shadow live PushPending = (%d, %v), want no retroactive push", pushed, err)
+	}
+	if calls := provider.MeterCalls(); len(calls) != 0 {
+		t.Fatalf("post-shadow provider calls = %+v, want none", calls)
+	}
+}
+
+func TestPushPendingEgressLiveHonorsCombinedOverageCap(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	store.SetOverageCapCentsForTest(acct.ID, 1)
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	const gib = int64(1 << 30)
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "egress-cap", now.Add(-time.Hour+time.Minute), 0, 0, 0, 0, 2*gib, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
+	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 0 {
+		t.Fatalf("PushPending = (%d, %v), want cap-safe no-op", pushed, err)
+	}
+	if calls := provider.MeterCalls(); len(calls) != 0 {
+		t.Fatalf("capped egress calls = %+v, want none", calls)
+	}
+}
+
+func TestPushPendingEgressLiveNeverBackfillsBeforeActivation(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	activation := now.Add(-time.Hour)
+	const gib = int64(1 << 30)
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "pre-activation", activation.Add(-time.Hour+time.Minute), 0, 0, 0, 0, 50*gib, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "post-activation", activation.Add(time.Minute), 0, 0, 0, 0, 2*gib, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive, effectiveFrom: activation}
+	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 1 {
+		t.Fatalf("PushPending = (%d, %v), want only post-activation event", pushed, err)
+	}
+	calls := provider.MeterCalls()
+	if len(calls) != 1 || calls[0].Hour != activation || calls[0].Quantity != gib {
+		t.Fatalf("post-activation calls = %+v, want one GiB after fresh allowance", calls)
 	}
 }

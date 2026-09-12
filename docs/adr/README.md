@@ -79,7 +79,7 @@ Any deviation from the spec requires a new ADR here first (spec §3, CLAUDE.md).
 | 043 | App logs producer stream (Move 4): per-instance ring + schedd fan-out + vmmd Logs RPC | accepted | issue #254, Move 4, M7 observability |
 | 044 | Per-plan CPU fairness at the cgroup level (3-level hierarchy + per-plan `cpu.weight` / `cpu.max` + `FaasCpuStarvation` alert) | accepted | issue #301 |
 | 045 | Mutable app env via `POST /v1/apps/{id}/env` (replaces immutable `--env`; envelope-sealed, re-encrypted on `RotateKey`) | accepted | Move 2 |
-| 046 | Per-instance egress metering (telemetry seam for future egress-billing PR) | accepted | issue #<TBD> (egress billing seam; ADR-039 precedent) |
+| 046 | Per-instance egress metering with default-off Polar billing | accepted, amended 2026-09-12 | canonical net_tx_bytes + meter-qualified delivery |
 | 050 | Repo decomposition: `projects` object + multi-workload auto-provision | proposed | `docs/repo_decomposition_implementation.md` |
 | 051 | Characterization boot: observed workload classification + in-guest port normalization | accepted | ADR-050 Phase 4 |
 | 052 | Adding a function runtime: 7-layer additive procedure | accepted | Tier 1 PR 1+2 worked example |

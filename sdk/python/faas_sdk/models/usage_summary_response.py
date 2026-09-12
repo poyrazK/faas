@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.usage_summary_response_egress_billing_mode import (
+    UsageSummaryResponseEgressBillingMode,
+    check_usage_summary_response_egress_billing_mode,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -28,12 +33,23 @@ class UsageSummaryResponse:
     included_gb_hours: int
     overage_gb_hours: float
     overage_cents: int
-    """Integer cents. Overages are €0.01/GB-h."""
+    """Integer cents. Includes compute at €0.01/GB-h and configured live egress overage; shadow egress is excluded."""
     used_cpu_hours: float | Unset = UNSET
     """Per-month CPU-hours (informational; not billed). issue #279 / PR-B."""
     used_egress_gb: float | Unset = UNSET
-    """Per-month canonical interface egress GB (informational; not billed). Σ net_tx_bytes across all apps;
-    tx_bytes is a diagnostic subset and is not added. ADR-046."""
+    """Per-month canonical interface egress GB. Σ net_tx_bytes across all apps; tx_bytes is a diagnostic subset and
+    is not added. Informational while egress_billing_mode is absent."""
+    egress_billing_mode: UsageSummaryResponseEgressBillingMode | Unset = UNSET
+    """Absent when egress billing is off. Shadow quantities are audited locally but are not sent to Polar."""
+    egress_billing_from: datetime.datetime | Unset = UNSET
+    """Explicit non-retroactive UTC-hour activation boundary."""
+    included_egress_gb: float | Unset = UNSET
+    """UTC-calendar-month included egress in provider billing units (GiB for Polar). Present when egress billing is
+    configured."""
+    egress_overage_gb: float | Unset = UNSET
+    """Current monthly egress above the included amount. Shadow values are not charged."""
+    egress_millicents_per_gb: int | Unset = UNSET
+    """Configured price per egress billing unit in millicents."""
     used_ingress_gb: float | Unset = UNSET
     """Per-month ingress GB (informational; not billed). Σ net_rx_bytes across all apps, converted to GB. ADR-048.
     Mirror of `used_egress_gb` for the inbound direction."""
@@ -59,6 +75,20 @@ class UsageSummaryResponse:
         used_cpu_hours = self.used_cpu_hours
 
         used_egress_gb = self.used_egress_gb
+
+        egress_billing_mode: str | Unset = UNSET
+        if not isinstance(self.egress_billing_mode, Unset):
+            egress_billing_mode = self.egress_billing_mode
+
+        egress_billing_from: str | Unset = UNSET
+        if not isinstance(self.egress_billing_from, Unset):
+            egress_billing_from = self.egress_billing_from.isoformat()
+
+        included_egress_gb = self.included_egress_gb
+
+        egress_overage_gb = self.egress_overage_gb
+
+        egress_millicents_per_gb = self.egress_millicents_per_gb
 
         used_ingress_gb = self.used_ingress_gb
 
@@ -86,6 +116,16 @@ class UsageSummaryResponse:
             field_dict["used_cpu_hours"] = used_cpu_hours
         if used_egress_gb is not UNSET:
             field_dict["used_egress_gb"] = used_egress_gb
+        if egress_billing_mode is not UNSET:
+            field_dict["egress_billing_mode"] = egress_billing_mode
+        if egress_billing_from is not UNSET:
+            field_dict["egress_billing_from"] = egress_billing_from
+        if included_egress_gb is not UNSET:
+            field_dict["included_egress_gb"] = included_egress_gb
+        if egress_overage_gb is not UNSET:
+            field_dict["egress_overage_gb"] = egress_overage_gb
+        if egress_millicents_per_gb is not UNSET:
+            field_dict["egress_millicents_per_gb"] = egress_millicents_per_gb
         if used_ingress_gb is not UNSET:
             field_dict["used_ingress_gb"] = used_ingress_gb
         if cold_boots is not UNSET:
@@ -114,6 +154,26 @@ class UsageSummaryResponse:
 
         used_egress_gb = d.pop("used_egress_gb", UNSET)
 
+        _egress_billing_mode = d.pop("egress_billing_mode", UNSET)
+        egress_billing_mode: UsageSummaryResponseEgressBillingMode | Unset
+        if isinstance(_egress_billing_mode, Unset):
+            egress_billing_mode = UNSET
+        else:
+            egress_billing_mode = check_usage_summary_response_egress_billing_mode(_egress_billing_mode)
+
+        _egress_billing_from = d.pop("egress_billing_from", UNSET)
+        egress_billing_from: datetime.datetime | Unset
+        if isinstance(_egress_billing_from, Unset):
+            egress_billing_from = UNSET
+        else:
+            egress_billing_from = datetime.datetime.fromisoformat(_egress_billing_from)
+
+        included_egress_gb = d.pop("included_egress_gb", UNSET)
+
+        egress_overage_gb = d.pop("egress_overage_gb", UNSET)
+
+        egress_millicents_per_gb = d.pop("egress_millicents_per_gb", UNSET)
+
         used_ingress_gb = d.pop("used_ingress_gb", UNSET)
 
         cold_boots = d.pop("cold_boots", UNSET)
@@ -135,6 +195,11 @@ class UsageSummaryResponse:
             overage_cents=overage_cents,
             used_cpu_hours=used_cpu_hours,
             used_egress_gb=used_egress_gb,
+            egress_billing_mode=egress_billing_mode,
+            egress_billing_from=egress_billing_from,
+            included_egress_gb=included_egress_gb,
+            egress_overage_gb=egress_overage_gb,
+            egress_millicents_per_gb=egress_millicents_per_gb,
             used_ingress_gb=used_ingress_gb,
             cold_boots=cold_boots,
             daily=daily,

@@ -1,3 +1,4 @@
+// spec: §10
 // Tests for pkg/billing/loader/config.go — LoadBillingConfig +
 // ApplyBillingEnvOverlay. Uses inline-string TOML fixtures (no
 // testdata/*.toml) per cmd/schedd/config_test.go:42-73 precedent.
@@ -164,6 +165,14 @@ hobby_product_id = "hobby-product"
 pro_product_id = "pro-product"
 scale_product_id = "scale-product"
 usage_event_name = "ram_usage"
+egress_billing_mode = "shadow"
+egress_billing_from = "2026-09-01T00:00:00Z"
+egress_usage_event_name = "egress_usage"
+egress_meter_id = "meter-egress"
+egress_millicents_per_gib = 2000
+hobby_included_egress_gib = 10
+pro_included_egress_gib = 100
+scale_included_egress_gib = 1000
 `)
 	cfg, err := LoadBillingConfig(body)
 	if err != nil {
@@ -177,6 +186,10 @@ usage_event_name = "ram_usage"
 	}
 	if !cfg.Polar.Sandbox || cfg.Polar.UsageEventName != "ram_usage" {
 		t.Fatalf("polar settings not loaded: %+v", cfg.Polar)
+	}
+	if cfg.Polar.EgressBillingMode != polar.EgressBillingShadow || cfg.Polar.EgressBillingFrom != "2026-09-01T00:00:00Z" || cfg.Polar.EgressMeterID != "meter-egress" ||
+		cfg.Polar.EgressMillicentsPerGiB != 2_000 || cfg.Polar.ScaleIncludedEgressGiB != 1_000 {
+		t.Fatalf("polar egress settings not loaded: %+v", cfg.Polar)
 	}
 }
 
@@ -273,6 +286,27 @@ func TestApplyBillingEnvOverlay_EmptyEnvLeavesTOML(t *testing.T) {
 	}
 	if cfg.Stripe.WebhookSecret != "whsec_toml" {
 		t.Errorf("cfg.Stripe.WebhookSecret = %q, want \"whsec_toml\"", cfg.Stripe.WebhookSecret)
+	}
+}
+
+func TestApplyBillingEnvOverlay_PolarEgress(t *testing.T) {
+	values := map[string]string{
+		"FAAS_POLAR_EGRESS_BILLING_MODE":       "live",
+		"FAAS_POLAR_EGRESS_BILLING_FROM":       "2026-09-01T00:00:00Z",
+		"FAAS_POLAR_EGRESS_USAGE_EVENT_NAME":   "egress_event",
+		"FAAS_POLAR_EGRESS_METER_ID":           "meter-egress",
+		"FAAS_POLAR_EGRESS_MILLICENTS_PER_GIB": "3000",
+		"FAAS_POLAR_HOBBY_INCLUDED_EGRESS_GIB": "20",
+		"FAAS_POLAR_PRO_INCLUDED_EGRESS_GIB":   "200",
+		"FAAS_POLAR_SCALE_INCLUDED_EGRESS_GIB": "2000",
+	}
+	cfg := ApplyBillingEnvOverlay(&RootBillingConfig{}, func(key string) string { return values[key] })
+	if cfg.Polar.EgressBillingMode != "live" || cfg.Polar.EgressBillingFrom != "2026-09-01T00:00:00Z" || cfg.Polar.EgressUsageEventName != "egress_event" || cfg.Polar.EgressMeterID != "meter-egress" {
+		t.Fatalf("polar egress string overlay = %+v", cfg.Polar)
+	}
+	if cfg.Polar.EgressMillicentsPerGiB != 3_000 || cfg.Polar.HobbyIncludedEgressGiB != 20 ||
+		cfg.Polar.ProIncludedEgressGiB != 200 || cfg.Polar.ScaleIncludedEgressGiB != 2_000 {
+		t.Fatalf("polar egress numeric overlay = %+v", cfg.Polar)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -563,20 +564,22 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 	}
 	now := l.now()
 	for _, acct := range accounts {
+		usages, err := MonthUsageForAccount(ctx, l.store, acct.ID, now)
+		if err != nil {
+			l.log.Warn("meter: quota usage_by_month", "account", acct.ID, "err", err)
+			continue
+		}
 		capCents, ok := capCache[acct.ID]
 		if ok && capCents >= 0 {
 			monthCents, err := l.store.CurrentMonthOverageCents(ctx, acct.ID)
 			if err != nil {
 				l.log.Warn("meter: overage read failed", "account", acct.ID, "err", err)
-			} else if monthCents >= capCents {
+			} else if meterCents, meterErr := liveMeterOverageCents(ctx, l.store, l.pusher, acct, now, state.BillingMeterEgress); meterErr != nil {
+				l.log.Warn("meter: secondary overage read failed", "account", acct.ID, "err", meterErr)
+			} else if saturatedAdd(monthCents, meterCents) >= capCents {
 				l.ops.BillingCapExceededTotal(string(acct.Plan))
 				continue
 			}
-		}
-		usages, err := MonthUsageForAccount(ctx, l.store, acct.ID, now)
-		if err != nil {
-			l.log.Warn("meter: quota usage_by_month", "account", acct.ID, "err", err)
-			continue
 		}
 		used := MonthlyUsageGB(usages)
 		if _, err := EnforceQuota(ctx, l.store, l.notif, l.parker, l.mailer, l.log, acct, used, now); err != nil {
@@ -588,6 +591,42 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			l.log.Warn("meter: enforce_quota", "account", acct.ID, "err", err)
 		}
 	}
+}
+
+func liveMeterOverageCents(ctx context.Context, store state.Store, provider billing.Provider, acct state.Account, now time.Time, meter state.BillingMeter) (int64, error) {
+	policyProvider, ok := provider.(billing.MeterUsagePolicyProvider)
+	if !ok {
+		return 0, nil
+	}
+	policy, configured := policyProvider.MeterUsagePolicy(acct.Plan, meter)
+	if !configured || policy.Mode != billing.MeterDeliveryLive {
+		return 0, nil
+	}
+	monthStart := time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
+	start := monthStart
+	if policy.EffectiveFrom.After(start) {
+		start = policy.EffectiveFrom
+	}
+	usages, err := store.UsageByHour(ctx, acct.ID, start, now.UTC())
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, usage := range usages {
+		var quantity int64
+		switch meter {
+		case state.BillingMeterEgress:
+			quantity = usage.NetTxBytes
+		default:
+			return 0, nil
+		}
+		if quantity > math.MaxInt64-total {
+			total = math.MaxInt64
+			break
+		}
+		total += quantity
+	}
+	return billing.MeterUsageCents(policy, max(total-policy.IncludedQuantity, 0)), nil
 }
 
 // emitFloorApplied (ADR-060, issue #515) groups the sampler's

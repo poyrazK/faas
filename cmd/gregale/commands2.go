@@ -3247,11 +3247,14 @@ func renderUsageSummary(w io.Writer, s api.UsageSummaryResponse) {
 	// sees the measurement next to the billing total without
 	// confusing the two.
 	_, _ = fmt.Fprintf(w, "  %-*s %.6f CPU-hours\n", labelWidth, "CPU usage:", s.UsedCPUHours)
-	// ADR-046: per-month egress is informational, NOT billed
-	// (the future billing PR will pick the unit). Same shape as
-	// CPU usage — a separate line, never folded into "Used:"
-	// so the customer never confuses the two.
 	_, _ = fmt.Fprintf(w, "  %-*s %.3f GB\n", labelWidth, "Egress:", s.UsedEgressGB)
+	if s.EgressBillingMode != "" {
+		_, _ = fmt.Fprintf(w, "  %-*s %s\n", labelWidth, "Egress mode:", s.EgressBillingMode)
+		_, _ = fmt.Fprintf(w, "  %-*s %s\n", labelWidth, "Egress from:", s.EgressBillingFrom)
+		_, _ = fmt.Fprintf(w, "  %-*s %.0f GB\n", labelWidth, "Egress incl:", s.IncludedEgressGB)
+		_, _ = fmt.Fprintf(w, "  %-*s %.3f GB @ %.3f cents/GB\n", labelWidth, "Egress over:", s.EgressOverageGB,
+			float64(s.EgressMillicentsPerGB)/float64(api.MillicentsPerCent))
+	}
 }
 
 func boolPtr(b bool) *bool { return &b }

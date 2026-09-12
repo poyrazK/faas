@@ -47,6 +47,12 @@
         <tr><th>GB-hours used</th><td>{{printf "%.2f" .Data.UsedGBHours}} / {{.Data.Included}}</td></tr>
         <tr><th>% of included quota</th><td>{{printf "%.0f" .Data.UsedPct}}%</td></tr>
         <tr><th>Egress this month (GB)</th><td>{{printf "%.2f" .Data.UsedEgressGB}}</td></tr>
+        {{if .Data.EgressBillingMode}}
+        <tr><th>Egress billing mode</th><td>{{.Data.EgressBillingMode}}</td></tr>
+        <tr><th>Egress billing starts</th><td>{{.Data.EgressBillingFrom}}</td></tr>
+        <tr><th>Included egress / month</th><td>{{printf "%.0f" .Data.IncludedEgressGB}} GB</td></tr>
+        <tr><th>Egress overage</th><td>{{printf "%.3f" .Data.EgressOverageGB}} GB at {{.Data.EgressPriceCentsPerGB}} cents/GB{{if eq .Data.EgressBillingMode "shadow"}} (not charged){{end}}</td></tr>
+        {{end}}
       </table>
       <p><a href="/dashboard/usage">Detailed usage</a> for the per-app breakdown.</p>
 
