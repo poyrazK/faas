@@ -136,7 +136,11 @@ func TestNodeOutputLimitReturnsBoundedFailure(t *testing.T) {
 	result, err := protoClient.Execute(context.Background(), executionproto.Request{
 		Version: executionproto.Version, ExecutionID: "output-limit-test", Runtime: api.ExecutionRuntimeNode22,
 		Source: `export default async () => { console.log("x".repeat(4096)); return true }`,
-		Input:  json.RawMessage("null"), TimeoutMS: 3000, MaxOutput: 1024,
+		// Output-limit admission must win over the guest timeout, but starting
+		// Node under the race-enabled package suite can exceed three seconds on
+		// a busy CI runner. Keep enough headroom for process startup while still
+		// exercising the bounded-output cancellation path.
+		Input: json.RawMessage("null"), TimeoutMS: 10_000, MaxOutput: 1024,
 		NetworkMode: api.ExecutionNetworkNone,
 	})
 	if err != nil {

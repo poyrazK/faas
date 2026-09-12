@@ -630,7 +630,7 @@ func printAffectedText(w io.Writer, plan api.PlanResponse, excludedSlugs map[str
 }
 
 // confirmPlan prints the plan and waits for a y/N confirmation. Reads
-// from r (typically os.Stdin) so tests can stub it. Returns true on
+// from r (typically osStdin) so tests can stub it. Returns true on
 // 'y' / 'yes' (case-insensitive); false on EOF, 'n', or any other
 // input — git does the same.
 //
@@ -640,6 +640,12 @@ func printAffectedText(w io.Writer, plan api.PlanResponse, excludedSlugs map[str
 // confirm-prompt terse; the destructive --exclude warning lives
 // inside printPlanText and fires regardless of showAffected.
 func confirmPlan(w io.Writer, r io.Reader, plan api.PlanResponse, excludeSet []string, showAffected bool) bool {
+	// A destructive plan must always show its removal partition before the
+	// operator is asked to approve it. Keep --show-affected opt-in for
+	// ordinary previews, but promote it automatically at the mutation gate.
+	if len(plan.Removed) > 0 {
+		showAffected = true
+	}
 	printPlanText(w, plan, excludeSet, showAffected)
 	//nolint:errcheck // same rationale as printPlanText; a failed Fprintln
 	// at the prompt is no different from the read below failing.

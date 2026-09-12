@@ -2129,7 +2129,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// by --only or --project-slug on a --tarball / --template / zero-config
 	// pack. The plan is fetched via ScanProject, the apply is
 	// transactional on the server (rollback on over-quota per
-	// ADR-050), and the confirm prompt is gated on TTY + --yes.
+	// ADR-050), and mutation requires --yes or an interactive prompt;
+	// non-TTY invocations fail closed after rendering the plan.
 	if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
 		if *createOnly {
 			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --only or --project-slug"))
@@ -2178,9 +2179,30 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			printPlanText(osStdout, plan, excludeList, *deployShowAffected)
 			return printErr("Plan is not applicable on this plan", errors.New("over-quota or unsupported configuration"))
 		}
-		if !*yes && !jsonOutput && stdoutIsTTY() && stdinIsTTY() {
-			if !confirmPlan(osStdout, os.Stdin, plan, excludeList, *deployShowAffected) {
-				return printErr("Aborted by user", errors.New("user declined at the confirm prompt"))
+		if !*yes {
+			// JSON output is intentionally non-interactive: prompting would
+			// corrupt the machine-readable stdout stream. Emit the complete
+			// plan first, then fail closed so an operator or CI job must make
+			// the approval explicit with --yes.
+			if jsonOutput {
+				if code := jsonOut(writeJSON(plan)); code != 0 {
+					return code
+				}
+				return printErr("Confirmation required", errors.New(
+					"project deploy requires --yes in JSON mode"))
+			}
+			if stdoutIsTTY() && stdinIsTTY() {
+				if !confirmPlan(osStdout, osStdin, plan, excludeList, *deployShowAffected) {
+					return printErr("Aborted by user", errors.New("user declined at the confirm prompt"))
+				}
+			} else {
+				// A redirected stream, CI runner, pipeline, or unsupported
+				// platform must never turn the absence of a prompt into an
+				// implicit approval. Render the same complete plan the TTY
+				// prompt would have shown so removals remain visible.
+				printPlanText(osStdout, plan, excludeList, true)
+				return printErr("Confirmation required", errors.New(
+					"project deploy requires --yes when stdin or stdout is not a TTY; review the plan and rerun with --yes"))
 			}
 		}
 		// Re-open because the previous reader consumed the body.
