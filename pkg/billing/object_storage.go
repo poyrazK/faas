@@ -11,12 +11,31 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ObjectStorageLineItemPolicy is the explicit commercial rollout boundary for
+// month-close object-storage charges. EffectiveFrom must be a UTC month
+// boundary. Off is represented by a sink returning ok=false.
+type ObjectStorageLineItemPolicy struct {
+	Provider      string
+	Mode          MeterDeliveryMode
+	EffectiveFrom time.Time
+}
+
+func (p ObjectStorageLineItemPolicy) valid() bool {
+	_, utcOffset := p.EffectiveFrom.Zone()
+	return p.Provider != "" &&
+		(p.Mode == MeterDeliveryShadow || p.Mode == MeterDeliveryLive) &&
+		!p.EffectiveFrom.IsZero() && utcOffset == 0 &&
+		p.EffectiveFrom.Equal(state.ObjectStoragePeriod(p.EffectiveFrom))
+}
+
 // ObjectStorageLineItemSink is the provider adapter seam for a finalized
-// period. Implementations should use record.ID as their external idempotency
-// key and translate millicents into the provider's native currency unit.
-// Keeping this optional interface separate from Provider avoids forcing every
-// billing integration to support object-storage line items at once.
+// period. Implementations must expose an explicit rollout policy, use
+// record.ID as their external idempotency key, and translate millicents into
+// the provider's native currency unit. Keeping this optional interface
+// separate from Provider avoids forcing every billing integration to support
+// object-storage line items at once.
 type ObjectStorageLineItemSink interface {
+	ObjectStorageLineItemPolicy() (ObjectStorageLineItemPolicy, bool)
 	PublishObjectStorageLineItem(context.Context, state.ObjectStorageBillingRecord) error
 }
 
@@ -47,6 +66,16 @@ func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAcc
 	if !periodStart.Before(state.ObjectStoragePeriod(now)) {
 		return nil, state.ErrObjectBillingOpen
 	}
+	var policy ObjectStorageLineItemPolicy
+	if sink != nil {
+		var enabled bool
+		policy, enabled = sink.ObjectStorageLineItemPolicy()
+		if !enabled {
+			sink = nil
+		} else if !policy.valid() {
+			return nil, errors.New("billing: invalid object storage line item policy")
+		}
+	}
 	all, err := accounts.ListAllAccounts(ctx)
 	if err != nil {
 		return nil, err
@@ -71,8 +100,40 @@ func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAcc
 			continue
 		}
 		if sink != nil {
-			if err := sink.PublishObjectStorageLineItem(ctx, record); err != nil {
-				failures = append(failures, fmt.Errorf("account %s: publish object usage: %w", account.ID, err))
+			if _, err := store.GetObjectStorageBillingDelivery(ctx, policy.Provider, record.ID); err == nil {
+				finalized = append(finalized, record)
+				continue
+			} else if !errors.Is(err, state.ErrNotFound) {
+				failures = append(failures, fmt.Errorf("account %s: read object billing delivery: %w", account.ID, err))
+				continue
+			}
+
+			delivery := state.ObjectStorageBillingDelivery{
+				Provider:           policy.Provider,
+				BillingRecordID:    record.ID,
+				AccountID:          record.AccountID,
+				PeriodStart:        record.PeriodStart,
+				QuantityMillicents: record.TotalMillicents,
+				DeliveredAt:        now,
+			}
+			switch {
+			case record.PeriodStart.Before(policy.EffectiveFrom):
+				delivery.Mode = state.ObjectStorageDeliveryPreActivation
+				delivery.QuantityMillicents = 0
+			case !account.Plan.IsPaid():
+				delivery.Mode = state.ObjectStorageDeliveryPlanIneligible
+				delivery.QuantityMillicents = 0
+			case policy.Mode == MeterDeliveryShadow:
+				delivery.Mode = state.ObjectStorageDeliveryShadow
+			case policy.Mode == MeterDeliveryLive:
+				delivery.Mode = state.ObjectStorageDeliveryLive
+				if err := sink.PublishObjectStorageLineItem(ctx, record); err != nil {
+					failures = append(failures, fmt.Errorf("account %s: publish object usage: %w", account.ID, err))
+					continue
+				}
+			}
+			if _, err := store.RecordObjectStorageBillingDelivery(ctx, delivery); err != nil {
+				failures = append(failures, fmt.Errorf("account %s: record object billing delivery: %w", account.ID, err))
 				continue
 			}
 		}

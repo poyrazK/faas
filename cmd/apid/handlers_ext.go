@@ -5147,7 +5147,8 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 			api.WriteProblem(w, api.ErrCapacity("could not calculate object storage usage"))
 			return
 		}
-		out.ObjectStorage = &api.ObjectStorageUsageResponse{Usage: usage, Policy: s.objectStorage.Accounting, Charges: charges}
+		objectStorage := s.objectStorageUsageResponse(usage, charges)
+		out.ObjectStorage = &objectStorage
 	}
 
 	if s.managedPostgres != nil {

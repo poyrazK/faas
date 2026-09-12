@@ -9075,10 +9075,31 @@ CREATE TABLE IF NOT EXISTS object_storage_billing_periods (
     total_millicents bigint NOT NULL CHECK (total_millicents BETWEEN 0 AND 1152921504606846976),
     finalized_at timestamptz NOT NULL DEFAULT now(),
     CHECK (total_millicents = storage_millicents + requests_millicents + egress_millicents),
-    UNIQUE (account_id, period_start)
+    UNIQUE (account_id, period_start),
+    CONSTRAINT object_storage_billing_periods_delivery_identity_key UNIQUE (id, account_id, period_start)
 );
 CREATE INDEX IF NOT EXISTS object_storage_billing_periods_account_period_idx
     ON object_storage_billing_periods (account_id, period_start DESC);
+
+CREATE TABLE IF NOT EXISTS object_storage_billing_deliveries (
+    provider text NOT NULL CHECK (provider <> ''),
+    billing_record_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    period_start timestamptz NOT NULL CHECK (
+        period_start = date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    ),
+    mode text NOT NULL CHECK (mode IN ('preactivation', 'plan_ineligible', 'shadow', 'live')),
+    quantity_millicents bigint NOT NULL CHECK (quantity_millicents BETWEEN 0 AND 1152921504606846976),
+    delivered_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (provider, billing_record_id),
+    UNIQUE (provider, account_id, period_start),
+    CHECK (mode NOT IN ('preactivation', 'plan_ineligible') OR quantity_millicents = 0),
+    FOREIGN KEY (billing_record_id, account_id, period_start)
+        REFERENCES object_storage_billing_periods(id, account_id, period_start)
+        ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS object_storage_billing_deliveries_account_period_idx
+    ON object_storage_billing_deliveries (account_id, period_start DESC);
 
 CREATE TABLE IF NOT EXISTS object_storage_multipart_uploads (
     id uuid PRIMARY KEY,

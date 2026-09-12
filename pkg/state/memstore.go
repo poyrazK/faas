@@ -500,7 +500,8 @@ type MemStore struct {
 	billingUsageDeliveries map[string]struct{}
 	// objectStorageBilling is the in-memory mirror of the finalized
 	// object-storage month-close ledger.
-	objectStorageBilling map[string]ObjectStorageBillingRecord
+	objectStorageBilling           map[string]ObjectStorageBillingRecord
+	objectStorageBillingDeliveries map[string]ObjectStorageBillingDelivery
 	// accountCredits is the in-memory mirror of the `account_credits`
 	// table (migration 00049, issue #279). Keyed by credit id. The
 	// handler is the only writer in production; meterd never reads
@@ -925,10 +926,11 @@ func NewMemStore() *MemStore {
 		billingIdentities: map[string]BillingIdentity{},
 		// invoices starts empty; PR A reads it via ListInvoicesForAccount,
 		// PR B writes via UpsertInvoice (webhook ingestion).
-		invoices:               map[string]Invoice{},
-		invoiceRefunds:         map[string]InvoiceRefund{},
-		billingUsageDeliveries: map[string]struct{}{},
-		objectStorageBilling:   map[string]ObjectStorageBillingRecord{},
+		invoices:                       map[string]Invoice{},
+		invoiceRefunds:                 map[string]InvoiceRefund{},
+		billingUsageDeliveries:         map[string]struct{}{},
+		objectStorageBilling:           map[string]ObjectStorageBillingRecord{},
+		objectStorageBillingDeliveries: map[string]ObjectStorageBillingDelivery{},
 		// accountCredits starts empty; the operator-only
 		// POST /v1/admin/accounts/{id}/credits path is the sole writer.
 		accountCredits: map[string]AccountCredit{},
@@ -15913,6 +15915,16 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key := range m.billingUsageDeliveries {
 		if strings.Contains(key, "\x00"+id+"\x00") {
 			delete(m.billingUsageDeliveries, key)
+		}
+	}
+	for key, record := range m.objectStorageBilling {
+		if record.AccountID == id {
+			delete(m.objectStorageBilling, key)
+		}
+	}
+	for key, delivery := range m.objectStorageBillingDeliveries {
+		if delivery.AccountID == id {
+			delete(m.objectStorageBillingDeliveries, key)
 		}
 	}
 	for instanceID, checkpoint := range m.networkUsageCheckpoints {

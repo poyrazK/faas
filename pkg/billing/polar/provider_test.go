@@ -74,6 +74,15 @@ func egressTestConfig(baseURL, mode string) Config {
 	return cfg
 }
 
+func objectStorageTestConfig(baseURL, mode string) Config {
+	cfg := testConfig(baseURL)
+	cfg.ObjectStorageBillingMode = mode
+	cfg.ObjectStorageBillingFrom = "2026-09-01T00:00:00Z"
+	cfg.ObjectStorageUsageEventName = "object_storage_usage"
+	cfg.ObjectStorageMeterID = "meter-object-storage"
+	return cfg
+}
+
 func TestNewProviderRequiresAccessToken(t *testing.T) {
 	_, err := NewProvider(Config{}, nil)
 	if err == nil || !errors.Is(err, ErrNoAPIKey) {
@@ -110,6 +119,86 @@ func TestEgressBillingRequiresUTCAlignedActivationHour(t *testing.T) {
 		if _, err := NewProvider(cfg, nil); err == nil || !strings.Contains(err.Error(), "UTC-hour boundary") {
 			t.Fatalf("NewProvider activation %q error = %v, want UTC-hour validation", activation, err)
 		}
+	}
+}
+
+func TestObjectStorageBillingDefaultsOff(t *testing.T) {
+	p, err := NewProvider(testConfig("http://example.test"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Capabilities().Has(billing.CapObjectStorageUsage) {
+		t.Fatal("default Polar provider unexpectedly advertises live object storage billing")
+	}
+	if _, ok := p.ObjectStorageLineItemPolicy(); ok {
+		t.Fatal("default Polar provider unexpectedly exposes an object storage policy")
+	}
+}
+
+func TestObjectStorageBillingRequiresUTCMonthActivation(t *testing.T) {
+	for _, activation := range []string{"", "2026-09-02T00:00:00Z", "2026-09-01T03:00:00+03:00"} {
+		cfg := objectStorageTestConfig("http://example.test", ObjectStorageBillingShadow)
+		cfg.ObjectStorageBillingFrom = activation
+		if _, err := NewProvider(cfg, nil); err == nil || !strings.Contains(err.Error(), "UTC-month boundary") {
+			t.Fatalf("NewProvider activation %q error = %v, want UTC-month validation", activation, err)
+		}
+	}
+}
+
+func TestPublishObjectStorageLineItemUsesExactMillicentQuantity(t *testing.T) {
+	var got usageEvent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/events/ingest" {
+			http.NotFound(w, r)
+			return
+		}
+		var body ingestRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Events) != 1 {
+			http.Error(w, "bad event", http.StatusBadRequest)
+			return
+		}
+		got = body.Events[0]
+		_, _ = io.WriteString(w, `{"inserted":1,"duplicates":0}`)
+	}))
+	defer server.Close()
+
+	p, err := NewProvider(objectStorageTestConfig(server.URL, ObjectStorageBillingLive), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Capabilities().Has(billing.CapObjectStorageUsage) {
+		t.Fatal("live Polar provider missing object storage capability")
+	}
+	policy, ok := p.ObjectStorageLineItemPolicy()
+	if !ok || policy.Provider != "polar" || policy.Mode != billing.MeterDeliveryLive || !policy.EffectiveFrom.Equal(time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("object storage policy = (%+v, %v)", policy, ok)
+	}
+	period := time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
+	record := state.ObjectStorageBillingRecord{
+		ID: "record-1", AccountID: "acct-1", PeriodStart: period, PeriodEnd: period.AddDate(0, 1, 0), Currency: "EUR",
+		StoredByteHours: 99, RequestCount: 88, EgressBytes: 77, ProviderCostMillicents: 66,
+		StorageMillicentsPerGiBMonth: 1000, RequestsMillicentsPerMillion: 2000, EgressMillicentsPerGiB: 3000,
+		StorageMillicents: 1200, RequestsMillicents: 34, EgressMillicents: 5, TotalMillicents: 1239,
+		FinalizedAt: period.AddDate(0, 1, 0).Add(time.Minute),
+	}
+	if err := p.PublishObjectStorageLineItem(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "object_storage_usage" || got.ExternalID != "faas-object-storage-record-1" || got.ExternalCustomerID != "acct-1" {
+		t.Fatalf("object storage event = %+v", got)
+	}
+	if got.Metadata["charge_millicents"] != float64(1239) || got.Metadata["storage_millicents"] != float64(1200) {
+		t.Fatalf("object storage event metadata = %+v", got.Metadata)
+	}
+}
+
+func TestObjectStorageShadowCannotPublish(t *testing.T) {
+	p, err := NewProvider(objectStorageTestConfig("http://example.test", ObjectStorageBillingShadow), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PublishObjectStorageLineItem(context.Background(), state.ObjectStorageBillingRecord{}); err == nil || !strings.Contains(err.Error(), "not live") {
+		t.Fatalf("shadow publish error = %v", err)
 	}
 }
 
@@ -200,6 +289,47 @@ func TestEnsurePlanProductsValidatesSeparateEgressCatalog(t *testing.T) {
 		}
 		if p.Capabilities().Has(billing.CapEgressUsage) {
 			t.Fatalf("%s catalog unexpectedly grants live egress capability", mode)
+		}
+	}
+}
+
+func TestEnsurePlanProductsValidatesObjectStorageCatalog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/meters/meter-1":
+			_, _ = io.WriteString(w, catalogMeterJSON())
+			return
+		case "/v1/meters/meter-object-storage":
+			_, _ = io.WriteString(w, `{"id":"meter-object-storage","unit":"scalar","archived_at":null,"filter":{"conjunction":"and","clauses":[{"property":"name","operator":"eq","value":"object_storage_usage"}]},"aggregation":{"func":"sum","property":"charge_millicents"}}`)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/products/") {
+			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
+			fixed := int64(900)
+			switch id {
+			case "pro-product":
+				fixed = 2900
+			case "scale-product":
+				fixed = 9900
+			}
+			product := strings.Replace(catalogProductJSON(id, fixed), `],"benefits"`, `,{"amount_type":"metered_unit","price_currency":"eur","unit_amount":"0.001","meter_id":"meter-object-storage","cap_amount":null,"is_archived":false}],"benefits"`, 1)
+			_, _ = io.WriteString(w, product)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	for _, mode := range []string{ObjectStorageBillingShadow, ObjectStorageBillingOff} {
+		p, err := NewProvider(objectStorageTestConfig(server.URL, mode), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.EnsurePlanProducts(context.Background()); err != nil {
+			t.Fatalf("EnsurePlanProducts mode=%s: %v", mode, err)
+		}
+		if p.Capabilities().Has(billing.CapObjectStorageUsage) {
+			t.Fatalf("%s catalog unexpectedly grants live object storage capability", mode)
 		}
 	}
 }

@@ -1370,6 +1370,16 @@ type ObjectStorageAuthorization struct {
 	Count       int64
 }
 
+type ObjectStorageBillingDelivery struct {
+	Provider           string
+	BillingRecordID    pgtype.UUID
+	AccountID          pgtype.UUID
+	PeriodStart        pgtype.Timestamptz
+	Mode               string
+	QuantityMillicents int64
+	DeliveredAt        pgtype.Timestamptz
+}
+
 type ObjectStorageBillingPeriod struct {
 	ID                           pgtype.UUID
 	AccountID                    pgtype.UUID

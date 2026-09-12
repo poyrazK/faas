@@ -1,3 +1,4 @@
+// ADR-156: immutable object-storage billing and delivery receipts.
 package state_test
 
 import (
@@ -44,5 +45,35 @@ func TestMemObjectStorageBillingPeriodIsIdempotent(t *testing.T) {
 	conflict.Currency = "USD"
 	if _, err := store.RecordObjectStorageBillingPeriod(nil, conflict); !errors.Is(err, state.ErrObjectBillingConflict) {
 		t.Fatalf("changed snapshot error = %v", err)
+	}
+}
+
+func TestMemObjectStorageBillingDeliveryIsIdempotent(t *testing.T) {
+	store := state.NewMemStore()
+	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	record, err := store.RecordObjectStorageBillingPeriod(nil, state.ObjectStorageBillingRecord{
+		AccountID: "acct", PeriodStart: period, PeriodEnd: period.AddDate(0, 1, 0), Currency: "EUR", FinalizedAt: period.AddDate(0, 1, 0).Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery := state.ObjectStorageBillingDelivery{
+		Provider: "polar", BillingRecordID: record.ID, AccountID: record.AccountID,
+		PeriodStart: period, Mode: state.ObjectStorageDeliveryShadow,
+		QuantityMillicents: record.TotalMillicents, DeliveredAt: period.AddDate(0, 1, 0).Add(2 * time.Hour),
+	}
+	first, err := store.RecordObjectStorageBillingDelivery(nil, delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery.DeliveredAt = delivery.DeliveredAt.Add(time.Hour)
+	again, err := store.RecordObjectStorageBillingDelivery(nil, delivery)
+	if err != nil || !again.DeliveredAt.Equal(first.DeliveredAt) {
+		t.Fatalf("idempotent retry = %+v, err=%v", again, err)
+	}
+	conflict := delivery
+	conflict.Mode = state.ObjectStorageDeliveryLive
+	if _, err := store.RecordObjectStorageBillingDelivery(nil, conflict); !errors.Is(err, state.ErrObjectBillingConflict) {
+		t.Fatalf("changed delivery error = %v", err)
 	}
 }
