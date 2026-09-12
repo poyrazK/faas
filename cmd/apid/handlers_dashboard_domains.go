@@ -85,7 +85,7 @@ func (s *server) projectDashboardDomains(ctx stdctx, log *slog.Logger, slug stri
 		}
 		if obs, err := s.store.GetDoctorObservation(ctx, domain.Domain); err == nil {
 			stale := !obs.ObservedAt.IsZero() && time.Since(obs.ObservedAt) >= s.doctorTTL()
-			report := doctorReportFromObs(domain, obs, stale)
+			report := doctorReportFromObs(domain, obs, stale, s.domain)
 			summary := &dashboard.DomainDoctorSummary{Healthy: report.Healthy, Stale: report.Stale, ObservedAt: report.ObservedAt}
 			for _, check := range report.Checks {
 				summary.Checks = append(summary.Checks, dashboard.DashboardDoctorCheck{

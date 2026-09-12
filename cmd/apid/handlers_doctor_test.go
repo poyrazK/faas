@@ -81,6 +81,52 @@ func TestGetDomainDoctor_FlagEnabledServesReport(t *testing.T) {
 	}
 }
 
+func TestGetDomainDoctor_CNAMEMismatchUsesCanonicalTarget(t *testing.T) {
+	withDomainDoctorEnabled(t)
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "doc-cname-mismatch")
+	if _, err := e.store.CreateCustomDomain(context.Background(), "feed.example.com", appID, "tok"); err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	obs := state.DomainDoctorObservation{
+		Domain:          "feed.example.com",
+		ObservedAt:      time.Now().UTC(),
+		DNSRecordFound:  true,
+		PointsToGregale: false,
+		ObservedTarget:  "feed.example.com.",
+		CertState:       "pending",
+		DNSCheckedAt:    time.Now().UTC(),
+	}
+	if err := e.store.UpsertDoctorObservation(context.Background(), obs); err != nil {
+		t.Fatalf("upsert obs: %v", err)
+	}
+
+	rec := e.do(t, "GET", "/v1/domains/feed.example.com/doctor", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var report api.DomainDoctorReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var points api.DomainDoctorCheck
+	for _, check := range report.Checks {
+		if check.Name == "points_to_gregale" {
+			points = check
+			break
+		}
+	}
+	if points.Status != "fail" {
+		t.Fatalf("points_to_gregale status = %q, want fail", points.Status)
+	}
+	if !strings.Contains(points.Remediation, "→ gregale.dev") {
+		t.Errorf("remediation = %q, want canonical Gregale target", points.Remediation)
+	}
+	if strings.Contains(points.Remediation, "feed.example.com.") {
+		t.Errorf("remediation = %q, must not recommend the observed self-reference", points.Remediation)
+	}
+}
+
 // TestGetDomainDoctor_IDOR (ADR-120 Tier A2) asserts a cross-
 // tenant probe returns 404 (not 403 — no leak that the row
 // exists). The handler's loadDomain helper at

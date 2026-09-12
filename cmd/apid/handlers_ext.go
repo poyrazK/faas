@@ -2450,7 +2450,7 @@ func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (a
 	obs, err := s.store.GetDoctorObservation(ctx, d.Domain)
 	if err == nil {
 		if time.Since(obs.ObservedAt) < s.doctorTTL() {
-			return doctorReportFromObs(d, obs, false), nil
+			return doctorReportFromObs(d, obs, false, s.domain), nil
 		}
 		// Stale: fall through to a synchronous re-probe so
 		// the next reader gets fresh data. The re-probe
@@ -2459,7 +2459,7 @@ func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (a
 		if refreshErr := s.refreshDoctorObservation(ctx, d.Domain); refreshErr == nil {
 			obs, _ = s.store.GetDoctorObservation(ctx, d.Domain)
 		}
-		return doctorReportFromObs(d, obs, true), nil
+		return doctorReportFromObs(d, obs, true, s.domain), nil
 	}
 	// ErrNotFound: poller hasn't written yet. Trigger a
 	// synchronous re-probe (bounded by the request ctx so
@@ -2471,7 +2471,7 @@ func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (a
 	if err != nil {
 		return api.DomainDoctorReport{}, err
 	}
-	return doctorReportFromObs(d, obs, true), nil
+	return doctorReportFromObs(d, obs, true, s.domain), nil
 }
 
 // refreshDoctorObservation is the synchronous re-probe
@@ -2495,7 +2495,7 @@ func (s *server) refreshDoctorObservation(ctx context.Context, domain string) er
 // (5 checks, each with a stable name + status + detail +
 // observed + remediation + checked_at) so the helper
 // stays small and is exercised by the e2e suite.
-func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation, stale bool) api.DomainDoctorReport {
+func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation, stale bool, appsDomain string) api.DomainDoctorReport {
 	report := api.DomainDoctorReport{
 		Domain:     d.Domain,
 		AppID:      d.AppID,
@@ -2521,7 +2521,17 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 		report.Healthy = false
 		if ptsObs != "" {
 			ptsDetail = "CNAME does not point at Gregale (observed: " + ptsObs + ")"
-			ptsRem = "Set CNAME " + d.Domain + " → " + ptsObs
+			// The observed value is the bad target, not the value the
+			// customer should configure. Using it here can produce a
+			// self-referential recommendation (for example, "CNAME
+			// feed.com → feed.com"). Always point remediation at the
+			// configured Gregale domain instead.
+			canonicalTarget := strings.TrimSuffix(strings.TrimSpace(appsDomain), ".")
+			if canonicalTarget != "" {
+				ptsRem = "Set CNAME " + d.Domain + " → " + canonicalTarget
+			} else {
+				ptsRem = "Set CNAME " + d.Domain + " to the configured Gregale domain"
+			}
 		} else {
 			ptsDetail = "no CNAME at apex; using A/AAAA record instead"
 		}
