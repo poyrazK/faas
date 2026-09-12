@@ -1,7 +1,9 @@
 # gatewayd_internal_service ansible role
 
 Installs the systemd unit for `gatewayd-internal`, the routing +
-wake + proxy daemon introduced in the Tier A7 split (ADR-070).
+wake + proxy daemon introduced in the Tier A7 split (ADR-070), and
+the managed realtime connection owner that serves its reserved
+WebSocket namespace.
 This role replaces the legacy `gatewayd_service` role for new
 installs; operators on the legacy daemon can run both side by
 side during the migration window.
@@ -9,7 +11,8 @@ side during the migration window.
 ## What this role does
 
 1. Drops `/etc/systemd/system/faas-gatewayd-internal.service`.
-2. Runs `systemctl daemon-reload`.
+2. Drops `/etc/systemd/system/faas-realtimed.service` and its role gate.
+3. Runs `systemctl daemon-reload`.
 
 ## What this role does NOT do
 

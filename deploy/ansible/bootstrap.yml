@@ -7,7 +7,7 @@
 #      gatewayd_public_service, githubd_service, otlp_exporter,
 #      log_archive).
 #   2. [compute_nodes] — fsn-2: shared preconditions + compute-only
-#      roles (vmmd_service, gatewayd_internal_service,
+#      roles (vmmd_service, gatewayd_internal_service + realtimed,
 #      compute_only_service, otlp_exporter, log_archive).
 # Per-box role isolation is enforced at two layers:
 #   - This playbook only applies the role subset each box needs.
@@ -20,7 +20,7 @@
 #
 # Per-box daemons:
 #   fsn-1 (control-plane): apid, schedd, meterd, gatewayd-public, githubd
-#   fsn-2 (compute-only):  vmmd, schedd, gatewayd-internal, builderd, imaged
+#   fsn-2 (compute-only):  vmmd, schedd, realtimed, gatewayd-internal, builderd, imaged
 #
 # The vars_file is loaded only on the control-plane host; the
 # off_host_backup_* vars are read from /etc/faas/sealed.env at

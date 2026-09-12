@@ -14,7 +14,7 @@ const legacyMigrate = "migrate"
 
 var legacyBinaries = []string{
 	"apid", "schedd", "gatewayd", "gatewayd-internal", "gatewayd-public",
-	"builderd", "imaged", "meterd", "githubd", "vmmd", "gregale", "hostage-gen",
+	"builderd", "imaged", "meterd", "githubd", "vmmd", "realtimed", "gregale", "hostage-gen",
 	legacyMigrate, "deployctl",
 }
 

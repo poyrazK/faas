@@ -269,6 +269,11 @@ var HostKeys = map[string]HostBlock{
 		},
 		ComputeNodeBlock: nil,
 	},
+	"realtimed": {
+		Daemon:           "realtimed",
+		PrivateKeys:      []string{"socket_path"},
+		ComputeNodeBlock: nil,
+	},
 }
 
 // TombstoneKeys is the catalog of keys that the renderer MUST NOT

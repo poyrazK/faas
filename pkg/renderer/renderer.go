@@ -190,7 +190,7 @@ func render(opts RenderOptions) (RenderReport, error) {
 		return RenderReport{}, err
 	}
 
-	// Resolve the per-host daemon set. The registry has 8 daemons;
+	// Resolve the per-host daemon set. The registry carries the core daemon set;
 	// the host's role filters them out (we never short-circuit by
 	// Critical — best-effort daemons still ship on the host they
 	// run on).
@@ -208,7 +208,7 @@ func render(opts RenderOptions) (RenderReport, error) {
 		// disagree about which box runs which daemon.
 		daemons = filterDaemons(daemons, daemonunitspec.DaemonsForRole(daemonunitspec.Role(host.Role))...)
 	}
-	// single-box (and ""): all 8 (Registry already includes imaged).
+	// single-box (and ""): all core daemons (Registry already includes imaged).
 
 	// Compute every output in memory first. Phase 3 publishes them
 	// atomically (apart from the cgroup v2 pseudo-file). The two-phase
@@ -477,6 +477,8 @@ func daemonConfigFor(m *manifest.Manifest, registryName string) *manifest.Daemon
 		return m.Daemons.Builderd
 	case "imaged":
 		return m.Daemons.Imaged
+	case "realtimed":
+		return m.Daemons.Realtimed
 	}
 	return nil
 }

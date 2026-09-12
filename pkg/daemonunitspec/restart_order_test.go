@@ -72,14 +72,15 @@ func TestRestartOrder_MatchesExpected(t *testing.T) {
 	}
 	want := []string{
 		"vmmd",              // root: no After — emitted first (indegree 0, lowest slice idx)
-		"apid",              // root: no After — second
-		"schedd",            // After[vmmd] — second-round ready, idx 2 beats meterd/githubd/imaged
+		"realtimed",         // After[vmmd] — second-round ready, idx 1
+		"apid",              // root: no After — registry tiebreak after realtimed
+		"schedd",            // After[vmmd] — ready after vmmd, idx 3
 		"gatewayd-internal", // After[schedd, apid] — both decremented, gatewayd-internal pops
 		"gatewayd-public",   // After[apid]
-		"meterd",            // After[apid] — Registry idx 5
-		"githubd",           // After[apid] — Registry idx 6
-		"imaged",            // After[vmmd] — Registry idx 7
-		"builderd",          // After[vmmd] — Registry idx 8, vmmd has popped
+		"meterd",            // After[apid] — Registry idx 6
+		"githubd",           // After[apid] — Registry idx 7
+		"imaged",            // After[vmmd] — Registry idx 8
+		"builderd",          // After[vmmd] — Registry idx 9, vmmd has popped
 	}
 	if len(got) != len(want) {
 		t.Fatalf("len(got)=%d, len(want)=%d; got=%v want=%v", len(got), len(want), got, want)

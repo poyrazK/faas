@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/geoip"
+	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sched"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -785,6 +786,10 @@ type Handler struct {
 	// gate (Free defaults off; Hobby/Pro/Scale default on via
 	// Plan.WebSocketEnabled / WebSocketResponseAllowed).
 	rawByNode func(t Target) http.Handler
+	// managedRealtime owns the opt-in managed WebSocket namespace. It is
+	// deliberately checked before host/app lookup and VM wake: the realtime
+	// daemon, rather than an application VM, owns these long-lived sockets.
+	managedRealtime http.Handler
 	// topNSample is the per-request bump for the gateway-side
 	// top-N sampler (cmd/gatewayd-internal/topn.go, issue #300). Set via
 	// SetTopNSample from cmd/gatewayd-internal/main.go. nil in unit
@@ -1325,6 +1330,15 @@ func (h *Handler) WithRawForwarding(fn func(t Target) http.Handler) *Handler {
 // matching WithEgressSink / WithLimiter / etc).
 func (h *Handler) WithStreamingEnabled(enabled bool) *Handler {
 	h.streamingEnabled = enabled
+	return h
+}
+
+// WithManagedRealtime installs the managed realtime handler. Requests under
+// realtime.ManagedPathPrefix are dispatched to it before ordinary app
+// routing, authentication, admission, or VM wake. Passing nil disables the
+// reserved namespace.
+func (h *Handler) WithManagedRealtime(handler http.Handler) *Handler {
+	h.managedRealtime = handler
 	return h
 }
 
@@ -4897,6 +4911,14 @@ func (h *Handler) writeWebSocketNotAllowed(w http.ResponseWriter, appID string, 
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Managed realtime is a separate connection owner. Route it before the
+	// normal request bookkeeping and drain tracker so a quiet socket does not
+	// hold an application request slot or wake/parking lease for its lifetime.
+	if h.managedRealtime != nil && strings.HasPrefix(r.URL.Path, realtime.ManagedPathPrefix) {
+		h.managedRealtime.ServeHTTP(w, r)
+		return
+	}
+
 	// The edge-rule budget is stamped after app resolution, so its timer
 	// cancellation must be deferred against the final request context rather
 	// than inside stampRequestBudget itself. This keeps cold-start and proxy
