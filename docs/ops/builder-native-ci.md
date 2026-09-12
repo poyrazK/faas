@@ -28,8 +28,11 @@ The workflow uses GitHub OIDC through this keyless GCP identity:
 - provider: `gregale-builder-native`
 - service account: `gregale-builder-ci@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com`
 
-The provider condition admits only `poyrazK/faas`, `refs/heads/main`, and
-`.github/workflows/builder-native.yml@refs/heads/main`. The service account has
+The provider condition admits only `poyrazK/faas`, `refs/heads/main`, and an
+exact-equality list of workflow files — `.github/workflows/builder-native.yml`
+and, since 2026-09-12, `.github/workflows/e2e-native.yml`, each pinned
+`@refs/heads/main`. A workflow absent from that list fails at the auth step.
+The service account has
 project-level `roles/compute.viewer`, instance-level
 `roles/compute.osAdminLogin` on compute node 2, and the custom
 `gregaleBuilderNodeLifecycle` role. Its lifecycle binding is conditioned on

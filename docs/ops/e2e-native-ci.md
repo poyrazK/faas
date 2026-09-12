@@ -22,14 +22,21 @@ never enforced here nor counted toward the reference-SSD p95 cohort.
 
 ## One-time cloud prerequisite
 
-The workload-identity provider condition admits
-`.github/workflows/builder-native.yml@refs/heads/main` only, so this workflow's
-OIDC token is **rejected until the condition also admits
-`.github/workflows/e2e-native.yml@refs/heads/main`**. Until then the run fails
-at the auth step; the node is never contacted, so a rejected run is inert
-rather than disruptive.
+**Done on 2026-09-12.** The `gregale-builder-native` provider condition matches
+`job_workflow_ref` by exact equality, one clause per admitted workflow, so a new
+workflow file is rejected until it is named. It now reads:
 
-Inspect the current condition, then widen it:
+```
+assertion.repository == 'poyrazK/faas' && assertion.ref == 'refs/heads/main' &&
+  (assertion.job_workflow_ref == 'poyrazK/faas/.github/workflows/builder-native.yml@refs/heads/main' ||
+   assertion.job_workflow_ref == 'poyrazK/faas/.github/workflows/e2e-native.yml@refs/heads/main')
+```
+
+**Any future workflow that needs compute node 2 must be added to that
+disjunction**, or it fails at the auth step. The node is never contacted, so a
+rejected run is inert rather than disruptive. Read the live condition before
+changing it — `update-oidc` replaces it wholesale, and dropping the
+`builder-native.yml` clause would silently disable that gate too:
 
 ```sh
 gcloud iam workload-identity-pools providers describe gregale-builder-native \
@@ -38,18 +45,9 @@ gcloud iam workload-identity-pools providers describe gregale-builder-native \
   --format='value(attributeCondition)'
 ```
 
-```sh
-gcloud iam workload-identity-pools providers update-oidc gregale-builder-native \
-  --project=project-5ae37259-04cf-4070-bef --location=global \
-  --workload-identity-pool=github-actions \
-  --attribute-condition="assertion.repository=='poyrazK/faas' && assertion.ref=='refs/heads/main' && assertion.job_workflow_ref.startsWith('poyrazK/faas/.github/workflows/builder-native.yml@') || assertion.repository=='poyrazK/faas' && assertion.ref=='refs/heads/main' && assertion.job_workflow_ref.startsWith('poyrazK/faas/.github/workflows/e2e-native.yml@')"
-```
-
-Read the existing condition before overwriting it — the command above replaces
-the condition wholesale, and the live one may differ from what this document
-records. No other IAM change is needed: the service account bindings, the
-instance-level `roles/compute.osAdminLogin`, and the
-`gregaleBuilderNodeLifecycle` lifecycle role already cover this workflow.
+No other IAM change was needed: the service account bindings, the instance-level
+`roles/compute.osAdminLogin`, and the `gregaleBuilderNodeLifecycle` lifecycle
+role already cover this workflow.
 
 ## Host prerequisites
 
