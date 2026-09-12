@@ -180,13 +180,11 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		e.ledger.Release(instanceID)
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob lease: %w", err)
 	}
-	if err := e.store.JobTaskMarkClaimed(ctx, runID, taskIndex, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
-		_ = e.jobLeaser.Release(ctx, tok, e.ownerNodeID)
-		e.ledger.Release(instanceID)
-		return JobWakeResult{}, fmt.Errorf("sched: WakeJob mark claimed: %w", err)
-	}
-
-	// 4. Write the instances row. CR-H / code-review #2 round-8:
+	// 4. Write the instances row before attaching it to job_tasks. PostgreSQL's
+	//    job_tasks_instance_id_fkey is immediate, so claiming first always fails
+	//    on the production store even though the in-memory store accepts it.
+	//
+	//    CR-H / code-review #2 round-8:
 	//    the previous shape deferred this to M7 — but without an
 	//    instances row, SampleJobsAndRoll finds 0 kind='job_task'
 	//    rows (meter customer never billed) and JobConcurrentByAccount
@@ -197,15 +195,22 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	//    instance ID is persisted before the vmmd boot RPC. mode='job'
 	//    is observability for the dashboard (the bill path keys on kind).
 	//
-	//    On any create-instance failure, release the lease + ledger
-	//    slot and let the dispatch tick re-queue via JobTaskRequeue
-	//    (no attempt increment — the customer's code did not run).
+	//    On any create-instance failure, release the lease + ledger slot. The
+	//    task has not been claimed yet, so it remains queued for the next tick.
 	if _, err := e.store.CreateJobInstance(ctx, instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID); err != nil {
-		e.rollbackJobClaim(ctx, runID, taskIndex, instanceID, tok)
+		e.rollbackUnclaimedJobAdmission(ctx, instanceID, tok, "")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create instance: %w", err)
 	}
 
-	// 5. vmmd RPC. The engine validates that vmmd acknowledges the same
+	// 5. Attach the task lease to the now-persisted instance. If another
+	//    dispatcher won the queued→claimed race, terminalize our unused row
+	//    and release its in-memory admission and lease before returning.
+	if err := e.store.JobTaskMarkClaimed(ctx, runID, taskIndex, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
+		e.rollbackUnclaimedJobAdmission(ctx, instanceID, tok, "job_task_claim_failed")
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob mark claimed: %w", err)
+	}
+
+	// 6. vmmd RPC. The engine validates that vmmd acknowledges the same
 	// instance and node selected during admission; a mismatched response is
 	// treated as a failed boot and all host-side resources are released.
 	if e.jobVmmClient == nil {
@@ -286,6 +291,23 @@ func (e *Engine) rollbackJobAdmission(ctx context.Context, runID string, taskInd
 	defer cancel()
 	e.rollbackJobClaim(cleanupCtx, runID, taskIndex, instanceID, tok)
 	e.transitionWithKind(cleanupCtx, instanceID, "", state.StateFailed, "wake_boot_error", reason)
+}
+
+// rollbackUnclaimedJobAdmission releases resources acquired before the task's
+// queued→claimed transition. It must not requeue the task: a concurrent
+// dispatcher may already have claimed it with a different instance.
+func (e *Engine) rollbackUnclaimedJobAdmission(ctx context.Context, instanceID string, tok LeaseToken, reason string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if e.jobLeaser != nil {
+		if err := e.jobLeaser.Release(cleanupCtx, tok, e.ownerNodeID); err != nil && !errors.Is(err, ErrLeaseNotFound) {
+			e.log.Warn("sched: job cleanup: release unclaimed lease", "instance", instanceID, "err", err)
+		}
+	}
+	e.ledger.Release(instanceID)
+	if reason != "" {
+		e.transitionWithKind(cleanupCtx, instanceID, "", state.StateFailed, "wake_boot_error", reason)
+	}
 }
 
 func (e *Engine) rollbackJobClaim(ctx context.Context, runID string, taskIndex int, instanceID string, tok LeaseToken) {
