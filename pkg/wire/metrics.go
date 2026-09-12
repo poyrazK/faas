@@ -168,7 +168,7 @@ type OpsMetrics struct {
 	// fall back to daemon_restart_count{daemon} with a longer
 	// for-window. Labels are bounded by the closed daemon set
 	// (apid, gatewayd-public, gatewayd-internal, schedd, vmmd,
-	// imaged, meterd, builderd, githubd, gregale) × the wire.Version
+	// imaged, meterd, builderd, githubd, outboundd, gregale) × the wire.Version
 	// string, so the cartesian is pre-instantiated at boot to
 	// surface zero rows from idle.
 	daemonRestartCount *prometheus.CounterVec
@@ -177,10 +177,10 @@ type OpsMetrics struct {
 	// identity of the running binary. Always 1 (the gauge's value
 	// is meaningless — the labels carry the signal). Operator
 	// dashboards query this metric for the "Daemon versions
-	// fleet-wide" heatmap panel. The label set is bounded at 10
+	// fleet-wide" heatmap panel. The label set is bounded at 11
 	// daemon names × the wire.Version × git_sha × build_time
 	// cartesian, but in practice git_sha and build_time are
-	// constant per binary so the realistic cardinality is 10 (one
+	// constant per binary so the realistic cardinality is 11 (one
 	// row per daemon, all sharing the same version+git_sha
 	// tuple). Pre-instantiated at boot — see SetDaemonBuildInfo.
 	daemonBuildInfo *prometheus.GaugeVec
@@ -1977,14 +1977,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// call).
 	daemonRestartCount := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_daemon_restart_count",
-		Help: "Count of systemd-driven restarts of THIS daemon process (issue #573 / ADR-128), labelled by (daemon, version). Producer is wire.Daemon() reading $SYSTEMD_RESTARTS_ON_FAILURE at boot; alert rules prefer node_exporter's node_systemd_restart_count{name=~'faas-.*\\.service'} when the systemd collector is enabled (commit 6 of the cluster B mega-PR added --collector.systemd to the node_exporter unit). This counter is the backstop for environments where the systemd collector is disabled. Closed daemon set: apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, gregale.",
+		Help: "Count of systemd-driven restarts of THIS daemon process (issue #573 / ADR-128), labelled by (daemon, version). Producer is wire.Daemon() reading $SYSTEMD_RESTARTS_ON_FAILURE at boot; alert rules prefer node_exporter's node_systemd_restart_count{name=~'faas-.*\\.service'} when the systemd collector is enabled (commit 6 of the cluster B mega-PR added --collector.systemd to the node_exporter unit). This counter is the backstop for environments where the systemd collector is disabled. Closed daemon set: apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, outboundd, gregale.",
 	}, []string{"daemon", "version"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale", "other"} {
+	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale", "other"} {
 		daemonRestartCount.WithLabelValues(daemon, Version)
 	}
 	// Issue #586 / ADR-129: per-daemon build info + uptime + ready.
-	// Closed daemon set mirrors daemonRestartCount above (10 closed
-	// + "other" overflow = 11). Pre-instantiated with the
+	// Closed daemon set mirrors daemonRestartCount above (11 closed
+	// + "other" overflow = 12). Pre-instantiated with the
 	// current wire.Version, GitSHA, BuildTime so /metrics surfaces
 	// the daemon identity from boot — the operator dashboard
 	// "Daemon versions fleet-wide" panel renders a non-empty
@@ -1994,7 +1994,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Ready starts at 0 and is driven by the daemon's /readyz probe.
 	daemonBuildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_daemon_build_info",
-		Help: "Always-1 gauge that exposes the running binary's identity (issue #586 / ADR-129), labelled by (daemon, version, git_sha, build_time). The labels carry the signal — the gauge value is meaningless. Operator dashboards query this metric for the 'Daemon versions fleet-wide' heatmap panel. The closed daemon set (apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, gregale) is pre-instantiated at boot so /metrics surfaces the identity from process start.",
+		Help: "Always-1 gauge that exposes the running binary's identity (issue #586 / ADR-129), labelled by (daemon, version, git_sha, build_time). The labels carry the signal — the gauge value is meaningless. Operator dashboards query this metric for the 'Daemon versions fleet-wide' heatmap panel. The closed daemon set (apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, outboundd, gregale) is pre-instantiated at boot so /metrics surfaces the identity from process start.",
 	}, []string{"daemon", "version", "git_sha", "build_time"})
 	daemonUptimeSeconds := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_daemon_uptime_seconds",
@@ -2008,7 +2008,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_daemon_ready_reason",
 		Help: "One-hot readiness reason classification (issue #586 / ADR-129), labelled by daemon and a closed reason class. reason ∈ {ready, draining, database, vmmd, grpc, storage, credentials, stale, process, other}; detailed error text remains in /readyz and logs to keep metric cardinality bounded.",
 	}, []string{"daemon", "reason"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale", "other"} {
+	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale", "other"} {
 		daemonBuildInfo.WithLabelValues(daemon, Version, GitSHA, BuildTime).Set(1)
 		daemonUptimeSeconds.WithLabelValues(daemon).Set(0)
 		daemonReady.WithLabelValues(daemon).Set(0)
@@ -4835,7 +4835,7 @@ func (m *OpsMetrics) SetServiceReplicaStatus(app string, desired, ready, startin
 //
 // The daemon label is normalised through the closed set
 // (apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged,
-// meterd, builderd, githubd, gregale) — anything else collapses to "other"
+// meterd, builderd, githubd, outboundd, gregale) — anything else collapses to "other"
 // so the label cardinality stays bounded across the daemon's
 // lifetime. nil-receiver guard mirrors LivenessRestarts /
 // WorkloadOOMKills so unit tests without metrics keep working.
@@ -4844,7 +4844,7 @@ func (m *OpsMetrics) RecordDaemonRestart(daemon, version string, n int) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -4868,7 +4868,7 @@ func (m *OpsMetrics) SetDaemonBuildInfo(daemon, version, gitSHA, buildTime strin
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -4891,7 +4891,7 @@ func (m *OpsMetrics) SetDaemonUptime(daemon string, seconds float64) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -4917,7 +4917,7 @@ func (m *OpsMetrics) MarkReady(daemon string, ready bool, reason string) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"

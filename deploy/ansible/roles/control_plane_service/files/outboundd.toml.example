@@ -12,6 +12,8 @@
 # Bind to the private interface/address routed from the guest network. Do not
 # assume the per-VM 10.0.0.1 tap address exists in the host root namespace.
 listen_addr = "127.0.0.1:8095"
+# Private Prometheus endpoint; scrape through the node-local metrics collector.
+metrics_addr = "127.0.0.1:9108"
 # db_url = ""                         # empty => DATABASE_URL / FAAS_DATABASE_URL
 # max_body_bytes = 26214400             # 25 MiB
 # read_timeout = "30s"

@@ -23,6 +23,7 @@ address. Adding, draining, or replacing a compute node therefore does not
 require editing the Prometheus target list or restarting Prometheus. The public
 gateway explicitly rejects the internal endpoints.
 - `meterd`    `:9106`
+- `outboundd` `:9108` (private request-admission and upstream metrics)
 - `prometheus` `:9095` (loopback self-scrape for alerting-path health)
 - `githubd`   `:8083`
 - `alertmanager` `:9094`

@@ -46,9 +46,9 @@ const (
 	// chunked by OutputWriter, while a result/request can be larger than one
 	// ordinary log line but never larger than the platform's hard output cap.
 	MaxFrameBytes = api.ExecutionOutputHardMaxBytes + 64*1024
-	// MaxRequestBytes is deliberately above the two independent plaintext
-	// field caps plus JSON escaping overhead. The admission layer remains
-	// authoritative for plan-specific source/input limits.
+	// MaxRequestBytes is deliberately above the independent source, bundle, and
+	// input plaintext caps plus JSON/base64 escaping overhead. The admission
+	// layer remains authoritative for plan-specific limits.
 	MaxRequestBytes = 4*api.ExecutionPlaintextFieldMaxBytes + 64*1024
 	// MaxExecutionIDBytes keeps malformed callers from turning an identifier
 	// into an unbounded allocation or log field.
@@ -80,7 +80,9 @@ type Request struct {
 	Version     uint16                   `json:"version"`
 	ExecutionID string                   `json:"execution_id"`
 	Runtime     api.ExecutionRuntime     `json:"runtime"`
-	Source      string                   `json:"source"`
+	Source      string                   `json:"source,omitempty"`
+	Entrypoint  string                   `json:"entrypoint,omitempty"`
+	Files       []api.ExecutionFile      `json:"files,omitempty"`
 	Input       json.RawMessage          `json:"input"`
 	TimeoutMS   int                      `json:"timeout_ms"`
 	MaxOutput   int                      `json:"max_output_bytes"`
@@ -117,6 +119,8 @@ func RequestFromResolvedExecution(id string, req api.ResolvedExecutionRequest) R
 		ExecutionID: id,
 		Runtime:     req.Runtime,
 		Source:      req.Source,
+		Entrypoint:  req.Entrypoint,
+		Files:       cloneExecutionFiles(req.Files),
 		Input:       input,
 		TimeoutMS:   req.Limits.TimeoutMS,
 		MaxOutput:   req.Limits.MaxOutputBytes,
@@ -146,9 +150,12 @@ func (r Request) Validate() error {
 	if !r.Runtime.Valid() {
 		return fmt.Errorf("%w: unsupported runtime %q", ErrInvalidRequest, r.Runtime)
 	}
-	if strings.TrimSpace(r.Source) == "" || strings.ContainsRune(r.Source, '\x00') ||
-		len(r.Source) > api.ExecutionPlaintextFieldMaxBytes {
-		return fmt.Errorf("%w: source is empty, contains NUL, or is too large", ErrInvalidRequest)
+	if strings.TrimSpace(r.Source) != "" {
+		if strings.ContainsRune(r.Source, '\x00') || len(r.Source) > api.ExecutionPlaintextFieldMaxBytes || len(r.Files) != 0 || r.Entrypoint != "" {
+			return fmt.Errorf("%w: source is invalid or mixed with a bundle", ErrInvalidRequest)
+		}
+	} else if err := api.ValidateExecutionBundle(r.Entrypoint, r.Files, api.ExecutionPlaintextFieldMaxBytes); err != nil {
+		return fmt.Errorf("%w: bundle is invalid: %w", ErrInvalidRequest, err)
 	}
 	if len(r.Input) == 0 {
 		return fmt.Errorf("%w: input is empty", ErrInvalidRequest)
@@ -166,6 +173,14 @@ func (r Request) Validate() error {
 		return fmt.Errorf("%w: network mode %q is not supported", ErrInvalidRequest, r.NetworkMode)
 	}
 	return nil
+}
+
+func cloneExecutionFiles(files []api.ExecutionFile) []api.ExecutionFile {
+	cloned := make([]api.ExecutionFile, len(files))
+	for i, file := range files {
+		cloned[i] = api.ExecutionFile{Path: file.Path, Content: append([]byte(nil), file.Content...)}
+	}
+	return cloned
 }
 
 // Validate validates the terminal result and the combined output budget.

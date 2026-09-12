@@ -7,6 +7,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+const disposableRunsCapabilityKey = "disposable-runs"
+
 // getCapabilities returns the canonical customer capability registry with
 // plan entitlement resolved for the authenticated account. It is read-only
 // and intentionally does not require MFA so API keys can use it during setup.
@@ -24,7 +26,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, _ *http.Request, acct st
 		switch capabilities.Capabilities[i].Key {
 		case "openapi-contract-preview":
 			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && api.ApiContractDiffEnabled()
-		case "disposable-runs":
+		case disposableRunsCapabilityKey:
 			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.executionAPIEnabled
 		case "object-storage":
 			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.objectStorageEnabled()

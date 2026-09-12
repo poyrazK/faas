@@ -468,6 +468,7 @@ from .env_diff_row import EnvDiffRow
 from .env_diff_row_cells import EnvDiffRowCells
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .execution_failure import ExecutionFailure
+from .execution_file import ExecutionFile
 from .execution_limit_request import ExecutionLimitRequest
 from .execution_limit_request_cpu_millicores import ExecutionLimitRequestCpuMillicores
 from .execution_limit_request_ephemeral_disk_mb import ExecutionLimitRequestEphemeralDiskMb
@@ -632,11 +633,14 @@ from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperat
 from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_realtime_close_request import ManagedRealtimeCloseRequest
 from .managed_realtime_endpoint_response import ManagedRealtimeEndpointResponse
 from .managed_realtime_endpoint_response_auth_token_masked import ManagedRealtimeEndpointResponseAuthTokenMasked
 from .managed_realtime_endpoint_response_callback_auth_token_masked import (
     ManagedRealtimeEndpointResponseCallbackAuthTokenMasked,
 )
+from .managed_realtime_message_request import ManagedRealtimeMessageRequest
+from .managed_realtime_publish_response import ManagedRealtimePublishResponse
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -1506,6 +1510,7 @@ __all__ = (
     "EnvDiffRowCells",
     "ErrorNewWebhookPayload",
     "ExecutionFailure",
+    "ExecutionFile",
     "ExecutionLimitRequest",
     "ExecutionLimitRequestCpuMillicores",
     "ExecutionLimitRequestEphemeralDiskMb",
@@ -1670,9 +1675,12 @@ __all__ = (
     "ManagedPostgresUsageOperatorResponseGuardrailState",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedRealtimeCloseRequest",
     "ManagedRealtimeEndpointResponse",
     "ManagedRealtimeEndpointResponseAuthTokenMasked",
     "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
+    "ManagedRealtimeMessageRequest",
+    "ManagedRealtimePublishResponse",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
