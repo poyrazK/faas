@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     from ..models.public_auth_block import PublicAuthBlock
     from ..models.scaling_policy import ScalingPolicy
     from ..models.service_replicas import ServiceReplicas
+    from ..models.workload_port import WorkloadPort
 
 
 T = TypeVar("T", bound="UpdateAppRequest")
@@ -135,6 +136,9 @@ class UpdateAppRequest:
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
+    ports: list[WorkloadPort] | None | Unset = UNSET
+    """Replace the app-owned listener declaration. Omit for no change; an empty array clears it. Named TCP
+    listeners use the `<slug>--port-<name>.<domain>` hostname form; UDP remains guest-only."""
     favicon: None | str | Unset = UNSET
     """Replace the per-app base64-encoded favicon; an empty value clears it. Omit for no change."""
     robots_txt: None | str | Unset = UNSET
@@ -318,6 +322,18 @@ class UpdateAppRequest:
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
+
+        ports: list[dict[str, Any]] | None | Unset
+        if isinstance(self.ports, Unset):
+            ports = UNSET
+        elif isinstance(self.ports, list):
+            ports = []
+            for ports_type_0_item_data in self.ports:
+                ports_type_0_item = ports_type_0_item_data.to_dict()
+                ports.append(ports_type_0_item)
+
+        else:
+            ports = self.ports
 
         favicon: None | str | Unset
         if isinstance(self.favicon, Unset):
@@ -533,6 +549,8 @@ class UpdateAppRequest:
             field_dict["max_retries"] = max_retries
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
+        if ports is not UNSET:
+            field_dict["ports"] = ports
         if favicon is not UNSET:
             field_dict["favicon"] = favicon
         if robots_txt is not UNSET:
@@ -600,6 +618,7 @@ class UpdateAppRequest:
         from ..models.public_auth_block import PublicAuthBlock
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_replicas import ServiceReplicas
+        from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
 
@@ -815,6 +834,28 @@ class UpdateAppRequest:
             service_replicas = UNSET
         else:
             service_replicas = ServiceReplicas.from_dict(_service_replicas)
+
+        def _parse_ports(data: object) -> list[WorkloadPort] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                ports_type_0 = []
+                _ports_type_0 = data
+                for ports_type_0_item_data in _ports_type_0:
+                    ports_type_0_item = WorkloadPort.from_dict(ports_type_0_item_data)
+
+                    ports_type_0.append(ports_type_0_item)
+
+                return ports_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[WorkloadPort] | None | Unset, data)
+
+        ports = _parse_ports(d.pop("ports", UNSET))
 
         def _parse_favicon(data: object) -> None | str | Unset:
             if data is None:
@@ -1205,6 +1246,7 @@ class UpdateAppRequest:
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             service_replicas=service_replicas,
+            ports=ports,
             favicon=favicon,
             robots_txt=robots_txt,
             head_wakes=head_wakes,

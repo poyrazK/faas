@@ -20,6 +20,21 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
+// ManagementError preserves an HTTP status returned by realtimed's local
+// management socket. Callers that expose a public API can map a missing live
+// connection (410) separately from an unavailable owner (503) without
+// parsing error strings.
+type ManagementError struct {
+	StatusCode int
+}
+
+func (e *ManagementError) Error() string {
+	if e == nil {
+		return "realtime: management request failed"
+	}
+	return fmt.Sprintf("realtime: management request returned HTTP %d", e.StatusCode)
+}
+
 // NewUnixClient returns a client connected to a local realtimed Unix socket.
 // The socket's DAC permissions remain the authorization boundary.
 func NewUnixClient(socket string) *Client {
@@ -149,7 +164,7 @@ func (c *Client) do(ctx context.Context, method, path string, payload any, resul
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("realtime: management request returned HTTP %d", resp.StatusCode)
+		return &ManagementError{StatusCode: resp.StatusCode}
 	}
 	if result != nil {
 		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {

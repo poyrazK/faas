@@ -4251,6 +4251,37 @@ func (c *Client) DeleteManagedRealtimeEndpoint(ctx context.Context, slug, id str
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+id, nil, nil)
 }
 
+// SendManagedRealtimeConnection queues a binary-safe message for one live
+// connection owned by the endpoint.
+func (c *Client) SendManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID string, req ManagedRealtimeMessageRequest) error {
+	return c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/send", req, nil)
+}
+
+// CloseManagedRealtimeConnection asks the realtime owner to close one live
+// connection. A missing or already-closed connection returns an API 410.
+func (c *Client) CloseManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID string, req ManagedRealtimeCloseRequest) error {
+	return c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/close", req, nil)
+}
+
+// SubscribeManagedRealtimeConnection adds a live connection to an endpoint
+// channel.
+func (c *Client) SubscribeManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID, channel string) error {
+	return c.do(ctx, "PUT", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/subscriptions/"+channel, nil, nil)
+}
+
+// UnsubscribeManagedRealtimeConnection removes a live connection from an
+// endpoint channel.
+func (c *Client) UnsubscribeManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID, channel string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/subscriptions/"+channel, nil, nil)
+}
+
+// PublishManagedRealtimeChannel publishes a message to subscribed live
+// connections on an endpoint channel.
+func (c *Client) PublishManagedRealtimeChannel(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest) (ManagedRealtimePublishResponse, error) {
+	var out ManagedRealtimePublishResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/channels/"+channel+"/publish", req, &out)
+}
+
 // --- Customer runtime log drains (issue #1398 O4) -------------------------
 
 func (c *Client) ListAppLogDrains(ctx context.Context, slug string) ([]AppLogDrainResponse, error) {

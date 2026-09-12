@@ -66,8 +66,9 @@ class AppManifest:
     working_dir: None | str | Unset = UNSET
     port: int | None | Unset = UNSET
     ports: list[WorkloadPort] | Unset = UNSET
-    """Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the public HTTP/readiness
-    listener; these entries are used for in-task endpoint discovery (ADR-165)."""
+    """Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness
+    listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries
+    remain available for in-task discovery (ADR-165, ADR-176)."""
     healthz: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
     healthcheck: AppManifestHealthcheck | Unset = UNSET

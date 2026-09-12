@@ -512,6 +512,8 @@ from .get_deployment_stages_response_200_history_item_status import GetDeploymen
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .git_hub_deployment_policy import GitHubDeploymentPolicy
+from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
 from .git_hub_install_mutation_request import GitHubInstallMutationRequest
 from .git_hub_install_status import GitHubInstallStatus
 from .git_hub_install_status_health import GitHubInstallStatusHealth
@@ -630,11 +632,14 @@ from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperat
 from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_realtime_close_request import ManagedRealtimeCloseRequest
 from .managed_realtime_endpoint_response import ManagedRealtimeEndpointResponse
 from .managed_realtime_endpoint_response_auth_token_masked import ManagedRealtimeEndpointResponseAuthTokenMasked
 from .managed_realtime_endpoint_response_callback_auth_token_masked import (
     ManagedRealtimeEndpointResponseCallbackAuthTokenMasked,
 )
+from .managed_realtime_message_request import ManagedRealtimeMessageRequest
+from .managed_realtime_publish_response import ManagedRealtimePublishResponse
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -1550,6 +1555,8 @@ __all__ = (
     "GetOpenAPISpecJSONResponse200",
     "GithubCheckUpdateRecord",
     "GithubCheckUpdateRecordStatus",
+    "GitHubDeploymentPolicy",
+    "GitHubDeploymentPolicyPatch",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusHealth",
@@ -1666,9 +1673,12 @@ __all__ = (
     "ManagedPostgresUsageOperatorResponseGuardrailState",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedRealtimeCloseRequest",
     "ManagedRealtimeEndpointResponse",
     "ManagedRealtimeEndpointResponseAuthTokenMasked",
     "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
+    "ManagedRealtimeMessageRequest",
+    "ManagedRealtimePublishResponse",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
