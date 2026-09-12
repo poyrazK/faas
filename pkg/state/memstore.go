@@ -11688,6 +11688,23 @@ func (m *MemStore) ListComputeNodes(_ context.Context, includeInactive bool) ([]
 	return out, nil
 }
 
+// ListComputeNodesPage is the bounded node-list variant used by operator
+// projections that compose fleet signals into one page. It mirrors
+// ListComputeNodes ordering while enforcing the caller's source cap.
+func (m *MemStore) ListComputeNodesPage(ctx context.Context, includeInactive bool, limit int) ([]ComputeNode, error) {
+	if limit <= 0 {
+		return []ComputeNode{}, nil
+	}
+	rows, err := m.ListComputeNodes(ctx, includeInactive)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
+
 // DeleteComputeNode hard-deletes an unused row by id. App ownership and
 // physical instance references make the row historical rather than mistaken,
 // so deletion refuses them with ErrConflict.

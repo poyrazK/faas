@@ -63,7 +63,7 @@ Commands:
   jobs         Cross-account job-run diagnosis and guarded cancellation (active|inspect|cancel)
   deployments  Cross-account deployment diagnosis and guarded retry/cancellation (active|inspect|cancel|retry)
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
-  obs           Operator-side meta-obs health snapshot (obs health; Obs-Meta + Trace-IDs Mega-PR / C8)
+  obs           Operator incident inbox and meta-obs health (obs incidents|health)
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
   github        GitHub delivery + Check Run recovery (status|retry-delivery|retry-check)
   version      Print the CLI version

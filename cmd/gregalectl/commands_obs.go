@@ -8,6 +8,8 @@
 //	                           either a human-readable summary
 //	                           (default) or the raw JSON snapshot
 //	                           (--json / $FAAS_JSON=1).
+//	gregalectl obs incidents — fetch the bounded, read-only incident inbox
+//	                           (deployment/job/node/alert correlation).
 //
 // The CLI dials apid via HTTP (not gRPC) — same path the operator
 // would use from a browser. The endpoint requires admin scope +
@@ -19,10 +21,9 @@
 // control-plane nodes; matches the convention at
 // cmd/apid/main.go::resolveListenAddr).
 //
-// Out of scope (explicit, mirrors the C7 plan): `obs events`,
-// `obs incidents`, sub-subcommands. The dispatcher reserves
-// room for those; this PR lands only the meta-obs health
-// surface the C7 endpoint exposes.
+// The inbox is deliberately read-only. Existing deployments/jobs/nodes
+// commands remain the explicit action surface for cancellation, retry, and
+// drain operations.
 package main
 
 import (
@@ -31,9 +32,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // dispatchObs is the top-level `obs` command name. Matches the
@@ -48,6 +53,8 @@ const dispatchObs = "obs"
 // rather than cli_meta.go so the dispatcher's switch is the
 // single source of truth for subcommand routing.
 const subObsHealth = "health"
+
+const subObsIncidents = "incidents"
 
 // defaultAPIDURL is the loopback default for the apid listen
 // addr. Matches cmd/apid/main.go::resolveListenAddr default of
@@ -64,14 +71,16 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents")
 		return 2
 	}
 	switch args[0] {
 	case subObsHealth:
 		return cmdObsHealth(args[1:])
+	case subObsIncidents:
+		return cmdObsIncidents(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl obs: unknown subcommand %q\nRun 'gregalectl obs health --help' for usage.\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl obs: unknown subcommand %q\nRun 'gregalectl obs incidents --help' for usage.\n", args[0])
 		return 2
 	}
 }
@@ -197,6 +206,124 @@ func cmdObsHealth(args []string) int {
 	}
 	writeObsHealthHuman(os.Stdout, snap)
 	return 0
+}
+
+// cmdObsIncidents fetches the bounded operator incident inbox. It shares the
+// admin bearer and apid resolution with `obs health`, while exposing filters
+// that keep routine triage focused on one signal family or severity.
+func cmdObsIncidents(args []string) int {
+	fs := flag.NewFlagSet(subObsIncidents, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout")
+	adminToken := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	typeFilter := fs.String("type", "", "incident type: deployment|job_run|compute_node|platform_alert")
+	severity := fs.String("severity", "", "severity: warning|error|critical")
+	since := fs.String("since", "", "RFC 3339 lower bound (default: last 24h; capped at 7d)")
+	cursorValue := fs.String("cursor", "", "opaque cursor returned as next_cursor")
+	limit := fs.Int("limit", api.ObsIncidentLimitDefault, "maximum incidents to return (1..200)")
+	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout for the apid round-trip")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "gregalectl obs incidents: positional arguments are not accepted")
+		return 2
+	}
+	if *limit < 1 || *limit > api.ObsIncidentLimitMax {
+		fmt.Fprintf(os.Stderr, "gregalectl obs incidents: --limit must be 1..%d\n", api.ObsIncidentLimitMax)
+		return 2
+	}
+	if *since != "" {
+		if _, err := time.Parse(time.RFC3339, *since); err != nil {
+			fmt.Fprintln(os.Stderr, "gregalectl obs incidents: --since must be RFC 3339")
+			return 2
+		}
+	}
+	token := *adminToken
+	if token == "" {
+		token = os.Getenv("FAAS_ADMIN_TOKEN")
+	}
+	if token == "" {
+		fmt.Fprintln(os.Stderr, "gregalectl obs incidents: --admin-token (or $FAAS_ADMIN_TOKEN) required")
+		return 2
+	}
+	query := url.Values{"limit": {strconv.Itoa(*limit)}}
+	if strings.TrimSpace(*typeFilter) != "" {
+		query.Set("type", strings.TrimSpace(*typeFilter))
+	}
+	if strings.TrimSpace(*severity) != "" {
+		query.Set("severity", strings.TrimSpace(*severity))
+	}
+	if strings.TrimSpace(*since) != "" {
+		query.Set("since", strings.TrimSpace(*since))
+	}
+	if strings.TrimSpace(*cursorValue) != "" {
+		query.Set("cursor", strings.TrimSpace(*cursorValue))
+	}
+	req, err := http.NewRequest(http.MethodGet, apidBase()+"/v1/admin/obs/incidents?"+query.Encode(), nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gregalectl obs incidents:", err)
+		return 1
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	resp, err := (&http.Client{Timeout: *timeout}).Do(req)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gregalectl obs incidents: dial apid:", err)
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gregalectl obs incidents: read body:", err)
+		return 1
+	}
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "gregalectl obs incidents: apid returned %d: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+		return 1
+	}
+	var response api.ObsIncidentListResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		fmt.Fprintln(os.Stderr, "gregalectl obs incidents: decode response:", err)
+		return 1
+	}
+	if *jsonOut || jsonFlagEnabled(args) {
+		enc := json.NewEncoder(os.Stdout)
+		if isTerminal(os.Stdout) {
+			enc.SetIndent("", "  ")
+		}
+		if err := enc.Encode(response); err != nil {
+			fmt.Fprintln(os.Stderr, "gregalectl obs incidents: encode json:", err)
+			return 1
+		}
+		return 0
+	}
+	writeObsIncidentsHuman(os.Stdout, response)
+	return 0
+}
+
+func writeObsIncidentsHuman(w io.Writer, response api.ObsIncidentListResponse) {
+	_, _ = fmt.Fprintf(w, "incidents=%d since=%s type=%s severity=%s limit=%d since_clamped=%t\n",
+		len(response.Items), response.Since.UTC().Format(time.RFC3339), response.Type, response.Severity,
+		response.Limit, response.SinceClamped)
+	for _, item := range response.Items {
+		_, _ = fmt.Fprintf(w, "incident_id=%s type=%s severity=%s status=%s observed_at=%s resource_id=%s resource_name=%s summary=%q",
+			item.ID, item.Type, item.Severity, item.Status, item.ObservedAt.UTC().Format(time.RFC3339),
+			item.ResourceID, item.ResourceName, item.Summary)
+		if item.ActionPath != "" {
+			_, _ = fmt.Fprintf(w, " action_path=%s", item.ActionPath)
+		}
+		if item.AuditPath != "" {
+			_, _ = fmt.Fprintf(w, " audit_path=%s", item.AuditPath)
+		}
+		if item.RunbookURL != "" {
+			_, _ = fmt.Fprintf(w, " runbook=%s", item.RunbookURL)
+		}
+		_, _ = fmt.Fprintln(w)
+	}
+	if response.NextCursor != "" {
+		_, _ = fmt.Fprintf(w, "next_cursor=%s\n", response.NextCursor)
+	}
 }
 
 // jsonFlagEnabled reports whether --json or $FAAS_JSON=1 was

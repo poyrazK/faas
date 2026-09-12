@@ -2056,6 +2056,11 @@ func (s *server) handler() http.Handler {
 	// because the snapshot exposes alert-state metadata.
 	mux.HandleFunc("GET /v1/admin/obs/health",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsHealthHandler))))
+	// Unified incident inbox. This is a read-only correlation projection over
+	// the existing deployment, job-run, compute-node, and alert surfaces;
+	// it keeps operator triage out of the deployment request path.
+	mux.HandleFunc("GET /v1/admin/obs/incidents",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidents))))
 
 	// P2a + P2b + P2d — operator recovery primitives. All three
 	// routes mount under requireScope(admin-only) so the admin

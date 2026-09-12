@@ -14675,6 +14675,42 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 	return out, rows.Err()
 }
 
+// ListComputeNodesPage is the bounded node-list variant used by operator
+// projections that compose fleet signals into one page. The LIMIT is pushed
+// into Postgres so a large fleet never materializes every node in apid.
+func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool, limit int) ([]ComputeNode, error) {
+	if limit <= 0 {
+		return []ComputeNode{}, nil
+	}
+	q := `
+		select id, name, target_url, vpcpus, mem_mb, max_concurrency,
+		       admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
+		       region, zone, schedd_target_url, gateway_target_url,
+		       public_ip, public_ip_set_at,
+		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		       lifecycle
+		  from compute_nodes
+	`
+	if !includeInactive {
+		q += ` where active = true`
+	}
+	q += ` order by name limit $1`
+	rows, err := s.pool.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list compute_nodes page (inactive=%t): %w", includeInactive, err)
+	}
+	defer rows.Close()
+	var out []ComputeNode
+	for rows.Next() {
+		node, err := scanComputeNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, node)
+	}
+	return out, rows.Err()
+}
+
 // nodeRowToComputeNode converts a sqlc.NodeGetByNameRow / NodeGetRow
 // (the field set is identical for the lifecycle-projection queries in
 // queries.sql) back to the legacy ComputeNode model. The legacy
