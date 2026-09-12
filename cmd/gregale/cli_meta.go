@@ -331,6 +331,8 @@ var cliCommands = []cliCommand{
 			{Name: "ram", Short: "set RAM in MB", Value: "MB"},
 			{Name: "max-concurrency", Short: "set max_concurrency", Value: "N"},
 			{Name: "require-signed", Short: "toggle require_signed", ClosedSet: []string{"true", "false"}},
+			{Name: "only-declared-routes", Short: "reject undeclared paths before waking the app (OpenAPI or explicit route list)"},
+			{Name: "no-only-declared-routes", Short: "disable the declared-route pre-wake gate"},
 		},
 	},
 	// operator-side "backup" verb moved to gregalectl in PR-6.5
