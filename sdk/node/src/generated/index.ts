@@ -35,6 +35,7 @@ export type { APIConsumerUsageQuoteResponse } from './models/APIConsumerUsageQuo
 export type { APIConsumerUsageResponse } from './models/APIConsumerUsageResponse.js';
 export type { APIConsumerUsageStatementBucketResponse } from './models/APIConsumerUsageStatementBucketResponse.js';
 export type { APIConsumerUsageStatementFinalizedWebhookPayload } from './models/APIConsumerUsageStatementFinalizedWebhookPayload.js';
+export type { APIConsumerUsageStatementHandoffResponse } from './models/APIConsumerUsageStatementHandoffResponse.js';
 export type { APIConsumerUsageStatementListResponse } from './models/APIConsumerUsageStatementListResponse.js';
 export type { APIConsumerUsageStatementResponse } from './models/APIConsumerUsageStatementResponse.js';
 export type { APIKeyExportResponse } from './models/APIKeyExportResponse.js';
@@ -111,6 +112,7 @@ export type { CapabilitiesResponse } from './models/CapabilitiesResponse.js';
 export type { CapabilityStatus } from './models/CapabilityStatus.js';
 export type { ChangeMemberRoleRequest } from './models/ChangeMemberRoleRequest.js';
 export type { ChangePlanRequest } from './models/ChangePlanRequest.js';
+export type { ClaimAPIConsumerUsageStatementRequest } from './models/ClaimAPIConsumerUsageStatementRequest.js';
 export type { ClearObsoleteReport } from './models/ClearObsoleteReport.js';
 export type { CompleteObjectMultipartUploadRequest } from './models/CompleteObjectMultipartUploadRequest.js';
 export type { ConsumedCreditRow } from './models/ConsumedCreditRow.js';

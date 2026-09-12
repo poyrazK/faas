@@ -8,8 +8,10 @@ import type { APIConsumerRateCardResponse } from '../models/APIConsumerRateCardR
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
 import type { APIConsumerUsageQuoteResponse } from '../models/APIConsumerUsageQuoteResponse.js';
 import type { APIConsumerUsageResponse } from '../models/APIConsumerUsageResponse.js';
+import type { APIConsumerUsageStatementHandoffResponse } from '../models/APIConsumerUsageStatementHandoffResponse.js';
 import type { APIConsumerUsageStatementListResponse } from '../models/APIConsumerUsageStatementListResponse.js';
 import type { APIConsumerUsageStatementResponse } from '../models/APIConsumerUsageStatementResponse.js';
+import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
 import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsumerRateCardRequest.js';
@@ -398,6 +400,98 @@ export class ConsumersService {
         'Idempotency-Key': idempotencyKey,
       },
       errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Fetch a customer billing handoff receipt.
+   * Returns the immutable external invoice reference recorded for a finalized usage statement.
+   * @returns APIConsumerUsageStatementHandoffResponse The immutable billing handoff receipt.
+   * @throws ApiError
+   */
+  public static getApiConsumerUsageStatementHandoff({
+    slug,
+    consumerId,
+    statementId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer identity owning the statement.
+     */
+    consumerId: string,
+    /**
+     * Durable usage statement UUID to hand off.
+     */
+    statementId: string,
+  }): CancelablePromise<APIConsumerUsageStatementHandoffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'statement_id': statementId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Record a customer billing handoff for a finalized statement.
+   * Claims a finalized usage statement for the customer's own billing system. Repeating the same claim returns the original receipt; a statement or external invoice ID cannot be claimed twice.
+   * @returns APIConsumerUsageStatementHandoffResponse The existing billing handoff receipt.
+   * @throws ApiError
+   */
+  public static claimApiConsumerUsageStatement({
+    slug,
+    consumerId,
+    statementId,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer identity owning the statement.
+     */
+    consumerId: string,
+    /**
+     * Durable usage statement UUID to hand off.
+     */
+    statementId: string,
+    requestBody: ClaimAPIConsumerUsageStatementRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<APIConsumerUsageStatementHandoffResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,

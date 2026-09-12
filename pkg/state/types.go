@@ -737,6 +737,32 @@ type APIConsumerUsageStatement struct {
 	FinalizedAt      *time.Time
 }
 
+// APIConsumerUsageStatementHandoff is the immutable customer-billing claim
+// for a finalized usage statement. Gregale records the handoff without
+// becoming the merchant of record; the external invoice reference belongs to
+// the customer's billing system.
+type APIConsumerUsageStatementHandoff struct {
+	ID                string
+	AccountID         string
+	AppID             string
+	ConsumerID        string
+	StatementID       string
+	ExternalInvoiceID string
+	Currency          string
+	AmountMillicents  int64
+	CreatedAt         time.Time
+}
+
+// APIConsumerUsageStatementHandoffInput identifies the finalized statement
+// being claimed and the customer's immutable external invoice reference.
+type APIConsumerUsageStatementHandoffInput struct {
+	AccountID         string
+	AppID             string
+	ConsumerID        string
+	StatementID       string
+	ExternalInvoiceID string
+}
+
 // APIConsumerUsageStatementInput contains the quote to persist. The handler
 // builds it from the usage ledger and immutable rate-card versions.
 type APIConsumerUsageStatementInput struct {

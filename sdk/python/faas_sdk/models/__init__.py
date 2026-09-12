@@ -48,6 +48,7 @@ from .api_consumer_usage_quote_response import APIConsumerUsageQuoteResponse
 from .api_consumer_usage_response import APIConsumerUsageResponse
 from .api_consumer_usage_statement_bucket_response import APIConsumerUsageStatementBucketResponse
 from .api_consumer_usage_statement_finalized_webhook_payload import APIConsumerUsageStatementFinalizedWebhookPayload
+from .api_consumer_usage_statement_handoff_response import APIConsumerUsageStatementHandoffResponse
 from .api_consumer_usage_statement_list_response import APIConsumerUsageStatementListResponse
 from .api_consumer_usage_statement_response import APIConsumerUsageStatementResponse
 from .api_consumer_usage_statement_response_status import APIConsumerUsageStatementResponseStatus
@@ -197,6 +198,7 @@ from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
+from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
@@ -1022,6 +1024,7 @@ __all__ = (
     "APIConsumerUsageResponse",
     "APIConsumerUsageStatementBucketResponse",
     "APIConsumerUsageStatementFinalizedWebhookPayload",
+    "APIConsumerUsageStatementHandoffResponse",
     "APIConsumerUsageStatementListResponse",
     "APIConsumerUsageStatementResponse",
     "APIConsumerUsageStatementResponseStatus",
@@ -1171,6 +1174,7 @@ __all__ = (
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
+    "ClaimAPIConsumerUsageStatementRequest",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
     "CompleteObjectMultipartUploadRequest",
