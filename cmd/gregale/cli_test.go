@@ -523,10 +523,9 @@ func TestCmdDeploy_HappyPath_PrintsHostingReceipt(t *testing.T) {
 	}
 }
 
-// TestCmdDeploy_JSONWait_ReturnsHostingReceipt pins the explicit machine
-// readable wait contract. Plain --json remains the historical queued receipt;
-// --json --wait returns the terminal deployment with hosting_receipt intact.
-func TestCmdDeploy_JSONWait_ReturnsHostingReceipt(t *testing.T) {
+// TestCmdDeploy_JSON_WaitsByDefault_ReturnsHostingReceipt pins that selecting
+// machine-readable output does not change the default deployment lifecycle.
+func TestCmdDeploy_JSON_WaitsByDefault_ReturnsHostingReceipt(t *testing.T) {
 	resetJSONOutput()
 	defer resetJSONOutput()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -534,7 +533,7 @@ func TestCmdDeploy_JSONWait_ReturnsHostingReceipt(t *testing.T) {
 		case "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: "live", APIHostingReceipt: json.RawMessage(`{"schema_version":1,"deployment_id":"d1","app_id":"a1","profile":{"version":"v1","framework":"express","port":3000,"health_path":"/healthz"},"artifact":{},"smoke":{"status":"verified","path":"/healthz","status_code":200}}`)})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: "pending"})
 		case "/v1/deployments/d1":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", AppID: "a1", Status: "live", APIHostingReceipt: json.RawMessage(`{"schema_version":1,"deployment_id":"d1","app_id":"a1","profile":{"version":"v1","framework":"express","port":3000,"health_path":"/healthz"},"artifact":{},"smoke":{"status":"verified","path":"/healthz","status_code":200}}`)})
 		default:
@@ -551,8 +550,8 @@ func TestCmdDeploy_JSONWait_ReturnsHostingReceipt(t *testing.T) {
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app", "--wait"}); code != 0 {
-		t.Fatalf("cmdDeploy --json --wait exit = %d, want 0", code)
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+		t.Fatalf("cmdDeploy --json exit = %d, want 0", code)
 	}
 	var receipt struct {
 		Status         string          `json:"status"`
@@ -878,7 +877,7 @@ func TestCmdApps_JSON_NDJSONShape(t *testing.T) {
 	}
 }
 
-func TestCmdDeploy_JSON_SkipsStream(t *testing.T) {
+func TestCmdDeploy_JSON_NoWaitReturnsQueuedReceipt(t *testing.T) {
 	resetJSONOutput()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -903,8 +902,8 @@ func TestCmdDeploy_JSON_SkipsStream(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	jsonOutput = true
 	defer func() { resetJSONOutput() }()
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
-		t.Fatalf("cmdDeploy JSON = %d, want 0", code)
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app", "--no-wait"}); code != 0 {
+		t.Fatalf("cmdDeploy --json --no-wait = %d, want 0", code)
 	}
 	out := strings.TrimRight(buf.String(), "\n")
 	var dep api.DeploymentResponse
@@ -913,6 +912,9 @@ func TestCmdDeploy_JSON_SkipsStream(t *testing.T) {
 	}
 	if dep.ID != "d1" {
 		t.Errorf("dep.ID = %q, want d1", dep.ID)
+	}
+	if dep.Status != "pending" {
+		t.Errorf("dep.Status = %q, want pending queued receipt", dep.Status)
 	}
 	// Issue #1182 §P1 follow-up: receipt must carry app_url
 	// (always), and on the image path commit_sha / source_sha256

@@ -1195,7 +1195,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// This supports service templates whose secrets must be configured before
 	// their first process starts, while reusing the normal shape/runtime path.
 	createOnly := fs.Bool("create-only", false, "create or reserve the app without uploading a deployment")
-	waitTimeoutSeconds := fs.Int("timeout", int(defaultDeployWaitTimeout/time.Second), "maximum seconds to wait when --wait is used (default 300)")
+	waitTimeoutSeconds := fs.Int("timeout", int(defaultDeployWaitTimeout/time.Second), "maximum seconds to wait for deployment readiness (default 300)")
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this deployment (optional)")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS
@@ -1420,12 +1420,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if explicit["no-wait"] && *noWaitDeploy {
 		waitForDeploy = false
 	}
-	// Preserve the historical queued JSON response unless the operator
-	// explicitly asks for the terminal receipt with --json --wait.
-	jsonWait := jsonOutput && explicit["wait"] && waitForDeploy
+	// Output format must not change deployment lifecycle semantics. JSON
+	// deploys wait by default just like human-readable deploys; --no-wait is
+	// the only mode that returns the queued receipt immediately.
+	jsonWait := jsonOutput && waitForDeploy
 	// `gregale dev --json` needs to observe the real stage stream so it can
-	// emit the edit-to-live receipt. Ordinary deploys retain their historical
-	// queued JSON response unless the caller explicitly asks for --wait.
+	// emit the edit-to-live receipt instead of the ordinary terminal JSON
+	// deployment receipt.
 	streamLogsOnJSON := jsonOutput && execution.streamLogsOnJSON
 	if streamLogsOnJSON {
 		waitForDeploy = true
