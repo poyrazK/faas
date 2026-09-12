@@ -70,6 +70,15 @@ func normalizedInstanceMode(mode string) string {
 	return mode
 }
 
+func instanceModeUsesSnapshots(mode string) bool {
+	switch state.InstanceMode(normalizedInstanceMode(mode)) {
+	case state.InstanceModeWorker, state.InstanceModeJob:
+		return false
+	default:
+		return true
+	}
+}
+
 func instanceModeMatchesApp(app state.App, ins state.Instance) bool {
 	return normalizedInstanceMode(ins.Mode) == instanceModeForApp(app)
 }
@@ -722,6 +731,198 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 		// another reconciliation for failures and replacements.
 		status.ready++
 	}
+}
+
+// scheduleWorkerReconcile restores the worker singleton after an
+// infrastructure failure without coupling explicit StopInstance calls to an
+// automatic restart. Customer-requested stops remain stops; dead-node,
+// liveness, and deployment lifecycle paths call this helper explicitly.
+func (e *Engine) scheduleWorkerReconcile(ctx context.Context, deploymentID string) {
+	if e == nil || e.store == nil || deploymentID == "" {
+		return
+	}
+	go e.ReconcileWorkerDeployment(detachedServiceContext(ctx), deploymentID)
+}
+
+// ReconcileWorkerDeployment resolves the app for an instance/deployment
+// notification and delegates to the app-scoped singleton reconciler.
+func (e *Engine) ReconcileWorkerDeployment(ctx context.Context, deploymentID string) {
+	ctx = detachedServiceContext(ctx)
+	dep, err := e.store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			e.log.Warn("sched: load worker deployment for app reconcile", "deployment", deploymentID, "err", err)
+		}
+		return
+	}
+	e.ReconcileWorkerApp(ctx, dep.AppID)
+}
+
+// workerDeploymentTargets selects one live generation per deployment scope.
+// LiveDeployments is newest-first; the explicit sort keeps the selection
+// deterministic for alternate Store implementations and equal timestamps.
+func workerDeploymentTargets(deployments []state.Deployment) map[string]struct{} {
+	ordered := append([]state.Deployment(nil), deployments...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].CreatedAt.Equal(ordered[j].CreatedAt) {
+			return ordered[i].ID > ordered[j].ID
+		}
+		return ordered[i].CreatedAt.After(ordered[j].CreatedAt)
+	})
+	targets := make(map[string]struct{})
+	seenScopes := make(map[string]struct{})
+	for _, dep := range ordered {
+		if dep.Status != state.DeployLive {
+			continue
+		}
+		scope := normalizedDeploymentScope(dep.Scope)
+		if _, exists := seenScopes[scope]; exists {
+			continue
+		}
+		seenScopes[scope] = struct{}{}
+		targets[dep.ID] = struct{}{}
+	}
+	return targets
+}
+
+func workerStatePreference(ins state.Instance) int {
+	switch state.State(ins.State) {
+	case state.StateRunning:
+		return 0
+	case state.StateWaking, state.StateColdBooting:
+		return 1
+	default:
+		return 2
+	}
+}
+
+// ReconcileWorkerApp converges worker mode to one resident instance for the
+// newest live deployment in each scope. It also drains worker rows after a
+// mode switch, failed activation, or supersede. The same app-level mutex used
+// by service allocation serializes mode switches without nesting appMu around
+// admission or graceful stop calls.
+func (e *Engine) ReconcileWorkerApp(ctx context.Context, appID string) {
+	ctx = detachedServiceContext(ctx)
+	reconcileMu := e.serviceAppMutex(appID)
+	reconcileMu.Lock()
+	defer reconcileMu.Unlock()
+
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			e.log.Warn("sched: load worker app", "app", appID, "err", err)
+		}
+		return
+	}
+	deployments, err := e.store.LiveDeployments(ctx, appID)
+	if err != nil {
+		e.log.Warn("sched: list live worker deployments", "app", appID, "err", err)
+		return
+	}
+	targets := make(map[string]struct{})
+	if app.Status == state.AppActive && instanceModeForApp(app) == string(state.InstanceModeWorker) {
+		targets = workerDeploymentTargets(deployments)
+	}
+
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		e.log.Warn("sched: list worker instances", "app", appID, "err", err)
+		return
+	}
+	workers := make([]state.Instance, 0, len(instances))
+	for _, ins := range instances {
+		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State).CountsForRAM() {
+			workers = append(workers, ins)
+		}
+	}
+	sort.SliceStable(workers, func(i, j int) bool {
+		left, right := workerStatePreference(workers[i]), workerStatePreference(workers[j])
+		if left != right {
+			return left < right
+		}
+		if workers[i].StartedAt.Equal(workers[j].StartedAt) {
+			return workers[i].ID < workers[j].ID
+		}
+		return workers[i].StartedAt.Before(workers[j].StartedAt)
+	})
+
+	kept := make(map[string]string, len(targets))
+	for _, ins := range workers {
+		_, wanted := targets[ins.DeploymentID]
+		_, alreadyKept := kept[ins.DeploymentID]
+		if wanted && !alreadyKept && state.State(ins.State).CountsForConcurrency() {
+			kept[ins.DeploymentID] = ins.ID
+			continue
+		}
+		if err := e.stopManagedWorker(ctx, ins.ID); err != nil {
+			e.log.Warn("sched: drain surplus worker", "app", appID, "deployment", ins.DeploymentID, "instance", ins.ID, "err", err)
+		}
+	}
+
+	for deploymentID := range targets {
+		if kept[deploymentID] != "" {
+			continue
+		}
+		dep, depErr := e.store.DeploymentByID(ctx, deploymentID)
+		if depErr != nil || dep.Status != state.DeployLive {
+			if depErr != nil && !errors.Is(depErr, state.ErrNotFound) {
+				e.log.Warn("sched: reload worker target", "app", appID, "deployment", deploymentID, "err", depErr)
+			}
+			continue
+		}
+		result, admitErr := e.AdmitInstanceForDeployment(ctx, appID, deploymentID, dep.Scope, TriggerWorkerSingleton)
+		if admitErr != nil {
+			e.log.Warn("sched: admit worker singleton", "app", appID, "deployment", deploymentID, "err", admitErr)
+			continue
+		}
+		if result.AtCapacity {
+			e.log.Debug("sched: worker singleton admission at capacity", "app", appID, "deployment", deploymentID)
+		}
+	}
+}
+
+// stopManagedWorker removes one reconciler-owned worker without snapshots.
+// RUNNING rows take the graceful OCI stop path. In-flight rows are destroyed
+// under appMu so a concurrent boot cannot commit after the cleanup decision.
+func (e *Engine) stopManagedWorker(ctx context.Context, instanceID string) error {
+	for attempt := 0; attempt < 2; attempt++ {
+		ins, err := e.store.InstanceByID(ctx, instanceID)
+		if err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				return nil
+			}
+			return err
+		}
+		if state.State(ins.State) == state.StateRunning {
+			_, err = e.StopInstance(ctx, instanceID, StopOptions{GraceSeconds: 30})
+			return err
+		}
+		if !state.State(ins.State).CountsForRAM() {
+			return nil
+		}
+
+		release := e.lockApp(ins.AppID)
+		fresh, reloadErr := e.store.InstanceByID(ctx, instanceID)
+		if reloadErr != nil {
+			release()
+			if errors.Is(reloadErr, state.ErrNotFound) {
+				return nil
+			}
+			return reloadErr
+		}
+		if fresh.State != ins.State {
+			release()
+			continue
+		}
+		destroyErr := e.timedDestroy(ctx, fresh.NodeID, fresh.ID, DestroyTimeout)
+		if destroyErr == nil {
+			e.ledger.Release(fresh.ID)
+			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+		}
+		release()
+		return destroyErr
+	}
+	return nil
 }
 
 func (e *Engine) isMirrorDeployment(ctx context.Context, appID, deploymentID string) (bool, error) {

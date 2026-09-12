@@ -131,8 +131,9 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	NotifyInstanceChanged   {"instance_id":uuid, "app_id":uuid,
 //	                         "state":"parked|running|cold_booting|..."}
 //	NotifySnapshotPrime     {"app_id":uuid, "deployment_id":uuid}
-//	                         imaged → schedd: layer is built, cold-boot once and
-//	                         snapshot it (spec §5 step 6, ADR-018).
+//	                         imaged → schedd: layer is built; schedd applies
+//	                         the app execution mode (snapshot prime for
+//	                         request/service, active worker, artifact-only job).
 //	NotifySnapshotWritten   {"deployment_id":uuid, "vmstate_path":"...",
 //	                         "storage_key":"...", "mem_bytes":int,
 //	                         "vmstate_bytes":int, "fc_version":"...",
@@ -140,6 +141,14 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         schedd → imaged: a park wrote a snapshot blob;
 //	                         imaged records the row (it is the sole writer to the
 //	                         snapshots table, CLAUDE.md ownership).
+//	NotifyDeploymentReady   {"deployment_id":uuid,
+//	                         "execution_mode":"worker|job",
+//	                         "instance_id":uuid?}
+//	                         schedd → imaged: a non-snapshot deployment is
+//	                         ready for activation. Worker readiness carries the
+//	                         RUNNING instance; jobs are artifact-only at deploy
+//	                         time and omit instance_id. imaged remains the sole
+//	                         deployment-live writer.
 //	NotifyBillingPastDue    {"account_id":uuid, "used_gb":float,
 //	                         "quota_gb":int, "at":rfc3339nano}
 //	                         meterd → apid/dashboard: Free-tier hard stop
@@ -274,6 +283,7 @@ const (
 	NotifySnapshotPrime   = "snapshot_prime"
 	NotifySnapshotBoot    = "snapshot_boot"
 	NotifySnapshotWritten = "snapshot_written"
+	NotifyDeploymentReady = "deployment_ready"
 	NotifyBillingPastDue  = "billing_past_due"
 	NotifyQuotaWarning    = "quota_warning"
 	NotifyCronFired       = "cron_fired"

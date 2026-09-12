@@ -504,10 +504,11 @@ type Engine struct {
 	restartMu        sync.Mutex
 	restartInFlight  map[string]*restartCall
 	restartCompleted map[string]string
-	// serviceAppMu serialises service replica allocation across all live
-	// deployments for an app. It is distinct from appMu because replica
-	// reconciliation invokes admission, which acquires appMu itself, and
-	// from serviceMu, which protects one deployment's state transition.
+	// serviceAppMu serialises service replica allocation and worker singleton
+	// convergence across all live deployments for an app. It is distinct from
+	// appMu because lifecycle reconciliation invokes admission, which acquires
+	// appMu itself, and from serviceMu, which protects one deployment's state
+	// transition.
 	serviceAppMu map[string]*sync.Mutex
 	// serviceMu serialises replica reconciliation per deployment. It is
 	// separate from appMu because reconciliation invokes admission, which
@@ -2383,6 +2384,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		wakeID = wakeUUID.String()
 	}
 
+	usesSnapshots := instanceModeUsesSnapshots(mode)
+
 	// Consult the per-deployment snapshot-miss backoff before touching the
 	// snapshot cache. Repeated cache misses must be visible as bounded 503s;
 	// silently forcing another cold boot defeats the backoff and can exhaust
@@ -2390,7 +2393,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	backoff, backoffActive, backoffErr := e.store.DeploymentSnapshotBackoffActive(ctx, dep.ID)
 	if backoffErr != nil {
 		e.log.Warn("wake: snapshot backoff gate lookup failed; proceeding without gate", "deployment_id", dep.ID, "err", backoffErr)
-	} else if backoffActive && !bypassGates {
+	} else if backoffActive && !bypassGates && usesSnapshots {
 		if e.ops != nil {
 			e.ops.WakeSnapshotTier("cold_boot_fallback").Inc()
 			e.ops.SnapshotBackoffGateOutcome("gated").Inc()
@@ -2412,7 +2415,16 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// restores vs init restores vs cold-boot fallbacks. nil-safe
 	// accessor (OpsMetrics = nil → no-op).
 	snap, haveSnap, chosenTier := e.usableSnapshotForWake(ctx, dep.ID, string(acct.Plan), app.RAMMB, app.AppProtocol)
-	if !haveSnap {
+	if !usesSnapshots {
+		// Worker/job state belongs to the running process and must never be
+		// resurrected from a request-oriented HTTP snapshot. Their lifecycle
+		// contract is cold boot + graceful stop.
+		snap = state.Snapshot{}
+		haveSnap = false
+		chosenTier = "cold_boot_fallback"
+		backoffActive = false
+	}
+	if !haveSnap && usesSnapshots {
 		// Only a deployment that has had a snapshot can be said to have
 		// missed one. This avoids starting the exponential backoff on a
 		// brand-new cold deployment that never had a cache entry.
@@ -4729,6 +4741,8 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 			}
 			if ins.Mode == string(state.InstanceModeService) {
 				e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+			} else if ins.Mode == string(state.InstanceModeWorker) {
+				e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 			}
 			reconciled++
 		case errors.Is(recErr, state.ErrConflict):
@@ -4787,10 +4801,33 @@ func (e *Engine) computeNodeActive(ctx context.Context, nodeID string) (bool, er
 	return cn.Active, nil
 }
 
-// Prime boots a freshly-built deployment once, snapshots it, and parks it —
-// step 6 of the deploy pipeline (spec §5). schedd runs it on imaged's
-// snapshot_prime handshake (ADR-018); on success it emits snapshot_written so
-// imaged records the snapshot row and marks the deployment live.
+// verifyPrimeLayer applies the deploy-time signature gate before any user code
+// runs. Job deployments use it without creating a VM; request/service/worker
+// modes call it immediately before their cold boot.
+func (e *Engine) verifyPrimeLayer(ctx context.Context, appID, layer string) error {
+	if e.verifier == nil {
+		return nil
+	}
+	if err := e.verifier.Verify(ctx, layer, "sigs/"+layer+".sig"); err != nil {
+		var p *api.Problem
+		if errors.As(err, &p) && p.Code == api.CodeSigInvalid {
+			e.log.Warn("prime: rejecting tampered layer", "app", appID, "layer", layer, "err", err)
+			return err
+		}
+		e.log.Warn("prime: verifier i/o error", "app", appID, "layer", layer, "err", err)
+		return api.NewProblem(503, api.CodeCapacity,
+			"signature verification storage error",
+			fmt.Sprintf("verifier I/O error for layer %q: %v (retry shortly)", layer, err)).
+			WithHeader("Retry-After", "5")
+	}
+	return nil
+}
+
+// Prime validates and activates a freshly-built deployment — step 6 of the
+// deploy pipeline (spec §5). Request/service deployments retain the historical
+// cold-boot + snapshot + park flow. Workers cold-boot once and remain RUNNING.
+// Jobs are artifact-only here: executing their entrypoint belongs exclusively
+// to invocation time.
 func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	release := e.lockApp(appID)
 	defer release()
@@ -4807,6 +4844,13 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		return fmt.Errorf("sched: prime: load deployment: %w", err)
+	}
+	primeLayer := layerKey(dep.RootfsKey, dep.ID)
+	if executionModeForApp(app) == api.ExecutionModeJob {
+		if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
+			return err
+		}
+		return e.emitDeploymentReady(ctx, deploymentID, api.ExecutionModeJob, "")
 	}
 
 	// Multi-node placement (issue #97 / ADR-025 axis 3): pick the
@@ -4880,7 +4924,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		return fmt.Errorf("sched: prime: load sidecars: %w", err)
 	}
 	spec := AppSpec{
-		BaseKey: baseKey(app.Runtime), LayerKey: layerKey(dep.RootfsKey, dep.ID),
+		BaseKey: baseKey(app.Runtime), LayerKey: primeLayer,
 		VCPUCount: int32(limits.VCPU), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(app.CPUMillicores),
 		EgressMbit: int32(limits.EgressMbit),
 		// M-3: deploy prime uses the same plan-resolved readiness budget
@@ -4930,29 +4974,15 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// deployment to DeployFailed the same way. The sig key
 	// derivation matches pkg/rootfs/publishExt4's
 	// "sigs/<layerKey>.sig" convention.
-	if e.verifier != nil {
-		if err := e.verifier.Verify(ctx, spec.LayerKey, "sigs/"+spec.LayerKey+".sig"); err != nil {
-			var p *api.Problem
-			if errors.As(err, &p) && p.Code == api.CodeSigInvalid {
-				e.log.Warn("prime: rejecting tampered layer",
-					"app", appID, "layer", spec.LayerKey, "err", err)
-				e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_sig_invalid")
-				e.ledger.Release(ins.ID)
-				return err
-			}
-			// Transient I/O — same Retry-After shape as the Wake
-			// branch. Wrap as a Problem so gatewayd-internal's writeWakeError
-			// flushes both status + header in one path (review
-			// finding #1a on PR #322).
-			e.log.Warn("prime: verifier i/o error",
-				"app", appID, "layer", spec.LayerKey, "err", err)
-			e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_sig_verify_io")
-			e.ledger.Release(ins.ID)
-			return api.NewProblem(503, api.CodeCapacity,
-				"signature verification storage error",
-				fmt.Sprintf("verifier I/O error for layer %q: %v (retry shortly)", spec.LayerKey, err)).
-				WithHeader("Retry-After", "5")
+	if err := e.verifyPrimeLayer(ctx, appID, spec.LayerKey); err != nil {
+		reason := "prime_sig_verify_io"
+		var p *api.Problem
+		if errors.As(err, &p) && p.Code == api.CodeSigInvalid {
+			reason = "prime_sig_invalid"
 		}
+		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", reason)
+		e.ledger.Release(ins.ID)
+		return err
 	}
 
 	// Per-call deadline (commit 1, spec §6.1). Same rationale as Wake:
@@ -4979,8 +5009,19 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	}
 	e.transition(ctx, ins.ID, appID, state.StateRunning)
 
-	// Boot succeeded; snapshot + park it (the prime is not left running).
 	ins.AppID, ins.DeploymentID = appID, deploymentID
+	if executionModeForApp(app) == api.ExecutionModeWorker {
+		if err := e.emitDeploymentReady(ctx, deploymentID, api.ExecutionModeWorker, ins.ID); err != nil {
+			e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
+			e.ledger.Release(ins.ID)
+			e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_ready_notify_failed")
+			return err
+		}
+		return nil
+	}
+
+	// Request/service boot succeeded; capture the reusable init snapshot and
+	// park the prime. Non-snapshot modes returned above.
 	return e.snapshotAndPark(ctx, ins)
 }
 
@@ -5049,13 +5090,22 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 	}
 }
 
-// Park snapshots a RUNNING instance and frees its RAM (idle reaper, spec §4.3).
-// Acquires the app lock; the reaper calls it per selected instance. The reaper
-// builds its selection without the lock, so we re-read under the lock and skip
-// anything no longer RUNNING (a concurrent wake/park already moved it).
+// Park snapshots a RUNNING request/service instance and frees its RAM (idle
+// reaper, spec §4.3). Worker/job instances have no reusable snapshot contract,
+// so an explicit park stops and destroys them instead. Acquires the app lock;
+// the reaper calls it per selected instance. The reaper builds its selection
+// without the lock, so we re-read under the lock and skip anything no longer
+// RUNNING (a concurrent wake/park already moved it).
 func (e *Engine) Park(ctx context.Context, instanceID string) error {
 	ins, err := e.lockedRunning(ctx, instanceID)
 	if err != nil || ins == nil {
+		return err
+	}
+	if mode := state.InstanceMode(ins.Mode); mode == state.InstanceModeWorker || mode == state.InstanceModeJob {
+		// StopInstance owns the mode-aware signal/grace/destroy sequence, but
+		// it must acquire the same app lock, so release this lock first.
+		e.unlockApp(ins.AppID)
+		_, err := e.StopInstance(ctx, instanceID, StopOptions{GraceSeconds: 30})
 		return err
 	}
 	defer e.unlockApp(ins.AppID)
@@ -5155,6 +5205,22 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 
 		switch state.State(fresh.State) {
 		case state.StateRunning:
+			if mode := state.InstanceMode(fresh.Mode); mode == state.InstanceModeWorker || mode == state.InstanceModeJob {
+				// Worker/job instances are durable workload processes, not
+				// snapshot cache entries. App eviction therefore follows the
+				// signal/grace/destroy path even when the row is RUNNING.
+				if _, stopErr := e.vmm.StopInstanceOnNode(ctx, fresh.NodeID, fresh.ID, int32(syscall.SIGTERM), 30); stopErr != nil {
+					e.log.Warn("sched: park app: stop worker/job signal failed; falling through to destroy", "instance", fresh.ID, "err", stopErr)
+				}
+				if destroyErr := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
+					errs = append(errs, fmt.Errorf("instance %s: destroy worker/job: %w", fresh.ID, destroyErr))
+					continue
+				}
+				e.ledger.Release(fresh.ID)
+				e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+				acted++
+				continue
+			}
 			// snapshotAndPark owns the full RUNNING → SNAPSHOTTING →
 			// PARKED path and the resident-ledger release.
 			if err := e.snapshotAndPark(ctx, fresh); err != nil {
@@ -5170,6 +5236,20 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 			// during a cold wake from becoming RUNNING after the park.
 			if err := e.timedDestroy(ctx, fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
 				errs = append(errs, fmt.Errorf("instance %s: destroy in-flight wake: %w", fresh.ID, err))
+				continue
+			}
+			e.ledger.Release(fresh.ID)
+			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
+			acted++
+		case state.StateSnapshotting:
+			if mode := state.InstanceMode(fresh.Mode); mode != state.InstanceModeWorker && mode != state.InstanceModeJob {
+				continue
+			}
+			// A legacy worker/job row may already be in SNAPSHOTTING from
+			// before mode-aware activation. Eviction must drain it rather
+			// than leave a non-snapshot workload wedged in that state.
+			if err := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
+				errs = append(errs, fmt.Errorf("instance %s: destroy snapshotting worker/job: %w", fresh.ID, err))
 				continue
 			}
 			e.ledger.Release(fresh.ID)
@@ -5349,6 +5429,9 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 	}
 	e.ledger.Release(instanceID)
 	e.transition(ctx, instanceID, ins.AppID, state.StateStopped)
+	if ins.Mode == string(state.InstanceModeWorker) {
+		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
+	}
 	return nil
 }
 
@@ -5387,6 +5470,9 @@ func (e *Engine) RecycleForDiskPressure(ctx context.Context, instanceID string, 
 
 	reason := fmt.Sprintf("disk_full used_bytes=%d capacity_bytes=%d", usedBytes, capacityBytes)
 	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, "disk_full", reason)
+	if ins.Mode == string(state.InstanceModeWorker) {
+		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
+	}
 	return nil
 }
 
@@ -6876,6 +6962,9 @@ func (e *Engine) DestroyForLivenessFailure(ctx context.Context, instanceID, reas
 	// helper — pass `"liveness_failed"` as the kind and the
 	// reason as the cause.
 	e.transitionWithKind(ctx, instanceID, appID, state.StateStopped, "liveness_failed", reason)
+	if freshLocked.Mode == string(state.InstanceModeWorker) {
+		e.scheduleWorkerReconcile(ctx, deploymentID)
+	}
 
 	// Counter emission. The (app, deployment) label set is
 	// bounded by the plan's deployed_apps × deployments size
@@ -7306,6 +7395,8 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	e.emitInstanceChanged(ctx, instanceID, appID, state.StateStopped, "") // wake_id already on the row; the direct-write path doesn't re-load it.
 	if freshLocked.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, deploymentID)
+	} else if freshLocked.Mode == string(state.InstanceModeWorker) {
+		e.scheduleWorkerReconcile(ctx, deploymentID)
 	}
 
 	// Counter emission. Cardinality bounds match LivenessRestarts.
@@ -7585,6 +7676,8 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 	if (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
 		ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	} else if to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker) {
+		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 	}
 
 	// Audit-log emission (spec §6.1). Best-effort: a failure logs
@@ -7657,6 +7750,28 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, deploymentID, nodeID, 
 	if err := e.ClearSnapshotBackoff(ctx, deploymentID); err != nil {
 		e.log.Warn("emit snapshot_written: clear snapshot backoff", "deployment", deploymentID, "err", err)
 	}
+}
+
+// emitDeploymentReady hands non-snapshot deployment activation back to
+// imaged. imaged owns the live transition; schedd only supplies readiness
+// evidence. Worker evidence is a RUNNING instance id, while job activation is
+// artifact-only and deliberately omits one.
+func (e *Engine) emitDeploymentReady(ctx context.Context, deploymentID, executionMode, instanceID string) error {
+	if e.notif == nil {
+		return errors.New("sched: deployment_ready notifier is not configured")
+	}
+	payload, err := json.Marshal(struct {
+		DeploymentID  string `json:"deployment_id"`
+		ExecutionMode string `json:"execution_mode"`
+		InstanceID    string `json:"instance_id,omitempty"`
+	}{DeploymentID: deploymentID, ExecutionMode: executionMode, InstanceID: instanceID})
+	if err != nil {
+		return fmt.Errorf("sched: encode deployment_ready: %w", err)
+	}
+	if err := e.notif.Notify(ctx, db.NotifyDeploymentReady, string(payload)); err != nil {
+		return fmt.Errorf("sched: emit deployment_ready for %s: %w", deploymentID, err)
+	}
+	return nil
 }
 
 // wakeOutcome is the discrete result of the wake-gate consult

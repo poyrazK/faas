@@ -59,6 +59,10 @@ const (
 	// whose live count fell below its desired replica count.
 	TriggerServiceReplica = "service.replica"
 
+	// TriggerWorkerSingleton — initial or replacement admission for the one
+	// long-lived worker assigned to a live deployment scope.
+	TriggerWorkerSingleton = "worker.singleton"
+
 	// TriggerPrewarm — a durable scheduled/predicted demand-window restore.
 	// This distinguishes intentional ahead-of-demand wakes from reactive
 	// traffic and permanent min_instances floors in the wake timeline.

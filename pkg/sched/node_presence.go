@@ -187,6 +187,8 @@ func (e *Engine) ObserveNodeInstances(ctx context.Context, nodeID string, liveCo
 				state.StateFailed, ins.WakeID)
 			if ins.Mode == string(state.InstanceModeService) {
 				e.scheduleServiceReconcile(checkCtx, ins.DeploymentID)
+			} else if ins.Mode == string(state.InstanceModeWorker) {
+				e.scheduleWorkerReconcile(checkCtx, ins.DeploymentID)
 			}
 			e.log.Warn("sched: failed stale running instance",
 				"instance_id", ins.ID, "app_id", ins.AppID,

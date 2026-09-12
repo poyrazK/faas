@@ -1638,7 +1638,11 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			return
 		}
 		if p.LifecycleChanged && p.AppID != "" {
-			go l.engine.ReconcileServiceApp(context.WithoutCancel(ctx), p.AppID)
+			go func(appID string) {
+				reconcileCtx := context.WithoutCancel(ctx)
+				l.engine.ReconcileServiceApp(reconcileCtx, appID)
+				l.engine.ReconcileWorkerApp(reconcileCtx, appID)
+			}(p.AppID)
 		}
 		l.log.Debug("app_changed", "payload", n.Payload)
 	case db.NotifyDeploymentChanged:
@@ -1651,15 +1655,20 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			l.log.Warn("sched: bad deployment_changed payload", "err", err)
 			return
 		}
-		if p.Status == string(state.DeployLive) {
-			deploymentID := p.DeploymentID
-			if deploymentID == "" {
-				// Older imaged versions carried the deployment id in `to`.
-				deploymentID = p.To
-			}
-			if deploymentID != "" {
-				go l.engine.ReconcileServiceDeployment(context.WithoutCancel(ctx), deploymentID)
-			}
+		deploymentID := p.DeploymentID
+		if deploymentID == "" && p.Status == string(state.DeployLive) {
+			// Older imaged versions carried the deployment id in `to`.
+			deploymentID = p.To
+		}
+		if deploymentID != "" && p.Status != "" {
+			// Live activates the new mode. Failed/superseded/cancelled signals
+			// drain a worker that may have proved readiness immediately before
+			// activation failed, while preserving the prior live generation.
+			go func(id string) {
+				reconcileCtx := context.WithoutCancel(ctx)
+				l.engine.ReconcileServiceDeployment(reconcileCtx, id)
+				l.engine.ReconcileWorkerDeployment(reconcileCtx, id)
+			}(deploymentID)
 		}
 		l.log.Debug("deployment_changed", "payload", n.Payload)
 	case db.NotifySnapshotPrime:
