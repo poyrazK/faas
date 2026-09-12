@@ -603,6 +603,7 @@ groups:
           severity: page
           component: vmmd
           family: snapshot_fleet
+          public_status: internal
         annotations:
           summary: "Snapshot fleet avg > 200 MB"
           description: "Average snapshot size has exceeded 200 MB for 10m. The fleet is past the §12 page threshold; /srv allocation will start pressuring tenant disk quotas."
@@ -615,6 +616,7 @@ groups:
           severity: warn
           component: vmmd
           family: snapshot_fleet
+          public_status: internal
         annotations:
           summary: "Snapshot fleet avg > 160 MB"
           description: "Average snapshot size between 160 MB and 200 MB for 15m. Page-tier crossing likely on the next deploy wave if cold-boot fallback rate is also elevated."
