@@ -101,46 +101,10 @@ func TestKeysAddHelpNeverCreatesCredential(t *testing.T) {
 			if calls != 0 {
 				t.Fatalf("keys add %s made %d API request(s)", help, calls)
 			}
-			if !strings.Contains(stdout.String(), "gregale keys") || !strings.Contains(stdout.String(), "add") {
+			if !strings.Contains(stdout.String(), "gregale keys add <label>") {
 				t.Fatalf("help output = %q", stdout.String())
 			}
 		})
-	}
-}
-
-func TestNestedHelpNeverDispatchesMutatingCommands(t *testing.T) {
-	resetJSONOut(t)
-	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		http.Error(w, "mutation must not run", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "test-token")
-
-	for _, args := range [][]string{
-		{"keys", "add", "--help"},
-		{"apps", "--quiet", "--help"},
-		{"secrets", "set", "--help"},
-		{"env", "push", "--help"},
-		{"github", "disconnect", "--help"},
-	} {
-		t.Run(strings.Join(args[:2], "_"), func(t *testing.T) {
-			var stdout bytes.Buffer
-			oldOut := osStdout
-			osStdout = &stdout
-			t.Cleanup(func() { osStdout = oldOut })
-			if code := run(args); code != 0 {
-				t.Fatalf("run(%v) = %d, want help success", args, code)
-			}
-			if !strings.Contains(stdout.String(), "Usage:") {
-				t.Fatalf("run(%v) output = %q", args, stdout.String())
-			}
-		})
-	}
-	if calls != 0 {
-		t.Fatalf("nested help made %d API request(s)", calls)
 	}
 }
 

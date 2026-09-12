@@ -101,12 +101,13 @@ func run(args []string) (status int) {
 		fmt.Print(topLevelUsage(false))
 		return 0
 	}
-	// Resolve help before dispatch. Several legacy leaf parsers treat unknown
-	// arguments as labels or resource identifiers, so allowing --help to reach
-	// them can perform a lookup or even a mutation. The parent metadata is
-	// local, complete enough to discover the leaf, and side-effect free.
-	if len(args) >= 2 && hasHelpFlag(args[1:]) {
-		if command, ok := lookupCliCommand(args[0]); ok && (len(args) == 2 || commandRecognizesNestedHelp(command, args[1:])) {
+	// Resolve parent-command help before dispatch. These commands otherwise
+	// interpret --help as a subcommand or resource identifier and may perform
+	// authentication or a resource lookup. Leaf help stays with the leaf parser,
+	// which can render the exact syntax; mutating parsers must intercept help
+	// before validating resource identifiers (see cmdKeys).
+	if len(args) == 2 && hasHelpFlag(args[1:]) {
+		if command, ok := lookupCliCommand(args[0]); ok {
 			printLocalCommandHelp(osStdout, command)
 			return 0
 		}
@@ -509,20 +510,6 @@ func run(args []string) (status int) {
 		fmt.Fprintf(os.Stderr, "gregale: unknown command %q\nRun 'gregale help' for usage.\n", args[0])
 		return 1
 	}
-}
-
-func commandRecognizesNestedHelp(command cliCommand, args []string) bool {
-	if len(command.Subcommands) == 0 {
-		return true
-	}
-	for _, arg := range args {
-		for _, sub := range command.Subcommands {
-			if arg == sub.Name {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func printLocalCommandHelp(w io.Writer, command cliCommand) {
