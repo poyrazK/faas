@@ -115,6 +115,47 @@ func TestReadSelfStatus_EmptyContent(t *testing.T) {
 	}
 }
 
+func TestReadSelfStatus_AcceptsCompleteZeroCapabilitySet(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/status"
+	fixture := []byte("Name:\tcapability_free\n" +
+		"CapInh:\t0000000000000000\n" +
+		"CapPrm:\t0000000000000000\n" +
+		"CapEff:\t0000000000000000\n" +
+		"CapBnd:\t0000000000000000\n" +
+		"CapAmb:\t0000000000000000\n")
+	if err := os.WriteFile(path, fixture, 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	prev := procSelfStatusPath
+	procSelfStatusPath = path
+	t.Cleanup(func() { procSelfStatusPath = prev })
+
+	mask, err := readSelfStatus()
+	if err != nil {
+		t.Fatalf("valid zero capability set rejected: %v", err)
+	}
+	if mask != (capdecl.CapMasks{}) {
+		t.Fatalf("mask = %+v, want zero capability set", mask)
+	}
+}
+
+func TestReadSelfStatus_RejectsMalformedCapabilitySet(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/status"
+	if err := os.WriteFile(path, []byte("CapInh:\tnot-hex\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	prev := procSelfStatusPath
+	procSelfStatusPath = path
+	t.Cleanup(func() { procSelfStatusPath = prev })
+
+	_, err := readSelfStatus()
+	if err == nil || !strings.Contains(err.Error(), "no cap lines") {
+		t.Fatalf("malformed capability set error = %v, want parse failure", err)
+	}
+}
+
 func TestReadSelfStatus_HappyPathViaFixture(t *testing.T) {
 	// Successful read: the fixture has Cap lines, ParseStatus
 	// returns non-zero, readSelfStatus returns the parsed

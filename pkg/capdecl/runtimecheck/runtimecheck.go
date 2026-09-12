@@ -232,16 +232,43 @@ func readSelfStatus() (capdecl.CapMasks, error) {
 		return capdecl.CapMasks{}, fmt.Errorf("read %s: %w", procSelfStatusPath, err)
 	}
 	mask := capdecl.ParseStatus(buf)
-	// A zero mask is plausible for an unprivileged daemon on a
-	// restrictive box (CapBnd=0x0000000000000000 is valid) but
-	// ONLY if we successfully read the file. If the parser
-	// returned zero because it didn't recognise the cap lines,
-	// surface that as a parse error so the boot fails loud
-	// instead of silently passing.
-	if mask == (capdecl.CapMasks{}) {
+	// An all-zero mask is valid for a fully capability-free daemon. Detect a
+	// missing/malformed proc contract from the source lines themselves rather
+	// than treating that valid value as a parse failure.
+	if !hasCompleteCapabilityStatus(buf) {
 		return capdecl.CapMasks{}, errors.New("parse " + procSelfStatusPath + ": no cap lines found (kernel too old or non-Linux)")
 	}
 	return mask, nil
+}
+
+func hasCompleteCapabilityStatus(buf []byte) bool {
+	want := map[string]bool{
+		"CapInh": false,
+		"CapPrm": false,
+		"CapEff": false,
+		"CapBnd": false,
+		"CapAmb": false,
+	}
+	for _, line := range strings.Split(string(buf), "\n") {
+		colon := strings.IndexByte(line, ':')
+		if colon < 0 {
+			continue
+		}
+		key := line[:colon]
+		if _, ok := want[key]; !ok {
+			continue
+		}
+		var value uint64
+		if _, err := fmt.Sscanf(line[colon+1:], " %x", &value); err == nil {
+			want[key] = true
+		}
+	}
+	for _, present := range want {
+		if !present {
+			return false
+		}
+	}
+	return true
 }
 
 // String is a convenience for log messages. It returns the same
