@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from ..models.edge_rule_limit_action import EdgeRuleLimitAction
     from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
     from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
+    from ..models.edge_rule_respond_action import EdgeRuleRespondAction
     from ..models.edge_rule_rewrite_action import EdgeRuleRewriteAction
     from ..models.edge_rule_route_action import EdgeRuleRouteAction
     from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
@@ -48,6 +49,7 @@ class CreateEdgeRuleRequest:
         | EdgeRuleLimitAction
         | EdgeRuleMaintenanceAction
         | EdgeRuleRedirectAction
+        | EdgeRuleRespondAction
         | EdgeRuleRewriteAction
         | EdgeRuleRouteAction
         | EdgeRuleThrottleAction
@@ -65,6 +67,7 @@ class CreateEdgeRuleRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
         from ..models.edge_rule_cors_action import EdgeRuleCORSAction
         from ..models.edge_rule_geo_action import EdgeRuleGeoAction
         from ..models.edge_rule_headers_action import EdgeRuleHeadersAction
@@ -106,6 +109,8 @@ class CreateEdgeRuleRequest:
         elif isinstance(self.action, EdgeRuleGeoAction):
             action = self.action.to_dict()
         elif isinstance(self.action, EdgeRuleThrottleAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleBudgetAction):
             action = self.action.to_dict()
         else:
             action = self.action.to_dict()
@@ -157,6 +162,7 @@ class CreateEdgeRuleRequest:
         from ..models.edge_rule_limit_action import EdgeRuleLimitAction
         from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
         from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
+        from ..models.edge_rule_respond_action import EdgeRuleRespondAction
         from ..models.edge_rule_rewrite_action import EdgeRuleRewriteAction
         from ..models.edge_rule_route_action import EdgeRuleRouteAction
         from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
@@ -179,6 +185,7 @@ class CreateEdgeRuleRequest:
             | EdgeRuleLimitAction
             | EdgeRuleMaintenanceAction
             | EdgeRuleRedirectAction
+            | EdgeRuleRespondAction
             | EdgeRuleRewriteAction
             | EdgeRuleRouteAction
             | EdgeRuleThrottleAction
@@ -280,11 +287,19 @@ class CreateEdgeRuleRequest:
                 return action_type_11
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_12 = EdgeRuleBudgetAction.from_dict(data)
+
+                return action_type_12
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
             if not isinstance(data, dict):
                 raise TypeError()
-            action_type_12 = EdgeRuleBudgetAction.from_dict(data)
+            action_type_13 = EdgeRuleRespondAction.from_dict(data)
 
-            return action_type_12
+            return action_type_13
 
         action = _parse_action(d.pop("action"))
 

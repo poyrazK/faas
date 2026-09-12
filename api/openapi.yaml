@@ -21201,13 +21201,8 @@ components:
           example: 200
         body:
           description: Arbitrary JSON response body. Omit for an empty response.
-          oneOf:
-            - type: object
-            - type: array
-            - type: string
-            - type: number
-            - type: boolean
-            - type: 'null'
+          # An unconstrained schema intentionally accepts any JSON value:
+          # object, array, scalar, or null.
 
     EdgeRuleGeoAction:
       description: |
