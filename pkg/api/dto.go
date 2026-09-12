@@ -2549,6 +2549,7 @@ type AccountLimits struct {
 	VCPU                        int           `json:"vcpu"`
 	MaxConcurrency              int           `json:"max_concurrency"`
 	DeployedApps                int           `json:"deployed_apps"`
+	DeploysPerHour              int           `json:"deploys_per_hour"`
 	DeveloperApps               int           `json:"developer_apps"`
 	IncludedGBHours             int64         `json:"included_gb_hours"`
 	AppLayerMaxMB               int           `json:"app_layer_max_mb"`
@@ -2562,6 +2563,20 @@ type AccountLimits struct {
 	TriggerMaxAttemptsMax       int           `json:"trigger_max_attempts_max"`
 	TriggerPayloadMaxBytes      int           `json:"trigger_payload_max_bytes"`
 	TriggerTLSSkipVerifyAllowed bool          `json:"trigger_tls_skip_verify_allowed"`
+}
+
+// AccountRateLimitsResponse reports account-wide rate windows that affect
+// customer operations.
+type AccountRateLimitsResponse struct {
+	Deploys AccountDeployRateLimit `json:"deploys"`
+}
+
+// AccountDeployRateLimit is the current fixed one-hour deploy window.
+type AccountDeployRateLimit struct {
+	Used           int       `json:"used"`
+	Limit          int       `json:"limit"`
+	Remaining      int       `json:"remaining"`
+	WindowResetsAt time.Time `json:"window_resets_at"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext

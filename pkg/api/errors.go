@@ -542,6 +542,9 @@ const (
 	// endpoint, not a billing gate. Maps to HTTP 429 + Retry-After:
 	// the window is 24h so the retry hint is in seconds-until-reset.
 	CodeExportRateLimited = "export_rate_limited"
+	// CodeDeployRateLimited marks an account that exhausted its plan's
+	// deployment admissions in the current one-hour window.
+	CodeDeployRateLimited = "deploy_rate_limited"
 	CodeUnauthorized      = "unauthorized"
 	// CodeForbidden is returned when the authenticated principal lacks
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
@@ -1669,7 +1672,7 @@ func StatusForCode(code string) int {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
 		return http.StatusForbidden
-	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited:
+	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited, CodeDeployRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -2378,6 +2381,20 @@ func ErrExportRateLimited(retryAfterS int) *Problem {
 		"Only one account export is allowed per 24h window; retry after the indicated back-off.").
 		WithHeader("Retry-After", fmt.Sprintf("%d", retryAfterS)).
 		WithDocs("https://docs.gregale.dev/gdpr#export-rate-limit")
+}
+
+// ErrDeployRateLimited reports an exhausted account deploy window. The
+// remaining/reset headers are added by apid from the atomic store result.
+func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeDeployRateLimited,
+		"Deploy rate limited",
+		fmt.Sprintf("This account has used all %d deploys in its current one-hour window.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://docs.gregale.dev/deployments#rate-limit")
 }
 
 // ErrInternal is the catch-all 500 envelope for handler-side failures

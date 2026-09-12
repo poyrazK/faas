@@ -384,6 +384,11 @@ func apiErrorFromResponse(resp *http.Response, data []byte) error {
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
 		p = *p.WithHeader("Retry-After", ra)
 	}
+	for _, name := range []string{"RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"} {
+		if value := resp.Header.Get(name); value != "" {
+			p = *p.WithHeader(name, value)
+		}
+	}
 	return &APIError{Problem: p}
 }
 
@@ -396,6 +401,13 @@ var ErrNoBody = errors.New("api: response body was empty")
 func (c *Client) Whoami(ctx context.Context) (AccountResponse, error) {
 	var out AccountResponse
 	return out, c.do(ctx, "GET", "/v1/account", nil, &out)
+}
+
+// GetAccountRateLimits returns the authenticated account's current deploy
+// rate window and plan-derived limit.
+func (c *Client) GetAccountRateLimits(ctx context.Context) (AccountRateLimitsResponse, error) {
+	var out AccountRateLimitsResponse
+	return out, c.do(ctx, "GET", "/v1/account/rate-limits", nil, &out)
 }
 
 // GetCapabilities returns the canonical feature maturity and plan

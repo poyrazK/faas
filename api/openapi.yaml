@@ -1653,6 +1653,22 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/ConflictDelete' }
 
+  /v1/account/rate-limits:
+    get:
+      tags: [account]
+      operationId: getAccountRateLimits
+      summary: Read the account's current deploy rate window.
+      description: Returns the durable account-wide deploy count, plan limit, remaining admissions, and fixed-window reset time.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current account rate limits.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountRateLimitsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account/plan:
     patch:
       tags: [account]
@@ -16122,13 +16138,14 @@ components:
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
       type: object
-      required: [plan, ram_mb, vcpu, max_concurrency, deployed_apps, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
+      required: [plan, ram_mb, vcpu, max_concurrency, deployed_apps, deploys_per_hour, developer_apps, included_gb_hours, app_layer_max_mb, ephemeral_disk_max_mb, triggers_allowed, trigger_kinds, trigger_limit_per_app, trigger_limit_per_account, trigger_batch_size_max, trigger_batch_window_max_ms, trigger_max_attempts_max, trigger_payload_max_bytes, trigger_tls_skip_verify_allowed]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
         ram_mb: { type: integer , example: 256}
         vcpu: { type: integer, minimum: 1, maximum: 4, description: "Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account reads." }
         max_concurrency: { type: integer }
         deployed_apps: { type: integer }
+        deploys_per_hour: { type: integer, minimum: 1, description: "Account-wide deployment admissions per fixed one-hour window." }
         developer_apps: { type: integer, description: "Maximum live `gregale dev` environments for this plan." }
         included_gb_hours: { type: integer, format: int64 }
         app_layer_max_mb: { type: integer }
@@ -16145,6 +16162,23 @@ components:
         trigger_max_attempts_max: { type: integer, minimum: 0 }
         trigger_payload_max_bytes: { type: integer, minimum: 0 }
         trigger_tls_skip_verify_allowed: { type: boolean, description: "Whether Kafka tls.skip_verify=true is permitted." }
+
+    AccountDeployRateLimit:
+      description: Current fixed one-hour account deploy window.
+      type: object
+      required: [used, limit, remaining, window_resets_at]
+      properties:
+        used: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1 }
+        remaining: { type: integer, minimum: 0 }
+        window_resets_at: { type: string, format: date-time }
+
+    AccountRateLimitsResponse:
+      description: Account-wide operation rate limits.
+      type: object
+      required: [deploys]
+      properties:
+        deploys: { $ref: '#/components/schemas/AccountDeployRateLimit' }
 
     ChangePlanRequest:
       description: "Target plan for the change."
@@ -28188,7 +28222,16 @@ components:
       headers:
         Retry-After:
           schema: { type: integer, example: 60 }
-          description: Seconds until the client may retry. Emitted by the authlimiter (plain-text path).
+          description: Seconds until the client may retry. Emitted by deploy admission and the authlimiter.
+        RateLimit-Limit:
+          schema: { type: integer, example: 10 }
+          description: Account deploy admissions allowed in the current window.
+        RateLimit-Remaining:
+          schema: { type: integer, example: 0 }
+          description: Deploy admissions remaining in the current window.
+        RateLimit-Reset:
+          schema: { type: integer, example: 1800 }
+          description: Seconds until the current deploy window resets.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

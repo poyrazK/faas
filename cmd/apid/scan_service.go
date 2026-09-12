@@ -746,6 +746,20 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		rate, rateErr := s.consumeAccountDeployRate(ctx, acct, timeNow().UTC())
+		if rateErr != nil {
+			_ = os.Remove(staged)
+			s.log.Warn("apid: apply deploy-rate admission failed", "app_id", app.ID, "account_id", acct.ID, "err", rateErr)
+			res.Error = "deploy admission failed (server logs carry the detail)"
+			out = append(out, res)
+			continue
+		}
+		if !rate.Allowed {
+			_ = os.Remove(staged)
+			res.Error = fmt.Sprintf("deploy rate limit reached; window resets at %s", rate.WindowResetsAt.UTC().Format(time.RFC3339))
+			out = append(out, res)
+			continue
+		}
 		// Enqueue via the shared helper. The helper does CreateDeployment
 		// + build.log spool + UpdateDeploymentStatus(building) + CreateBuild
 		// + NotifyBuildQueued + (optional) NotifyDeploymentChanged for

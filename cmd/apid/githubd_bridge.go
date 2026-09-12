@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -45,6 +46,8 @@ import (
 // canonical seam — same pattern as advisory_receiver.go).
 type githubdBridgeStore interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
+	AccountByID(ctx context.Context, id string) (state.Account, error)
+	ConsumeAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error)
 	LatestDeployment(ctx context.Context, appID string) (state.Deployment, error)
 	CreateDeployment(ctx context.Context, d state.Deployment) (state.Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status state.DeploymentStatus, logPath string) error
@@ -256,6 +259,19 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		return nil, status.Errorf(codes.InvalidArgument,
 			"EnqueueBuild: source_path size=%d != declared source_bytes=%d",
 			st.Size(), req.SourceBytes)
+	}
+	acct, err := g.store.AccountByID(ctx, req.AccountId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
+	}
+	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, acct.Plan.DeploysPerHour(), timeNow().UTC())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "EnqueueBuild: deploy admission: %v", err)
+	}
+	if !rate.Allowed {
+		return nil, status.Errorf(codes.ResourceExhausted,
+			"EnqueueBuild: account deploy rate limit %d reached; resets at %s",
+			rate.Limit, rate.WindowResetsAt.UTC().Format(time.RFC3339))
 	}
 
 	// The shared apidsource.Enqueue helper handles CreateDeployment +
