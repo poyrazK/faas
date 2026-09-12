@@ -48,14 +48,14 @@ on that host. On a control-plane host:
 ```sh
 sudo systemctl daemon-reload
 sudo systemctl restart faas-apid faas-schedd faas-meterd \
-  faas-gatewayd-public faas-githubd
+  faas-gatewayd-public faas-githubd faas-outboundd faas-s3-gatewayd
 ```
 
 On a compute-only host:
 
 ```sh
 sudo systemctl restart faas-vmmd faas-gatewayd-internal \
-  faas-builderd faas-imaged
+  faas-builderd faas-imaged faas-realtimed
 ```
 
 ## Collector routing
@@ -66,10 +66,10 @@ This keeps provider API keys and backend-specific retry/transform policy in the
 collector rather than in every Gregale service.
 
 The daemon service identity is `service.name` (`apid`, `schedd`,
-`gatewayd-public`, and so on) and `service.version` is the running Gregale
-version. Add deployment or host identity through
-`OTEL_RESOURCE_ATTRIBUTES`; do not put account IDs, request paths, or other
-unbounded values there.
+`gatewayd-public`, `realtimed`, `outboundd`, `s3-gatewayd`, and so on) and
+`service.version` is the running Gregale version. Add deployment or host
+identity through `OTEL_RESOURCE_ATTRIBUTES`; do not put account IDs, request
+paths, or other unbounded values there.
 
 ## Verify
 

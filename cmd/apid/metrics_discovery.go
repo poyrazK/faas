@@ -7,12 +7,13 @@ import (
 )
 
 const (
-	computeMetricsDiscoveryPath  = "/v1/internal/metrics/targets"
-	vmmdMetricsDiscoveryPath     = "/v1/internal/metrics/vmmd-targets"
-	imagedMetricsDiscoveryPath   = "/v1/internal/metrics/imaged-targets"
-	builderdMetricsDiscoveryPath = "/v1/internal/metrics/builderd-targets"
-	promtailMetricsDiscoveryPath = "/v1/internal/metrics/promtail-targets"
-	maxMetricsDiscoveryTargets   = 1000
+	computeMetricsDiscoveryPath   = "/v1/internal/metrics/targets"
+	vmmdMetricsDiscoveryPath      = "/v1/internal/metrics/vmmd-targets"
+	imagedMetricsDiscoveryPath    = "/v1/internal/metrics/imaged-targets"
+	builderdMetricsDiscoveryPath  = "/v1/internal/metrics/builderd-targets"
+	realtimedMetricsDiscoveryPath = "/v1/internal/metrics/realtimed-targets"
+	promtailMetricsDiscoveryPath  = "/v1/internal/metrics/promtail-targets"
+	maxMetricsDiscoveryTargets    = 1000
 )
 
 // prometheusTargetGroup is the HTTP service-discovery wire shape described by
@@ -44,6 +45,14 @@ func (s *server) imagedMetricsDiscovery(w http.ResponseWriter, r *http.Request) 
 
 func (s *server) builderdMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
 	s.metricsDiscovery(w, r, "builderd", daemonMetricsTarget("9105"))
+}
+
+// realtimedMetricsDiscovery serves the managed realtime daemon's metrics
+// from every active compute node. Realtime sockets are node-local, so a
+// control-plane Prometheus must discover the same active registry used by the
+// compute gateway rather than scrape only a single control-plane address.
+func (s *server) realtimedMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
+	s.metricsDiscovery(w, r, "realtimed", daemonMetricsTarget("9107"))
 }
 
 // promtailMetricsDiscovery serves the control-plane Prometheus HTTP-SD

@@ -1224,6 +1224,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/internal/metrics/vmmd-targets", s.vmmdMetricsDiscovery)
 	mux.HandleFunc("GET /v1/internal/metrics/imaged-targets", s.imagedMetricsDiscovery)
 	mux.HandleFunc("GET /v1/internal/metrics/builderd-targets", s.builderdMetricsDiscovery)
+	mux.HandleFunc("GET /v1/internal/metrics/realtimed-targets", s.realtimedMetricsDiscovery)
 	// Issue #274: Promtail metrics are discovered from the same active
 	// compute-node registry, but use a separate HTTP-SD endpoint so the
 	// gateway and shipper jobs never scrape each other's ports.

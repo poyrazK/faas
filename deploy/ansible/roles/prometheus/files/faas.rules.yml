@@ -992,7 +992,7 @@ groups:
       # a dead alertmanager means alerts evaluate but never page anyone.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasDaemonDown
-        expr: up{job=~"apid|gatewayd|gatewayd-internal|schedd|vmmd|imaged|builderd|meterd|outboundd|githubd|prometheus|alertmanager"} == 0
+        expr: up{job=~"apid|gatewayd|gatewayd-internal|schedd|vmmd|imaged|builderd|realtimed|outboundd|s3-gatewayd|meterd|githubd|prometheus|alertmanager"} == 0
         for: 2m
         labels:
           severity: page
@@ -1018,8 +1018,10 @@ groups:
           or vmmd_daemon_ready{daemon="vmmd"} == 0
           or imaged_daemon_ready{daemon="imaged"} == 0
           or builderd_daemon_ready{daemon="builderd"} == 0
-          or meterd_daemon_ready{daemon="meterd"} == 0
+          or realtimed_daemon_ready{daemon="realtimed"} == 0
           or outboundd_daemon_ready{daemon="outboundd"} == 0
+          or s3_gateway_daemon_ready{daemon="s3-gatewayd"} == 0
+          or meterd_daemon_ready{daemon="meterd"} == 0
         for: 5m
         labels:
           severity: page

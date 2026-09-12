@@ -36,6 +36,7 @@ prom_compute_metrics_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/t
 prom_compute_vmmd_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/vmmd-targets"
 prom_compute_imaged_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/imaged-targets"
 prom_compute_builderd_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/builderd-targets"
+prom_compute_realtimed_discovery_url: "http://127.0.0.1:8081/v1/internal/metrics/realtimed-targets"
 prom_compute_metrics_discovery_refresh_interval: "15s"
 # The supported fleet shape is one control plane with up to 1,000 compute
 # nodes. Keep the bound in the rendered scrape job as a second line of
@@ -92,6 +93,9 @@ prom_alertmanager_url: "http://127.0.0.1:9094"
 #   - builderd 9105 — the daemon's canonical loopback default and the
 #     value documented in builderd.toml.example. The single-box target
 #     is omitted automatically on a split control-plane host.
+#   - realtimed 9107 — compute-node health listener; split-box targets are
+#     discovered from apid's active compute-node registry.
+#   - outboundd 8095 — its loopback data listener also serves /metrics.
 prom_targets:
   - job: apid
     host: 127.0.0.1
@@ -113,6 +117,10 @@ prom_targets:
   - job: builderd
     host: 127.0.0.1
     port: 9105
+    box_roles: [single-box]
+  - job: realtimed
+    host: 127.0.0.1
+    port: 9107
     box_roles: [single-box]
   - job: githubd
     host: 127.0.0.1

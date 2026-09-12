@@ -96,13 +96,10 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 	resp.Range = rng
 	resp.Source = src
 
-	// Best-effort enrichment of the three Hobby+-only fields
-	// beyond the PromQL fetch. A failure here degrades the field
-	// to 0 (same posture as the QueueDepth best-effort path at
-	// pkg/appmetrics/appmetrics.go:196-199) and stamps Source
-	// with the existing degraded prefix only when the underlying
-	// PromQL fetch itself failed — these SQL/PromQL misses do
-	// not flip the whole response to degraded.
+	// Best-effort enrichment of Wakes24h is sourced from the durable events
+	// table. The cache-hit and error-budget fields remain absent until their
+	// respective metric contracts are available; emitting zero would make an
+	// unavailable signal look like an observed 0% value.
 
 	// Wakes24h: count of wake.boot_started events in the trailing
 	// 24 hours, sourced from the events table. The (data->>'app_id')
@@ -122,26 +119,6 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 			"err", err.Error())
 	}
 
-	// CacheHitRatePct: ADR-122 response-cache hit ratio. The
-	// PromQL query against gateway_response_cache_total{app_id,
-	// outcome=hit/miss} is out of scope for this PR; the field
-	// stays 0 until the response-cache consumer-facing metric
-	// lands. The DTO is non-omitempty (this field is ALWAYS on
-	// the wire) so the dashboard can rely on the documented
-	// schema. Feature-off vs. feature-on-zero-traffic is
-	// distinguished by the `Routes` block presence, not by
-	// this field's absence.
-	_ = app.RouteMetricsEnabled // opt-in flag consulted at fetch time in a future PR
-
-	// ErrorBudgetPct: trailing-30d API-availability error budget
-	// remaining. Computed against the plan's API-availability
-	// SLO target (99.5% per spec §12). The per-plan SLO target
-	// is not yet exposed on the Limits struct (issue TBD); the
-	// field stays 0 until that lands. The dashboard renders 0
-	// with no traffic as "—" rather than a misleading "budget
-	// exhausted" message.
-	// TODO: wire against apid_request_total{account_id, code}
-	// once the per-plan SLO target lands on Limits.
 	resp.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
 	if target != nil {
 		emitOperatorActionView(r, s, acct, target.ID, "metrics")

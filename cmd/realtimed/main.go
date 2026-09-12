@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -28,6 +30,21 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	ops := wire.NewOpsMetrics("realtimed")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "realtimed", wire.Version, log, ops.Registry(), ops.MetricPrefix())
+	if traceErr != nil {
+		return fmt.Errorf("realtimed: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("realtimed: trace shutdown failed", "err", err)
+		}
+	}()
+	wire.BootStamps(ctx, "realtimed", ops)
+	wire.RegisterDefaultOps(ops)
+
 	observedRole := role.FromConfig(getenv("FAAS_REALTIME_ROLE", string(role.RoleSingleBox)), "FAAS_REALTIME_ROLE")
 	if err := role.Require("realtimed", observedRole, role.RoleSingleBox, role.RoleComputeOnly); err != nil {
 		return err
@@ -51,6 +68,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		CallbackTimeout:  envDuration("FAAS_REALTIME_CALLBACK_TIMEOUT", 30*time.Second),
 	}, realtime.HTTPHooks{})
 	defer func() { _ = manager.Close() }()
+	ops.Registry().MustRegister(realtime.NewStatsCollector(manager))
+	readyProbe := &wire.ReadyzProbe{}
+	readySignal := readyProbe.Register()
+	readyProbe.SetReadyObserver(func(ready bool, reason string) {
+		ops.MarkReady("realtimed", ready, reason)
+	})
+	defer readyProbe.Drain("realtimed", log)
 
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -67,12 +91,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	server := &http.Server{
-		Handler:           manager.HTTPHandler(),
+		Handler:           trace.HTTPHandler("realtimed.internal", wire.HTTPMetricsHandler(ops, "http_request", manager.HTTPHandler())),
 		ReadHeaderTimeout: 5 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
+	controlMux := http.NewServeMux()
+	controlMux.Handle("GET /metrics", ops.Handler())
+	wire.ControlMuxLite(controlMux, readyProbe.ReadyFunc(), readyProbe.ReasonFunc())
+	controlMux.Handle("/", trace.HTTPHandler("realtimed", wire.HTTPMetricsHandler(ops, "http_request", manager.HTTPHandler())))
 	healthServer := &http.Server{
-		Handler:           manager.HTTPHandler(),
+		Handler:           controlMux,
 		ReadHeaderTimeout: 5 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
@@ -85,6 +113,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		serverErr <- nil
 	}()
+	readySignal.Set(true, "")
 	go func() {
 		log.Info("realtimed health listening", "address", healthListener.Addr().String())
 		if err := healthServer.Serve(healthListener); err != nil && !errors.Is(err, http.ErrServerClosed) {

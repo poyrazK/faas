@@ -23,7 +23,7 @@ func UnitRealtimed() daemonunit.Unit {
 		Slice:              FaasCPSlice,
 		MemoryMax:          "512M",
 
-		EnvironmentFile: "-/etc/faas/secrets/realtimed/realtimed.env",
+		EnvironmentFile: "-/etc/faas/secrets/realtimed/realtimed.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
 		},

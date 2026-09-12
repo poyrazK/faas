@@ -19,6 +19,7 @@ Slice=faas-cp.slice
 MemoryMax=512M
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/object-storage/provider.env
+EnvironmentFile=-/etc/faas/otel.env
 Environment=FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json
 Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_host_age_identity
 Environment=FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH=%d/faas_host_age_identity_previous

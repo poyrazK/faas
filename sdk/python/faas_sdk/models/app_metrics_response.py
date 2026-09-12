@@ -104,28 +104,15 @@ class AppMetricsResponse:
     cache_hit_rate_pct: float | Unset = UNSET
     """Share of cache-eligible requests served from
     `gateway_response_cache` (ADR-122) over the window.
-    ALWAYS present on the wire (the SDK can rely on the
-    documented schema) — 0 means either "feature off" (no
-    cache rule attached) or "feature on, zero traffic". The
-    dashboard distinguishes the two via the existence of the
-    `routes` block, not via field absence. The field stays 0
-    until the response-cache consumer-facing metric lands
-    (the current per-app dashboard surfaces the
-    `gateway_response_cache_total{outcome=hit/miss}` rollup
-    through the operator-side §12 panel, not this field).
+    This field is omitted until the response-cache
+    consumer-facing metric lands. Absence means unavailable,
+    not an observed 0% hit rate.
     """
     error_budget_pct: float | Unset = UNSET
-    """Trailing-30d API-availability error budget remaining (0 =
-    exhausted, 100 = full). ALWAYS present on the wire so the
-    SDK can rely on the documented schema — 0 renders as "—"
-    on the dashboard rather than a misleading "budget
-    exhausted" message. Computed against the plan's
-    API-availability SLO target (99.5% per spec §12). The
-    field stays 0 until the per-plan SLO target lands on the
-    `Limits` struct (issue TBD); once wired, the field is
-    computed against `apid_request_total{account_id, code}`
-    over the trailing 30d, scaled by the per-plan SLO
-    target.
+    """Trailing-30d API-availability error budget remaining. This
+    field is omitted until the per-plan SLO target and
+    trailing-window query are wired. Absence means unavailable,
+    not an observed exhausted budget.
     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

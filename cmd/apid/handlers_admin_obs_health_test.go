@@ -1,13 +1,11 @@
 // handlers_admin_obs_health_test.go — Obs-Meta + Trace-IDs Mega-PR /
 // C7: tests for GET /v1/admin/obs/health.
 //
-// Pins the JSON shape (closed-set fields, no nil), the admin-only
-// auth gate, and the SQL-derived data flow. PromQL-derived fields
-// are pinned at the seed default (0 / 1.0) when s.promqlClient is
-// nil — the same nil-tolerant posture the handler ships with —
-// rather than mocking Prometheus (the metric names are part of
-// the contract too; a future PromQL-server unit test can pin the
-// exact query strings).
+// Pins the JSON shape, the admin-only auth gate, and the SQL-derived
+// data flow. PromQL-derived fields are pinned at the seed default
+// (0 / 1.0) when s.promqlClient is nil, while prometheus_available
+// must be false. The healthy PromQL path is covered separately below so the
+// no-data fallback remains distinguishable from a Prometheus outage.
 package main
 
 import (
@@ -16,10 +14,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -58,7 +58,8 @@ func newObsHealthEnv(t *testing.T, scopes []string, adminEmail, callerEmail stri
 //
 // PromQL-derived fields return their nil-promql defaults (0 for
 // counters, 1.0 for the coverage ratio) because the test server
-// has s.promqlClient == nil.
+// has s.promqlClient == nil. The availability flag prevents those
+// defaults from being mistaken for live data.
 func TestObsHealthHandler_StableJSONShapeOnEmptyDB(t *testing.T) {
 	e := newObsHealthEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
 
@@ -103,8 +104,52 @@ func TestObsHealthHandler_StableJSONShapeOnEmptyDB(t *testing.T) {
 	if resp.AlertsFiring != 0 {
 		t.Errorf("AlertsFiring = %d, want 0 (nil-promql)", resp.AlertsFiring)
 	}
+	if resp.PrometheusAvailable {
+		t.Error("PrometheusAvailable = true, want false (nil-promql)")
+	}
 	if resp.GeneratedAt.IsZero() {
 		t.Error("GeneratedAt is zero, want a non-zero UTC timestamp")
+	}
+}
+
+func TestObsHealthHandler_PrometheusNoActivityIsAvailable(t *testing.T) {
+	var queries []string
+	promServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Query().Get("query"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1728000000,"0"]}]}}`)
+	}))
+	defer promServer.Close()
+
+	e := newObsHealthEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	e.s.promqlClient = promql.NewClient(promServer.URL, promServer.Client())
+	rec := e.do(t, "GET", "/v1/admin/obs/health", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.ObsHealthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	if !resp.PrometheusAvailable {
+		t.Fatal("PrometheusAvailable = false, want true for successful no-activity queries")
+	}
+	if resp.AuditLogCoverageRatio5m != 1.0 {
+		t.Fatalf("AuditLogCoverageRatio5m = %v, want 1.0", resp.AuditLogCoverageRatio5m)
+	}
+	want := []string{
+		`sum(increase(audit_log_write_total[5m])) or vector(0)`,
+		`sum(increase(audit_log_write_failures_total[5m])) or vector(0)`,
+		`sum(audit_log_coverage_ratio_5m) or vector(1)`,
+		`count(ALERTS{alertstate="firing"}) or vector(0)`,
+	}
+	if len(queries) != len(want) {
+		t.Fatalf("PromQL query count = %d, want %d (%v)", len(queries), len(want), queries)
+	}
+	for i := range want {
+		if queries[i] != want[i] {
+			t.Errorf("query[%d] = %q, want %q", i, queries[i], want[i])
+		}
 	}
 }
 
@@ -179,6 +224,7 @@ func TestSeedHealthKindRatios_StableShape(t *testing.T) {
 func TestObsHealthResponse_JSONKeysAreStable(t *testing.T) {
 	raw := `{
 		"generated_at": "2026-08-26T00:00:00Z",
+		"prometheus_available": false,
 		"audit_log_write_total_5m": 0,
 		"audit_log_write_failures_5m": 0,
 		"audit_log_coverage_ratio_5m": 1.0,
@@ -207,6 +253,7 @@ func TestObsHealthResponse_JSONKeysAreStable(t *testing.T) {
 		"trace_id_completeness_ratio",
 		"alerts_firing",
 		"generated_at",
+		"prometheus_available",
 	} {
 		if !strings.Contains(string(out), `"`+want+`":`) {
 			t.Errorf("missing JSON key %q after round-trip", want)
