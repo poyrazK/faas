@@ -1,25 +1,20 @@
 from http import HTTPStatus
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.list_tenant_surfaces_response import ListTenantSurfacesResponse
 from ...models.problem import Problem
+from ...models.repo_response import RepoResponse
 from ...types import Response
 
 
-def _get_kwargs(
-    slug: str,
-) -> dict[str, Any]:
+def _get_kwargs() -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/apps/{slug}/tenant-surfaces".format(
-            slug=quote(str(slug), safe=""),
-        ),
+        "url": "/v1/github/repos",
     }
 
     return _kwargs
@@ -27,9 +22,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ListTenantSurfacesResponse | Problem | None:
+) -> Problem | list[RepoResponse] | None:
     if response.status_code == 200:
-        response_200 = ListTenantSurfacesResponse.from_dict(response.json())
+        response_200 = []
+        _response_200 = response.json()
+        for response_200_item_data in _response_200:
+            response_200_item = RepoResponse.from_dict(response_200_item_data)
+
+            response_200.append(response_200_item)
 
         return response_200
 
@@ -38,15 +38,20 @@ def _parse_response(
 
         return response_401
 
-    if response.status_code == 402:
-        response_402 = Problem.from_dict(response.json())
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
 
-        return response_402
+        return response_403
 
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 502:
+        response_502 = Problem.from_dict(response.json())
+
+        return response_502
 
     if response.status_code == 503:
         response_503 = Problem.from_dict(response.json())
@@ -61,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ListTenantSurfacesResponse | Problem]:
+) -> Response[Problem | list[RepoResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -71,31 +76,26 @@ def _build_response(
 
 
 def sync_detailed(
-    slug: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> Response[ListTenantSurfacesResponse | Problem]:
-    """List tenant surfaces on an app.
+    client: AuthenticatedClient,
+) -> Response[Problem | list[RepoResponse]]:
+    """List repositories visible to the account's GitHub App installation.
 
-     Returns every active tenant surface on the app. Soft-deleted
-    surfaces are filtered out server-side. Returns 503 when the
-    `FAAS_TENANT_SURFACES_ENABLED` flag is off (the cluster ships
-    dark until the cert-engine real-mint ADR lands).
-
-    Args:
-        slug (str):
+     Bearer API-key surface for customer automation. Requires the
+    dedicated `github:manage` scope. The account's durable GitHub App
+    installation is resolved server-side, so callers do not need to
+    copy or provide an installation id. Installation credentials are
+    never returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ListTenantSurfacesResponse | Problem]
+        Response[Problem | list[RepoResponse]]
     """
 
-    kwargs = _get_kwargs(
-        slug=slug,
-    )
+    kwargs = _get_kwargs()
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -105,60 +105,51 @@ def sync_detailed(
 
 
 def sync(
-    slug: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> ListTenantSurfacesResponse | Problem | None:
-    """List tenant surfaces on an app.
+    client: AuthenticatedClient,
+) -> Problem | list[RepoResponse] | None:
+    """List repositories visible to the account's GitHub App installation.
 
-     Returns every active tenant surface on the app. Soft-deleted
-    surfaces are filtered out server-side. Returns 503 when the
-    `FAAS_TENANT_SURFACES_ENABLED` flag is off (the cluster ships
-    dark until the cert-engine real-mint ADR lands).
-
-    Args:
-        slug (str):
+     Bearer API-key surface for customer automation. Requires the
+    dedicated `github:manage` scope. The account's durable GitHub App
+    installation is resolved server-side, so callers do not need to
+    copy or provide an installation id. Installation credentials are
+    never returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ListTenantSurfacesResponse | Problem
+        Problem | list[RepoResponse]
     """
 
     return sync_detailed(
-        slug=slug,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
-    slug: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> Response[ListTenantSurfacesResponse | Problem]:
-    """List tenant surfaces on an app.
+    client: AuthenticatedClient,
+) -> Response[Problem | list[RepoResponse]]:
+    """List repositories visible to the account's GitHub App installation.
 
-     Returns every active tenant surface on the app. Soft-deleted
-    surfaces are filtered out server-side. Returns 503 when the
-    `FAAS_TENANT_SURFACES_ENABLED` flag is off (the cluster ships
-    dark until the cert-engine real-mint ADR lands).
-
-    Args:
-        slug (str):
+     Bearer API-key surface for customer automation. Requires the
+    dedicated `github:manage` scope. The account's durable GitHub App
+    installation is resolved server-side, so callers do not need to
+    copy or provide an installation id. Installation credentials are
+    never returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ListTenantSurfacesResponse | Problem]
+        Response[Problem | list[RepoResponse]]
     """
 
-    kwargs = _get_kwargs(
-        slug=slug,
-    )
+    kwargs = _get_kwargs()
 
     response = await client.get_async_httpx_client().request(**kwargs)
 
@@ -166,31 +157,27 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    slug: str,
     *,
-    client: AuthenticatedClient | Client,
-) -> ListTenantSurfacesResponse | Problem | None:
-    """List tenant surfaces on an app.
+    client: AuthenticatedClient,
+) -> Problem | list[RepoResponse] | None:
+    """List repositories visible to the account's GitHub App installation.
 
-     Returns every active tenant surface on the app. Soft-deleted
-    surfaces are filtered out server-side. Returns 503 when the
-    `FAAS_TENANT_SURFACES_ENABLED` flag is off (the cluster ships
-    dark until the cert-engine real-mint ADR lands).
-
-    Args:
-        slug (str):
+     Bearer API-key surface for customer automation. Requires the
+    dedicated `github:manage` scope. The account's durable GitHub App
+    installation is resolved server-side, so callers do not need to
+    copy or provide an installation id. Installation credentials are
+    never returned.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ListTenantSurfacesResponse | Problem
+        Problem | list[RepoResponse]
     """
 
     return (
         await asyncio_detailed(
-            slug=slug,
             client=client,
         )
     ).parsed

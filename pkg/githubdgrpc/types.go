@@ -35,6 +35,7 @@ const (
 // Repo is one repo in the installation's catalog. The dashboard's
 // repo picker renders these.
 type Repo struct {
+	ID            int64
 	FullName      string // "owner/name"
 	DefaultBranch string // "main" | "master" | custom
 	Private       bool

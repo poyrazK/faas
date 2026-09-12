@@ -983,6 +983,7 @@ func (x *ExchangeOAuthCodeResponse) GetDefaultBranch() string {
 
 type Repo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,4,opt,name=id,proto3" json:"id,omitempty"`                                           // GitHub repository id
 	FullName      string                 `protobuf:"bytes,1,opt,name=full_name,json=fullName,proto3" json:"full_name,omitempty"`                // "owner/name"
 	DefaultBranch string                 `protobuf:"bytes,2,opt,name=default_branch,json=defaultBranch,proto3" json:"default_branch,omitempty"` // "main" | "master" | custom
 	Private       bool                   `protobuf:"varint,3,opt,name=private,proto3" json:"private,omitempty"`
@@ -1018,6 +1019,13 @@ func (x *Repo) ProtoReflect() protoreflect.Message {
 // Deprecated: Use Repo.ProtoReflect.Descriptor instead.
 func (*Repo) Descriptor() ([]byte, []int) {
 	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *Repo) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
 }
 
 func (x *Repo) GetFullName() string {
@@ -2365,8 +2373,9 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x05state\x18\x03 \x01(\tR\x05state\"k\n" +
 	"\x19ExchangeOAuthCodeResponse\x12'\n" +
 	"\x0finstallation_id\x18\x01 \x01(\tR\x0einstallationId\x12%\n" +
-	"\x0edefault_branch\x18\x02 \x01(\tR\rdefaultBranch\"d\n" +
-	"\x04Repo\x12\x1b\n" +
+	"\x0edefault_branch\x18\x02 \x01(\tR\rdefaultBranch\"t\n" +
+	"\x04Repo\x12\x0e\n" +
+	"\x02id\x18\x04 \x01(\x03R\x02id\x12\x1b\n" +
 	"\tfull_name\x18\x01 \x01(\tR\bfullName\x12%\n" +
 	"\x0edefault_branch\x18\x02 \x01(\tR\rdefaultBranch\x12\x18\n" +
 	"\aprivate\x18\x03 \x01(\bR\aprivate\"e\n" +

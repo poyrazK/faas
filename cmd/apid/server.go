@@ -2539,6 +2539,7 @@ func (s *server) handler() http.Handler {
 	// Customer automation surface. These aliases deliberately use a
 	// dedicated bearer scope and reject session cookies, so CLI/CI callers
 	// can manage a connection without weakening the browser CSRF contract.
+	mux.HandleFunc("GET /v1/github/repos", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.listGitHubRepositories)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/github", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.getGitHubConnection)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/github/bind", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.bindGitHubConnection))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/github/sync", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.syncGitHubConnection))))))

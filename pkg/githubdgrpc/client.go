@@ -113,6 +113,7 @@ func (c *Client) ListInstallableRepos(ctx context.Context, accountID string, ins
 	out := make([]Repo, 0, len(resp.GetRepos()))
 	for _, r := range resp.GetRepos() {
 		out = append(out, Repo{
+			ID:            r.GetId(),
 			FullName:      r.GetFullName(),
 			DefaultBranch: r.GetDefaultBranch(),
 			Private:       r.GetPrivate(),

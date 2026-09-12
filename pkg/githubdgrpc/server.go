@@ -166,6 +166,7 @@ func (s *Server) ListInstallableRepos(ctx context.Context, req *githubdpb.ListIn
 	pb := make([]*githubdpb.Repo, 0, len(repos))
 	for _, r := range repos {
 		pb = append(pb, &githubdpb.Repo{
+			Id:            r.ID,
 			FullName:      r.FullName,
 			DefaultBranch: r.DefaultBranch,
 			Private:       r.Private,

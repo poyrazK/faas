@@ -314,6 +314,15 @@ type AppConfiguredResources struct {
 }
 
 // AppResponse is an app as returned by the API.
+// RepoResponse is one repository visible to the account's GitHub App
+// installation. Installation credentials are never returned.
+type RepoResponse struct {
+	ID            int64  `json:"id"`
+	FullName      string `json:"full_name"`
+	DefaultBranch string `json:"default_branch"`
+	Private       bool   `json:"private"`
+}
+
 type AppResponse struct {
 	ID              string `json:"id"`
 	Slug            string `json:"slug"`

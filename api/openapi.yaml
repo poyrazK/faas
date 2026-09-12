@@ -5493,6 +5493,41 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/github/repos:
+    get:
+      tags: [github]
+      operationId: listGitHubRepositories
+      summary: List repositories visible to the account's GitHub App installation.
+      description: |
+        Bearer API-key surface for customer automation. Requires the
+        dedicated `github:manage` scope. The account's durable GitHub App
+        installation is resolved server-side, so callers do not need to
+        copy or provide an installation id. Installation credentials are
+        never returned.
+      security:
+        - bearerAuth: [github:manage]
+      responses:
+        '200':
+          description: Repositories currently visible to the account's GitHub App installation.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/RepoResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: The account has not completed GitHub App installation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: GitHub could not be reached while listing repositories.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/github:
     parameters:
       - $ref: '#/components/parameters/Slug'

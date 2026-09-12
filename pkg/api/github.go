@@ -2,6 +2,15 @@ package api
 
 import "context"
 
+// ListGitHubRepositories returns the repositories visible to the account's
+// durable GitHub App installation. The server resolves the installation id
+// from the bearer token's account, so callers do not need browser state or a
+// manually copied installation id.
+func (c *Client) ListGitHubRepositories(ctx context.Context) ([]RepoResponse, error) {
+	var out []RepoResponse
+	return out, c.do(ctx, "GET", "/v1/github/repos", nil, &out)
+}
+
 // GetGitHubConnection returns the account-scoped GitHub installation and app
 // binding projection. The endpoint is bearer-only and requires github:manage.
 func (c *Client) GetGitHubConnection(ctx context.Context, slug string) (GitHubInstallStatus, error) {

@@ -15,7 +15,7 @@ import (
 // are for repeatable customer automation after an installation exists.
 func cmdGithub(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale github <status|sync|bind|disconnect> <slug> [flags]", "github")
+		PrintUsage(os.Stderr, "usage: gregale github <status|sync|repos|bind|disconnect> <slug> [flags]", "github")
 		return 1
 	}
 	switch args[0] {
@@ -23,6 +23,8 @@ func cmdGithub(args []string) int {
 		return cmdGithubStatus(args[1:])
 	case "sync":
 		return cmdGithubSync(args[1:])
+	case "repos":
+		return cmdGithubRepos(args[1:])
 	case "bind":
 		return cmdGithubBind(args[1:])
 	case "disconnect":
@@ -31,6 +33,38 @@ func cmdGithub(args []string) int {
 		fmt.Fprintf(os.Stderr, "unknown github subcommand %q\n", args[0])
 		return 1
 	}
+}
+
+func cmdGithubRepos(args []string) int {
+	slug, ok := githubSlugArg(args, "github repos")
+	if !ok {
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	// Resolve the slug first so a typo cannot accidentally list a valid
+	// account-level installation while the caller meant another app.
+	if _, err := client.GetGitHubConnection(context.Background(), slug); err != nil {
+		return printErr("GitHub status failed", err)
+	}
+	repos, err := client.ListGitHubRepositories(context.Background())
+	if err != nil {
+		return printErr("GitHub repository listing failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(repos))
+	}
+	_, _ = fmt.Fprintf(osStdout, "GitHub repositories visible to %s:\n", slug)
+	for _, repo := range repos {
+		visibility := "public"
+		if repo.Private {
+			visibility = "private"
+		}
+		_, _ = fmt.Fprintf(osStdout, "  %-40s %-8s %s\n", repo.FullName, visibility, repo.DefaultBranch)
+	}
+	return 0
 }
 
 func cmdGithubStatus(args []string) int {
@@ -67,15 +101,15 @@ func cmdGithubSync(args []string) int {
 
 func cmdGithubBind(args []string) int {
 	fs := flag.NewFlagSet("github bind", flag.ContinueOnError)
-	installationID := fs.Int64("installation-id", 0, "GitHub App installation id (required)")
+	installationID := fs.Int64("installation-id", 0, "GitHub App installation id (optional; resolved from the account when omitted)")
 	repo := fs.String("repo", "", "GitHub repository OWNER/NAME (required)")
 	branch := fs.String("branch", "", "production branch (defaults to the installation default)")
 	deployBranches := fs.String("deploy-branches", "", "comma-separated branch=scope mappings")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !validCLISlug(fs.Arg(0)) || *installationID <= 0 || strings.TrimSpace(*repo) == "" {
-		PrintUsage(os.Stderr, "usage: gregale github bind <slug> --installation-id ID --repo OWNER/NAME [--branch BRANCH] [--deploy-branches branch=scope,...]", "github")
+	if fs.NArg() != 1 || !validCLISlug(fs.Arg(0)) || *installationID < 0 || strings.TrimSpace(*repo) == "" {
+		PrintUsage(os.Stderr, "usage: gregale github bind <slug> --repo OWNER/NAME [--installation-id ID] [--branch BRANCH] [--deploy-branches branch=scope,...]", "github")
 		return 1
 	}
 	branches, err := parseGitHubDeployBranches(*deployBranches)
@@ -85,6 +119,16 @@ func cmdGithubBind(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *installationID == 0 {
+		status, err := client.GetGitHubConnection(context.Background(), fs.Arg(0))
+		if err != nil {
+			return printErr("GitHub status failed", err)
+		}
+		if status.InstallationID <= 0 {
+			return printErr("GitHub bind failed", fmt.Errorf("no GitHub App installation is connected; run `gregale connect github` first"))
+		}
+		*installationID = status.InstallationID
 	}
 	resp, err := client.BindGitHubConnection(context.Background(), fs.Arg(0), api.InstallBindRequest{
 		InstallationID: *installationID, RepoFullName: strings.TrimSpace(*repo),
