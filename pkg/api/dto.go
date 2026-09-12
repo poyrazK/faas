@@ -5104,12 +5104,20 @@ type ApplyResponseApp struct {
 // Renders as {slug, app_id, deployment_id, build_id, error?}.
 // On staging or enqueue failure, Error is non-empty and the
 // deployment/build IDs are empty. Partial failure is by design.
+// When the CLI waits for a project deploy, DeploymentStatus and
+// BuildStatus are filled from the durable deployment/build rows. They
+// are wire-additive so existing apply consumers can continue to treat
+// this as an enqueue receipt while wait-aware consumers get the final
+// lifecycle state in the same response.
 type AppliedBuild struct {
-	Slug         string `json:"slug"`
-	AppID        string `json:"app_id"`
-	DeploymentID string `json:"deployment_id,omitempty"`
-	BuildID      string `json:"build_id,omitempty"`
-	Error        string `json:"error,omitempty"`
+	Slug             string `json:"slug"`
+	AppID            string `json:"app_id"`
+	DeploymentID     string `json:"deployment_id,omitempty"`
+	BuildID          string `json:"build_id,omitempty"`
+	DeploymentStatus string `json:"deployment_status,omitempty"`
+	BuildStatus      string `json:"build_status,omitempty"`
+	FailureClass     string `json:"failure_class,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 // --- cosign trusted-publisher wire types (issue #472 / ADR-054) -------------

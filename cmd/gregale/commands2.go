@@ -1214,14 +1214,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	noTriggers := fs.Bool("no-triggers", false, "skip the `gregale.yaml` triggers fan-out (issue #791 PR-C)")
 	// Deployment completion is wait-by-default for compatibility with the
 	// existing deploy command; --no-wait returns once apid queues the
-	// deployment so CI and scripts can continue immediately.
-	waitDeploy := fs.Bool("wait", false, "wait for the deployment to become live (default)")
-	noWaitDeploy := fs.Bool("no-wait", false, "return after the deployment is queued")
+	// deployment/build so CI and scripts can continue immediately.
+	waitDeploy := fs.Bool("wait", false, "wait for deployments/builds to reach a terminal state (default)")
+	noWaitDeploy := fs.Bool("no-wait", false, "return after deployments/builds are queued")
 	// --create-only reserves the app metadata without uploading a deployment.
 	// This supports service templates whose secrets must be configured before
 	// their first process starts, while reusing the normal shape/runtime path.
 	createOnly := fs.Bool("create-only", false, "create or reserve the app without uploading a deployment")
-	waitTimeoutSeconds := fs.Int("timeout", int(defaultDeployWaitTimeout/time.Second), "maximum seconds to wait for deployment readiness (default 300)")
+	waitTimeoutSeconds := fs.Int("timeout", int(defaultDeployWaitTimeout/time.Second), "maximum shared wait seconds for deployment readiness (default 300)")
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this deployment (optional)")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS
@@ -2207,8 +2207,26 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err != nil {
 			return printErr("Apply failed", err)
 		}
-		if jsonOutput {
+		// --no-wait preserves the enqueue receipt exactly. The default
+		// project path waits for every workload just like a single-app
+		// deploy, and returns the observed lifecycle in the same response.
+		if jsonOutput && (!waitForDeploy || len(apply.Builds) == 0) {
 			return jsonOut(writeJSON(apply))
+		}
+		if jsonOutput {
+			waited := waitForProjectDeployments(ctx, client, apply,
+				time.Duration(*waitTimeoutSeconds)*time.Second)
+			if code := jsonOut(writeJSON(waited.apply)); code != 0 {
+				return code
+			}
+			if waited.interrupted {
+				return 130
+			}
+			if waited.timedOut {
+				PrintWarn(osStderr, "project deployments did not reach a terminal state before the wait deadline")
+				return 3
+			}
+			return projectApplyExitCode(waited.apply)
 		}
 		PrintOK(osStdout, "Created project %s with %d app(s) and %d cron(s)",
 			apply.ProjectID, len(apply.Apps), len(plan.Crons))
@@ -2218,29 +2236,24 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// fires only when the post-exclude apply succeeded but the
 		// pre-exclude gate would have blocked. Extracted into a
 		// helper so unit tests can pin the wire shape without
-		// standing up the full deploy command. The render is
-		// suppressed under --json (the jsonOutput branch returns
-		// above with a byte-shape write; the human-readable note
-		// would otherwise duplicate the JSON for those operators).
+		// standing up the full deploy command.
 		renderApplyRescue(osStdout, apply)
-		// Per-workload build lines (PR-A, repo decomposition Phase 5
-		// close-the-loop). The apply path enqueued one (deployment,
-		// build) per added/changed workload; surface them so the
-		// operator can `faas logs <build_id>` to follow progress.
-		// Partial-failure rows have Error populated and no IDs.
-		// We ignore Fprintf errors: stdout is the only sink and a
-		// closed pipe (e.g. `... | head`) would otherwise flip the
-		// exit code on a successful apply — matches the
-		// commands_decompose_test stub which drops Fprintf errors
-		// on the same path.
-		for _, b := range apply.Builds {
-			if b.Error != "" {
-				_, _ = fmt.Fprintf(osStdout, "  ! %s: %s\n", b.Slug, b.Error)
-				continue
-			}
-			_, _ = fmt.Fprintf(osStdout, "  ✓ %s: deployment=%s build=%s\n", b.Slug, b.DeploymentID, b.BuildID)
+		if !waitForDeploy || len(apply.Builds) == 0 {
+			renderProjectApplyBuilds(osStdout, apply.Builds, false)
+			return 0
 		}
-		return 0
+		PrintProgress(osStdout, "waiting for %d project deployment(s)…", len(apply.Builds))
+		waited := waitForProjectDeployments(ctx, client, apply,
+			time.Duration(*waitTimeoutSeconds)*time.Second)
+		renderProjectApplyBuilds(osStdout, waited.apply.Builds, true)
+		if waited.interrupted {
+			return 130
+		}
+		if waited.timedOut {
+			PrintWarn(osStderr, "project deployments did not reach a terminal state before the wait deadline")
+			return 3
+		}
+		return projectApplyExitCode(waited.apply)
 	}
 
 	var workflowDefs []api.WorkflowSpec

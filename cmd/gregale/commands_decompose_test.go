@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -39,10 +40,15 @@ import (
 // a useful message — that keeps regressions from masquerading as a
 // happy-path write.
 type decomposeSink struct {
-	scanStatus  int
-	scanBody    api.PlanResponse
-	applyStatus int
-	applyBody   api.ApplyResponse
+	mu              sync.Mutex
+	scanStatus      int
+	scanBody        api.PlanResponse
+	applyStatus     int
+	applyBody       api.ApplyResponse
+	deployments     map[string]api.DeploymentResponse
+	builds          map[string]api.BuildResponse
+	deploymentCalls int
+	buildCalls      int
 
 	// capture lets tests assert the multipart body shape, including
 	// the parsed Content-Type and the field set the SDK Client writes.
@@ -66,6 +72,26 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.capturedMultipart = body
 		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.applyStatus, s.applyBody)
+	case strings.HasPrefix(r.URL.Path, "/v1/deployments/") && r.Method == http.MethodGet:
+		s.mu.Lock()
+		s.deploymentCalls++
+		s.mu.Unlock()
+		id := strings.TrimPrefix(r.URL.Path, "/v1/deployments/")
+		if deployment, ok := s.deployments[id]; ok {
+			writeJSONTestStatus(w, http.StatusOK, deployment)
+			return
+		}
+		http.Error(w, "decomposeSink: deployment not found", http.StatusNotFound)
+	case strings.HasPrefix(r.URL.Path, "/v1/builds/") && r.Method == http.MethodGet:
+		s.mu.Lock()
+		s.buildCalls++
+		s.mu.Unlock()
+		id := strings.TrimPrefix(r.URL.Path, "/v1/builds/")
+		if build, ok := s.builds[id]; ok {
+			writeJSONTestStatus(w, http.StatusOK, build)
+			return
+		}
+		http.Error(w, "decomposeSink: build not found", http.StatusNotFound)
 	default:
 		http.Error(w, "decomposeSink: not found: "+r.URL.Path, http.StatusNotFound)
 	}
@@ -621,6 +647,196 @@ func TestCmdDeployTarball_JSONFlag(t *testing.T) {
 	}
 	if len(out.Apps) != 3 {
 		t.Errorf("apps: got %d, want 3", len(out.Apps))
+	}
+}
+
+func projectApplyWithBuilds() api.ApplyResponse {
+	apply := goldenApply
+	apply.Builds = []api.AppliedBuild{
+		{Slug: "api", AppID: "a-1", DeploymentID: "d-api", BuildID: "b-api"},
+		{Slug: "worker", AppID: "a-3", DeploymentID: "d-worker", BuildID: "b-worker"},
+	}
+	return apply
+}
+
+func projectTerminalDeployments() map[string]api.DeploymentResponse {
+	return map[string]api.DeploymentResponse{
+		"d-api":    {ID: "d-api", AppID: "a-1", BuildID: "b-api", Status: statusLive},
+		"d-worker": {ID: "d-worker", AppID: "a-3", BuildID: "b-worker", Status: statusLive},
+	}
+}
+
+func projectTerminalBuilds() map[string]api.BuildResponse {
+	return map[string]api.BuildResponse{
+		"b-api":    {ID: "b-api", DeploymentID: "d-api", Status: api.BuildStatusSucceeded},
+		"b-worker": {ID: "b-worker", DeploymentID: "d-worker", Status: api.BuildStatusSucceeded},
+	}
+}
+
+// TestCmdDeployTarball_ProjectWaitsForAllBuilds pins the default project
+// lifecycle: an apply receipt is not considered complete until every
+// deployment and build has a terminal status, and the text output includes
+// those observed statuses.
+func TestCmdDeployTarball_ProjectWaitsForAllBuilds(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   projectApplyWithBuilds(),
+		deployments: projectTerminalDeployments(),
+		builds:      projectTerminalBuilds(),
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	prevJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = prevJSON }()
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t), "--project-slug", "fixture", "--yes",
+	}); code != 0 {
+		t.Fatalf("project wait exit = %d, want 0", code)
+	}
+	if sink.deploymentCalls != 2 || sink.buildCalls != 2 {
+		t.Fatalf("status calls: deployments=%d builds=%d, want 2 each", sink.deploymentCalls, sink.buildCalls)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"waiting for 2 project deployment(s)",
+		"api: deployment=d-api (live) build=b-api (succeeded)",
+		"worker: deployment=d-worker (live) build=b-worker (succeeded)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("project wait output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestCmdDeployTarball_ProjectWaitJSONIncludesStatuses keeps the machine
+// readable response aligned with the human result: wait-aware JSON carries
+// the terminal deployment/build state for each workload.
+func TestCmdDeployTarball_ProjectWaitJSONIncludesStatuses(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   projectApplyWithBuilds(),
+		deployments: projectTerminalDeployments(),
+		builds:      projectTerminalBuilds(),
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	prevJSON := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = prevJSON }()
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t), "--project-slug", "fixture", "--yes",
+	}); code != 0 {
+		t.Fatalf("project wait --json exit = %d, want 0", code)
+	}
+	var got api.ApplyResponse
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &got); err != nil {
+		t.Fatalf("project wait JSON is invalid: %v\n%s", err, stdout.String())
+	}
+	if len(got.Builds) != 2 {
+		t.Fatalf("builds: got %d, want 2", len(got.Builds))
+	}
+	for _, build := range got.Builds {
+		if build.DeploymentStatus != statusLive || build.BuildStatus != api.BuildStatusSucceeded {
+			t.Errorf("%s statuses: deployment=%q build=%q", build.Slug, build.DeploymentStatus, build.BuildStatus)
+		}
+	}
+}
+
+// TestCmdDeployTarball_ProjectNoWaitSkipsStatusReads preserves the explicit
+// escape hatch for callers that only want the enqueue receipt.
+func TestCmdDeployTarball_ProjectNoWaitSkipsStatusReads(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   projectApplyWithBuilds(),
+		deployments: projectTerminalDeployments(),
+		builds:      projectTerminalBuilds(),
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	prevJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = prevJSON }()
+
+	stdout, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t), "--project-slug", "fixture", "--yes", "--no-wait",
+	}); code != 0 {
+		t.Fatalf("project --no-wait exit = %d, want 0", code)
+	}
+	if sink.deploymentCalls != 0 || sink.buildCalls != 0 {
+		t.Fatalf("--no-wait performed status reads: deployments=%d builds=%d", sink.deploymentCalls, sink.buildCalls)
+	}
+	if !strings.Contains(stdout.String(), "deployment=d-api build=b-api") {
+		t.Errorf("--no-wait output lost enqueue receipt:\n%s", stdout.String())
+	}
+}
+
+// TestCmdDeployTarball_ProjectWaitTimeoutReturnsQueuedState verifies that the
+// shared --timeout budget is honored and the JSON response still contains the
+// most recent non-terminal statuses so the caller can resume watching later.
+func TestCmdDeployTarball_ProjectWaitTimeoutReturnsQueuedState(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   projectApplyWithBuilds(),
+		deployments: map[string]api.DeploymentResponse{
+			"d-api":    {ID: "d-api", Status: "running"},
+			"d-worker": {ID: "d-worker", Status: "running"},
+		},
+		builds: map[string]api.BuildResponse{
+			"b-api":    {ID: "b-api", Status: api.BuildStatusRunning},
+			"b-worker": {ID: "b-worker", Status: api.BuildStatusRunning},
+		},
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	prevJSON := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = prevJSON }()
+
+	stdout, restoreStdout := captureStdout(t)
+	defer restoreStdout()
+	stderr, restoreStderr := captureStderr(t)
+	defer restoreStderr()
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t), "--project-slug", "fixture", "--yes", "--timeout", "1",
+	}); code != 3 {
+		t.Fatalf("project wait timeout exit = %d, want 3", code)
+	}
+	var got api.ApplyResponse
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &got); err != nil {
+		t.Fatalf("timeout JSON is invalid: %v\n%s", err, stdout.String())
+	}
+	for _, build := range got.Builds {
+		if build.DeploymentStatus != "running" || build.BuildStatus != api.BuildStatusRunning {
+			t.Errorf("%s timeout statuses: deployment=%q build=%q", build.Slug, build.DeploymentStatus, build.BuildStatus)
+		}
+	}
+	if !strings.Contains(stderr.String(), "did not reach a terminal state") {
+		t.Errorf("timeout warning missing: %q", stderr.String())
 	}
 }
 
