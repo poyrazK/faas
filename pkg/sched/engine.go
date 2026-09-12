@@ -680,6 +680,25 @@ func (e *Engine) budgetForWake(in bootInput) time.Duration {
 	return e.budgetFor(in.initState)
 }
 
+// ownsApp reports whether this scheduler may mutate an app's runtime state.
+// A node-local scheduler owns exactly its apps.node_id shard. An owner-less
+// scheduler is the legacy single-box/default-local scheduler; it must not also
+// act on apps assigned to a real compute node, otherwise the central and
+// node-local schedulers race the same park and each keeps an independent
+// admission ledger.
+func (e *Engine) ownsApp(app state.App) bool {
+	if app.NodeID == "" {
+		return true
+	}
+	if e.ownerNodeID != "" {
+		return app.NodeID == e.ownerNodeID
+	}
+	if e.defaultLocalNodeID != "" {
+		return app.NodeID == e.defaultLocalNodeID
+	}
+	return true
+}
+
 // NewEngine wires the engine. notif may be nil (notifications are best-effort in
 // tests); log may be nil (slog default); ops may be nil (tests don't assert on
 // metrics).
@@ -1587,7 +1606,7 @@ func (e *Engine) RestartApp(ctx context.Context, appID, wakeID string) (out Coor
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: restart app: load app %s: %w", appID, err)
 	}
-	if e.ownerNodeID != "" && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+	if !e.ownsApp(app) {
 		return CoordOutcome{}, nil
 	}
 	if app.Status != state.AppActive && app.Status != state.AppEvictedCold {
@@ -1772,17 +1791,15 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	// synthetic default-local row has no NodeID constraint). Empty
 	// app.NodeID is the legacy non-shared case (an app never pinned
 	// to a node); the engine's chooser places it on the local box.
-	if e.ownerNodeID != "" {
-		app, err := e.store.AppByID(ctx, appID)
-		if err != nil && !errors.Is(err, state.ErrNotFound) {
-			return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: load app %q: %w", appID, err)
-		}
-		if err == nil && app.NodeID != "" && app.NodeID != e.ownerNodeID {
-			return CoordOutcome{}, fmt.Errorf(
-				"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box)",
-				appID, app.NodeID, e.ownerNodeID,
-			)
-		}
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return CoordOutcome{}, fmt.Errorf("sched: EnsureWake: load app %q: %w", appID, err)
+	}
+	if err == nil && !e.ownsApp(app) {
+		return CoordOutcome{}, fmt.Errorf(
+			"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box)",
+			appID, app.NodeID, e.ownerNodeID,
+		)
 	}
 	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutFor(ctx, appID))
 	if err != nil {
@@ -2296,6 +2313,17 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	if bypassGates {
 		concurrency = e.ledger.Concurrency(app.ID)
 	} else {
+		// A peer scheduler or a recovery path can move an instance to a
+		// non-resident state without touching this process's in-memory ledger.
+		// Reconcile only when the local view would reject at the app cap, so
+		// healthy cold wakes keep the existing zero-query fast path.
+		if e.ledger.Concurrency(app.ID) >= effectiveMaxConcurrency(app, limits) {
+			if repaired, reconcileErr := e.reconcileAppAdmission(ctx, app.ID); reconcileErr != nil {
+				e.log.Warn("sched: reconcile stale admission before cap decision", "app", app.ID, "err", reconcileErr)
+			} else if repaired > 0 {
+				e.log.Info("sched: released stale admission before cap decision", "app", app.ID, "instances", repaired)
+			}
+		}
 		outcome, obsCents, capCents, concurrency, atCapacity = e.admitGate(ctx, &app, limits)
 	}
 	if outcome != wakeAdmit {
@@ -4864,6 +4892,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err != nil {
 		return err
 	}
+	if !e.ownsApp(app) {
+		return nil
+	}
 
 	// Load the deployment row so layerPath can read the rootfs_path imaged
 	// stamped. Missing row (race with apid? — shouldn't happen, schedd only
@@ -5164,6 +5195,33 @@ func (e *Engine) ParkWithReason(ctx context.Context, instanceID, reason string) 
 	return nil
 }
 
+// reconcileAppAdmission repairs this process's ledger from durable instance
+// states. It is app-scoped and is called only on a would-be concurrency
+// rejection. Terminal rows release their reservation; snapshotting and
+// migrating rows keep RAM but no longer consume an app serving slot.
+func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, error) {
+	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	if err != nil {
+		return 0, err
+	}
+	repaired := 0
+	for _, ins := range instances {
+		current := state.State(ins.State)
+		if current.CountsForConcurrency() {
+			continue
+		}
+		if current.CountsForRAM() {
+			e.ledger.BeginSnapshot(ins.ID)
+			continue
+		}
+		if e.ledger.ResidentFor(ins.ID) {
+			e.ledger.Release(ins.ID)
+			repaired++
+		}
+	}
+	return repaired, nil
+}
+
 // ParkApp tears down every live instance of an app whose lifecycle has already
 // been changed to evicted_cold by apid. The app-level park endpoint is
 // asynchronous: apid owns the app status write, while schedd owns instance
@@ -5191,7 +5249,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	// In the split-node topology every schedd receives the notification.
 	// Only the owner may mutate the app's instances. Empty owner/node values
 	// preserve the legacy single-box and pre-sharding test posture.
-	if e.ownerNodeID != "" && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+	if !e.ownsApp(app) {
 		return 0, nil
 	}
 	if app.Status != state.AppEvictedCold {
@@ -5207,7 +5265,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("sched: park app: reload app %s: %w", appID, err)
 	}
-	if e.ownerNodeID != "" && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+	if !e.ownsApp(app) {
 		return 0, nil
 	}
 	if app.Status != state.AppEvictedCold {
@@ -5313,7 +5371,7 @@ func (e *Engine) ReconcileLifecycleInstance(ctx context.Context, instanceID stri
 	if err != nil {
 		return false, fmt.Errorf("sched: lifecycle reconcile: load app %s: %w", ins.AppID, err)
 	}
-	if e.ownerNodeID != "" && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+	if !e.ownsApp(app) {
 		return false, nil
 	}
 
@@ -5330,7 +5388,7 @@ func (e *Engine) ReconcileLifecycleInstance(ctx context.Context, instanceID stri
 	if err != nil {
 		return false, fmt.Errorf("sched: lifecycle reconcile: reload app %s: %w", ins.AppID, err)
 	}
-	if e.ownerNodeID != "" && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+	if !e.ownsApp(app) {
 		return false, nil
 	}
 
@@ -5414,7 +5472,7 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 	if app.Status != state.AppDeleted {
 		return 0, nil
 	}
-	if e.ownerNodeID != "" && app.NodeID != "" && app.NodeID != e.ownerNodeID {
+	if !e.ownsApp(app) {
 		return 0, nil
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, appID)
@@ -5805,6 +5863,9 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		return n.VCPUBudget
 	}
 	for _, app := range apps {
+		if !e.ownsApp(app) {
+			continue
+		}
 		acct, err := e.store.AccountByID(ctx, app.AccountID)
 		if err != nil {
 			continue

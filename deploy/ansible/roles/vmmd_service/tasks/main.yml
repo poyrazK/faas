@@ -84,6 +84,12 @@
     group: root
     mode: "0644"
 
+- name: vmmd_service — remove legacy schedd target override
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-vmmd.service.d/99-schedd-target.conf
+    state: absent
+  notify: restart faas-vmmd
+
 - name: vmmd_service — install manifest-derived schedd target
   ansible.builtin.template:
     src: 99-faas-schedd-target.conf.j2

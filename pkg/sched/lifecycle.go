@@ -540,6 +540,9 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		}
 		return
 	}
+	if !e.ownsApp(app) {
+		return
+	}
 	if app.Status != state.AppActive {
 		return
 	}
@@ -812,6 +815,9 @@ func (e *Engine) ReconcileWorkerApp(ctx context.Context, appID string) {
 		if !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("sched: load worker app", "app", appID, "err", err)
 		}
+		return
+	}
+	if !e.ownsApp(app) {
 		return
 	}
 	deployments, err := e.store.LiveDeployments(ctx, appID)
