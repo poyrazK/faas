@@ -7,14 +7,14 @@ import (
 )
 
 const (
-	computeMetricsDiscoveryPath  = "/v1/internal/metrics/targets"
-	vmmdMetricsDiscoveryPath     = "/v1/internal/metrics/vmmd-targets"
-	imagedMetricsDiscoveryPath   = "/v1/internal/metrics/imaged-targets"
-	builderdMetricsDiscoveryPath = "/v1/internal/metrics/builderd-targets"
-	nodeMetricsDiscoveryPath     = "/v1/internal/metrics/node-targets"
+	computeMetricsDiscoveryPath   = "/v1/internal/metrics/targets"
+	vmmdMetricsDiscoveryPath      = "/v1/internal/metrics/vmmd-targets"
+	imagedMetricsDiscoveryPath    = "/v1/internal/metrics/imaged-targets"
+	builderdMetricsDiscoveryPath  = "/v1/internal/metrics/builderd-targets"
+	nodeMetricsDiscoveryPath      = "/v1/internal/metrics/node-targets"
 	realtimedMetricsDiscoveryPath = "/v1/internal/metrics/realtimed-targets"
-	promtailMetricsDiscoveryPath = "/v1/internal/metrics/promtail-targets"
-	maxMetricsDiscoveryTargets   = 1000
+	promtailMetricsDiscoveryPath  = "/v1/internal/metrics/promtail-targets"
+	maxMetricsDiscoveryTargets    = 1000
 )
 
 // metricsDiscoveryHandler is mounted only on apid's loopback metrics server.

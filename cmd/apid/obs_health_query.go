@@ -50,17 +50,12 @@ const obsHealthQueryWindow = 5 * time.Minute
 // operator sees it as "missing" at.
 const obsHealthStuckRunningThreshold = 5 * time.Minute
 
-// auditLogWrite5m queries the apid Prometheus for the delta of
+// auditLogWrite5mStatus queries the apid Prometheus for the delta of
 // audit_log_write_total over the trailing 5m window. Returns 0
 // when s.promqlClient is nil OR when the query fails — the
 // endpoint surfaces this as "no data" rather than a 500 so a
 // Prometheus outage doesn't page the on-call about an unrelated
 // apid bug.
-func (s *server) auditLogWrite5m(ctx context.Context) int64 {
-	v, _ := s.auditLogWrite5mStatus(ctx)
-	return v
-}
-
 func (s *server) auditLogWrite5mStatus(ctx context.Context) (int64, bool) {
 	if s.promqlClient == nil {
 		return 0, false
@@ -73,14 +68,9 @@ func (s *server) auditLogWrite5mStatus(ctx context.Context) (int64, bool) {
 	return int64(v), true
 }
 
-// auditLogWriteFailures5m mirrors auditLogWrite5m for the failure
+// auditLogWriteFailures5mStatus mirrors auditLogWrite5mStatus for the failure
 // counter. Returned as a separate field so the dashboard can
 // render a failed/total ratio without a per-field subtraction.
-func (s *server) auditLogWriteFailures5m(ctx context.Context) int64 {
-	v, _ := s.auditLogWriteFailures5mStatus(ctx)
-	return v
-}
-
 func (s *server) auditLogWriteFailures5mStatus(ctx context.Context) (int64, bool) {
 	if s.promqlClient == nil {
 		return 0, false
@@ -93,17 +83,12 @@ func (s *server) auditLogWriteFailures5mStatus(ctx context.Context) (int64, bool
 	return int64(v), true
 }
 
-// auditLogCoverageRatio5m reads the trace_id coverage ratio
+// auditLogCoverageRatio5mStatus reads the trace_id coverage ratio
 // directly from Prometheus (the gauge is set by the C5 schedd
 // 60s tick). Returns 1.0 (vacuous truth) when the gauge has
 // never been set — a fresh apid that hasn't seen any
 // audit_log writes yet reports "100% covered" rather than
 // "0% covered", which is the right default for an empty window.
-func (s *server) auditLogCoverageRatio5m(ctx context.Context) float64 {
-	v, _ := s.auditLogCoverageRatio5mStatus(ctx)
-	return v
-}
-
 func (s *server) auditLogCoverageRatio5mStatus(ctx context.Context) (float64, bool) {
 	if s.promqlClient == nil {
 		return 1.0, false
