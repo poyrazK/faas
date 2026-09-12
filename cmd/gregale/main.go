@@ -188,6 +188,10 @@ func run(args []string) (status int) {
 	case dispatchApps:
 		// `gregale apps ls` is an alias for the default list action.
 		if len(args) > 1 && args[1] == "ls" {
+			if len(args) != 2 {
+				PrintUsage(os.Stderr, "usage: gregale apps [ls]", "apps")
+				return 1
+			}
 			return cmdApps()
 		}
 		if len(args) > 1 && args[1] == subRestore {
@@ -202,13 +206,11 @@ func run(args []string) (status int) {
 		if len(args) > 1 && args[1] == "routes" {
 			// CR-B1: CodeQL off-by-one (alerts #208 + #209) flagged
 			// the unguarded `args[2]` / `args[3:]` access below.
-			// Outer guard verified args[1] == "routes" but did not
-			// bounds-check args[2]. `len(args) < 3` falls through
-			// to the default cmdApps() path so `gregale apps
-			// routes` (no slug) doesn't panic; the leaf's
-			// PrintUsage exits 1 with the usage hint.
+			// Outer guard verifies args[1] == "routes" but does not
+			// bounds-check args[2]. Forwarding an empty slug to the leaf
+			// gives a usage error instead of listing every app.
 			if len(args) < 3 {
-				return cmdApps()
+				return cmdAppsRoutes("", nil)
 			}
 			return cmdAppsRoutes(args[2], args[3:])
 		}
@@ -220,7 +222,7 @@ func run(args []string) (status int) {
 		// off-by-one guard (`len(args) < 3` falls through).
 		if len(args) > 1 && args[1] == subStreamingCap {
 			if len(args) < 3 {
-				return cmdApps()
+				return cmdAppsStreamingCap("", nil)
 			}
 			return cmdAppsStreamingCap(args[2], args[3:])
 		}
@@ -230,6 +232,10 @@ func run(args []string) (status int) {
 			// made the documented `gregale apps -q <slug>` command
 			// unexpectedly enter the typed-confirmation path.
 			return cmdAppsRm(args[1:])
+		}
+		if len(args) > 1 {
+			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
+			return 1
 		}
 		return cmdApps()
 	case dispatchDeployments:

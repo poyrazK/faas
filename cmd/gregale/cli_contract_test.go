@@ -31,6 +31,36 @@ func TestCmdAppsRm_LongQuietAlias(t *testing.T) {
 	}
 }
 
+func TestCmdAppsDispatch_QuietDeleteSpellings(t *testing.T) {
+	for _, spelling := range []string{"-q", "--quiet"} {
+		t.Run(spelling, func(t *testing.T) {
+			resetJSONOut(t)
+			f := authedFakeAPI(t, "", http.StatusNoContent)
+			if code := run([]string{"apps", spelling, "demo"}); code != 0 {
+				t.Fatalf("run(apps %s demo) = %d, want 0", spelling, code)
+			}
+			if f.sawMethod != http.MethodDelete || f.sawPath != "/v1/apps/demo" {
+				t.Errorf("request = %s %s, want DELETE /v1/apps/demo", f.sawMethod, f.sawPath)
+			}
+		})
+	}
+}
+
+func TestCmdAppsDispatch_RejectsUnknownPositionals(t *testing.T) {
+	for _, args := range [][]string{{"delete", "--help"}, {"typo"}, {"ls", "extra"}} {
+		t.Run(strings.Join(args, "-"), func(t *testing.T) {
+			resetJSONOut(t)
+			f := authedFakeAPI(t, `[]`, http.StatusOK)
+			if code := run(append([]string{"apps"}, args...)); code != 1 {
+				t.Fatalf("run(apps %s) = %d, want usage error 1", strings.Join(args, " "), code)
+			}
+			if f.sawMethod != "" {
+				t.Fatalf("unknown apps positional made %s %s request", f.sawMethod, f.sawPath)
+			}
+		})
+	}
+}
+
 func TestBuildHelpListsEveryImplementedSubcommand(t *testing.T) {
 	resetJSONOut(t)
 	var out bytes.Buffer
