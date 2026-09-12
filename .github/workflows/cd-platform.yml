@@ -1,0 +1,198 @@
+# cd-platform.yml — canonical production rollout across control and compute.
+#
+# The stage workflows remain independently dispatchable for repair work. A
+# production release uses this workflow so a successful control-plane stage
+# cannot be mistaken for a successful fleet rollout.
+
+name: cd-platform
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing signed pre-1.0 release tag"
+        required: true
+        type: string
+      claim_file:
+        description: "Path to the active node's ComputeNodeClaim (preferred)"
+        required: false
+        default: ""
+        type: string
+      fleet_bundle_url:
+        description: "HTTPS URL for the active node's signed FleetEnrollmentBundle"
+        required: false
+        default: ""
+        type: string
+      fleet_bundle_signature_url:
+        description: "HTTPS URL for the FleetEnrollmentBundle signature"
+        required: false
+        default: ""
+        type: string
+      fleet_bundle_sha256:
+        description: "sha256 digest of the FleetEnrollmentBundle"
+        required: false
+        default: ""
+        type: string
+      node:
+        description: "Active manifest compute node name"
+        required: false
+        default: ""
+        type: string
+      ssh_host:
+        description: "Legacy provider SSH address for the active compute node"
+        required: false
+        default: ""
+        type: string
+      ssh_user:
+        description: "SSH user"
+        required: false
+        default: root
+        type: string
+      ssh_port:
+        description: "SSH port"
+        required: false
+        default: "22"
+        type: string
+      ssh_host_key_sha256:
+        description: "Expected OpenSSH host-key fingerprint"
+        required: false
+        default: ""
+        type: string
+      storage_device:
+        description: "Optional stable storage device path"
+        required: false
+        default: ""
+        type: string
+      format_storage:
+        description: "Format the explicitly supplied blank storage device as XFS"
+        required: false
+        default: false
+        type: boolean
+      skip_fleet_preflight:
+        description: "Reuse a recent successful full-fleet preflight"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: cd-platform-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  control:
+    name: Control-plane stage
+    uses: ./.github/workflows/cd-controlplane.yml
+    with:
+      release_tag: ${{ inputs.release_tag }}
+    secrets: inherit
+
+  compute:
+    name: Required compute stage
+    needs: control
+    uses: ./.github/workflows/cd-compute.yml
+    with:
+      release_tag: ${{ inputs.release_tag }}
+      claim_file: ${{ inputs.claim_file }}
+      fleet_bundle_url: ${{ inputs.fleet_bundle_url }}
+      fleet_bundle_signature_url: ${{ inputs.fleet_bundle_signature_url }}
+      fleet_bundle_sha256: ${{ inputs.fleet_bundle_sha256 }}
+      node: ${{ inputs.node }}
+      ssh_host: ${{ inputs.ssh_host }}
+      ssh_user: ${{ inputs.ssh_user }}
+      ssh_port: ${{ inputs.ssh_port }}
+      ssh_host_key_sha256: ${{ inputs.ssh_host_key_sha256 }}
+      storage_device: ${{ inputs.storage_device }}
+      format_storage: ${{ inputs.format_storage }}
+      skip_fleet_preflight: ${{ inputs.skip_fleet_preflight }}
+    secrets: inherit
+
+  verify:
+    name: Report fleet release convergence
+    if: always()
+    needs: [control, compute]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    env:
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+      CONTROL_RESULT: ${{ needs.control.result }}
+      COMPUTE_RESULT: ${{ needs.compute.result }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 1
+
+      - name: Resolve desired release and set up control-plane SSH
+        run: |
+          set -euo pipefail
+          [[ -n "$CP_HOST" && -n "$CP_SSH_KEY" ]] || {
+            echo "::error::CP_HOST and CP_SSH_KEY are required to report fleet convergence" >&2
+            exit 1
+          }
+          desired_release="$(git rev-parse HEAD)"
+          [[ "$desired_release" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::selected tag did not resolve to a full git SHA" >&2
+            exit 1
+          }
+          echo "DESIRED_RELEASE=$desired_release" >> "$GITHUB_ENV"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CP_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 0600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$CP_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 0600 ~/.ssh/known_hosts
+
+      - name: Observe desired and active-node releases
+        run: |
+          set -uo pipefail
+          status_file="$RUNNER_TEMP/fleet-release-status.json"
+          error_file="$RUNNER_TEMP/fleet-release-status.stderr"
+          # A failed compute stage is already terminal. Observe once so the
+          # summary captures desired/observed state without hiding the failure
+          # behind another wait. A successful stage gets two heartbeat periods
+          # to publish its final release and liveness state.
+          gate_timeout=2m
+          if [[ "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" ]]; then
+            gate_timeout=0
+          fi
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+            "systemd-run --quiet --wait --pipe --collect --property=EnvironmentFile=/etc/faas/compute-db.env /usr/local/bin/gregalectl compute-nodes release-status --desired-release '${DESIRED_RELEASE}' --timeout '${gate_timeout}' --poll-interval 10s --break-glass-db --json" \
+            >"$status_file" 2>"$error_file"
+          gate_exit=$?
+
+          {
+            echo "### Platform rollout ${RELEASE_TAG}"
+            echo
+            echo "| Stage | Result |"
+            echo "| --- | --- |"
+            echo "| Control plane | ${CONTROL_RESULT} |"
+            echo "| Compute | ${COMPUTE_RESULT} |"
+            echo "| Active-node release gate | exit ${gate_exit} |"
+            echo
+            echo '```json'
+            if [[ -s "$status_file" ]]; then
+              cat "$status_file"
+            else
+              printf '{"desired_release":"%s","ready":false,"failure_reason":"release_status_unavailable"}\n' "$DESIRED_RELEASE"
+            fi
+            echo '```'
+            if [[ -s "$error_file" ]]; then
+              echo
+              echo '<details><summary>Release gate stderr</summary>'
+              echo
+              echo '```text'
+              cat "$error_file"
+              echo '```'
+              echo '</details>'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$CONTROL_RESULT" != "success" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
+            echo "::error::platform rollout failed: control=${CONTROL_RESULT} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
+            exit 1
+          fi

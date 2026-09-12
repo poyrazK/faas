@@ -1,4 +1,6 @@
 # .github/workflows/cd-compute.yml — adopt or roll a compute-only host.
+# Production platform releases are orchestrated by cd-platform.yml; this is a
+# reusable stage and an independently dispatchable repair path.
 #
 # This workflow is deliberately provider-neutral. The provider creates the
 # machine and supplies its SSH address; the existing gregalectl join pipeline
@@ -13,6 +15,72 @@
 name: cd-compute
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Existing signed pre-1.0 release tag"
+        required: true
+        type: string
+      claim_file:
+        description: "Path to a ComputeNodeClaim in the selected release source"
+        required: false
+        default: ""
+        type: string
+      fleet_bundle_url:
+        description: "HTTPS URL for a privately hosted, signed FleetEnrollmentBundle"
+        required: false
+        default: ""
+        type: string
+      fleet_bundle_signature_url:
+        description: "HTTPS URL for the FleetEnrollmentBundle signature"
+        required: false
+        default: ""
+        type: string
+      fleet_bundle_sha256:
+        description: "sha256 digest of the FleetEnrollmentBundle"
+        required: false
+        default: ""
+        type: string
+      node:
+        description: "Manifest compute node name"
+        required: false
+        default: ""
+        type: string
+      ssh_host:
+        description: "Provider SSH address for a legacy dispatch"
+        required: false
+        default: ""
+        type: string
+      ssh_user:
+        description: "SSH user"
+        required: false
+        default: root
+        type: string
+      ssh_port:
+        description: "SSH port"
+        required: false
+        default: "22"
+        type: string
+      ssh_host_key_sha256:
+        description: "Expected OpenSSH host-key fingerprint"
+        required: false
+        default: ""
+        type: string
+      storage_device:
+        description: "Optional stable storage device path"
+        required: false
+        default: ""
+        type: string
+      format_storage:
+        description: "Format the explicitly supplied blank storage device as XFS"
+        required: false
+        default: false
+        type: boolean
+      skip_fleet_preflight:
+        description: "Reuse a recent successful full-fleet preflight"
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       release_tag:

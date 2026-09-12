@@ -1073,17 +1073,17 @@ groups:
       # A rollout should converge to one daemon release. This catches a
       # partial deploy where systemd is healthy and readiness is green, but
       # different hosts (or different daemons on one host) are serving
-      # incompatible code for longer than the normal rollout window.
+      # incompatible code. The canonical rollout owns a bounded convergence
+      # window; public status must show the mixed fleet while that gate runs.
       - alert: FaasDeployVersionSkew
         expr: count(count by (version) ({__name__=~".*_faas_deploy_version"})) > 1
-        for: 10m
         labels:
           severity: warn
           component: platform
           family: daemon_lifecycle
         annotations:
           summary: "Fleet is running multiple daemon release versions"
-          description: "More than one faas_deploy_version has been visible for 10m. Check daemon_build_info by instance and version, then complete or roll back the interrupted deployment before traffic is split across releases."
+          description: "More than one faas_deploy_version is visible. Check daemon_build_info by instance and version, then complete or roll back the failed deployment before traffic remains split across releases."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDeployVersionSkew.md"
 
       # Long-lived processes are not automatically unhealthy, but a daemon

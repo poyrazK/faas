@@ -1,4 +1,6 @@
 # cd-controlplane.yml — deploy a selected signed release to the control plane.
+# Production platform releases are orchestrated by cd-platform.yml; this is a
+# reusable stage and an independently dispatchable repair path.
 #
 # Prerequisites (GitHub repo Settings → Secrets):
 #   CP_SSH_KEY (or DO_SSH_KEY) — ed25519 private key (PR-1: previously generated
@@ -22,6 +24,12 @@
 name: cd-controlplane
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Existing pre-1.0 release tag published by release.yml"
+        required: true
+        type: string
   workflow_dispatch:  # manual trigger for deliberate deployment
     inputs:
       release_tag:
