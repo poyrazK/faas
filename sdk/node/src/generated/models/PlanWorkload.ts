@@ -8,6 +8,9 @@ import type { PlanDetectedBy } from './PlanDetectedBy.js';
  */
 export type PlanWorkload = {
   name: string;
+  /**
+   * Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages remain available outside this directory.
+   */
   root_dir: string;
   dockerfile?: string;
   command: Array<string>;

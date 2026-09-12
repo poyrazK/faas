@@ -130,7 +130,11 @@ func migrateDownPublicStatus(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("migrateDownPublicStatus: set goose dialect: %v", err)
 	}
-	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+	// Roll back to the exact prefix boundary rather than one migration
+	// step. New migrations may land between the prefix migration and this
+	// one on the PR merge ref; DownContext would stop at that newer
+	// migration and make this focused round-trip test order-dependent.
+	if err := goose.DownToContext(ctx, sqlDB, ".", publicStatusPreviousMigrationVersion); err != nil {
 		t.Fatalf("migrateDownPublicStatus: %v", err)
 	}
 	var got int64
