@@ -30,6 +30,11 @@ func WorkloadAdmissionReasons(workloads []reposcan.Workload, accountApps []state
 	seen := make(map[string]struct{}, len(workloads))
 	var reasons []string
 	for _, workload := range workloads {
+		if workload.DetectedBy.Detector == "serverless" {
+			reasons = append(reasons, fmt.Sprintf(
+				"workload %q is a Serverless function without an execution adapter; create a function app and deploy the handler explicitly",
+				workload.Name))
+		}
 		if !api.ValidAppSlug(workload.Name) {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q has invalid app slug %q; use 3-40 lowercase letters, digits, or hyphens",
