@@ -8,7 +8,7 @@ author: "Gregale"
 # POST /v1/apps/{slug}/deployments/source-ref endpoint — no new
 # server surface.
 #
-# Pinned-major @v1 is the recommended shape; the bundled CLI
+# Pinned-major @v0 is the public-beta shape; the bundled CLI
 # version is exposed as the `cli-version` output so customers can
 # lint for drift. Optional `--pinned-sha` input on the snippet
 # generator emits a `# pin: <sha>` comment line for customers who
@@ -79,16 +79,22 @@ inputs:
 outputs:
   deployment-id:
     description: "The new deployment id (32-char hex)"
+    value: ${{ steps.deploy.outputs.deployment-id }}
   app-slug:
     description: "Echo of the input app slug"
+    value: ${{ steps.deploy.outputs.app-slug }}
   status:
     description: "Observed deployment status: live | queued | failed | cancelled | superseded | timeout"
+    value: ${{ steps.deploy.outputs.status }}
   url:
     description: "URL of the new deployment record on the control-plane API (https://{api-base}/v1/apps/{slug}/deployments/{id})"
+    value: ${{ steps.deploy.outputs.url }}
   check-run-id:
     description: "GitHub Check Run id created for the deployment (empty when checks: write is unavailable)"
+    value: ${{ steps.deploy.outputs.check-run-id }}
   cli-version:
     description: "Bundled gregale CLI version (verifies the vendored binary)"
+    value: ${{ steps.deploy.outputs.cli-version }}
 
 runs:
   using: "composite"
@@ -111,6 +117,7 @@ runs:
         INPUT_FORMAT: ${{ inputs.format }}
       run: "$ACTION_PATH/src/run.sh validate"
     - name: Deploy
+      id: deploy
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}

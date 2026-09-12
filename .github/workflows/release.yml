@@ -18,10 +18,10 @@
 #
 # Tag strategy: every release commits to a `release/v<tag>` branch AND
 # force-updates the MAJOR moving tag (vN from vN.M.P) so that
-# `uses: poyrazK/faas/.github/actions/deploy@v1` (the canonical shape
+# `uses: poyrazK/faas/.github/actions/deploy@v0` (the public-beta shape
 # pinned in the README + ADR + the rendered snippet) resolves to the
 # latest vendored binary. Without the moving-tag step, customers
-# pinned at @v1 would resolve to the pre-workflow commit that has no
+# pinned at @v0 would resolve to the pre-workflow commit that has no
 # bin/gregale, and `run.sh` would exit 1 with "vendored binary not
 # found" on day one.
 
@@ -157,6 +157,41 @@ jobs:
           # worked end-to-end.
           ./.github/actions/deploy/bin/gregale version
 
+      - name: Start fixture Gregale API
+        run: |
+          python3 scripts/ci/github-action-fixture-server.py \
+            --port 18081 \
+            --request-log "$RUNNER_TEMP/github-action-fixture.requests" &
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent http://127.0.0.1:18081/healthz >/dev/null; then
+              exit 0
+            fi
+            echo "waiting for fixture API (${attempt}/5)"
+            sleep 1
+          done
+          echo "fixture Gregale API did not become ready" >&2
+          exit 1
+
+      - name: Run the exact deploy Action being released
+        id: deploy_action
+        uses: ./.github/actions/deploy
+        with:
+          api-base: http://127.0.0.1:18081
+          api-key: action-ref-canary-nonsecret
+          app: action-ref-canary
+          wait: "false"
+
+      - name: Verify fixture workflow contract
+        env:
+          ACTION_OUTCOME: ${{ steps.deploy_action.outcome }}
+          DEPLOYMENT_ID: ${{ steps.deploy_action.outputs.deployment-id }}
+          DEPLOYMENT_STATUS: ${{ steps.deploy_action.outputs.status }}
+        run: |
+          test "$ACTION_OUTCOME" = success
+          test "$DEPLOYMENT_ID" = 00000000000000000000000000000001
+          test "$DEPLOYMENT_STATUS" = queued
+          grep -Fxq "POST /v1/apps/action-ref-canary/deployments/source-ref" "$RUNNER_TEMP/github-action-fixture.requests"
+
       - name: Commit vendored binary + version + SHA256SUMS
         env:
           TAG: ${{ github.ref_name }}
@@ -184,18 +219,38 @@ jobs:
         run: |
           set -euo pipefail
           # Extract the MAJOR version (the "vN" from "vN.M.P") so
-          # customers pinned at @v1 always resolve to the latest
+          # customers pinned at @vN always resolve to the latest
           # vendored binary. Local-only: never push the moving tag
           # to the release branch (it stays on the SHA we just
           # committed). The `git push --force` updates the moving
           # tag in refs/tags/vN to point at this commit, so
-          # `uses: .../deploy@v1` resolves to the vendored binary.
+          # `uses: .../deploy@vN` resolves to the vendored binary.
           MAJOR="$(echo "$TAG" | cut -d. -f1)"
           # This checkout is now the release branch HEAD containing the
           # vendored binary. Point the moving major tag at that commit, not
           # at the original source tag that triggered this workflow.
           git tag -f "$MAJOR" HEAD
           git push origin "refs/tags/${MAJOR}" --force
+
+      - name: Verify generated Action ref through GitHub Contents API
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          MAJOR="${TAG%%.*}"
+          SNIPPET="$(/tmp/gregale-build/gregale deploy --github --name action-ref-canary)"
+          USES_REF="$(printf '%s\n' "$SNIPPET" | sed -n 's/^[[:space:]]*- uses: //p' | head -1)"
+          EXPECTED="poyrazK/faas/.github/actions/deploy@${MAJOR}"
+          if [ "$USES_REF" != "$EXPECTED" ]; then
+            echo "generated Action ref $USES_REF does not match release major $EXPECTED" >&2
+            exit 1
+          fi
+          printf '%s\n' "$SNIPPET" | grep -Fq "https://gregale.dev/docs/build/source-ref"
+          for path in .github/actions/deploy/action.yml .github/actions/deploy/bin/gregale; do
+            gh api "repos/${GITHUB_REPOSITORY}/contents/${path}?ref=${MAJOR}" \
+              | jq -e '.type == "file" and .size > 0' >/dev/null
+          done
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
@@ -252,15 +307,16 @@ jobs:
             In your workflow:
 
             ```yaml
-            - uses: poyrazK/faas/.github/actions/deploy@v1
+            - uses: poyrazK/faas/.github/actions/deploy@v0
               with:
                 app: my-app
             ```
 
-            For hard reproducibility, pin a specific tag:
+            For hard reproducibility, resolve `refs/tags/v0` and pin its
+            40-character release commit SHA:
 
             ```yaml
-            - uses: poyrazK/faas/.github/actions/deploy@${{ github.ref_name }}
+            - uses: poyrazK/faas/.github/actions/deploy@<40-character-commit-sha>
             ```
 
   # ADR-172: the npm channel. Consumes the archives built above rather than

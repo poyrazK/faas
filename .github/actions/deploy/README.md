@@ -16,7 +16,7 @@ jobs:
       checks: write
       id-token: write
     steps:
-      - uses: poyrazK/faas/.github/actions/deploy@v1
+      - uses: poyrazK/faas/.github/actions/deploy@v0
         with:
           api-base: https://api.gregale.dev
           app: my-app
@@ -69,10 +69,14 @@ blocks the deployment.
 
 ## Pin reproducibility
 
-The action is pinned to `@v1` by default. The `release.yml` workflow force-updates the `vN` moving tag on every `vN.M.P` release, so `@v1` always resolves to the latest vendored binary — minor and patch releases ship without any workflow edit on the customer side. For full immutability, pin a specific tag:
+The action is pinned to `@v0` during public beta. The `release.yml` workflow force-updates the `vN` moving tag on every `vN.M.P` release, so `@v0` always resolves to the latest vendored binary. For full immutability, resolve that moving tag once and pin its commit SHA:
+
+```bash
+git ls-remote https://github.com/poyrazK/faas.git refs/tags/v0
+```
 
 ```yaml
-- uses: poyrazK/faas/.github/actions/deploy@v1.4.2
+- uses: poyrazK/faas/.github/actions/deploy@<40-character-commit-sha>
 ```
 
 The bundled `cli-version` output lets you lint for drift in enterprise monorepos.

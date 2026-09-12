@@ -19,9 +19,62 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+func TestGithubDeployActionCompositeOutputsAreMapped(t *testing.T) {
+	root, err := findRepoRoot(".")
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, ".github", "actions", "deploy", "action.yml"))
+	if err != nil {
+		t.Fatalf("read deploy Action metadata: %v", err)
+	}
+	var metadata struct {
+		Outputs map[string]struct {
+			Value string `yaml:"value"`
+		} `yaml:"outputs"`
+		Runs struct {
+			Using string `yaml:"using"`
+			Steps []struct {
+				ID string `yaml:"id"`
+			} `yaml:"steps"`
+		} `yaml:"runs"`
+	}
+	if err := yaml.Unmarshal(raw, &metadata); err != nil {
+		t.Fatalf("parse deploy Action metadata: %v", err)
+	}
+	if metadata.Runs.Using != "composite" {
+		t.Fatalf("runs.using = %q, want composite", metadata.Runs.Using)
+	}
+	foundDeployStep := false
+	for _, step := range metadata.Runs.Steps {
+		if step.ID == "deploy" {
+			foundDeployStep = true
+			break
+		}
+	}
+	if !foundDeployStep {
+		t.Fatal("composite Action has no deploy step id for output mappings")
+	}
+	for _, name := range []string{"deployment-id", "app-slug", "status", "url", "check-run-id", "cli-version"} {
+		output, ok := metadata.Outputs[name]
+		if !ok {
+			t.Errorf("composite Action output %q is not declared", name)
+			continue
+		}
+		want := "${{ steps.deploy.outputs." + name + " }}"
+		if output.Value != want {
+			t.Errorf("output %q value = %q, want %q", name, output.Value, want)
+		}
+	}
+}
 
 func TestRenderGithubSnippet(t *testing.T) {
 	cases := []struct {
@@ -42,7 +95,8 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"Repo: ${{ github.repository }}",
 				"Ref: ${{ github.sha }}",
 				"app: my-app",
-				"uses: poyrazK/faas/.github/actions/deploy@v1",
+				"uses: poyrazK/faas/.github/actions/deploy@v0",
+				"https://gregale.dev/docs/build/source-ref",
 				"id-token: write",
 				"checks: write",
 				"https://api.gregale.dev",
@@ -51,6 +105,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 			mustNotLn: []string{
 				"# pin this Action", // no SHA provided → no pin comment
 				"api-key:",
+				"see docs/source-ref.md",
 			},
 		},
 		{
@@ -81,7 +136,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 			pinnedSHA: "f1e2d3c4b5a6987654321098765432109abcdef0",
 			mustLines: []string{
 				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
-				"uses: poyrazK/faas/.github/actions/deploy@v1",
+				"uses: poyrazK/faas/.github/actions/deploy@v0",
 			},
 		},
 		{
@@ -97,7 +152,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"Repo: onebox-faas/hello",
 				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
 				"app: hello",
-				"uses: poyrazK/faas/.github/actions/deploy@v1",
+				"uses: poyrazK/faas/.github/actions/deploy@v0",
 			},
 		},
 		{
