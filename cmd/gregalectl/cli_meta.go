@@ -85,6 +85,17 @@ type cliFlag struct {
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
 	{
+		Name:    dispatchBilling,
+		DocSlug: "billing",
+		Short:   "Operator billing catalog, reconciliation, and webhook diagnostics",
+		Subcommands: []cliSub{
+			{Name: "price-catalog", Short: "List, sync, or reset the provider catalog"},
+			{Name: "reconcile", Short: "Reconcile usage for one account"},
+			{Name: "reconcile-paddle-overage", Short: "Check Paddle overage schema readiness"},
+			{Name: "webhook-test", Short: "Send a locally signed Paddle or Stripe webhook"},
+		},
+	},
+	{
 		Name:    "status",
 		DocSlug: "status",
 		Short:   "Publish and inspect public incidents and maintenance",
