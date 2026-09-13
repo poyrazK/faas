@@ -2936,6 +2936,84 @@ func (q *Queries) ExecutionRequeueExpiredRestores(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const executionUsageByAccount = `-- name: ExecutionUsageByAccount :one
+SELECT
+    count(*)::bigint AS runs,
+    COALESCE(sum(wall_time_ms), 0)::bigint AS wall_time_ms,
+    COALESCE(sum(cpu_time_ms), 0)::bigint AS cpu_time_ms,
+    COALESCE(max(peak_memory_mb), 0)::bigint AS peak_memory_mb,
+    COALESCE(sum(output_bytes), 0)::bigint AS output_bytes,
+    count(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded,
+    count(*) FILTER (WHERE status = 'failed')::bigint AS failed,
+    count(*) FILTER (WHERE status = 'timed_out')::bigint AS timed_out,
+    count(*) FILTER (WHERE status = 'out_of_memory')::bigint AS out_of_memory,
+    count(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled
+FROM execution_usage_ledger
+WHERE account_id = $1
+  AND finished_at >= $2::timestamptz
+  AND finished_at < $3::timestamptz
+`
+
+type ExecutionUsageByAccountParams struct {
+	AccountID  pgtype.UUID
+	MonthStart pgtype.Timestamptz
+	MonthEnd   pgtype.Timestamptz
+}
+
+type ExecutionUsageByAccountRow struct {
+	Runs         int64
+	WallTimeMs   int64
+	CpuTimeMs    int64
+	PeakMemoryMb int64
+	OutputBytes  int64
+	Succeeded    int64
+	Failed       int64
+	TimedOut     int64
+	OutOfMemory  int64
+	Cancelled    int64
+}
+
+func (q *Queries) ExecutionUsageByAccount(ctx context.Context, db DBTX, arg ExecutionUsageByAccountParams) (ExecutionUsageByAccountRow, error) {
+	row := db.QueryRow(ctx, executionUsageByAccount, arg.AccountID, arg.MonthStart, arg.MonthEnd)
+	var i ExecutionUsageByAccountRow
+	err := row.Scan(
+		&i.Runs,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.OutputBytes,
+		&i.Succeeded,
+		&i.Failed,
+		&i.TimedOut,
+		&i.OutOfMemory,
+		&i.Cancelled,
+	)
+	return i, err
+}
+
+const executionUsageRecord = `-- name: ExecutionUsageRecord :exec
+INSERT INTO execution_usage_ledger (
+    execution_id, account_id, runtime, status, wall_time_ms, cpu_time_ms,
+    peak_memory_mb, output_bytes, started_at, finished_at, created_at
+)
+SELECT id, account_id, runtime, status, wall_time_ms, cpu_time_ms,
+       peak_memory_mb,
+       (result_bytes + octet_length(stdout) + octet_length(stderr))::bigint,
+       started_at, finished_at, created_at
+FROM executions
+WHERE id = $1
+  AND status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+ON CONFLICT (execution_id) DO NOTHING
+`
+
+// The execution ID is the idempotency key. Recording from the terminal
+// execution row keeps usage and the lifecycle projection in lockstep and
+// makes retries/recovery harmless.
+func (q *Queries) ExecutionUsageRecord(ctx context.Context, db DBTX, executionID pgtype.UUID) error {
+	_, err := db.Exec(ctx, executionUsageRecord, executionID)
+	return err
+}
+
 const expireOrgInvitations = `-- name: ExpireOrgInvitations :execrows
 update org_invitations
 set revoked_at = now()

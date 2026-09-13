@@ -891,6 +891,21 @@ type SetPasswordRequest struct {
 	CurrentPassword string `json:"current_password,omitempty"`
 }
 
+// ExecutionUsageSummaryResponse is the account-level usage roll-up for
+// disposable executions in one UTC calendar month.
+type ExecutionUsageSummaryResponse struct {
+	Runs         int64 `json:"runs"`
+	WallTimeMS   int64 `json:"wall_time_ms"`
+	CPUTimeMS    int64 `json:"cpu_time_ms"`
+	PeakMemoryMB int64 `json:"peak_memory_mb"`
+	OutputBytes  int64 `json:"output_bytes"`
+	Succeeded    int64 `json:"succeeded"`
+	Failed       int64 `json:"failed"`
+	TimedOut     int64 `json:"timed_out"`
+	OutOfMemory  int64 `json:"out_of_memory"`
+	Cancelled    int64 `json:"cancelled"`
+}
+
 // UsageSummaryResponse is the roll-up for the current month (or any
 // month passed as a query param). Used by the dashboard usage page so
 // the customer sees a single number ("used X of Y GB-h, overage $Z")
@@ -899,11 +914,12 @@ type SetPasswordRequest struct {
 // Overage math: anything above IncludedGBHours is billable at the
 // overage rate in the financial model (€0.01/GB-h). Cents are integer.
 type UsageSummaryResponse struct {
-	Month           string  `json:"month"`             // YYYY-MM
-	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 3_600_000
-	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
-	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
-	OverageCents    int64   `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
+	Month           string                         `json:"month"`             // YYYY-MM
+	UsedGBHours     float64                        `json:"used_gb_hours"`     // Σ mb_seconds / 3_600_000
+	IncludedGBHours int64                          `json:"included_gb_hours"` // from plan limits
+	OverageGBHours  float64                        `json:"overage_gb_hours"`  // max(0, used - included)
+	OverageCents    int64                          `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
+	Executions      *ExecutionUsageSummaryResponse `json:"executions,omitempty"`
 }
 
 // AccountUsageResponse is the account-level usage projection. Optional

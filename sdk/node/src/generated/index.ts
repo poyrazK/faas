@@ -252,6 +252,7 @@ export type { ExecutionListResponse } from './models/ExecutionListResponse.js';
 export type { ExecutionNetworkPolicy } from './models/ExecutionNetworkPolicy.js';
 export type { ExecutionResponse } from './models/ExecutionResponse.js';
 export type { ExecutionUsage } from './models/ExecutionUsage.js';
+export type { ExecutionUsageSummaryResponse } from './models/ExecutionUsageSummaryResponse.js';
 export type { FieldError } from './models/FieldError.js';
 export type { FilterCriteria } from './models/FilterCriteria.js';
 export type { FilterCriteriaClause } from './models/FilterCriteriaClause.js';

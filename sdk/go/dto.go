@@ -89,11 +89,12 @@ type (
 	InstanceResponse = api.InstanceResponse
 
 	// Usage.
-	UsageResponse                = api.UsageResponse
-	UsageSummaryResponse         = api.UsageSummaryResponse
-	AccountUsageResponse         = api.AccountUsageResponse
-	ObjectStorageUsageResponse   = api.ObjectStorageUsageResponse
-	ManagedPostgresUsageResponse = api.ManagedPostgresUsageResponse
+	UsageResponse                 = api.UsageResponse
+	UsageSummaryResponse          = api.UsageSummaryResponse
+	ExecutionUsageSummaryResponse = api.ExecutionUsageSummaryResponse
+	AccountUsageResponse          = api.AccountUsageResponse
+	ObjectStorageUsageResponse    = api.ObjectStorageUsageResponse
+	ManagedPostgresUsageResponse  = api.ManagedPostgresUsageResponse
 
 	// Auth (password).
 	PasswordLoginRequest  = api.PasswordLoginRequest

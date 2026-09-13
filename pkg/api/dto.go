@@ -3356,6 +3356,23 @@ type DailyUsagePoint struct {
 	TopAppGBHours float64 `json:"top_app_gb_hours,omitempty"`
 }
 
+// ExecutionUsageSummaryResponse is the account-level usage roll-up for
+// disposable executions in one UTC calendar month. It is sourced from the
+// terminal execution usage ledger, so deleting sealed payloads does not alter
+// the reported usage. PeakMemoryMB is the maximum observed peak across runs.
+type ExecutionUsageSummaryResponse struct {
+	Runs         int64 `json:"runs"`
+	WallTimeMS   int64 `json:"wall_time_ms"`
+	CPUTimeMS    int64 `json:"cpu_time_ms"`
+	PeakMemoryMB int64 `json:"peak_memory_mb"`
+	OutputBytes  int64 `json:"output_bytes"`
+	Succeeded    int64 `json:"succeeded"`
+	Failed       int64 `json:"failed"`
+	TimedOut     int64 `json:"timed_out"`
+	OutOfMemory  int64 `json:"out_of_memory"`
+	Cancelled    int64 `json:"cancelled"`
+}
+
 // UsageSummaryResponse is the roll-up for the current month (or any
 // month passed as a query param). Used by the dashboard usage page so
 // the customer sees the account summary and its trailing daily trend
@@ -3411,6 +3428,9 @@ type UsageSummaryResponse struct {
 	// bill of health" panel reads this single number; the
 	// per-app breakdown lives at UsageResponse.ColdBootCount.
 	ColdBootTotal int64 `json:"cold_boots"`
+	// Executions is omitted only when the backing store does not implement the
+	// execution usage read seam (for example, a legacy test double).
+	Executions *ExecutionUsageSummaryResponse `json:"executions,omitempty"`
 	// Daily is the trailing 30 UTC calendar days of account usage,
 	// grouped by day. It is additive so existing clients can ignore it.
 	Daily []DailyUsagePoint `json:"daily"`

@@ -3542,6 +3542,13 @@ func renderUsageSummary(w io.Writer, s api.UsageSummaryResponse) {
 	// confusing the two.
 	_, _ = fmt.Fprintf(w, "  %-*s %.6f CPU-hours\n", labelWidth, "CPU usage:", s.UsedCPUHours)
 	_, _ = fmt.Fprintf(w, "  %-*s %.3f GB\n", labelWidth, "Egress:", s.UsedEgressGB)
+	if s.Executions != nil {
+		_, _ = fmt.Fprintf(w, "  %-*s %d runs (%d succeeded, %d failed, %d cancelled)\n",
+			labelWidth, "Executions:", s.Executions.Runs, s.Executions.Succeeded,
+			s.Executions.Failed, s.Executions.Cancelled)
+		_, _ = fmt.Fprintf(w, "  %-*s %d ms wall / %d ms CPU\n",
+			labelWidth, "Run compute:", s.Executions.WallTimeMS, s.Executions.CPUTimeMS)
+	}
 	if s.EgressBillingMode != "" {
 		_, _ = fmt.Fprintf(w, "  %-*s %s\n", labelWidth, "Egress mode:", s.EgressBillingMode)
 		_, _ = fmt.Fprintf(w, "  %-*s %s\n", labelWidth, "Egress from:", s.EgressBillingFrom)

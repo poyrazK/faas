@@ -9346,6 +9346,46 @@ ALTER TABLE ONLY public.execution_payloads
 
 
 --
+-- Name: execution_usage_ledger; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.execution_usage_ledger (
+    execution_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    runtime text NOT NULL,
+    status text NOT NULL,
+    wall_time_ms bigint DEFAULT 0 NOT NULL,
+    cpu_time_ms bigint DEFAULT 0 NOT NULL,
+    peak_memory_mb bigint DEFAULT 0 NOT NULL,
+    output_bytes bigint DEFAULT 0 NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT execution_usage_ledger_finished_check CHECK ((finished_at >= created_at)),
+    CONSTRAINT execution_usage_ledger_nonnegative_check CHECK (((wall_time_ms >= 0) AND (cpu_time_ms >= 0) AND (peak_memory_mb >= 0) AND (output_bytes >= 0))),
+    CONSTRAINT execution_usage_ledger_started_check CHECK (((started_at IS NULL) OR ((started_at >= created_at) AND (finished_at >= started_at)))),
+    CONSTRAINT execution_usage_ledger_runtime_check CHECK ((runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text]))),
+    CONSTRAINT execution_usage_ledger_status_check CHECK ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text])))
+);
+
+
+ALTER TABLE ONLY public.execution_usage_ledger
+    ADD CONSTRAINT execution_usage_ledger_pkey PRIMARY KEY (execution_id);
+
+
+CREATE INDEX execution_usage_ledger_account_finished_idx ON public.execution_usage_ledger USING btree (account_id, finished_at DESC, execution_id DESC);
+
+
+ALTER TABLE ONLY public.execution_usage_ledger
+    ADD CONSTRAINT execution_usage_ledger_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+ALTER TABLE ONLY public.execution_usage_ledger
+    ADD CONSTRAINT execution_usage_ledger_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
+
+
+--
 -- Name: enforce_execution_status_transition(); Type: FUNCTION; Schema: public; Owner: -
 --
 

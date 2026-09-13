@@ -3367,6 +3367,40 @@ DELETE FROM execution_payloads AS payload
 USING candidates
 WHERE payload.execution_id = candidates.execution_id;
 
+-- name: ExecutionUsageRecord :exec
+-- The execution ID is the idempotency key. Recording from the terminal
+-- execution row keeps usage and the lifecycle projection in lockstep and
+-- makes retries/recovery harmless.
+INSERT INTO execution_usage_ledger (
+    execution_id, account_id, runtime, status, wall_time_ms, cpu_time_ms,
+    peak_memory_mb, output_bytes, started_at, finished_at, created_at
+)
+SELECT id, account_id, runtime, status, wall_time_ms, cpu_time_ms,
+       peak_memory_mb,
+       (result_bytes + octet_length(stdout) + octet_length(stderr))::bigint,
+       started_at, finished_at, created_at
+FROM executions
+WHERE id = sqlc.arg(execution_id)
+  AND status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+ON CONFLICT (execution_id) DO NOTHING;
+
+-- name: ExecutionUsageByAccount :one
+SELECT
+    count(*)::bigint AS runs,
+    COALESCE(sum(wall_time_ms), 0)::bigint AS wall_time_ms,
+    COALESCE(sum(cpu_time_ms), 0)::bigint AS cpu_time_ms,
+    COALESCE(max(peak_memory_mb), 0)::bigint AS peak_memory_mb,
+    COALESCE(sum(output_bytes), 0)::bigint AS output_bytes,
+    count(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded,
+    count(*) FILTER (WHERE status = 'failed')::bigint AS failed,
+    count(*) FILTER (WHERE status = 'timed_out')::bigint AS timed_out,
+    count(*) FILTER (WHERE status = 'out_of_memory')::bigint AS out_of_memory,
+    count(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled
+FROM execution_usage_ledger
+WHERE account_id = sqlc.arg(account_id)
+  AND finished_at >= sqlc.arg(month_start)::timestamptz
+  AND finished_at < sqlc.arg(month_end)::timestamptz;
+
 -- Runtime snapshot catalog (ADR-171 follow-up / durable publication boundary).
 -- Publication is insert-only; retirement is the sole mutable transition.
 -- name: RuntimeSnapshotInsert :one

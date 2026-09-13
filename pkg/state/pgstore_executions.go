@@ -95,6 +95,13 @@ func executionRowsFromSQL(rows []sqlc.Execution) []Execution {
 	return out
 }
 
+func recordExecutionUsage(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, executionID pgtype.UUID) error {
+	if err := q.ExecutionUsageRecord(ctx, db, executionID); err != nil {
+		return fmt.Errorf("record execution usage: %w", err)
+	}
+	return nil
+}
+
 func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionParams) (Execution, error) {
 	if err := validateCreateExecution(params); err != nil {
 		return Execution{}, err
@@ -330,6 +337,9 @@ func (s *PgStore) CompleteExecution(ctx context.Context, params CompleteExecutio
 	if _, err := q.ExecutionPayloadDelete(ctx, tx, row.ID); err != nil {
 		return Execution{}, fmt.Errorf("complete execution: delete payload: %w", err)
 	}
+	if err := recordExecutionUsage(ctx, q, tx, row.ID); err != nil {
+		return Execution{}, fmt.Errorf("complete execution: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Execution{}, fmt.Errorf("complete execution: commit: %w", err)
 	}
@@ -355,6 +365,9 @@ func (s *PgStore) RequestExecutionCancellation(ctx context.Context, accountID, e
 	}
 	if locked.Status == string(api.ExecutionStatusSucceeded) ||
 		api.ExecutionStatus(locked.Status).Terminal() {
+		if err := recordExecutionUsage(ctx, q, tx, locked.ID); err != nil {
+			return Execution{}, fmt.Errorf("cancel execution: %w", err)
+		}
 		if _, err := q.ExecutionPayloadDelete(ctx, tx, locked.ID); err != nil {
 			return Execution{}, fmt.Errorf("cancel execution: clean terminal payload: %w", err)
 		}
@@ -373,6 +386,9 @@ func (s *PgStore) RequestExecutionCancellation(ctx context.Context, accountID, e
 		return Execution{}, mapErr(err)
 	}
 	if api.ExecutionStatus(row.Status).Terminal() {
+		if err := recordExecutionUsage(ctx, q, tx, row.ID); err != nil {
+			return Execution{}, fmt.Errorf("cancel execution: %w", err)
+		}
 		if _, err := q.ExecutionPayloadDelete(ctx, tx, row.ID); err != nil {
 			return Execution{}, fmt.Errorf("cancel execution: delete payload: %w", err)
 		}
@@ -429,6 +445,11 @@ func (s *PgStore) SweepExecutions(ctx context.Context, at time.Time, limit int) 
 	}
 	var deleted int64
 	if len(ids) > 0 {
+		for _, id := range ids {
+			if err := recordExecutionUsage(ctx, q, tx, id); err != nil {
+				return ExecutionSweepResult{}, fmt.Errorf("sweep executions: %w", err)
+			}
+		}
 		deleted, err = q.ExecutionPayloadDeleteMany(ctx, tx, ids)
 		if err != nil {
 			return ExecutionSweepResult{}, fmt.Errorf("sweep executions: delete payloads: %w", err)
@@ -445,5 +466,29 @@ func (s *PgStore) SweepExecutions(ctx context.Context, at time.Time, limit int) 
 		ExpiredQueued: len(expired), RequeuedRestores: len(requeued),
 		FinishedRestores: len(finishedRestores), FinishedRuns: len(finishedRuns),
 		PayloadsDeleted: int(deleted + orphans),
+	}, nil
+}
+
+// ExecutionUsageByAccount returns the UTC-month aggregate from the durable
+// execution usage ledger. Terminal payload deletion does not affect this read.
+func (s *PgStore) ExecutionUsageByAccount(ctx context.Context, accountID string, month time.Time) (ExecutionUsageSummary, error) {
+	if strings.TrimSpace(accountID) == "" || month.IsZero() {
+		return ExecutionUsageSummary{}, ErrExecutionInvalid
+	}
+	month = month.UTC()
+	start := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	row, err := sqlc.New().ExecutionUsageByAccount(ctx, s.pool, sqlc.ExecutionUsageByAccountParams{
+		AccountID: mustPgUUID(accountID), MonthStart: executionTime(start), MonthEnd: executionTime(end),
+	})
+	if err != nil {
+		return ExecutionUsageSummary{}, mapErr(err)
+	}
+	return ExecutionUsageSummary{
+		AccountID: accountID, Month: start, Runs: row.Runs,
+		WallTimeMS: row.WallTimeMs, CPUTimeMS: row.CpuTimeMs,
+		PeakMemoryMB: row.PeakMemoryMb, OutputBytes: row.OutputBytes,
+		Succeeded: row.Succeeded, Failed: row.Failed, TimedOut: row.TimedOut,
+		OutOfMemory: row.OutOfMemory, Cancelled: row.Cancelled,
 	}, nil
 }

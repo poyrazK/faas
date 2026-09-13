@@ -2490,6 +2490,61 @@ func TestUsageSummary_HappyPath(t *testing.T) {
 	if out.Daily == nil {
 		t.Errorf("daily = nil, want an empty array")
 	}
+	if out.Executions == nil || out.Executions.Runs != 0 {
+		t.Fatalf("execution usage = %+v, want an empty ledger-backed projection", out.Executions)
+	}
+}
+
+func TestUsageSummaryIncludesExecutionUsageLedger(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	admitted := time.Now().UTC().Add(-100 * time.Millisecond)
+	request := api.CreateExecutionRequest{
+		Runtime: api.ExecutionRuntimeNode22,
+		Source:  "export default async function main(input) { return input }",
+		Input:   []byte(`{"ok":true}`),
+	}
+	resolved, problem := request.Resolve(e.acct.Plan)
+	if problem != nil {
+		t.Fatalf("resolve execution: %v", problem)
+	}
+	row, err := e.store.CreateExecution(t.Context(), state.CreateExecutionParams{
+		AccountID: e.acct.ID, Request: resolved,
+		SourceBytes: len(request.Source), InputBytes: len(request.Input),
+		AdmittedAt: admitted, DeadlineAt: admitted.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
+		SealedPayload: []byte("sealed"), PayloadKID: "test-kid",
+	})
+	if err != nil {
+		t.Fatalf("CreateExecution: %v", err)
+	}
+	claim, err := e.store.ClaimExecution(t.Context(), "usage-test", admitted.Add(time.Millisecond), time.Second)
+	if err != nil {
+		t.Fatalf("ClaimExecution: %v", err)
+	}
+	if _, err := e.store.MarkExecutionRunning(t.Context(), row.ID, *claim.LeaseToken, admitted.Add(2*time.Millisecond)); err != nil {
+		t.Fatalf("MarkExecutionRunning: %v", err)
+	}
+	exitCode := 0
+	finished := admitted.Add(3 * time.Millisecond)
+	if _, err := e.store.CompleteExecution(t.Context(), state.CompleteExecutionParams{
+		ID: row.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded,
+		Result: []byte(`{"ok":true}`), Stdout: "done\n", ExitCode: &exitCode,
+		Usage: api.ExecutionUsage{WallTimeMS: 3, CPUTimeMS: 2, PeakMemoryMB: 64}, FinishedAt: finished,
+	}); err != nil {
+		t.Fatalf("CompleteExecution: %v", err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/usage/summary?month="+finished.Format("2006-01"), nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out api.UsageSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Executions == nil || out.Executions.Runs != 1 || out.Executions.Succeeded != 1 ||
+		out.Executions.WallTimeMS != 3 || out.Executions.CPUTimeMS != 2 || out.Executions.PeakMemoryMB != 64 {
+		t.Fatalf("execution usage = %+v, want one succeeded run", out.Executions)
+	}
 }
 
 type usageSummaryEgressProvider struct {
