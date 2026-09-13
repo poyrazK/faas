@@ -9516,6 +9516,23 @@ func (s *PgStore) UpdateBuildProvenanceSBOM(ctx context.Context, buildID, sbomKe
 	return nil
 }
 
+// UpdateBuildProvenanceRunnerDigest stamps the digest of the exact function
+// runner injected by imaged onto an existing build_provenance row. The
+// function layer is built after builderd creates the provenance row, so this
+// update is intentionally a separate post-build operation.
+func (s *PgStore) UpdateBuildProvenanceRunnerDigest(ctx context.Context, buildID, runnerDigest string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update build_provenance set runner_digest = $1 where build_id = $2`,
+		nullString(runnerDigest), buildID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SweepStuckRunningBuilds is the reaper sweep (issue #195 B1.4).
 // Returns the number of build rows flipped. The owning in-flight
 // deployment is failed in the same transaction so a crashed builder

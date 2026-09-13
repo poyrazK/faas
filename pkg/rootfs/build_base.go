@@ -371,8 +371,11 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 			}
 		}
 	}
+	runnerDigest := ""
 	if in.FunctionRunnerPath != "" {
-		if err := InjectFunctionRunner(staging, in.FunctionRunnerPath); err != nil {
+		var err error
+		runnerDigest, err = injectFunctionRunner(staging, in.FunctionRunnerPath)
+		if err != nil {
 			return BuildResult{}, err
 		}
 	}
@@ -434,7 +437,12 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		return BuildResult{}, err
 	}
 
-	res := BuildResult{SizeMB: sizeMB, ContentBytes: stats.ContentBytes, SBOMKey: sbomKey}
+	res := BuildResult{
+		SizeMB:       sizeMB,
+		ContentBytes: stats.ContentBytes,
+		SBOMKey:      sbomKey,
+		RunnerDigest: runnerDigest,
+	}
 	if in.OutImage != "" {
 		res.ImagePath = in.OutImage
 	} else {

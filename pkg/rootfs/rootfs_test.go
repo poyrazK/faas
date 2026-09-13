@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -363,6 +365,35 @@ func TestBuildProducesSizedLayer(t *testing.T) {
 	// produced ext4 at the requested key.
 	if _, err := be.Get(context.Background(), "apps/slug/dep.ext4"); err != nil {
 		t.Fatalf("storage Get after build: %v", err)
+	}
+}
+
+func TestBuildReportsFunctionRunnerDigest(t *testing.T) {
+	gi := filepath.Join(t.TempDir(), "guest-init")
+	if err := os.WriteFile(gi, []byte("INIT"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := []byte("function runner bytes")
+	runnerPath := filepath.Join(t.TempDir(), "faas-runner")
+	if err := os.WriteFile(runnerPath, runner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := NewBuilder(&mkfsFakeRunner{fill: []byte("FAKE-EXT4")}).Build(context.Background(), BuildInput{
+		Manifest:           api.AppManifest{Entrypoint: []string{"/usr/local/bin/faas-runner"}},
+		GuestInitPath:      gi,
+		FunctionRunnerPath: runnerPath,
+		Plan:               api.PlanFree,
+		Storage:            newTestStorage(t),
+		StorageKey:         "apps/slug/function.ext4",
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	sum := sha256.Sum256(runner)
+	want := "sha256:" + hex.EncodeToString(sum[:])
+	if res.RunnerDigest != want {
+		t.Fatalf("RunnerDigest = %q, want %q", res.RunnerDigest, want)
 	}
 }
 
