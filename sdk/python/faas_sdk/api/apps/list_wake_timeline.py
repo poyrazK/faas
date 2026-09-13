@@ -61,6 +61,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 402:
+        response_402 = Problem.from_dict(response.json())
+
+        return response_402
+
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
@@ -117,6 +122,8 @@ def sync_detailed(
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
+    Wake narratives are a Hobby+ observability surface; Free
+    accounts receive 402 before slug or wake lookup.
 
     Args:
         slug (str):
@@ -175,6 +182,8 @@ def sync(
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
+    Wake narratives are a Hobby+ observability surface; Free
+    accounts receive 402 before slug or wake lookup.
 
     Args:
         slug (str):
@@ -228,6 +237,8 @@ async def asyncio_detailed(
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
+    Wake narratives are a Hobby+ observability surface; Free
+    accounts receive 402 before slug or wake lookup.
 
     Args:
         slug (str):
@@ -284,6 +295,8 @@ async def asyncio(
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
+    Wake narratives are a Hobby+ observability surface; Free
+    accounts receive 402 before slug or wake lookup.
 
     Args:
         slug (str):

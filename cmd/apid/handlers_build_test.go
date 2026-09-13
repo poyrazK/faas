@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,7 +80,7 @@ func seedBuildForStatus(t *testing.T, store *state.MemStore, acct state.Account)
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	build, err := store.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 12345, "")
+	build, err := store.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 12345, "/var/spool/faas/builds/private/build.log")
 	if err != nil {
 		t.Fatalf("CreateBuild: %v", err)
 	}
@@ -140,6 +141,51 @@ func TestGetBuild_OK(t *testing.T) {
 	}
 	if resp.EnqueuedAt == "" {
 		t.Errorf("enqueued_at = %q, want non-empty", resp.EnqueuedAt)
+	}
+	if strings.Contains(rec.Body.String(), "log_path") || strings.Contains(rec.Body.String(), "/var/") {
+		t.Errorf("customer build response leaked host log path: %s", rec.Body.String())
+	}
+}
+
+func TestGetBuild_CancelledLifecycle(t *testing.T) {
+	h, key, store, acct := buildTestServer(t)
+	buildID := seedBuildForStatus(t, store, acct)
+	if err := store.UpdateBuildStatus(context.Background(), buildID, state.BuildRunning, "", true, false); err != nil {
+		t.Fatalf("start build: %v", err)
+	}
+	if err := store.MarkBuildCancelled(context.Background(), buildID, "", false, time.Now().UTC()); err != nil {
+		t.Fatalf("cancel build: %v", err)
+	}
+
+	rec := buildGet(t, h, key, "/v1/builds/"+buildID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp api.BuildResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != api.BuildStatusCancelled || resp.CancelledAt == "" || resp.StartedAt == "" {
+		t.Fatalf("cancelled lifecycle = %+v", resp)
+	}
+	if resp.DurationSeconds < 0 {
+		t.Errorf("duration_seconds = %d, want non-negative", resp.DurationSeconds)
+	}
+}
+
+func TestGetBuild_QueuedCancellationHasNoDuration(t *testing.T) {
+	h, key, store, acct := buildTestServer(t)
+	buildID := seedBuildForStatus(t, store, acct)
+	if err := store.MarkBuildCancelled(context.Background(), buildID, "", false, time.Now().UTC()); err != nil {
+		t.Fatalf("cancel queued build: %v", err)
+	}
+	rec := buildGet(t, h, key, "/v1/builds/"+buildID)
+	var resp api.BuildResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != api.BuildStatusCancelled || resp.CancelledAt == "" || resp.StartedAt != "" || resp.DurationSeconds != 0 {
+		t.Fatalf("queued cancellation lifecycle = %+v", resp)
 	}
 }
 

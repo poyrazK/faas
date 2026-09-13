@@ -1780,11 +1780,10 @@ type BuildProvenanceResponse struct {
 // ADR-038 Phase 3): BuildResponse is the LIFECYCLE surface — status,
 // timestamps, failure_class, server-computed duration.
 //
-// Status mirrors builds.status, a 4-state enum (queued|running|
-// succeeded|failed) — schema.sql:662 CHECK constraint. 'cancelled'
-// from the original issue example is intentionally absent; the
-// schema doesn't support it and no transition code exists. Adding
-// it requires a separate migration + builderd path.
+// Status mirrors builds.status, a 5-state enum (queued|running|
+// succeeded|failed|cancelled). A queued cancellation has no started_at or
+// duration; a running cancellation has cancelled_at and a duration measured
+// from started_at.
 //
 // failure_class is empty unless status='failed'; the failure_class
 // CHECK constraint is oom|timeout|user_error|infra (schema.sql:660).
@@ -1811,6 +1810,7 @@ const (
 	BuildStatusRunning   = "running"
 	BuildStatusSucceeded = "succeeded"
 	BuildStatusFailed    = "failed"
+	BuildStatusCancelled = "cancelled"
 )
 
 type BuildResponse struct {
@@ -1818,12 +1818,12 @@ type BuildResponse struct {
 	DeploymentID    string `json:"deployment_id"`
 	Kind            string `json:"kind"` // railpack|dockerfile|tarball|github
 	SourceBytes     int64  `json:"source_bytes"`
-	Status          string `json:"status"` // queued|running|succeeded|failed
+	Status          string `json:"status"` // queued|running|succeeded|failed|cancelled
 	FailureClass    string `json:"failure_class,omitempty"`
-	LogPath         string `json:"log_path,omitempty"`
 	EnqueuedAt      string `json:"enqueued_at"`
 	StartedAt       string `json:"started_at,omitempty"`
 	FinishedAt      string `json:"finished_at,omitempty"`
+	CancelledAt     string `json:"cancelled_at,omitempty"`
 	DurationSeconds int    `json:"duration_seconds,omitempty"`
 	// CacheStatus and CacheKeySHA256 are populated once builderd makes a
 	// cache decision. The status is hit|miss|invalidated; the key is the

@@ -1,8 +1,9 @@
 from typing import Literal
 
-BuildResponseStatus = Literal["failed", "queued", "running", "succeeded"]
+BuildResponseStatus = Literal["cancelled", "failed", "queued", "running", "succeeded"]
 
 BUILD_RESPONSE_STATUS_VALUES: set[BuildResponseStatus] = {
+    "cancelled",
     "failed",
     "queued",
     "running",

@@ -4699,10 +4699,9 @@ func (s *server) buildProvenanceResponse(p state.BuildProvenance) api.BuildProve
 // rely on the omitempty tags on BuildResponse so the JSON stays
 // minimal.
 //
-// duration_seconds is server-computed: only set when BOTH
-// StartedAt and FinishedAt are non-zero — a CI script can always
-// rely on its presence meaning "the build reached a terminal
-// state and elapsed N wall-clock seconds."
+// duration_seconds is server-computed from StartedAt to either FinishedAt or
+// CancelledAt. A cancelled queued build exposes cancelled_at but omits the
+// duration because it never started.
 func (s *server) buildResponse(b state.Build) api.BuildResponse {
 	out := api.BuildResponse{
 		ID:           b.ID,
@@ -4714,17 +4713,19 @@ func (s *server) buildResponse(b state.Build) api.BuildResponse {
 	if b.FailureClass != "" {
 		out.FailureClass = string(b.FailureClass)
 	}
-	if b.LogPath != "" {
-		out.LogPath = b.LogPath
-	}
 	if !b.StartedAt.IsZero() {
 		out.StartedAt = b.StartedAt.UTC().Format(time.RFC3339)
 	}
 	if !b.FinishedAt.IsZero() {
 		out.FinishedAt = b.FinishedAt.UTC().Format(time.RFC3339)
 	}
-	if !b.StartedAt.IsZero() && !b.FinishedAt.IsZero() {
-		out.DurationSeconds = int(b.FinishedAt.Sub(b.StartedAt).Seconds())
+	terminalAt := b.FinishedAt
+	if b.CancelledAt != nil {
+		terminalAt = *b.CancelledAt
+		out.CancelledAt = b.CancelledAt.UTC().Format(time.RFC3339)
+	}
+	if !b.StartedAt.IsZero() && !terminalAt.IsZero() {
+		out.DurationSeconds = int(terminalAt.Sub(b.StartedAt).Seconds())
 	}
 	if b.CacheStatus != "" {
 		out.CacheStatus = b.CacheStatus
@@ -4997,12 +4998,12 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 	if statusFilter != "" {
 		switch statusFilter {
 		case api.BuildStatusQueued, api.BuildStatusRunning,
-			api.BuildStatusSucceeded, api.BuildStatusFailed:
+			api.BuildStatusSucceeded, api.BuildStatusFailed, api.BuildStatusCancelled:
 			// ok
 		default:
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Bad status filter",
-				"expected one of queued|running|succeeded|failed"))
+				"expected one of queued|running|succeeded|failed|cancelled"))
 			return
 		}
 	}

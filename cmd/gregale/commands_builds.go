@@ -256,6 +256,7 @@ func printBuildStatus(w io.Writer, b api.BuildResponse) {
 		{"enqueued_at", b.EnqueuedAt},
 		{"started_at", b.StartedAt},
 		{"finished_at", b.FinishedAt},
+		{"cancelled_at", b.CancelledAt},
 		// duration_seconds is rendered only when the build reached
 		// a terminal status (server stamps 0 + omitempty otherwise).
 		// Showing a literal `0` here would suggest "this build took
@@ -295,7 +296,7 @@ func formatBuildCacheSummary(status, key string) string {
 // the buildkit_version + framework_version columns (DEPLOY-PROV-5,
 // PR #736).
 func durationSecondsForDisplay(b api.BuildResponse) string {
-	if b.Status != buildStatusSucceeded && b.Status != buildStatusFailed {
+	if b.Status != buildStatusSucceeded && b.Status != buildStatusFailed && b.Status != buildStatusCancelled {
 		return ""
 	}
 	return strconv.Itoa(b.DurationSeconds)
@@ -341,7 +342,7 @@ func renderBuildListRow(w io.Writer, b api.BuildResponse) {
 func cmdBuildList(args []string) int {
 	fs := flag.NewFlagSet("build-list", flag.ContinueOnError)
 	app := fs.String("app", "", "filter to one app slug")
-	status := fs.String("status", "", "filter to status (queued|running|succeeded|failed)")
+	status := fs.String("status", "", "filter to status (queued|running|succeeded|failed|cancelled)")
 	limit := fs.Int("limit", 50, "page size (1-200)")
 	before := fs.String("before", "", "pagination cursor (opaque token from NextBefore)")
 	all := fs.Bool("all", false, "walk every page (ignores --limit/--before)")
@@ -355,10 +356,10 @@ func cmdBuildList(args []string) int {
 	if *status != "" {
 		switch *status {
 		case api.BuildStatusQueued, api.BuildStatusRunning,
-			api.BuildStatusSucceeded, api.BuildStatusFailed:
+			api.BuildStatusSucceeded, api.BuildStatusFailed, api.BuildStatusCancelled:
 			// ok
 		default:
-			PrintUsage(os.Stderr, "usage: gregale build list --status (queued|running|succeeded|failed)", "build")
+			PrintUsage(os.Stderr, "usage: gregale build list --status (queued|running|succeeded|failed|cancelled)", "build")
 			return 1
 		}
 	}

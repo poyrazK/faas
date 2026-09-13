@@ -118,6 +118,7 @@ const (
 	// string appears 3+ times across the file.
 	buildStatusSucceeded = "succeeded"
 	buildStatusFailed    = "failed"
+	buildStatusCancelled = "cancelled"
 
 	// Deployment status enum value (DEPLOY-PROV-6 sibling).
 	// Lifted out so the SSE decoder branch + pollDeploymentFinal
@@ -4588,7 +4589,7 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 		callCtx, cancelCall := context.WithTimeout(parent, remaining)
 		b, err := c.GetBuildsId(callCtx, dep.BuildID)
 		cancelCall()
-		if err == nil && (b.Status == buildStatusSucceeded || b.Status == buildStatusFailed) {
+		if err == nil && (b.Status == buildStatusSucceeded || b.Status == buildStatusFailed || b.Status == buildStatusCancelled) {
 			return b, true
 		}
 		// Jitter ±10% of the current backoff so N concurrent CI
@@ -4649,6 +4650,10 @@ func terminalExitForBuildWithFailureContext(ctx context.Context, c *Client, b ap
 	if b.Status == buildStatusSucceeded {
 		dep := api.DeploymentResponse{ID: b.DeploymentID, Status: statusLive}
 		return renderSuccessfulDeployment(ctx, c, dep, appSlug)
+	}
+	if b.Status == buildStatusCancelled {
+		PrintWarn(os.Stderr, "build %s was cancelled; deployment %s did not complete", b.ID, b.DeploymentID)
+		return 2
 	}
 	// Failed build — surface the lifecycle info. End users hitting
 	// this path are CI scripts that lost their SSE; the canonical

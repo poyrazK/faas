@@ -312,6 +312,8 @@ export class ObservabilityService {
    * logs/metrics/wake. Cross-account access 404s the
    * same way unknown slugs do (forge-proof: every row's
    * `data.app_id` is verified to match the resolved app).
+   * Wake narratives are a Hobby+ observability surface; Free
+   * accounts receive 402 before slug or wake lookup.
    *
    * @returns WakeTimelineResponse Wake-timeline frames.
    * @throws ApiError
@@ -359,6 +361,7 @@ export class ObservabilityService {
       errors: {
         400: `Malformed query parameter on the wake-timeline read — \`since\` not RFC 3339 or \`limit\` out of range.`,
         401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `No such app (slug) or wake_id is unknown.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).

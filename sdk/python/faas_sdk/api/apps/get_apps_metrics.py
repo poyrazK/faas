@@ -53,6 +53,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 402:
+        response_402 = Problem.from_dict(response.json())
+
+        return response_402
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -96,7 +101,9 @@ def sync_detailed(
 
     PromQL cost: 6 round-trips regardless of N apps (vs. 7N
     for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
-    and `Client.QueryBuckets`.
+    and `Client.QueryBuckets`. This rollup exposes the same
+    Hobby+ signals as the per-app endpoint, so Free accounts
+    receive 402.
 
     Args:
         range_ (GetAppsMetricsRange | Unset):  Default: '5m'.
@@ -141,7 +148,9 @@ def sync(
 
     PromQL cost: 6 round-trips regardless of N apps (vs. 7N
     for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
-    and `Client.QueryBuckets`.
+    and `Client.QueryBuckets`. This rollup exposes the same
+    Hobby+ signals as the per-app endpoint, so Free accounts
+    receive 402.
 
     Args:
         range_ (GetAppsMetricsRange | Unset):  Default: '5m'.
@@ -181,7 +190,9 @@ async def asyncio_detailed(
 
     PromQL cost: 6 round-trips regardless of N apps (vs. 7N
     for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
-    and `Client.QueryBuckets`.
+    and `Client.QueryBuckets`. This rollup exposes the same
+    Hobby+ signals as the per-app endpoint, so Free accounts
+    receive 402.
 
     Args:
         range_ (GetAppsMetricsRange | Unset):  Default: '5m'.
@@ -224,7 +235,9 @@ async def asyncio(
 
     PromQL cost: 6 round-trips regardless of N apps (vs. 7N
     for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
-    and `Client.QueryBuckets`.
+    and `Client.QueryBuckets`. This rollup exposes the same
+    Hobby+ signals as the per-app endpoint, so Free accounts
+    receive 402.
 
     Args:
         range_ (GetAppsMetricsRange | Unset):  Default: '5m'.

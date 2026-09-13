@@ -1816,6 +1816,19 @@ func TestPollBuildStatus_FailedBranch(t *testing.T) {
 	}
 }
 
+func TestPollBuildStatus_CancelledBranch(t *testing.T) {
+	fastBuildPoll(t)
+	srv, dep, _ := pollBuildStubCounting(t, "queued", "running", "cancelled")
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	c := api.NewClient(srv.URL, "fp_live_x")
+	b, ok := pollBuildStatus(c, dep, 4*time.Second)
+	if !ok || b.Status != api.BuildStatusCancelled {
+		t.Fatalf("pollBuildStatus = (%+v, %v), want cancelled terminal", b, ok)
+	}
+}
+
 // TestPollBuildStatus_DeadlineElapses pins: when the server
 // never returns a terminal status, pollBuildStatus returns
 // (zero, false) after the deadline. The 200ms deadline is

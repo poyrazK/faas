@@ -159,7 +159,8 @@ export class AccountService {
    *
    * `window` is the same closed vocabulary as the per-app
    * endpoint: `1h` | `24h` (default) | `7d`. Auth chain:
-   * `usage:read` scope + MFA.
+   * `usage:read` scope + MFA. The SLO rollup is a Hobby+
+   * observability surface; Free accounts receive 402.
    *
    * On Prometheus failure the endpoint returns 200 with
    * zeroed fields and `source: "degraded: <reason>"`. When
@@ -187,6 +188,7 @@ export class AccountService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

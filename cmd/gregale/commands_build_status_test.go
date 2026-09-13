@@ -222,7 +222,7 @@ func TestPrintBuildStatus_BlankDurationForNonTerminal(t *testing.T) {
 // duration_seconds value. Without this test, the previous
 // regression fix could over-correct into "always blank".
 func TestPrintBuildStatus_NumericDurationForTerminal(t *testing.T) {
-	for _, status := range []string{"succeeded", "failed"} {
+	for _, status := range []string{"succeeded", "failed", "cancelled"} {
 		t.Run(status, func(t *testing.T) {
 			var buf bytes.Buffer
 			printBuildStatus(&buf, api.BuildResponse{
@@ -238,5 +238,21 @@ func TestPrintBuildStatus_NumericDurationForTerminal(t *testing.T) {
 				t.Errorf("expected duration_seconds: 82 in output (status=%s); got:\n%s", status, out)
 			}
 		})
+	}
+}
+
+func TestPrintBuildStatus_CancelledTimestamp(t *testing.T) {
+	var buf bytes.Buffer
+	printBuildStatus(&buf, api.BuildResponse{
+		ID:              "id",
+		Status:          api.BuildStatusCancelled,
+		StartedAt:       "2026-09-13T12:00:00Z",
+		CancelledAt:     "2026-09-13T12:00:08Z",
+		DurationSeconds: 8,
+	})
+	out := buf.String()
+	if !strings.Contains(out, "cancelled_at:          2026-09-13T12:00:08Z") ||
+		!strings.Contains(out, "duration_seconds:      8") {
+		t.Fatalf("cancelled lifecycle missing from output:\n%s", out)
 	}
 }
