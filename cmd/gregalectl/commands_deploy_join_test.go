@@ -154,6 +154,20 @@ func TestNodeJoinFullBootstrapPreservesPlayLevelRoleSemantics(t *testing.T) {
 	}
 }
 
+func TestFleetVerifyUsesPrivateTransportAddressForComputeReadiness(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "fleet_verify", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := string(body)
+	if !strings.Contains(tasks, "faas_private_dns_address") || !strings.Contains(tasks, "faas_private_address") {
+		t.Fatal("fleet_verify must probe compute readiness through the provider-neutral private transport address")
+	}
+	if strings.Contains(tasks, "regex_replace('127\\.0\\.0\\.1', ansible_host)") {
+		t.Fatal("fleet_verify must not use the provider SSH address for private readiness probes")
+	}
+}
+
 func TestNodeJoinPublishesHardwareCapacityBeforeVMMDStarts(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
 	if err != nil {
