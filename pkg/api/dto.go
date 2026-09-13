@@ -7811,20 +7811,39 @@ type DebugCoverageResponse struct {
 	LatestTelemetryAt   string              `json:"latest_telemetry_at,omitempty"`
 }
 
+// DebugRunningRequestAttribution links request activity to the nearest
+// retained request-telemetry aggregate. The row is a representative when the
+// publisher collapsed several requests, so MatchDeltaMS and Count are exposed
+// explicitly instead of presenting it as an exact individual request.
+type DebugRunningRequestAttribution struct {
+	TelemetryID  string  `json:"telemetry_id"`
+	DeploymentID string  `json:"deployment_id"`
+	Route        string  `json:"route"`
+	Method       string  `json:"method"`
+	TraceID      *string `json:"trace_id,omitempty"`
+	ReceivedAt   string  `json:"received_at"`
+	Count        int     `json:"count"`
+	WakeID       string  `json:"wake_id,omitempty"`
+	InstanceID   string  `json:"instance_id,omitempty"`
+	MatchDeltaMS int64   `json:"match_delta_ms"`
+}
+
 // DebugRunningCause is one observed reason an application remained resident
 // during an idle-reaper observation. Reasons are deliberately evidence-shaped:
 // the debugger reports what the scheduler saw, rather than predicting a
-// saving or inferring a protocol that was not instrumented.
+// saving or inferring a protocol that was not instrumented. Request activity
+// may carry a bounded attribution to the nearest retained telemetry row.
 type DebugRunningCause struct {
-	Code            string `json:"code"`
-	Summary         string `json:"summary"`
-	InstanceCount   int    `json:"instance_count"`
-	OpenConnections int64  `json:"open_connections,omitempty"`
-	TailTasks       int    `json:"tail_tasks,omitempty"`
-	Mode            string `json:"mode,omitempty"`
-	WorkloadClass   string `json:"workload_class,omitempty"`
-	LastActivityAt  string `json:"last_activity_at,omitempty"`
-	IdleDeadline    string `json:"idle_deadline,omitempty"`
+	Code            string                          `json:"code"`
+	Summary         string                          `json:"summary"`
+	InstanceCount   int                             `json:"instance_count"`
+	OpenConnections int64                           `json:"open_connections,omitempty"`
+	TailTasks       int                             `json:"tail_tasks,omitempty"`
+	Mode            string                          `json:"mode,omitempty"`
+	WorkloadClass   string                          `json:"workload_class,omitempty"`
+	LastActivityAt  string                          `json:"last_activity_at,omitempty"`
+	IdleDeadline    string                          `json:"idle_deadline,omitempty"`
+	Request         *DebugRunningRequestAttribution `json:"request,omitempty"`
 }
 
 // DebugRunningObservation is the durable scheduler observation used by the

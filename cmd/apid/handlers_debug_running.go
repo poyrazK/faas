@@ -7,13 +7,18 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const (
-	debugRunningEventKind = "debug.running_reason"
-	debugRunningLimitMax  = 100
+	debugRunningEventKind        = "debug.running_reason"
+	debugRunningLimitMax         = 100
+	debugRunningAttributionCap   = 200
+	debugRunningAttributionSlack = 2 * time.Minute
 )
 
 // debugRunningEvent mirrors the scheduler's durable event shape. Keeping the
@@ -134,6 +139,12 @@ func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStar
 			break
 		}
 	}
+	// Scheduler observations intentionally retain only an activity timestamp.
+	// Join request causes to the nearest retained telemetry representative at
+	// read time so the scheduler remains independent of apid's SQL store. A
+	// missing/older telemetry table is a normal degraded state and must not
+	// hide the running explanation.
+	s.enrichRunningRequestAttribution(ctx, app.ID, windowStart, windowEnd, history)
 
 	config := api.DebugRunningConfig{
 		ConfiguredMinInstances: app.EffectiveMinInstances(),
@@ -163,4 +174,101 @@ func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStar
 		History:           history,
 		HistoryTruncated:  len(history) == limit,
 	}, nil
+}
+
+// enrichRunningRequestAttribution adds request/route evidence to request
+// activity causes without turning a collapsed telemetry representative into a
+// claim about one exact request. The bounded query is best-effort: MemStore and
+// older installations may not expose request telemetry yet.
+func (s *server) enrichRunningRequestAttribution(ctx context.Context, appID string, windowStart, windowEnd time.Time, history []api.DebugRunningObservation) {
+	if len(history) == 0 {
+		return
+	}
+	needsAttribution := false
+	for _, observation := range history {
+		for _, cause := range observation.Causes {
+			if cause.Code == api.DebugRunningReasonRequestActivity && cause.LastActivityAt != "" {
+				needsAttribution = true
+				break
+			}
+		}
+		if needsAttribution {
+			break
+		}
+	}
+	if !needsAttribution {
+		return
+	}
+	rows, err := s.store.ListRequestTelemetryByApp(ctx, sqlc.ListRequestTelemetryByAppParams{
+		AppID:             stringToPgUUID(appID),
+		ReceivedAt:        pgtype.Timestamptz{Time: windowStart, Valid: true},
+		ReceivedAt_2:      pgtype.Timestamptz{Time: windowEnd, Valid: true},
+		CursorReceivedAt:  pgtype.Timestamptz{},
+		CursorID:          pgtype.UUID{},
+		Route:             "",
+		DeploymentID:      "",
+		StatusFilter:      0,
+		ColdBootFilter:    -1,
+		ConsumerAnonymous: false,
+		ConsumerID:        "",
+		MinLatencyMs:      0,
+		Limit:             debugRunningAttributionCap,
+	})
+	if err != nil {
+		return
+	}
+	for i := range history {
+		for j := range history[i].Causes {
+			cause := &history[i].Causes[j]
+			if cause.Code != api.DebugRunningReasonRequestActivity || cause.LastActivityAt == "" {
+				continue
+			}
+			at, err := time.Parse(time.RFC3339Nano, cause.LastActivityAt)
+			if err != nil {
+				continue
+			}
+			row, delta, ok := nearestRunningTelemetryRow(rows, at)
+			if !ok {
+				continue
+			}
+			item := debugTelemetryRowToItem(row)
+			cause.Request = &api.DebugRunningRequestAttribution{
+				TelemetryID:  item.ID,
+				DeploymentID: item.DeploymentID,
+				Route:        item.Route,
+				Method:       item.Method,
+				TraceID:      item.TraceID,
+				ReceivedAt:   item.ReceivedAt,
+				Count:        item.Count,
+				WakeID:       item.WakeID,
+				InstanceID:   item.InstanceID,
+				MatchDeltaMS: delta.Milliseconds(),
+			}
+		}
+	}
+}
+
+func nearestRunningTelemetryRow(rows []sqlc.ListRequestTelemetryByAppRow, target time.Time) (sqlc.ListRequestTelemetryByAppRow, time.Duration, bool) {
+	var best sqlc.ListRequestTelemetryByAppRow
+	var bestDelta time.Duration
+	found := false
+	for _, row := range rows {
+		if !row.ReceivedAt.Valid {
+			continue
+		}
+		// Never attribute a request that happened after the scheduler's
+		// activity timestamp: a later row could be unrelated traffic that
+		// merely happened to be closer in wall-clock time.
+		delta := target.Sub(row.ReceivedAt.Time)
+		if delta < 0 {
+			continue
+		}
+		if delta > debugRunningAttributionSlack || found && delta >= bestDelta {
+			continue
+		}
+		best = row
+		bestDelta = delta
+		found = true
+	}
+	return best, bestDelta, found
 }

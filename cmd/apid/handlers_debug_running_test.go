@@ -6,8 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestDebugRunning_ReturnsCurrentAndHistory(t *testing.T) {
@@ -83,6 +86,28 @@ func TestDebugRunning_IsPlanGated(t *testing.T) {
 	}
 	rec := e.do(t, http.MethodGet, "/v1/apps/running-debug-free/debug/running", nil, nil)
 	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanFeatureGated)
+}
+
+func TestNearestRunningTelemetryRow_BoundedAndClosest(t *testing.T) {
+	target := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	rows := []sqlc.ListRequestTelemetryByAppRow{
+		{ID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}, ReceivedAt: pgtype.Timestamptz{Time: target.Add(-1500 * time.Millisecond), Valid: true}},
+		{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}, ReceivedAt: pgtype.Timestamptz{Time: target.Add(900 * time.Millisecond), Valid: true}},
+		{ID: pgtype.UUID{Bytes: [16]byte{3}, Valid: true}, ReceivedAt: pgtype.Timestamptz{Time: target.Add(3 * time.Minute), Valid: true}},
+	}
+	row, delta, ok := nearestRunningTelemetryRow(rows, target)
+	if !ok {
+		t.Fatal("nearestRunningTelemetryRow returned no match")
+	}
+	if row.ID.Bytes != [16]byte{1} {
+		t.Fatalf("matched row = %v, want closest row", row.ID.Bytes)
+	}
+	if delta != 1500*time.Millisecond {
+		t.Fatalf("delta = %s, want 1500ms", delta)
+	}
+	if _, _, ok := nearestRunningTelemetryRow([]sqlc.ListRequestTelemetryByAppRow{{ReceivedAt: pgtype.Timestamptz{Time: target.Add(3 * time.Minute), Valid: true}}}, target); ok {
+		t.Fatal("out-of-slack telemetry row was attributed")
+	}
 }
 
 func appendRunningEvent(t *testing.T, e testEnv, appID string, at time.Time, code string) {

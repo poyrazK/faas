@@ -27735,6 +27735,26 @@ components:
         oldest_telemetry_at: { type: string, format: date-time }
         latest_telemetry_at: { type: string, format: date-time }
 
+    DebugRunningRequestAttribution:
+      type: object
+      description: |
+        The nearest retained request-telemetry representative linked to a
+        request-activity cause. A representative may contain several
+        collapsed requests; match_delta_ms and count make that limitation
+        explicit.
+      required: [telemetry_id, deployment_id, route, method, received_at, count, match_delta_ms]
+      properties:
+        telemetry_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        route: { type: string }
+        method: { type: string }
+        trace_id: { type: string }
+        received_at: { type: string, format: date-time }
+        count: { type: integer, minimum: 1 }
+        wake_id: { type: string }
+        instance_id: { type: string }
+        match_delta_ms: { type: integer, format: int64, minimum: 0 }
+
     DebugRunningCause:
       type: object
       description: |
@@ -27754,6 +27774,7 @@ components:
         workload_class: { type: string }
         last_activity_at: { type: string, format: date-time }
         idle_deadline: { type: string, format: date-time }
+        request: { $ref: '#/components/schemas/DebugRunningRequestAttribution' }
 
     DebugRunningObservation:
       type: object

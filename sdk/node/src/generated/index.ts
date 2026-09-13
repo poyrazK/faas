@@ -190,6 +190,7 @@ export type { DebugRequestEvidenceResponse } from './models/DebugRequestEvidence
 export type { DebugRunningCause } from './models/DebugRunningCause.js';
 export type { DebugRunningConfig } from './models/DebugRunningConfig.js';
 export type { DebugRunningObservation } from './models/DebugRunningObservation.js';
+export type { DebugRunningRequestAttribution } from './models/DebugRunningRequestAttribution.js';
 export type { DebugRunningResponse } from './models/DebugRunningResponse.js';
 export type { DebugTelemetryListFilters } from './models/DebugTelemetryListFilters.js';
 export type { DebugTelemetryListResponse } from './models/DebugTelemetryListResponse.js';

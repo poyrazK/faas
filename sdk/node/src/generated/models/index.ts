@@ -184,6 +184,7 @@ export type { DebugRequestEvidenceResponse } from './DebugRequestEvidenceRespons
 export type { DebugRunningCause } from './DebugRunningCause.js';
 export type { DebugRunningConfig } from './DebugRunningConfig.js';
 export type { DebugRunningObservation } from './DebugRunningObservation.js';
+export type { DebugRunningRequestAttribution } from './DebugRunningRequestAttribution.js';
 export type { DebugRunningResponse } from './DebugRunningResponse.js';
 export type { DebugTelemetryListFilters } from './DebugTelemetryListFilters.js';
 export type { DebugTelemetryListResponse } from './DebugTelemetryListResponse.js';

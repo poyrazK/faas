@@ -100,6 +100,11 @@
                     <p>{{.Summary}}</p>
                     {{if .LastActivityAt}}<small class="muted">Last activity {{.LastActivityAt}}{{if .IdleDeadline}} · idle deadline {{.IdleDeadline}}{{end}}</small>{{end}}
                     {{if .Mode}}<small class="muted">Mode {{.Mode}}{{if .WorkloadClass}} · workload {{.WorkloadClass}}{{end}}</small>{{end}}
+                    {{if .Request}}
+                      <p><a href="{{.Request.RequestURL}}">Inspect representative request →</a></p>
+                      <small class="muted"><code>{{.Request.Method}} {{.Request.Route}}</code> · {{.Request.ReceivedAt}} · {{.Request.Count}} represented request(s) · matched within {{.Request.MatchDeltaMS}} ms</small>
+                      {{if .Request.TraceID}}<small class="muted"> · trace <code>{{.Request.TraceID}}</code></small>{{end}}
+                    {{end}}
                   </article>
                 {{end}}
               </div>

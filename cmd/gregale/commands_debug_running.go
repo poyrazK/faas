@@ -58,6 +58,14 @@ func renderDebugRunning(w io.Writer, slug string, resp api.DebugRunningResponse)
 			_, _ = fmt.Fprintln(w, "Current observed causes:")
 			for _, cause := range resp.Current {
 				_, _ = fmt.Fprintf(w, "  - %s: %s\n", cause.Code, cause.Summary)
+				if cause.Request != nil {
+					request := cause.Request
+					_, _ = fmt.Fprintf(w, "    representative telemetry: %s %s %s (matched within %dms; count=%d)\n",
+						request.Method, request.Route, request.TelemetryID, request.MatchDeltaMS, request.Count)
+					if request.TraceID != nil && *request.TraceID != "" {
+						_, _ = fmt.Fprintf(w, "    trace: %s\n", *request.TraceID)
+					}
+				}
 			}
 		}
 		if len(resp.History) > 0 && resp.History[0].Degraded {

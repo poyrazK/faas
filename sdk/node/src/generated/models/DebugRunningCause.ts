@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DebugRunningRequestAttribution } from './DebugRunningRequestAttribution.js';
 /**
  * One observed scheduler reason an application remained resident. The
  * platform reports evidence available at the scheduler boundary; it
@@ -18,5 +19,6 @@ export type DebugRunningCause = {
   workload_class?: string;
   last_activity_at?: string;
   idle_deadline?: string;
+  request?: DebugRunningRequestAttribution;
 };
 

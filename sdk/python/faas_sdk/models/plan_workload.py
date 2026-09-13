@@ -24,6 +24,8 @@ class PlanWorkload:
 
     name: str
     root_dir: str
+    """Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages
+    remain available outside this directory."""
     command: list[str]
     ports: list[int]
     dockerfile: str | Unset = UNSET
