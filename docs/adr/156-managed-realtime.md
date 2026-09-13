@@ -50,6 +50,13 @@ built-in HTTP callback hook retries network failures and 408/429/5xx responses
 up to three total attempts with a bounded exponential backoff; a caller can
 set `MaxAttempts` to one when a custom hook owns delivery policy.
 
+When `realtimed` uses the built-in hook, message and disconnect callbacks are
+also written to its node-local callback outbox before delivery. Unacknowledged
+files are replayed after process restart; delivery is at-least-once and events
+that exhaust the bounded replay budget are retained as dead letters. The
+outbox location defaults to `/run/faas/realtime-callbacks` and is configurable
+with `FAAS_REALTIME_CALLBACK_OUTBOX`.
+
 Management examples:
 
 ```
@@ -76,9 +83,10 @@ The daemon defaults to 10,000 concurrent connections, 1 MiB frames, a 64
 message per-connection output queue, 30 second heartbeats, 10 second pong
 wait, a 5 second write deadline, and a 24 hour maximum connection age. These
 are configurable with `FAAS_REALTIME_*` environment variables. `/internal/stats`
-exposes process-local accepted/rejected connection, message, byte, and queue
-drop and callback-error counters for metering and alerting; aggregate across nodes because the
-registry is intentionally node-local.
+exposes process-local accepted/rejected connection, message, byte, queue-drop,
+callback-error, callback-pending, and callback-dead-letter counters for
+metering and alerting; aggregate across nodes because the registry and outbox
+are intentionally node-local.
 
 ## Follow-up work
 

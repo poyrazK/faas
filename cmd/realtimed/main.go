@@ -40,6 +40,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
+	callbackTimeout := envDuration("FAAS_REALTIME_CALLBACK_TIMEOUT", 30*time.Second)
+	outbox, err := realtime.NewCallbackOutbox(realtime.CallbackOutboxConfig{
+		Root: getenv("FAAS_REALTIME_CALLBACK_OUTBOX", realtime.DefaultCallbackOutboxRoot),
+	})
+	if err != nil {
+		return err
+	}
+	hooks := realtime.HTTPHooks{DurableQueue: outbox}
 	manager := realtime.NewManager(realtime.Config{
 		MaxConnections:   envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
 		MaxMessageBytes:  int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
@@ -48,8 +56,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		PongWait:         envDuration("FAAS_REALTIME_PONG_WAIT", 10*time.Second),
 		WriteWait:        envDuration("FAAS_REALTIME_WRITE_WAIT", 5*time.Second),
 		MaxConnectionAge: envDuration("FAAS_REALTIME_MAX_AGE", 24*time.Hour),
-		CallbackTimeout:  envDuration("FAAS_REALTIME_CALLBACK_TIMEOUT", 30*time.Second),
-	}, realtime.HTTPHooks{})
+		CallbackTimeout:  callbackTimeout,
+	}, hooks)
 	defer func() { _ = manager.Close() }()
 
 	listener, err := net.Listen("unix", socketPath)
@@ -76,6 +84,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
+	go func() {
+		err := outbox.Run(ctx, func(deliveryCtx context.Context, event realtime.Event) error {
+			callbackCtx, cancel := context.WithTimeout(deliveryCtx, callbackTimeout)
+			defer cancel()
+			return hooks.Deliver(callbackCtx, event)
+		})
+		if err != nil && !errors.Is(err, context.Canceled) {
+			log.Warn("realtimed callback outbox stopped", "err", err)
+		}
+	}()
 	serverErr := make(chan error, 2)
 	go func() {
 		log.Info("realtimed listening", "socket", socketPath)

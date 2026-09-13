@@ -350,6 +350,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PUBLIC_IFACE", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible"},
 	{Name: "FAAS_PUBLIC_LISTEN_ADDR", Owners: []string{"gatewayd-public"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_QUOTA_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_REALTIME_CALLBACK_OUTBOX", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_CALLBACK_TIMEOUT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HEALTH_LISTEN", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HEARTBEAT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},

@@ -27,12 +27,25 @@ const (
 type HTTPHooks struct {
 	Client  *http.Client
 	Headers func(Event) http.Header
+	// DurableQueue persists message and disconnect callbacks before the first
+	// HTTP attempt. Connect callbacks remain synchronous because their result
+	// decides whether the WebSocket handshake is admitted.
+	DurableQueue *CallbackOutbox
 	// MaxAttempts is the total number of callback requests, including the
 	// initial attempt. Zero uses the production default of three attempts.
 	MaxAttempts int
 	// RetryBackoff is the base delay for transient callback failures. Delays
 	// grow exponentially and are capped at five seconds. Zero uses 100ms.
 	RetryBackoff time.Duration
+}
+
+// OutboxStats exposes durable callback counters to Manager. Custom Hooks do
+// not need to implement this optional observation seam.
+func (h HTTPHooks) OutboxStats() CallbackOutboxStats {
+	if h.DurableQueue == nil {
+		return CallbackOutboxStats{}
+	}
+	return h.DurableQueue.Stats()
 }
 
 func (h HTTPHooks) Connect(ctx context.Context, event Event) (bool, error) {
@@ -50,6 +63,33 @@ func (h HTTPHooks) Message(ctx context.Context, event Event) error {
 	if event.CallbackURL == "" || event.CallbackPath == "" {
 		return nil
 	}
+	if h.DurableQueue != nil {
+		claimed, err := h.DurableQueue.EnqueueAndClaim(event)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			return nil
+		}
+		err = h.deliverMessage(ctx, event)
+		if err != nil {
+			if ctx.Err() != nil {
+				h.DurableQueue.Release(event.ID)
+			} else if failErr := h.DurableQueue.Fail(event.ID); failErr != nil {
+				return errors.Join(err, fmt.Errorf("persist callback failure: %w", failErr))
+			}
+			return err
+		}
+		if err := h.DurableQueue.Ack(event.ID); err != nil {
+			h.DurableQueue.Release(event.ID)
+			return err
+		}
+		return nil
+	}
+	return h.deliverMessage(ctx, event)
+}
+
+func (h HTTPHooks) deliverMessage(ctx context.Context, event Event) error {
 	status, err := h.deliver(ctx, event)
 	if err != nil {
 		return err
@@ -64,6 +104,33 @@ func (h HTTPHooks) Disconnect(ctx context.Context, event Event) error {
 	if event.CallbackURL == "" || event.CallbackPath == "" {
 		return nil
 	}
+	if h.DurableQueue != nil {
+		claimed, err := h.DurableQueue.EnqueueAndClaim(event)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			return nil
+		}
+		err = h.deliverDisconnect(ctx, event)
+		if err != nil {
+			if ctx.Err() != nil {
+				h.DurableQueue.Release(event.ID)
+			} else if failErr := h.DurableQueue.Fail(event.ID); failErr != nil {
+				return errors.Join(err, fmt.Errorf("persist callback failure: %w", failErr))
+			}
+			return err
+		}
+		if err := h.DurableQueue.Ack(event.ID); err != nil {
+			h.DurableQueue.Release(event.ID)
+			return err
+		}
+		return nil
+	}
+	return h.deliverDisconnect(ctx, event)
+}
+
+func (h HTTPHooks) deliverDisconnect(ctx context.Context, event Event) error {
 	status, err := h.deliver(ctx, event)
 	if err != nil {
 		return err
@@ -72,6 +139,35 @@ func (h HTTPHooks) Disconnect(ctx context.Context, event Event) error {
 		return fmt.Errorf("realtime: disconnect callback returned HTTP %d", status)
 	}
 	return nil
+}
+
+// Deliver sends one persisted message or disconnect event without touching a
+// durable queue. It is used by CallbackOutbox.Run after a process restart.
+func (h HTTPHooks) Deliver(ctx context.Context, event Event) error {
+	if event.CallbackURL == "" || event.CallbackPath == "" {
+		return nil
+	}
+	status, err := h.deliver(ctx, event)
+	if err != nil {
+		return err
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return &CallbackHTTPError{StatusCode: status}
+	}
+	return nil
+}
+
+// CallbackHTTPError reports a non-2xx callback response to the durable
+// replay loop while preserving the status for diagnostics.
+type CallbackHTTPError struct {
+	StatusCode int
+}
+
+func (e *CallbackHTTPError) Error() string {
+	if e == nil {
+		return "realtime: callback returned a non-2xx response"
+	}
+	return fmt.Sprintf("realtime: callback returned HTTP %d", e.StatusCode)
 }
 
 func (h HTTPHooks) deliver(ctx context.Context, event Event) (int, error) {

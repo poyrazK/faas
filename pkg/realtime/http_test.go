@@ -3,6 +3,7 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -84,6 +85,50 @@ func TestHTTPHooksDoesNotRetryTerminalCallbackFailures(t *testing.T) {
 	}
 	if got := attempts.Load(); got != 1 {
 		t.Fatalf("callback attempts = %d, want 1", got)
+	}
+}
+
+func TestHTTPHooksDurableMessageReplaysAfterInitialFailure(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
+	hooks := HTTPHooks{Client: server.Client(), DurableQueue: queue, MaxAttempts: 1}
+	event := Event{ID: "evt_durable", Type: EventMessage, ConnectionID: "rt_durable", CallbackURL: server.URL, CallbackPath: "/events"}
+	if err := hooks.Message(context.Background(), event); err == nil {
+		t.Fatal("Message callback unexpectedly succeeded on transient failure")
+	}
+	if stats := queue.Stats(); stats.Pending != 1 {
+		t.Fatalf("queue Stats after failed callback = %+v, want one pending event", stats)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- queue.Run(ctx, func(deliveryCtx context.Context, pending Event) error {
+			err := hooks.Deliver(deliveryCtx, pending)
+			if err == nil {
+				cancel()
+			}
+			return err
+		})
+	}()
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("callback attempts = %d, want initial attempt plus replay", got)
+	}
+	if stats := queue.Stats(); stats.Pending != 0 {
+		t.Fatalf("queue Stats after replay = %+v, want empty", stats)
 	}
 }
 

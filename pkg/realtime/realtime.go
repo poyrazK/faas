@@ -124,7 +124,7 @@ type Endpoint struct {
 // Hooks receives connection lifecycle events. Connect is synchronous with
 // connection admission and may reject the connection. Message and Disconnect
 // are called after the connection has been admitted; production hooks should
-// enqueue a durable event and return quickly.
+// persist events before delivery and keep callback work bounded.
 type Hooks interface {
 	Connect(context.Context, Event) (accept bool, err error)
 	Message(context.Context, Event) error
@@ -196,15 +196,18 @@ type ConnectionInfo struct {
 // Stats is a point-in-time view of the bounded realtime data plane. Counters
 // are process-local; operators should aggregate them across realtimed nodes.
 type Stats struct {
-	CurrentConnections  uint64 `json:"current_connections"`
-	AcceptedConnections uint64 `json:"accepted_connections"`
-	RejectedConnections uint64 `json:"rejected_connections"`
-	ReceivedMessages    uint64 `json:"received_messages"`
-	ReceivedBytes       uint64 `json:"received_bytes"`
-	SentMessages        uint64 `json:"sent_messages"`
-	SentBytes           uint64 `json:"sent_bytes"`
-	DroppedMessages     uint64 `json:"dropped_messages"`
-	CallbackErrors      uint64 `json:"callback_errors"`
+	CurrentConnections   uint64 `json:"current_connections"`
+	AcceptedConnections  uint64 `json:"accepted_connections"`
+	RejectedConnections  uint64 `json:"rejected_connections"`
+	ReceivedMessages     uint64 `json:"received_messages"`
+	ReceivedBytes        uint64 `json:"received_bytes"`
+	SentMessages         uint64 `json:"sent_messages"`
+	SentBytes            uint64 `json:"sent_bytes"`
+	DroppedMessages      uint64 `json:"dropped_messages"`
+	CallbackErrors       uint64 `json:"callback_errors"`
+	CallbackPending      uint64 `json:"callback_pending"`
+	CallbackPendingBytes uint64 `json:"callback_pending_bytes"`
+	CallbackDeadLetters  uint64 `json:"callback_dead_letters"`
 }
 
 type connection struct {
@@ -783,7 +786,7 @@ func (m *Manager) Stats() Stats {
 	if current < 0 {
 		current = 0
 	}
-	return Stats{
+	stats := Stats{
 		CurrentConnections:  uint64(current),
 		AcceptedConnections: m.acceptedConnections.Load(),
 		RejectedConnections: m.rejectedConnections.Load(),
@@ -794,6 +797,27 @@ func (m *Manager) Stats() Stats {
 		DroppedMessages:     m.droppedMessages.Load(),
 		CallbackErrors:      m.callbackErrors.Load(),
 	}
+	if provider, ok := m.hooks.(interface{ OutboxStats() CallbackOutboxStats }); ok {
+		outbox := provider.OutboxStats()
+		stats.CallbackPending = uint64(maxInt(outbox.Pending, 0))
+		stats.CallbackPendingBytes = uint64(maxInt64(outbox.PendingBytes, 0))
+		stats.CallbackDeadLetters = uint64(maxInt64(outbox.DeadLetterTotal, 0))
+	}
+	return stats
+}
+
+func maxInt(value, floor int) int {
+	if value < floor {
+		return floor
+	}
+	return value
+}
+
+func maxInt64(value, floor int64) int64 {
+	if value < floor {
+		return floor
+	}
+	return value
 }
 
 // Close stops admission, closes every socket, and cancels callback contexts.

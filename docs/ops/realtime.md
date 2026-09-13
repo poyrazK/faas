@@ -79,5 +79,13 @@ Set `FAAS_REALTIME_MAX_CONNECTIONS`,
 `FAAS_REALTIME_HEARTBEAT`, `FAAS_REALTIME_PONG_WAIT`,
 `FAAS_REALTIME_WRITE_WAIT`, `FAAS_REALTIME_MAX_AGE`, and
 `FAAS_REALTIME_CALLBACK_TIMEOUT` in the realtimed environment file when
-adjusting limits. Keep the callback URL on an ordinary app route so the normal
-gateway wake path can start a sleeping application to process an event.
+adjusting limits. `FAAS_REALTIME_CALLBACK_OUTBOX` optionally overrides the
+node-local callback spool (default `/run/faas/realtime-callbacks`). Message and
+disconnect events are fsynced before delivery and replayed after a realtimed
+restart; delivery is at-least-once, and poison events are retained under the
+outbox's `dead/` directory after the bounded retry budget. Keep the callback URL
+on an ordinary app route so the normal gateway wake path can start a sleeping
+application to process an event.
+
+`/internal/stats` includes callback-pending, callback-pending-bytes, and
+callback-dead-letter counters alongside the connection and delivery counters.
