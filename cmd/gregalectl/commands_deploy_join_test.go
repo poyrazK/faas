@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -839,12 +840,24 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		}
 	}
 	var calls [][]string
+	var rolloutOverlap float64
 	ansiblePlaybookRunner = func(_ context.Context, _ string, args []string) error {
 		calls = append(calls, append([]string(nil), args...))
 		inventory := ""
 		for i := range args {
 			if args[i] == "-i" && i+1 < len(args) {
 				inventory = args[i+1]
+			}
+			if args[i] == "-e" && i+1 < len(args) && strings.HasSuffix(args[i+1], "join-vars.json") {
+				body, err := os.ReadFile(strings.TrimPrefix(args[i+1], "@"))
+				if err != nil {
+					return err
+				}
+				var vars map[string]any
+				if err := json.Unmarshal(body, &vars); err != nil {
+					return err
+				}
+				rolloutOverlap, _ = vars["faas_postgres_rollout_overlap_nodes"].(float64)
 			}
 		}
 		if inventory == "" {
@@ -878,6 +891,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		StorageEnvSource:      storageEnv,
 		RuntimeBasesEnvSource: runtimeBasesEnv,
 		RepoRoot:              repo,
+		PostgresOverlapNodes:  4,
 		SkipFleetPreflight:    true,
 	})
 	if err != nil {
@@ -899,12 +913,16 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		StorageEnvSource:      storageEnv,
 		RuntimeBasesEnvSource: runtimeBasesEnv,
 		RepoRoot:              repo,
+		PostgresOverlapNodes:  4,
 		SkipFleetPreflight:    true,
 	}, &report); err != nil || code != 0 {
 		t.Fatalf("deployJoinApply: code=%d err=%v", code, err)
 	}
 	if len(calls) != 2 {
 		t.Fatalf("Ansible calls = %d, want control-plane convergence plus limited join", len(calls))
+	}
+	if rolloutOverlap != 4 {
+		t.Fatalf("faas_postgres_rollout_overlap_nodes = %v, want 4", rolloutOverlap)
 	}
 	controlPlane := strings.Join(calls[0], " ")
 	if !strings.Contains(controlPlane, "--limit control_plane") || !strings.Contains(controlPlane, "node_join_control_plane.yml") {

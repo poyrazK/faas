@@ -47,7 +47,8 @@
             - (faas_postgres_superuser_reserved_connections | int))
         fail_msg: >-
           Inventory-derived PostgreSQL capacity does not cover the steady
-          75% ceiling and one rolling compute generation.
+          75% ceiling and {{ faas_postgres_rollout_overlap_nodes }} concurrent
+          rolling compute generations.
 
     - name: Require one production group per fleet host
       ansible.builtin.assert:

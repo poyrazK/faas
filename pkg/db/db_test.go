@@ -24,23 +24,37 @@ func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 	operatorHeadroom := postgresCapacityDefault(t, "faas_postgres_min_operator_headroom")
 	declaredControl := postgresCapacityDefault(t, "faas_postgres_control_plane_pool_budget")
 	declaredCompute := postgresCapacityDefault(t, "faas_postgres_per_compute_pool_budget")
-	rolloutNodes := postgresCapacityDefault(t, "faas_postgres_rollout_overlap_nodes")
+	standaloneRolloutNodes := postgresCapacityDefault(t, "faas_postgres_rollout_overlap_nodes")
 	if got := sum(control); got != declaredControl {
 		t.Fatalf("control-plane pool budget = %d, role declares %d", got, declaredControl)
 	}
 	if got := sum(compute); got != declaredCompute {
 		t.Fatalf("per-compute pool budget = %d, role declares %d", got, declaredCompute)
 	}
-	wantMax := map[int32]int32{1: 130, 2: 160, 10: 520, 12: 610}
-	for _, computeNodes := range []int32{1, 2, 10, 12} {
+	tests := []struct {
+		computeNodes int32
+		rolloutNodes int32
+		wantMax      int32
+	}{
+		{computeNodes: 1, rolloutNodes: standaloneRolloutNodes, wantMax: 130},
+		{computeNodes: 2, rolloutNodes: standaloneRolloutNodes, wantMax: 160},
+		{computeNodes: 10, rolloutNodes: standaloneRolloutNodes, wantMax: 520},
+		{computeNodes: 12, rolloutNodes: standaloneRolloutNodes, wantMax: 610},
+		// join-fleet converges four nodes by default. These cases cover the
+		// boundary where the steady-state 75% margin alone is insufficient.
+		{computeNodes: 10, rolloutNodes: 4, wantMax: 540},
+		{computeNodes: 11, rolloutNodes: 4, wantMax: 570},
+	}
+	for _, tt := range tests {
+		computeNodes := tt.computeNodes
 		steadyTotal := declaredControl + computeNodes*declaredCompute
-		rolloutTotal := declaredControl + (computeNodes+rolloutNodes)*declaredCompute
+		rolloutTotal := declaredControl + (computeNodes+tt.rolloutNodes)*declaredCompute
 		ordinaryForWarning := (steadyTotal*4 + 2) / 3
 		ordinaryForRollout := rolloutTotal + operatorHeadroom
 		ordinaryCapacity := max32(ordinaryForWarning, ordinaryForRollout)
 		maxConnections := roundUp10(ordinaryCapacity + reservedConnections)
-		if maxConnections != wantMax[computeNodes] {
-			t.Fatalf("%d-node max_connections = %d, want %d", computeNodes, maxConnections, wantMax[computeNodes])
+		if maxConnections != tt.wantMax {
+			t.Fatalf("%d-node/%d-overlap max_connections = %d, want %d", computeNodes, tt.rolloutNodes, maxConnections, tt.wantMax)
 		}
 		configuredOrdinary := maxConnections - reservedConnections
 		if steadyTotal*4 > configuredOrdinary*3 {

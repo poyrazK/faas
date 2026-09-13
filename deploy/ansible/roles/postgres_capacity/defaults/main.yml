@@ -3,6 +3,8 @@
 # complete [compute_nodes] inventory; it never assumes a two-node ceiling.
 faas_postgres_control_plane_pool_budget: 40
 faas_postgres_per_compute_pool_budget: 34
+# Standalone joins overlap one generation. `gregalectl deploy join-fleet`
+# overrides this with its effective worker count for the current batch.
 faas_postgres_rollout_overlap_nodes: 1
 faas_postgres_superuser_reserved_connections: 5
 faas_postgres_min_operator_headroom: 10
