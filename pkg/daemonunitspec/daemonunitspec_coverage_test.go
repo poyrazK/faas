@@ -166,6 +166,9 @@ func TestUnitApid_Shape(t *testing.T) {
 	if !hasOptionalLoadCredential(u, "faas_archive_creds", "/etc/faas/secrets/storage-box/archive-creds.json") {
 		t.Error("apid: missing optional faas_archive_creds LoadCredential")
 	}
+	if !hasReadWrite(u, "/srv/fc") {
+		t.Error("apid: missing artifact lifecycle access to /srv/fc")
+	}
 }
 
 func TestUnitSchedd_Shape(t *testing.T) {
@@ -242,6 +245,9 @@ func TestUnitGatewaydInternal_Shape(t *testing.T) {
 	}
 	if !hasOptionalLoadCredential(u, "faas_archive_creds", "/etc/faas/secrets/storage-box/archive-creds.json") {
 		t.Error("gatewayd-internal: missing optional faas_archive_creds LoadCredential")
+	}
+	if !hasReadWrite(u, "/var/lib/faas/egress-meter") {
+		t.Error("gatewayd-internal: missing durable egress metering access")
 	}
 }
 

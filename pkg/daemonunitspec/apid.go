@@ -110,7 +110,7 @@ func UnitApid() daemonunit.Unit {
 		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
-		ReadWritePaths: []string{"/var/lib/faas", "/var/log/faas", "/var/spool/faas"},
+		ReadWritePaths: []string{"/srv/fc", "/var/lib/faas", "/var/log/faas", "/var/spool/faas"},
 
 		WantedBy: "multi-user.target",
 	}
