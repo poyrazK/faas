@@ -409,6 +409,24 @@ func TestHealthcheckPathFromDep_Mega4(t *testing.T) {
 	if got != "/healthz" {
 		t.Errorf("got %q", got)
 	}
+	profile := json.RawMessage(`{"version":"v1","framework":"node","port":3000,"health_path":"/readyz","inferred":true}`)
+	if got := healthcheckPathFromDep(state.Deployment{InferredProfile: profile}); got != "/readyz" {
+		t.Errorf("inferred profile path = %q, want /readyz", got)
+	}
+	receipt := json.RawMessage(`{"profile":{"version":"v1","framework":"node","port":3000,"health_path":"/receiptz","inferred":true}}`)
+	if got := healthcheckPathFromDep(state.Deployment{APIHostingReceipt: receipt, InferredProfile: profile}); got != "/receiptz" {
+		t.Errorf("hosting receipt path = %q, want /receiptz", got)
+	}
+	if got := healthcheckPathFromDep(state.Deployment{
+		OverrideHealthcheck: json.RawMessage(`{"path":"/overridez"}`),
+		APIHostingReceipt:   receipt,
+		InferredProfile:     profile,
+	}); got != "/overridez" {
+		t.Errorf("override path = %q, want /overridez", got)
+	}
+	if got := healthcheckPathFromDep(state.Deployment{InferredProfile: json.RawMessage(`{"version":"v1","health_path":"/ok\nheader"}`)}); got != "" {
+		t.Errorf("unsafe health path = %q, want empty", got)
+	}
 }
 
 // --- isOnScaleOutCooldown ----------------------------------------

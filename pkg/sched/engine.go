@@ -6632,29 +6632,6 @@ func envSecretsFromDep(dep state.Deployment) map[string]string {
 	return out
 }
 
-// healthcheckPathFromDep (issue #460 / ADR-053, ADR-057 / PR-D) unmarshals
-// dep.OverrideHealthcheck (jsonb column) and returns the readiness probe
-// path. Returns "" when the column is nil (pre-PR-A deployments), when
-// the path field is empty (legacy no-healthcheck), or when the column is
-// malformed (fail-soft to the legacy TCP-accept on :8080). The mirror of
-// envSecretsFromDep above: defensive against a malformed column rather
-// than fail-the-wake, because the apid validator already enforces the
-// shape at INSERT time — a tampered column would need a direct DB write
-// behind the spec's role separation.
-//
-// Returned string is owned by the caller; mutating it does not affect
-// the deployment row.
-func healthcheckPathFromDep(dep state.Deployment) string {
-	if len(dep.OverrideHealthcheck) == 0 {
-		return ""
-	}
-	var hc api.DeploymentHealthcheck
-	if err := json.Unmarshal(dep.OverrideHealthcheck, &hc); err != nil {
-		return ""
-	}
-	return hc.Path
-}
-
 // loadAPIEnv is the plaintext sibling of loadSealedEnv (issue #395 /
 // ADR-045). Reads the per-app app_envs rows for the given scope and
 // flattens them into the fcvm shape Manager.Wake consumes. Same

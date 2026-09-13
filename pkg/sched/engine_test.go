@@ -1543,7 +1543,20 @@ func TestEngineWake_EmptyCallerDeploymentID_FallsBackToLiveDeployment(t *testing
 
 func TestEngineWake_RestoreFromSnapshot(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "restore-health@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "restore-health", RAMMB: 512, MaxConcurrency: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployLive,
+		InferredProfile: json.RawMessage(`{"version":"v1","framework":"node","port":3000,"health_path":"/readyz","inferred":true}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// A fresh, version-matched snapshot makes wake a restore.
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
@@ -1563,6 +1576,34 @@ func TestEngineWake_RestoreFromSnapshot(t *testing.T) {
 	}
 	if vmm.restores != 1 || vmm.coldBoots != 0 {
 		t.Errorf("restores=%d coldBoots=%d, want 1/0", vmm.restores, vmm.coldBoots)
+	}
+	if got := vmm.lastRestoreSpec.HealthcheckPath; got != "/readyz" {
+		t.Errorf("restore HealthcheckPath = %q, want /readyz", got)
+	}
+}
+
+func TestEngineWake_ColdBootForwardsInferredHealthPath(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "cold-health@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "cold-health", RAMMB: 256, MaxConcurrency: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployLive,
+		InferredProfile: json.RawMessage(`{"version":"v1","framework":"node","port":3000,"health_path":"/healthz","inferred":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if got := vmm.lastColdBootSpec.HealthcheckPath; got != "/healthz" {
+		t.Errorf("cold boot HealthcheckPath = %q, want /healthz", got)
 	}
 }
 
@@ -2105,6 +2146,9 @@ func TestEnginePrime_ForwardsInferredRuntimePort(t *testing.T) {
 	}
 	if got := vmm.lastColdBootSpec.Port; got != 3000 {
 		t.Fatalf("prime cold-boot Port = %d, want 3000", got)
+	}
+	if got := vmm.lastColdBootSpec.HealthcheckPath; got != "/healthz" {
+		t.Fatalf("prime cold-boot HealthcheckPath = %q, want /healthz", got)
 	}
 }
 
