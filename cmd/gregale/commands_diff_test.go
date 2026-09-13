@@ -43,6 +43,40 @@ func TestNormalizeDeployPreviewFlags(t *testing.T) {
 	}
 }
 
+func TestDeployPreviewRequested(t *testing.T) {
+	tests := []struct {
+		name       string
+		dryRun     bool
+		diff       bool
+		serverDiff bool
+		want       bool
+		wantErr    string
+	}{
+		{name: "neither", want: false},
+		{name: "diff", diff: true, want: true},
+		{name: "dry run", dryRun: true, want: true},
+		{name: "server diff implies preview", serverDiff: true, want: true},
+		{name: "aliases remain mutually exclusive", dryRun: true, diff: true, wantErr: "--dry-run and --diff are aliases; use only one"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := deployPreviewRequested(tt.dryRun, tt.diff, tt.serverDiff)
+			if got != tt.want {
+				t.Fatalf("deployPreviewRequested() = %t, want %t", got, tt.want)
+			}
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateDeployDiffManifest_RejectsWorkflows(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir, `workflows:

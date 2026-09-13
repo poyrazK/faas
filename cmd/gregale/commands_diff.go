@@ -84,6 +84,18 @@ func normalizeDeployPreviewFlags(dryRun, diff bool) (bool, error) {
 	return dryRun || diff, nil
 }
 
+// deployPreviewRequested folds all read-only preview spellings into the
+// single diff path. In particular, --server-diff is a transport selector,
+// not a permission to deploy: using it by itself must still short-circuit
+// before any mutating endpoint is reached.
+func deployPreviewRequested(dryRun, diff, serverDiff bool) (bool, error) {
+	preview, err := normalizeDeployPreviewFlags(dryRun, diff)
+	if err != nil {
+		return false, err
+	}
+	return preview || serverDiff, nil
+}
+
 // buildDiffOptions projects the parsed cmdDeployTarball flag set
 // into the diff CLI options. Called from cmdDeployTarball's
 // --diff short-circuit path so the diff sees the same flags a real

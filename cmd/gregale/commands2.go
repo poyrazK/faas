@@ -1407,7 +1407,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// deploy-local --json spelling equivalent for the diff path,
 	// whose renderer uses a separate option field.
 	*diffJSON = *diffJSON || jsonOutput
-	preview, previewErr := normalizeDeployPreviewFlags(*dryRun, *diff)
+	preview, previewErr := deployPreviewRequested(*dryRun, *diff, *serverDiff)
 	if previewErr != nil {
 		return printErr("Invalid flags", previewErr)
 	}
@@ -1644,8 +1644,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *createOnly {
 			return printErr("Invalid flags", fmt.Errorf("--create-only is not supported with --repo; use --template or --path"))
 		}
-		if *dryRun {
-			return printErr("Invalid flags", fmt.Errorf("--dry-run is not supported with --repo; use a local source with --path or --worktree"))
+		if *diff {
+			return printErr("Invalid flags", fmt.Errorf("--diff/--dry-run/--server-diff cannot be combined with --repo; source-ref preview is not supported"))
 		}
 		if *profile != "" {
 			return printErr("Invalid flags", fmt.Errorf("--profile cannot be combined with --repo"))
