@@ -72,7 +72,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		MaxHeaderBytes:    64 << 10,
 	}
 	healthServer := &http.Server{
-		Handler:           manager.HTTPHandler(),
+		Handler:           manager.HealthHandler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}

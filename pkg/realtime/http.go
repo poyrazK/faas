@@ -110,12 +110,11 @@ func (h HTTPHooks) deliver(ctx context.Context, event Event) (int, error) {
 	return resp.StatusCode, nil
 }
 
-// HTTPHandler returns the daemon's combined handler. The public managed path
-// is intentionally mounted beside private /internal management routes; the
-// latter should be served only on a DAC-protected Unix socket.
-func (m *Manager) HTTPHandler() http.Handler {
+// HealthHandler returns the handler for the daemon's health listener. It
+// intentionally exposes only liveness/readiness probes; management routes
+// must remain behind the DAC-protected Unix socket returned by HTTPHandler.
+func (m *Manager) HealthHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle(ManagedPathPrefix, m)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		if m == nil || m.closed.Load() {
 			http.Error(w, "unhealthy", http.StatusServiceUnavailable)
@@ -132,6 +131,18 @@ func (m *Manager) HTTPHandler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ready\n")
 	})
+	return mux
+}
+
+// HTTPHandler returns the daemon's combined handler. The public managed path
+// is intentionally mounted beside private /internal management routes; the
+// latter should be served only on a DAC-protected Unix socket.
+func (m *Manager) HTTPHandler() http.Handler {
+	mux := http.NewServeMux()
+	health := m.HealthHandler()
+	mux.Handle(ManagedPathPrefix, m)
+	mux.Handle("/healthz", health)
+	mux.Handle("/readyz", health)
 	mux.Handle("/internal/", m.internalHandler())
 	return mux
 }

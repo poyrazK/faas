@@ -45,3 +45,25 @@ func TestHTTPHooksSendsCallbackAuthAndOmitsSecretsFromEvent(t *testing.T) {
 		t.Fatalf("callback secrets leaked into event JSON: %s", raw)
 	}
 }
+
+func TestHealthHandlerDoesNotExposeManagementRoutes(t *testing.T) {
+	m := NewManager(Config{}, nil)
+	defer m.Close()
+	handler := m.HealthHandler()
+
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("health status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	for _, path := range []string{"/internal/stats", "/internal/connections", "/internal/endpoints"} {
+		request = httptest.NewRequest(http.MethodGet, path, nil)
+		recorder = httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("health handler %s status = %d, want %d", path, recorder.Code, http.StatusNotFound)
+		}
+	}
+}

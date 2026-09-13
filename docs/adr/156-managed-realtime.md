@@ -60,8 +60,10 @@ POST /internal/endpoints/{endpoint}/channels/{channel}:publish
 ```
 
 The Unix socket is mode `0660` and owned by `faas:faas`; it is not a public
-HTTP surface. Deployments must authorize endpoint registration and management
-at the caller boundary. The bootstrap `auth_token` field is intended only for
+HTTP surface. The loopback health listener exposes only `/healthz` and
+`/readyz`, never `/internal/*` management routes. Deployments must authorize
+endpoint registration and management at the caller boundary. The bootstrap
+`auth_token` field is intended only for
 controlled single-node deployments; production endpoint registration should
 install an app-specific authorizer.
 

@@ -4,6 +4,9 @@
 on `/run/faas/realtimed.sock`; `gatewayd-internal` forwards the reserved
 `/__gregale/realtime/` namespace there when
 `FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock` is set.
+Its loopback health listener (by default `127.0.0.1:9107`) exposes only
+`/healthz` and `/readyz`; management routes remain available only on the
+DAC-protected Unix socket.
 
 The service is intentionally separate from the raw application WebSocket
 bridge. Restarting it closes managed connections and emits disconnect events;
