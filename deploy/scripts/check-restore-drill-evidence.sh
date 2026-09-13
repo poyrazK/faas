@@ -85,6 +85,14 @@ done
 
 # A committed template or a partially filled operator record must never satisfy
 # the M8 claim. Check the table values for placeholder markers and empty cells.
+#
+# A placeholder is a BALANCED <...> token, which is what the template uses:
+# <UTC-date>, <$USER>, <hostname -f>, <ISO-8601>. Matching a bare "<" or ">"
+# instead also rejected real recorded values — the 2026-09-09 drill records
+# "3.075894s (... outside the <350 ms platform snapshot-restore SLO)", where "<"
+# is prose for "less than" — and that false positive made this gate fail on
+# every PR against main.
+drill_placeholder_re='<[^<>]*>'
 while IFS='|' read -r _ field value _; do
   field="${field#"${field%%[![:space:]]*}"}"
   field="${field%"${field##*[![:space:]]}"}"
@@ -98,7 +106,11 @@ while IFS='|' read -r _ field value _; do
   #   "3.075894s (... outside the <350 ms platform snapshot-restore SLO)"
   # where "<" is prose for "less than", and that false positive made this gate
   # fail on every PR against main.
-  [[ ! "$value" =~ \<[^\<\>]*\> ]] || fail "placeholder value in ${latest}: ${field}"
+  # The pattern lives in a variable and is used UNQUOTED so bash treats it as an
+  # ERE. Do not write it inline as \<...\>: in GNU ERE those are word-boundary
+  # anchors, not literal angle brackets, so the rule would match almost any word
+  # and reject every value on Linux while passing on BSD/macOS.
+  [[ ! "$value" =~ $drill_placeholder_re ]] || fail "placeholder value in ${latest}: ${field}"
 done < "$latest"
 
 echo "m8-evidence-check: PASS — $(basename "$latest") is a populated PASS record within 30 days"
