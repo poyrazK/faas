@@ -175,7 +175,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DEPLOY_BASE_REF_NODE24", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_DEPLOY_BASE_REF_PYTHON312", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_DEPLOY_BASE_REF_PYTHON313", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
-	{Name: "FAAS_DEV", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
+	{Name: "FAAS_DEV", Owners: []string{"shared", "apid"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_DEV_TOKEN", Owners: []string{"apid"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_DNS_API_URL", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DNS_PROVIDER", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceDefault},

@@ -98,7 +98,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DEPLOY_BASE_REF_NODE24` | shared | `envfile` |  |  | `` |  |
 | `FAAS_DEPLOY_BASE_REF_PYTHON312` | shared | `envfile` |  |  | `` |  |
 | `FAAS_DEPLOY_BASE_REF_PYTHON313` | shared | `envfile` |  |  | `` |  |
-| `FAAS_DEV` | shared | `dev-only` |  |  | `` | must never be set on a production host |
+| `FAAS_DEV` | shared, apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DEV_TOKEN` | apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DNS_API_URL` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_DNS_PROVIDER` | gatewayd-public, shared | `default` |  |  | `` |  |
