@@ -165,11 +165,17 @@ func TestClaimWakeFirstByteStartPreservesOriginalBrowserBoundary(t *testing.T) {
 	h.beginWakePageCycle("app-browser", acceptedAt)
 	h.finishWakePageCycle(context.Background(), "app-browser", "wake-browser")
 
-	got, ok := h.claimWakeFirstByteStart("app-browser", "wake-browser")
-	if !ok || !got.Equal(acceptedAt) {
-		t.Fatalf("claim = (%v, %v), want (%v, true)", got, ok, acceptedAt)
+	req := httptest.NewRequest(http.MethodGet, "http://app.example/", nil)
+	firstReq, firstTarget := h.armWakeFirstByte(req, "app-browser", Target{AppID: "app-browser", WakeID: "wake-browser"}, "")
+	if firstTarget.WakeID != "wake-browser" {
+		t.Fatalf("first target wake ID = %q, want wake-browser", firstTarget.WakeID)
 	}
-	if _, ok := h.claimWakeFirstByteStart("app-browser", "wake-browser"); ok {
-		t.Fatal("wake first-byte boundary was claimable more than once")
+	got := wakeTimelineStart(firstReq)
+	if !got.Equal(acceptedAt) {
+		t.Fatalf("first-byte start = %v, want %v", got, acceptedAt)
+	}
+	_, secondTarget := h.armWakeFirstByte(req, "app-browser", Target{AppID: "app-browser", WakeID: "wake-browser"}, "wake-browser")
+	if secondTarget.WakeID != "" {
+		t.Fatalf("second target reused wake metadata: %q", secondTarget.WakeID)
 	}
 }

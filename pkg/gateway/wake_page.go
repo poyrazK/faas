@@ -158,6 +158,27 @@ func (h *Handler) claimWakeFirstByteStart(appID, wakeID string) (time.Time, bool
 	return cycle.acceptedAt, true
 }
 
+// armWakeFirstByte transfers the cached wake identity onto exactly one
+// forwarded request. Keeping this as a single operation matters for coalesced
+// followers: they share one scheduler wake, but only the first upstream byte
+// belongs in that wake's lifecycle. Later warm requests must not reuse the
+// target's historical WakeID.
+func (h *Handler) armWakeFirstByte(r *http.Request, appID string, target Target, admittedWakeID string) (*http.Request, Target) {
+	target.AppID = appID
+	candidateWakeID := target.WakeID
+	if candidateWakeID == "" {
+		candidateWakeID = admittedWakeID
+	}
+	target.WakeID = ""
+	if acceptedAt, ok := h.claimWakeFirstByteStart(appID, candidateWakeID); ok {
+		target.WakeID = candidateWakeID
+		if r != nil {
+			r = r.WithContext(WithWakeTimelineStart(r.Context(), acceptedAt))
+		}
+	}
+	return r, target
+}
+
 func (h *Handler) noteWakePageServed(ctx context.Context, appID, accountID, requestID string, servedAt time.Time) {
 	if h == nil || appID == "" {
 		return

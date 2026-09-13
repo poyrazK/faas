@@ -92,7 +92,7 @@ const (
 	// WakeProxyFirstByte — gatewayd-internal received the first response
 	// byte from the woken instance (httptrace.GotFirstResponseByte
 	// callback). Payload: {wake_id, app_id, request_id,
-	// instance_id, node_id, latency_ms}.
+	// instance_id, node_id, latency_ms, proxy_latency_ms}.
 	WakeProxyFirstByte = "wake.proxy_first_byte"
 	// WakePageServed — gatewayd returned the browser "Waking up" page while
 	// the detached wake was still in progress. The row is joined to the

@@ -783,7 +783,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWakeLatencyHigh.md"
 
       - alert: FaasWakeEventIdentityMissing
-        expr: sum by (phase, field) (increase({__name__=~"(gatewayd|vmmd)_wake_identity_invalid_total"}[5m])) > 0
+        expr: sum by (phase, field) (increase({__name__=~"(gatewayd|schedd|vmmd)_wake_identity_invalid_total"}[5m])) > 0
         for: 2m
         labels:
           severity: warn

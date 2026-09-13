@@ -5833,9 +5833,6 @@ haveApp:
 	}
 	defer vmRelease()
 	target := pick.Target
-	if acceptedAt, ok := h.claimWakeFirstByteStart(app.ID, target.WakeID); ok {
-		r = r.WithContext(WithWakeTimelineStart(r.Context(), acceptedAt)) //nolint:contextcheck // request-local telemetry boundary for this wake generation.
-	}
 	// A selected target proves the app is live, including a newly completed
 	// wake. Health probes can reuse this state while the app later parks.
 	h.markHealthReady(app.ID)
@@ -5845,10 +5842,11 @@ haveApp:
 	if cold && wakeID != "" && target.WakeID != "" {
 		wakeID = target.WakeID
 	}
-	// The cached target retains the VM's original wake ID. Only this
-	// request's admission belongs in a wake timeline; warm traffic must not
-	// append synchronous wake events for the rest of the VM's lifetime.
-	target.WakeID = wakeID
+	// Consume the wake generation's first-byte metadata exactly once. This
+	// also covers the first warm-looking browser retry after a detached wake
+	// page: the cached target still carries the completed wake ID even though
+	// this retry did not perform admission itself.
+	r, target = h.armWakeFirstByte(r, app.ID, target, wakeID)
 
 	// Semantic bridge span. The request context is passed through the existing
 	// otelgrpc client instrumentation, so vmmd's forwarding server span and

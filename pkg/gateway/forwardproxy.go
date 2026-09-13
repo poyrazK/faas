@@ -498,10 +498,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// gateway-fanout cache sets it from the
 			// AdmitInstanceResponse on the wake). requestID
 			// is the inbound x-faas-request-id minted by the
-			// gateway edge. latency_ms is the gap from the
-			// proxy start (stamped on the request context by
-			// the closure) to the first byte. nil opts out
-			// (pre-PR-C fixtures).
+			// gateway edge. latency_ms starts at request/wake
+			// acceptance; proxy_latency_ms keeps the final bridge
+			// hop separately. nil opts out (pre-PR-C fixtures).
 			//
 			// `evs` aliases the parameter so the package
 			// name `evts.ProxyFirstByte` is still reachable
