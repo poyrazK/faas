@@ -677,6 +677,7 @@ func TestVerifyAndActivateJoinedNodeUsesControlPlaneRow(t *testing.T) {
 	hash := "sha256:" + strings.Repeat("a", 64)
 	certificate := "-----BEGIN CERTIFICATE-----\njoined-node\n-----END CERTIFICATE-----"
 	fingerprint := strings.Repeat("b", 64)
+	staleHeartbeat := time.Now().Add(-48 * time.Hour)
 	row, err := st.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
 		Name:            "fsn-2.faas",
 		TargetURL:       "tcp://fsn-2.gregale.dev:50051",
@@ -685,6 +686,7 @@ func TestVerifyAndActivateJoinedNodeUsesControlPlaneRow(t *testing.T) {
 		ManifestHash:    &hash,
 		HostCertificate: &certificate,
 		CertFingerprint: &fingerprint,
+		LastHeartbeatAt: staleHeartbeat,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -700,7 +702,7 @@ func TestVerifyAndActivateJoinedNodeUsesControlPlaneRow(t *testing.T) {
 		t.Fatalf("verifyAndActivateJoinedNode: %v", err)
 	}
 	got, err := st.ComputeNodeByName(context.Background(), "fsn-2.faas")
-	if err != nil || !got.Active {
+	if err != nil || !got.Active || !got.LastHeartbeatAt.After(staleHeartbeat) {
 		t.Fatalf("row after activation = %#v, err=%v", got, err)
 	}
 }
