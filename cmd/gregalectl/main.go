@@ -48,6 +48,7 @@ Commands:
   release      Materialise / install / rotate a cluster-shipped release bundle (release bundle|install|kgv)
   doctor       Read-only diagnostic for the cluster-shipped release bundle (doctor [--node NAME] [--release SHA] [--deep]; PR-4 / ADR-110)
   host-age     Operator host.age rotation (host-age init|rotate|status|prune-previous)
+  fleet-seal   Fleet-wide unseal identity (fleet-seal init|migrate|verify)
   pki          Operator local-dev PKI bootstrap (pki init|status|rotate)
   sign-keys    Provision the cosign sign keypair (sign-keys init|rotate|status; --sign-key / --verify-key)
   node-key     Provision the per-node CapacityReport signing keypair (node-key init|rotate|status)
@@ -150,6 +151,8 @@ func run(args []string) int {
 		// Operator-side host.age rotation (issue #316 / ADR-057).
 		// Local fs only — never hits apid.
 		return cmdHostAge(args[1:])
+	case dispatchFleetSeal:
+		return cmdFleetSeal(args[1:])
 	case dispatchPKI:
 		// Operator-side local-dev PKI bootstrap (ADR-052). Issues
 		// /etc/faas/tls/{ca,<daemon>/} material for multi-box mTLS.

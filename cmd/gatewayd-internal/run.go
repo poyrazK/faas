@@ -1730,7 +1730,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// the apid + meterd daemons load.
 	deps.publicAuthCache = gateway.NewPublicAuthCache()
 	if deps.hostKeyDir != "" {
-		if identities, loadErr := secretbox.LoadHostKeys(deps.hostKeyDir); loadErr != nil {
+		if identities, loadErr := secretbox.LoadFleetAndHostKeys(deps.hostKeyDir); loadErr != nil {
 			log.Warn("gatewayd-internal: LoadHostKeys (rotation overlap) failed; basic-auth will be unseal-disabled until next boot",
 				"dir", deps.hostKeyDir, "err", loadErr.Error())
 		} else {

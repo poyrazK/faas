@@ -47,9 +47,10 @@ func UnitMeterd() daemonunit.Unit {
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_BILLING_MODE", Value: "live"},
 			{Key: "FAAS_PROMETHEUS_URL", Value: "http://127.0.0.1:9095"},
-			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
+			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 			{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 		},

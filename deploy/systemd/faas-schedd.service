@@ -26,6 +26,7 @@ Environment=TMPDIR=/var/lib/faas/oci-tmp
 Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/host.age
 Environment=FAAS_JOBS_DISPATCH=1
 Environment=FAAS_WORKFLOWS_ENABLED=1
+LoadCredential=fleet.age:/etc/faas/secrets/fleet.age
 LoadCredential=host.age:/etc/faas/secrets/host.age
 NoNewPrivileges=yes
 ProtectSystem=strict

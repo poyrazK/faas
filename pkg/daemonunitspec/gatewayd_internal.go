@@ -93,6 +93,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "fleet.age", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
 			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 			{Name: "faas_session_key", Path: "/etc/faas/secrets/session.key"},

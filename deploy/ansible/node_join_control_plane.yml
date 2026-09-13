@@ -58,6 +58,31 @@
         group: faas
         mode: "0750"
 
+    - name: Ensure the control-plane secret directory exists
+      ansible.builtin.file:
+        path: /etc/faas/secrets
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Stage the dedicated fleet unseal identity on the control plane
+      ansible.builtin.copy:
+        src: "{{ faas_join_fleet_age_key_source }}"
+        dest: /etc/faas/secrets/fleet.age
+        owner: root
+        group: root
+        mode: "0400"
+      no_log: true
+
+    - name: Stage the fleet unseal recipient on the control plane
+      ansible.builtin.copy:
+        src: "{{ faas_join_fleet_age_recipient_source }}"
+        dest: /etc/faas/secrets/fleet.age.pub
+        owner: root
+        group: root
+        mode: "0444"
+
     - name: Stage the shared OCI storage environment on the control plane
       ansible.builtin.copy:
         src: "{{ faas_join_storage_env_source }}"

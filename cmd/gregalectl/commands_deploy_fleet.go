@@ -56,6 +56,8 @@ func cmdDeployJoinFleet(args []string) int {
 	computeDBEnv := fs.String("compute-db-env", "", "root-only compute DB environment")
 	storageEnv := fs.String("storage-env", "", "shared OCI storage.env source")
 	runtimeBasesEnv := fs.String("runtime-bases-env", "", "release-bound digest-pinned runtime base refs")
+	fleetAgeKey := fs.String("fleet-age-key", "", "shared fleet.age identity")
+	fleetAgeRecipient := fs.String("fleet-age-recipient", "", "matching fleet.age.pub recipient")
 	ansibleVars := fs.String("ansible-vars-file", "", "optional provider/overlay Ansible vars")
 	repoRoot := fs.String("repo-root", "", "path to the faas repository")
 	maxParallel := fs.Int("max-parallel", defaultJoinFleetMaxParallel, "maximum number of nodes converged at once")
@@ -119,6 +121,7 @@ func cmdDeployJoinFleet(args []string) int {
 			CosignBinary: *cosignBinary, PKISource: *pkiSource,
 			SignKeySource: *signKey, VerifyKeySource: *verifyKey,
 			ComputeDBEnvSource: *computeDBEnv, StorageEnvSource: *storageEnv, RuntimeBasesEnvSource: *runtimeBasesEnv, ArtifactDir: *artifactDir,
+			FleetAgeKeySource: *fleetAgeKey, FleetAgeRecipientSource: *fleetAgeRecipient,
 			AnsibleVarsFile: *ansibleVars, RepoRoot: *repoRoot,
 			PostgresOverlapNodes: workers,
 			SkipFleetPreflight:   *skipPreflight, Resume: *resume,

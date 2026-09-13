@@ -318,8 +318,8 @@ func TestUnitMeterd_Shape(t *testing.T) {
 	if !hasEnvironment(u, "FAAS_PROMETHEUS_URL", "http://127.0.0.1:9095") {
 		t.Error("meterd: missing local Prometheus endpoint for alert evaluation")
 	}
-	if !hasEnvironment(u, "FAAS_HOST_AGE_IDENTITY_PATH", "%d/faas_host_age_identity") {
-		t.Error("meterd: missing host age credential path for webhook secret decryption")
+	if !hasEnvironment(u, "FAAS_HOST_AGE_IDENTITY_PATH", "%d/faas_fleet_age_identity") {
+		t.Error("meterd: missing fleet age credential path for webhook secret decryption")
 	}
 	if !hasLoadCredential(u, "faas_host_age_identity", "/etc/faas/secrets/host.age") {
 		t.Error("meterd: missing current host age identity LoadCredential")

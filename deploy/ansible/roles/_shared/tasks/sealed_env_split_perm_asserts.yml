@@ -50,6 +50,7 @@
   ansible.builtin.stat:
     path: "{{ item.path }}"
   loop:
+    - {name: fleet_age, path: /etc/faas/secrets/fleet.age}
     - {name: schedd_env, path: /etc/faas/secrets/schedd/schedd.env}
     - {name: meterd_billing_env, path: /etc/faas/secrets/meterd/billing.env}
     - {name: githubd_env, path: /etc/faas/secrets/githubd/githubd.env}
@@ -97,6 +98,7 @@
     path: "{{ item.path }}"
   loop:
     - {name: host_age_pub, path: /etc/faas/secrets/host.age.pub}
+    - {name: fleet_age_pub, path: /etc/faas/secrets/fleet.age.pub}
   loop_control:
     label: "{{ item.name }}"
   register: faas_sealed_env_split_public_stat

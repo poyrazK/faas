@@ -412,7 +412,7 @@ func defaultDeps() runDeps {
 		openStore:           state.NewPgStore,
 		detectOverlayIP:     nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
 		loadHostKey:         secretbox.LoadHostKey,
-		loadHostKeys:        secretbox.LoadHostKeys,
+		loadHostKeys:        secretbox.LoadFleetAndHostKeys,
 		genAndSaveKey:       secretbox.GenerateAndSaveHostKey,
 		writeRecipient:      secretbox.WriteRecipientFile,
 		popCounters:         netns.PopCounters,
@@ -582,7 +582,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		deps.loadHostKey = secretbox.LoadHostKey
 	}
 	if deps.loadHostKeys == nil {
-		deps.loadHostKeys = secretbox.LoadHostKeys
+		deps.loadHostKeys = secretbox.LoadFleetAndHostKeys
 	}
 	if deps.genAndSaveKey == nil {
 		deps.genAndSaveKey = secretbox.GenerateAndSaveHostKey

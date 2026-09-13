@@ -200,6 +200,16 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchFleetSeal,
+		DocSlug: "fleet-seal",
+		Short:   "Provision, migrate, and verify the fleet-wide sealed-secret identity",
+		Subcommands: []cliSub{
+			{Name: "init", Short: "Create fleet.age and fleet.age.pub", Flags: []cliFlag{{Name: "dir", Short: "fleet identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal cluster and customer material to fleet.age", Flags: []cliFlag{{Name: "fleet-key", Short: "fleet.age identity"}, {Name: "legacy-host-dir", Short: "legacy host identity directory"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "verify", Short: "Prove customer probe and shared-kid JWT access", Flags: []cliFlag{{Name: "fleet-key", Short: "staged fleet.age identity"}, {Name: "host-key", Short: "per-host host.age identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
 		// PR-911 image rollout (PR #929 mega; ADR-110 + ADR-111). Operator
 		// surfaces draining + activation of compute_nodes rows so the
 		// deployctl upgrade-node orchestrator can reason about which box
@@ -353,7 +363,7 @@ var cliCommands = []cliCommand{
 					{Name: "nodes-file", Short: "provider connection list (alternative to claim-file)"},
 					{Name: "manifest-file", Short: "signed production manifest (required)"},
 					{Name: "release-tag", Short: "signed release tag (required)"},
-					{Name: "secrets-dir", Short: "directory containing join secrets and pki/ (required)"},
+					{Name: "secrets-dir", Short: "directory containing fleet.age, fleet.age.pub, join secrets, and pki/ (required)"},
 					{Name: "output-dir", Short: "prepared artifact directory (required)"},
 					{Name: "cache-dir", Short: "persistent public artifact cache"},
 					{Name: "cosign-binary", Short: "Linux/amd64 cosign binary to stage"},
@@ -370,6 +380,8 @@ var cliCommands = []cliCommand{
 					{Name: "manifest-file", Short: "split-box manifest (required)"},
 					{Name: "artifact-dir", Short: "standard shared join assets"},
 					{Name: "runtime-bases-env", Short: "release-bound digest-pinned runtime base refs"},
+					{Name: "fleet-age-key", Short: "shared fleet.age identity"},
+					{Name: "fleet-age-recipient", Short: "matching fleet.age.pub recipient"},
 					{Name: "max-parallel", Short: "bounded concurrent joins (default 4)"},
 					{Name: "skip-fleet-preflight", Short: "skip one shared fleet preflight"},
 					{Name: "resume", Short: "resume failed/interrupted joins"},
@@ -414,6 +426,8 @@ var cliCommands = []cliCommand{
 					{Name: "storage-env", Short: "shared OCI storage environment"},
 					{Name: "runtime-bases-env", Short: "release-bound digest-pinned runtime base refs"},
 					{Name: "storage-device", Short: "optional dedicated fast-root block device"},
+					{Name: "fleet-age-key", Short: "shared fleet.age identity"},
+					{Name: "fleet-age-recipient", Short: "matching fleet.age.pub recipient"},
 					{Name: "format-storage", Short: "explicitly format a supplied blank device as XFS"},
 					{Name: "box-age-key", Short: "optional box-age identity source"},
 					{Name: "rclone-envelope", Short: "encrypted rclone.conf envelope"},

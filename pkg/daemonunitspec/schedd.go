@@ -91,6 +91,7 @@ func UnitSchedd() daemonunit.Unit {
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "fleet.age", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
 			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 		},

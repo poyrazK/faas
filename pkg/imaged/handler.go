@@ -270,7 +270,8 @@ type Handler struct {
 	// path apid loads for MFA unseal). Nil-safe: with no identity
 	// wired, the registry credential lookup is skipped and pulls
 	// stay anonymous (matches the Free plan / no-credential case).
-	secretboxIdentity *age.X25519Identity
+	secretboxIdentity   *age.X25519Identity
+	secretboxIdentities []*age.X25519Identity
 }
 
 // New returns a Handler. The OCI puller is injected so tests can substitute
@@ -775,6 +776,19 @@ func (h *Handler) WithVMMClient(c VMMClientIface) *Handler {
 // (handler_auth_test.go).
 func (h *Handler) WithSecretboxIdentity(ident *age.X25519Identity) *Handler {
 	h.secretboxIdentity = ident
+	if ident != nil {
+		h.secretboxIdentities = []*age.X25519Identity{ident}
+	}
+	return h
+}
+
+// WithSecretboxIdentities wires the fleet-first identity set while retaining
+// host identities for legacy ciphertext migration.
+func (h *Handler) WithSecretboxIdentities(identities []*age.X25519Identity) *Handler {
+	h.secretboxIdentities = identities
+	if len(identities) > 0 {
+		h.secretboxIdentity = identities[0]
+	}
 	return h
 }
 
@@ -1605,7 +1619,11 @@ func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host s
 	// app_secret namespace check). A namespace mismatch
 	// means the envelope was sealed for a different
 	// secretbox slot — refuse rather than passing through.
-	ns, plaintext, err := secretbox.OpenBytes(h.secretboxIdentity, cred.PasswordEncrypted)
+	identities := h.secretboxIdentities
+	if len(identities) == 0 && h.secretboxIdentity != nil {
+		identities = []*age.X25519Identity{h.secretboxIdentity}
+	}
+	ns, plaintext, err := secretbox.OpenBytesMulti(identities, cred.PasswordEncrypted)
 	if err != nil {
 		// Don't echo the unseal error verbatim — it can include
 		// corrupted-byte markers that aid an attacker probing the

@@ -99,7 +99,7 @@ func UnitImaged() daemonunit.Unit {
 			{Key: "FAAS_BASE_STAGING_ROOT", Value: "/dev/shm/faas-base-staging"},
 			{Key: "FAAS_BASE_EXTRACT_ROOT", Value: "/srv/fc/base-staging"},
 			{Key: "FAAS_BASE_TMP_ROOT", Value: "/srv/fc/base"},
-			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
+			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
 
 			// Per-runtime function runner binaries (spec §4.9). imaged
 			// stages the runner into the app layer at
@@ -135,6 +135,7 @@ func UnitImaged() daemonunit.Unit {
 			{Key: "FAAS_FUNCTION_RUNNER_GO124_ALPINE", Value: "/opt/faas/current/bin/runners/go124-alpine/faas-runner"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 		},
 

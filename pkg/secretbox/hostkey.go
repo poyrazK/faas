@@ -60,6 +60,12 @@ var ErrRecipientInsecurePerms = errors.New("secretbox: host.age.pub permissions 
 // on-disk file — see the package docstring above for the decoupling.
 const DefaultHostKeyPath = "/etc/faas/secrets/host.age"
 
+// DefaultFleetKeyPath is the dedicated X25519 identity shared by every
+// Gregale control-plane and compute node. It is deliberately separate from
+// host.age: host.age remains a per-host identity, while ciphertext that may be
+// consumed on another node is sealed to fleet.age.
+const DefaultFleetKeyPath = "/etc/faas/secrets/fleet.age"
+
 // DefaultHostKeyPreviousPath is the rotation-overlap twin of DefaultHostKeyPath.
 // During the 30-day overlap window (issue #316 / ADR-057), the operator
 // renames the old host.age to host.age.previous; daemons load BOTH
@@ -169,6 +175,9 @@ func RecipientString(id *age.X25519Identity) string {
 // (public side) for apid to consume. vmmd owns the private half; apid reads
 // only the public string at startup. Mode 0444 — public by design.
 const DefaultHostAgeRecipientPath = "/etc/faas/secrets/host.age.pub"
+
+// DefaultFleetAgeRecipientPath is the public half of DefaultFleetKeyPath.
+const DefaultFleetAgeRecipientPath = "/etc/faas/secrets/fleet.age.pub"
 
 // WriteRecipientFile writes the public side of id to path with mode 0444.
 // Called by vmmd after LoadOrGenerate. apid reads the file at startup;
@@ -282,6 +291,57 @@ func LoadHostKeys(dir string) ([]*age.X25519Identity, error) {
 		return nil, fmt.Errorf("secretbox: load host.age.previous %q: %w", previousPath, err)
 	}
 	return []*age.X25519Identity{current, previous}, nil
+}
+
+// LoadFleetAndHostKeys loads the fleet identity first, followed by the
+// current and previous per-host identities. New shared ciphertext is sealed
+// to identities[0]; the host identities remain available only to migrate
+// legacy host-sealed rows without ever writing plaintext to disk.
+//
+// systemd LoadCredential uses service-specific filenames, so both the
+// canonical on-disk names and the credential names emitted by
+// pkg/daemonunitspec are accepted. fleet.age is mandatory: callers that need
+// the legacy single-host posture must continue to call LoadHostKeys.
+func LoadFleetAndHostKeys(dir string) ([]*age.X25519Identity, error) {
+	fleet, err := loadFirstIdentity(dir, []string{"fleet.age", "faas_fleet_age_identity"})
+	if err != nil {
+		return nil, fmt.Errorf("secretbox: load fleet identity: %w", err)
+	}
+	identities := []*age.X25519Identity{fleet}
+	seen := map[string]struct{}{fleet.Recipient().String(): {}}
+
+	for _, names := range [][]string{
+		{"host.age", "faas_host_age_identity"},
+		{"host.age.previous", "faas_host_age_identity_previous"},
+	} {
+		id, loadErr := loadFirstIdentity(dir, names)
+		if loadErr != nil {
+			if errors.Is(loadErr, ErrHostKeyNotFound) {
+				continue
+			}
+			return nil, loadErr
+		}
+		kid := id.Recipient().String()
+		if _, duplicate := seen[kid]; duplicate {
+			continue
+		}
+		seen[kid] = struct{}{}
+		identities = append(identities, id)
+	}
+	return identities, nil
+}
+
+func loadFirstIdentity(dir string, names []string) (*age.X25519Identity, error) {
+	for _, name := range names {
+		id, err := LoadHostKey(filepath.Join(dir, name))
+		if err == nil {
+			return id, nil
+		}
+		if !errors.Is(err, ErrHostKeyNotFound) {
+			return nil, err
+		}
+	}
+	return nil, ErrHostKeyNotFound
 }
 
 // WriteHostKeyAtPath writes id's textual representation to path with

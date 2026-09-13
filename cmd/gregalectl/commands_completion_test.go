@@ -27,6 +27,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 	dispatchConsts := map[string]string{
 		"dispatchOperatorAuth": "auth",
 		"dispatchHostAge":      "host-age",
+		"dispatchFleetSeal":    "fleet-seal",
 		"dispatchPKI":          "pki",
 		"dispatchSignKeys":     "sign-keys",
 		"dispatchNodeKey":      "node-key",

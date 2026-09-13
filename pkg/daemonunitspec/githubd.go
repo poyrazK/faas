@@ -60,10 +60,12 @@ func UnitGithubd() daemonunit.Unit {
 
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/githubd/githubd.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
-			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
+			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
+			{Key: "FAAS_HOST_AGE_PUB", Value: "/etc/faas/secrets/fleet.age.pub"},
 			{Key: "FAAS_GITHUB_APP_KEY_PATH", Value: "/etc/faas/secrets/githubd/app.pem"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 		},
 

@@ -192,6 +192,10 @@ Files carrying the banner:
 ADR-070 itself is the source of truth for the split and carries an end-of-file
 note instead of the banner.
 
+## Fleet security decisions
+
+- [ADR-178: dedicated fleet sealed-secret domain](178-fleet-sealed-secret-domain.md)
+
 ## Snapshot restore optimization decisions
 
 - [ADR-147: request activity flush cadence](147-request-activity-flush-cadence.md)

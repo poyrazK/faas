@@ -60,6 +60,36 @@ groups:
           description: "The five-minute public status evaluator has not persisted a complete capability bucket set for at least 15 minutes. Check apid logs, Prometheus reachability, and Postgres status_observation_buckets writes."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/StatusPageDegraded.md"
 
+  - name: fleet_seal_domain
+    interval: 30s
+    rules:
+      - alert: FaasFleetSealDomainUnverified
+        expr: |
+          node_systemd_unit_state{name="faas-schedd.service",state="active"} == 1
+          unless on(instance)
+          faas_fleet_seal_domain_ready == 1
+        for: 5m
+        labels:
+          severity: page
+          component: schedd
+          family: fleet_seal_domain
+        annotations:
+          summary: "Compute node has not proved fleet sealed-secret access"
+          description: "schedd is active on {{ $labels.instance }}, but the node-join fleet-seal gate did not prove the customer-secret fixture and cluster signing key. Drain the node and repeat the verification before returning it to capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFleetSealDomain.md"
+
+      - alert: FaasFleetSigningKIDDiverged
+        expr: count(count by (kid) (faas_fleet_cluster_signing_key_info == 1)) > 1
+        for: 2m
+        labels:
+          severity: page
+          component: schedd
+          family: fleet_seal_domain
+        annotations:
+          summary: "Compute nodes report different cluster signing kids"
+          description: "More than one cluster signing kid is reported by verified fleet nodes. Internal-service JWTs can fail across nodes until every node verifies the current singleton key."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFleetSealDomain.md"
+
   # Production validation artifacts are bounded to 5 GiB per host. The
   # node-exporter textfile collector provides one series per host, so the
   # instance label identifies the cleanup owner without adding path cardinality.

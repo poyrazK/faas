@@ -1467,7 +1467,7 @@ func buildAlertEvaluator(deps runDeps, store state.Store, log *slog.Logger, ops 
 		// (with a Warn) if LoadHostKeys fails — the box is
 		// still unsealing current-keyed envelopes, just not
 		// previous-keyed ones.
-		if identities, loadErr := secretbox.LoadHostKeys(filepath.Dir(identityPath)); loadErr != nil {
+		if identities, loadErr := secretbox.LoadFleetAndHostKeys(filepath.Dir(identityPath)); loadErr != nil {
 			log.Warn("meterd: LoadHostKeys (rotation overlap) failed; alert dispatch will unseal only envelopes sealed under the current host.age",
 				"dir", filepath.Dir(identityPath), "err", loadErr.Error())
 		} else {

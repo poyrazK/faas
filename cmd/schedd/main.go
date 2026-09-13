@@ -68,7 +68,12 @@ func loadHostAgeIdentities(path string) ([]*age.X25519Identity, error) {
 	if path == "" {
 		path = secretbox.DefaultHostKeyPath
 	}
-	return secretbox.LoadHostKeys(filepath.Dir(path))
+	dir := filepath.Dir(path)
+	identities, err := secretbox.LoadFleetAndHostKeys(dir)
+	if errors.Is(err, secretbox.ErrHostKeyNotFound) {
+		return secretbox.LoadHostKeys(dir)
+	}
+	return identities, err
 }
 
 // scheddServerVerifier permits the registered compute-node identities and the

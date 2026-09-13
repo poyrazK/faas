@@ -343,7 +343,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// current-keyed envelopes, just not previous-keyed ones.
 				var identities []*age.X25519Identity
 				if dir := filepath.Dir(hostKeyPath()); dir != "" {
-					if ids, loadErr := secretbox.LoadHostKeys(dir); loadErr != nil {
+					if ids, loadErr := secretbox.LoadFleetAndHostKeys(dir); loadErr != nil {
 						log.Warn("githubd: LoadHostKeys (rotation overlap) failed; install-token unseal will work only for envelopes sealed under the current host.age",
 							"dir", dir, "err", loadErr.Error())
 					} else {

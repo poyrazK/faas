@@ -19,11 +19,11 @@ MemoryMax=512M
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/object-storage/provider.env
 Environment=FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json
-Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_host_age_identity
-Environment=FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH=%d/faas_host_age_identity_previous
+Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_fleet_age_identity
 Environment=FAAS_S3_GATEWAY_LISTEN_ADDR=127.0.0.1:8084
 Environment=FAAS_S3_GATEWAY_CONTROL_ADDR=127.0.0.1:9096
 Environment=FAAS_S3_GATEWAY_SPOOL_DIR=/var/spool/faas/s3-gatewayd
+LoadCredential=faas_fleet_age_identity:/etc/faas/secrets/fleet.age
 LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
 NoNewPrivileges=yes
 ProtectSystem=strict

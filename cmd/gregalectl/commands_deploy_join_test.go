@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
@@ -152,6 +153,33 @@ func TestNodeJoinFullBootstrapPreservesPlayLevelRoleSemantics(t *testing.T) {
 	}
 	if !strings.Contains(block, "faas_join_bootstrap_contract_current") {
 		t.Fatalf("full bootstrap convergence must remain conditional on the managed-host contract")
+	}
+}
+
+func TestNodeJoinStagesAndVerifiesFleetSealBeforeServicesStart(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	stage := strings.Index(playbook, "Stage the dedicated fleet unseal identity before bootstrap")
+	bootstrap := strings.Index(playbook, "import_playbook: bootstrap.yml")
+	verify := strings.Index(playbook, "Prove fleet customer-secret and shared-kid access before service activation")
+	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
+	if stage < 0 || bootstrap < 0 || verify < 0 || restart < 0 {
+		t.Fatal("node_join is missing a fleet-seal staging, bootstrap, verification, or service-start gate")
+	}
+	if stage >= bootstrap {
+		t.Fatal("fleet.age must be staged before bootstrap renders units that require it")
+	}
+	if verify >= restart {
+		t.Fatal("fleet secret and shared-kid verification must pass before compute services start")
+	}
+	block := playbook[verify:restart]
+	for _, token := range []string{"fleet-seal", "verify", "/etc/faas/secrets/fleet.age", "/etc/faas/secrets/host.age", "faas_fleet_seal.prom"} {
+		if !strings.Contains(block, token) {
+			t.Errorf("fleet verification gate missing %q", token)
+		}
 	}
 }
 
@@ -789,6 +817,18 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 			"FAAS_DEPLOY_BASE_REF_NODE22=ghcr.io/example/runner-node22@sha256:1111111111111111111111111111111111111111111111111111111111111111\n"+"FAAS_DEPLOY_BASE_REF_PYTHON312=ghcr.io/example/runner-python312@sha256:2222222222222222222222222222222222222222222222222222222222222222\n"+"FAAS_DEPLOY_BASE_REF_GO124=ghcr.io/example/runner-go124@sha256:3333333333333333333333333333333333333333333333333333333333333333\n"+"FAAS_DEPLOY_BASE_REF_GO124_ALPINE=ghcr.io/example/runner-go124-alpine@sha256:4444444444444444444444444444444444444444444444444444444444444444\n"+"FAAS_DEPLOY_BASE_REF_NODE24=ghcr.io/example/runner-node24@sha256:5555555555555555555555555555555555555555555555555555555555555555\n"+"FAAS_DEPLOY_BASE_REF_PYTHON313=ghcr.io/example/runner-python313@sha256:6666666666666666666666666666666666666666666666666666666666666666\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	fleetIdentity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fleetAgeKey := filepath.Join(artifactDir, "fleet.age")
+	fleetAgeRecipient := filepath.Join(artifactDir, "fleet.age.pub")
+	if err := os.WriteFile(fleetAgeKey, []byte(fleetIdentity.String()), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fleetAgeRecipient, []byte(fleetIdentity.Recipient().String()), 0o444); err != nil {
+		t.Fatal(err)
+	}
 	signKey := filepath.Join(artifactDir, "sign.key")
 	verifyKey := filepath.Join(artifactDir, "sign-pub.pem")
 	for _, path := range []string{signKey, verifyKey} {
@@ -878,43 +918,47 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}
 
 	report, err := deployJoinValidate(deployJoinOptions{
-		ManifestFile:          manifestPath,
-		Node:                  "fsn-2",
-		SSHHost:               "203.0.113.27",
-		ReleaseTarball:        tarball,
-		BootstrapBinary:       bootstrap,
-		CosignBinary:          cosign,
-		PKISource:             pkiDir,
-		SignKeySource:         signKey,
-		VerifyKeySource:       verifyKey,
-		ComputeDBEnvSource:    computeDBEnv,
-		StorageEnvSource:      storageEnv,
-		RuntimeBasesEnvSource: runtimeBasesEnv,
-		RepoRoot:              repo,
-		PostgresOverlapNodes:  4,
-		SkipFleetPreflight:    true,
+		ManifestFile:            manifestPath,
+		Node:                    "fsn-2",
+		SSHHost:                 "203.0.113.27",
+		ReleaseTarball:          tarball,
+		BootstrapBinary:         bootstrap,
+		CosignBinary:            cosign,
+		PKISource:               pkiDir,
+		SignKeySource:           signKey,
+		VerifyKeySource:         verifyKey,
+		ComputeDBEnvSource:      computeDBEnv,
+		StorageEnvSource:        storageEnv,
+		RuntimeBasesEnvSource:   runtimeBasesEnv,
+		FleetAgeKeySource:       fleetAgeKey,
+		FleetAgeRecipientSource: fleetAgeRecipient,
+		RepoRoot:                repo,
+		PostgresOverlapNodes:    4,
+		SkipFleetPreflight:      true,
 	})
 	if err != nil {
 		t.Fatalf("deployJoinValidate: %v", err)
 	}
 	if code, err := deployJoinApply(&deployJoinOptions{
-		ManifestFile:          manifestPath,
-		Node:                  "fsn-2",
-		SSHHost:               "203.0.113.27",
-		SSHUser:               "root",
-		SSHPort:               22,
-		ReleaseTarball:        tarball,
-		BootstrapBinary:       bootstrap,
-		CosignBinary:          cosign,
-		PKISource:             pkiDir,
-		SignKeySource:         signKey,
-		VerifyKeySource:       verifyKey,
-		ComputeDBEnvSource:    computeDBEnv,
-		StorageEnvSource:      storageEnv,
-		RuntimeBasesEnvSource: runtimeBasesEnv,
-		RepoRoot:              repo,
-		PostgresOverlapNodes:  4,
-		SkipFleetPreflight:    true,
+		ManifestFile:            manifestPath,
+		Node:                    "fsn-2",
+		SSHHost:                 "203.0.113.27",
+		SSHUser:                 "root",
+		SSHPort:                 22,
+		ReleaseTarball:          tarball,
+		BootstrapBinary:         bootstrap,
+		CosignBinary:            cosign,
+		PKISource:               pkiDir,
+		SignKeySource:           signKey,
+		VerifyKeySource:         verifyKey,
+		ComputeDBEnvSource:      computeDBEnv,
+		StorageEnvSource:        storageEnv,
+		RuntimeBasesEnvSource:   runtimeBasesEnv,
+		FleetAgeKeySource:       fleetAgeKey,
+		FleetAgeRecipientSource: fleetAgeRecipient,
+		RepoRoot:                repo,
+		PostgresOverlapNodes:    4,
+		SkipFleetPreflight:      true,
 	}, &report); err != nil || code != 0 {
 		t.Fatalf("deployJoinApply: code=%d err=%v", code, err)
 	}

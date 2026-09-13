@@ -36,13 +36,13 @@ func UnitS3Gateway() daemonunit.Unit {
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/object-storage/provider.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_OBJECT_STORAGE_CONFIG", Value: "/etc/faas/object-storage.json"},
-			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
-			{Key: "FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH", Value: "%d/faas_host_age_identity_previous"},
+			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
 			{Key: "FAAS_S3_GATEWAY_LISTEN_ADDR", Value: "127.0.0.1:8084"},
 			{Key: "FAAS_S3_GATEWAY_CONTROL_ADDR", Value: "127.0.0.1:9096"},
 			{Key: "FAAS_S3_GATEWAY_SPOOL_DIR", Value: "/var/spool/faas/s3-gatewayd"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 			{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 		},

@@ -78,6 +78,26 @@
         - { path: /usr/local/bin, mode: "0755" }
         - { path: /var/lib/faas/bootstrap, mode: "0700" }
 
+    # The production bootstrap renders units with fleet.age as a required
+    # systemd credential. Stage it before importing bootstrap.yml so a fresh
+    # host cannot transiently start with a host-local unseal domain.
+    - name: Stage the dedicated fleet unseal identity before bootstrap
+      ansible.builtin.copy:
+        src: "{{ faas_join_fleet_age_key_source }}"
+        dest: /etc/faas/secrets/fleet.age
+        owner: root
+        group: root
+        mode: "0400"
+      no_log: true
+
+    - name: Stage the fleet unseal recipient before bootstrap
+      ansible.builtin.copy:
+        src: "{{ faas_join_fleet_age_recipient_source }}"
+        dest: /etc/faas/secrets/fleet.age.pub
+        owner: root
+        group: root
+        mode: "0444"
+
     # Keep the Ansible boundary fail-closed as well as the gregalectl
     # boundary. This playbook can be invoked directly by an operator, so a
     # caller must not be able to bypass the multi-box OCI contract and make
@@ -707,6 +727,33 @@
           - "{{ faas_join_database_node }}"
       register: faas_secrets_init
       changed_when: true
+
+    - name: Ensure the fleet-seal node-exporter metric directory exists
+      ansible.builtin.file:
+        path: /var/lib/node_exporter/textfile_collector
+        state: directory
+        owner: node_exporter
+        group: node_exporter
+        mode: "0755"
+
+    - name: Prove fleet customer-secret and shared-kid access before service activation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - fleet-seal
+          - verify
+          - --fleet-key
+          - /etc/faas/secrets/fleet.age
+          - --host-key
+          - /etc/faas/secrets/host.age
+          - --db-env
+          - /etc/faas/compute-db.env
+          - --metrics-file
+          - /var/lib/node_exporter/textfile_collector/faas_fleet_seal.prom
+          - --json
+      register: faas_fleet_seal_verify
+      changed_when: false
+      no_log: true
 
     - name: Unseal the reusable rclone configuration
       changed_when: true

@@ -1607,10 +1607,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// signal that the box is misconfigured rather than a silent accept-and-
 	// drop of plaintext. The unit tests don't set the var because the
 	// handlers they're checking don't exercise the seal path.
-	if recipientPath := deps.getenv("FAAS_HOST_AGE_RECIPIENT_PATH"); recipientPath != "" {
+	recipientPath := deps.getenv("FAAS_FLEET_AGE_RECIPIENT_PATH")
+	if recipientPath == "" {
+		recipientPath = deps.getenv("FAAS_HOST_AGE_RECIPIENT_PATH")
+	}
+	if recipientPath != "" {
 		r, err := secretbox.LoadRecipient(recipientPath)
 		if err != nil {
-			return fmt.Errorf("apid: load host age recipient %q: %w", recipientPath, err)
+			return fmt.Errorf("apid: load fleet age recipient %q: %w", recipientPath, err)
 		}
 		setSecretRecipient = func() *age.X25519Recipient { return r }
 		// Issue #463 / ADR-068: the sidecar seal helper reuses the
@@ -1618,9 +1622,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// separate getter keeps the seal helpers testable in
 		// isolation without leaking the secret-handler test seam.
 		setSidecarRecipient = func() *age.X25519Recipient { return r }
-		log.Info("host age recipient loaded", "path", recipientPath)
+		log.Info("fleet age recipient loaded", "path", recipientPath)
 	} else {
-		log.Warn("FAAS_HOST_AGE_RECIPIENT_PATH unset — secrets PUT will return 503")
+		log.Warn("FAAS_FLEET_AGE_RECIPIENT_PATH unset — secrets PUT will return 503")
 	}
 
 	// MFA (IAM-2, issue #186): load the host age identity so
@@ -1636,14 +1640,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// so the 30-day rotation overlap window unseals envelopes
 	// sealed under the previous key. The single-identity SetMFAIdentity
 	// stays wired for backward compat with the existing tests.
-	if identityPath := deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH"); identityPath != "" {
+	identityPath := deps.getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
+	if identityPath == "" {
+		identityPath = deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
+	}
+	if identityPath != "" {
 		ident, err := secretbox.LoadHostKey(identityPath)
 		if err != nil {
-			return fmt.Errorf("apid: load host age identity %q: %w", identityPath, err)
+			return fmt.Errorf("apid: load fleet age identity %q: %w", identityPath, err)
 		}
 		SetMFARecipient(func() *age.X25519Recipient { return ident.Recipient() })
 		SetMFAIdentity(func() *age.X25519Identity { return ident })
-		log.Info("host age identity loaded for MFA", "path", identityPath)
+		log.Info("fleet age identity loaded for MFA", "path", identityPath)
 
 		// Rotation-overlap wiring: load the multi-identity slice from
 		// the same directory. If LoadHostKeys fails (e.g. .previous
@@ -1652,9 +1660,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// envelopes under the current key, just not the previous one.
 		// A hard error would lock every MFA customer out, which is
 		// worse than the operator-visible degraded-mode log line.
-		identities, loadErr := secretbox.LoadHostKeys(filepath.Dir(identityPath))
+		identities, loadErr := secretbox.LoadFleetAndHostKeys(filepath.Dir(identityPath))
 		if loadErr != nil {
-			log.Warn("apid: LoadHostKeys (rotation overlap) failed; MFA unseal will work only for envelopes sealed under the current host.age",
+			log.Warn("apid: fleet and legacy host identity load failed; MFA unseal will work only for envelopes sealed under the current fleet.age",
 				"dir", filepath.Dir(identityPath), "err", loadErr.Error())
 		} else {
 			SetMFAIdentities(func() []*age.X25519Identity { return identities })

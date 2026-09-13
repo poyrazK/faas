@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"filippo.io/age"
@@ -192,20 +193,12 @@ func loadIdentities(getenv func(string) string) ([]*age.X25519Identity, error) {
 	if currentPath == "" {
 		return nil, errors.New("s3-gatewayd: FAAS_HOST_AGE_IDENTITY_PATH is required")
 	}
-	current, err := secretbox.LoadHostKey(currentPath)
-	if err != nil {
-		return nil, fmt.Errorf("s3-gatewayd: load host age identity: %w", err)
+	identities, err := secretbox.LoadFleetAndHostKeys(filepath.Dir(currentPath))
+	if errors.Is(err, secretbox.ErrHostKeyNotFound) {
+		return secretbox.LoadHostKeys(filepath.Dir(currentPath))
 	}
-	identities := []*age.X25519Identity{current}
-	if previousPath := getenv("FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH"); previousPath != "" {
-		previous, err := secretbox.LoadHostKey(previousPath)
-		if err != nil {
-			if errors.Is(err, secretbox.ErrHostKeyNotFound) {
-				return identities, nil
-			}
-			return nil, fmt.Errorf("s3-gatewayd: load previous host age identity: %w", err)
-		}
-		identities = append(identities, previous)
+	if err != nil {
+		return nil, fmt.Errorf("s3-gatewayd: load fleet and host age identities: %w", err)
 	}
 	return identities, nil
 }

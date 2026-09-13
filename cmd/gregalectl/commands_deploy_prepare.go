@@ -697,10 +697,15 @@ func stagePrepareSecrets(sourceDir, outputDir string) error {
 		}
 		return fmt.Errorf("secrets directory: %w", err)
 	}
+	if err := validateFleetAgePair(filepath.Join(sourceDir, "fleet.age"), filepath.Join(sourceDir, "fleet.age.pub")); err != nil {
+		return fmt.Errorf("fleet seal identity: %w", err)
+	}
 	required := []struct {
 		name string
 		mode os.FileMode
 	}{
+		{name: "fleet.age", mode: 0o400},
+		{name: "fleet.age.pub", mode: 0o444},
 		{name: "compute-ssh-key", mode: 0o600},
 		{name: "compute-db.env", mode: 0o600},
 		{name: "storage.env", mode: 0o600},

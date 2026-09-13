@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"filippo.io/age"
 )
 
 func TestParsePrepareChecksums(t *testing.T) {
@@ -107,7 +109,13 @@ func TestPrepareReleaseAssetsReusesVerifiedCache(t *testing.T) {
 
 func TestStagePrepareSecretsRejectsCAKey(t *testing.T) {
 	secrets := t.TempDir()
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for name, body := range map[string]string{
+		"fleet.age":       identity.String(),
+		"fleet.age.pub":   identity.Recipient().String(),
 		"compute-ssh-key": "private key",
 		"compute-db.env":  "DATABASE_URL=postgres://faas@example/faas\nFAAS_VMMD_DBURL=postgres://faas@example/faas\n",
 		"storage.env":     "FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\n",
@@ -118,6 +126,9 @@ func TestStagePrepareSecretsRejectsCAKey(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.Chmod(filepath.Join(secrets, "fleet.age"), 0o400); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(secrets, "pki", "ca"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -127,9 +138,42 @@ func TestStagePrepareSecretsRejectsCAKey(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(secrets, "pki", "ca", "ca.key"), []byte("private"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := stagePrepareSecrets(secrets, filepath.Join(t.TempDir(), "out"))
+	err = stagePrepareSecrets(secrets, filepath.Join(t.TempDir(), "out"))
 	if err == nil || !strings.Contains(err.Error(), "ca/ca.key") {
 		t.Fatalf("stagePrepareSecrets error = %v, want CA key rejection", err)
+	}
+}
+
+func TestStagePrepareSecretsRequiresMatchingFleetSealPair(t *testing.T) {
+	secrets := t.TempDir()
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"fleet.age":       identity.String(),
+		"fleet.age.pub":   other.Recipient().String(),
+		"compute-ssh-key": "private key",
+		"compute-db.env":  "DATABASE_URL=postgres://faas@example/faas\nFAAS_VMMD_DBURL=postgres://faas@example/faas\n",
+		"storage.env":     "FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\n",
+		"sign.key":        "signing key",
+		"sign-pub.pem":    "public key",
+	} {
+		if err := os.WriteFile(filepath.Join(secrets, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(secrets, "fleet.age"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+
+	err = stagePrepareSecrets(secrets, filepath.Join(t.TempDir(), "out"))
+	if err == nil || !strings.Contains(err.Error(), "do not match") {
+		t.Fatalf("stagePrepareSecrets error = %v, want fleet pair mismatch", err)
 	}
 }
 

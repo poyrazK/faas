@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"filippo.io/age"
 )
 
 func TestJoinFleetWorkerCount(t *testing.T) {
@@ -124,5 +127,31 @@ func TestResolveJoinArtifactsDoesNotOverrideExplicitPaths(t *testing.T) {
 	}
 	if opts.PKISource != filepath.Join(artifactDir, "pki") {
 		t.Fatalf("PKI source = %q", opts.PKISource)
+	}
+}
+
+func TestResolveJoinArtifactsTwelveNodesShareFleetSealPair(t *testing.T) {
+	artifactDir := t.TempDir()
+	fleet, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(artifactDir, "fleet.age")
+	recipientPath := filepath.Join(artifactDir, "fleet.age.pub")
+	if err := os.WriteFile(keyPath, []byte(fleet.String()), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recipientPath, []byte(fleet.Recipient().String()), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		opts := deployJoinOptions{ArtifactDir: artifactDir, Node: fmt.Sprintf("compute-%02d", i)}
+		resolveJoinArtifacts(&opts)
+		if opts.FleetAgeKeySource != keyPath || opts.FleetAgeRecipientSource != recipientPath {
+			t.Fatalf("node %d resolved different fleet artifacts: %+v", i, opts)
+		}
+		if err := validateFleetAgePair(opts.FleetAgeKeySource, opts.FleetAgeRecipientSource); err != nil {
+			t.Fatalf("node %d fleet pair: %v", i, err)
+		}
 	}
 }

@@ -506,11 +506,11 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// and pulls stay anonymous (matches Free plan + no-cred
 	// Hobby paths).
 	if identityPath := envOr("FAAS_HOST_AGE_IDENTITY_PATH", ""); identityPath != "" {
-		ident, err := secretbox.LoadHostKey(identityPath)
+		identities, err := secretbox.LoadFleetAndHostKeys(filepath.Dir(identityPath))
 		if err != nil {
 			return fmt.Errorf("imaged: load host age identity %q: %w", identityPath, err)
 		}
-		h.WithSecretboxIdentity(ident)
+		h.WithSecretboxIdentities(identities)
 		log.Info("host age identity loaded for registry credential unseal",
 			"path", identityPath)
 	} else {
