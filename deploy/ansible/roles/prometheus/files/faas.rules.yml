@@ -2061,6 +2061,62 @@ groups:
           description: "No OTel spans summary has been written through gatewayd-public POST /v1/otel/v1/traces for 15m. The OTLP writer ships customer spans into request_telemetry.spans_summary (ADR-127 PR-D); a stall means the debugger's per-request span view is going dark. Check gatewayd-public logs for `otel_spans: apid RPC failed` (auth.sock unreachable), `otel_spans: rate_limited` (customer's per-account token bucket exhausted), or `otel_spans: shape_invalid` (malformed OTLP body). Drill-down: `rate(gatewayd_public_otel_spans_ingested_total[5m]) by (outcome)` distinguishes the four outcomes (inserted/rate_limited/db_error/shape_invalid)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDebugTelemetryIngestStalled.md"
 
+      # request_telemetry is range-partitioned by received_at. meterd
+      # reconciles the current month and two future months at startup and
+      # hourly so normal writes never accumulate in the catch-all default.
+      - alert: FaasRequestTelemetryPartitionCoverageMissing
+        expr: |
+          meterd_request_telemetry_partition_current_covered == 0
+          or
+          meterd_request_telemetry_partition_covered_months < 3
+        for: 5m
+        labels:
+          severity: page
+          component: meterd
+          family: debug_telemetry
+        annotations:
+          summary: "request telemetry partition coverage is incomplete"
+          description: "meterd does not see an attached request_telemetry partition for the current month or both future months. New rows may be landing in request_telemetry_default, making retention more expensive. Inspect the partition catalog and meterd reconciliation errors before changing partition DDL manually."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestTelemetryPartitionsDegraded.md"
+
+      - alert: FaasRequestTelemetryPartitionReconcileStalled
+        expr: |
+          (
+            meterd_request_telemetry_partition_last_success_timestamp_seconds == 0
+            and on (job, instance)
+            time() - process_start_time_seconds{job="meterd"} > 600
+          )
+          or
+          (
+            meterd_request_telemetry_partition_last_success_timestamp_seconds > 0
+            and
+            time() - meterd_request_telemetry_partition_last_success_timestamp_seconds > 7200
+          )
+        for: 5m
+        labels:
+          severity: page
+          component: meterd
+          family: debug_telemetry
+        annotations:
+          summary: "request telemetry partition reconciliation is stale"
+          description: "meterd has not completed request_telemetry partition reconciliation during startup or within two hourly intervals. Check meterd_request_telemetry_partition_reconcile_failures_total and meterd logs for lock, catalog, or database errors."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestTelemetryPartitionsDegraded.md"
+
+      - alert: FaasRequestTelemetryDefaultReceivingRows
+        expr: |
+          meterd_request_telemetry_default_latest_received_timestamp_seconds > 0
+          and
+          time() - meterd_request_telemetry_default_latest_received_timestamp_seconds < 600
+        for: 2m
+        labels:
+          severity: page
+          component: meterd
+          family: debug_telemetry
+        annotations:
+          summary: "request telemetry is writing into the default partition"
+          description: "request_telemetry_default received a row during the last 10 minutes. Explicit partition coverage has a gap or incoming telemetry is outside the expected time range. Check the row timestamps and attached partition bounds; the hourly reconciler safely moves current-month rows."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestTelemetryPartitionsDegraded.md"
+
       # ─────────────────────────────────────────────────────────────────
       # Observability pipeline health. These metrics describe the optional
       # daemon-owned Prometheus → OTLP bridge itself, not customer span

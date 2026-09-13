@@ -41,6 +41,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	egresspb "github.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1"
 	"github.com/onebox-faas/faas/pkg/alerts"
@@ -729,6 +730,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	ops := wire.NewOpsMetrics("meterd")
+	requestTelemetryPartitions := newRequestTelemetryPartitionMetrics(ops.Registry(), deps.now)
 	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "meterd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("meterd: init tracing: %w", traceErr)
@@ -1212,7 +1214,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// sweep because Hobby's retention cap is 3 days — a daily
 	// sweep would let the table accumulate several extra days
 	// of rows between ticks.
-	go meter.RetentionLoopRequestTelemetry(ctx, poolAdapter{pool}, meter.RequestTelemetryRetentionInterval, log)
+	partitionDB := poolAdapter{pool}
+	go meter.RequestTelemetryPartitionLoop(ctx, partitionDB, meter.RequestTelemetryPartitionInterval, log, requestTelemetryPartitions.observe)
+	go meter.RetentionLoopRequestTelemetry(ctx, partitionDB, meter.RequestTelemetryRetentionInterval, log)
 
 	// SAFE-RELEASES production-leveling Stream D (issue #976 /
 	// ADR-122 post-merge audit): deployment_audit GC cron.
@@ -1686,6 +1690,10 @@ func (a poolAdapter) Exec(ctx context.Context, sql string, args ...any) (int64, 
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+func (a poolAdapter) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return a.p.QueryRow(ctx, sql, args...)
 }
 
 // storageStoreAdapter narrows state.Store to the meter.Store
