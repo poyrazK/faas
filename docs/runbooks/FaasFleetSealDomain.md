@@ -31,3 +31,10 @@ sudo gregalectl fleet-seal migrate \
 ```
 
 Repeat `fleet-seal verify` on every node. A failed `deploy join-node` leaves its `compute_nodes` row drained and stops before service activation. After all nodes show the same recipient and `kid`, activate the node through the normal join controller. If migration reports a compare-and-swap conflict, a customer or key rotation won the race; rerun migration rather than editing ciphertext directly.
+
+The production environment must store the matching identity and recipient as
+the `FLEET_AGE_KEY` and `FLEET_AGE_RECIPIENT` GitHub Actions secrets. The
+control-plane CD workflow stages and verifies that pair before activation; the
+compute CD workflow places the same pair in every join artifact directory.
+Changing either secret requires the coordinated migration above and must not
+be done during an ordinary release rollout.

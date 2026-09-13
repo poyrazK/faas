@@ -335,6 +335,46 @@ jobs:
           fi
           REMOTE
 
+      - name: Stage the shared fleet seal identity
+        env:
+          FLEET_AGE_KEY: ${{ secrets.FLEET_AGE_KEY }}
+          FLEET_AGE_RECIPIENT: ${{ secrets.FLEET_AGE_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          [[ -n "${FLEET_AGE_KEY:-}" && -n "${FLEET_AGE_RECIPIENT:-}" ]] || {
+            echo "::error::production secrets FLEET_AGE_KEY and FLEET_AGE_RECIPIENT are required" >&2
+            exit 1
+          }
+          stage="$RUNNER_TEMP/fleet-age"
+          install -d -m 0700 "$stage"
+          printf '%s\n' "$FLEET_AGE_KEY" > "$stage/fleet.age"
+          printf '%s\n' "$FLEET_AGE_RECIPIENT" > "$stage/fleet.age.pub"
+          chmod 0400 "$stage/fleet.age"
+          chmod 0444 "$stage/fleet.age.pub"
+          remote_stage="/tmp/gregale-fleet-age-${GITHUB_RUN_ID}"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" "install -d -m 0700 '$remote_stage'"
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "$stage/fleet.age" "$stage/fleet.age.pub" \
+            "root@${{ env.CP_HOST }}:${remote_stage}/"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" "bash -s -- '$remote_stage'" <<'REMOTE'
+          set -euo pipefail
+          stage="$1"
+          trap 'rm -rf -- "$stage"' EXIT
+          grep -qE '^AGE-SECRET-KEY-1[0-9A-Z]+$' "$stage/fleet.age"
+          grep -qE '^age1[0-9a-z]+$' "$stage/fleet.age.pub"
+          install -d -o root -g root -m 0700 /etc/faas/secrets
+          for file in fleet.age fleet.age.pub; do
+            if [[ -e "/etc/faas/secrets/$file" ]] && ! cmp -s "$stage/$file" "/etc/faas/secrets/$file"; then
+              echo "existing $file differs; use the coordinated fleet-seal rotation procedure" >&2
+              exit 1
+            fi
+          done
+          install -o root -g root -m 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
+          install -o root -g root -m 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
+          REMOTE
+
       - name: Upload and activate immutable release
         run: |
           set -euo pipefail
@@ -395,6 +435,10 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
             "${release_dir}/bin/deployctl bundle-check ${release_dir} &&
+             ${release_dir}/bin/gregalectl fleet-seal migrate --fleet-key /etc/faas/secrets/fleet.age --legacy-host-dir /etc/faas/secrets --db-env /etc/faas/sealed.env --json &&
+             verify_json=\$(${release_dir}/bin/gregalectl fleet-seal verify --fleet-key /etc/faas/secrets/fleet.age --host-key /etc/faas/secrets/host.age --db-env /etc/faas/sealed.env --metrics-file /var/lib/node_exporter/textfile_collector/faas_fleet_seal.prom --json) &&
+             test \"\$(printf '%s' \"\$verify_json\" | jq -r .fleet_recipient)\" = \"\$(tr -d '\\r\\n' </etc/faas/secrets/fleet.age.pub)\" &&
+             printf '%s\\n' \"\$verify_json\" &&
              ${release_dir}/bin/deployctl deploy ${RELEASE_ID} &&
              install -d -o faas-apid -g faas -m 0770 /etc/faas/statuspage &&
              install -o root -g faas -m 0644 ${release_dir}/statuspage/index.html /etc/faas/statuspage/.index.html-${RELEASE_ID} &&
