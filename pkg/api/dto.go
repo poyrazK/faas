@@ -4975,6 +4975,9 @@ type SourceRefDeployRequest struct {
 	Repo   string `json:"repo"`
 	Ref    string `json:"ref"`
 	Format string `json:"format,omitempty"`
+	// NoTriggers skips applying trigger declarations found in the fetched
+	// gregale.yaml. Workflow definitions remain part of the deployment.
+	NoTriggers bool `json:"no_triggers,omitempty"`
 	// Annotation fields (issue #977 / ADR-116). The GitHub
 	// Action .github/actions/deploy passes these from the
 	// action.yml inputs (reason / tag / deployed-by / pr-number);

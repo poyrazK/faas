@@ -21320,6 +21320,10 @@ components:
           enum: [tarball]
           default: tarball
           description: "Forward-compat field. PR-A only supports `tarball`."
+        no_triggers:
+          type: boolean
+          default: false
+          description: "Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed."
         # Issue #977 / ADR-116 — deployment annotation echo. The four
         # columns stamped at create time are surfaced verbatim so the
         # dashboard, CLI history, and SDK consumers can render the

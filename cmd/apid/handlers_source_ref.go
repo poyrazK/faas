@@ -177,6 +177,32 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, prob)
 		return
 	}
+	manifest, manifestProblem := loadSourceRefManifest(spoolPath, app, acct.Plan)
+	if manifestProblem != nil {
+		api.WriteProblem(w, manifestProblem)
+		return
+	}
+	var workflowDefs []api.WorkflowSpec
+	if manifest != nil {
+		workflowDefs = manifest.Workflows
+	}
+	stagedManifest := sourceRefManifestStaged{appID: app.ID}
+	manifestCommitted := false
+	defer func() {
+		if manifestCommitted || (len(stagedManifest.cronIDs) == 0 && len(stagedManifest.triggerIDs) == 0) {
+			return
+		}
+		if rollbackErr := s.rollbackSourceRefManifest(context.WithoutCancel(r.Context()), stagedManifest); rollbackErr != nil {
+			s.log.Warn("source-ref manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
+		}
+	}()
+	if !req.NoTriggers {
+		stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest)
+		if manifestProblem != nil {
+			api.WriteProblem(w, manifestProblem)
+			return
+		}
+	}
 
 	// Issue #977 / ADR-116: validate annotation fields carried on
 	// the JSON body. The source-ref path uses the JSON wire (vs the
@@ -199,6 +225,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		Kind:            state.DeploymentKindGitHub,
 		SourcePath:      spoolPath,
 		SourceBytes:     spoolBytes,
+		SourceRoot:      app.RootDir,
 		SourceURL:       fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
 		CommitSHA:       resolvedSHA,
 		FunctionRuntime: functionRuntimeForApp(app),
@@ -230,12 +257,14 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		CanaryTotalSteps:       rollout.CanaryTotalSteps,
 		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 		CanaryStages:           rollout.CanaryStages,
+		Workflows:              marshalWorkflowDefinitions(workflowDefs),
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})
 	if err != nil {
 		s.writeDeploymentCreateError(w, err)
 		return
 	}
+	manifestCommitted = true
 	sourceAccepted = true
 	s.auditSourceRefDeploy(r.Context(), acct, app, res, prev, req, resolvedSHA, installID, ann)
 	// Reload the deployment row so the response carries the

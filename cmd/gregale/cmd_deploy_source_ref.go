@@ -88,6 +88,10 @@ func cmdDeployRepoSourceRefContextWithJSONWait(ctx context.Context, slug, repo, 
 // wrapper above keeps the helper's default behavior for callers that do not
 // need the deploy-local flags.
 func cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool, idempotencyKey string, waitTimeout time.Duration) int {
+	return cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx, slug, repo, ref, ann, waitForDeploy, jsonWait, idempotencyKey, waitTimeout, false)
+}
+
+func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool, idempotencyKey string, waitTimeout time.Duration, noTriggers bool) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -102,6 +106,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx context.Context, slug,
 		PRNumber:       ann.PRNumber,
 		TrafficPercent: ann.TrafficPercent,
 		Canary:         ann.Canary,
+		NoTriggers:     noTriggers,
 	}
 	deployCtx := ctx
 	if idempotencyKey != "" {

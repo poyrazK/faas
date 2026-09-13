@@ -42,6 +42,8 @@ class SourceRefDeployRequest:
     """
     format_: SourceRefDeployRequestFormat | Unset = "tarball"
     """Forward-compat field. PR-A only supports `tarball`."""
+    no_triggers: bool | Unset = False
+    """Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed."""
     reason: str | Unset = UNSET
     """Free-form operator note (≤280 chars). Example: 'Emergency rollback after payment provider incident'."""
     tag: SourceRefDeployRequestTag | Unset = UNSET
@@ -69,6 +71,8 @@ class SourceRefDeployRequest:
         format_: str | Unset = UNSET
         if not isinstance(self.format_, Unset):
             format_ = self.format_
+
+        no_triggers = self.no_triggers
 
         reason = self.reason
 
@@ -104,6 +108,8 @@ class SourceRefDeployRequest:
         )
         if format_ is not UNSET:
             field_dict["format"] = format_
+        if no_triggers is not UNSET:
+            field_dict["no_triggers"] = no_triggers
         if reason is not UNSET:
             field_dict["reason"] = reason
         if tag is not UNSET:
@@ -134,6 +140,8 @@ class SourceRefDeployRequest:
             format_ = UNSET
         else:
             format_ = check_source_ref_deploy_request_format(_format_)
+
+        no_triggers = d.pop("no_triggers", UNSET)
 
         reason = d.pop("reason", UNSET)
 
@@ -178,6 +186,7 @@ class SourceRefDeployRequest:
             repo=repo,
             ref=ref,
             format_=format_,
+            no_triggers=no_triggers,
             reason=reason,
             tag=tag,
             deployed_by=deployed_by,
