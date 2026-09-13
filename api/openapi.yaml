@@ -1763,7 +1763,8 @@ paths:
 
         `window` is the same closed vocabulary as the per-app
         endpoint: `1h` | `24h` (default) | `7d`. Auth chain:
-        `usage:read` scope + MFA.
+        `usage:read` scope + MFA. The SLO rollup is a Hobby+
+        observability surface; Free accounts receive 402.
 
         On Prometheus failure the endpoint returns 200 with
         zeroed fields and `source: "degraded: <reason>"`. When
@@ -1802,6 +1803,7 @@ paths:
                 throttled_total: 23
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/account/export:
@@ -4192,6 +4194,9 @@ paths:
         the PromQL pass succeeded, only `instance_hours` /
         `gb_hours` are zeroed and `source` is
         `"degraded: postgres unavailable"`.
+
+        This is a Hobby+ per-app observability surface. Free
+        accounts receive 402 before the app slug is resolved.
       parameters:
         - name: window
           in: query
@@ -4226,6 +4231,7 @@ paths:
                 throttled_total: 0
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -12192,7 +12198,9 @@ paths:
 
         PromQL cost: 6 round-trips regardless of N apps (vs. 7N
         for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
-        and `Client.QueryBuckets`.
+        and `Client.QueryBuckets`. This rollup exposes the same
+        Hobby+ signals as the per-app endpoint, so Free accounts
+        receive 402.
       parameters:
         - name: range
           in: query
@@ -12227,6 +12235,7 @@ paths:
                     wake_p95_ms: 380.2
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/invocations/{id}:
@@ -13016,6 +13025,8 @@ paths:
         logs/metrics/wake. Cross-account access 404s the
         same way unknown slugs do (forge-proof: every row's
         `data.app_id` is verified to match the resolved app).
+        Wake narratives are a Hobby+ observability surface; Free
+        accounts receive 402 before slug or wake lookup.
       parameters:
         - name: since
           in: query
@@ -13062,6 +13073,7 @@ paths:
           description: Malformed query parameter on the wake-timeline read — `since` not RFC 3339 or `limit` out of range.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
         '404':
           description: No such app (slug) or wake_id is unknown.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }

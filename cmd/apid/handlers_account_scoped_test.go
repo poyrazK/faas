@@ -398,6 +398,13 @@ func TestGetAppsMetrics_InvalidRange(t *testing.T) {
 	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
 
+func TestGetAppsMetrics_FreePlanReturns402(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	createApp(t, e, "free-app")
+	rec := e.do(t, http.MethodGet, "/v1/apps/metrics?range=5m", nil, nil)
+	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
+}
+
 // TestGetAppsMetrics_HappyPath_WithProm wires a fake Prometheus that
 // returns per-app vector data, then asserts the rollup is keyed by
 // app_slug and each row carries the per-app `request_count`.

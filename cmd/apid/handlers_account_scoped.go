@@ -184,6 +184,10 @@ func (s *server) listSecretsForAccount(w http.ResponseWriter, r *http.Request, a
 // message as the per-app endpoint because both share the
 // "degraded: <reason>" Source contract.
 func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !acct.Plan.PerAppMetricsAllowed() {
+		api.WriteProblem(w, api.ErrPlanPerAppMetricsNotAllowed(acct.Plan))
+		return
+	}
 	rng := r.URL.Query().Get("range")
 	if rng == "" {
 		rng = appmetrics.DefaultRange

@@ -70,6 +70,10 @@ import (
 // primary caller is an API key with ScopesReadSurface).
 // IDOR-safe via loadApp — cross-account slug → 404.
 func (s *server) getAppSLO(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !acct.Plan.PerAppMetricsAllowed() {
+		api.WriteProblem(w, api.ErrPlanPerAppMetricsNotAllowed(acct.Plan))
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug")) //nolint:contextcheck // loadApp takes r and uses r.Context() for its own DB calls; the helper is shared across every per-app handler.
 	if !ok {
 		return
@@ -100,6 +104,10 @@ func (s *server) getAppSLO(w http.ResponseWriter, r *http.Request, acct state.Ac
 // is the SQL JOIN on apps.account_id=$1 in the pgstore helper
 // — there's no (accountID, slug) pair to IDOR-check.
 func (s *server) getAccountSLO(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !acct.Plan.PerAppMetricsAllowed() {
+		api.WriteProblem(w, api.ErrPlanPerAppMetricsNotAllowed(acct.Plan))
+		return
+	}
 	window := r.URL.Query().Get("window")
 	if window == "" {
 		window = api.SLODefaultWindow
@@ -264,7 +272,7 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 	appMatcher := appmetrics.AppIDMatcher(appIDs)
 
 	// 1. requests_total.
-	reqCountQ := fmt.Sprintf(`sum(increase(gateway_requests_total{%s}[%s]))`, appMatcher, window)
+	reqCountQ := fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{%s}[%s]))`, appMatcher, window)
 	if v, err := s.promqlClient.QueryScalar(ctx, reqCountQ); err == nil {
 		resp.RequestsTotal = int64(appmetrics.SafeRoundNonNeg(v))
 	} else {
@@ -294,8 +302,8 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 
 	// 5. error_rate_pct.
 	errQ := appmetrics.PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_requests_total{%s,code=~"[45].."}[%s]))`, appMatcher, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total{%s}[%s]))`, appMatcher, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class=~"[45]xx"}[%s]))`, appMatcher, window),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s}[%s]))`, appMatcher, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, errQ); err == nil {
 		resp.ErrorRatePct = appmetrics.SafePercent(v)
 	} else {
@@ -305,7 +313,7 @@ func (s *server) fetchAccountSLO(ctx context.Context, acct state.Account, window
 	// 6. cold_boot_rate_pct.
 	coldQ := appmetrics.PercentRatioQuery(
 		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{%s}[%s]))`, appMatcher, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total{%s}[%s]))`, appMatcher, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s}[%s]))`, appMatcher, window))
 	if v, err := s.promqlClient.QueryScalar(ctx, coldQ); err == nil {
 		resp.ColdBootRatePct = appmetrics.SafePercent(v)
 	} else {

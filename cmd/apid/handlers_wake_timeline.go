@@ -75,7 +75,6 @@ const (
 // caller's account we 404 the same way unknown slugs do (forge-
 // proof).
 func (s *server) listWakeTimeline(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	slug := r.PathValue("slug")
 	target, ok := s.resolveOnBehalfOf(w, r, acct, "wake-timeline")
 	if !ok {
 		return
@@ -84,6 +83,11 @@ func (s *server) listWakeTimeline(w http.ResponseWriter, r *http.Request, acct s
 	if target != nil {
 		authAcct = *target
 	}
+	if !authAcct.Plan.PerAppMetricsAllowed() {
+		api.WriteProblem(w, api.ErrPlanPerAppMetricsNotAllowed(authAcct.Plan))
+		return
+	}
+	slug := r.PathValue("slug")
 	wakeID := r.PathValue("wake_id")
 	if wakeID == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
