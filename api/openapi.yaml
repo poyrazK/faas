@@ -5972,6 +5972,31 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/account/overage-cap:
+    get:
+      tags: [account]
+      operationId: getOverageCap
+      summary: Read the account's monthly overage cap.
+      description: Returns integer cents, zero when no overage is allowed, or null when no cap is set.
+      responses:
+        '200':
+          description: The saved monthly overage cap.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [overage_cap_cents]
+                properties:
+                  overage_cap_cents:
+                    type: [integer, 'null']
+                    format: int64
+                    minimum: 0
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500':
+          description: Could not read the saved cap.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
     post:
       tags: [account]
       operationId: raiseOverageCap
