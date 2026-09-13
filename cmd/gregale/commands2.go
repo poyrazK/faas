@@ -4047,6 +4047,13 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			return 130
 		case e, ok := <-dec.Events():
 			if !ok {
+				// Decoder publishes the terminal error after it has
+				// queued every parsed event. Wait until Events closes
+				// before reading Errors so an EOF cannot win a select
+				// against a buffered `degraded` (or log) frame.
+				if streamErr := <-dec.Errors(); streamErr != nil && !errors.Is(streamErr, io.EOF) {
+					return printErr("Stream closed", streamErr)
+				}
 				if collector != nil {
 					collector.flush(os.Stdout)
 				}
@@ -4081,14 +4088,6 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 					collector.observe(e.Data)
 				}
 			}
-		case err := <-dec.Errors():
-			if errors.Is(err, io.EOF) {
-				if collector != nil {
-					collector.flush(os.Stdout)
-				}
-				return 0
-			}
-			return printErr("Stream closed", err)
 		}
 	}
 }
