@@ -51,11 +51,12 @@ unbudgeted client that needs attribution before its pool can be corrected.
 Do not increase `max_connections` as the first response. More backends raise
 PostgreSQL memory use and hide a pool-budget regression. Keep the normal
 public-beta topology (control plane plus one active compute node) at or below
-90 ordinary sessions. The stopped standby node may be activated because the
-sum of all direct-pool caps remains within PostgreSQL's 97 ordinary-client
-slots, but it removes the operator headroom needed for rollout overlap. Before
-running both compute nodes continuously, introduce PgBouncer and repeat the
-API, wake, jobs, workflow, and rollout-overlap capacity suite.
+90 ordinary sessions. Do not activate the stopped standby node for continuous
+traffic with direct daemon pools: both schedd processes on that node require
+eleven permanent LISTEN sessions plus request headroom, so the complete fleet
+can exceed PostgreSQL's 97 ordinary-client slots. Before running both compute
+nodes continuously, introduce PgBouncer and repeat the API, wake, jobs,
+workflow, and rollout-overlap capacity suite.
 
 ## Verify recovery
 
