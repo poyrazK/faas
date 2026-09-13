@@ -396,6 +396,10 @@ type MemStore struct {
 	// by ClaimExecution after the in-memory lease CAS succeeds.
 	executions        map[string]Execution
 	executionPayloads map[string]executionPayload
+	// executionUsageLedger mirrors execution_usage_ledger. It is keyed by
+	// execution ID so terminalization and recovery can be replayed without
+	// double-counting usage.
+	executionUsageLedger map[string]executionUsageLedgerRow
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
@@ -925,6 +929,7 @@ func NewMemStore() *MemStore {
 		invocations:             map[string]Invocation{},
 		executions:              map[string]Execution{},
 		executionPayloads:       map[string]executionPayload{},
+		executionUsageLedger:    map[string]executionUsageLedgerRow{},
 		runtimeSnapshots:        map[string]RuntimeSnapshotRecord{},
 		accountAsyncQuota:       map[string]accountAsyncQuotaRow{},
 		instances:               map[string]Instance{},

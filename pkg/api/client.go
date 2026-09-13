@@ -3612,7 +3612,8 @@ func (c *Client) GetAppErrorSample(ctx context.Context, slug, fingerprint string
 }
 
 // UsageSummary returns the account-wide monthly roll-up
-// (used_gb_hours, included_gb_hours, overage_gb_hours, overage_cents).
+// (used_gb_hours, included_gb_hours, overage_gb_hours, overage_cents), plus
+// optional disposable-execution usage from the terminal usage ledger.
 // Distinct from GetUsage which returns per-app rows; empty month falls
 // back to the server's default (current month).
 func (c *Client) UsageSummary(ctx context.Context, month string) (UsageSummaryResponse, error) {

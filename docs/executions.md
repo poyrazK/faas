@@ -41,6 +41,16 @@ bundles contain regular file bytes only—there is no symlink, device, or host
 path representation. Source and input are encrypted before durable admission
 and are never returned by reads.
 
+## Usage accounting
+
+`GET /v1/usage/summary` (and its `compute` projection in
+`GET /v1/account/usage`) includes an `executions` object for the requested UTC
+calendar month. It reports terminal run count, summed wall/CPU time, maximum
+peak memory, output bytes, and counts by terminal outcome. These values come
+from an execution-ID-keyed ledger written in the same transaction as
+terminalization, so retries cannot double-count and deleting the sealed
+payload does not erase usage history.
+
 The control-plane and scheduler gates are explicit. Set
 `FAAS_EXECUTION_API_ENABLED=1` on apid and `FAAS_EXECUTION_DISPATCH=1` on
 schedd only after the host's restore/execute/destroy isolation checks pass.

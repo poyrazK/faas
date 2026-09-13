@@ -1016,6 +1016,21 @@ type ExecutionPayload struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type ExecutionUsageLedger struct {
+	ExecutionID  pgtype.UUID
+	AccountID    pgtype.UUID
+	Runtime      string
+	Status       string
+	WallTimeMs   int64
+	CpuTimeMs    int64
+	PeakMemoryMb int64
+	OutputBytes  int64
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	RecordedAt   pgtype.Timestamptz
+}
+
 type GdprRequest struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID

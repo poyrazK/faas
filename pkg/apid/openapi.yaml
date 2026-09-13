@@ -25838,6 +25838,24 @@ components:
       x-since: "2026-09"
       x-issue: "308"
 
+    ExecutionUsageSummaryResponse:
+      description: "Account-level usage roll-up for terminal disposable executions in one UTC calendar month. Payload cleanup does not remove these ledger-backed facts."
+      type: object
+      required: [runs, wall_time_ms, cpu_time_ms, peak_memory_mb, output_bytes, succeeded, failed, timed_out, out_of_memory, cancelled]
+      properties:
+        runs: { type: integer, format: int64, minimum: 0 }
+        wall_time_ms: { type: integer, format: int64, minimum: 0, description: "Sum of host-measured wall time across terminal runs." }
+        cpu_time_ms: { type: integer, format: int64, minimum: 0, description: "Sum of host-measured CPU time across terminal runs." }
+        peak_memory_mb: { type: integer, format: int64, minimum: 0, description: "Maximum host-measured peak memory across terminal runs." }
+        output_bytes: { type: integer, format: int64, minimum: 0, description: "Sum of result, stdout, and stderr bytes across terminal runs." }
+        succeeded: { type: integer, format: int64, minimum: 0 }
+        failed: { type: integer, format: int64, minimum: 0 }
+        timed_out: { type: integer, format: int64, minimum: 0 }
+        out_of_memory: { type: integer, format: int64, minimum: 0 }
+        cancelled: { type: integer, format: int64, minimum: 0 }
+      x-since: "2026-09"
+      x-issue: "execution-usage-ledger"
+
     UsageSummaryResponse:
       description: "Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage dimensions, and a trailing 30-day daily trend (issue #308). The GB-hours fields drive the overage math; the other dimensions are informational."
       type: object
@@ -25887,6 +25905,12 @@ components:
           description: 'Per-month sum of WAKE_RESTORE→WAKE_COLD_BOOT transitions across every app on the account (informational; not billed). ADR-048.'
           x-since: "2026-08"
           x-issue: "436"
+        executions:
+          allOf:
+            - $ref: '#/components/schemas/ExecutionUsageSummaryResponse'
+          description: 'Terminal disposable execution usage for this UTC calendar month. Omitted when the backing store does not expose the execution usage read seam.'
+          x-since: "2026-09"
+          x-issue: "execution-usage-ledger"
         daily:
           type: array
           description: 'Trailing 30 UTC calendar days, oldest first, grouped across the account. Empty when no daily rollup rows exist. issue #308.'

@@ -246,6 +246,7 @@ export type { ExecutionListResponse } from './ExecutionListResponse.js';
 export type { ExecutionNetworkPolicy } from './ExecutionNetworkPolicy.js';
 export type { ExecutionResponse } from './ExecutionResponse.js';
 export type { ExecutionUsage } from './ExecutionUsage.js';
+export type { ExecutionUsageSummaryResponse } from './ExecutionUsageSummaryResponse.js';
 export type { FieldError } from './FieldError.js';
 export type { FilterCriteria } from './FilterCriteria.js';
 export type { FilterCriteriaClause } from './FilterCriteriaClause.js';

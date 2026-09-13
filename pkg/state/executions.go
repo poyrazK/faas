@@ -93,6 +93,32 @@ type ExecutionSweepResult struct {
 	PayloadsDeleted  int
 }
 
+// ExecutionUsageSummary is the account-scoped aggregate of terminal
+// disposable executions in one UTC calendar month. It is backed by the
+// append-only execution usage ledger rather than the payload-bearing
+// execution row so payload cleanup cannot remove billing facts.
+type ExecutionUsageSummary struct {
+	AccountID    string
+	Month        time.Time
+	Runs         int64
+	WallTimeMS   int64
+	CPUTimeMS    int64
+	PeakMemoryMB int64
+	OutputBytes  int64
+	Succeeded    int64
+	Failed       int64
+	TimedOut     int64
+	OutOfMemory  int64
+	Cancelled    int64
+}
+
+// ExecutionUsageStore is deliberately narrower than Store. The scheduler
+// writes the ledger inside its terminalization transaction; customer reads
+// use this optional seam so older Store test doubles remain source-compatible.
+type ExecutionUsageStore interface {
+	ExecutionUsageByAccount(ctx context.Context, accountID string, month time.Time) (ExecutionUsageSummary, error)
+}
+
 // ExecutionQuotaError is returned when atomic admission observes the active
 // per-account limit. Observed includes the execution the caller attempted to
 // admit, matching the API problem-detail convention.

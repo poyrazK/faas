@@ -5192,6 +5192,25 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	}
 	egressMode, egressFrom, includedEgress, egressOverage, egressPrice := egressUsagePolicyView(s.billingProvider, acct.Plan, eligibleEgressBytes)
 	overageCents = combinedOverageCents(s.billingProvider, acct.Plan, eligibleEgressBytes, overageCents)
+	var executionUsage *api.ExecutionUsageSummaryResponse
+	if usageStore, ok := s.store.(state.ExecutionUsageStore); ok {
+		usage, err := usageStore.ExecutionUsageByAccount(ctx, acct.ID, month)
+		if err != nil {
+			return api.UsageSummaryResponse{}, err
+		}
+		executionUsage = &api.ExecutionUsageSummaryResponse{
+			Runs:         usage.Runs,
+			WallTimeMS:   usage.WallTimeMS,
+			CPUTimeMS:    usage.CPUTimeMS,
+			PeakMemoryMB: usage.PeakMemoryMB,
+			OutputBytes:  usage.OutputBytes,
+			Succeeded:    usage.Succeeded,
+			Failed:       usage.Failed,
+			TimedOut:     usage.TimedOut,
+			OutOfMemory:  usage.OutOfMemory,
+			Cancelled:    usage.Cancelled,
+		}
+	}
 	return api.UsageSummaryResponse{
 		Month:                 monthStr,
 		UsedGBHours:           usedGB,
@@ -5205,6 +5224,7 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 		IncludedEgressGB:      includedEgress,
 		EgressOverageGB:       egressOverage,
 		EgressMillicentsPerGB: egressPrice,
+		Executions:            executionUsage,
 		// ADR-048: ingress Σ + cold-boot Σ across every
 		// app on this account for the month. Both
 		// informational, not billed.

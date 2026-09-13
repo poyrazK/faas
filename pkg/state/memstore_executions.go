@@ -20,6 +20,20 @@ type executionPayload struct {
 	createdAt time.Time
 }
 
+type executionUsageLedgerRow struct {
+	ExecutionID  string
+	AccountID    string
+	Runtime      api.ExecutionRuntime
+	Status       api.ExecutionStatus
+	WallTimeMS   int64
+	CPUTimeMS    int64
+	PeakMemoryMB int64
+	OutputBytes  int64
+	StartedAt    *time.Time
+	FinishedAt   time.Time
+	CreatedAt    time.Time
+}
+
 func cloneExecution(row Execution) Execution {
 	row.Result = append([]byte(nil), row.Result...)
 	if row.LeaseToken != nil {
@@ -284,8 +298,75 @@ func (m *MemStore) CompleteExecution(_ context.Context, params CompleteExecution
 	row.FinishedAt = &finishedAt
 	row.UpdatedAt = finishedAt
 	m.executions[row.ID] = row
+	m.recordExecutionUsageLocked(row)
 	delete(m.executionPayloads, row.ID)
 	return cloneExecution(row), nil
+}
+
+// recordExecutionUsageLocked is the MemStore mirror of the Postgres
+// execution_usage_ledger insert. The execution ID is the idempotency key;
+// repeated terminalization/recovery attempts are no-ops.
+func (m *MemStore) recordExecutionUsageLocked(row Execution) {
+	if !row.Status.Terminal() {
+		return
+	}
+	if _, exists := m.executionUsageLedger[row.ID]; exists {
+		return
+	}
+	startedAt := cloneTimePtr(row.StartedAt)
+	m.executionUsageLedger[row.ID] = executionUsageLedgerRow{
+		ExecutionID:  row.ID,
+		AccountID:    row.AccountID,
+		Runtime:      row.Runtime,
+		Status:       row.Status,
+		WallTimeMS:   row.Usage.WallTimeMS,
+		CPUTimeMS:    row.Usage.CPUTimeMS,
+		PeakMemoryMB: int64(row.Usage.PeakMemoryMB),
+		OutputBytes:  int64(len(row.Result) + len(row.Stdout) + len(row.Stderr)),
+		StartedAt:    startedAt,
+		FinishedAt:   derefTime(row.FinishedAt),
+		CreatedAt:    row.CreatedAt,
+	}
+}
+
+// ExecutionUsageByAccount returns a month-scoped aggregate over the durable
+// ledger. The month is interpreted as a UTC calendar month and must be the
+// first day of that month (or it is normalized defensively).
+func (m *MemStore) ExecutionUsageByAccount(_ context.Context, accountID string, month time.Time) (ExecutionUsageSummary, error) {
+	if strings.TrimSpace(accountID) == "" || month.IsZero() {
+		return ExecutionUsageSummary{}, ErrExecutionInvalid
+	}
+	month = month.UTC()
+	start := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	summary := ExecutionUsageSummary{AccountID: accountID, Month: start}
+	for _, row := range m.executionUsageLedger {
+		if row.AccountID != accountID || row.FinishedAt.Before(start) || !row.FinishedAt.Before(end) {
+			continue
+		}
+		summary.Runs++
+		summary.WallTimeMS += row.WallTimeMS
+		summary.CPUTimeMS += row.CPUTimeMS
+		if row.PeakMemoryMB > summary.PeakMemoryMB {
+			summary.PeakMemoryMB = row.PeakMemoryMB
+		}
+		summary.OutputBytes += row.OutputBytes
+		switch row.Status {
+		case api.ExecutionStatusSucceeded:
+			summary.Succeeded++
+		case api.ExecutionStatusFailed:
+			summary.Failed++
+		case api.ExecutionStatusTimedOut:
+			summary.TimedOut++
+		case api.ExecutionStatusOutOfMemory:
+			summary.OutOfMemory++
+		case api.ExecutionStatusCancelled:
+			summary.Cancelled++
+		}
+	}
+	return summary, nil
 }
 
 func copyInt(value *int) *int {
@@ -315,6 +396,7 @@ func (m *MemStore) RequestExecutionCancellation(_ context.Context, accountID, ex
 		return Execution{}, ErrNotFound
 	}
 	if row.Status.Terminal() {
+		m.recordExecutionUsageLocked(row)
 		delete(m.executionPayloads, row.ID)
 		return cloneExecution(row), nil
 	}
@@ -327,6 +409,7 @@ func (m *MemStore) RequestExecutionCancellation(_ context.Context, accountID, ex
 	if row.Status == api.ExecutionStatusQueued {
 		row.Status = api.ExecutionStatusCancelled
 		row.FinishedAt = &requestedAt
+		m.recordExecutionUsageLocked(row)
 		delete(m.executionPayloads, row.ID)
 	}
 	m.executions[row.ID] = row
@@ -384,6 +467,7 @@ func (m *MemStore) SweepExecutions(_ context.Context, at time.Time, limit int) (
 		row := m.executions[id]
 		finishExecutionForSweep(&row, api.ExecutionStatusTimedOut, at, "deadline_exceeded", "execution deadline elapsed before dispatch")
 		m.executions[id] = row
+		m.recordExecutionUsageLocked(row)
 		if _, ok := m.executionPayloads[id]; ok {
 			delete(m.executionPayloads, id)
 			result.PayloadsDeleted++
@@ -402,6 +486,7 @@ func (m *MemStore) SweepExecutions(_ context.Context, at time.Time, limit int) (
 		status, code, message := sweepTerminal(row, at, "execution deadline elapsed during restore")
 		finishExecutionForSweep(&row, status, at, code, message)
 		m.executions[id] = row
+		m.recordExecutionUsageLocked(row)
 		if _, ok := m.executionPayloads[id]; ok {
 			delete(m.executionPayloads, id)
 			result.PayloadsDeleted++
@@ -440,6 +525,7 @@ func (m *MemStore) SweepExecutions(_ context.Context, at time.Time, limit int) (
 		}
 		finishExecutionForSweep(&row, status, at, code, message)
 		m.executions[id] = row
+		m.recordExecutionUsageLocked(row)
 		if _, ok := m.executionPayloads[id]; ok {
 			delete(m.executionPayloads, id)
 			result.PayloadsDeleted++
