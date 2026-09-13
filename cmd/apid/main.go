@@ -628,6 +628,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
+		go srv.runManagedRealtimeEndpointReconciler(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -1501,8 +1502,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// because the operator never exported the env var.
 	srv.WithGatewaydControlURL(resolveGatewaydControlURL(deps.getenv))
 	// ADR-156: same-box installs mirror durable realtime endpoint writes onto
-	// the local realtimed owner. Split-box deployments leave this unset until
-	// the leased cross-node registrar is configured.
+	// the local realtimed owner. Fleet installs replace it with the leased
+	// cross-node registrar below; the background reconciler repairs missed
+	// fan-out after node activation or restart.
 	srv.WithRealtimeSocket(deps.getenv("FAAS_REALTIME_SOCKET"))
 	if ownerStore, ok := store.(state.ManagedRealtimeConnectionOwnerStore); ok {
 		localNodeID := ""

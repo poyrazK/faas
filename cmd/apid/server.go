@@ -109,9 +109,8 @@ type server struct {
 	// Unix owner for endpoint registration and connection discovery.
 	realtimeClient *realtime.Client
 	// realtimeOwner routes customer-facing connection operations to the node
-	// that owns a live socket. The initial implementation wires a local Unix
-	// client; a leased cross-node resolver can replace it without changing the
-	// public API handlers.
+	// that owns a live socket. Production wires a leased cross-node resolver;
+	// the local Unix client remains the same-box fast path.
 	realtimeOwner realtimeOwner
 	// events is the in-process broadcaster the SSE handlers read from
 	// (slice 5/6). nil falls back to a fresh one so callers can defer

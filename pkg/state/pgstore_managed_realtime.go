@@ -174,6 +174,20 @@ func (s *PgStore) ListManagedRealtimeEndpointsForAccount(ctx context.Context, ac
 	return scanManagedRealtimeEndpoints(rows)
 }
 
+func (s *PgStore) ListManagedRealtimeEndpoints(ctx context.Context) ([]ManagedRealtimeEndpoint, error) {
+	rows, err := s.pool.Query(ctx, `
+		select id, app_id, account_id, callback_url, connect_path, message_path,
+		       disconnect_path, callback_auth_token_sealed, auth_token_sealed,
+		       enabled, created_at, updated_at
+		  from managed_realtime_endpoints order by created_at desc
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("state: list realtime endpoints: %w", err)
+	}
+	defer rows.Close()
+	return scanManagedRealtimeEndpoints(rows)
+}
+
 type managedRealtimeEndpointScanner interface{ Scan(dest ...any) error }
 
 func scanManagedRealtimeEndpoint(s managedRealtimeEndpointScanner) (ManagedRealtimeEndpoint, error) {

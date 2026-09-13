@@ -88,3 +88,11 @@ it on close. A failed or expired owner lease is rediscovered rather than guessed
 publish broadcasts to all active nodes because channel membership is node-local.
 The directory is written by apid/control-plane code only—`realtimed` continues
 to own sockets and never writes Postgres.
+
+The apid control plane also runs a bounded periodic endpoint reconciler. It
+replays the durable endpoint rows (including disabled rows) to the active-node
+registrar immediately at boot and every 30 seconds thereafter. This repairs a
+node that restarts or becomes active after a mutation-time fan-out, while
+keeping endpoint credentials and customer state in the control plane. A
+temporary node or database failure is logged and retried on the next pass; it
+does not prevent apid from serving requests.

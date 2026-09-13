@@ -693,6 +693,14 @@ type ManagedRealtimeEndpointStore interface {
 	ListManagedRealtimeEndpointsForAccount(ctx context.Context, accountID string) ([]ManagedRealtimeEndpoint, error)
 }
 
+// ManagedRealtimeEndpointLister is the optional store-wide read surface used
+// by the apid endpoint reconciler. It is separate from
+// ManagedRealtimeEndpointStore so narrow test doubles and older integrations
+// remain source-compatible while the background repair loop rolls out.
+type ManagedRealtimeEndpointLister interface {
+	ListManagedRealtimeEndpoints(ctx context.Context) ([]ManagedRealtimeEndpoint, error)
+}
+
 // WebhookDeliveryReleaser is an optional rollback seam for webhook ingress.
 // A delivery is claimed before its side effects run to serialize concurrent
 // redeliveries; if those side effects fail, the claim must be removed so the

@@ -33,6 +33,12 @@ operations are routed through the leased owner directory, while publish is
 broadcast to active nodes. The daemon-socket example below remains useful for
 node-local bootstrap and recovery tooling.
 
+Endpoint writes are best-effort fan-out operations. apid performs an immediate
+reconciliation at boot and every 30 seconds, replaying enabled rows and
+removing disabled rows on active nodes. If a node is restarting or unreachable,
+the pass records the failure and retries on the next interval; no endpoint
+mutation is required to heal the node after it becomes active.
+
 ```
 curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/endpoints \
   -H 'content-type: application/json' \
