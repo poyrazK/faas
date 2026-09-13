@@ -74,6 +74,12 @@ type JailerVMM struct {
 	// listeners here closes the race where a fast guest sends its characterization
 	// or job-exit frame before the corresponding wait RPC starts.
 	guestVsockListeners map[guestVsockListenerKey]*net.UnixListener
+	// guestVsockStreamHandlers receive Firecracker guest-initiated streams on
+	// the per-instance <uds_path>_<port> endpoints. The outer compute VM cannot
+	// bind VMADDR_CID_HOST, so daemon-wide AF_VSOCK listeners are not a valid
+	// transport on the supported nested-virtualization topology.
+	guestVsockStreamHandlers map[uint32]GuestVsockStreamHandler
+	guestVsockObserver       GuestVsockTransportObserver
 	// characterizationReceipts coordinate the receiver started during boot
 	// with Manager.Wake's later WaitCharacterizationReport call. A single
 	// accept loop owns each listener; every waiter observes the cached result.
@@ -410,6 +416,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		proc:                     make(map[string]*exec.Cmd),
 		clients:                  make(map[string]*http.Client),
 		guestVsockListeners:      make(map[guestVsockListenerKey]*net.UnixListener),
+		guestVsockStreamHandlers: make(map[uint32]GuestVsockStreamHandler),
 		characterizationReceipts: make(map[string]*characterizationReceipt),
 		recs:                     make(map[string]*instanceRecord),
 		rings:                    make(map[string]*logbuf.Ring),
@@ -709,6 +716,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	preparedConfigAt := time.Now()
 	if err = v.ownChrootRoot(root, l); err != nil {
 		return err
+	}
+	if !l.IsBuilder && cfg.VsockDevice != nil {
+		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
+		}
 	}
 	if jobManifest != nil {
 		if err = v.prepareJobExitListener(l); err != nil {
@@ -1152,6 +1164,11 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.ownChrootRoot(root, l); err != nil {
 		return err
 	}
+	if !l.IsBuilder {
+		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
+		}
+	}
 	if err = v.stageMountHelper(root); err != nil {
 		return err
 	}
@@ -1303,6 +1320,130 @@ func (v *JailerVMM) vsockUDSSock(instance string) string {
 type guestVsockListenerKey struct {
 	instance string
 	port     uint32
+}
+
+// Guest-initiated platform channels use Firecracker's per-VM Unix bridge.
+// These ports mirror guest-init and cmd/vmmd. They live here because JailerVMM
+// is the component that owns the instance-specific UDS path and must bind it
+// before Firecracker starts or resumes.
+const (
+	VsockGuestEventHostPort       uint32 = 1027
+	VsockWorkloadIdentityHostPort uint32 = 1030
+)
+
+// GuestVsockStreamHandler handles one guest-initiated stream. The instance is
+// established by the listener that accepted the connection, so it is a
+// stronger credential than a caller-supplied frame field. failureKind must be
+// from the bounded transport set consumed by vmmd metrics.
+type GuestVsockStreamHandler func(instance string, conn net.Conn) (failureKind string, err error)
+
+// GuestVsockTransportObserver receives capability and I/O state changes. An
+// empty failureKind and nil err means the receiver is available. vmmd uses the
+// closed failure kinds to update readiness and bounded Prometheus labels.
+type GuestVsockTransportObserver func(port uint32, failureKind string, err error)
+
+// WithGuestVsockTransportObserver installs the daemon health callback.
+func (v *JailerVMM) WithGuestVsockTransportObserver(observer GuestVsockTransportObserver) *JailerVMM {
+	if v == nil {
+		return v
+	}
+	v.mu.Lock()
+	v.guestVsockObserver = observer
+	v.mu.Unlock()
+	return v
+}
+
+// RegisterGuestVsockStreamHandler registers a required platform receiver.
+// Registration is daemon-scoped; boot and restore prepare one UDS listener per
+// instance before Firecracker can deliver guest traffic.
+func (v *JailerVMM) RegisterGuestVsockStreamHandler(port uint32, handler GuestVsockStreamHandler) error {
+	if v == nil || port == 0 || handler == nil {
+		return fmt.Errorf("invalid VMM, vsock port, or handler")
+	}
+	v.mu.Lock()
+	if v.guestVsockStreamHandlers == nil {
+		v.guestVsockStreamHandlers = make(map[uint32]GuestVsockStreamHandler)
+	}
+	if _, exists := v.guestVsockStreamHandlers[port]; exists {
+		v.mu.Unlock()
+		return fmt.Errorf("guest vsock handler already registered on port %d", port)
+	}
+	v.guestVsockStreamHandlers[port] = handler
+	observer := v.guestVsockObserver
+	v.mu.Unlock()
+	if observer != nil {
+		observer(port, "", nil)
+	}
+	return nil
+}
+
+func (v *JailerVMM) notifyGuestVsockTransport(port uint32, failureKind string, err error) {
+	v.mu.Lock()
+	observer := v.guestVsockObserver
+	v.mu.Unlock()
+	if observer != nil {
+		observer(port, failureKind, err)
+	}
+}
+
+// prepareRegisteredGuestVsockListeners binds every daemon receiver for one
+// instance. A preparation failure aborts boot/restore and marks the daemon
+// unhealthy; serving a VM without its platform channels would make lifecycle
+// and identity behavior silently incomplete.
+func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
+	v.mu.Lock()
+	handlers := make(map[uint32]GuestVsockStreamHandler, len(v.guestVsockStreamHandlers))
+	for port, handler := range v.guestVsockStreamHandlers {
+		handlers[port] = handler
+	}
+	v.mu.Unlock()
+	for port, handler := range handlers {
+		if err := v.prepareGuestVsockListener(l, port); err != nil {
+			v.notifyGuestVsockTransport(port, "prepare", err)
+			return fmt.Errorf("prepare guest vsock receiver port %d: %w", port, err)
+		}
+		ln := v.guestVsockListener(l.Instance, port)
+		if ln == nil {
+			err := fmt.Errorf("prepared listener is missing")
+			v.notifyGuestVsockTransport(port, "prepare", err)
+			return fmt.Errorf("prepare guest vsock receiver port %d: %w", port, err)
+		}
+		v.notifyGuestVsockTransport(port, "", nil)
+		go v.serveGuestVsockStreams(l.Instance, port, ln, handler)
+	}
+	return nil
+}
+
+func (v *JailerVMM) serveGuestVsockStreams(instance string, port uint32, ln *net.UnixListener, handler GuestVsockStreamHandler) {
+	const maxConcurrentStreams = 64
+	sem := make(chan struct{}, maxConcurrentStreams)
+	for {
+		conn, err := ln.AcceptUnix()
+		if err != nil {
+			if !errors.Is(err, net.ErrClosed) {
+				v.notifyGuestVsockTransport(port, "accept", err)
+			}
+			return
+		}
+		select {
+		case sem <- struct{}{}:
+			go func() {
+				defer func() {
+					_ = conn.Close()
+					<-sem
+				}()
+				failureKind, handleErr := handler(instance, conn)
+				if handleErr != nil {
+					v.notifyGuestVsockTransport(port, failureKind, handleErr)
+					return
+				}
+				v.notifyGuestVsockTransport(port, "", nil)
+			}()
+		default:
+			_ = conn.Close()
+			v.notifyGuestVsockTransport(port, "overload", fmt.Errorf("more than %d concurrent streams", maxConcurrentStreams))
+		}
+	}
 }
 
 type characterizationReceipt struct {

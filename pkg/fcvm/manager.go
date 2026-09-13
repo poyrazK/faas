@@ -4777,8 +4777,9 @@ func (m *Manager) LastLivenessDestroyAtForDeployment(deploymentID string) time.T
 // cooldownByDeployment[deploymentID], not on the Instance, so the
 // stamp survives the test's Register→SetLivenessDestroy sequence
 // even if the Instance is replaced. Empty deploymentID skips the
-// stamp seam (legacy pre-PR-B path is also exempt).
-func (m *Manager) RegisterInstanceForTest(instanceID, deploymentID string) *Manager {
+// stamp seam (legacy pre-PR-B path is also exempt). Two optional identity
+// values set app_id and account_id for workload-identity receiver tests.
+func (m *Manager) RegisterInstanceForTest(instanceID, deploymentID string, identity ...string) *Manager {
 	if m == nil {
 		return m
 	}
@@ -4796,6 +4797,10 @@ func (m *Manager) RegisterInstanceForTest(instanceID, deploymentID string) *Mana
 		// Update the DeploymentID on an existing entry so the
 		// test-side stamp matches the test-side loop's read key.
 		m.live[instanceID].DeploymentID = deploymentID
+	}
+	if len(identity) >= 2 {
+		m.live[instanceID].AppID = identity[0]
+		m.live[instanceID].AccountID = identity[1]
 	}
 	return m
 }

@@ -1222,6 +1222,18 @@ groups:
           description: "{{ $labels.daemon }} has exposed daemon_ready=0 for 5m. Check its /readyz response and dependency-specific reason before routing traffic or restarting it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonNotReady.md"
 
+      - alert: FaasVMMDGuestReceiverDown
+        expr: vmmd_guest_vsock_receiver_up{receiver=~"events|workload_identity"} == 0
+        for: 1m
+        labels:
+          severity: page
+          component: vmmd
+          family: guest_receiver
+        annotations:
+          summary: "vmmd guest receiver {{ $labels.receiver }} is unavailable"
+          description: "vmmd cannot accept the required {{ $labels.receiver }} channel through a Firecracker per-instance Unix bridge. The node is not traffic-ready until the receiver recovers."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasVMMDGuestReceiverDown.md"
+
       - alert: FaasMeterdFleetEgressStreamsMissing
         expr: meterd_fleet_egress_expected_streams > meterd_fleet_egress_connected_streams
         for: 2m
