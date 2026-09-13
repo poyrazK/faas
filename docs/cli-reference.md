@@ -341,6 +341,14 @@ Show the current status of one build
 
 List builds and discover build IDs
 
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | filter to one app |  |
+| `--status <STATUS>` | filter by lifecycle status | one of `queued` · `running` · `succeeded` · `failed` · `cancelled` |
+| `--limit <N>` | page size (1..200) |  |
+| `--before <CURSOR>` | pagination cursor |  |
+| `--all` | walk every page |  |
+
 ### build provenance
 
 Show the build provenance attestation
