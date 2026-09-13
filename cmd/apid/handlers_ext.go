@@ -1933,6 +1933,13 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}); err != nil {
 		s.log.WarnContext(r.Context(), "enqueue app.parked webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
 	}
+	if app.Status != state.AppEvictedCold {
+		s.audit.Emit(r.Context(), "app.parked", &acct.ID, map[string]any{
+			"app_id": app.ID,
+			"slug":   app.Slug,
+			"status": st,
+		})
+	}
 	s.log.Info("app parked", "app", app.ID, "account", acct.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1963,6 +1970,13 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		"app_id": app.ID, "slug": app.Slug, "status": st, "occurred_at": time.Now().UTC(),
 	}); err != nil {
 		s.log.WarnContext(r.Context(), "enqueue app.woken webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+	}
+	if app.Status != state.AppActive {
+		s.audit.Emit(r.Context(), "app.woken", &acct.ID, map[string]any{
+			"app_id": app.ID,
+			"slug":   app.Slug,
+			"status": st,
+		})
 	}
 	s.log.Info("app woken", "app", app.ID, "account", acct.ID)
 	w.WriteHeader(http.StatusNoContent)
@@ -2001,6 +2015,11 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 		// preserve the accepted response and log the transient failure.
 		s.log.Warn("app restart: notify schedd failed", "app", app.ID, "err", err)
 	}
+	s.audit.Emit(r.Context(), "app.restart_requested", &acct.ID, map[string]any{
+		"app_id":  app.ID,
+		"slug":    app.Slug,
+		"wake_id": wakeID,
+	})
 	s.log.Info("app restart requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID)
 	writeJSON(w, http.StatusAccepted, api.AppRestartResponse{WakeID: wakeID})
 }
