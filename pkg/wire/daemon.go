@@ -289,11 +289,10 @@ func Daemon(name string, fn RunFunc) {
 	// would emit the daemon name twice on every record. NewCorrelationLogger
 	// injects FieldDaemon once when daemon != "". Keep "version" on the With
 	// chain so the version stamp survives correlation envelope construction.
-	log := NewCorrelationLogger(
-		Logger().With("version", Version),
-		CorrelationFields{RequestID: NewRequestID()},
-		name,
-	)
+	// A daemon lifetime is not a request lifetime. Process logs must not carry
+	// a startup-generated request_id: doing so masks the request-local value
+	// added by HTTP/gRPC handlers and can produce duplicate JSON keys.
+	log := NewCorrelationLogger(Logger().With("version", Version), CorrelationFields{}, name)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
