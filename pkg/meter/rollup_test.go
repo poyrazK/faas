@@ -1,3 +1,4 @@
+// adr: 048
 // Usage_daily rollup tests (ADR-048 §5). Exercises the OVERWRITE
 // (point-in-time) contract under three scenarios:
 //

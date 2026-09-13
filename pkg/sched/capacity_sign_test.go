@@ -1,3 +1,4 @@
+// adr: 053
 // capacity_sign_test.go — ADR-053 node_signature tests.
 //
 // Pins the canonical-payload / sign / verify triangle that

@@ -197,8 +197,8 @@ func TestSec11_HostAgeIdentity_LoadCredentialDecouple(t *testing.T) {
 	// canonical post-run buffer drain used by every negative-path
 	// host-key subtest.
 	logStr := procBuffer(proc)
-	if !strings.Contains(logStr, "host age identity loaded for MFA") {
-		t.Errorf("apid log missing 'host age identity loaded for MFA' line; cannot prove decouple — full log:\n%s", logStr)
+	if !strings.Contains(logStr, "fleet age identity loaded for MFA") {
+		t.Errorf("apid log missing 'fleet age identity loaded for MFA' line; cannot prove decouple — full log:\n%s", logStr)
 	}
 	if !strings.Contains(logStr, credCopyPath) {
 		t.Errorf("apid log missing cred-copy path %q — apid read a different file than we told it to — full log:\n%s", credCopyPath, logStr)

@@ -27,7 +27,7 @@ func TestMigrationBackfillsLegacyAppDeletionDeadlineAndRootfsKey(t *testing.T) {
 	if _, err := pool.Exec(ctx, `update deployments set rootfs_path='/legacy/custom/rootfs.ext4', rootfs_key='' where id=$1`, deploymentID); err != nil {
 		t.Fatal(err)
 	}
-	body, err := os.ReadFile("20260913221000000_app_deletion_deadline_backfill.sql")
+	body, err := os.ReadFile("20260913221057189_app_deletion_deadline_backfill.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

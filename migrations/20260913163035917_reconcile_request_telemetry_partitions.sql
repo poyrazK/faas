@@ -9,9 +9,12 @@ DECLARE
     range_start timestamptz;
     range_end timestamptz;
     partition_name text;
+    schema_name text := current_schema();
     is_attached boolean;
 BEGIN
-    LOCK TABLE public.request_telemetry IN ACCESS EXCLUSIVE MODE;
+    EXECUTE format(
+        'LOCK TABLE %I.request_telemetry IN ACCESS EXCLUSIVE MODE',
+        schema_name);
     FOR month_offset IN 0..2 LOOP
         range_start := date_trunc('month', now()) + make_interval(months => month_offset);
         range_end := range_start + interval '1 month';
@@ -23,29 +26,29 @@ BEGIN
               JOIN pg_class child ON child.oid = i.inhrelid
               JOIN pg_class parent ON parent.oid = i.inhparent
               JOIN pg_namespace ns ON ns.oid = child.relnamespace
-             WHERE parent.oid = 'public.request_telemetry'::regclass
-               AND ns.nspname = 'public'
+             WHERE parent.oid = format('%I.request_telemetry', schema_name)::regclass
+               AND ns.nspname = schema_name
                AND child.relname = partition_name
         ) INTO is_attached;
         IF is_attached THEN
             CONTINUE;
         END IF;
-        IF to_regclass('public.' || partition_name) IS NOT NULL THEN
+        IF to_regclass(format('%I.%I', schema_name, partition_name)) IS NOT NULL THEN
             RAISE EXCEPTION 'request telemetry partition % exists but is not attached', partition_name;
         END IF;
 
         EXECUTE format(
-            'CREATE TABLE public.%I (LIKE public.request_telemetry INCLUDING ALL)',
-            partition_name);
+            'CREATE TABLE %I.%I (LIKE %I.request_telemetry INCLUDING ALL)',
+            schema_name, partition_name, schema_name);
         EXECUTE format(
-            'INSERT INTO public.%I SELECT * FROM public.request_telemetry_default WHERE received_at >= %L AND received_at < %L',
-            partition_name, range_start, range_end);
+            'INSERT INTO %I.%I SELECT * FROM %I.request_telemetry_default WHERE received_at >= %L AND received_at < %L',
+            schema_name, partition_name, schema_name, range_start, range_end);
         EXECUTE format(
-            'DELETE FROM public.request_telemetry_default WHERE received_at >= %L AND received_at < %L',
-            range_start, range_end);
+            'DELETE FROM %I.request_telemetry_default WHERE received_at >= %L AND received_at < %L',
+            schema_name, range_start, range_end);
         EXECUTE format(
-            'ALTER TABLE public.request_telemetry ATTACH PARTITION public.%I FOR VALUES FROM (%L) TO (%L)',
-            partition_name, range_start, range_end);
+            'ALTER TABLE %I.request_telemetry ATTACH PARTITION %I.%I FOR VALUES FROM (%L) TO (%L)',
+            schema_name, schema_name, partition_name, range_start, range_end);
     END LOOP;
 END $$;
 -- +goose StatementEnd

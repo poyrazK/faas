@@ -1,3 +1,4 @@
+// adr: 063
 // PR scale-out readiness #3 — disk-drift sweep tests. The sweep is
 // read-only and never writes; these tests drive Tick directly against
 // a hermetic t.TempDir() wired through sched.SetSnapDirForTesting.

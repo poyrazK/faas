@@ -46,7 +46,7 @@
      vmmd refuses to start — mirroring the same fail-fast posture as
      `pkg/cosign.NewLocalSigner` and `pkg/secretbox.LoadHostKey`. The
      public half is published to schedd via a new `compute_node_keys`
-  table (migration 00076, lifecycle amendment 20260913222000000):
+  table (migration 00076, lifecycle amendment 20260913222058431):
   `(compute_node_id uuid NOT NULL,
      key_id text NOT NULL, public_key_pem text NOT NULL,
      created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY

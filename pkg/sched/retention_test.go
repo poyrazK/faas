@@ -1,3 +1,4 @@
+// spec: §17
 // retention_test.go (PR #74, spec §17 follow-up). The retention
 // sweep lives in pkg/sched and runs as a 4th ticker in Loop.Run; this
 // file pins its behaviour at the unit level.

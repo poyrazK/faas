@@ -1,3 +1,4 @@
+// adr: 100
 // poller_decoders_mega4_test.go — Coverage Mega-PR #4 cluster 7:
 // fill pkg/sched coverage on the pure config decoders + small pure
 // helpers in poller_*.go + engine.go that the existing

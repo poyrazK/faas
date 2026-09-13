@@ -1,3 +1,4 @@
+// adr: 046
 // Package egressgrpc server-side end-to-end test: writes into a
 // shared *egresssink.EgressSink, dials a real gRPC server-streaming
 // client, and asserts the producer/consumer pipeline delivers the

@@ -29,7 +29,7 @@ func TestMigrationSuspendsLegacyDevPrincipalAndRevokesKeys(t *testing.T) {
 	`, accountID, orgID); err != nil {
 		t.Fatal(err)
 	}
-	body, err := os.ReadFile("20260913160000000_suspend_legacy_dev_principal.sql")
+	body, err := os.ReadFile("20260913160024291_suspend_legacy_dev_principal.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

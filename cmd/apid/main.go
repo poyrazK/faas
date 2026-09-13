@@ -1662,6 +1662,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// worse than the operator-visible degraded-mode log line.
 		identities, loadErr := secretbox.LoadFleetAndHostKeys(filepath.Dir(identityPath))
 		if loadErr != nil {
+			// Keep every unseal and fingerprint caller on the same accessor
+			// even when the optional legacy-overlap scan is unavailable. The
+			// explicitly loaded current identity is still valid; leaving the
+			// multi-identity accessor nil would make secret rotation fail (and
+			// previously allowed a nil-function panic) despite successful boot.
+			SetMFAIdentities(func() []*age.X25519Identity {
+				return []*age.X25519Identity{ident}
+			})
 			log.Warn("apid: fleet and legacy host identity load failed; MFA unseal will work only for envelopes sealed under the current fleet.age",
 				"dir", filepath.Dir(identityPath), "err", loadErr.Error())
 		} else {
