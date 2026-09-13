@@ -92,7 +92,13 @@ while IFS='|' read -r _ field value _; do
   value="${value%"${value##*[![:space:]]}"}"
   [[ -n "$field" && "$field" != "Field" && "$field" != "---" ]] || continue
   [[ -n "$value" ]] || fail "empty value for ${field} in ${latest}"
-  [[ "$value" != *"<"* && "$value" != *">"* ]] || fail "placeholder value in ${latest}: ${field}"
+  # Match a BALANCED <...> token, which is what the template actually uses
+  # (<UTC-date>, <$USER>, <hostname -f>, <ISO-8601>). Rejecting any stray "<"
+  # or ">" also rejected real recorded values: the 2026-09-09 drill records
+  #   "3.075894s (... outside the <350 ms platform snapshot-restore SLO)"
+  # where "<" is prose for "less than", and that false positive made this gate
+  # fail on every PR against main.
+  [[ ! "$value" =~ \<[^\<\>]*\> ]] || fail "placeholder value in ${latest}: ${field}"
 done < "$latest"
 
 echo "m8-evidence-check: PASS — $(basename "$latest") is a populated PASS record within 30 days"
