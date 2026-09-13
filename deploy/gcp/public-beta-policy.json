@@ -20,6 +20,12 @@
   "access": {
     "forbidden_public_tcp_ports": [22, 3389, 8080],
     "forbidden_control_plane_env": ["FAAS_DEV", "FAAS_DEV_TOKEN"],
+    "forbidden_direct_origin_tcp_ports": [80, 443],
+    "origin_target_tag": "gregale-origin",
+    "origin_firewall_rules": {
+      "ipv4": "gregale-cloudflare-origin-v4",
+      "ipv6": "gregale-cloudflare-origin-v6"
+    },
     "required_metadata": {
       "enable-oslogin": "TRUE",
       "block-project-ssh-keys": "TRUE"
@@ -32,7 +38,8 @@
       "Gregale Ops Agent export failures",
       "Gregale backup object deletion",
       "Gregale backup bulk reads",
-      "Gregale infrastructure IAM changes"
+      "Gregale infrastructure IAM changes",
+      "Gregale origin firewall changes"
     ]
   },
   "backup": {

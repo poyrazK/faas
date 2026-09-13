@@ -19,6 +19,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_POLICY = ROOT / "deploy/gcp/public-beta-policy.json"
+CLOUDFLARE_V4 = ROOT / "deploy/ansible/roles/nftables/files/cloudflare-ips-v4.txt"
+CLOUDFLARE_V6 = ROOT / "deploy/ansible/roles/nftables/files/cloudflare-ips-v6.txt"
 
 
 def gcloud(*args: str, allow_error: bool = False) -> Any:
@@ -150,6 +152,28 @@ def port_is_public(rule: dict[str, Any], forbidden: set[int]) -> bool:
     return False
 
 
+def rule_allows_ports(rule: dict[str, Any], required: set[int]) -> bool:
+    """Return true when one enabled ingress rule admits every required port."""
+    if rule.get("disabled") or rule.get("direction", "INGRESS") != "INGRESS":
+        return False
+    admitted: set[int] = set()
+    for allowed in rule.get("allowed", []):
+        if allowed.get("IPProtocol", allowed.get("ipProtocol", "")).lower() not in {"tcp", "all"}:
+            continue
+        ports = allowed.get("ports")
+        if not ports:
+            return True
+        for item in ports:
+            lo, _, hi = str(item).partition("-")
+            low, high = int(lo), int(hi or lo)
+            admitted.update(port for port in required if low <= port <= high)
+    return admitted == required
+
+
+def pinned_cloudflare_ranges(path: Path) -> set[str]:
+    return {line.strip() for line in path.read_text().splitlines() if line.strip()}
+
+
 def budget_destinations(budget: dict[str, Any]) -> list[str]:
     rule = budget.get("allUpdatesRule", {})
     out = list(rule.get("monitoringNotificationChannels", []))
@@ -215,7 +239,8 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
             failures.append(f"{name}: service account is {accounts or 'missing'}, expected {expected_sa}")
 
     control = policy["control_plane"]
-    check_instance(instances.get(control["instance"]), control, "control-plane")
+    control_instance = instances.get(control["instance"])
+    check_instance(control_instance, control, "control-plane")
 
     compute_policy = policy["compute"]
     compute = [i for name, i in instances.items() if name.startswith(compute_policy["instance_prefix"])]
@@ -239,6 +264,31 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
     for rule in snap.get("firewalls", []):
         if port_is_public(rule, forbidden):
             failures.append(f"firewall {rule.get('name', '<unnamed>')} exposes an administrative TCP port publicly")
+
+    origin_ports = set(policy["access"]["forbidden_direct_origin_tcp_ports"])
+    firewalls = {str(rule.get("name")): rule for rule in snap.get("firewalls", [])}
+    for rule in firewalls.values():
+        if port_is_public(rule, origin_ports):
+            failures.append(f"firewall {rule.get('name', '<unnamed>')} exposes the HTTP origin publicly")
+    origin_tag = policy["access"]["origin_target_tag"]
+    control_tags = set((control_instance or {}).get("tags", {}).get("items", []))
+    if origin_tag not in control_tags:
+        failures.append(f"{control['instance']}: missing origin target tag {origin_tag}")
+    expected_by_family = {
+        "ipv4": pinned_cloudflare_ranges(CLOUDFLARE_V4),
+        "ipv6": pinned_cloudflare_ranges(CLOUDFLARE_V6),
+    }
+    for family, name in policy["access"]["origin_firewall_rules"].items():
+        rule = firewalls.get(name)
+        if not rule:
+            failures.append(f"origin firewall rule is missing: {name}")
+            continue
+        if set(rule.get("sourceRanges", [])) != expected_by_family[family]:
+            failures.append(f"origin firewall {name} does not match pinned Cloudflare {family} ranges")
+        if origin_tag not in set(rule.get("targetTags", [])):
+            failures.append(f"origin firewall {name} is not limited to target tag {origin_tag}")
+        if not rule_allows_ports(rule, origin_ports):
+            failures.append(f"origin firewall {name} does not allow both TCP/80 and TCP/443")
 
     project_iam = snap.get("project_iam", {})
     compute_members = {f"serviceAccount:{i['serviceAccounts'][0]['email']}" for i in compute if i.get("serviceAccounts")}

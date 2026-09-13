@@ -56,3 +56,13 @@ faas_control_plane_allowed_ports:
   - 9102
   - 9104
   - 9105
+
+# Public control-plane origins behind Cloudflare set this true. The role then
+# loads Cloudflare's checked-in IPv4/IPv6 ranges and admits TCP/80+443 only
+# from those sources. Loopback remains available for local health checks and
+# IAP/OS Login remains the emergency operations path. Provider firewall rules
+# are a second layer; this host policy keeps a GCP rule drift from reopening
+# tenant routing directly.
+faas_cloudflare_origin_only: false
+faas_cloudflare_ipv4_cidrs: []
+faas_cloudflare_ipv6_cidrs: []

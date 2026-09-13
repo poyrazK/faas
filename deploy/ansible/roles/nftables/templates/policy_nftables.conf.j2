@@ -24,7 +24,11 @@ table inet faas {
     ct state established,related accept
     iif lo accept
     iifname "br-tenants" accept
-    tcp dport { 22,80,443 } accept     # sshd + gatewayd-public public listener
+{% if faas_cloudflare_origin_only | default(false) %}    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary
+{% for cidr in faas_cloudflare_ipv4_cidrs %}    ip saddr {{ cidr }} tcp dport { 80,443 } accept comment "gateway via Cloudflare"
+{% endfor %}{% for cidr in faas_cloudflare_ipv6_cidrs %}    ip6 saddr {{ cidr }} tcp dport { 80,443 } accept comment "gateway via Cloudflare"
+{% endfor %}{% else %}    tcp dport { 22,80,443 } accept     # sshd + gatewayd-public public listener
+{% endif -%}
 {% if faas_postgres_allowed_cidrs is defined and faas_postgres_allowed_cidrs -%}
 {% for cidr in faas_postgres_allowed_cidrs -%}
     ip saddr {{ cidr }} tcp dport 5432 accept comment "faas postgres from compute"

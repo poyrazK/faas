@@ -5,12 +5,13 @@ the linked billing account. The repository policy records the operator identity
 and project ID separately: changing the active `gcloud` account never changes
 project ownership or billing linkage.
 
-The executable policy covers issues #2346 and #2351–#2356 plus #2360. It checks
+The executable policy covers issues #2346, #2424, and #2351–#2356 plus #2360. It checks
 the live project, not a cached inventory:
 
 - Cloud Ops Agent write IAM and an alert for dropped exports;
 - deletion protection, retained control-plane state disk, and daily snapshots;
 - IAP/OS Login access with project keys blocked and no public SSH, RDP, or 8080;
+- Cloudflare-only origin ingress on TCP/80+443 at both GCP and host firewalls;
 - separate control/compute identities and a backup writer without delete/IAM;
 - Storage and IAM Data Access logs;
 - SSD-backed active compute capacity and paid disks on stopped nodes;
@@ -90,12 +91,33 @@ GCLOUD_IAP_SSH_VERIFIED=1 GCLOUD_IAP_CD_VERIFIED=1 \
 ```
 
 This creates an IAP-only SSH rule, grants the named operator OS Admin Login and
-IAP tunnel access, enables OS Login, blocks project SSH keys, and deletes the
-three known public administrative rules. The host-hardening Ansible role keeps
-password authentication and direct root login off. It refuses to apply that
-posture while Ansible is itself connected as root. Rerun bootstrap through the
-named OS Login administrator and prove IAP sudo once more before closing the
-retained session.
+IAP tunnel access, enables OS Login, blocks project SSH keys, creates IPv4 and
+IPv6 TCP/80+443 rules containing only the pinned Cloudflare ranges, tags the
+control plane as `gregale-origin`, and deletes known broad ingress rules. The
+Ansible nftables role enforces the same source boundary on every manifest-
+generated Cloudflare control plane. Loopback is the explicit health path; use
+IAP/OS Login for emergency access instead of opening a temporary public origin
+rule. The host-hardening role keeps password authentication and direct root
+login off.
+
+After the access phase and Ansible rollout, prove both sides from an Internet
+host whose address is outside Cloudflare. The first request must succeed through
+public DNS and include Cloudflare's server header; the direct `--resolve` probe
+must fail before receiving an HTTP response.
+
+```sh
+FAAS_ORIGIN_IP=<control-plane-public-ip> \
+  deploy/scripts/cloudflare-origin-smoke.sh
+```
+
+The canonical range files are
+`deploy/ansible/roles/nftables/files/cloudflare-ips-v4.txt` and
+`cloudflare-ips-v6.txt`. Compare them to Cloudflare's official `/ips-v4` and
+`/ips-v6` endpoints monthly and before a reported edge connectivity incident.
+Update both files in one reviewed release; the GCP convergence tool and host
+firewall consume the same files. Run the smoke above before removing an old
+range. Firewall Admin Activity changes page through the `Gregale origin
+firewall changes` alert; immediately rerun the read-only audit after any page.
 
 ### Identity and backup cutover
 

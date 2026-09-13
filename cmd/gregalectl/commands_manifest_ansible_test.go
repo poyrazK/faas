@@ -112,6 +112,12 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(controlVars, "faas_compute_gateway_discovery: database") {
 		t.Errorf("control host vars missing database gateway discovery:\n%s", controlVars)
 	}
+	if !strings.Contains(controlVars, "faas_cloudflare_origin_only: true") {
+		t.Errorf("Cloudflare control host vars do not restrict origin ingress:\n%s", controlVars)
+	}
+	if strings.Contains(computeVars, "faas_cloudflare_origin_only: true") {
+		t.Errorf("compute host vars unexpectedly expose the Cloudflare origin listener:\n%s", computeVars)
+	}
 	if !strings.Contains(controlVars, `faas_apid_app_errors_listen: "tcp://0.0.0.0:9093"`) {
 		t.Errorf("control host vars missing AppErrors listener:\n%s", controlVars)
 	}

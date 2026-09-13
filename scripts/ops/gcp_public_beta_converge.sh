@@ -15,6 +15,8 @@ control_sa="gregale-control@${project}.iam.gserviceaccount.com"
 restore_sa="gregale-backup-restore@${project}.iam.gserviceaccount.com"
 backup_role="projects/${project}/roles/gregaleBackupWriter"
 alert_email="${GCP_ALERT_EMAIL:-$operator}"
+cloudflare_v4_file="$root/deploy/ansible/roles/nftables/files/cloudflare-ips-v4.txt"
+cloudflare_v6_file="$root/deploy/ansible/roles/nftables/files/cloudflare-ips-v6.txt"
 phase=guard
 apply=0
 
@@ -64,6 +66,24 @@ run() {
 }
 
 exists() { "$@" >/dev/null 2>&1; }
+cloudflare_ranges() {
+  local file="$1"
+  [[ -s "$file" ]] || { echo "Cloudflare range file is missing or empty: $file" >&2; return 1; }
+  paste -sd, "$file"
+}
+
+ensure_origin_firewall_rule() {
+  local name="$1" ranges="$2"
+  if exists gcloud compute firewall-rules describe "$name" --project="$project"; then
+    run gcloud compute firewall-rules update "$name" --project="$project" \
+      --source-ranges="$ranges" --target-tags=gregale-origin \
+      --allow=tcp:80,tcp:443 --priority=800 --quiet
+  else
+    run gcloud compute firewall-rules create "$name" --project="$project" --network=default \
+      --direction=INGRESS --priority=800 --action=ALLOW --rules=tcp:80,tcp:443 \
+      --source-ranges="$ranges" --target-tags=gregale-origin --quiet
+  fi
+}
 zone_of() {
   gcloud compute instances list --project="$project" --filter="name=($1)" \
     --format='value(zone.basename())' | head -1
@@ -217,7 +237,7 @@ guard_phase() {
   fi
 
   local metric alert
-  for metric in backup-object-delete backup-bulk-read infrastructure-iam-change; do
+  for metric in backup-object-delete backup-bulk-read infrastructure-iam-change origin-firewall-change; do
     if ! exists gcloud logging metrics describe "gregale_${metric//-/_}" --project="$project"; then
       run gcloud logging metrics create "gregale_${metric//-/_}" --project="$project" \
         --config-from-file="$root/deploy/gcp/${metric}-metric.yaml"
@@ -232,6 +252,7 @@ guard_phase() {
 Gregale backup object deletion|backup-object-delete
 Gregale backup bulk reads|backup-bulk-read
 Gregale infrastructure IAM changes|infrastructure-iam-change
+Gregale origin firewall changes|origin-firewall-change
 ALERTS
 
   local retention
@@ -262,6 +283,17 @@ access_phase() {
   }
   ensure_project_role "user:$operator" roles/compute.osAdminLogin
   ensure_project_role "user:$operator" roles/iap.tunnelResourceAccessor
+
+  local cloudflare_v4 cloudflare_v6 control_zone
+  cloudflare_v4="$(cloudflare_ranges "$cloudflare_v4_file")"
+  cloudflare_v6="$(cloudflare_ranges "$cloudflare_v6_file")"
+  ensure_origin_firewall_rule gregale-cloudflare-origin-v4 "$cloudflare_v4"
+  ensure_origin_firewall_rule gregale-cloudflare-origin-v6 "$cloudflare_v6"
+
+  control_zone="$(zone_of "$control")"
+  [[ -n "$control_zone" ]] || { echo "control instance is missing: $control" >&2; return 1; }
+  run gcloud compute instances add-tags "$control" --project="$project" --zone="$control_zone" \
+    --tags=gregale-origin --quiet
   if ! exists gcloud compute firewall-rules describe gregale-iap-ssh --project="$project"; then
     run gcloud compute firewall-rules create gregale-iap-ssh --project="$project" --network=default \
       --direction=INGRESS --priority=900 --action=ALLOW --rules=tcp:22 \
@@ -274,9 +306,10 @@ access_phase() {
     run gcloud compute instances add-metadata "$name" --project="$project" --zone="$zone" \
       --metadata=enable-oslogin=TRUE,block-project-ssh-keys=TRUE --quiet
   done < <(fleet_instances)
-  for rule in default-allow-ssh default-allow-rdp allow-faas-8080; do
-    exists gcloud compute firewall-rules describe "$rule" --project="$project" \
-      && run gcloud compute firewall-rules delete "$rule" --project="$project" --quiet
+  for rule in default-allow-ssh default-allow-rdp allow-faas-8080 allow-http-https default-allow-http default-allow-https; do
+    if exists gcloud compute firewall-rules describe "$rule" --project="$project"; then
+      run gcloud compute firewall-rules delete "$rule" --project="$project" --quiet
+    fi
   done
 }
 
