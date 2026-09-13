@@ -8745,6 +8745,7 @@ paths:
       - name: domain
         in: path
         required: true
+        description: Customer-owned custom domain to re-arm for TXT verification.
         schema: { type: string, pattern: '^[a-z0-9.\-]+$' }
     post:
       tags: [domains]
