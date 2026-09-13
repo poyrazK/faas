@@ -16,6 +16,11 @@ import (
 // node does not stay stale for longer than a normal control-plane window.
 const managedRealtimeEndpointReconcileInterval = 30 * time.Second
 
+const (
+	managedRealtimeOwnerReapInterval = time.Minute
+	managedRealtimeOwnerReapBatch    = 1000
+)
+
 // reconcileManagedRealtimeEndpoints projects every durable endpoint row onto
 // the configured realtime registrar. Disabled rows are included so a missed
 // update eventually removes their registration as well. A single bad row is
@@ -70,6 +75,56 @@ func (s *server) runManagedRealtimeEndpointReconciler(ctx context.Context) {
 	runPass()
 
 	ticker := time.NewTicker(managedRealtimeEndpointReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runPass()
+		}
+	}
+}
+
+// reapManagedRealtimeConnectionOwners removes expired directory rows left by
+// crashed API or realtime processes. The optional interface keeps this safe
+// for older stores while the production PgStore provides the implementation.
+func (s *server) reapManagedRealtimeConnectionOwners(ctx context.Context) (int64, error) {
+	reaper, ok := s.store.(state.ManagedRealtimeConnectionOwnerReaper)
+	if !ok {
+		return 0, nil
+	}
+	removed, err := reaper.PruneExpiredManagedRealtimeConnectionOwners(ctx, managedRealtimeOwnerReapBatch)
+	if err != nil {
+		return 0, fmt.Errorf("prune managed realtime connection owners: %w", err)
+	}
+	return removed, nil
+}
+
+// runManagedRealtimeOwnerReaper keeps the lease directory bounded for the
+// lifetime of apid. Cleanup is deliberately independent of the endpoint
+// reconciler: owner rows are ephemeral routing hints, not endpoint state.
+func (s *server) runManagedRealtimeOwnerReaper(ctx context.Context) {
+	if _, ok := s.store.(state.ManagedRealtimeConnectionOwnerReaper); !ok {
+		return
+	}
+	log := s.log
+	if log == nil {
+		log = slog.Default()
+	}
+	runPass := func() {
+		removed, err := s.reapManagedRealtimeConnectionOwners(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			log.Warn("managed realtime owner reaper pass failed", "err", err)
+			return
+		}
+		if removed > 0 {
+			log.Info("managed realtime owner reaper pass complete", "removed", removed)
+		}
+	}
+	runPass()
+
+	ticker := time.NewTicker(managedRealtimeOwnerReapInterval)
 	defer ticker.Stop()
 	for {
 		select {

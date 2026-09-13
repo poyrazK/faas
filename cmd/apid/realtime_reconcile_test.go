@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -83,5 +84,32 @@ func TestReconcileManagedRealtimeEndpointsNoRegistrarIsNoop(t *testing.T) {
 	srv := newServer(state.NewMemStore(), discardLogger(), "gregale.dev", noopNotifier{})
 	if err := srv.reconcileManagedRealtimeEndpoints(context.Background()); err != nil {
 		t.Fatalf("reconcile without registrar = %v, want nil", err)
+	}
+}
+
+func TestReapManagedRealtimeConnectionOwnersRemovesOnlyExpiredRows(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	if _, err := store.ClaimManagedRealtimeConnectionOwner(ctx, "expired-connection", "endpoint", "node", time.Millisecond); err != nil {
+		t.Fatalf("claim expired owner: %v", err)
+	}
+	if _, err := store.ClaimManagedRealtimeConnectionOwner(ctx, "live-connection", "endpoint", "node", time.Minute); err != nil {
+		t.Fatalf("claim live owner: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
+	removed, err := srv.reapManagedRealtimeConnectionOwners(ctx)
+	if err != nil {
+		t.Fatalf("reap owners: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed = %d, want 1", removed)
+	}
+	if _, err := store.GetManagedRealtimeConnectionOwner(ctx, "expired-connection", "endpoint"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("expired owner lookup = %v, want ErrNotFound", err)
+	}
+	if _, err := store.GetManagedRealtimeConnectionOwner(ctx, "live-connection", "endpoint"); err != nil {
+		t.Fatalf("live owner lookup = %v, want present", err)
 	}
 }

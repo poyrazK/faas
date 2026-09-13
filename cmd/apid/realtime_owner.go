@@ -304,7 +304,7 @@ func (o *leasedRealtimeOwner) Publish(ctx context.Context, endpointID, channel s
 
 // RegisterEndpoint and RemoveEndpoint fan out durable endpoint state to every
 // active realtime node. The control-plane row remains authoritative; a node
-// restart is repaired by the next endpoint mutation or a future reconciler.
+// restart is repaired by the periodic endpoint reconciler.
 func (o *leasedRealtimeOwner) RegisterEndpoint(ctx context.Context, endpoint realtime.Endpoint) error {
 	return o.broadcastEndpoint(ctx, endpoint.ID, func(op realtimeNodeOperator) error {
 		return op.RegisterEndpoint(ctx, endpoint)

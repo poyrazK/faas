@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,4 +73,34 @@ func (m *MemStore) ReleaseManagedRealtimeConnectionOwner(_ context.Context, conn
 	}
 	delete(m.managedRealtimeOwners, connectionID)
 	return nil
+}
+
+// PruneExpiredManagedRealtimeConnectionOwners mirrors the bounded Postgres
+// cleanup in the in-memory store used by tests and local development.
+func (m *MemStore) PruneExpiredManagedRealtimeConnectionOwners(_ context.Context, limit int) (int64, error) {
+	if limit <= 0 {
+		return 0, fmt.Errorf("state: managed realtime owner prune requires a positive limit, got %d", limit)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	expired := make([]ManagedRealtimeConnectionOwner, 0)
+	for _, owner := range m.managedRealtimeOwners {
+		if !owner.LeaseExpiresAt.After(now) {
+			expired = append(expired, owner)
+		}
+	}
+	sort.Slice(expired, func(i, j int) bool {
+		if expired[i].LeaseExpiresAt.Equal(expired[j].LeaseExpiresAt) {
+			return expired[i].ConnectionID < expired[j].ConnectionID
+		}
+		return expired[i].LeaseExpiresAt.Before(expired[j].LeaseExpiresAt)
+	})
+	if len(expired) > limit {
+		expired = expired[:limit]
+	}
+	for _, owner := range expired {
+		delete(m.managedRealtimeOwners, owner.ConnectionID)
+	}
+	return int64(len(expired)), nil
 }

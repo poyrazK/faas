@@ -96,3 +96,8 @@ node that restarts or becomes active after a mutation-time fan-out, while
 keeping endpoint credentials and customer state in the control plane. A
 temporary node or database failure is logged and retried on the next pass; it
 does not prevent apid from serving requests.
+
+Connection-owner leases are ephemeral routing hints. A separate apid cleanup
+loop deletes expired rows in bounded batches (immediately at boot and every
+minute), so crashes cannot grow `managed_realtime_connection_owners` without
+limit. Live leases are never touched.

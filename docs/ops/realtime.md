@@ -39,6 +39,10 @@ removing disabled rows on active nodes. If a node is restarting or unreachable,
 the pass records the failure and retries on the next interval; no endpoint
 mutation is required to heal the node after it becomes active.
 
+The connection-owner directory is also swept independently: expired leases
+left by crashed processes are deleted in batches at boot and every minute.
+Active leases are preserved, and a cleanup failure is retried automatically.
+
 ```
 curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/endpoints \
   -H 'content-type: application/json' \

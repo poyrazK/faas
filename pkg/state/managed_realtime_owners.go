@@ -38,6 +38,14 @@ type ManagedRealtimeConnectionOwnerStore interface {
 	ReleaseManagedRealtimeConnectionOwner(context.Context, string, string) error
 }
 
+// ManagedRealtimeConnectionOwnerReaper is the optional maintenance surface
+// for removing leases left behind by crashed API or realtime processes. It is
+// separate from ManagedRealtimeConnectionOwnerStore so narrow integrations
+// remain source-compatible while the bounded cleanup loop rolls out.
+type ManagedRealtimeConnectionOwnerReaper interface {
+	PruneExpiredManagedRealtimeConnectionOwners(context.Context, int) (int64, error)
+}
+
 func validateRealtimeOwnerLeaseInput(connectionID, endpointID, nodeID string, ttl time.Duration) error {
 	if connectionID == "" || endpointID == "" || nodeID == "" || ttl <= 0 {
 		return errors.New("state: connection, endpoint, node, and positive lease TTL are required")
@@ -134,4 +142,29 @@ func (s *PgStore) ReleaseManagedRealtimeConnectionOwner(ctx context.Context, con
 		return ErrManagedRealtimeOwnerConflict
 	}
 	return nil
+}
+
+// PruneExpiredManagedRealtimeConnectionOwners removes at most limit leases
+// whose expiry has passed. The bounded delete keeps maintenance work below a
+// predictable transaction size even when a node was offline for a long time.
+func (s *PgStore) PruneExpiredManagedRealtimeConnectionOwners(ctx context.Context, limit int) (int64, error) {
+	if limit <= 0 {
+		return 0, fmt.Errorf("state: managed realtime owner prune requires a positive limit, got %d", limit)
+	}
+	tag, err := s.pool.Exec(ctx, `
+		with expired as (
+			select connection_id
+			  from managed_realtime_connection_owners
+			 where lease_expires_at <= now()
+			 order by lease_expires_at, connection_id
+			 limit $1
+		)
+		delete from managed_realtime_connection_owners owners
+		 using expired
+		 where owners.connection_id = expired.connection_id
+	`, limit)
+	if err != nil {
+		return 0, fmt.Errorf("state: prune managed realtime owners: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }

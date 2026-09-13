@@ -70,3 +70,49 @@ func TestPgStoreManagedRealtimeOwnerLeaseLifecycle(t *testing.T) {
 		t.Fatalf("get after release = %v, want ErrNotFound", err)
 	}
 }
+
+func TestPgStoreManagedRealtimeOwnerPruneExpired(t *testing.T) {
+	s, ctx := pgStore(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-managed-realtime-owner-prune")
+	endpoint, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(accountID, appID), 10, 50)
+	if err != nil {
+		t.Fatalf("CreateManagedRealtimeEndpointIfUnderQuota: %v", err)
+	}
+	node, err := s.CreateComputeNode(ctx, state.ComputeNode{
+		Name:               "rt-owner-prune-" + uuid.NewString(),
+		TargetURL:          "unix:///run/faas/vmmd.sock",
+		VPCPUs:             4,
+		MemMB:              8192,
+		MaxConcurrency:     16,
+		AdmissionCeilingMB: 4096,
+		VCPUBudget:         160,
+		Active:             true,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	for _, connectionID := range []string{"rt_expired_1", "rt_expired_2"} {
+		if _, err := s.ClaimManagedRealtimeConnectionOwner(ctx, connectionID, endpoint.ID, node.ID, time.Millisecond); err != nil {
+			t.Fatalf("claim %s: %v", connectionID, err)
+		}
+	}
+	if _, err := s.ClaimManagedRealtimeConnectionOwner(ctx, "rt_live", endpoint.ID, node.ID, time.Minute); err != nil {
+		t.Fatalf("claim live: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	removed, err := s.PruneExpiredManagedRealtimeConnectionOwners(ctx, 1)
+	if err != nil || removed != 1 {
+		t.Fatalf("prune limit=1 = (%d, %v), want (1, nil)", removed, err)
+	}
+	removed, err = s.PruneExpiredManagedRealtimeConnectionOwners(ctx, 10)
+	if err != nil || removed != 1 {
+		t.Fatalf("prune remainder = (%d, %v), want (1, nil)", removed, err)
+	}
+	if _, err := s.GetManagedRealtimeConnectionOwner(ctx, "rt_live", endpoint.ID); err != nil {
+		t.Fatalf("live owner lookup = %v, want present", err)
+	}
+	if _, err := s.PruneExpiredManagedRealtimeConnectionOwners(ctx, 0); err == nil {
+		t.Fatal("prune limit=0 unexpectedly succeeded")
+	}
+}
