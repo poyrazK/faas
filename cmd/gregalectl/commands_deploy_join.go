@@ -918,6 +918,15 @@ func verifyAndActivateJoinedNode(ctx context.Context, report *deployJoinReport, 
 	if err := validateComputeTargetURL(row.TargetURL); err != nil {
 		return err
 	}
+	// Establish a fresh liveness baseline before making a long-idle standby
+	// admitting. Peer schedds compare last_heartbeat_at with the 90-second
+	// staleness budget and can observe the activation immediately. Leaving the
+	// old timestamp in place lets that observer demote an otherwise healthy
+	// node before its owner runs its first heartbeat tick. Nodes older than the
+	// recovery inventory window then cannot recover without operator action.
+	if err := store.HeartbeatComputeNode(ctx, row.ID); err != nil {
+		return fmt.Errorf("refresh row %s heartbeat before activation: %w", row.ID, err)
+	}
 	if !row.Active {
 		if err := store.SetComputeNodeActive(ctx, row.ID, true); err != nil {
 			return fmt.Errorf("activate row %s: %w", row.ID, err)
