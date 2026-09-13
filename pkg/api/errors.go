@@ -546,6 +546,11 @@ const (
 	// deployment admissions in the current one-hour window.
 	CodeDeployRateLimited = "deploy_rate_limited"
 	CodeUnauthorized      = "unauthorized"
+	// CodeAuthRateLimited marks a rejected credential after the caller's
+	// source IP exhausted the failed-auth budget. Valid credentials from the
+	// same IP are still admitted, so one broken client behind a shared NAT
+	// cannot lock out other customers.
+	CodeAuthRateLimited = "auth_rate_limited"
 	// CodeForbidden is returned when the authenticated principal lacks
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
@@ -1673,7 +1678,8 @@ func StatusForCode(code string) int {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
 		return http.StatusForbidden
-	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited, CodeDeployRateLimited:
+	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited, CodeDeployRateLimited,
+		CodeAuthRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
 		return http.StatusRequestEntityTooLarge

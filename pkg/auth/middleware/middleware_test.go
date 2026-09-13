@@ -10,6 +10,7 @@ package middleware_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1253,6 +1254,59 @@ func TestRequireLimited_BlocksEleventhAttempt(t *testing.T) {
 	}
 	if rec.Code != http.StatusTooManyRequests {
 		t.Errorf("11th status = %d, want 429", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Errorf("Content-Type = %q, want application/problem+json", got)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "60" {
+		t.Errorf("Retry-After = %q, want 60", got)
+	}
+	var problem api.Problem
+	if err := json.NewDecoder(rec.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode Problem: %v", err)
+	}
+	if problem.Code != api.CodeAuthRateLimited {
+		t.Errorf("problem code = %q, want %q", problem.Code, api.CodeAuthRateLimited)
+	}
+}
+
+func TestRequireLimited_ValidKeyBypassesExhaustedSharedIP(t *testing.T) {
+	authn := newFakeAuthn()
+	validToken := validBearerKey
+	authn.authKey[string(api.HashAPIKey(validToken))] = authResult{
+		acct: mkActiveAccount("acct-valid"),
+		key:  mkKey("key-valid", "apps:read"),
+	}
+	mw := newMW(t, authn, nil, nil, nil)
+	hits := 0
+	h := mw.RequireLimited(func(w http.ResponseWriter, _ *http.Request, acct state.Account) {
+		hits++
+		if acct.ID != "acct-valid" {
+			t.Errorf("account = %q, want acct-valid", acct.ID)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	const remoteAddr = "203.0.113.42:54321"
+	for i := 0; i < 10; i++ {
+		rec := httptest.NewRecorder()
+		r := mkRequest("GET", "/v1/apps", map[string]string{"Authorization": "Bearer bad"}, nil)
+		r.RemoteAddr = remoteAddr
+		h(rec, r)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("invalid attempt %d = %d, want 401", i+1, rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	r := mkRequest("GET", "/v1/apps", map[string]string{"Authorization": "Bearer " + validToken}, nil)
+	r.RemoteAddr = remoteAddr
+	h(rec, r)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("valid request status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if hits != 1 {
+		t.Fatalf("handler hits = %d, want 1", hits)
 	}
 }
 
