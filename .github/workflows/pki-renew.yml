@@ -26,4 +26,3 @@ jobs:
           ansible-playbook
           -i deploy/ansible/inventory/hosts.ini
           deploy/ansible/pki_renew.yml
-
