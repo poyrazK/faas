@@ -145,6 +145,21 @@ func TestRollupLoop_DefaultInterval(t *testing.T) {
 	<-done
 }
 
+func TestDailyRollupWindows_IncludeCurrentPartialDay(t *testing.T) {
+	now := time.Date(2026, 9, 13, 17, 37, 11, 0, time.FixedZone("test", 3*60*60))
+	windows := dailyRollupWindows(now)
+	if len(windows) != 2 {
+		t.Fatalf("windows = %d, want yesterday and today", len(windows))
+	}
+	today := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	if !windows[0].start.Equal(today.Add(-24*time.Hour)) || !windows[0].end.Equal(today) {
+		t.Fatalf("yesterday window = [%s,%s)", windows[0].start, windows[0].end)
+	}
+	if !windows[1].start.Equal(today) || !windows[1].end.Equal(now.UTC()) {
+		t.Fatalf("current window = [%s,%s), want [%s,%s)", windows[1].start, windows[1].end, today, now.UTC())
+	}
+}
+
 // TestRollupSQL_OverwriteSemantics pins the overwrite contract.
 // Additive merge on `usage_daily` would multiply the day's totals
 // by the number of cron ticks (~288× per day at 5-min cadence) and

@@ -18,8 +18,8 @@
 // (~288× per day at 5-min cadence) and silently inflate the
 // dashboard. The session-isolation invariant ("a missed tick or
 // a meterd restart covers the gap") is preserved because the cron
-// always re-aggregates the FULL day window for yesterday on every
-// tick — the next-tick-after-gap covers the same data.
+// always re-aggregates yesterday and the current partial day on every
+// tick — the next tick after a gap covers the same data.
 //
 // The rollup never pushes to billing providers — it is informational
 // only, mirroring the per-row additivity of the underlying minute
@@ -109,11 +109,11 @@ func RollupOnce(ctx context.Context, db execer, windowStart, windowEnd time.Time
 	return tag, nil
 }
 
-// RollupLoop ticks RollupOnce on interval. Each tick rolls the
-// previous UTC day window so the dashboard has at least one day of
-// data after the first boot. A future "since-last-rollup" extension
-// can read MAX(usage_daily.rolled_up_at) and tick a smaller window —
-// today's per-day roll is enough for the hot path.
+// RollupLoop ticks RollupOnce on interval. Each tick rolls both the previous
+// complete UTC day and the current partial UTC day. Recomputing the complete
+// day repairs late-arriving rows; recomputing today makes the customer-facing
+// default useful within one interval. ON CONFLICT overwrites totals, so ticks
+// and process restarts cannot double count.
 //
 // Errors are logged Warn and retried on the next tick — a
 // persistent failure shows up as a flood of WARN logs that an
@@ -135,17 +135,7 @@ func RollupLoop(ctx context.Context, db execer, interval time.Duration, log *slo
 	if log == nil {
 		log = slog.Default()
 	}
-	now := time.Now().UTC()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Add(-24 * time.Hour)
-	end := start.Add(24 * time.Hour)
-	if _, err := RollupOnce(ctx, db, start, end); err != nil {
-		log.Warn("meter: usage_daily rollup (initial)",
-			"window_start", start.Format(time.RFC3339),
-			"err", err)
-	} else {
-		log.Info("meter: usage_daily rollup ok (initial)",
-			"window_start", start.Format(time.RFC3339))
-	}
+	runDailyRollups(ctx, db, time.Now().UTC(), log, "initial")
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -153,17 +143,38 @@ func RollupLoop(ctx context.Context, db execer, interval time.Duration, log *slo
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			now := time.Now().UTC()
-			start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Add(-24 * time.Hour)
-			end := start.Add(24 * time.Hour)
-			if _, err := RollupOnce(ctx, db, start, end); err != nil {
-				log.Warn("meter: usage_daily rollup",
-					"window_start", start.Format(time.RFC3339),
-					"err", err)
-				continue
-			}
-			log.Info("meter: usage_daily rollup ok",
-				"window_start", start.Format(time.RFC3339))
+			runDailyRollups(ctx, db, time.Now().UTC(), log, "tick")
 		}
+	}
+}
+
+type dailyRollupWindow struct {
+	start time.Time
+	end   time.Time
+}
+
+func dailyRollupWindows(now time.Time) []dailyRollupWindow {
+	now = now.UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	return []dailyRollupWindow{
+		{start: today.Add(-24 * time.Hour), end: today},
+		{start: today, end: now},
+	}
+}
+
+func runDailyRollups(ctx context.Context, db execer, now time.Time, log *slog.Logger, phase string) {
+	for _, window := range dailyRollupWindows(now) {
+		if _, err := RollupOnce(ctx, db, window.start, window.end); err != nil {
+			log.Warn("meter: usage_daily rollup",
+				"phase", phase,
+				"window_start", window.start.Format(time.RFC3339),
+				"window_end", window.end.Format(time.RFC3339),
+				"err", err)
+			continue
+		}
+		log.Info("meter: usage_daily rollup ok",
+			"phase", phase,
+			"window_start", window.start.Format(time.RFC3339),
+			"window_end", window.end.Format(time.RFC3339))
 	}
 }
