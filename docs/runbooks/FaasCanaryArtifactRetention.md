@@ -44,6 +44,8 @@ sudo grep -R -F '/path/from/record' /etc/systemd/system /run/systemd/system /usr
 sudo find /proc/[0-9]*/fd -lname '/path/from/record*' -print 2>/dev/null
 ```
 
+## Recover
+
 A referenced path is preserved. End the owning canary or transient test unit,
 then run one guarded sweep and recheck the metrics:
 
