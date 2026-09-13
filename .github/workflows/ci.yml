@@ -1551,6 +1551,39 @@ jobs:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
         run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
 
+      - name: migration full-suite impact checker tests
+        run: scripts/ci/migration-full-suite-needed_test.sh
+
+      - name: classify full migration suite impact
+        id: migration-impact
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # Main and explicit manual runs retain unconditional full-history
+          # coverage. Pull requests and merge-queue refs use the exact diff so
+          # deployment/docs/UI-only changes do not replay ~650 migrations in
+          # each of ~250 sequential database tests.
+          if [[ "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            needed=true
+            echo "full migration suite required for ${EVENT_NAME}"
+          elif [[ -z "$BASE_REF" ]]; then
+            needed=true
+            echo "::warning::base ref unavailable; running the full migration suite"
+          else
+            git fetch -q origin "$BASE_REF"
+            base="$(git merge-base HEAD "origin/${BASE_REF}")"
+            changed="$(git diff --name-only "$base" HEAD)"
+            printf 'changed paths considered for full migration suite:\n%s\n' "$changed"
+            if printf '%s\n' "$changed" | scripts/ci/migration-full-suite-needed.sh; then
+              needed=true
+            else
+              needed=false
+            fi
+          fi
+          echo "needed=${needed}" >> "$GITHUB_OUTPUT"
+
       # The per-migration Postgres tests (migrations/*_test.go, ~240 of them)
       # ran nowhere: the pg shards exclude the package with `grep -v
       # /migrations` and the two steps above name single tests with -run.
@@ -1569,6 +1602,7 @@ jobs:
       # each test replays the full migration set, so commit fsync dominates.
       # Durability is irrelevant to a throwaway CI database.
       - name: migrations per-migration tests (full package)
+        if: steps.migration-impact.outputs.needed == 'true'
         env:
           PGOPTIONS: "-c synchronous_commit=off"
         # No -p: this is a single package, so -p (PACKAGE parallelism) does
@@ -1584,6 +1618,9 @@ jobs:
         # performance assertion; sizing it near the mean just converts
         # runner variance into red builds.
         run: go test -count=1 -timeout=35m ./migrations/...
+      - name: report skipped full migration suite
+        if: steps.migration-impact.outputs.needed != 'true'
+        run: echo 'Full per-migration package skipped because the pull-request diff cannot affect it.'
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
