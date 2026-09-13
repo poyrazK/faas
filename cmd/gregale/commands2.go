@@ -4007,59 +4007,98 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	if explain {
 		collector = newExplainCollector(slug, deployment)
 	}
-	for {
-		select {
-		case <-ctx.Done():
-			// Ctrl-C. Exit cleanly with status 130 (the
-			// shell's standard for SIGINT exit).
+	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
+		// Move 4 (issue #254): the apid stub emits `event: degraded`
+		// when schedd's StreamAppLogs RPC isn't wired yet (the
+		// production-side path is a follow-up PR — this commit only
+		// swaps the Move 3 stub for the real SSE shape on the apid
+		// side). Move 3's `not_implemented` shape is dead code;
+		// removed.
+		if e.Event == "degraded" {
+			if jsonOutput {
+				_ = writeJSONProblem(appLogsDegradedProblem(e.Data))
+			} else {
+				fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
+			}
 			if collector != nil {
 				collector.flush(os.Stdout)
 			}
-			return 130
-		case e, ok := <-dec.Events():
+			return true, 3
+		}
+		if e.Event == "end" {
+			if collector != nil {
+				collector.flush(os.Stdout)
+			}
+			return true, 0
+		}
+		if e.Data != "" {
+			fmt.Println(e.Data)
+			if collector != nil {
+				collector.observe(e.Data)
+			}
+		}
+		return false, 0
+	})
+	if collector != nil && code == 130 {
+		collector.flush(os.Stdout)
+	}
+	if streamErr != nil {
+		return printErr("Stream closed", streamErr)
+	}
+	return code
+}
+
+// consumeLogStream preserves SSE wire order when the decoder makes both its
+// event and terminal-error channels ready at once. A select may otherwise
+// choose io.EOF before a buffered terminal frame, turning a degraded stream
+// into a false success. Once a terminal error is observed we drain the event
+// channel before interpreting it; Decoder closes that channel immediately
+// after publishing the terminal condition.
+func consumeLogStream(ctx context.Context, events <-chan api.Event, errs <-chan error, visit func(api.Event) (bool, int)) (int, error) {
+	handle := func(event api.Event) (bool, int) {
+		if visit == nil {
+			return false, 0
+		}
+		return visit(event)
+	}
+	terminal := func(err error) (int, error) {
+		if err == nil || errors.Is(err, io.EOF) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return 130, nil
+		case event, ok := <-events:
 			if !ok {
-				if collector != nil {
-					collector.flush(os.Stdout)
+				err, ok := <-errs
+				if !ok {
+					return 0, nil
 				}
-				return 0
+				return terminal(err)
 			}
-			// Move 4 (issue #254): the apid stub emits `event: degraded`
-			// when schedd's StreamAppLogs RPC isn't wired yet (the
-			// production-side path is a follow-up PR — this commit only
-			// swaps the Move 3 stub for the real SSE shape on the apid
-			// side). Move 3's `not_implemented` shape is dead code;
-			// removed.
-			if e.Event == "degraded" {
-				if jsonOutput {
-					_ = writeJSONProblem(appLogsDegradedProblem(e.Data))
-				} else {
-					fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
-				}
-				if collector != nil {
-					collector.flush(os.Stdout)
-				}
-				return 3
+			if done, code := handle(event); done {
+				return code, nil
 			}
-			if e.Event == "end" {
-				if collector != nil {
-					collector.flush(os.Stdout)
-				}
-				return 0
+		case err, ok := <-errs:
+			if !ok {
+				err = nil
 			}
-			if e.Data != "" {
-				fmt.Println(e.Data)
-				if collector != nil {
-					collector.observe(e.Data)
+			for {
+				select {
+				case <-ctx.Done():
+					return 130, nil
+				case event, more := <-events:
+					if !more {
+						return terminal(err)
+					}
+					if done, code := handle(event); done {
+						return code, nil
+					}
 				}
 			}
-		case err := <-dec.Errors():
-			if errors.Is(err, io.EOF) {
-				if collector != nil {
-					collector.flush(os.Stdout)
-				}
-				return 0
-			}
-			return printErr("Stream closed", err)
 		}
 	}
 }
