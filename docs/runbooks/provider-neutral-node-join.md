@@ -330,6 +330,10 @@ Run `gregalectl deploy join-fleet --nodes-file nodes.yaml
 /secure/fleet/join-artifacts --max-parallel 8 --yes`. It runs one complete
 preflight, then converges at most eight nodes at a time. Each node still has
 its own durable job and lease, so a partial batch can be resumed safely.
+Before contacting the fleet, the command passes the effective worker count
+(`min(--max-parallel, nodes in this batch)`) to the PostgreSQL capacity check.
+Every node convergence carries the same value, so database admission includes
+all old/new compute generations that can overlap during the batch.
 
 If a partially-converged host must be taken out of service first, run
 `gregalectl deploy rollback-node --node fsn-3 --yes`. This drains the

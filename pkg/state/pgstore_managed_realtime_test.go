@@ -57,6 +57,13 @@ func TestPgStore_ManagedRealtimeEndpointRoundTrip(t *testing.T) {
 	if len(byAccount) != 1 || byAccount[0].ID != created.ID {
 		t.Fatalf("account list = %+v, want one endpoint %s", byAccount, created.ID)
 	}
+	all, err := s.ListManagedRealtimeEndpoints(ctx)
+	if err != nil {
+		t.Fatalf("ListManagedRealtimeEndpoints: %v", err)
+	}
+	if len(all) != 1 || all[0].ID != created.ID {
+		t.Fatalf("all list = %+v, want one endpoint %s", all, created.ID)
+	}
 
 	enabled := false
 	newURL := "https://example.com/realtime/updated"
@@ -81,6 +88,13 @@ func TestPgStore_ManagedRealtimeEndpointRoundTrip(t *testing.T) {
 		updated.MessagePath != newPath || updated.DisconnectPath != newDisconnectPath ||
 		string(updated.CallbackAuthTokenSealed) != string(newCallbackToken) || string(updated.AuthTokenSealed) != string(newAuthToken) {
 		t.Fatalf("update did not apply: %+v", updated)
+	}
+	all, err = s.ListManagedRealtimeEndpoints(ctx)
+	if err != nil {
+		t.Fatalf("ListManagedRealtimeEndpoints after disable: %v", err)
+	}
+	if len(all) != 1 || all[0].ID != created.ID || all[0].Enabled {
+		t.Fatalf("all list after disable = %+v, want disabled endpoint %s", all, created.ID)
 	}
 
 	duplicate := pgManagedRealtimeEndpoint(accountID, appID)

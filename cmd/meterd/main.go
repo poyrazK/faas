@@ -621,10 +621,12 @@ type runDeps struct {
 func defaultDeps() runDeps {
 	return runDeps{
 		configPath: "/etc/faas/meterd.toml",
-		openDB:     db.Open,
-		migrate:    db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
-		loadMeter:  func(c *Config) (*meter.Config, error) { return c.Meter, nil },
-		getenv:     os.Getenv,
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-meterd")
+		},
+		migrate:   db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
+		loadMeter: func(c *Config) (*meter.Config, error) { return c.Meter, nil },
+		getenv:    os.Getenv,
 		dialSchedd: func(ctx context.Context, target string, tlsCfg *tls.Config) (parkInstanceParker, error) {
 			c, err := scheddgrpc.DialContext(ctx, target, tlsCfg)
 			if err != nil {
@@ -704,6 +706,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	billingMode, err := billing.ModeFromEnv(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("meterd: billing mode: %w", err)
+	}
 	// SAFE-RELEASES-F3: canary progression and safedeploy action dispatch
 	// are one activation unit. The action dispatcher needs the APID client
 	// created from the canary token; fail before opening Postgres if an
@@ -782,7 +788,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	pusher := deps.pusher
 	var provName string
 	if pusher == nil {
-		if deps.loadBillingProvider == nil {
+		if billingMode.Enabled() && deps.loadBillingProvider == nil {
 			return fmt.Errorf("meterd: nil loadBillingProvider and nil pusher (refusing to start unbounded)")
 		}
 		// PR-P2: read the [billing] block from the daemon's TOML and
@@ -799,25 +805,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("meterd: load billing config: %w", err)
 		}
 		billingCfg = billingloader.ApplyBillingEnvOverlay(billingCfg, deps.getenv)
-		var loadErr error
-		pusher, provName, loadErr = deps.loadBillingProvider(billingCfg, deps.getenv, store, log)
-		if loadErr != nil {
-			return fmt.Errorf("meterd: load billing provider: %w", loadErr)
+		provName = billingCfg.DefaultProvider()
+		if billingMode.Enabled() {
+			var loadErr error
+			pusher, provName, loadErr = deps.loadBillingProvider(billingCfg, deps.getenv, store, log)
+			if loadErr != nil {
+				return fmt.Errorf("meterd: load billing provider: %w", loadErr)
+			}
+			// Empty API key on a Stripe box is a soft-warn today
+			// (pushUsageRecordSDKSum returns an error per call, the loop
+			// logs and skips); with Polar or Paddle, the API key must
+			// be set or the SDK refuses to initialize. Surface the provider
+			// name so an operator can match the warning to the right
+			// source.
+			//
+			// Read from the merged cfg (env wins if non-empty, TOML is the
+			// fallback — pkg/billing/loader/config.go::ApplyBillingEnvOverlay)
+			// so a TOML-only deploy doesn't emit a false-positive warning.
+			// Reading deps.getenv directly here would warn even when the
+			// TOML key is present and the SDK initializes fine.
+			warnIfEmptyAPIKey(log, billingCfg, provName)
+			log.Info("meterd billing provider loaded", "provider", provName)
+		} else {
+			log.Info("meterd billing disabled; provider initialization skipped", "provider", provName)
 		}
-		// Empty API key on a Stripe box is a soft-warn today
-		// (pushUsageRecordSDKSum returns an error per call, the loop
-		// logs and skips); with Polar or Paddle, the API key must
-		// be set or the SDK refuses to initialize. Surface the provider
-		// name so an operator can match the warning to the right
-		// source.
-		//
-		// Read from the merged cfg (env wins if non-empty, TOML is the
-		// fallback — pkg/billing/loader/config.go::ApplyBillingEnvOverlay)
-		// so a TOML-only deploy doesn't emit a false-positive warning.
-		// Reading deps.getenv directly here would warn even when the
-		// TOML key is present and the SDK initializes fine.
-		warnIfEmptyAPIKey(log, billingCfg, provName)
-		log.Info("meterd billing provider loaded", "provider", provName)
 	}
 	// Mailer: defaults to mail.SenderFromEnv so FAAS_MAIL_TRANSPORT
 	// selects the transport (resend/postmark/log/noop). The dunning
@@ -926,8 +937,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// provider is loaded before the timer overlay, so validating only the
 	// TOML value would let FAAS_STRIPE_INTERVAL=24h bypass Polar's hourly
 	// delivery contract.
-	if err := validateBillingPushInterval(provName, mc.StripeInterval); err != nil {
-		return err
+	if billingMode.Enabled() {
+		if err := validateBillingPushInterval(provName, mc.StripeInterval); err != nil {
+			return err
+		}
 	}
 
 	// Dunning timer: drives the 7-day past_due → suspended and 21-day
@@ -1079,6 +1092,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// gauges without a nil check (zero value is a no-op).
 	jobMetrics := meter.NewJobMetrics()
 	loop := meter.NewLoop(store, cpu, parker, pusher, pn, mailer, dunning, residency, evaluator, deps.now, log, mc, ops).
+		WithBillingEnabled(billingMode.Enabled()).
 		WithEgress(egress).
 		WithProbe(probe).
 		WithPartitionCreate(gatedPartitionCreate).
@@ -1106,7 +1120,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if provName == "" {
 		provName = provPolar
 	}
-	rec := reconciler.New(provName, store, pusher, log, recRegistry)
+	rec := reconciler.New(provName, store, pusher, log, recRegistry).WithMode(billingMode)
 	go rec.Loop(ctx, mc.ReconcileInterval)
 
 	// ADR-049 §B.3: snapshot/app-layer storage rollup. The store

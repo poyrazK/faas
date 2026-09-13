@@ -1,0 +1,63 @@
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "sustained ordinary connection pressure warns without paging"
+    input_series:
+      - series: 'faas_postgres_client_connections'
+        values: '80x31'
+      - series: 'faas_postgres_ordinary_connection_capacity'
+        values: '100x31'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasPostgresConnectionsHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: database_capacity
+            exp_annotations:
+              summary: "PostgreSQL ordinary connection use is above 75%"
+              description: "Daemon sessions have consumed more than 75% of PostgreSQL's ordinary-client capacity for 10m. Identify oversized pools by application_name and recover headroom before rollouts or bursts exhaust the remaining slots."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresConnectionsHigh.md"
+      - eval_time: 15m
+        alertname: FaasPostgresConnectionsCritical
+        exp_alerts: []
+
+  - interval: 30s
+    name: "critical ordinary connection pressure pages"
+    input_series:
+      - series: 'faas_postgres_client_connections'
+        values: '95x21'
+      - series: 'faas_postgres_ordinary_connection_capacity'
+        values: '100x21'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasPostgresConnectionsCritical
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: postgres
+              family: database_capacity
+            exp_annotations:
+              summary: "PostgreSQL ordinary connection use is above 90%"
+              description: "Daemon sessions have consumed more than 90% of PostgreSQL's ordinary-client capacity for 5m. New API, scheduler, restore, backup, and rollout work can fail when the remaining ordinary slots are exhausted."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresConnectionsHigh.md"
+
+  - interval: 30s
+    name: "missing capacity never divides by zero or pages"
+    input_series:
+      - series: 'faas_postgres_client_connections'
+        values: '0x21'
+      - series: 'faas_postgres_ordinary_connection_capacity'
+        values: '0x21'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasPostgresConnectionsHigh
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: FaasPostgresConnectionsCritical
+        exp_alerts: []

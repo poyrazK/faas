@@ -48,6 +48,9 @@ class InstanceResponse:
     deployment_id: str
     state: str
     ram_mb: int
+    resident: bool
+    """True when this instance currently holds host memory. Historical parked, stopped, and failed rows report
+    false."""
     host_ip: None | str | Unset = UNSET
     wake_id: str | Unset = UNSET
     started_at: datetime.datetime | None | Unset = UNSET
@@ -82,6 +85,8 @@ class InstanceResponse:
         state = self.state
 
         ram_mb = self.ram_mb
+
+        resident = self.resident
 
         host_ip: None | str | Unset
         if isinstance(self.host_ip, Unset):
@@ -154,6 +159,7 @@ class InstanceResponse:
                 "deployment_id": deployment_id,
                 "state": state,
                 "ram_mb": ram_mb,
+                "resident": resident,
             }
         )
         if host_ip is not UNSET:
@@ -187,6 +193,8 @@ class InstanceResponse:
         state = d.pop("state")
 
         ram_mb = d.pop("ram_mb")
+
+        resident = d.pop("resident")
 
         def _parse_host_ip(data: object) -> None | str | Unset:
             if data is None:
@@ -365,6 +373,7 @@ class InstanceResponse:
             deployment_id=deployment_id,
             state=state,
             ram_mb=ram_mb,
+            resident=resident,
             host_ip=host_ip,
             wake_id=wake_id,
             started_at=started_at,

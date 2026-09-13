@@ -16,6 +16,10 @@ export type AccountLimits = {
   max_concurrency: number;
   deployed_apps: number;
   /**
+   * Account-wide deployment admissions per fixed one-hour window.
+   */
+  deploys_per_hour: number;
+  /**
    * Maximum live `gregale dev` environments for this plan.
    */
   developer_apps: number;

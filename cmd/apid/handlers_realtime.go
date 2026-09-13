@@ -85,9 +85,9 @@ func realtimeEndpointResponse(e state.ManagedRealtimeEndpoint) api.ManagedRealti
 	return out
 }
 
-// syncManagedRealtimeEndpoint mirrors durable endpoint state onto the local
-// realtime owner when one is configured. Cross-node deployments leave the
-// registrar unset until the dispatch/lease control plane is enabled.
+// syncManagedRealtimeEndpoint mirrors durable endpoint state onto the
+// configured local or leased realtime owner when one is configured. Mutation
+// paths call this best-effort; the background reconciler repairs missed fanout.
 func (s *server) syncManagedRealtimeEndpoint(ctx context.Context, row state.ManagedRealtimeEndpoint) error {
 	if s.realtimeRegistrar == nil {
 		return nil

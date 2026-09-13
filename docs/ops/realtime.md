@@ -18,13 +18,26 @@ writing the daemon socket directly:
 ```
 POST /v1/apps/{slug}/realtime/endpoints
 GET|PATCH|DELETE /v1/apps/{slug}/realtime/endpoints/{id}
+POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send
+POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close
+PUT|DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}
+POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish
 ```
 
 The API persists endpoint configuration in the control plane, applies the
-per-plan inventory cap, returns masked credentials, and best-effort mirrors the
-row to a local realtimed owner when `FAAS_REALTIME_SOCKET` is configured. The
-daemon-socket example below remains useful for node-local bootstrap and
-recovery tooling.
+per-plan inventory cap, returns masked credentials, and mirrors enabled rows to
+active realtime nodes. In a single-box install this is the local
+`FAAS_REALTIME_SOCKET`; in a multi-node install apid uses each node's private
+`gateway_target_url` and the `gatewayd-internal` control proxy. Connection
+operations are routed through the leased owner directory, while publish is
+broadcast to active nodes. The daemon-socket example below remains useful for
+node-local bootstrap and recovery tooling.
+
+Endpoint writes are best-effort fan-out operations. apid performs an immediate
+reconciliation at boot and every 30 seconds, replaying enabled rows and
+removing disabled rows on active nodes. If a node is restarting or unreachable,
+the pass records the failure and retries on the next interval; no endpoint
+mutation is required to heal the node after it becomes active.
 
 ```
 curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/endpoints \
@@ -34,10 +47,15 @@ curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/en
 
 The callback URL should be an ordinary application route. Its first request
 wakes a sleeping VM; the quiet WebSocket itself remains owned by `realtimed`.
-Use `pkg/realtime.Client` (or the equivalent management HTTP calls) to send to
-a `connection_id`, subscribe/publish channels, or close a connection.
-The current registry is node-local, so endpoint registration and management
-must target the realtimed node that owns the connections.
+Use the authenticated API (or `pkg/realtime.Client` for node-local tooling) to
+send to a `connection_id`, subscribe/publish channels, or close a connection.
+Send and publish bodies contain `data_base64` and an optional `binary` flag;
+decoded frames are limited to 1 MiB. In multi-node mode, apid discovers and
+leases the connection owner, renews the lease for the operation, and retries a
+stale owner once. Endpoint registration must be able to reach each node's
+private `gateway_target_url`; missing or unreachable nodes remain fail-closed
+for connection operations (`503`) and are skipped when another node accepts a
+publish.
 
 Inspect health and counters from the `faas` group:
 

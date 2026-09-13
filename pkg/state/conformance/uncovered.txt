@@ -316,7 +316,6 @@ JobSoftDelete
 JobTaskCancel
 JobTaskClaimBatch
 JobTaskFindStuck
-JobTaskGet
 JobTaskList
 JobTaskMarkClaimed
 JobTaskMarkTerminal

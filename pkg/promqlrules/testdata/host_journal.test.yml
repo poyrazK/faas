@@ -1,0 +1,105 @@
+# Synthetic acceptance coverage for issue #2350 host-journal monitoring.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "healthy bounded journal stays quiet"
+    input_series:
+      - series: 'vmmd_networkd_dispatcher_errors_last_5m{job="vmmd",instance="10.0.0.2:9104",node="compute-ssd"}'
+        values: '0x31'
+      - series: 'vmmd_journal_disk_usage_bytes{job="vmmd",instance="10.0.0.2:9104",node="compute-ssd"}'
+        values: '104857600x31'
+      - series: 'vmmd_host_journal_metrics_up{job="vmmd",instance="10.0.0.2:9104",node="compute-ssd"}'
+        values: '1x31'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasNetworkdDispatcherErrors
+      - eval_time: 15m
+        alertname: FaasHostJournalNearLimit
+      - eval_time: 15m
+        alertname: FaasHostJournalGrowingFast
+      - eval_time: 15m
+        alertname: FaasHostJournalMetricsDown
+
+  - interval: 30s
+    name: "persistent dispatcher errors remain observable"
+    input_series:
+      - series: 'vmmd_networkd_dispatcher_errors_last_5m{job="vmmd",instance="10.0.0.2:9104",node="compute-ssd"}'
+        values: '2x21'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasNetworkdDispatcherErrors
+        exp_alerts:
+          - exp_labels:
+              job: vmmd
+              instance: 10.0.0.2:9104
+              node: compute-ssd
+              severity: warn
+              component: vmmd
+              family: host_journal
+            exp_annotations:
+              summary: "networkd-dispatcher is reporting errors on compute-ssd"
+              description: "networkd-dispatcher has emitted warning-or-higher journal entries for at least two minutes. Expected disappearing Gregale vh<slot> interfaces are filtered before journald, so remaining entries indicate a persistent interface, hook, or networkctl failure."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+
+  - interval: 30s
+    name: "journal near its bound remains actionable"
+    input_series:
+      - series: 'vmmd_journal_disk_usage_bytes{job="vmmd",instance="10.0.0.2:9104",node="compute-ssd"}'
+        values: '471859200x31'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasHostJournalNearLimit
+        exp_alerts:
+          - exp_labels:
+              job: vmmd
+              instance: 10.0.0.2:9104
+              node: compute-ssd
+              severity: warn
+              component: vmmd
+              family: host_journal
+            exp_annotations:
+              summary: "Local journal exceeds 400 MiB on compute-ssd"
+              description: "The persistent and runtime journals have remained above 400 MiB for ten minutes, approaching Gregale's 512 MiB persistent-journal bound. Check noisy units and off-host shipping before rotation removes incident evidence."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+
+  - interval: 30s
+    name: "rapid journal growth and failed collection alert"
+    input_series:
+      - series: 'vmmd_journal_disk_usage_bytes{job="vmmd",instance="10.0.0.3:9104",node="compute-2"}'
+        values: '1048576+2097152x31'
+      - series: 'vmmd_host_journal_metrics_up{job="vmmd",instance="10.0.0.3:9104",node="compute-2"}'
+        values: '0x31'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasHostJournalGrowingFast
+        exp_alerts:
+          - exp_labels:
+              job: vmmd
+              instance: 10.0.0.3:9104
+              node: compute-2
+              severity: warn
+              component: vmmd
+              family: host_journal
+            exp_annotations:
+              summary: "Local journal is growing rapidly on compute-2"
+              description: "Local journal usage has grown faster than 120 MiB/hour for five minutes. Identify the emitting unit before the bounded journal rotates useful history or creates avoidable off-host ingestion volume."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+      - eval_time: 15m
+        alertname: FaasHostJournalMetricsDown
+        exp_alerts:
+          - exp_labels:
+              job: vmmd
+              instance: 10.0.0.3:9104
+              node: compute-2
+              severity: warn
+              component: vmmd
+              family: host_journal
+            exp_annotations:
+              summary: "Host journal metrics are unavailable on compute-2"
+              description: "vmmd has failed to read networkd-dispatcher errors or local journal disk usage for ten minutes. Check journalctl/du availability and vmmd's privileges before trusting the journal pressure signals."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"

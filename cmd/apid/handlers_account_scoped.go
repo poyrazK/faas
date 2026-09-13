@@ -214,7 +214,7 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 
 	// 1. request_count per app.
 	countByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`sum by (app)(increase(gateway_requests_total[%s]))`, rng))
+		fmt.Sprintf(`sum by (app)(increase(gateway_request_duration_seconds_count[%s]))`, rng))
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "request_count")
 		return
@@ -225,7 +225,7 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 	// Prometheus' 0/0 = NaN result; the response map's missing-key value
 	// correctly represents an idle app as 0%.
 	errRateByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`(sum by (app)(rate(gateway_requests_total{code=~"[45].."}[%s])) / sum by (app)(rate(gateway_requests_total[%s])) * 100) and on (app) (sum by (app)(rate(gateway_requests_total[%s])) > 0)`, rng, rng, rng))
+		fmt.Sprintf(`(sum by (app)(rate(gateway_request_duration_seconds_count{class=~"[45]xx"}[%s])) / sum by (app)(rate(gateway_request_duration_seconds_count[%s])) * 100) and on (app) (sum by (app)(rate(gateway_request_duration_seconds_count[%s])) > 0)`, rng, rng, rng))
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "error_rate")
 		return
@@ -234,7 +234,7 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 	// 3. cold_start per app. Apply the same zero-traffic guard as the
 	// error-rate ratio so dormant apps cannot degrade the whole rollup.
 	coldByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`(sum by (app)(rate(gateway_cold_boot_total[%s])) / sum by (app)(rate(gateway_requests_total[%s])) * 100) and on (app) (sum by (app)(rate(gateway_requests_total[%s])) > 0)`, rng, rng, rng))
+		fmt.Sprintf(`(sum by (app)(rate(gateway_cold_boot_total[%s])) / sum by (app)(rate(gateway_request_duration_seconds_count[%s])) * 100) and on (app) (sum by (app)(rate(gateway_request_duration_seconds_count[%s])) > 0)`, rng, rng, rng))
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "cold_start")
 		return

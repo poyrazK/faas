@@ -43,6 +43,11 @@ Configuration and app bindings are stored in the `outbound_integrations` and
 `outbound_integration_apps` tables. A later extension may add durable scheduling
 for callers that prefer queueing; v1 rejects predictably instead.
 
+The daemon exposes an operator-only Prometheus listener (loopback by default)
+with bounded per-integration admission, rejection, in-flight, upstream status,
+and latency metrics. The in-flight gauge is process-local; Postgres remains
+the source of truth for the fleet-wide limit.
+
 ## Rejected alternatives
 
 - Transparent packet interception: cannot identify request boundaries in

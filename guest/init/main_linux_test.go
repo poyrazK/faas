@@ -516,6 +516,9 @@ func TestPrepareRailpackConfig_UsesPlatformBaseAndRestoresSource(t *testing.T) {
 	if config["custom"] != true {
 		t.Fatalf("custom Railpack config was not preserved: %v", config["custom"])
 	}
+	if got := config["packages"].(map[string]any)["node"]; got != "22" {
+		t.Fatalf("runtime package version = %v, want 22", got)
+	}
 	if err := restore(); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
@@ -591,6 +594,71 @@ func TestPrepareRailpackConfig_MinimalBaseDefaultsAptPackagesEmpty(t *testing.T)
 	}
 	if err := restore(); err != nil {
 		t.Fatalf("restore: %v", err)
+	}
+}
+
+func TestPrepareRailpackConfig_MarkerlessFunctionUsesCopyOnlyPlan(t *testing.T) {
+	workdir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workdir, "handler.js"), []byte("exports.handler = async () => ({statusCode: 200})"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	baseRef := "ghcr.io/poyrazk/runner-node22@sha256:" + strings.Repeat("d", 64)
+	restore, err := prepareRailpackConfig(api.BuildManifest{
+		Framework: api.FrameworkRailpackNode, Runtime: "node22", RuntimeBaseRef: baseRef,
+		Workdir: workdir, Function: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(workdir, "railpack.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config["provider"] != "shell" {
+		t.Fatalf("provider = %v, want shell", config["provider"])
+	}
+	deploy := config["deploy"].(map[string]any)
+	if deploy["startCommand"] != "/bin/true" {
+		t.Fatalf("startCommand = %v", deploy["startCommand"])
+	}
+	if data, err := os.ReadFile(filepath.Join(workdir, "start.sh")); err != nil || !strings.Contains(string(data), "/bin/true") {
+		t.Fatalf("generated start script = %q, %v", data, err)
+	}
+	build := config["steps"].(map[string]any)["build"].(map[string]any)
+	inputs := build["inputs"].([]any)
+	if len(inputs) != 2 || inputs[0].(map[string]any)["image"] != baseRef || inputs[1].(map[string]any)["local"] != true {
+		t.Fatalf("copy-only inputs = %#v", inputs)
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(workdir, "railpack.json")); !os.IsNotExist(err) {
+		t.Fatalf("generated config remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workdir, "start.sh")); !os.IsNotExist(err) {
+		t.Fatalf("generated start script remains: %v", err)
+	}
+}
+
+func TestFunctionSourceNeedsCopyOnlyPlan_PreservesDetectedProjects(t *testing.T) {
+	workdir := t.TempDir()
+	m := api.BuildManifest{Framework: api.FrameworkRailpackNode, Workdir: workdir, Function: true}
+	if !functionSourceNeedsCopyOnlyPlan(m) {
+		t.Fatal("handler-only Node function was not classified as markerless")
+	}
+	if err := os.WriteFile(filepath.Join(workdir, "package.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if functionSourceNeedsCopyOnlyPlan(m) {
+		t.Fatal("package-backed Node function lost normal provider plan")
+	}
+	m.Function = false
+	if functionSourceNeedsCopyOnlyPlan(m) {
+		t.Fatal("ordinary app was classified as markerless function")
 	}
 }
 

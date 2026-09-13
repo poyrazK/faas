@@ -364,6 +364,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	}
 
 	if sourcePath != "" {
+		if !s.admitAccountDeploy(w, r, acct) {
+			return
+		}
 		// PR-B: the prior-deployment supersede is folded into
 		// store.CreateDeployment's tx (pkg/state/pgstore.go). The tarball
 		// branch picks up the parity the image: branch used to lack —

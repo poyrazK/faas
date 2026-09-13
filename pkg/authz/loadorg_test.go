@@ -151,6 +151,23 @@ func TestLoadOrg_PassthroughNoSlug(t *testing.T) {
 	}
 }
 
+func TestLoadOrg_UsesRouteSlugWithoutDuplicateHeader(t *testing.T) {
+	resolver := newStubResolver()
+	resolver.orgs["acme"] = state.Org{ID: "org-1", Slug: "acme"}
+	resolver.members["org-1|acct-1"] = state.OrgMembership{
+		OrgID: "org-1", AccountID: "acct-1", Role: state.OrgRoleOwner,
+	}
+	req := reqWithPrincipal(t, http.MethodGet, "/v1/orgs/acme", "")
+	req.SetPathValue("slug", "acme")
+	rec, next := runLoadOrg(t, req, resolver, nil)
+	if rec.Code != http.StatusOK || !next.called {
+		t.Fatalf("route-slug request = %d, next=%v", rec.Code, next.called)
+	}
+	if next.membershipObserved == nil || next.membershipObserved.OrgID != "org-1" {
+		t.Fatalf("membership = %+v, want org-1", next.membershipObserved)
+	}
+}
+
 // TestLoadOrg_HeaderPreferredOverQuery — both header and query set
 // → header wins. The good header resolves; the bad query is
 // ignored. This is the IDOR-safe precedence: a malicious query

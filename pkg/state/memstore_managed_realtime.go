@@ -118,6 +118,12 @@ func (m *MemStore) ListManagedRealtimeEndpointsForAccount(_ context.Context, acc
 	return listManagedRealtimeEndpoints(m.managedRealtimeEndpoints, func(e ManagedRealtimeEndpoint) bool { return e.AccountID == accountID }), nil
 }
 
+func (m *MemStore) ListManagedRealtimeEndpoints(_ context.Context) ([]ManagedRealtimeEndpoint, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return listManagedRealtimeEndpoints(m.managedRealtimeEndpoints, func(ManagedRealtimeEndpoint) bool { return true }), nil
+}
+
 func listManagedRealtimeEndpoints(rows map[string]ManagedRealtimeEndpoint, keep func(ManagedRealtimeEndpoint) bool) []ManagedRealtimeEndpoint {
 	out := make([]ManagedRealtimeEndpoint, 0, len(rows))
 	for _, e := range rows {

@@ -224,7 +224,8 @@ func runManifestScaleAnsibleCheck(t *testing.T, files []manifestAnsibleFile) {
 		t.Fatal("generated files did not include inventory/hosts.ini")
 	}
 	playbookPath := filepath.Join(repoRoot, "deploy", "ansible", "scale_check.yml")
-	cmd := exec.Command(ansiblePlaybook, "--check", "--inventory", inventoryPath, playbookPath)
+	cmd := exec.Command(ansiblePlaybook, "--check", "--inventory", inventoryPath,
+		"--extra-vars", fmt.Sprintf("faas_postgres_rollout_overlap_nodes=%d", defaultJoinFleetMaxParallel), playbookPath)
 	cmd.Dir = repoRoot
 	cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "ANSIBLE_DEPRECATION_WARNINGS=false")
 	var output bytes.Buffer

@@ -234,6 +234,56 @@ func (w *ringWriter) Write(p []byte) (int, error) {
 	return w.ring.Write(w.stream, p)
 }
 
+// customerConsoleWriter separates the guest serial console from Firecracker's
+// own stdout. Firecracker multiplexes both onto the child stdout pipe, while
+// the customer log API promises only guest application/runtime output. The
+// unfiltered stream is still copied to the root-owned console file by
+// startJailer for operator diagnostics.
+type customerConsoleWriter struct {
+	mu      sync.Mutex
+	ring    *logbuf.Ring
+	pending []byte
+}
+
+func (w *customerConsoleWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pending = append(w.pending, p...)
+	for {
+		newline := bytes.IndexByte(w.pending, '\n')
+		if newline < 0 {
+			break
+		}
+		line := append([]byte(nil), w.pending[:newline+1]...)
+		w.pending = w.pending[newline+1:]
+		if firecrackerControlLine(line) {
+			continue
+		}
+		if _, err := w.ring.Write("stdout", line); err != nil {
+			return len(p), err
+		}
+	}
+	return len(p), nil
+}
+
+func firecrackerControlLine(line []byte) bool {
+	trimmed := strings.TrimSpace(string(line))
+	if !strings.HasPrefix(trimmed, "[") {
+		return false
+	}
+	headerEnd := strings.IndexByte(trimmed, ']')
+	if headerEnd < 0 {
+		return false
+	}
+	header := trimmed[:headerEnd+1]
+	for _, origin := range []string{":fc_api]", ":api_server]", ":vmm]", ":snapshot]"} {
+		if strings.Contains(header, origin) {
+			return true
+		}
+	}
+	return strings.Contains(header, ":main]") && strings.Contains(trimmed[headerEnd+1:], "Firecracker")
+}
+
 // ringFor returns the per-instance ring registered for instance, or nil
 // when the instance never had one (legacy Boot callers, test seams).
 // Caller may be holding v.mu; the function takes and releases it.
@@ -2403,6 +2453,32 @@ func consoleShowsGuestHalted(path string) bool {
 	return consoleContains(path, "System halted")
 }
 
+// watchBuilderGuestHalt independently reaps a Firecracker process after the
+// builder guest has flushed its result and halted. DestroyWithExport has the
+// same check while an RPC is waiting, but keeping the watcher with the process
+// closes the failure mode where teardown is delayed or never reaches that RPC.
+func watchBuilderGuestHalt(consolePath string, done <-chan struct{}, pollEvery time.Duration, kill func()) {
+	if consolePath == "" || done == nil || kill == nil {
+		return
+	}
+	if pollEvery <= 0 {
+		pollEvery = 250 * time.Millisecond
+	}
+	ticker := time.NewTicker(pollEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if consoleShowsGuestHalted(consolePath) {
+				kill()
+				return
+			}
+		}
+	}
+}
+
 // consoleShowsBuilderReady reads the bounded tail of the serial console for
 // the stable guest-init stage emitted after a successful KeepWarm build. The
 // check belongs in vmmd, which owns the console file even when builderd and
@@ -3336,7 +3412,7 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 		// into the per-instance ring. stderr stays discarded — FC only
 		// writes there on configuration errors and operators inspect those
 		// via systemctl logs, not the per-app tail.
-		stdout = &ringWriter{ring: ring, stream: "stdout"}
+		stdout = &customerConsoleWriter{ring: ring}
 	}
 	if consoleFile != nil {
 		stdout = io.MultiWriter(stdout, consoleFile)
@@ -3358,6 +3434,11 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	rec := &instanceRecord{cmd: cmd, consolePath: consolePath, isBuilder: l.IsBuilder, done: make(chan struct{})}
 	v.recs[l.Instance] = rec
 	v.mu.Unlock()
+	if rec.isBuilder {
+		go watchBuilderGuestHalt(rec.consolePath, rec.done, 250*time.Millisecond, func() {
+			v.killProcess(l.Instance)
+		})
+	}
 	// Watchdog: cmd.Wait must be called exactly once per process (stdlib
 	// contract). Run it here so DestroyWithExport can later read the captured
 	// exit code without racing the actual process termination.

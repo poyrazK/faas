@@ -3,18 +3,20 @@
 //
 // The githubd dispatcher fetches the full repo tree via Source.Fetch
 // (codeload archive for the bound installation). After the reconcile
-// step fans out the touched apps, each app's RootDir subtree needs
-// to land on disk as a per-app .tar.gz so the apid bridge can hand
-// the path to apid's CreateDeployment, which stamps it on the
-// deployment row's SourcePath. builderd reads SourcePath as a local
-// file (pkg/builderd/builderd.go:321) — no URL fetch path.
+// step fans out the touched apps, each app gets a repository snapshot
+// on disk as a per-app .tar.gz. The archive intentionally keeps the
+// repository-relative paths intact; the app's RootDir is carried on the
+// deployment row as SourceRoot so workspace manifests, lockfiles, and
+// sibling packages remain visible to the builder.
 //
 // This file owns:
 //
-//   - stageAppSource: Service method that stages one app's
-//     RootDir subtree into <WorkDir>/build-sources/<account>/
-//     <app>/<commit_sha>/source.tar.gz.
-//   - RepackageRootTree: the per-app gzip-tar walk.
+//   - stageAppSource: Service method that stages one repository
+//     snapshot into <WorkDir>/build-sources/<account>/<app>/
+//     <commit_sha>/source.tar.gz.
+//   - RepackageRepositoryTree: the workspace-preserving gzip-tar walk.
+//   - RepackageRootTree: the legacy subtree/rebase walk used by
+//     independent source-ref callers.
 //
 // The staging path is stable for the daemon's lifetime (keyed
 // on commit SHA), so a re-push of the same SHA overwrites the
@@ -39,7 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// stageAppSource stages the per-app RootDir subtree into the
+// stageAppSource stages the full repository tree into the
 // githubd workdir and returns:
 //
 //   - sourcePath: the absolute path to the staged .tar.gz on disk
@@ -76,16 +78,19 @@ func (s *Service) stageAppSource(ctx context.Context, tree SourceTree, app state
 	dstTarball := filepath.Join(stagingDir, "source.tar.gz")
 
 	// Honor ctx cancellation by short-circuiting the walk. The
-	// RepackageRootTree walker checks ctx between files (cheap;
+	// RepackageRepositoryTree walker checks ctx between files (cheap;
 	// inotify-style). A cancelled ctx returns a partial tarball
 	// — the caller logs + skips, the next re-push re-stages.
-	if err := RepackageRootTree(ctx, tree.FS(), app.RootDir, dstTarball); err != nil {
+	if err := ValidateRootDir(tree.FS(), app.RootDir); err != nil {
+		return "", 0, "", fmt.Errorf("githubd: validate source root: %w", err)
+	}
+	if err := RepackageRepositoryTree(ctx, tree.FS(), dstTarball); err != nil {
 		// Best-effort: don't leave a half-written tarball on
 		// disk (a future EnqueueBuild would pick it up via
 		// the (account, app, sha) cache key and read a
 		// truncated file).
 		_ = os.Remove(dstTarball)
-		return "", 0, "", fmt.Errorf("githubd: repackage root tree: %w", err)
+		return "", 0, "", fmt.Errorf("githubd: repackage repository tree: %w", err)
 	}
 	// Stat the tarball for the size the apid bridge will
 	// stamp on the deployment row's SourceBytes.
@@ -124,6 +129,45 @@ func (s *Service) stageAppSource(ctx context.Context, tree SourceTree, app state
 // single file — io.Copy would block on a slow read). The
 // walker checks ctx.Err() at the top of each iteration.
 func RepackageRootTree(ctx context.Context, src fs.FS, rootDir, dstTarball string) error {
+	walkRoot := rootDir
+	if walkRoot == "" {
+		walkRoot = "."
+	}
+	return repackageTree(ctx, src, walkRoot, walkRoot, dstTarball)
+}
+
+// RepackageRepositoryTree writes the complete repository tree to a
+// gzip-compressed tar archive without rebasing paths. It is the staging
+// primitive for project/GitHub builds: builderd uses the deployment's
+// SourceRoot to select the workload while package managers can still walk
+// upward to the repository workspace manifest and lockfile.
+func RepackageRepositoryTree(ctx context.Context, src fs.FS, dstTarball string) error {
+	return repackageTree(ctx, src, ".", ".", dstTarball)
+}
+
+// ValidateRootDir confirms that a workload root exists in a repository tree.
+// Full-repository staging cannot rely on the archive walk itself to catch a
+// missing workload directory, so callers use this check to preserve the
+// partial-success behavior of the old subtree staging path.
+func ValidateRootDir(src fs.FS, rootDir string) error {
+	if rootDir == "" || rootDir == "." {
+		return nil
+	}
+	info, err := fs.Stat(src, rootDir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("source root %q is not a directory", rootDir)
+	}
+	return nil
+}
+
+// repackageTree walks walkRoot and writes entries relative to pathBase.
+// Keeping the walk/encoding implementation shared makes the legacy
+// subtree-rebasing path and the workspace-preserving path behave identically
+// for cancellation, directory entries, and file metadata.
+func repackageTree(ctx context.Context, src fs.FS, walkRoot, pathBase, dstTarball string) error {
 	dst, err := os.Create(dstTarball) //nolint:gosec // dst is operator-controlled
 	if err != nil {
 		return fmt.Errorf("create tarball: %w", err)
@@ -138,17 +182,6 @@ func RepackageRootTree(ctx context.Context, src fs.FS, rootDir, dstTarball strin
 	}()
 	gz := gzip.NewWriter(dst)
 	tw := tar.NewWriter(gz)
-
-	// fs.WalkDir fails with "open : file does not exist"
-	// when the root is "" — Go's fs.WalkDir calls
-	// src.Open("") on the empty string and the standard
-	// fs.FS implementations reject it. "." is the
-	// canonical "root of this FS" path and is the same
-	// shape the standard library uses internally.
-	walkRoot := rootDir
-	if walkRoot == "" {
-		walkRoot = "."
-	}
 
 	walkErr := fs.WalkDir(src, walkRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -169,18 +202,11 @@ func RepackageRootTree(ctx context.Context, src fs.FS, rootDir, dstTarball strin
 		if p == walkRoot {
 			return nil
 		}
-		// Rebase the path so the tarball is rooted at
-		// the app (not the repo). path.Rel handles
-		// both the "" rootDir case (yields p verbatim)
-		// and the "/foo" rootDir case (yields
-		// "everything-under-foo"). For the "" rootDir
-		// case we pass "." to filepath.Rel so a file
-		// at walkRoot/. returns the bare file name.
-		relBase := rootDir
-		if relBase == "" {
-			relBase = "."
-		}
-		rel, relErr := filepath.Rel(relBase, p)
+		// Relativize against pathBase. For the workspace path both
+		// values are ".", preserving repository-relative names; for
+		// the legacy path they are the selected subtree, rebasing the
+		// app contents to the archive root.
+		rel, relErr := filepath.Rel(pathBase, p)
 		if relErr != nil {
 			return relErr
 		}

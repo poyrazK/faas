@@ -500,12 +500,39 @@ func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, 
 	if err != nil {
 		return fmt.Errorf("list apps: %w", err)
 	}
+	orgs, err := s.store.ListOrgsForAccount(ctx, acct.ID)
+	if err != nil {
+		return fmt.Errorf("list organizations: %w", err)
+	}
 	out := newAccountExportJSON(dst)
+	if err := out.value("schema_version", 2); err != nil {
+		return err
+	}
 	if err := out.value("exported_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
 	//nolint:contextcheck // nil store skips the response's derived lookups.
 	if err := out.value("account", s.accountResponse(context.Background(), acct, nil)); err != nil {
+		return err
+	}
+	organizations := make([]api.OrgResponse, 0, len(orgs))
+	for _, org := range orgs {
+		organizations = append(organizations, api.OrgResponseFromRow(orgToRow(org)))
+	}
+	if err := out.value("organizations", organizations); err != nil {
+		return err
+	}
+	orgSections, err := listOrgResourcesForAccountExport(ctx, s, orgs)
+	if err != nil {
+		return err
+	}
+	if err := out.value("org_memberships", orgSections.memberships); err != nil {
+		return err
+	}
+	if err := out.value("org_invitations", orgSections.invitations); err != nil {
+		return err
+	}
+	if err := out.value("org_api_keys", orgSections.keys); err != nil {
 		return err
 	}
 	if err := out.array("apps", func(emit func(any) error) error {
@@ -600,6 +627,56 @@ func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, 
 		return err
 	}
 	return out.close()
+}
+
+type accountExportOrgSections struct {
+	memberships []api.OrgMembershipExportResponse
+	invitations []api.OrgInvitationResponse
+	keys        []api.APIKeyResponse
+}
+
+func listOrgResourcesForAccountExport(ctx context.Context, s *server, orgs []state.Org) (accountExportOrgSections, error) {
+	out := accountExportOrgSections{
+		memberships: make([]api.OrgMembershipExportResponse, 0),
+		invitations: make([]api.OrgInvitationResponse, 0),
+		keys:        make([]api.APIKeyResponse, 0),
+	}
+	now := time.Now().UTC()
+	for _, org := range orgs {
+		members, err := s.store.ListOrgMembers(ctx, org.ID)
+		if err != nil {
+			return out, fmt.Errorf("list memberships for org %s: %w", org.ID, err)
+		}
+		for _, member := range members {
+			row := s.memberToRow(ctx, member)
+			dto := api.OrgMembershipExportResponse{
+				OrgID: org.ID, OrgSlug: org.Slug, AccountID: row.AccountID,
+				Email: row.Email, Role: row.Role, JoinedAt: api.FormatAlertTime(row.JoinedAt),
+			}
+			if member.InvitedByAccountID != nil {
+				dto.InvitedByAccountID = *member.InvitedByAccountID
+			}
+			if member.RemovedAt != nil {
+				dto.RemovedAt = api.FormatAlertTime(*member.RemovedAt)
+			}
+			out.memberships = append(out.memberships, dto)
+		}
+		invitations, err := s.store.ListOrgInvitationsForOrg(ctx, org.ID)
+		if err != nil {
+			return out, fmt.Errorf("list invitations for org %s: %w", org.ID, err)
+		}
+		for _, invitation := range invitations {
+			out.invitations = append(out.invitations, api.OrgInvitationResponseFromRow(invitationToRow(invitation, org.Slug, now)))
+		}
+		keys, err := s.store.ListOrgAPIKeys(ctx, org.ID)
+		if err != nil {
+			return out, fmt.Errorf("list API keys for org %s: %w", org.ID, err)
+		}
+		for _, key := range keys {
+			out.keys = append(out.keys, orgAPIKeyResponse(key))
+		}
+	}
+	return out, nil
 }
 
 type auditExportItem struct {

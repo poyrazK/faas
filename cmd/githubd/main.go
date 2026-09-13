@@ -67,7 +67,9 @@ type runDeps struct {
 func defaultDeps() runDeps {
 	return runDeps{
 		configPath: "/etc/faas/githubd.toml",
-		openDB:     db.Open,
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-githubd")
+		},
 		readAppID:  func() string { return os.Getenv("FAAS_GITHUB_APP_ID") },
 		readKeyPEM: readKeyPEMDefault,
 		httpClient: func() githubd.HTTPClient { return http.DefaultClient },

@@ -149,6 +149,30 @@ func TestReconciler_ZeroDriftIsHappyPath(t *testing.T) {
 	}
 }
 
+func TestReconciler_DisabledModeDoesNotReportFailure(t *testing.T) {
+	store, _ := seedMemStore(t, "acct_disabled", api.PlanHobby, 3600)
+	rec := New("stripe", store, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), nil).
+		WithMode(billing.ModeDisabled)
+	if err := rec.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(rec.Handler())
+	defer srv.Close()
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	text := string(body)
+	if !strings.Contains(text, `meterd_billing_mode_enabled{provider="stripe"} 0`) {
+		t.Fatalf("missing disabled-mode metric:\n%s", text)
+	}
+	if strings.Contains(text, `meterd_billing_drift_reconcile_failures_total{provider="stripe",reason="unsupported"}`) {
+		t.Fatalf("disabled mode emitted unsupported failure:\n%s", text)
+	}
+}
+
 func TestReconciler_OverageProviderUsesNetCalendarMonthUsage(t *testing.T) {
 	store, id := seedMemStore(t, "acct_overage", api.PlanHobby, int64(api.PlanHobby.PlanIncludedGBHours()+2)*api.SecondsPerGBHour)
 	prov := &stubProvider{

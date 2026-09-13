@@ -3,8 +3,8 @@
 //
 // Direction: githubd → apid only. The githubd dispatcher dials
 // /run/faas/apid-githubd.sock after the fan-out and stages each
-// app's per-app RootDir subtree into githubd's build-sources dir
-// as a per-app .tar.gz. The apid-side handler (cmd/apid/
+// app's full repository into githubd's build-sources dir as a
+// per-app .tar.gz. The apid-side handler (cmd/apid/
 // githubd_bridge.go) creates the deployment + build rows and emits
 // the build_queued pg_notify that builderd LISTENs on.
 //

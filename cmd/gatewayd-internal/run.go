@@ -94,6 +94,27 @@ var scheddSocket = envOrGateway("FAAS_SCHEDD_SOCKET", "/run/faas/schedd.sock")
 // per-test path without needing /run/faas on the host (PR #203).
 var gatewaydInternalSocket = envOrGateway("FAAS_GATEWAY_SYNTH_SOCKET", "/run/faas/gatewayd-internal.sock")
 
+const internalGatewayHealthHost = "gatewayd-internal.faas"
+
+// internalHealthRoute reserves the synthetic health response only for direct
+// infrastructure probes. App-host requests, including unknown and parked
+// hosts, continue through the normal host router so /healthz reflects the
+// selected deployment instead of the gateway process.
+func internalHealthRoute(infrastructure, app http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.TrimSpace(r.Host)
+		if parsed, _, err := net.SplitHostPort(host); err == nil {
+			host = parsed
+		}
+		host = strings.TrimSuffix(strings.ToLower(strings.Trim(host, "[]")), ".")
+		if r.URL.Path == "/healthz" && (host == internalGatewayHealthHost || host == "localhost" || net.ParseIP(host) != nil) {
+			infrastructure.ServeHTTP(w, r)
+			return
+		}
+		app.ServeHTTP(w, r)
+	})
+}
+
 // publicListenOffSentinel is the value of FAAS_GATEWAY_LISTEN that
 // disables the public listener entirely — used by
 // faas-gatewayd-internal.service in production (ADR-068 / ADR-070
@@ -1009,7 +1030,7 @@ func defaultServer(addr string, handler http.Handler) *http.Server {
 // package; the `prod` prefix was the placeholder-era workaround so
 // the two `run` symbols could coexist in `package main`).
 func run(ctx context.Context, log *slog.Logger) error {
-	pool, err := db.Open(ctx, "")
+	pool, err := db.OpenWithAppName(ctx, "", "faas-gatewayd-internal")
 	if err != nil {
 		return fmt.Errorf("gatewayd: open db: %w", err)
 	}
@@ -1897,6 +1918,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	var realtimeControlProxy http.Handler
 	// Managed realtime is an opt-in data plane. When the local realtimed
 	// daemon socket is configured, reserve its namespace before ordinary
 	// host lookup/wake so a quiet client connection does not keep an app VM
@@ -1907,6 +1929,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			handler.WithManagedRealtime(proxy)
 			log.Info("gatewayd-internal: managed realtime proxy armed", "socket", socket)
 		}
+		realtimeControlProxy = newRealtimedControlProxy(socket, log)
 	}
 	// The backend above owns invalidation; the handler owns lookup/store. Both
 	// sides intentionally share deps.responseCache so a deploy or rule update
@@ -2882,7 +2905,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (`deps.synth`) serves. The mux routes:
 	//   /v1/synthesize           → synth handler (existing, M7)
 	//   /v1/invocations:dispatch → synth handler (existing, Move 1)
-	//   /healthz                 → synth handler
+	//   /healthz on an infrastructure Host → synth handler
+	//   /healthz on an app Host  → customer publicHandler
 	//   everything else          → customer publicHandler (NEW — issue #675)
 	//
 	// Production (FAAS_GATEWAY_LISTEN=off) routes ALL customer traffic
@@ -2907,6 +2931,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// without also updating the unified-mux test in
 		// pkg/gateway/synth_test.go (TestSynthServer_UnifiedMux_RoutesPathsCorrectly).
 		unifiedMux.Handle("/", publicHandler)
+		if realtimeControlProxy != nil {
+			unifiedMux.Handle("/v1/internal/realtime/", realtimeControlProxy)
+		}
 		// Pull the synth mux out of the SynthServer via a small
 		// accessor; the server exposes SetHandler so the caller
 		// owns the unified mux. The synth mux itself carries
@@ -2933,7 +2960,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// intended GET handler. Audit round 2 finding #3 (PR
 		// #910).
 		unifiedMux.Handle("POST /v1/invocations:dispatch_batch", deps.synth.Mux())
-		unifiedMux.Handle("/healthz", deps.synth.Mux())
+		unifiedMux.Handle("/healthz", internalHealthRoute(deps.synth.Mux(), publicHandler))
 		// The compute data-plane listener is private: the generated nftables
 		// policy admits port 8080 only from the control plane. Expose the
 		// control metrics there so the control-plane Prometheus can scrape
@@ -2958,6 +2985,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// is gone.
 		deps.synth.SetHandler(unifiedMux)
 		publicListenerHandler = unifiedMux
+	} else if realtimeControlProxy != nil {
+		// Legacy/test wiring without SynthServer still needs the private
+		// control hop; keep ordinary customer routing as the catch-all.
+		mux := http.NewServeMux()
+		mux.Handle("/", publicHandler)
+		mux.Handle("/v1/internal/realtime/", realtimeControlProxy)
+		publicListenerHandler = mux
 	}
 	// addSrv is the closure for the public :8080 + control listeners
 	// below; declared above so the unified-mux block above can run

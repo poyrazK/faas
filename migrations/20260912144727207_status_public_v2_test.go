@@ -18,7 +18,10 @@ import (
 )
 
 const (
-	publicStatusPreviousMigrationVersion int64 = 20260912130000001
+	// Keep the rollback assertion pinned to the migration immediately before
+	// the v2 status migration. Newer migrations may be added between the
+	// original fixture point and this migration's timestamp.
+	publicStatusPreviousMigrationVersion int64 = 20260912134233953
 	publicStatusMigrationVersion         int64 = 20260912144727207
 )
 
@@ -130,14 +133,22 @@ func migrateDownPublicStatus(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("migrateDownPublicStatus: set goose dialect: %v", err)
 	}
-	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+	// Roll back to the exact prefix boundary rather than one migration
+	// step. New migrations may land between the prefix migration and this
+	// one on the PR merge ref; DownContext would stop at that newer
+	// migration and make this focused round-trip test order-dependent.
+	if err := goose.DownToContext(ctx, sqlDB, ".", publicStatusPreviousMigrationVersion); err != nil {
 		t.Fatalf("migrateDownPublicStatus: %v", err)
 	}
 	var got int64
 	if err := pool.QueryRow(ctx, `select coalesce(max(version_id), 0) from goose_db_version where is_applied`).Scan(&got); err != nil {
 		t.Fatalf("migrateDownPublicStatus: read ledger: %v", err)
 	}
-	if got != publicStatusPreviousMigrationVersion {
-		t.Fatalf("migration ledger at %d after rollback, want %d", got, publicStatusPreviousMigrationVersion)
+	// Timestamp migrations may be inserted between the prefix used to seed
+	// this test and the migration under test. Rolling back one step should
+	// therefore leave the ledger somewhere in that interval, rather than at
+	// the old hard-coded predecessor.
+	if got < publicStatusPreviousMigrationVersion || got >= publicStatusMigrationVersion {
+		t.Fatalf("migration ledger at %d after rollback, want a version in [%d, %d)", got, publicStatusPreviousMigrationVersion, publicStatusMigrationVersion)
 	}
 }

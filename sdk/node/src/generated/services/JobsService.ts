@@ -422,8 +422,8 @@ export class JobsService {
   }
   /**
    * Get tail logs of a task.
-   * Proxied from vmmd's tail endpoint on the compute node
-   * that owns the instance. Empty LogContent with
+   * Returns the durable combined stdout/stderr tail captured before
+   * the terminal task microVM is destroyed. Empty LogContent with
    * Truncated=false means the task never produced output
    * (process exited before writing anything — common for
    * OOM-killed tasks).

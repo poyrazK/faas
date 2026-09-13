@@ -11,7 +11,7 @@
 //     apid tarball path at cmd/apid/deploy_inputs.go).
 //   - Per-workload staged tarball exists under
 //     FAAS_SPOOL_ROOT/projects/<acct>/<project>/<appID>.tar.gz and
-//     is rooted at RootDir (not the repo root).
+//     preserves the repository tree; SourceRoot selects the workload.
 //   - build_queued pg_notify fires (Pattern A from
 //     waiters.go:22-67).
 //   - project.build.enqueued audit row (the audit taxonomy the
@@ -199,17 +199,16 @@ func TestApplyProject_Builds_DeploymentStatusBuilding(t *testing.T) {
 	}
 }
 
-// TestApplyProject_Builds_StagedTarballRootedAtRootDir pins that
-// the per-workload tarball is rooted at RootDir, not the repo
-// root. Without this, the staging would produce identical tarballs
-// for every workload and the workload-isolation guarantee would
-// be lost.
+// TestApplyProject_Builds_StagedTarballPreservesRepository pins that
+// every workload receives the repository-relative tree while its
+// deployment SourceRoot selects the build context. Workspace package
+// managers need root manifests and sibling packages in addition to the
+// selected workload directory.
 //
-// Strategy: build a tarball with a sentinel file at RootDir that
-// ONLY that workload's tarball should contain, plus a shared file
-// at the repo root. After apply, find each workload's staged
-// tarball and check the sentinel is present.
-func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
+// Strategy: build a tarball with per-workload sentinel files plus a
+// shared file at the repo root. After apply, find each workload's
+// staged tarball and check the complete repository is present.
+func TestApplyProject_Builds_StagedTarballPreservesRepository(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
@@ -223,9 +222,9 @@ func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
 	})
 	key := h.SeedAccount(context.Background(), api.PlanPro)
 
-	// Fixture: api's RootDir is "services/api" so the per-app
-	// tarball should include only files under that prefix. Sentinel
-	// markers per workload make it possible to assert.
+	// Fixture: api and worker live below services/. Root and sibling
+	// sentinels make it possible to assert that the archive preserves
+	// the workspace rather than rebasing one workload to archive root.
 	entries := []struct{ name, body string }{
 		{"root-marker.txt", "this-is-the-repo-root"},
 		{"faas-root/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n"},
@@ -251,9 +250,8 @@ func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
 		t.Fatalf("need at least 2 apps, got %d", len(ar.Apps))
 	}
 
-	// Walk spoolRoot and find each app's tarball; verify the
-	// matching sentinel file is inside and the cross-sentinel is
-	// absent.
+	// Walk spoolRoot and find each app's tarball; every full-repository
+	// archive should contain the root marker and both workload sentinels.
 	var tarballs []string
 	_ = filepath.Walk(spoolRoot, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() && strings.HasSuffix(path, ".tar.gz") && strings.Contains(path, "/projects/") {
@@ -264,8 +262,9 @@ func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
 	if len(tarballs) < len(ar.Apps) {
 		t.Fatalf("staged tarballs on disk: %d, want >= %d", len(tarballs), len(ar.Apps))
 	}
-	// Each tarball should contain exactly one of the per-workload
-	// sentinel files (or the root marker, if RootDir is "").
+	// Each tarball should contain the repository root and both workload
+	// sentinel files. SourceRoot (persisted on the deployment) supplies
+	// the workload boundary to builderd.
 	containsSentinel := func(path, sentinel string) bool {
 		// Vetted-id path: the spool tarball was just written by
 		// the harness under FAAS_SPOOL_ROOT — not a customer
@@ -300,12 +299,9 @@ func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
 	for _, path := range tarballs {
 		hasAPI := containsSentinel(path, "API_ONLY.txt")
 		hasWorker := containsSentinel(path, "WORKER_ONLY.txt")
-		// Exactly one of the two sentinels should be present
-		// per workload's tarball. None of the tarballs should
-		// contain BOTH sentinels (that would mean RootDir wasn't
-		// honoured).
-		if hasAPI && hasWorker {
-			t.Fatalf("tarball %s contains both sentinels — RootDir was not honoured", path)
+		if !hasAPI || !hasWorker || !containsSentinel(path, "root-marker.txt") {
+			t.Fatalf("tarball %s does not preserve repository workspace (api=%v worker=%v root=%v)",
+				path, hasAPI, hasWorker, containsSentinel(path, "root-marker.txt"))
 		}
 	}
 }
@@ -392,7 +388,7 @@ func TestApplyProject_Builds_ApplyResponseBuildsSlice(t *testing.T) {
 // must continue and enqueue the other workloads.
 //
 // Strategy: include a workload name 'ghost' (via compose) but no
-// matching directory. RepackageRootTree walks a non-existent path
+// matching directory. ValidateRootDir walks a non-existent path
 // and returns ErrNotExist. The apply loop's per-app Error path
 // catches it and continues.
 func TestApplyProject_Builds_PartialFailureLeavesOthersIntact(t *testing.T) {

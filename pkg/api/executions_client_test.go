@@ -12,6 +12,12 @@ func TestExecutionClientLifecycle(t *testing.T) {
 	var methods []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		methods = append(methods, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/executions" {
+			query := r.URL.Query()
+			if query.Get("limit") != "10" || query.Get("offset") != "20" || query.Get("status") != string(ExecutionStatusRunning) {
+				t.Fatalf("list query = %v", query)
+			}
+		}
 		if r.Method == http.MethodPost {
 			var req CreateExecutionRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Runtime != ExecutionRuntimeNode22 {
@@ -31,10 +37,13 @@ func TestExecutionClientLifecycle(t *testing.T) {
 	if _, err := c.GetExecution(ctx, "exec-1"); err != nil {
 		t.Fatalf("GetExecution: %v", err)
 	}
+	if _, err := c.ListExecutions(ctx, 10, 20, ExecutionStatusRunning); err != nil {
+		t.Fatalf("ListExecutions: %v", err)
+	}
 	if _, err := c.CancelExecution(ctx, "exec-1"); err != nil {
 		t.Fatalf("CancelExecution: %v", err)
 	}
-	want := []string{"POST /v1/executions", "GET /v1/executions/exec-1", "DELETE /v1/executions/exec-1"}
+	want := []string{"POST /v1/executions", "GET /v1/executions/exec-1", "GET /v1/executions", "DELETE /v1/executions/exec-1"}
 	if len(methods) != len(want) {
 		t.Fatalf("methods = %v, want %v", methods, want)
 	}

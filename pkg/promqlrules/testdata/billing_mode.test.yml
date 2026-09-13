@@ -1,0 +1,37 @@
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'meterd_billing_mode_enabled{provider="stripe"}'
+        values: '0x10'
+      - series: 'meterd_billing_reconcile_supported{provider="stripe"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BillingReconciliationUnavailable
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'meterd_billing_mode_enabled{provider="stripe"}'
+        values: '1x10'
+      - series: 'meterd_billing_reconcile_supported{provider="stripe"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: BillingReconciliationUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: meterd
+              family: billing_drift
+              public_status: internal
+              provider: stripe
+            exp_annotations:
+              summary: "Billing reconciliation is unavailable for stripe"
+              description: "Live billing is enabled but the active provider does not expose a usable reconciliation surface, so provider-vs-local billing drift cannot be measured. Treat drift gauges as unknown until the provider configuration is corrected."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"

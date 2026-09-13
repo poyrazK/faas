@@ -1,0 +1,14 @@
+[Unit]
+Description=Gregale durable public gateway listener
+Documentation=https://docs.gregale.dev/ops/gatewayd-public
+Before=faas-gatewayd-public.service
+
+[Socket]
+ListenStream=127.0.0.1:8080
+FileDescriptorName=public
+NoDelay=true
+Backlog=4096
+Service=faas-gatewayd-public.service
+
+[Install]
+WantedBy=sockets.target

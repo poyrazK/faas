@@ -42,6 +42,13 @@ func TestPg_CoverageAccountsAndKeys(t *testing.T) {
 	if acct.Plan != api.PlanScale || acct.Status != state.AccountPastDue {
 		t.Fatalf("updated account = %+v", acct)
 	}
+	org, err := s.OrgByPersonalAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if org.Plan != api.PlanScale || org.Status != state.OrgStatus(state.AccountPastDue) {
+		t.Fatalf("personal org entitlement drifted: %+v", org)
+	}
 	// CreateAPIKey + APIKeyByHash + AuthenticateKey + AccountByKeyHash.
 	// Scopes must satisfy the DB vocab CHECK
 	// (api_keys_scopes_vocab_chk): subset of the six allowed values,

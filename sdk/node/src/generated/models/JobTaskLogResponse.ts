@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Per-task log tail. Proxied from vmmd's tail endpoint on
- * the compute node that owns the instance. Truncated=true
+ * Durable per-task combined stdout/stderr tail. Truncated=true
  * means the tail was capped at MaxBytes; clients re-fetch
  * with a larger limit to see more.
  *

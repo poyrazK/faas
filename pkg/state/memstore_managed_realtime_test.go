@@ -51,6 +51,37 @@ func TestMemStoreManagedRealtimeEndpointLifecycle(t *testing.T) {
 	}
 }
 
+func TestMemStoreManagedRealtimeEndpointListAllIncludesDisabled(t *testing.T) {
+	m, ctx, acct, app := realtimeFixture(t)
+	first, err := m.CreateManagedRealtimeEndpointIfUnderQuota(ctx, ManagedRealtimeEndpoint{
+		AccountID: acct.ID, AppID: app.ID, CallbackURL: "https://example.com/first", Enabled: true,
+	}, 10, 10)
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	second, err := m.CreateManagedRealtimeEndpointIfUnderQuota(ctx, ManagedRealtimeEndpoint{
+		AccountID: acct.ID, AppID: app.ID, CallbackURL: "https://example.com/second", Enabled: false,
+	}, 10, 10)
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+
+	rows, err := m.ListManagedRealtimeEndpoints(ctx)
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("list all returned %d rows, want 2", len(rows))
+	}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		seen[row.ID] = true
+	}
+	if !seen[first.ID] || !seen[second.ID] {
+		t.Fatalf("list all ids = %v, want %s and %s", seen, first.ID, second.ID)
+	}
+}
+
 func TestMemStoreManagedRealtimeEndpointQuotaCountsDisabledRows(t *testing.T) {
 	m, ctx, acct, app := realtimeFixture(t)
 	first, err := m.CreateManagedRealtimeEndpointIfUnderQuota(ctx, ManagedRealtimeEndpoint{AccountID: acct.ID, AppID: app.ID, Enabled: false}, 1, 10)

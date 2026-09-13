@@ -5609,10 +5609,11 @@ haveApp:
 	defer burstDone()
 	limits, _ := api.LimitsFor(app.Plan)
 	var (
-		cold       bool
-		wakeID     string
-		wakeMethod WakeMethod
-		err        error
+		cold              bool
+		wakeID            string
+		wakeMethod        WakeMethod
+		platformWakeStart time.Time
+		err               error
 	)
 
 	// PickWarm is the combined warm-path decision for the production backend. A
@@ -5640,6 +5641,11 @@ haveApp:
 		}
 	}
 	if !pick.OK {
+		// This is the canonical platform-only boundary. Authentication,
+		// routing, rate limiting, and the public edge have already completed;
+		// scheduler admission, VM restore, and the internal first-byte hop are
+		// included.
+		platformWakeStart = time.Now()
 		// Per-app fan-out admission (issue #168). The WakeGate's
 		// shouldWake predicate runs HealthyCount against the plan's
 		// effective max_concurrency, so a burst of N requests admits up to
@@ -5742,6 +5748,9 @@ haveApp:
 	// hits are recovered via the next deployment_changed notify
 	// that re-seeds the cache.
 	if !pick.OK && pick.ColdBucket != "" {
+		if platformWakeStart.IsZero() {
+			platformWakeStart = time.Now()
+		}
 		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(r.Context(), "gateway.wake_fanout",
 			attribute.String("app_id", app.ID),
 			attribute.String("deployment_id", pick.ColdBucket),
@@ -5788,7 +5797,20 @@ haveApp:
 	// the request waits on the selected VM until its own budget expires.
 	var vmRelease func()
 	var vmWaited bool
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(r.Context(), app, pick, perVMConcurrency)
+	capacityCtx, capacitySpan := pkgtrace.StartSpan(r.Context(), "gateway.capacity_wait",
+		attribute.String("app_id", app.ID),
+		attribute.String("instance_id", pick.Target.InstanceID),
+		attribute.Int("concurrency_per_vm", perVMConcurrency),
+	)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency)
+	capacitySpan.SetAttributes(
+		attribute.Bool("waited", vmWaited),
+		attribute.String("selected_instance_id", pick.Target.InstanceID),
+	)
+	if err != nil {
+		capacitySpan.RecordError(err)
+	}
+	capacitySpan.End()
 	if vmWaited {
 		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
 	}
@@ -6263,6 +6285,9 @@ haveApp:
 			firstByteAt = time.Now()
 		}
 		h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceIDFromContext(r.Context()))
+		if !platformWakeStart.IsZero() {
+			h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceIDFromContext(r.Context()))
+		}
 		// Wake-locality classifier (PR scale-out readiness). Increment
 		// AFTER the existing first-byte observation so the 350 ms
 		// measurement path is unchanged. Only fires on a real admit

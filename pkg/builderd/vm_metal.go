@@ -159,6 +159,7 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 		Framework:       MapFramework(req.Framework),
 		Runtime:         req.Runtime,
 		RuntimeBaseRef:  req.RuntimeBaseRef,
+		Function:        req.Function,
 		DependencyCache: req.DependencyCacheKey != "",
 		KeepWarm:        req.KeepWarm,
 		TimeoutSec:      timeoutSec,
@@ -599,6 +600,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		exitCode = done.ExitCode
 		res.ExitCode = exitCode
 		res.LogTailBytes = int64(len(done.LogTail))
+		res.LogTail = done.LogTail
 		res.FailureClass = done.FailureClass
 		res.FailureCode = done.FailureCode
 		res.FailurePkg = done.FailurePkg

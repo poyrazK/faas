@@ -1526,6 +1526,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
+		if explicit["no-triggers"] {
+			return printErr("Unsupported project deploy flags", errors.New(
+				"--no-triggers cannot be combined with --project, --project-slug, or --only; project deploy trigger suppression is not yet supported"))
+		}
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "canary-preset", "canary-stages",
@@ -3172,6 +3176,10 @@ func cmdKeys(args []string) int {
 		}
 		return 0
 	case subAdd:
+		if hasHelpFlag(args[1:]) {
+			PrintUsage(osStdout, "usage: gregale keys add <label>", "keys")
+			return 0
+		}
 		if len(args) < 2 {
 			PrintUsage(os.Stderr, "usage: gregale keys add <label>", "keys")
 			return 1
@@ -4044,7 +4052,11 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			// side). Move 3's `not_implemented` shape is dead code;
 			// removed.
 			if e.Event == "degraded" {
-				fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
+				if jsonOutput {
+					_ = writeJSONProblem(appLogsDegradedProblem(e.Data))
+				} else {
+					fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
+				}
 				if collector != nil {
 					collector.flush(os.Stdout)
 				}
@@ -4696,7 +4708,8 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 
 // mapFailureMessage returns the user-facing copy for one of the four
 // failure classes UX §2.4 enumerates. Anything else falls back to
-// "Build failed: <err>" so the customer sees the raw class at least.
+// "Deploy failed: <err>" because post-build imaging and snapshot failures
+// reach this same renderer.
 //
 // Error-explanations cluster (spec §6.4 amendment 1): when the
 // caller already has a *api.Problem, the whycopy catalog lookup
@@ -4716,7 +4729,7 @@ func mapFailureMessage(err string) string {
 	case "infra":
 		return "Our build system hiccuped — we've been alerted and requeued your build automatically."
 	}
-	return "Build failed: " + err
+	return "Deploy failed: " + err
 }
 
 // mapFailureProblem maps a deployment's *api.Problem to the

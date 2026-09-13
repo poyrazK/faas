@@ -2,10 +2,10 @@ package main
 
 // Customer-facing disposable Runs commands (ADR-171).
 //
-// `gregale run` submits a single source file to a fresh Firecracker VM. The
-// VM has loopback-only networking, an internal ephemeral scratch filesystem,
-// and is destroyed after the terminal result; this command deliberately has
-// no volume or persistent-workspace flags.
+// `gregale run` submits source to a fresh Firecracker VM. It accepts either a
+// single source file or a bounded directory bundle. The VM has loopback-only
+// networking, an internal ephemeral scratch filesystem, and is destroyed
+// after the terminal result; no persistent workspace is implied.
 
 import (
 	"context"
@@ -27,6 +27,8 @@ func cmdRun(args []string) int {
 	runtimeName := fs.String("runtime", string(api.ExecutionRuntimeNode22), "isolated runtime (node22|node24|python312|python313)")
 	source := fs.String("source", "", "source code (use --file for a local file)")
 	file := fs.String("file", "", "read source from a local regular file")
+	dir := fs.String("dir", "", "read a bounded ephemeral source bundle from a local directory")
+	entrypoint := fs.String("entrypoint", "", "normalized bundle path to execute (required with --dir)")
 	input := fs.String("input", "", "JSON input (inline | @file | - for stdin)")
 	timeoutMS := fs.Int("timeout-ms", 0, "maximum execution time in milliseconds")
 	memoryMB := fs.Int("memory-mb", 0, "memory limit in MB")
@@ -40,8 +42,10 @@ func cmdRun(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) != 0 || (*source == "" && *file == "") || (*source != "" && *file != "") {
-		PrintUsage(osStderr, "usage: gregale run --runtime R (--source CODE | --file PATH) [--input J|@file|-] [--wait]", "run")
+	legacyMode := *source != "" || *file != ""
+	bundleMode := *dir != ""
+	if len(positional) != 0 || (legacyMode && bundleMode) || (!legacyMode && !bundleMode) || (*source != "" && *file != "") || (bundleMode && *entrypoint == "") || (!bundleMode && *entrypoint != "") {
+		PrintUsage(osStderr, "usage: gregale run --runtime R (--source CODE | --file PATH | --dir PATH --entrypoint FILE) [--input J|@file|-] [--wait]", "run")
 		return 1
 	}
 	if *pollInterval <= 0 || *waitTimeout <= 0 {
@@ -49,18 +53,27 @@ func cmdRun(args []string) int {
 		return 1
 	}
 
-	sourceBytes, err := executionSource(*source, *file)
-	if err != nil {
-		return printErr("Could not read source", err)
+	var sourceBytes []byte
+	var files []api.ExecutionFile
+	var err error
+	if bundleMode {
+		files, err = executionBundle(*dir, *entrypoint)
+		if err != nil {
+			return printErr("Could not read source bundle", err)
+		}
+	} else {
+		sourceBytes, err = executionSource(*source, *file)
+		if err != nil {
+			return printErr("Could not read source", err)
+		}
 	}
 	inputBytes, err := resolveExecutionInput(*input)
 	if err != nil {
 		return printErr("Invalid input", err)
 	}
 	req := api.CreateExecutionRequest{
-		Runtime: api.ExecutionRuntime(*runtimeName),
-		Source:  string(sourceBytes),
-		Input:   inputBytes,
+		Runtime: api.ExecutionRuntime(*runtimeName), Source: string(sourceBytes),
+		Entrypoint: *entrypoint, Files: files, Input: inputBytes,
 		Limits: &api.ExecutionLimitRequest{
 			TimeoutMS:       *timeoutMS,
 			MemoryMB:        *memoryMB,
@@ -111,17 +124,20 @@ func cmdRun(args []string) int {
 
 func cmdRuns(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(osStderr, "usage: gregale runs <get|status|cancel> <id>", "runs")
+		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel> [<id>]", "runs")
 		return 1
 	}
 	verb := args[0]
+	if verb == "list" {
+		return cmdRunsList(args[1:])
+	}
 	if verb != "get" && verb != statusLiteral && verb != "cancel" {
-		PrintUsage(osStderr, "usage: gregale runs <get|status|cancel> <id>", "runs")
+		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel> [<id>]", "runs")
 		return 1
 	}
 	flags, positional := splitArgsForFlags(args[1:])
 	if len(flags) != 0 || len(positional) != 1 {
-		PrintUsage(osStderr, "usage: gregale runs <get|status|cancel> <id>", "runs")
+		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel> [<id>]", "runs")
 		return 1
 	}
 	client, err := authedClient()
@@ -150,6 +166,50 @@ func cmdRuns(args []string) int {
 	}
 	PrintProgress(osStdout, "Run %s status=%s.", resp.ID, resp.Status)
 	return 0
+}
+
+func cmdRunsList(args []string) int {
+	fs := flag.NewFlagSet("runs-list", flag.ContinueOnError)
+	limit := fs.Int("limit", 50, "maximum number of runs (1..200)")
+	offset := fs.Int("offset", 0, "number of matching runs to skip")
+	status := fs.String("status", "", "filter by lifecycle status")
+	flags, positional := splitArgsForFlags(args)
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(positional) != 0 || validateCLILimit("limit", *limit, 200) != nil || *offset < 0 {
+		PrintUsage(osStderr, "usage: gregale runs list [--limit N] [--offset N] [--status STATUS]", "runs")
+		return 1
+	}
+	filter := api.ExecutionStatus(*status)
+	if filter != "" && !filter.Valid() {
+		PrintUsage(osStderr, "usage: gregale runs list [--limit N] [--offset N] [--status STATUS]", "runs")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.ListExecutions(context.Background(), *limit, *offset, filter)
+	if err != nil {
+		return printErr("Could not list runs", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	renderExecutionList(osStdout, resp)
+	return 0
+}
+
+func renderExecutionList(w io.Writer, resp api.ExecutionListResponse) {
+	if len(resp.Executions) == 0 {
+		_, _ = fmt.Fprintln(w, "(no runs)")
+		return
+	}
+	_, _ = fmt.Fprintf(w, "%-36s %-12s %-10s %s\n", "id", "status", "runtime", "created")
+	for _, execution := range resp.Executions {
+		_, _ = fmt.Fprintf(w, "%-36s %-12s %-10s %s\n", execution.ID, execution.Status, execution.Runtime, execution.CreatedAt)
+	}
 }
 
 func executionSource(inline, path string) ([]byte, error) {

@@ -108,6 +108,9 @@ func (s *server) retryDeployment(w http.ResponseWriter, r *http.Request, acct st
 	//    ErrInvalidArgument for a closed-vocab slip; we map that
 	//    to 400 even though the storage-layer call already passed
 	//    the IsStageName check — belt-and-suspenders.
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
 	newDep, err := s.enqueueRetry(r.Context(), app, dep, state.StageName(req.FromStage))
 	if err != nil {
 		var problem *api.Problem

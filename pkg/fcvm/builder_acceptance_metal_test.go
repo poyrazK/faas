@@ -1,5 +1,7 @@
 //go:build metal && linux
 
+// spec: §4.5 — the native builder acceptance gate proves source builds use a
+// real isolated Firecracker VM and release all temporary resources.
 package fcvm_test
 
 import (
@@ -203,6 +205,9 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 	t.Run("builderd-orchestrator", func(t *testing.T) {
 		runBuilderdOrchestratorAcceptance(t, buildTimeoutSeconds)
 	})
+	t.Run("builderd-failure-orchestrator", func(t *testing.T) {
+		runBuilderdFailureOrchestratorAcceptance(t, buildTimeoutSeconds)
+	})
 }
 
 func mustAcceptance(t *testing.T, err error) {
@@ -315,6 +320,127 @@ func runBuilderdOrchestratorAcceptance(t *testing.T, buildTimeoutSeconds int) {
 	leakcheck.AssertZero(t)
 }
 
+// runBuilderdFailureOrchestratorAcceptance proves the production failure
+// handoff all the way through builderd. The lower-level failed-build case
+// verifies the guest export itself; this case additionally requires
+// ProcessOne to consume build-done, persist the guest diagnostic, mark both
+// durable rows failed, and release Firecracker plus its scratch drive within
+// ten seconds of the guest's halt marker.
+func runBuilderdFailureOrchestratorAcceptance(t *testing.T, buildTimeoutSeconds int) {
+	t.Helper()
+	m := fcvm.NewAcceptanceManager(t)
+	tmp := t.TempDir()
+	sock := filepath.Join(tmp, "v.sock")
+	listener, err := net.Listen("unix", sock)
+	mustAcceptance(t, err)
+	server := grpc.NewServer()
+	vmmdpb.RegisterVmmdServer(server, vmmdgrpc.New(acceptanceSignalAdapter{m}, nil, os.Getenv("FAAS_TEST_FC_VERSION"), slog.Default()))
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	driveDir := filepath.Join(tmp, "drives")
+	driver, err := builderd.NewVMMDriver(sock, os.Getenv("FAAS_BUILDER_BASE_PATH"), driveDir, filepath.Join(tmp, "exports"))
+	mustAcceptance(t, err)
+	t.Cleanup(func() { _ = driver.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(buildTimeoutSeconds+600)*time.Second)
+	defer cancel()
+
+	const buildID = "builderd-failure-orchestrator"
+	t.Cleanup(func() {
+		cleanup, done := context.WithTimeout(context.Background(), 20*time.Second)
+		defer done()
+		_ = driver.Cancel(cleanup, buildID)
+		_ = m.Destroy(cleanup, "build-"+buildID)
+	})
+	source := acceptanceSource(t, tmp, "", acceptanceSourceOptions{fail: true})
+	sourceInfo, err := os.Stat(source)
+	mustAcceptance(t, err)
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "builderd-failure-orchestrator@example.com", api.PlanPro)
+	mustAcceptance(t, err)
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: account.ID, Slug: buildID, Type: state.AppTypeApp,
+		RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 1,
+	})
+	mustAcceptance(t, err)
+	logPath := filepath.Join(tmp, "build.log")
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: source,
+		SourceBytes: sourceInfo.Size(), SourceSHA256: acceptanceSHA256(t, source), LogPath: logPath,
+	})
+	mustAcceptance(t, err)
+	build, err := store.CreateBuildWithID(ctx, buildID, dep.ID, state.DeploymentKindTarball, sourceInfo.Size(), logPath)
+	mustAcceptance(t, err)
+	notifier := &acceptanceNotifier{}
+	b := builderd.New(store, notifier, driver, builderd.NewCache(filepath.Join(tmp, "cache")), nil, nil,
+		builderd.Config{BuildTimeoutSeconds: buildTimeoutSeconds, SourceWaitTimeout: 2 * time.Second, BuilderNodeID: "metal-acceptance"}, slog.Default())
+
+	result := make(chan error, 1)
+	go func() {
+		_, processErr := b.ProcessOne(ctx, build.ID)
+		result <- processErr
+	}()
+	consolePath := filepath.Join("/var/log/faas", "vm-build-"+buildID+".console")
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	var processErr error
+	for {
+		select {
+		case processErr = <-result:
+			console, readErr := os.ReadFile(consolePath)
+			mustAcceptance(t, readErr)
+			if !strings.Contains(string(console), "System halted") {
+				t.Fatal("builderd completed before the guest halt marker was observable")
+			}
+			goto completed
+		case <-ticker.C:
+			console, readErr := os.ReadFile(consolePath)
+			if readErr != nil || !strings.Contains(string(console), "System halted") {
+				continue
+			}
+			select {
+			case processErr = <-result:
+			case <-time.After(10 * time.Second):
+				t.Fatal("builderd did not reach a terminal failure within 10s of guest halt")
+			}
+			goto completed
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+
+completed:
+	if processErr == nil || !strings.Contains(processErr.Error(), "vm exit") {
+		t.Fatalf("ProcessOne error = %v, want guest exit failure", processErr)
+	}
+	completedBuild, err := store.BuildByID(ctx, build.ID)
+	mustAcceptance(t, err)
+	if completedBuild.Status != state.BuildFailed || completedBuild.FailureClass != state.FailureUserError {
+		t.Fatalf("build = status %s class %s, want failed/user_error", completedBuild.Status, completedBuild.FailureClass)
+	}
+	completedDep, err := store.DeploymentByID(ctx, dep.ID)
+	mustAcceptance(t, err)
+	if completedDep.Status != state.DeployFailed {
+		t.Fatalf("deployment status = %s, want failed", completedDep.Status)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	mustAcceptance(t, err)
+	if !strings.Contains(string(logBytes), "exit code: 42") {
+		t.Fatalf("customer build log lost guest diagnostic:\n%s", logBytes)
+	}
+	if notifier.snapshotBootPayload != "" {
+		t.Fatal("failed build emitted snapshot_boot")
+	}
+	if m.LiveCount() != 0 || m.LeasedCount() != 0 {
+		t.Fatalf("failed builder leaked VM or lease: live=%d leases=%d", m.LiveCount(), m.LeasedCount())
+	}
+	drives, err := filepath.Glob(filepath.Join(driveDir, "build-"+buildID+"-*.ext4"))
+	mustAcceptance(t, err)
+	if len(drives) != 0 {
+		t.Fatalf("failed builder scratch survived completion: %v", drives)
+	}
+	leakcheck.AssertZero(t)
+}
+
 func acceptanceSHA256(t *testing.T, path string) string {
 	t.Helper()
 	f, err := os.Open(path)
@@ -354,7 +480,8 @@ func acceptanceImageBoot(t *testing.T, ctx context.Context, m *fcvm.Manager, tmp
 	policy, err := acceptanceScanPolicyFromEnv()
 	mustAcceptance(t, err)
 	t.Logf("%s vulnerability scan: critical=%d high=%d medium=%d low=%d unknown=%d policy=%s only_fixed=%t",
-		fixture, scan.Critical, scan.High, scan.Medium, scan.Low, scan.Unknown, policy.FailOn, policy.OnlyFixed)
+		fixture, scan.SeverityCounts.Critical, scan.SeverityCounts.High, scan.SeverityCounts.Medium,
+		scan.SeverityCounts.Low, scan.SeverityCounts.Unknown, policy.FailOn, policy.OnlyFixed)
 	for _, vulnerability := range scan.Vulnerabilities {
 		if severityRank(vulnerability.Severity) >= severityRank(imaged.SeverityHigh) {
 			t.Logf("%s vulnerability: id=%s severity=%s package=%s version=%s fixed_in=%s paths=%v",

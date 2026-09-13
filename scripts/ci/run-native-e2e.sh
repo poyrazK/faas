@@ -85,6 +85,17 @@ if [[ -f "${e2e_env_file}" ]]; then
     die "${e2e_env_file} must be root-owned mode 0600 (found: ${env_perms})"
   # shellcheck disable=SC1090
   source "${e2e_env_file}"
+  # If the host bothered to write this file, its DSN wins — falling back to the
+  # default would point the suite at a DIFFERENT cluster than the operator
+  # chose, silently. Observed for real on 2026-09-12: the DSN contains an
+  # unescaped `&`, and written unquoted it makes the shell background the
+  # assignment in a subshell, so the variable arrives here EMPTY. Quote the
+  # value in the env file.
+  [[ -n "${FAAS_E2E_DATABASE_URL:-}" ]] ||
+    die "${e2e_env_file} exists but FAAS_E2E_DATABASE_URL is empty after sourcing it.
+  The value must be quoted — the DSN contains an '&', and unquoted the shell
+  parses it as a background job plus a stray command:
+    FAAS_E2E_DATABASE_URL='postgres:///faas_e2e?host=/run/postgresql&user=faas'"
 fi
 database_url="${FAAS_E2E_DATABASE_URL:-${DATABASE_URL:-postgres:///faas_e2e?host=/run/postgresql&user=faas}}"
 
@@ -231,21 +242,35 @@ export FAAS_BUILDER_BASE_PATH="${builder_base}"
 # (docs/ops/builder-native-ci.md).
 export FAAS_TEST_REFERENCE_SSD=0
 
-# The whole ./cmd/e2e package, both build tags' worth of tests, in one binary.
+# The metal-tagged tests in ./cmd/e2e — the ones that need this hardware.
 #
-# -run is deliberately absent. The self-hosted `metal` job this family replaces
-# executed exactly one test for 100 consecutive dispatches; a -run added "just
-# to triage a flake" is how that happens again. The required-test contract
-# below is the narrower lever: it names the tests that must actually execute,
-# so the suite can grow without the gate silently shrinking.
-echo "native e2e: run the ./cmd/e2e suite with the metal build tag"
+# The filter is DERIVED FROM SOURCE (every func in a //go:build metal file), not
+# hand-listed, so it cannot quietly shrink: a `-run` naming one test would have
+# to survive the enumeration checks below and run-native-e2e_test.sh, which
+# executes the same derivation against the tree. That is the guarantee the old
+# "no -run at all" rule was reaching for; running all ~330 tests on a 4-vCPU
+# node turned out to defeat the gate instead (see native-e2e-verdict.sh).
+metal_tests="$(native_e2e_metal_tests "${repo_root}")"
+[[ -n "${metal_tests}" ]] ||
+  die "no metal-tagged tests found in cmd/e2e; the build tag or the derivation is wrong"
+metal_test_count="$(printf '%s\n' "${metal_tests}" | wc -l | tr -d ' ')"
+
+# Every required test must be in the derived set. A required test that loses its
+# metal tag would otherwise silently stop being run AND stop being required.
+for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
+  printf '%s\n' "${metal_tests}" | grep -qx "${required}" ||
+    die "required test ${required} is not in the metal-tagged set; it lost its //go:build metal tag or was renamed"
+done
+
+run_regex="^($(printf '%s\n' "${metal_tests}" | paste -sd'|' -))\$"
+echo "native e2e: run ${metal_test_count} metal-tagged tests from ./cmd/e2e"
 # Distinct from the transient unit's own native-e2e.log: the unit already
 # appends this script's stdout there, and tee-ing into the same file would
 # interleave every line with itself and corrupt the tally greps below.
 e2e_log="${FAAS_E2E_TRANSFER_ROOT:-/var/tmp}/cmd-e2e.log"
 set +e
 make GO="${FAAS_E2E_GO}" PKGS=./cmd/e2e/... \
-  RUN_ARGS='-timeout=75m -v' test-metal 2>&1 | tee "${e2e_log}"
+  RUN_ARGS="-timeout=75m -v -run ${run_regex}" test-metal 2>&1 | tee "${e2e_log}"
 e2e_rc="${PIPESTATUS[0]}"
 set -e
 

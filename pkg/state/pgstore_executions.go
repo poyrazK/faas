@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -169,8 +170,25 @@ func (s *PgStore) ExecutionByID(ctx context.Context, accountID, executionID stri
 
 func (s *PgStore) ListExecutions(ctx context.Context, accountID string, limit, offset int) ([]Execution, error) {
 	limit, offset = normalizeExecutionPage(limit, offset)
+	if limit > math.MaxInt32 || offset > math.MaxInt32 {
+		return nil, fmt.Errorf("%w: pagination values are outside int32 bounds", ErrExecutionInvalid)
+	}
 	rows, err := sqlc.New().ExecutionListForAccount(ctx, s.pool, sqlc.ExecutionListForAccountParams{
 		AccountID: mustPgUUID(accountID), PageLimit: int32(limit), PageOffset: int32(offset),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return executionRowsFromSQL(rows), nil
+}
+
+func (s *PgStore) ListExecutionsByStatus(ctx context.Context, accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
+	limit, offset = normalizeExecutionPage(limit, offset)
+	if limit > math.MaxInt32 || offset > math.MaxInt32 {
+		return nil, fmt.Errorf("%w: pagination values are outside int32 bounds", ErrExecutionInvalid)
+	}
+	rows, err := sqlc.New().ExecutionListForAccountStatus(ctx, s.pool, sqlc.ExecutionListForAccountStatusParams{
+		AccountID: mustPgUUID(accountID), Status: string(status), PageLimit: int32(limit), PageOffset: int32(offset),
 	})
 	if err != nil {
 		return nil, mapErr(err)

@@ -85,6 +85,14 @@ func TestPg_InvocationRoundTrip(t *testing.T) {
 	if _, err := s.ClaimInvocation(ctx, inv.ID, "inst-Y", 30); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("re-claim err = %v, want ErrNotFound", err)
 	}
+	// Preserve the diagnostic during a retry, then prove a subsequent
+	// success clears it rather than returning success with a stale error.
+	if err := s.FailInvocation(ctx, inv.ID, "stale ownership error", time.Nanosecond, 0); err != nil {
+		t.Fatalf("FailInvocation(retry): %v", err)
+	}
+	if _, err := s.ClaimInvocation(ctx, inv.ID, "inst-Z", 30); err != nil {
+		t.Fatalf("ClaimInvocation(retry): %v", err)
+	}
 
 	// Complete → state=completed, completed_at stamped.
 	if err := s.CompleteInvocation(ctx, inv.ID, json.RawMessage(`{"status":200}`)); err != nil {
@@ -96,6 +104,9 @@ func TestPg_InvocationRoundTrip(t *testing.T) {
 	}
 	if final.CompletedAt == nil {
 		t.Errorf("post-complete completed_at = nil, want set")
+	}
+	if final.LastError != "" {
+		t.Errorf("post-complete last_error = %q, want cleared", final.LastError)
 	}
 }
 

@@ -40,9 +40,20 @@ var (
 // deliberately together so the scheduler opens one authenticated object and
 // never has to reconcile independently sealed fields.
 type Envelope struct {
-	Version uint16          `json:"version"`
-	Source  string          `json:"source"`
-	Input   json.RawMessage `json:"input"`
+	Version    uint16              `json:"version"`
+	Source     string              `json:"source,omitempty"`
+	Entrypoint string              `json:"entrypoint,omitempty"`
+	Files      []api.ExecutionFile `json:"files,omitempty"`
+	Input      json.RawMessage     `json:"input"`
+}
+
+// DecodedPayload is the authenticated plaintext handed to the scheduler
+// immediately before guest dispatch. Callers must discard it after use.
+type DecodedPayload struct {
+	Source     string
+	Entrypoint string
+	Files      []api.ExecutionFile
+	Input      json.RawMessage
 }
 
 // Validate enforces the same hard limits as the guest protocol before any
@@ -53,9 +64,12 @@ func (e Envelope) Validate() error {
 	if e.Version != CurrentVersion {
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalid, e.Version)
 	}
-	if strings.TrimSpace(e.Source) == "" || strings.ContainsRune(e.Source, '\x00') ||
-		len(e.Source) > api.ExecutionPlaintextFieldMaxBytes {
-		return fmt.Errorf("%w: source is empty or outside hard bounds", ErrInvalid)
+	if strings.TrimSpace(e.Source) != "" {
+		if strings.ContainsRune(e.Source, '\x00') || len(e.Source) > api.ExecutionPlaintextFieldMaxBytes || len(e.Files) != 0 || e.Entrypoint != "" {
+			return fmt.Errorf("%w: source is outside hard bounds or mixed with a bundle", ErrInvalid)
+		}
+	} else if err := api.ValidateExecutionBundle(e.Entrypoint, e.Files, api.ExecutionPlaintextFieldMaxBytes); err != nil {
+		return fmt.Errorf("%w: bundle is invalid: %w", ErrInvalid, err)
 	}
 	if len(e.Input) == 0 || len(e.Input) > api.ExecutionPlaintextFieldMaxBytes || !json.Valid(e.Input) {
 		return fmt.Errorf("%w: input is missing, too large, or invalid JSON", ErrInvalid)
@@ -66,13 +80,25 @@ func (e Envelope) Validate() error {
 // Seal validates and age-encrypts one source/input envelope. The returned
 // ciphertext is suitable for execution_payloads.sealed_payload.
 func Seal(recipient *age.X25519Recipient, source string, input json.RawMessage) ([]byte, error) {
+	return SealRequest(recipient, api.ResolvedExecutionRequest{Source: source, Input: input})
+}
+
+// SealRequest validates and age-encrypts either the legacy source string or a
+// multi-file ephemeral bundle together with its JSON input.
+func SealRequest(recipient *age.X25519Recipient, request api.ResolvedExecutionRequest) ([]byte, error) {
+	if recipient == nil {
+		return nil, fmt.Errorf("%w: recipient is nil", ErrInvalid)
+	}
+	input := request.Input
 	if input == nil {
 		input = json.RawMessage("null")
 	}
 	envelope := Envelope{
-		Version: CurrentVersion,
-		Source:  source,
-		Input:   append(json.RawMessage(nil), input...),
+		Version:    CurrentVersion,
+		Source:     request.Source,
+		Entrypoint: request.Entrypoint,
+		Files:      cloneFiles(request.Files),
+		Input:      append(json.RawMessage(nil), input...),
 	}
 	if err := envelope.Validate(); err != nil {
 		return nil, err
@@ -93,46 +119,67 @@ func Seal(recipient *age.X25519Recipient, source string, input json.RawMessage) 
 // the stamped key id. The returned error intentionally carries no ciphertext,
 // source, input, storage path, or key material.
 func Decode(ctx context.Context, identities []*age.X25519Identity, sealed []byte, kid string) (string, json.RawMessage, error) {
-	if err := ctx.Err(); err != nil {
+	decoded, err := DecodeRequest(ctx, identities, sealed, kid)
+	if err != nil {
 		return "", nil, err
 	}
+	return decoded.Source, decoded.Input, nil
+}
+
+// DecodeRequest opens one ciphertext and returns the authenticated source
+// contract, including an optional file bundle.
+func DecodeRequest(ctx context.Context, identities []*age.X25519Identity, sealed []byte, kid string) (DecodedPayload, error) {
+	if err := ctx.Err(); err != nil {
+		return DecodedPayload{}, err
+	}
 	if len(sealed) == 0 || len(sealed) > api.ExecutionSealedPayloadMaxBytes {
-		return "", nil, ErrInvalid
+		return DecodedPayload{}, ErrInvalid
 	}
 	identity := identityForKID(identities, kid)
 	if identity == nil {
-		return "", nil, ErrKIDMismatch
+		return DecodedPayload{}, ErrKIDMismatch
 	}
 	namespace, plaintext, err := secretbox.OpenBytes(identity, sealed)
 	if err != nil {
 		if opensWithAnotherIdentity(identities, identity, sealed) {
-			return "", nil, ErrKIDMismatch
+			return DecodedPayload{}, ErrKIDMismatch
 		}
-		return "", nil, ErrInvalid
+		return DecodedPayload{}, ErrInvalid
 	}
 	if subtle.ConstantTimeCompare([]byte(namespace), []byte(Namespace)) != 1 {
-		return "", nil, ErrWrongNamespace
+		return DecodedPayload{}, ErrWrongNamespace
 	}
 	if err := ctx.Err(); err != nil {
 		clear(plaintext)
-		return "", nil, err
+		return DecodedPayload{}, err
 	}
 	envelope, err := decodeEnvelope(plaintext)
 	clear(plaintext)
 	if err != nil {
-		return "", nil, err
+		return DecodedPayload{}, err
 	}
-	return envelope.Source, append(json.RawMessage(nil), envelope.Input...), nil
+	return DecodedPayload{
+		Source: envelope.Source, Entrypoint: envelope.Entrypoint,
+		Files: cloneFiles(envelope.Files), Input: append(json.RawMessage(nil), envelope.Input...),
+	}, nil
 }
 
 // NewDecoder adapts Decode to sched.ExecutionPayloadDecoder without making
 // this package depend on scheduler internals. It snapshots the identity slice
 // so callers cannot mutate the key set while a claim is being processed.
-func NewDecoder(identities []*age.X25519Identity) func(context.Context, []byte, string) (string, json.RawMessage, error) {
+func NewDecoder(identities []*age.X25519Identity) func(context.Context, []byte, string) (DecodedPayload, error) {
 	keys := append([]*age.X25519Identity(nil), identities...)
-	return func(ctx context.Context, sealed []byte, kid string) (string, json.RawMessage, error) {
-		return Decode(ctx, keys, sealed, kid)
+	return func(ctx context.Context, sealed []byte, kid string) (DecodedPayload, error) {
+		return DecodeRequest(ctx, keys, sealed, kid)
 	}
+}
+
+func cloneFiles(files []api.ExecutionFile) []api.ExecutionFile {
+	cloned := make([]api.ExecutionFile, len(files))
+	for i, file := range files {
+		cloned[i] = api.ExecutionFile{Path: file.Path, Content: append([]byte(nil), file.Content...)}
+	}
+	return cloned
 }
 
 func identityForKID(identities []*age.X25519Identity, kid string) *age.X25519Identity {
