@@ -130,6 +130,36 @@ grep -Fq 'source "${repo_root}/scripts/ci/native-e2e-verdict.sh"' "${runner}" ||
 # filter now (running all ~330 e2e tests starved the metal ones on the 4-vCPU
 # node), but the filter is generated from the build tag, so it cannot be
 # narrowed to a hand-picked test without failing these checks.
+# Exercise the derivation under the RUNNER's shell options, not this script's.
+# run-native-e2e.sh sets `set -Eeuo pipefail`; without that here, a pipeline
+# whose last element exits non-zero still looks fine. It did look fine — and the
+# gate then died three seconds into a real run with no output, because a
+# metal-tagged file declaring no top-level Test func (fixtures_test.go) made the
+# inner grep exit 1 and pipefail propagated it out of the command substitution.
+#
+# The fixture puts such a file LAST in sort order deliberately: that is the only
+# ordering that reproduces it, and it is the ordering GNU grep produced on the
+# node while the local grep did not.
+probe_root="$(mktemp -d)"
+mkdir -p "${probe_root}/cmd/e2e"
+printf '//go:build metal\n\npackage e2e_test\n\nfunc TestProbeAlpha(t *testing.T) {}\n' \
+  > "${probe_root}/cmd/e2e/a_probe_test.go"
+printf '//go:build metal\n\npackage e2e_test\n\nfunc helperOnly() {}\n' \
+  > "${probe_root}/cmd/e2e/zz_no_tests_test.go"
+probe_out="$(bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  native_e2e_metal_tests "$2"
+' _ "${verdict}" "${probe_root}" 2>&1)" || {
+  rm -rf "${probe_root}"
+  fail "the derivation dies under set -Eeuo pipefail when a metal-tagged file declares no tests"
+}
+[[ "${probe_out}" == "TestProbeAlpha" ]] || {
+  rm -rf "${probe_root}"
+  fail "the derivation returned '${probe_out}', want just TestProbeAlpha"
+}
+rm -rf "${probe_root}"
+
 metal_tests="$(native_e2e_metal_tests "${repo_root}")"
 [[ -n "${metal_tests}" ]] || fail "the derivation found no metal-tagged tests in cmd/e2e"
 metal_count="$(printf '%s\n' "${metal_tests}" | wc -l | tr -d ' ')"

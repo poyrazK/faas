@@ -35,7 +35,14 @@ native_e2e_metal_tests() {
   grep -l '^//go:build metal' "${repo_root}"/cmd/e2e/*_test.go 2>/dev/null |
     while IFS= read -r file; do
       [[ -n "${file}" ]] || continue
-      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${file}"
+      # `|| true` is load-bearing: a metal-tagged file may legitimately declare
+      # no top-level Test func (cmd/e2e/fixtures_test.go is fixtures only), and
+      # grep exits 1 there. The runner sets `set -Eeuo pipefail`, so when such a
+      # file was LAST in the list the while loop's status became the pipeline's
+      # status, the command substitution failed, and the gate died three seconds
+      # in with no output at all. It passed local testing only because that file
+      # sorted elsewhere under a different grep implementation.
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${file}" || true
     done |
     sed -E 's/^func //; s/\($//' |
     sort -u
