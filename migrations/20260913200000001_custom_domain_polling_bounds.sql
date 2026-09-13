@@ -1,3 +1,5 @@
+-- +goose Up
+
 -- Bound legacy custom-domain polling and make due work indexable. Existing
 -- rows are spread over the next hour so a deployment cannot re-query the
 -- entire historical backlog at once.
