@@ -33,10 +33,9 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // Issue #585 / ADR-127 — sealed.env is apid-only; githubd loads the
 // GitHub App credentials (FAAS_GITHUB_APP_ID / CLIENT_ID / CLIENT_SECRET /
 // WEBHOOK_SECRET) from /etc/faas/secrets/githubd/githubd.env (0400
-// root:root). The host.age identity is delivered via LoadCredential=
-// (the env var holds the %d/<name> tmpfs path, mirroring apid). The PEM
-// key file path is set as a literal Environment= entry so the daemon's
-// readKeyPEMDefault finds it on first boot.
+// root:root). Private identities, the public fleet recipient, and the App
+// PEM are delivered via LoadCredential= so User=faas never needs search
+// permission on the root-only /etc/faas/secrets directory.
 func UnitGithubd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:           "onebox-faas githubd — GitHub App integration",
@@ -61,12 +60,17 @@ func UnitGithubd() daemonunit.Unit {
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/githubd/githubd.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
-			{Key: "FAAS_HOST_AGE_PUB", Value: "/etc/faas/secrets/fleet.age.pub"},
-			{Key: "FAAS_GITHUB_APP_KEY_PATH", Value: "/etc/faas/secrets/githubd/app.pem"},
+			{Key: "FAAS_HOST_AGE_PUB", Value: "%d/faas_fleet_age_recipient"},
+			{Key: "FAAS_GITHUB_APP_KEY_PATH", Value: "%d/faas_github_app_key_unit"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
+			{Name: "faas_fleet_age_recipient", Path: "/etc/faas/secrets/fleet.age.pub"},
+			// Keep this credential ID distinct from the legacy Ansible
+			// 90-faas-github-app-key.conf drop-in so upgraded hosts can load
+			// both definitions safely until that compatibility file is retired.
+			{Name: "faas_github_app_key_unit", Path: "/etc/faas/secrets/githubd/app.pem"},
 		},
 
 		NoNewPrivileges:         true,

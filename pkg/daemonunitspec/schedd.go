@@ -84,6 +84,7 @@ func UnitSchedd() daemonunit.Unit {
 		Environment: []daemonunit.KV{
 			{Key: "TMPDIR", Value: "/var/lib/faas/oci-tmp"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/host.age"},
+			{Key: "FAAS_SIGN_PUB", Value: "%d/faas_sign_pub"},
 			// ADR-143: public-beta units enable the runtimes that their API
 			// and CLI advertise. The vmmd JobColdBoot RPC and durable workflow
 			// executor are both wired before the loop starts.
@@ -94,6 +95,7 @@ func UnitSchedd() daemonunit.Unit {
 			{Name: "fleet.age", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
 			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
+			{Name: "faas_sign_pub", Path: "/etc/faas/secrets/sign-pub.pem"},
 		},
 
 		NoNewPrivileges:       true,

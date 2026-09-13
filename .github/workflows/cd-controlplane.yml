@@ -394,6 +394,24 @@ jobs:
           EnvironmentFile=/etc/faas/apid-age-recipients.env
           CREDENTIALS
           chmod 0644 /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf
+
+          install -d -o root -g root -m 0755 /etc/systemd/system/faas-schedd.service.d
+          cat > /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf <<'CREDENTIALS'
+          [Service]
+          LoadCredential=cd_sign_pub:/etc/faas/secrets/sign-pub.pem
+          Environment=FAAS_SIGN_PUB=%d/cd_sign_pub
+          CREDENTIALS
+          chmod 0644 /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf
+
+          install -d -o root -g root -m 0755 /etc/systemd/system/faas-githubd.service.d
+          cat > /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf <<'CREDENTIALS'
+          [Service]
+          LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
+          LoadCredential=cd_github_app_key:/etc/faas/secrets/githubd/app.pem
+          Environment=FAAS_HOST_AGE_PUB=%d/cd_fleet_age_recipient
+          Environment=FAAS_GITHUB_APP_KEY_PATH=%d/cd_github_app_key
+          CREDENTIALS
+          chmod 0644 /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf
           REMOTE
 
       - name: Upload and activate immutable release

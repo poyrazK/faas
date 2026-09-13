@@ -24,10 +24,12 @@ EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=TMPDIR=/var/lib/faas/oci-tmp
 Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/host.age
+Environment=FAAS_SIGN_PUB=%d/faas_sign_pub
 Environment=FAAS_JOBS_DISPATCH=1
 Environment=FAAS_WORKFLOWS_ENABLED=1
 LoadCredential=fleet.age:/etc/faas/secrets/fleet.age
 LoadCredential=host.age:/etc/faas/secrets/host.age
+LoadCredential=faas_sign_pub:/etc/faas/secrets/sign-pub.pem
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

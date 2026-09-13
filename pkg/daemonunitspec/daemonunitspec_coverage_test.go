@@ -212,6 +212,12 @@ func TestUnitSchedd_Shape(t *testing.T) {
 	if !hasOptionalLoadCredential(u, "host.age.previous", "/etc/faas/secrets/host.age.previous") {
 		t.Error("schedd: missing optional host.age.previous LoadCredential")
 	}
+	if !hasEnvironment(u, "FAAS_SIGN_PUB", "%d/faas_sign_pub") {
+		t.Error("schedd: signing public key bypasses the systemd credential directory")
+	}
+	if !hasLoadCredential(u, "faas_sign_pub", "/etc/faas/secrets/sign-pub.pem") {
+		t.Error("schedd: missing signing public key LoadCredential")
+	}
 }
 
 func TestUnitBuilderd_Shape(t *testing.T) {
@@ -294,6 +300,18 @@ func TestUnitGithubd_Shape(t *testing.T) {
 	// home unit, which only breaks siblings; sibling-safe here).
 	if !hasReadWrite(u, "/run/faas") {
 		t.Errorf("githubd: missing ReadWritePaths=/run/faas (githubd.sock home)")
+	}
+	if !hasEnvironment(u, "FAAS_HOST_AGE_PUB", "%d/faas_fleet_age_recipient") {
+		t.Error("githubd: fleet age recipient bypasses the systemd credential directory")
+	}
+	if !hasLoadCredential(u, "faas_fleet_age_recipient", "/etc/faas/secrets/fleet.age.pub") {
+		t.Error("githubd: missing fleet age recipient LoadCredential")
+	}
+	if !hasEnvironment(u, "FAAS_GITHUB_APP_KEY_PATH", "%d/faas_github_app_key_unit") {
+		t.Error("githubd: App private key bypasses the systemd credential directory")
+	}
+	if !hasLoadCredential(u, "faas_github_app_key_unit", "/etc/faas/secrets/githubd/app.pem") {
+		t.Error("githubd: missing App private key LoadCredential")
 	}
 }
 
@@ -425,6 +443,23 @@ func TestRegistry_UnitConstructorsNonNil(t *testing.T) {
 	for _, e := range Registry {
 		if e.Unit == nil {
 			t.Errorf("%s: Unit constructor nil", e.Name)
+		}
+	}
+}
+
+// Control-plane secrets live below a root-owned 0700 directory. systemd can
+// read them before dropping privileges and expose per-service copies through
+// %d, but a non-root daemon cannot traverse the source directory itself.
+func TestUnprivilegedUnits_DoNotReadSecretsDirectoryDirectly(t *testing.T) {
+	for _, entry := range UnitEntries() {
+		u := entry.Unit()
+		if u.User == "" || u.User == "root" {
+			continue
+		}
+		for _, env := range u.Environment {
+			if strings.HasPrefix(env.Value, "/etc/faas/secrets/") {
+				t.Errorf("%s: %s points directly at root-only secrets path %q; use LoadCredential and %%d", entry.Name, env.Key, env.Value)
+			}
 		}
 	}
 }
