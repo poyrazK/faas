@@ -474,7 +474,10 @@ jobs:
           status_valid=0
           for _ in $(seq 1 10); do
             if curl -fsS http://127.0.0.1:8080/status/slo.json -o "$status_body" &&
-              python3 -c 'import json,math,sys; d=json.load(open(sys.argv[1])); values=[d["api_availability_pct"],d["wake_p95_ms"],d["build_success_pct"]]; raise SystemExit(0 if all(isinstance(v,(int,float)) and math.isfinite(v) for v in values) else 1)' "$status_body"; then
+              # An idle window has no wake sample and correctly reports null.
+              # API/build metrics are always required; a reported wake value
+              # must be numeric and finite.
+              python3 -c 'import json,math,sys; d=json.load(open(sys.argv[1])); required=[d["api_availability_pct"],d["build_success_pct"]]; wake=d["wake_p95_ms"]; valid=lambda v:isinstance(v,(int,float)) and math.isfinite(v); raise SystemExit(0 if all(valid(v) for v in required) and (wake is None or valid(wake)) else 1)' "$status_body"; then
               status_valid=1
               break
             fi

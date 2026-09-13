@@ -116,3 +116,14 @@ func TestCDControlPlaneConvergesOutbounddAndPublicBetaBilling(t *testing.T) {
 		t.Fatalf("outboundd prerequisites must converge before deployctl activation: prerequisites=%d deploy=%d", prerequisites, deploy)
 	}
 }
+
+func TestCDControlPlaneAcceptsIdleWakeWindow(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	if !strings.Contains(workflow, "wake is None or valid(wake)") {
+		t.Fatal("control-plane rollout gate must accept wake_p95_ms=null during an idle window")
+	}
+}
