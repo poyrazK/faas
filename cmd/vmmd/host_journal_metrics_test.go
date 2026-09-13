@@ -19,6 +19,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+type hostJournalExitError struct{ code int }
+
+func (e hostJournalExitError) Error() string { return "host journal command exited" }
+func (e hostJournalExitError) ExitCode() int { return e.code }
+
 func TestHostJournalMetricsSample(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -136,6 +141,45 @@ func TestHostJournalMetricsPartialFailureKeepsLastGoodValues(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.journalBytes); got != 512 {
 		t.Errorf("journal bytes = %v, want 512", got)
+	}
+}
+
+func TestHostJournalMetricsTreatsNoGrepMatchesAsZero(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "journalctl" {
+			return nil, hostJournalExitError{code: 1}
+		}
+		return []byte("4096\t" + args[len(args)-1] + "\n"), nil
+	}
+	m := newHostJournalMetrics(reg, run, func() time.Time { return time.Unix(1_725_000_000, 0) })
+	if err := m.sample(context.Background()); err != nil {
+		t.Fatalf("empty successful journal query: %v", err)
+	}
+	if got := testutil.ToFloat64(m.dispatcherErrors); got != 0 {
+		t.Fatalf("dispatcher errors = %v, want 0", got)
+	}
+	if got := testutil.ToFloat64(m.up); got != 1 {
+		t.Fatalf("collector up = %v, want 1", got)
+	}
+}
+
+func TestJournalNoMatchesRejectsRealFailures(t *testing.T) {
+	for name, tc := range map[string]struct {
+		out  []byte
+		err  error
+		want bool
+	}{
+		"empty exit one":        {err: hostJournalExitError{code: 1}, want: true},
+		"diagnostic exit one":   {out: []byte("permission denied"), err: hostJournalExitError{code: 1}},
+		"empty exit two":        {err: hostJournalExitError{code: 2}},
+		"successful empty read": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := journalNoMatches(tc.out, tc.err); got != tc.want {
+				t.Fatalf("journalNoMatches() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

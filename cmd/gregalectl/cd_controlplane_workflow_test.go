@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 )
 
 func TestCDControlPlanePromotesActiveReleaseCLI(t *testing.T) {
@@ -65,5 +67,63 @@ func TestCDControlPlanePromotesVersionedStatusPage(t *testing.T) {
 	}
 	if !(bundle < seal && seal < deploy && deploy < stage && stage < promote) {
 		t.Fatalf("status page must be sealed before deployment and promoted after activation: bundle=%d seal=%d deploy=%d stage=%d promote=%d", bundle, seal, deploy, stage, promote)
+	}
+}
+
+func TestCDControlPlaneBundlesEveryCanonicalControlPlaneDaemon(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	start := strings.Index(workflow, "for unit in")
+	if start < 0 {
+		t.Fatalf("control-plane workflow is missing its bundled unit loop")
+	}
+	end := strings.Index(workflow[start:], "; do")
+	if end < 0 {
+		t.Fatalf("control-plane workflow has an unterminated bundled unit loop")
+	}
+	unitList := workflow[start : start+end]
+	for _, daemon := range daemonunitspec.DaemonsForRole(daemonunitspec.RoleControlPlane) {
+		unit := "faas-" + daemon + ".service"
+		if !strings.Contains(unitList, unit) {
+			t.Errorf("control-plane workflow does not bundle canonical unit %s", unit)
+		}
+	}
+}
+
+func TestCDControlPlaneConvergesOutbounddAndPublicBetaBilling(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	for _, required := range []string{
+		"host-config/outboundd.toml",
+		"FAAS_OUTBOUNDD_ROLE=control-plane",
+		"FAAS_BILLING_MODE=disabled",
+		"/etc/faas/secrets/outboundd/outboundd.env",
+		"faas_map  faas-outboundd  faas",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("control-plane workflow is missing convergence contract %q", required)
+		}
+	}
+	prerequisites := strings.Index(workflow, "outboundd was added after the original")
+	deploy := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	if prerequisites < 0 || deploy < 0 || prerequisites > deploy {
+		t.Fatalf("outboundd prerequisites must converge before deployctl activation: prerequisites=%d deploy=%d", prerequisites, deploy)
+	}
+}
+
+func TestCDControlPlaneAcceptsIdleWakeWindow(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	if !strings.Contains(workflow, "wake is None or valid(wake)") {
+		t.Fatal("control-plane rollout gate must accept wake_p95_ms=null during an idle window")
 	}
 }

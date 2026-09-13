@@ -222,6 +222,7 @@ jobs:
             faas-gatewayd-public.service \
             faas-githubd.service \
             faas-meterd.service \
+            faas-outboundd.service \
             faas-schedd.service; do
             # Look up the unit in the v2 role files/ trees. The role
             # ownership is the source of truth for the CP subset; deployctl
@@ -245,6 +246,27 @@ jobs:
               exit 1
             fi
             install -m 0644 "${src}" "${BUNDLE_ROOT}/systemd/${unit}"
+          done
+          # Files required before deployctl can activate outboundd. Keep the
+          # role/billing overrides inside the signed bundle so the standalone
+          # control-plane path applies the same public-beta posture as Ansible.
+          install -d -m 0755 "${BUNDLE_ROOT}/host-config"
+          install -m 0644 \
+            deploy/ansible/roles/control_plane_service/files/outboundd.toml.example \
+            "${BUNDLE_ROOT}/host-config/outboundd.toml"
+          install -d -m 0755 \
+            "${BUNDLE_ROOT}/systemd/faas-outboundd.service.d" \
+            "${BUNDLE_ROOT}/systemd/faas-apid.service.d" \
+            "${BUNDLE_ROOT}/systemd/faas-meterd.service.d"
+          cat > "${BUNDLE_ROOT}/systemd/faas-outboundd.service.d/99-faas-role.conf" <<'EOF'
+          [Service]
+          Environment=FAAS_OUTBOUNDD_ROLE=control-plane
+          EOF
+          for service in faas-apid faas-meterd; do
+            cat > "${BUNDLE_ROOT}/systemd/${service}.service.d/zz-faas-billing-mode.conf" <<'EOF'
+          [Service]
+          Environment=FAAS_BILLING_MODE=disabled
+          EOF
           done
           # Tier A7 split: faas-gatewayd.service (the v1 monolithic unit)
           # was removed in PR-A (ADR-070). The CD refuses to ship a
@@ -324,6 +346,39 @@ jobs:
             scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -r \
               "${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:${release_dir}/"
           fi
+          # outboundd was added after the original controller-managed host
+          # bootstrap. Converge its least-privilege runtime prerequisites
+          # before deployctl enables the release's authoritative unit set.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} "bash -s -- '${release_dir}'" <<'REMOTE'
+          set -euo pipefail
+          release_dir="$1"
+          getent group faas >/dev/null
+          if ! id faas-outboundd >/dev/null 2>&1; then
+            useradd --system --gid faas --shell /usr/sbin/nologin \
+              --no-create-home faas-outboundd
+          fi
+          if [[ ! -f /etc/faas/outboundd.toml ]]; then
+            install -o root -g faas -m 0640 \
+              "$release_dir/host-config/outboundd.toml" \
+              /etc/faas/outboundd.toml
+          fi
+          install -d -o root -g root -m 0700 /etc/faas/secrets/outboundd
+          outbound_env="$(mktemp /etc/faas/secrets/outboundd/.outboundd.env.XXXXXX)"
+          trap 'rm -f "$outbound_env"' EXIT
+          grep -E '^DATABASE_URL=.+' /etc/faas/sealed.env > "$outbound_env"
+          [[ "$(wc -l < "$outbound_env")" -eq 1 ]]
+          chown root:root "$outbound_env"
+          chmod 0400 "$outbound_env"
+          mv -f "$outbound_env" /etc/faas/secrets/outboundd/outboundd.env
+          trap - EXIT
+
+          ident_file="$(sudo -u postgres psql -X -A -t -c 'show ident_file')"
+          if ! grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
+            printf 'faas_map  faas-outboundd  faas\n' >> "$ident_file"
+            systemctl reload postgresql@16-main.service
+          fi
+          REMOTE
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
             "${release_dir}/bin/deployctl bundle-check ${release_dir} &&
@@ -419,7 +474,10 @@ jobs:
           status_valid=0
           for _ in $(seq 1 10); do
             if curl -fsS http://127.0.0.1:8080/status/slo.json -o "$status_body" &&
-              python3 -c 'import json,math,sys; d=json.load(open(sys.argv[1])); values=[d["api_availability_pct"],d["wake_p95_ms"],d["build_success_pct"]]; raise SystemExit(0 if all(isinstance(v,(int,float)) and math.isfinite(v) for v in values) else 1)' "$status_body"; then
+              # An idle window has no wake sample and correctly reports null.
+              # API/build metrics are always required; a reported wake value
+              # must be numeric and finite.
+              python3 -c 'import json,math,sys; d=json.load(open(sys.argv[1])); required=[d["api_availability_pct"],d["build_success_pct"]]; wake=d["wake_p95_ms"]; valid=lambda v:isinstance(v,(int,float)) and math.isfinite(v); raise SystemExit(0 if all(valid(v) for v in required) and (wake is None or valid(wake)) else 1)' "$status_body"; then
               status_valid=1
               break
             fi

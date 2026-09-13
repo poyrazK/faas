@@ -12,13 +12,15 @@
   ansible.builtin.systemd_service:
     daemon_reload: true
 
-# Reload first so the configured bound governs the newly active file, then
+# Ubuntu 24.04's systemd-journald unit does not implement ExecReload, so
+# `state: reloaded` fails after an otherwise successful first convergence.
+# Restart first so the configured bound governs the newly active file, then
 # rotate and vacuum archived files. The handler fires only when the drop-in
-# changes, so routine converges do not discard journal history.
-- name: reload journald bounds
+# changes, so routine converges do not restart journald.
+- name: restart journald with bounded storage
   ansible.builtin.systemd_service:
     name: systemd-journald
-    state: reloaded
+    state: restarted
   listen: converge bounded journal
 
 - name: rotate journal before enforcing new bound
