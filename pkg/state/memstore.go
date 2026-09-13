@@ -8711,7 +8711,10 @@ func (m *MemStore) ListAllCustomDomainsForDoctor(_ context.Context) ([]string, e
 	defer m.mu.Unlock()
 	seen := make(map[string]struct{})
 	var out []string
-	for d := range m.domains {
+	for d, row := range m.domains {
+		if !row.Verified() {
+			continue
+		}
 		seen[d] = struct{}{}
 		out = append(out, d)
 	}

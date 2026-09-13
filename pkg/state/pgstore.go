@@ -9972,7 +9972,11 @@ func (s *PgStore) ListUnverifiedCustomDomains(ctx context.Context) ([]CustomDoma
 		       coalesce(cert_failed_at, 'epoch'::timestamptz)
 		  from custom_domains
 		 where verified_at is null
-		 order by domain`)
+		   and verification_next_check_at <= now()
+		   and verification_expires_at > now()
+		 order by row_number() over (partition by app_id order by verification_next_check_at, domain),
+		          verification_next_check_at, domain
+		 limit 64`)
 	if err != nil {
 		return nil, err
 	}
@@ -10170,7 +10174,7 @@ func (s *PgStore) GetDoctorObservation(ctx context.Context, domain string) (Doma
 // query's.
 func (s *PgStore) ListAllCustomDomainsForDoctor(ctx context.Context) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT domain FROM custom_domains
+		SELECT domain FROM custom_domains WHERE verified_at IS NOT NULL
 		UNION ALL
 		SELECT hostname FROM tenant_hostnames
 	`)
