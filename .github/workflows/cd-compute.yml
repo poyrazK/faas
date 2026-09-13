@@ -847,7 +847,7 @@ jobs:
           curl --fail --silent --show-error \
             --retry 10 --retry-delay 1 --retry-all-errors \
             --connect-timeout 2 --max-time 3 \
-            --header 'Host: health-probe.invalid' \
+            --header 'Host: gatewayd-internal.faas' \
             "http://${gateway_host}:8080/healthz" >/dev/null
 
       - name: Show post-join identity without exposing secrets

@@ -31,3 +31,18 @@ func TestCDComputeWorkflowRequiresExplicitFleetPreflightSkip(t *testing.T) {
 		t.Fatalf("cd-compute workflow has %d fleet-preflight skip arguments, want exactly 1", got)
 	}
 }
+
+func TestCDComputeWorkflowUsesInfrastructureHealthHost(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatalf("read cd-compute workflow: %v", err)
+	}
+	workflow := string(body)
+
+	if !strings.Contains(workflow, `--header 'Host: gatewayd-internal.faas'`) {
+		t.Fatal("cd-compute private reachability probe must use the gateway infrastructure health host")
+	}
+	if strings.Contains(workflow, `--header 'Host: health-probe.invalid'`) {
+		t.Fatal("cd-compute private reachability probe must not route health checks through the unknown-app path")
+	}
+}
