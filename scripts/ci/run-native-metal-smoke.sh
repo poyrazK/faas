@@ -177,6 +177,10 @@ export FAAS_TEST_FC_VERSION="${fc_version}"
 # the reference-SSD p95 cohort.
 export FAAS_TEST_REFERENCE_SSD=0
 
+# test-metal honours RUN_REGEX as a -run filter. This gate must always run the
+# whole package, so refuse to inherit one from the environment.
+unset RUN_REGEX
+
 # Run the whole pkg/fcvm metal package, not a single boot.
 #
 # TestMetalHelloBoot proved the path works; it is one of 142 metal-tagged
