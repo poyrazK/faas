@@ -83,6 +83,7 @@
     - role: nftables
     - role: overlay
     - role: node_exporter
+    - role: internal_pki_renewal
     - role: canary_artifact_retention
     - role: alertmanager
     - role: prometheus
@@ -137,6 +138,7 @@
     - role: nftables
     - role: overlay
     - role: node_exporter
+    - role: internal_pki_renewal
     - role: canary_artifact_retention
     # Compute-only:
     - role: vmmd_service

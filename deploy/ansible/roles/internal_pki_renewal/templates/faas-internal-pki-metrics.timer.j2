@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh Gregale internal mTLS leaf expiry metrics
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec={{ faas_internal_pki_metrics_interval }}
+RandomizedDelaySec=30s
+Persistent=true
+Unit=faas-internal-pki-metrics.service
+
+[Install]
+WantedBy=timers.target
+

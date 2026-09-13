@@ -1101,6 +1101,8 @@ jobs:
           # ADR-143: the post-activation verify playbook is production
           # tooling (`make verify-fleet`) and must stay parseable.
           ansible-playbook --syntax-check verify.yml
+          # Internal mTLS renewal is a scheduled production entrypoint.
+          ansible-playbook --syntax-check pki_renew.yml
           # Gate-F: the opt-in acceptance playbooks. Neither was parsed by any
           # job, so a syntax error in them would only surface when an operator
           # ran one by hand against a real host.
@@ -1162,6 +1164,8 @@ jobs:
           grep -q 'http://127.0.0.1:9101/v1/internal/metrics/imaged-targets' "$RUNNER_TEMP/prometheus.yml"
           grep -q 'job_name: "builderd"' "$RUNNER_TEMP/prometheus.yml"
           grep -q 'http://127.0.0.1:9101/v1/internal/metrics/builderd-targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'job_name: "node-compute"' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:9101/v1/internal/metrics/node-targets' "$RUNNER_TEMP/prometheus.yml"
           if grep -q 'job_name: "promtail' "$RUNNER_TEMP/prometheus.yml"; then
             echo 'default Prometheus config scrapes Promtail without an enabled Loki transport' >&2
             exit 1

@@ -53,6 +53,7 @@ faas_control_plane_allowed_ports:
   - 50051
   - 8080
   - 9092
+  - 9100
   - 9102
   - 9104
   - 9105

@@ -1,0 +1,29 @@
+name: internal-pki-renewal
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: internal-pki-renewal
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  renew:
+    name: Renew expiring internal mTLS leaves
+    if: github.repository == 'poyrazK/faas'
+    runs-on: [self-hosted, linux, faas-fleet]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run serialized fleet renewal
+        run: >-
+          ansible-playbook
+          -i deploy/ansible/inventory/hosts.ini
+          deploy/ansible/pki_renew.yml
+

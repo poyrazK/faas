@@ -370,11 +370,11 @@ groups:
       - record: faas_compute_metrics_healthy_targets:by_job
         expr: |
           sum by (job) (
-            up{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"}
+            up{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"}
           )
           or on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} * 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} * 0
           )
 
       - record: faas_compute_metrics_scrape_coverage:by_job
@@ -383,22 +383,22 @@ groups:
           /
           on (job)
           clamp_min(
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"},
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"},
             1
           )
 
       - alert: FaasComputeMetricsScrapeCoverageLow
         expr: |
           (
-            faas_compute_metrics_scrape_coverage:by_job{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} < 1
+            faas_compute_metrics_scrape_coverage:by_job{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} < 1
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -413,15 +413,15 @@ groups:
       - alert: FaasComputeMetricsScrapeTargetDown
         expr: |
           (
-            up{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} == 0
+            up{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} == 0
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -436,11 +436,11 @@ groups:
       - alert: FaasComputeMetricsDiscoveryStale
         expr: |
           (
-            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} == 0
+            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} == 0
           )
           or
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} > 120
           )
         for: 5m
         labels:
@@ -455,15 +455,15 @@ groups:
       - alert: FaasComputeMetricsDiscoveryEmpty
         expr: |
           (
-            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
+            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} > 0
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} == 0
+            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} == 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} <= 120
+            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} <= 120
           )
         for: 5m
         labels:
@@ -476,7 +476,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
       - alert: FaasComputeMetricsDiscoveryInvalidTargets
-        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|promtail-compute"} > 0
+        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|promtail-compute"} > 0
         for: 10m
         labels:
           severity: warn
@@ -2939,3 +2939,84 @@ groups:
           summary: "A compute node has too many trusted capacity signing keys"
           description: "Schedd trusts more than the current key and one bounded rotation-overlap key for a compute node. Treat the extra credentials as a capacity-report authentication incident."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeTrustedKeyOverflow.md"
+
+  - name: internal_mtls_lifecycle
+    interval: 1m
+    rules:
+      - alert: FaasInternalMTLSLeafExpiryWarning
+        expr: faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds - time() < 2592000
+        for: 1h
+        labels:
+          severity: warn
+          component: gregalectl
+          family: internal_mtls_lifecycle
+          public_status: internal
+        annotations:
+          summary: "An internal mTLS leaf expires within 30 days"
+          description: "The earliest active internal mTLS leaf for {{ $labels.host }}/{{ $labels.daemon }} expires in less than 30 days. The daily renewal should replace it before the 14-day paging threshold."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+      - alert: FaasInternalMTLSLeafExpiryCritical
+        expr: faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds - time() < 1209600
+        for: 15m
+        labels:
+          severity: page
+          component: gregalectl
+          family: internal_mtls_lifecycle
+          public_status: internal
+        annotations:
+          summary: "An internal mTLS leaf expires within 14 days"
+          description: "The scheduled renewal has not restored a safe validity window for {{ $labels.host }}/{{ $labels.daemon }}. Internal RPCs will fail when the leaf expires."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+      - alert: FaasInternalMTLSExpiryMetricsStale
+        expr: absent(faas_internal_mtls_expiry_metrics_last_success_timestamp_seconds) or time() - faas_internal_mtls_expiry_metrics_last_success_timestamp_seconds > 900
+        for: 15m
+        labels:
+          severity: page
+          component: gregalectl
+          family: internal_mtls_lifecycle
+          public_status: internal
+        annotations:
+          summary: "Internal mTLS expiry metrics are stale"
+          description: "At least one host has stopped publishing a complete read of its actual /etc/faas/tls leaf set. Treat expiry as unknown until the collector succeeds."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+      - alert: FaasInternalMTLSRenewalFailed
+        expr: faas_internal_mtls_renewal_partial == 1 or faas_internal_mtls_renewal_last_failure_timestamp_seconds > faas_internal_mtls_renewal_last_success_timestamp_seconds
+        for: 5m
+        labels:
+          severity: page
+          component: gregalectl
+          family: internal_mtls_lifecycle
+          public_status: internal
+        annotations:
+          summary: "Scheduled internal mTLS renewal failed"
+          description: "The most recent renewal failed on {{ $labels.host }}. A partial value means leaves were installed before a consumer restart or health check failed."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+      - alert: FaasInternalMTLSRenewalNeverCompleted
+        expr: faas_internal_mtls_renewal_last_success_timestamp_seconds == 0 or time() - faas_internal_mtls_renewal_last_success_timestamp_seconds > 90000
+        for: 15m
+        labels:
+          severity: page
+          component: gregalectl
+          family: internal_mtls_lifecycle
+          public_status: internal
+        annotations:
+          summary: "Scheduled internal mTLS renewal is stale"
+          description: "The host has not recorded a successful renewal check within one daily renewal interval. Verify the self-hosted runner and complete fleet inventory."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+      - alert: FaasInternalMTLSComputeMetricsMissing
+        expr: up{job="node-compute"} == 0 or (up{job="node-compute"} == 1 unless on(node) faas_internal_mtls_expiry_metrics_last_success_timestamp_seconds)
+        for: 15m
+        labels:
+          severity: warn
+          component: node-exporter
+          family: internal_mtls_lifecycle
+          public_status: internal
+        annotations:
+          summary: "A compute host stopped exporting internal mTLS expiry metrics"
+          description: "Prometheus cannot scrape node_exporter or cannot find its internal mTLS textfile series on compute host {{ $labels.node }}; certificate expiry is unknown."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"

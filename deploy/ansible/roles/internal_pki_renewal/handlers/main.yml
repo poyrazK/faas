@@ -1,0 +1,4 @@
+---
+- name: reload systemd for internal pki metrics
+  ansible.builtin.systemd:
+    daemon_reload: true

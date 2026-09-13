@@ -99,6 +99,10 @@ type Store interface {
 	// missing row at this step means releaseinstall was skipped,
 	// which is a deploy-order bug.
 	StampHostCertificate(ctx context.Context, name, pem, fingerprint string) error
+	// CompareAndSwapHostCertificate rotates a compute node's attestation only
+	// when the stored fingerprint is the expected old value. Repeating a
+	// completed rotation with the same new fingerprint is idempotent.
+	CompareAndSwapHostCertificate(ctx context.Context, name, expectedFingerprint, pem, fingerprint string) error
 	// BumpComputeNodeGeneration increments the generation column
 	// on the row whose name matches. PR-4 doctor (issue #911 /
 	// ADR-110) calls this when checkSecrets detects a
@@ -117,6 +121,10 @@ var ErrNotFound = errors.New("releaseinstall: bundle not found")
 // from ErrNotFound so callers can distinguish "no bundle row" from
 // "no compute node row" without parsing the message.
 var ErrComputeNodeNotFound = errors.New("releaseinstall: compute node not found")
+
+// ErrCertificateFingerprintConflict means another writer changed the node
+// attestation after the renewal workflow read its old fingerprint.
+var ErrCertificateFingerprintConflict = errors.New("releaseinstall: compute node certificate fingerprint conflict")
 
 // ErrInvalidRole is returned by SetComputeNodeRole when the role
 // argument is not one of the canonical values (issue #911 / ADR-110).
@@ -598,6 +606,42 @@ func (s pgStore) StampHostCertificate(ctx context.Context, name, pem, fingerprin
 		return ErrComputeNodeNotFound
 	}
 	return nil
+}
+
+func (s pgStore) CompareAndSwapHostCertificate(ctx context.Context, name, expectedFingerprint, pem, fingerprint string) error {
+	if name == "" || expectedFingerprint == "" || pem == "" || fingerprint == "" {
+		return fmt.Errorf("releaseinstall: certificate CAS requires name, expected fingerprint, PEM, and new fingerprint")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set host_certificate = $3,
+		       cert_fingerprint = $4,
+		       generation = coalesce(generation, 0) +
+		           case when cert_fingerprint = $4 then 0 else 1 end
+		 where name = $1
+		   and cert_fingerprint in ($2, $4)
+	`, name, expectedFingerprint, pem, fingerprint)
+	if err != nil {
+		return fmt.Errorf("releaseinstall: compare-and-swap host cert: %w", err)
+	}
+	if tag.RowsAffected() != 0 {
+		return nil
+	}
+	var current *string
+	if err := s.pool.QueryRow(ctx, `select cert_fingerprint from compute_nodes where name = $1`, name).Scan(&current); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrComputeNodeNotFound
+		}
+		return fmt.Errorf("releaseinstall: read host cert after CAS miss: %w", err)
+	}
+	return fmt.Errorf("%w: node %q stored=%q expected=%q new=%q", ErrCertificateFingerprintConflict, name, valueOrEmpty(current), expectedFingerprint, fingerprint)
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // BumpComputeNodeGeneration implements Store. Atomic

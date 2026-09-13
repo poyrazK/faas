@@ -290,6 +290,35 @@ func (s *fakeStore) StampHostCertificate(_ context.Context, name, pem, fingerpri
 	return nil
 }
 
+func (s *fakeStore) CompareAndSwapHostCertificate(_ context.Context, name, expectedFingerprint, pem, fingerprint string) error {
+	if name == "" || expectedFingerprint == "" || pem == "" || fingerprint == "" {
+		return errors.New("releaseinstall: certificate CAS requires all fields")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row, ok := s.cnRows[name]
+	if !ok {
+		return ErrComputeNodeNotFound
+	}
+	current := ""
+	if row.CertFingerprint != nil {
+		current = *row.CertFingerprint
+	}
+	if current != expectedFingerprint && current != fingerprint {
+		return ErrCertificateFingerprintConflict
+	}
+	row.HostCertificate = &pem
+	if current != fingerprint {
+		generation := 1
+		if row.Generation != nil {
+			generation = *row.Generation + 1
+		}
+		row.Generation = &generation
+	}
+	row.CertFingerprint = &fingerprint
+	return nil
+}
+
 // BumpComputeNodeGeneration implements Store (PR-4 / Commit 6).
 func (s *fakeStore) BumpComputeNodeGeneration(_ context.Context, name string) (int, error) {
 	if name == "" {
@@ -869,6 +898,35 @@ func TestFakeStore_StampHostCertificate_NotFound(t *testing.T) {
 	err := s.StampHostCertificate(context.Background(), "ghost", "PEM", "fp")
 	if !errors.Is(err, ErrComputeNodeNotFound) {
 		t.Errorf("err = %v, want ErrComputeNodeNotFound", err)
+	}
+}
+
+func TestFakeStore_CompareAndSwapHostCertificate(t *testing.T) {
+	s := newFakeStore()
+	sha := strings.Repeat("c", 40)
+	mh := "sha256:" + strings.Repeat("c", 64)
+	if _, err := s.UpsertComputeNode(context.Background(), "node-1", sha, mh); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StampHostCertificate(context.Background(), "node-1", "PEM-A", "fp-A"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompareAndSwapHostCertificate(context.Background(), "node-1", "wrong", "PEM-B", "fp-B"); !errors.Is(err, ErrCertificateFingerprintConflict) {
+		t.Fatalf("wrong expected fingerprint: %v", err)
+	}
+	if err := s.CompareAndSwapHostCertificate(context.Background(), "node-1", "fp-A", "PEM-B", "fp-B"); err != nil {
+		t.Fatalf("CAS rotate: %v", err)
+	}
+	row, _ := s.GetComputeNode(context.Background(), "node-1")
+	if row.CertFingerprint == nil || *row.CertFingerprint != "fp-B" || row.Generation == nil || *row.Generation != 1 {
+		t.Fatalf("rotated row = %+v", row)
+	}
+	if err := s.CompareAndSwapHostCertificate(context.Background(), "node-1", "fp-A", "PEM-B", "fp-B"); err != nil {
+		t.Fatalf("idempotent CAS replay: %v", err)
+	}
+	row, _ = s.GetComputeNode(context.Background(), "node-1")
+	if row.Generation == nil || *row.Generation != 1 {
+		t.Fatalf("idempotent replay generation = %v, want 1", row.Generation)
 	}
 }
 

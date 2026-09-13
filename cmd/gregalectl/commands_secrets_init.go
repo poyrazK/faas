@@ -256,9 +256,10 @@ func secretsInit(f *secretsInitFlags, stdout io.Writer) error {
 }
 
 type secretsStampFlags struct {
-	dir  string
-	host string
-	dsn  string
+	dir                 string
+	host                string
+	dsn                 string
+	expectedFingerprint string
 }
 
 // cmdSecretsStamp is the non-destructive repair path for an already
@@ -270,6 +271,7 @@ func cmdSecretsStamp(args []string) int {
 	dir := fs.String("dir", defaultSecretsDir, "root secrets directory (default /etc/faas/secrets)")
 	host := fs.String("host", "", "compute_nodes.name to stamp (default: hostname)")
 	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN (default: $FAAS_PG_DSN, $DATABASE_URL, or deploy env file)")
+	expectedFingerprint := fs.String("expected-fingerprint", "", "CAS guard for an internal mTLS attestation rotation")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -277,7 +279,7 @@ func cmdSecretsStamp(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregalectl secrets stamp [flags]", "secrets")
 		return 1
 	}
-	if err := stampExistingHostCertificate(&secretsStampFlags{dir: *dir, host: *host, dsn: *dsn}); err != nil {
+	if err := stampExistingHostCertificate(&secretsStampFlags{dir: *dir, host: *host, dsn: *dsn, expectedFingerprint: *expectedFingerprint}); err != nil {
 		return printErr("stamp failed", err)
 	}
 	hostName := *host
@@ -321,7 +323,11 @@ func stampExistingHostCertificate(f *secretsStampFlags) error {
 	if dsn == "" {
 		return fmt.Errorf("database DSN not set (use --pg-dsn, FAAS_PG_DSN, DATABASE_URL, or a deploy env file)")
 	}
-	if err := writeComputeNodeCert(dsn, host, hostCert, []byte(fingerprint), osStdout); err != nil {
+	if f.expectedFingerprint != "" {
+		if err := writeComputeNodeCertCAS(dsn, host, f.expectedFingerprint, hostCert, fingerprint); err != nil {
+			return err
+		}
+	} else if err := writeComputeNodeCert(dsn, host, hostCert, []byte(fingerprint), osStdout); err != nil {
 		return err
 	}
 	return nil
@@ -530,6 +536,21 @@ func writeComputeNodeCert(dsn, host string, pem, fingerprint []byte, stdout io.W
 	store := releaseinstall.NewStore(pool)
 	if err := store.StampHostCertificate(ctx, host, string(pem), string(fingerprint)); err != nil {
 		return fmt.Errorf("stamp host cert: %w", err)
+	}
+	return nil
+}
+
+func writeComputeNodeCertCAS(dsn, host, expectedFingerprint string, pem []byte, fingerprint string) error {
+	pool, err := openPgPoolFromDSN(dsn)
+	if err != nil {
+		return fmt.Errorf("open pg pool: %w", err)
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	store := releaseinstall.NewStore(pool)
+	if err := store.CompareAndSwapHostCertificate(ctx, host, expectedFingerprint, string(pem), fingerprint); err != nil {
+		return fmt.Errorf("rotate host cert attestation: %w", err)
 	}
 	return nil
 }

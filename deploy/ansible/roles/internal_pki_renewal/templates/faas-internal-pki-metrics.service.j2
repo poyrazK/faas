@@ -1,0 +1,15 @@
+[Unit]
+Description=Export Gregale internal mTLS leaf expiry metrics
+After=node_exporter.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart={{ faas_internal_pki_gregalectl }} pki metrics --root-dir {{ faas_internal_pki_root }} --box-role {{ faas_box_role }} --host {{ faas_node_name }} --renewal-state {{ faas_internal_pki_state_dir }}/status.json --output {{ faas_internal_pki_textfile }}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ faas_internal_pki_state_dir }} /var/lib/node_exporter/textfile_collector
+

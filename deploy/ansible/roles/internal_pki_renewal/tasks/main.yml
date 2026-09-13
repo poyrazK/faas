@@ -1,0 +1,46 @@
+---
+- name: internal_pki_renewal — validate host identity
+  ansible.builtin.assert:
+    that:
+      - faas_box_role in ['control-plane', 'compute-only']
+      - faas_node_name is defined
+      - faas_node_name | length > 0
+
+- name: internal_pki_renewal — create root-only state directory
+  ansible.builtin.file:
+    path: "{{ faas_internal_pki_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: internal_pki_renewal — ensure node exporter textfile directory exists
+  ansible.builtin.file:
+    path: "{{ faas_internal_pki_textfile | dirname }}"
+    state: directory
+    mode: "0755"
+
+- name: internal_pki_renewal — install expiry collector service
+  ansible.builtin.template:
+    src: faas-internal-pki-metrics.service.j2
+    dest: /etc/systemd/system/faas-internal-pki-metrics.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd for internal pki metrics
+
+- name: internal_pki_renewal — install expiry collector timer
+  ansible.builtin.template:
+    src: faas-internal-pki-metrics.timer.j2
+    dest: /etc/systemd/system/faas-internal-pki-metrics.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd for internal pki metrics
+
+- name: internal_pki_renewal — enable expiry collector timer
+  ansible.builtin.systemd:
+    name: faas-internal-pki-metrics.timer
+    enabled: true
+    state: started
+    daemon_reload: true

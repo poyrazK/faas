@@ -218,6 +218,16 @@ func TestPromtailMetricsTargetReusesComputeHost(t *testing.T) {
 	}
 }
 
+func TestNodeMetricsTargetReusesComputeHost(t *testing.T) {
+	got, ok := daemonMetricsTarget("9100")("tcp://fsn-2.gregale.dev:8080")
+	if !ok {
+		t.Fatal("node metrics target rejected a valid compute target")
+	}
+	if got != "fsn-2.gregale.dev:9100" {
+		t.Fatalf("target=%q, want fsn-2.gregale.dev:9100", got)
+	}
+}
+
 func TestPromtailMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 	store := state.NewMemStore()
 	target := "tcp://fsn-2.gregale.dev:8080"
@@ -279,6 +289,7 @@ func TestComputeDaemonMetricsDiscoveryUsesCanonicalPorts(t *testing.T) {
 		{name: "vmmd", path: vmmdMetricsDiscoveryPath, handler: srv.vmmdMetricsDiscovery, want: "192.0.2.2:9104", job: "vmmd"},
 		{name: "imaged", path: imagedMetricsDiscoveryPath, handler: srv.imagedMetricsDiscovery, want: "192.0.2.2:9102", job: "imaged"},
 		{name: "builderd", path: builderdMetricsDiscoveryPath, handler: srv.builderdMetricsDiscovery, want: "192.0.2.2:9105", job: "builderd"},
+		{name: "node", path: nodeMetricsDiscoveryPath, handler: srv.nodeMetricsDiscovery, want: "192.0.2.2:9100", job: "node-compute"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
