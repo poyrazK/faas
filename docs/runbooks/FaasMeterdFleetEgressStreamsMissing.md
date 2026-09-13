@@ -5,6 +5,14 @@ has authenticated gateway usage streams. Customer requests may still succeed;
 the affected gateway keeps unacknowledged request, response-byte, and cold-boot
 frames in `/var/lib/faas/egress-meter/pending.json` until meterd commits them.
 
+## Symptom
+
+`meterd_fleet_egress_expected_streams` is greater than
+`meterd_fleet_egress_connected_streams`, and the alert remains active after the
+normal reconnect window.
+
+## Check
+
 1. Compare `meterd_fleet_egress_expected_streams` with
    `meterd_fleet_egress_connected_streams` and inspect
    `meterd_fleet_egress_failures_total` by `stage`.
@@ -14,6 +22,9 @@ frames in `/var/lib/faas/egress-meter/pending.json` until meterd commits them.
 3. For each active compute node, verify its `gateway_target_url`, TCP reachability
    on port 9092, the `egress.faas` server certificate, and
    `faas-gatewayd-internal.service` readiness.
+
+## Recover
+
 4. Do not delete the compute-local pending file. If it is corrupt, preserve a
    copy for billing reconciliation and take the node out of service before
    repairing it.
