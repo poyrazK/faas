@@ -375,6 +375,25 @@ jobs:
           done
           install -o root -g root -m 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
           install -o root -g root -m 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
+
+          # Keep both the incoming release and an older rollback release able
+          # to read the public recipients while /etc/faas/secrets stays 0700.
+          # This drop-in is host state, so deployctl preserves it across the
+          # release unit install and any rollback.
+          install -d -o root -g root -m 0755 /etc/systemd/system/faas-apid.service.d
+          cat > /etc/faas/apid-age-recipients.env <<'RECIPIENTS'
+          FAAS_FLEET_AGE_RECIPIENT_PATH=/run/credentials/faas-apid.service/cd_fleet_age_recipient
+          FAAS_HOST_AGE_RECIPIENT_PATH=/run/credentials/faas-apid.service/cd_host_age_recipient
+          RECIPIENTS
+          chown root:root /etc/faas/apid-age-recipients.env
+          chmod 0644 /etc/faas/apid-age-recipients.env
+          cat > /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf <<'CREDENTIALS'
+          [Service]
+          LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
+          LoadCredential=cd_host_age_recipient:/etc/faas/secrets/host.age.pub
+          EnvironmentFile=/etc/faas/apid-age-recipients.env
+          CREDENTIALS
+          chmod 0644 /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf
           REMOTE
 
       - name: Upload and activate immutable release

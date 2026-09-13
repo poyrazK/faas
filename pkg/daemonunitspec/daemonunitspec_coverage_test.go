@@ -160,6 +160,18 @@ func TestUnitApid_Shape(t *testing.T) {
 	if !hasLoadCredential(u, "faas_host_hmac_key", "/etc/faas/secrets/host.hmac.key") {
 		t.Error("apid: missing required faas_host_hmac_key LoadCredential")
 	}
+	if !hasEnvironment(u, "FAAS_FLEET_AGE_RECIPIENT_PATH", "%d/faas_fleet_age_recipient") {
+		t.Error("apid: fleet age recipient bypasses the systemd credential directory")
+	}
+	if !hasLoadCredential(u, "faas_fleet_age_recipient", "/etc/faas/secrets/fleet.age.pub") {
+		t.Error("apid: missing required faas_fleet_age_recipient LoadCredential")
+	}
+	if !hasEnvironment(u, "FAAS_HOST_AGE_RECIPIENT_PATH", "%d/faas_host_age_recipient") {
+		t.Error("apid: host age recipient bypasses the systemd credential directory")
+	}
+	if !hasLoadCredential(u, "faas_host_age_recipient", "/etc/faas/secrets/host.age.pub") {
+		t.Error("apid: missing required faas_host_age_recipient LoadCredential")
+	}
 	if !hasEnvironment(u, "FAAS_LOG_ARCHIVE_CREDS_PATH", "%d/faas_archive_creds") {
 		t.Error("apid: missing optional log archive credential-dir environment")
 	}

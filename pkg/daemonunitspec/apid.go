@@ -19,10 +19,13 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // file body, now preserved here:
 //
 //   - apid is the SOLE consumer of faas_session_key, faas_host_age_identity,
-//     and faas_host_hmac_key LoadCredentials (every other control-plane
-//     daemon reads sealed.env but does NOT read these credentials; the
-//     session key, host X25519 private half, and value-hash HMAC key never
-//     enter their environments).
+//     faas_fleet_age_identity, and faas_host_hmac_key LoadCredentials (every
+//     other control-plane daemon reads sealed.env but does NOT read these
+//     credentials; the session key, X25519 private halves, and value-hash
+//     HMAC key never enter their environments). The public recipient files
+//     are credentials too because /etc/faas/secrets is intentionally
+//     root-only; their contents are public, but an unprivileged daemon cannot
+//     traverse that directory directly.
 //   - The rotation-overlap LoadCredential (`:-` flag) on
 //     `faas_host_age_identity_previous` is a no-op pre-rotation but
 //     essential during the 30-day window after `gregale host-age rotate
@@ -72,7 +75,8 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_SESSION_KEY", Value: "%d/faas_session_key"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
 			{Key: "FAAS_FLEET_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
-			{Key: "FAAS_FLEET_AGE_RECIPIENT_PATH", Value: "/etc/faas/secrets/fleet.age.pub"},
+			{Key: "FAAS_FLEET_AGE_RECIPIENT_PATH", Value: "%d/faas_fleet_age_recipient"},
+			{Key: "FAAS_HOST_AGE_RECIPIENT_PATH", Value: "%d/faas_host_age_recipient"},
 			{Key: "FAAS_HOST_HMAC_KEY_PATH", Value: "%d/faas_host_hmac_key"},
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 			{Key: "FAAS_APID_ADVISORY_SOCK", Value: "/run/faas/apid.sock"},
@@ -87,6 +91,8 @@ func UnitApid() daemonunit.Unit {
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 			{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
+			{Name: "faas_fleet_age_recipient", Path: "/etc/faas/secrets/fleet.age.pub"},
+			{Name: "faas_host_age_recipient", Path: "/etc/faas/secrets/host.age.pub"},
 			{Name: "faas_host_hmac_key", Path: "/etc/faas/secrets/host.hmac.key"},
 			{Name: "faas_archive_creds", Path: "/etc/faas/secrets/storage-box/archive-creds.json", Optional: true},
 		},
