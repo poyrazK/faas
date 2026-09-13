@@ -7616,11 +7616,13 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: resolve deployment app: %w", err)
 	}
 
-	// Lock the parent apps row to serialise against concurrent
-	// creates and app teardown, then lock the deployment. This order
-	// matches CreateDeployment and SoftDeleteAppCascade.
+	// Lock the parent apps row to serialise against concurrent creates and app
+	// teardown, then lock the deployment. Retained deployments can outlive a
+	// soft-deleted parent and still need system cancellation, so the lock must
+	// include deleted apps. This order matches CreateDeployment and
+	// SoftDeleteAppCascade.
 	var locked int
-	if err := tx.QueryRow(ctx, `SELECT 1 FROM apps WHERE id = $1 AND status = 'active' FOR UPDATE`, appID).Scan(&locked); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM apps WHERE id = $1 FOR UPDATE`, appID).Scan(&locked); err != nil {
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: lock apps row: %w", err)
 	}
 	if err := tx.QueryRow(ctx, `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`, id).Scan(&status); err != nil {
