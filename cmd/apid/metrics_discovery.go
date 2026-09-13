@@ -15,6 +15,19 @@ const (
 	maxMetricsDiscoveryTargets   = 1000
 )
 
+// metricsDiscoveryHandler is mounted only on apid's loopback metrics server.
+// Keeping these paths out of handler() makes the isolation independent of
+// reverse-proxy path filters and trusted forwarding headers.
+func (s *server) metricsDiscoveryHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+computeMetricsDiscoveryPath, s.computeMetricsDiscovery)
+	mux.HandleFunc("GET "+vmmdMetricsDiscoveryPath, s.vmmdMetricsDiscovery)
+	mux.HandleFunc("GET "+imagedMetricsDiscoveryPath, s.imagedMetricsDiscovery)
+	mux.HandleFunc("GET "+builderdMetricsDiscoveryPath, s.builderdMetricsDiscovery)
+	mux.HandleFunc("GET "+promtailMetricsDiscoveryPath, s.promtailMetricsDiscovery)
+	return mux
+}
+
 // prometheusTargetGroup is the HTTP service-discovery wire shape described by
 // Prometheus. One group is emitted per compute node so a node replacement
 // replaces both its target and its bounded identity labels on the next

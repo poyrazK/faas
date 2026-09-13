@@ -1239,18 +1239,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/auth/sessions/revoke_all", s.auth(s.requireMFA(s.revokeAllSessions)))
 	mux.HandleFunc("GET /v1/auth/csrf", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.issueCSRFToken))))
 
-	// Apps.
-	// Issue #1219: Prometheus refreshes compute gateway targets from the
-	// active control-plane registry. This internal route is loopback-only;
-	// gatewayd-internal rejects the same path before its public /v1 proxy.
-	mux.HandleFunc("GET /v1/internal/metrics/targets", s.computeMetricsDiscovery)
-	mux.HandleFunc("GET /v1/internal/metrics/vmmd-targets", s.vmmdMetricsDiscovery)
-	mux.HandleFunc("GET /v1/internal/metrics/imaged-targets", s.imagedMetricsDiscovery)
-	mux.HandleFunc("GET /v1/internal/metrics/builderd-targets", s.builderdMetricsDiscovery)
-	// Issue #274: Promtail metrics are discovered from the same active
-	// compute-node registry, but use a separate HTTP-SD endpoint so the
-	// gateway and shipper jobs never scrape each other's ports.
-	mux.HandleFunc("GET /v1/internal/metrics/promtail-targets", s.promtailMetricsDiscovery)
+	// Apps. Internal metrics discovery is mounted only on the dedicated
+	// loopback metrics listener; see metricsDiscoveryHandler.
 	mux.HandleFunc("GET /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listApps))))
 	mux.HandleFunc("POST /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createApp))))))
 	// `gregale dev`: one stable, expiring preview app per account/project.
@@ -2960,8 +2950,48 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(mux),
+		s.observeWrap(apiContractHandler(mux)),
 	))
+}
+
+// apiContractHandler replaces net/http's plain-text 404/405 fallbacks for the
+// public API namespace with the platform Problem JSON contract. Browser and
+// static paths outside /v1 keep ServeMux's native behavior.
+func apiContractHandler(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h, pattern := mux.Handler(r)
+		if pattern != "" || !strings.HasPrefix(r.URL.Path, "/v1/") {
+			mux.ServeHTTP(w, r)
+			return
+		}
+
+		probe := &fallbackProbe{header: make(http.Header)}
+		h.ServeHTTP(probe, r)
+		if probe.status == http.StatusMethodNotAllowed {
+			if allow := probe.header.Get("Allow"); allow != "" {
+				w.Header().Set("Allow", allow)
+			}
+			api.WriteProblem(w, api.NewProblem(http.StatusMethodNotAllowed, api.CodeMethodNotAllowed,
+				"Method not allowed", "the requested method is not supported for this API route"))
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+			"Not found", "no such API route"))
+	})
+}
+
+type fallbackProbe struct {
+	header http.Header
+	status int
+}
+
+func (p *fallbackProbe) Header() http.Header    { return p.header }
+func (p *fallbackProbe) WriteHeader(status int) { p.status = status }
+func (p *fallbackProbe) Write(body []byte) (int, error) {
+	if p.status == 0 {
+		p.status = http.StatusOK
+	}
+	return len(body), nil
 }
 
 // observeWrap returns the mux wrapped in an observe middleware that

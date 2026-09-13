@@ -64,11 +64,11 @@ On the control-plane host, verify that apid's internal endpoint is reachable
 from the Prometheus user. The endpoint is deliberately loopback-only:
 
 ```sh
-curl -fsS http://127.0.0.1:8081/v1/internal/metrics/targets
-curl -fsS http://127.0.0.1:8081/v1/internal/metrics/vmmd-targets
-curl -fsS http://127.0.0.1:8081/v1/internal/metrics/imaged-targets
-curl -fsS http://127.0.0.1:8081/v1/internal/metrics/builderd-targets
-curl -fsS http://127.0.0.1:8081/v1/internal/metrics/promtail-targets
+curl -fsS http://127.0.0.1:9101/v1/internal/metrics/targets
+curl -fsS http://127.0.0.1:9101/v1/internal/metrics/vmmd-targets
+curl -fsS http://127.0.0.1:9101/v1/internal/metrics/imaged-targets
+curl -fsS http://127.0.0.1:9101/v1/internal/metrics/builderd-targets
+curl -fsS http://127.0.0.1:9101/v1/internal/metrics/promtail-targets
 ```
 
 If either request returns `503`, inspect apid and PostgreSQL:

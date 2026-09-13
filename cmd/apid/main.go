@@ -1862,6 +1862,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			prometheus.Gatherers{ops.Registry(), budgetReg},
 			promhttp.HandlerOpts{Registry: ops.Registry()},
 		))
+		metricsMux.Handle("/v1/internal/metrics/", srv.metricsDiscoveryHandler())
 		wire.ControlMuxLite(metricsMux, apidProbe.ReadyFunc(), apidProbe.ReasonFunc())
 		metricsSrv = &http.Server{
 			Addr:    metricsAddr,

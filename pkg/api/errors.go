@@ -550,8 +550,9 @@ const (
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
-	CodeForbidden = "insufficient_scope"
-	CodeNotFound  = "not_found"
+	CodeForbidden        = "insufficient_scope"
+	CodeNotFound         = "not_found"
+	CodeMethodNotAllowed = "method_not_allowed"
 	// CodeUndeclaredRoute is returned directly by gatewayd when the
 	// only-declared-routes contract is enabled and the request path/method is
 	// absent from the explicit list or imported OpenAPI document.
