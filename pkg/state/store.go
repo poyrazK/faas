@@ -6183,6 +6183,11 @@ type CustomerEventFilter struct {
 	Limit            int
 }
 
+const (
+	CustomerEventLimitDefault = 50
+	CustomerEventLimitMax     = 100
+)
+
 // CustomerEventLister is implemented by production stores without widening
 // Store for narrow test adapters. Callers must fall back to subject-only reads
 // when the optimized ownership query is unavailable.

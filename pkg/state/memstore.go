@@ -12972,9 +12972,11 @@ func (m *MemStore) ListCustomerEvents(_ context.Context, filter CustomerEventFil
 		return nil, nil
 	}
 	if filter.Limit <= 0 {
-		filter.Limit = 50
+		filter.Limit = CustomerEventLimitDefault
+	} else if filter.Limit > CustomerEventLimitMax {
+		filter.Limit = CustomerEventLimitMax
 	}
-	out := make([]Event, 0, filter.Limit)
+	out := make([]Event, 0, CustomerEventLimitMax)
 	for i := len(m.events) - 1; i >= 0 && len(out) < filter.Limit; i-- {
 		event := m.events[i]
 		ownedSubject := event.Subject != nil && *event.Subject == *subject
@@ -13891,7 +13893,7 @@ func (m *MemStore) RecordInvoiceRefund(_ context.Context, refund InvoiceRefund) 
 	newState := classifyInvoiceRefundStatus(refund.Status)
 	var settledDelta, pendingDelta, creditDelta int64
 	var reverseCredit bool
-	storedRefund := refund
+	var storedRefund InvoiceRefund
 	storedRefundKey := existingKey
 	if existingKey == "" {
 		if newState != invoiceRefundFailed && (paid <= 0 || inv.AmountRefundedCents+inv.AmountRefundPendingCents+refund.AmountCents > paid) {

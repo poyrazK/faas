@@ -8330,7 +8330,6 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	if err != nil {
 		return Deployment{}, err
 	}
-	newDep.ID = uuid.NewString()
 	// Step 4 — INSERT with stage_state seeded to the requested
 	// fromStage. We do not call CreateDeployment because that path
 	// supersedes the prior live row (a retry is independent of
@@ -8821,7 +8820,6 @@ func (s *PgStore) CreatePublicStatusEvent(ctx context.Context, input StatusEvent
 	legacySeverity := legacyStatusSeverity(input.Impact)
 	publicID := uuid.NewString()
 	var inc StatusIncident
-	var dbComponents []string
 	var inserted bool
 	err = tx.QueryRow(ctx, `
 		insert into status_incidents (
@@ -8832,13 +8830,13 @@ func (s *PgStore) CreatePublicStatusEvent(ctx context.Context, input StatusEvent
 		on conflict (create_idempotency_key) do update
 		set create_idempotency_key=excluded.create_idempotency_key
 		returning id,component,severity,message,posted_at,resolved_at,public_id::text,kind,
-		          title,impact,affected_components,lifecycle_state,starts_at,scheduled_start_at,
+		          title,impact,lifecycle_state,starts_at,scheduled_start_at,
 		          scheduled_end_at,updated_at,(xmax = 0)`,
 		legacyComponent, legacySeverity, input.Message, publicID, string(input.Kind), strings.TrimSpace(input.Title),
 		string(input.Impact), components, string(input.State), input.StartsAt, input.ScheduledStartAt,
 		input.ScheduledEndAt, input.IdempotencyKey, input.Actor,
 	).Scan(&inc.ID, &inc.Component, &inc.Severity, &inc.Message, &inc.PostedAt, &inc.ResolvedAt, &inc.PublicID,
-		(*string)(&inc.Kind), &inc.Title, (*string)(&inc.Impact), &dbComponents, (*string)(&inc.State),
+		(*string)(&inc.Kind), &inc.Title, (*string)(&inc.Impact), (*string)(&inc.State),
 		&inc.StartsAt, &inc.ScheduledStartAt, &inc.ScheduledEndAt, &inc.UpdatedAt, &inserted)
 	if err != nil {
 		return StatusIncident{}, err
@@ -8848,7 +8846,6 @@ func (s *PgStore) CreatePublicStatusEvent(ctx context.Context, input StatusEvent
 			return StatusIncident{}, err
 		}
 	}
-	inc.Components = parseComponents(dbComponents)
 	_, err = tx.Exec(ctx, `insert into status_incident_updates(incident_id,lifecycle_state,message,posted_at,actor,idempotency_key)
 		values($1,$2,$3,$4,$5,$6) on conflict(idempotency_key) do nothing`,
 		inc.ID, string(input.State), input.Message, inc.PostedAt, input.Actor, input.IdempotencyKey)
@@ -16448,7 +16445,9 @@ func (s *PgStore) ListEvents(ctx context.Context, subject string, limit int) ([]
 // remain operator-only.
 func (s *PgStore) ListCustomerEvents(ctx context.Context, filter CustomerEventFilter) ([]Event, error) {
 	if filter.Limit <= 0 {
-		filter.Limit = 50
+		filter.Limit = CustomerEventLimitDefault
+	} else if filter.Limit > CustomerEventLimitMax {
+		filter.Limit = CustomerEventLimitMax
 	}
 	var since any
 	if !filter.Since.IsZero() {
@@ -16485,7 +16484,7 @@ func (s *PgStore) ListCustomerEvents(ctx context.Context, filter CustomerEventFi
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]Event, 0, filter.Limit)
+	out := make([]Event, 0, CustomerEventLimitMax)
 	for rows.Next() {
 		var event Event
 		var data []byte
