@@ -124,12 +124,32 @@ remove_bucket_role() {
   return 0
 }
 
+create_monitoring_policy() {
+  local policy_file="$1" channel="$2" attempt
+  if ((apply == 0)); then
+    run gcloud monitoring policies create --project="$project" \
+      --policy-from-file="$policy_file" --notification-channels="$channel"
+    return
+  fi
+  # A log-based metric can take several minutes to become queryable by Cloud
+  # Monitoring after Logging accepted it. Retry the dependent policy create so
+  # a fresh guard run converges without requiring a manual second invocation.
+  for attempt in $(seq 1 30); do
+    if run gcloud monitoring policies create --project="$project" \
+        --policy-from-file="$policy_file" --notification-channels="$channel"; then
+      return 0
+    fi
+    ((attempt == 30)) || sleep 10
+  done
+  return 1
+}
+
 guard_phase() {
   enable_api compute.googleapis.com
   enable_api logging.googleapis.com
   enable_api monitoring.googleapis.com
 
-  local name zone boot
+  local name zone boot boot_auto_delete
   while read -r name zone; do
     [[ -n "$name" && -n "$zone" ]] || continue
     run gcloud compute instances update "$name" --project="$project" --zone="$zone" --deletion-protection --quiet
@@ -138,8 +158,12 @@ guard_phase() {
   zone="$(zone_of "$control")"
   [[ -n "$zone" ]] || { echo "control instance is missing: $control" >&2; return 1; }
   boot="$(disk_of "$control" "$zone")"
-  run gcloud compute instances set-disk-auto-delete "$control" --project="$project" --zone="$zone" \
-    --disk="$boot" --no-auto-delete --quiet
+  boot_auto_delete="$(gcloud compute instances describe "$control" --project="$project" --zone="$zone" \
+    --format='value(disks[0].autoDelete)')"
+  if [[ "$boot_auto_delete" != "False" ]]; then
+    run gcloud compute instances set-disk-auto-delete "$control" --project="$project" --zone="$zone" \
+      --disk="$boot" --no-auto-delete --quiet
+  fi
   if ! exists gcloud compute resource-policies describe gregale-control-daily --project="$project" --region="$region"; then
     run gcloud compute resource-policies create snapshot-schedule gregale-control-daily \
       --project="$project" --region="$region" --daily-schedule --start-time=01:00 \
@@ -161,15 +185,22 @@ guard_phase() {
 
   local channel
   channel="$(gcloud beta monitoring channels list --project="$project" \
-    --filter='displayName="Gregale operator email" AND enabled=true' --format='value(name)' 2>/dev/null | head -1)"
+    --filter='displayName="Gregale operator email"' --format='value(name)' 2>/dev/null | head -1)"
   if [[ -z "$channel" ]]; then
     run gcloud beta monitoring channels create --project="$project" \
       --display-name='Gregale operator email' \
       --description='Primary notification path for Gregale public beta infrastructure alerts' \
       --type=email --channel-labels="email_address=$alert_email" --quiet
     if ((apply)); then
-      channel="$(gcloud beta monitoring channels list --project="$project" \
-        --filter='displayName="Gregale operator email" AND enabled=true' --format='value(name)' 2>/dev/null | head -1)"
+      # Monitoring notification channels are eventually consistent. A
+      # successful create can take several seconds to appear in list output;
+      # wait for it instead of failing an otherwise idempotent guard run.
+      for _ in $(seq 1 12); do
+        channel="$(gcloud beta monitoring channels list --project="$project" \
+          --filter='displayName="Gregale operator email"' --format='value(name)' 2>/dev/null | head -1)"
+        [[ -n "$channel" ]] && break
+        sleep 5
+      done
       [[ -n "$channel" ]] || { echo "created notification channel is not visible" >&2; return 1; }
     else
       channel="projects/$project/notificationChannels/created-during-apply"
@@ -182,9 +213,7 @@ guard_phase() {
   fi
   if ! gcloud monitoring policies list --project="$project" --format='value(displayName)' \
       | grep -Fqx 'Gregale Ops Agent export failures'; then
-    run gcloud monitoring policies create --project="$project" \
-      --policy-from-file="$root/deploy/gcp/ops-agent-export-alert.json" \
-      --notification-channels="$channel"
+    create_monitoring_policy "$root/deploy/gcp/ops-agent-export-alert.json" "$channel"
   fi
 
   local metric alert
@@ -197,9 +226,7 @@ guard_phase() {
   while IFS='|' read -r alert metric; do
     if ! gcloud monitoring policies list --project="$project" --format='value(displayName)' \
         | grep -Fqx "$alert"; then
-      run gcloud monitoring policies create --project="$project" \
-        --policy-from-file="$root/deploy/gcp/${metric}-alert.json" \
-        --notification-channels="$channel"
+      create_monitoring_policy "$root/deploy/gcp/${metric}-alert.json" "$channel"
     fi
   done <<'ALERTS'
 Gregale backup object deletion|backup-object-delete
