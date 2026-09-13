@@ -387,6 +387,13 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		legacyLoaded = legacyErr == nil
 		if legacyErr == nil && !legacy.Verified() {
 			obs.CertState = certStatusPending
+		} else if pointsToG.Status == probeFail {
+			// A definite routing mismatch is already actionable and must not
+			// become a tenant-controlled network probe. Wait for the hostname to
+			// point back to the Gregale edge before opening a TLS connection.
+			obs.CertState = certStatusDialFailed
+			obs.LastError = errCertRoutingMismatch.Error()
+			obs.CertCheckedAt = time.Now().UTC()
 		} else {
 			obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, probeDomain)
 			obs.CertCheckedAt = time.Now().UTC()

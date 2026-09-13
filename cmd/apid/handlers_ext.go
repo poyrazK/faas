@@ -2372,6 +2372,12 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 		return resp, nil
 	}
 	dialDomain, _ := state.WildcardProbeHost(d.Domain)
+	if points := checkPointsToGregale(ctx, dialDomain); points.Status == probeFail {
+		err := fmt.Errorf("%w: %w", errCertFailure, errCertRoutingMismatch)
+		resp.CertStatus = classifyCertError(err)
+		resp.CertLastError = errCertRoutingMismatch.Error()
+		return resp, err
+	}
 	cert, err := dialCert(ctx, dialDomain)
 	if err != nil {
 		resp.CertStatus = classifyCertError(err)
@@ -2397,6 +2403,12 @@ func classifyCertError(err error) string {
 	case errors.Is(err, errCDNCert):
 		return "dial_failed:cdn_cert"
 	case errors.Is(err, errCertFailure):
+		if errors.Is(err, errCertAddressBlocked) {
+			return "dial_failed:address_blocked"
+		}
+		if errors.Is(err, errCertRoutingMismatch) {
+			return "dial_failed:routing_mismatch"
+		}
 		return "dial_failed:" + dialFailureReason(err)
 	case errors.Is(err, context.DeadlineExceeded):
 		return "dial_failed:dial_timeout"

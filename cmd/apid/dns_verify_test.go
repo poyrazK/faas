@@ -274,6 +274,75 @@ func TestDialCert_CtxCancellation(t *testing.T) {
 	}
 }
 
+func TestIsPublicCertAddress(t *testing.T) {
+	t.Parallel()
+	cases := map[string]bool{
+		"8.8.8.8":              true,
+		"2606:4700:4700::1111": true,
+		"127.0.0.1":            false,
+		"10.0.0.1":             false,
+		"169.254.169.254":      false,
+		"192.0.2.1":            false,
+		"198.18.0.1":           false,
+		"::1":                  false,
+		"fd00::1":              false,
+		"fe80::1":              false,
+		"::ffff:127.0.0.1":     false,
+		"2001:db8::1":          false,
+	}
+	for raw, want := range cases {
+		raw, want := raw, want
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+			if got := isPublicCertAddress(net.ParseIP(raw)); got != want {
+				t.Errorf("isPublicCertAddress(%s) = %v, want %v", raw, got, want)
+			}
+		})
+	}
+}
+
+func TestDialCertRejectsMixedPublicPrivateAnswersWithoutDial(t *testing.T) {
+	previousLookup, previousDial := certLookupIPFunc, certDialContextFunc
+	t.Cleanup(func() { certLookupIPFunc, certDialContextFunc = previousLookup, previousDial })
+	certLookupIPFunc = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}, {IP: net.ParseIP("10.0.0.8")}}, nil
+	}
+	dials := 0
+	certDialContextFunc = func(context.Context, string, string) (net.Conn, error) {
+		dials++
+		return nil, errors.New("unexpected dial")
+	}
+
+	_, err := dialCertFunc(context.Background(), "customer.example")
+	if !errors.Is(err, errCertAddressBlocked) {
+		t.Fatalf("error = %v, want errCertAddressBlocked", err)
+	}
+	if dials != 0 {
+		t.Fatalf("dial calls = %d, want 0", dials)
+	}
+}
+
+func TestDialCertPinsApprovedResolutionToNumericAddress(t *testing.T) {
+	previousLookup, previousDial := certLookupIPFunc, certDialContextFunc
+	t.Cleanup(func() { certLookupIPFunc, certDialContextFunc = previousLookup, previousDial })
+	lookups := 0
+	certLookupIPFunc = func(context.Context, string) ([]net.IPAddr, error) {
+		lookups++
+		return []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}, nil
+	}
+	certDialContextFunc = func(_ context.Context, _, address string) (net.Conn, error) {
+		if address != "8.8.8.8:443" {
+			t.Fatalf("dial address = %q, want pinned numeric address", address)
+		}
+		return nil, errors.New("stop after address assertion")
+	}
+
+	_, _ = dialCertFunc(context.Background(), "customer.example")
+	if lookups != 1 {
+		t.Fatalf("DNS lookups = %d, want 1", lookups)
+	}
+}
+
 // fmtErr is a tiny helper so the closure above does not import
 // "fmt" just to wrap an error. Kept local so the test file does
 // not pull new dependencies.
