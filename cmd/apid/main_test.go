@@ -160,6 +160,34 @@ func TestSeedDevAccount_InvalidToken(t *testing.T) {
 	}
 }
 
+func TestRejectProductionDevEnvironment(t *testing.T) {
+	t.Parallel()
+	lookup := func(values map[string]string) func(string) string {
+		return func(name string) string { return values[name] }
+	}
+	if err := rejectProductionDevEnvironment(role.RoleSingleBox, lookup(map[string]string{
+		"FAAS_DEV": "1", "FAAS_DEV_TOKEN": "secret",
+	})); err != nil {
+		t.Fatalf("single-box dev environment rejected: %v", err)
+	}
+	if err := rejectProductionDevEnvironment(role.RoleControlPlane, lookup(nil)); err != nil {
+		t.Fatalf("clean control-plane environment rejected: %v", err)
+	}
+	err := rejectProductionDevEnvironment(role.RoleControlPlane, lookup(map[string]string{
+		"FAAS_DEV": "true", "FAAS_DEV_TOKEN": "do-not-log-this-value",
+	}))
+	if err == nil {
+		t.Fatal("control-plane dev environment accepted")
+	}
+	got := err.Error()
+	if !contains(got, "FAAS_DEV, FAAS_DEV_TOKEN") {
+		t.Fatalf("error %q does not name both rejected variables", got)
+	}
+	if contains(got, "do-not-log-this-value") {
+		t.Fatalf("error leaked credential value: %q", got)
+	}
+}
+
 func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
 	_, _, err := runAppErrorsServer(
 		context.Background(),

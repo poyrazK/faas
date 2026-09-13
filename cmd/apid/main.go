@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -45,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
+	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -98,6 +100,46 @@ func seedDevAccount(ctx context.Context, store state.Store, token string) error 
 		return err
 	}
 	_ = acct // find-or-create confirmed; the row exists either way
+	return nil
+}
+
+// rejectProductionDevEnvironment keeps local bootstrap conveniences out of a
+// control-plane process. The registry filter also catches future dev-only
+// variables owned directly by apid; shared test-only variables are excluded
+// except for the process-wide FAAS_DEV switch.
+func rejectProductionDevEnvironment(boxRole role.Role, getenv func(string) string) error {
+	if boxRole != role.RoleControlPlane {
+		return nil
+	}
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	var configured []string
+	for _, row := range daemonunitspec.EnvContractForDaemon("apid") {
+		if row.Source != daemonunitspec.EnvSourceDevOnly {
+			continue
+		}
+		directOwner := false
+		for _, owner := range row.Owners {
+			if owner == "apid" {
+				directOwner = true
+				break
+			}
+		}
+		if row.Name != "FAAS_DEV" && !directOwner {
+			continue
+		}
+		if _, prefix := strings.CutSuffix(row.Name, "_"); prefix {
+			continue
+		}
+		if strings.TrimSpace(getenv(row.Name)) != "" {
+			configured = append(configured, row.Name)
+		}
+	}
+	if len(configured) > 0 {
+		sort.Strings(configured)
+		return fmt.Errorf("apid: production role forbids dev-only environment variables: %s", strings.Join(configured, ", "))
+	}
 	return nil
 }
 
@@ -533,6 +575,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// dev boots unmoved. The gate still runs before db.Open.
 	if err := role.Require("apid", cfg.Role,
 		role.RoleSingleBox, role.RoleControlPlane); err != nil {
+		return err
+	}
+	if err := rejectProductionDevEnvironment(cfg.Role, deps.getenv); err != nil {
 		return err
 	}
 

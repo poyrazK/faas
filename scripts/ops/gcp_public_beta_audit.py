@@ -34,6 +34,28 @@ def gcloud(*args: str, allow_error: bool = False) -> Any:
         raise RuntimeError(f"{' '.join(command)} returned invalid JSON: {exc}") from exc
 
 
+def inspect_control_plane_dev_env(project: str, instance: dict[str, Any], forbidden: list[str]) -> Any:
+    """Return configured forbidden names from sealed.env without reading values."""
+    name = str(instance.get("name", ""))
+    zone = zone_name(str(instance.get("zone", "")))
+    if not name or not zone:
+        return {"_error": "control-plane instance or zone is unavailable"}
+    pattern = "|".join(forbidden)
+    remote = (
+        "sudo awk -F= '$1 ~ /^(" + pattern + ")$/ {print $1}' "
+        "/etc/faas/sealed.env | LC_ALL=C sort -u"
+    )
+    command = [
+        "gcloud", "compute", "ssh", name, "--zone", zone, "--project", project,
+        "--quiet", "--command", remote,
+    ]
+    proc = subprocess.run(command, text=True, capture_output=True, check=False)
+    if proc.returncode:
+        return {"_error": proc.stderr.strip() or f"exit {proc.returncode}"}
+    allowed = set(forbidden)
+    return sorted({line.strip() for line in proc.stdout.splitlines() if line.strip() in allowed})
+
+
 def collect(policy: dict[str, Any]) -> dict[str, Any]:
     project = policy["project_id"]
     bucket = policy["backup"]["bucket"]
@@ -42,13 +64,21 @@ def collect(policy: dict[str, Any]) -> dict[str, Any]:
     if isinstance(billing, dict):
         billing_account = str(billing.get("billingAccountName", "")).split("/")[-1]
 
+    instances = gcloud("compute", "instances", "list", "--project", project)
+    control = next(
+        (item for item in instances if item.get("name") == policy["control_plane"]["instance"]),
+        {},
+    )
     result = {
         "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "active_accounts": gcloud("auth", "list", "--filter=status:ACTIVE"),
         "project": gcloud("projects", "describe", project),
         "billing_project": billing,
         "project_metadata": gcloud("compute", "project-info", "describe", "--project", project),
-        "instances": gcloud("compute", "instances", "list", "--project", project),
+        "instances": instances,
+        "control_plane_dev_only_env": inspect_control_plane_dev_env(
+            project, control, policy["access"]["forbidden_control_plane_env"]
+        ),
         "disks": gcloud("compute", "disks", "list", "--project", project),
         "firewalls": gcloud("compute", "firewall-rules", "list", "--project", project),
         "project_iam": gcloud("projects", "get-iam-policy", project),
@@ -142,6 +172,15 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
         failures.append("gcloud returned a different project than the policy")
     if not snap.get("billing_project", {}).get("billingEnabled"):
         failures.append("project billing is disabled or cannot be read")
+
+    dev_env = snap.get("control_plane_dev_only_env", {})
+    if isinstance(dev_env, dict) and dev_env.get("_error"):
+        failures.append(f"control-plane dev-only environment cannot be audited: {dev_env['_error']}")
+    elif dev_env:
+        failures.append(
+            "control-plane sealed environment contains forbidden dev-only variables: "
+            + ", ".join(sorted(str(name) for name in dev_env))
+        )
 
     instances = {item.get("name"): item for item in snap.get("instances", [])}
     disks = {item.get("name"): item for item in snap.get("disks", [])}

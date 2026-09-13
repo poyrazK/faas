@@ -59,6 +59,7 @@ def healthy_snapshot() -> dict:
         "active_accounts": [{"account": POLICY["operator_account"], "status": "ACTIVE"}],
         "project": {"projectId": project},
         "billing_project": {"billingEnabled": True, "billingAccountName": "billingAccounts/ABC"},
+        "control_plane_dev_only_env": [],
         "project_metadata": {
             "commonInstanceMetadata": {
                 "items": [
@@ -190,6 +191,21 @@ class AuditTest(unittest.TestCase):
         joined = "\n".join(failures)
         self.assertIn("stopped for 60.0h", joined)
         self.assertIn("public-all exposes", joined)
+
+    def test_dev_only_control_plane_environment_fails_without_values(self) -> None:
+        snap = healthy_snapshot()
+        snap["control_plane_dev_only_env"] = ["FAAS_DEV_TOKEN", "FAAS_DEV"]
+        failures = AUDIT.audit(POLICY, snap)
+        joined = "\n".join(failures)
+        self.assertIn("FAAS_DEV, FAAS_DEV_TOKEN", joined)
+
+    def test_unreadable_control_plane_environment_fails_closed(self) -> None:
+        snap = healthy_snapshot()
+        snap["control_plane_dev_only_env"] = {"_error": "ssh unavailable"}
+        self.assertIn(
+            "control-plane dev-only environment cannot be audited: ssh unavailable",
+            AUDIT.audit(POLICY, snap),
+        )
 
 
 if __name__ == "__main__":

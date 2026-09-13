@@ -718,6 +718,22 @@
     - faas_billing_mode == 'live'
     - (faas_polar_soft_assert.stdout | default('')) != ''
 
+# Issue #2411: control-plane service convergence is a production operation.
+# Reject dev auth/bootstrap names before any unit restart and never print the
+# corresponding values.
+- name: control_plane_service — reject dev-only auth/bootstrap variables
+  ansible.builtin.shell: |
+    set -euo pipefail
+    sealed=/etc/faas/sealed.env
+    test -f "$sealed"
+    if grep -qE '^FAAS_(DEV|DEV_TOKEN)=' "$sealed"; then
+      echo "FAIL: production sealed.env contains a forbidden dev-only auth/bootstrap variable"
+      exit 1
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+
 # Issue #246 / ADR-115 / spec G4 closure — mail transport must
 # be selected (or dev-mode explicit) before the daemon boots in
 # production. The pkg/mail factory refuses to boot on a non-dev
@@ -730,8 +746,7 @@
 # Belt-and-braces: a literal `FAAS_MAIL_TRANSPORT=log` is also
 # asserted here, because the operator almost certainly meant
 # `resend` (or `postmark`) and silently booting with a journal-
-# only sender in production will miss every dunning + quota
-# notice. The dev-mode escape hatch is FAAS_DEV=1.
+# only sender in production will miss every dunning + quota notice.
 - name: control_plane_service — assert FAAS_MAIL_TRANSPORT selected (issue # 246 / ADR-115)
   ansible.builtin.shell: |
     set -euo pipefail
@@ -741,14 +756,6 @@
       exit 1
     fi
     transport="$(grep -E '^FAAS_MAIL_TRANSPORT=' "$sealed" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    dev="$(grep -E '^FAAS_DEV=' "$sealed" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    # PR #1191 fixup: trim + lowercase the FAAS_DEV value before the
-    # literal match so the playbook accepts the same truthy set the
-    # Go side does — pkg/mail.IsDevMode accepts 1/true/yes/on
-    # case-insensitively (devTruthyLiterals). An operator setting
-    # FAAS_DEV=true used to see this playbook FAIL even though the
-    # daemon would have booted. Empty / "0" / unset stay production.
-    dev_norm="$(printf '%s' "${dev:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
     case "$transport" in
       resend|postmark|noop)
         # live transport — credentials are the operator's responsibility.
@@ -757,15 +764,8 @@
         echo "mail transport = $transport (prod)"
         ;;
       log|"")
-        case "$dev_norm" in
-          1|true|yes|on)
-            echo "mail transport = ${transport:-unset} + FAAS_DEV=$dev (dev)"
-            ;;
-          *)
-            echo "FAIL: FAAS_MAIL_TRANSPORT=${transport:-unset} on a non-dev box — apid + meterd will refuse to boot. Set FAAS_MAIL_TRANSPORT=resend (or postmark / noop) or FAAS_DEV=1 (or true/yes/on)."
-            exit 1
-            ;;
-        esac
+        echo "FAIL: FAAS_MAIL_TRANSPORT=${transport:-unset} on a production control plane — apid + meterd will refuse to boot. Set FAAS_MAIL_TRANSPORT=resend (or postmark / noop)."
+        exit 1
         ;;
       *)
         echo "FAIL: FAAS_MAIL_TRANSPORT=$transport is not a known transport (resend|postmark|log|noop). apid will refuse to boot."

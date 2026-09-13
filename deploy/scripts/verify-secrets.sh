@@ -74,6 +74,24 @@ check "sealed.env does NOT contain FAAS_SESSION_KEY" bash -c '
     && ! grep -q "^FAAS_SESSION_KEY=" /etc/faas/sealed.env
 '
 
+# Production dev-bootstrap variables are forbidden even when their values are
+# empty. Match and report names only; credential values must never enter CI,
+# SSH, or operator logs.
+check "sealed.env does NOT contain dev-only auth/bootstrap variables" bash -c '
+  [[ -f /etc/faas/sealed.env ]] \
+    && ! grep -qE "^FAAS_(DEV|DEV_TOKEN)=" /etc/faas/sealed.env
+'
+
+# Report the synthetic-principal shape without reading key hashes. The data
+# migration revokes/suspends historical rows; this check prevents a later
+# operator or restore from silently reintroducing them.
+dev_principal_counts="$(sudo -u postgres psql -X -A -t -F '|' -d faas -c \
+  "select (select count(*) from accounts where email = 'dev@local'), (select count(*) from accounts where email = 'dev@local' and status = 'active'), (select count(*) from api_keys k join accounts a on a.id = k.account_id where a.email = 'dev@local' and k.status in ('active','grace'))" \
+  2>/dev/null || true)"
+IFS='|' read -r dev_accounts dev_active_accounts dev_usable_keys <<< "$dev_principal_counts"
+echo "  dev@local audit: accounts=${dev_accounts:-unknown}, active_accounts=${dev_active_accounts:-unknown}, usable_keys=${dev_usable_keys:-unknown}"
+check "database has no usable dev@local principal" test "${dev_active_accounts:-}|${dev_usable_keys:-}" = "0|0"
+
 # 3. faas-apid's environment carries FAAS_SESSION_KEY (systemd
 #    LoadCredential → Environment= substitution). The shape of the
 #    value (PATH-shaped: starts with /run/credentials/, OR

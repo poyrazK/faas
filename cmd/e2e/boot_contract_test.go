@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -167,6 +168,48 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 		"spans-writer":      spansSocket,
 	} {
 		assertUnixAccepts(t, name, path, &logs)
+	}
+}
+
+// A production-role process must reject the synthetic principal before it
+// opens PostgreSQL or binds an authentication listener. The database assertion
+// proves the rejected token cannot recreate dev@local as a side effect.
+func TestBootContract_APIDProductionRejectsDevPrincipal(t *testing.T) {
+	pool := pgtest.Open(t)
+	if pool == nil {
+		t.Skip("pgtest.Open skipped")
+	}
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate isolated boot-contract schema: %v", err)
+	}
+	token := "faas_" + strings.Repeat("a", 48)
+	procCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	proc := exec.CommandContext(procCtx, apidBinary, "--config", filepath.Join(t.TempDir(), "missing.toml"))
+	proc.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"DATABASE_URL=" + poolDSN(pool),
+		"FAAS_APID_ROLE=control-plane",
+		"FAAS_DEV_TOKEN=" + token,
+	}
+	var logs syncBuffer
+	proc.Stdout = &logs
+	proc.Stderr = &logs
+	err := proc.Run()
+	if err == nil {
+		t.Fatal("production apid accepted FAAS_DEV_TOKEN")
+	}
+	output := logs.String()
+	if !strings.Contains(output, "production role forbids dev-only environment variables: FAAS_DEV_TOKEN") {
+		t.Fatalf("unexpected production rejection:\n%s", output)
+	}
+	if strings.Contains(output, token) {
+		t.Fatal("production rejection logged the token value")
+	}
+	if _, err := state.NewPgStore(pool).AccountByEmail(ctx, "dev@local"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("rejected production boot created dev@local: %v", err)
 	}
 }
 

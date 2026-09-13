@@ -322,6 +322,19 @@ jobs:
             syft version
           '
 
+      - name: Reject production dev bootstrap variables
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" 'bash -se' <<'REMOTE'
+          sealed=/etc/faas/sealed.env
+          test -f "$sealed"
+          if grep -qE '^FAAS_(DEV|DEV_TOKEN)=' "$sealed"; then
+            echo "production sealed.env contains a forbidden dev-only auth/bootstrap variable" >&2
+            exit 1
+          fi
+          REMOTE
+
       - name: Upload and activate immutable release
         run: |
           set -euo pipefail

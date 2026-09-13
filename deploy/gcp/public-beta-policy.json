@@ -19,6 +19,7 @@
   },
   "access": {
     "forbidden_public_tcp_ports": [22, 3389, 8080],
+    "forbidden_control_plane_env": ["FAAS_DEV", "FAAS_DEV_TOKEN"],
     "required_metadata": {
       "enable-oslogin": "TRUE",
       "block-project-ssh-keys": "TRUE"
