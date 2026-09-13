@@ -73,9 +73,6 @@ func ValidObjectStoragePolicy(p api.ObjectStoragePolicy) bool {
 }
 
 func objectKeyHash(key string) string {
-	// codeql[go/weak-sensitive-data-hashing] false-positive: this digest is an
-	// internal object-name equality key for reservation accounting, not a
-	// password verifier or a confidentiality boundary.
 	h := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(h[:])
 }

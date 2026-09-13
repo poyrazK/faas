@@ -304,11 +304,9 @@ func (a *Auditor) emit(ctx context.Context, actor, kind string, accountID *strin
 		}
 	}
 	if err != nil {
-		// codeql[go/log-injection] false-positive: logsanitize.Field strips
-		// control characters from every caller-provided string before logging.
 		a.log.Warn("audit: append event",
-			"actor", logsanitize.Field(actor), "kind", logsanitize.Field(kind),
-			"subject", logsanitize.Field(subjectStr), "err", err)
+			"actor", logsanitize.HashShort(actor), "kind", metricKind,
+			"subject", logsanitize.HashShort(subjectStr), "error_class", errorClassFromErr(err))
 		if a.ops != nil {
 			a.ops.AuditWriteFailures(subjectStr).Inc()
 			a.ops.AuditLogWriteFailuresTotal(endpoint, metricKind, errorClassFromErr(err)).Inc()

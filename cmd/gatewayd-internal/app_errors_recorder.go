@@ -396,9 +396,6 @@ func (r *appErrorsRecorder) drainBatch(maxRows int) []appErrorRow {
 // cardinality).
 func deriveFingerprint(route string, status int, class string) string {
 	canonical := fmt.Sprintf("%s\x1f%d\x1f%s", route, status, class)
-	// codeql[go/weak-sensitive-data-hashing] false-positive: this is a
-	// collision-resistant grouping fingerprint for route/status/class, not a
-	// password verifier or protection for secret data.
 	sum := sha256.Sum256([]byte(canonical))
 	return hex.EncodeToString(sum[:])
 }
