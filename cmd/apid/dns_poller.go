@@ -186,6 +186,20 @@ func (s *server) pendingUnverifiedDomains(ctx context.Context) ([]pendingDomainR
 	// Fast path: PgStore and MemStore expose the full row through this
 	// optional interface. Keeping it optional preserves compatibility with
 	// narrow test doubles that only implement the historical Store surface.
+	type claimer interface {
+		ClaimCustomDomainsForVerification(context.Context, int) ([]state.CustomDomain, error)
+	}
+	if c, ok := s.store.(claimer); ok {
+		domains, err := c.ClaimCustomDomainsForVerification(ctx, 64)
+		if err != nil {
+			return nil, err
+		}
+		out = make([]pendingDomainRow, 0, len(domains))
+		for _, d := range domains {
+			out = append(out, pendingDomainRow{Domain: d.Domain, ChallengeToken: d.ChallengeToken, CertStatus: d.CertStatus})
+		}
+		return out, nil
+	}
 	type listUnverified interface {
 		ListUnverifiedCustomDomains(ctx context.Context) ([]state.CustomDomain, error)
 	}

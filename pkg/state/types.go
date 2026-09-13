@@ -2359,7 +2359,10 @@ type CustomDomain struct {
 	// CertFailureEmailAt is the in-memory mirror of the durable 24-hour
 	// notification cooldown. PgStore keeps this value in its column and does
 	// not need to expose it on customer-facing domain responses.
-	CertFailureEmailAt time.Time
+	CertFailureEmailAt      time.Time
+	VerificationNextCheckAt time.Time
+	VerificationExpiresAt   time.Time
+	VerificationAttempts    int
 }
 
 // Verified reports whether the TXT challenge has been satisfied.

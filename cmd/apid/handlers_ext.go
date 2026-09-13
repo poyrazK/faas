@@ -2188,8 +2188,21 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		}
 	}
 	token := randomToken(16)
-	d, err := s.store.CreateCustomDomain(r.Context(), domain, app.ID, token)
+	perApp, perAccount, _ := api.CustomDomainLimitsFor(acct.Plan)
+	type quotaCreator interface {
+		CreateCustomDomainIfUnderQuota(context.Context, string, string, string, int, int) (state.CustomDomain, error)
+	}
+	creator, ok := s.store.(quotaCreator)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("domain quota enforcement unavailable"))
+		return
+	}
+	d, err := creator.CreateCustomDomainIfUnderQuota(r.Context(), domain, app.ID, token, perApp, perAccount)
 	if err != nil {
+		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
+			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
+			return
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 			"Domain taken", err.Error()))
 		return
@@ -2210,6 +2223,31 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		"domain": d.Domain,
 	})
 	writeJSON(w, http.StatusAccepted, domainResponse(d))
+}
+
+func (s *server) retryDomainVerification(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	domain := strings.ToLower(strings.TrimSpace(r.PathValue("domain")))
+	d, err := s.store.DomainByName(r.Context(), domain)
+	if err != nil {
+		s.notFound(w, "no such domain")
+		return
+	}
+	app, err := s.store.AppByID(r.Context(), d.AppID)
+	if err != nil || app.AccountID != acct.ID {
+		s.notFound(w, "no such domain")
+		return
+	}
+	type retrier interface {
+		RetryCustomDomainVerification(context.Context, string) error
+	}
+	if x, ok := s.store.(retrier); !ok {
+		api.WriteProblem(w, api.ErrCapacity("domain retry unavailable"))
+		return
+	} else if err := x.RetryCustomDomainVerification(r.Context(), domain); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain cannot be retried", err.Error()))
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // wildcardTenantSurfaceOverlap checks the non-deleted tenant-surface hostname

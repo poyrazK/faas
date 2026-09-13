@@ -105,6 +105,22 @@ type StreamingStatus string
 // and for deterministic tests — do not reorder.
 var Plans = []Plan{PlanFree, PlanHobby, PlanPro, PlanScale}
 
+// CustomDomainLimitsFor is the canonical pending-domain abuse budget.
+func CustomDomainLimitsFor(p Plan) (perApp, perAccount int, ok bool) {
+	switch p {
+	case PlanFree:
+		return 2, 5, true
+	case PlanHobby:
+		return 5, 20, true
+	case PlanPro:
+		return 20, 100, true
+	case PlanScale:
+		return 100, 500, true
+	default:
+		return 0, 0, false
+	}
+}
+
 // PlanResourceShape is the canonical RAM/vCPU pair advertised for a plan.
 // Guest vCPU topology is plan-derived in v1 (ADR-014 and ADR-152); it is not
 // a persisted per-app override. RAM can still be selected below the plan cap

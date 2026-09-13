@@ -1868,7 +1868,7 @@ groups:
         # customers see "Last check Xm ago" indefinitely on
         # the dashboard and the `gregale domains doctor`
         # command returns stale rows — page.
-        expr: time() - timestamp(apid_domain_doctor_oldest_observation_seconds) > 1560
+        expr: absent(apid_domain_doctor_oldest_observation_seconds) or time() - timestamp(apid_domain_doctor_oldest_observation_seconds) > 1560
         for: 30m
         labels:
           severity: page
