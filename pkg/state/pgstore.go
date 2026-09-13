@@ -2585,7 +2585,9 @@ func (s *PgStore) ListInstancesByNodeID(ctx context.Context, nodeID string) ([]I
 		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
 		   from instances i
 		   join apps a on a.id = i.app_id
-		  where a.node_id = $1`
+		  where a.node_id = $1
+		    and a.status <> 'deleted'
+		    and c.enabled = true`
 	rows, err := s.pool.Query(ctx, sel, nodeID)
 	if err != nil {
 		return nil, err
@@ -3970,6 +3972,13 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 		 where app_id = $1
 		   and status in ('pending', 'building', 'imaging', 'snapshotting')`, id, now); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app cancel deployments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update crons
+		   set enabled = false
+		 where app_id = $1
+		   and enabled = true`, id); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app disable crons: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		with candidates as (

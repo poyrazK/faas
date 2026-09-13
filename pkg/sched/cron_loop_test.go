@@ -133,6 +133,15 @@ type recordingSynth struct {
 	inv   atomic.Value // last persisted invocation delivered
 }
 
+type claimLosingStore struct{ state.Store }
+
+func (s claimLosingStore) ClaimInvocation(ctx context.Context, id, instanceID string, leaseSeconds int) (state.Invocation, error) {
+	if _, err := s.Store.ClaimInvocation(ctx, id, instanceID, leaseSeconds); err != nil {
+		return state.Invocation{}, err
+	}
+	return state.Invocation{}, state.ErrNotFound
+}
+
 func (r *recordingSynth) SynthesizeRequest(_ context.Context, appID, _, path string) error {
 	r.calls.Add(1)
 	r.last.Store(struct{ AppID, Path string }{AppID: appID, Path: path})
@@ -398,6 +407,62 @@ func TestCronDispatch_DisabledSkipped(t *testing.T) {
 	}
 	if len(enabled) != 0 {
 		t.Fatalf("expected zero enabled crons in fresh store, got %d", len(enabled))
+	}
+}
+
+func TestCronDispatch_ClaimLostHandsOffWithoutDuplicateInvoke(t *testing.T) {
+	t.Parallel()
+	base := state.NewMemStore()
+	store := claimLosingStore{Store: base}
+	ctx := context.Background()
+	acct, _ := store.CreateAccount(ctx, "claim-race@example.com", api.PlanHobby)
+	_, cron := newAppAndCron(t, store, acct.ID, true)
+	vmm := &fakeWakeVMM{}
+	eng, _ := makeEngine(t, store, vmm)
+	synth := &recordingSynth{}
+	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
+
+	run, admitted := loop.dispatchCronLocked(ctx, cron, time.Now().UTC(), TriggerSchedule)
+
+	if !admitted || run.InvocationID == "" {
+		t.Fatalf("dispatch result = %+v, admitted=%v; want durable handoff", run, admitted)
+	}
+	if got := synth.calls.Load(); got != 0 {
+		t.Fatalf("gateway calls = %d, want 0 after drain won the claim", got)
+	}
+	inv, err := base.InvocationByID(ctx, run.InvocationID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	if inv.State != state.InvocationDispatching {
+		t.Fatalf("invocation state = %q, want dispatching under drain ownership", inv.State)
+	}
+}
+
+func TestCronDispatch_OwnerlessSchedulerSkipsRemoteApp(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, _ := store.CreateAccount(ctx, "remote-cron@example.com", api.PlanHobby)
+	app, _ := newAppAndCron(t, store, acct.ID, true)
+	if err := store.SetAppNodeID(ctx, app.ID, "remote-node"); err != nil {
+		t.Fatalf("SetAppNodeID: %v", err)
+	}
+	vmm := &fakeWakeVMM{}
+	eng, _ := makeEngine(t, store, vmm)
+	synth := &recordingSynth{}
+	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
+	loop.now = func() time.Time {
+		return time.Date(2026, 7, 17, 12, 2, 0, 0, time.UTC)
+	}
+
+	loop.runCronTick(ctx)
+
+	if got := vmm.calls.Load(); got != 0 {
+		t.Fatalf("wake calls = %d, want 0 for remote-owned app", got)
+	}
+	if got := synth.calls.Load(); got != 0 {
+		t.Fatalf("gateway calls = %d, want 0 for remote-owned app", got)
 	}
 }
 

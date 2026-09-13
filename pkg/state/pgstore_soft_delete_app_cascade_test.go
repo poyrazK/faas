@@ -26,6 +26,10 @@ import (
 func TestPg_SoftDeleteAppCascade_UpdatesStatus(t *testing.T) {
 	s, ctx := pgStore(t)
 	_, appID, _ := seedLiveDeploy(t, s, ctx)
+	cron, err := s.CreateCron(ctx, appID, "*/5 * * * *", "/healthz", true)
+	if err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
 
 	deleted, err := s.SoftDeleteAppCascade(ctx, appID)
 	if err != nil {
@@ -46,6 +50,13 @@ func TestPg_SoftDeleteAppCascade_UpdatesStatus(t *testing.T) {
 	}
 	if got.Status != state.AppDeleted {
 		t.Errorf("status persisted: got %q, want %q", got.Status, state.AppDeleted)
+	}
+	gotCron, err := s.CronByID(ctx, cron.ID)
+	if err != nil {
+		t.Fatalf("CronByID post-soft-delete: %v", err)
+	}
+	if gotCron.Enabled {
+		t.Error("cron still enabled after app soft-delete")
 	}
 }
 

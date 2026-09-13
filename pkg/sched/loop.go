@@ -3124,6 +3124,14 @@ func (l *Loop) runCronTick(ctx context.Context) {
 	}
 	now := l.now()
 	for _, c := range crons {
+		app, appErr := store.AppByID(ctx, c.AppID)
+		if appErr != nil {
+			l.log.Warn("cron: resolve owner", "cron_id", c.ID, "app_id", c.AppID, "err", appErr)
+			continue
+		}
+		if !l.engine.ownsApp(app) {
+			continue
+		}
 		l.dispatchOneCron(ctx, c, now)
 	}
 }
@@ -3181,6 +3189,11 @@ type CronRun struct {
 }
 
 func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time) {
+	// Store queries filter disabled rows, but keep the guard at the
+	// dispatch boundary so a stale row can never fire after disable/delete.
+	if !c.Enabled {
+		return
+	}
 	sched, err := ParseScheduleWithTimezone(c.Schedule, c.Timezone)
 	if err != nil {
 		l.log.Warn("cron: bad schedule", "cron_id", c.ID, "err", err)
@@ -3378,7 +3391,10 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	// the drain's next tick (which filters state='pending').
 	if enq.ID != "" {
 		if _, err := l.engine.Store().ClaimInvocation(ctx, enq.ID, "", 60); err != nil {
-			l.log.Warn("cron: claim invocation", "cron_id", c.ID, "err", err)
+			// The general drain won pending -> dispatching. It now owns
+			// delivery, so invoking from this path would duplicate the fire.
+			l.log.Debug("cron: invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID, "err", err)
+			return CronRun{InvocationID: enq.ID}, true
 		}
 	}
 	if l.gateway != nil {

@@ -3760,7 +3760,8 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 	}
 	var out []Cron
 	for _, c := range m.crons {
-		if owner[c.AppID] == nodeID {
+		app, ok := m.apps[c.AppID]
+		if ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled {
 			out = append(out, c)
 		}
 	}
@@ -4881,6 +4882,12 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	}
 	a.Status = AppDeleted
 	m.apps[id] = a
+	for cronID, cron := range m.crons {
+		if cron.AppID == id && cron.Enabled {
+			cron.Enabled = false
+			m.crons[cronID] = cron
+		}
+	}
 	now := time.Now().UTC()
 	for deploymentID, d := range m.deployments {
 		if d.AppID != id || !d.Status.IsCancelEligible() {

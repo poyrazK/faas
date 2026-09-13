@@ -141,6 +141,13 @@ func TestMemStore_ListOwnedCronsByNodeID(t *testing.T) {
 	if len(got) != 2 {
 		t.Errorf("ListOwnedCronsByNodeID(node-fsn-2) = %d, want 2 (unplaced owner dropped)", len(got))
 	}
+	disabled := false
+	if _, err := m.UpdateCron(ctx, got[0].ID, nil, nil, &disabled, nil); err != nil {
+		t.Fatalf("disable cron: %v", err)
+	}
+	if got, err := m.ListOwnedCronsByNodeID(ctx, "node-fsn-2"); err != nil || len(got) != 1 {
+		t.Fatalf("ListOwnedCronsByNodeID after disable = %+v, %v; want one", got, err)
+	}
 
 	if got, err := m.ListOwnedCronsByNodeID(ctx, "node-empty"); err != nil || len(got) != 0 {
 		t.Errorf("ListOwnedCronsByNodeID(node-empty) = %+v, %v; want empty", got, err)
