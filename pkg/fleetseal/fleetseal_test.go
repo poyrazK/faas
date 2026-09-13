@@ -105,6 +105,32 @@ func TestVerifyRejectsHostIdentityEqualToFleet(t *testing.T) {
 	}
 }
 
+func TestMigrateNormalizesLegacyNamespaceAlreadySealedToFleet(t *testing.T) {
+	fleet, _ := age.GenerateX25519Identity()
+	host, _ := age.GenerateX25519Identity()
+	privatePEM, publicPEM, kid := signingKey(t)
+	clusterBlob, err := secretbox.SealBytes(fleet.Recipient(), "cluster_svc", privatePEM, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{cluster: state.ClusterSigningKey{
+		ID:           1,
+		KeyID:        kid,
+		PublicKeyPEM: string(publicPEM),
+		SealedBlob:   clusterBlob,
+	}}
+	if _, err := Migrate(context.Background(), store, fleet, nil); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := Verify(context.Background(), store, fleet, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verified.Ready || !verified.ProbeOK || !verified.JWTRoundTripOK {
+		t.Fatalf("unexpected verification report: %+v", verified)
+	}
+}
+
 func signingKey(t *testing.T) ([]byte, []byte, string) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)

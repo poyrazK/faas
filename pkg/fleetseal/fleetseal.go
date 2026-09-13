@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	ProbeNamespace = "app_secret"
-	ProbeKey       = "GREGALE_FLEET_SEAL_PROBE"
-	ProbeValue     = "gregale-fleet-seal-domain-v1"
-	maxProbeBytes  = 256
+	ProbeNamespace          = "app_secret"
+	ProbeKey                = "GREGALE_FLEET_SEAL_PROBE"
+	ProbeValue              = "gregale-fleet-seal-domain-v1"
+	clusterSigningNamespace = "internal_svc"
+	maxProbeBytes           = 256
 )
 
 type Store interface {
@@ -68,14 +69,19 @@ func Migrate(ctx context.Context, store Store, fleet *age.X25519Identity, legacy
 		return report, fmt.Errorf("fleetseal: load cluster key: %w", err)
 	}
 	report.ClusterKID = cluster.KeyID
-	if _, plaintext, fleetErr := secretbox.OpenBytes(fleet, cluster.SealedBlob); fleetErr == nil {
+	ns, plaintext, fleetErr := secretbox.OpenBytes(fleet, cluster.SealedBlob)
+	if fleetErr == nil && ns == clusterSigningNamespace {
 		zero(plaintext)
 	} else {
-		ns, plaintext, openErr := secretbox.OpenBytesMulti(openers, cluster.SealedBlob)
-		if openErr != nil {
-			return report, fmt.Errorf("fleetseal: cluster key cannot be opened by fleet or legacy identities: %w", openErr)
+		if fleetErr != nil {
+			var openErr error
+			ns, plaintext, openErr = secretbox.OpenBytesMulti(openers, cluster.SealedBlob)
+			_ = ns // legacy namespaces are normalized below.
+			if openErr != nil {
+				return report, fmt.Errorf("fleetseal: cluster key cannot be opened by fleet or legacy identities: %w", openErr)
+			}
 		}
-		sealed, sealErr := secretbox.SealBytes(recipient, ns, plaintext, len(plaintext)+1)
+		sealed, sealErr := secretbox.SealBytes(recipient, clusterSigningNamespace, plaintext, len(plaintext)+1)
 		zero(plaintext)
 		if sealErr != nil {
 			return report, fmt.Errorf("fleetseal: reseal cluster key: %w", sealErr)
@@ -184,9 +190,9 @@ func Verify(ctx context.Context, store Store, fleet, host *age.X25519Identity) (
 	if err != nil {
 		return report, fmt.Errorf("fleetseal: cluster signing key is not sealed to fleet identity: %w", err)
 	}
-	if ns != "internal_svc" {
+	if ns != clusterSigningNamespace {
 		zero(plaintext)
-		return report, fmt.Errorf("fleetseal: cluster signing namespace %q, want internal_svc", ns)
+		return report, fmt.Errorf("fleetseal: cluster signing namespace %q, want %s", ns, clusterSigningNamespace)
 	}
 	priv, pub, err := parseAndMatchClusterKey(plaintext, cluster.PublicKeyPEM, cluster.KeyID)
 	zero(plaintext)
