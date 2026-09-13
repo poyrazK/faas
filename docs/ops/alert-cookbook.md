@@ -61,6 +61,7 @@ When you receive a page:
 | `snapshot_fleet` | page | [`FaasSnapshotFleetHigh.md`](FaasSnapshotFleetHigh.md) | None — fleet-wide storage pressure is always actionable. |
 | `lv_fc` | warn | [`FaasLvFcUsageHigh.md`](FaasLvFcUsageHigh.md) | Snapshot retention prune lag; check `imaged_prune_lag_seconds`. |
 | `build_queue` | page | [`FaasBuildQueueBacklog.md`](FaasBuildQueueBacklog.md) | Builder slot gate tripping on a single customer's burst; rule out by checking the per-account queued count. |
+| `build_export` | warn | [`FaasBuildExportRetention.md`](../runbooks/FaasBuildExportRetention.md) | A short imaged restart can leave active handoffs above the byte cap; they should drain within one sweep after imaged recovers. |
 | `wake_latency` | page | [`FaasWakeLatencyHigh.md`](FaasWakeLatencyHigh.md) | Single instance wedged (liveness probe will catch it). |
 | `cold_boot` | page | [`FaasColdBootFallbackHigh.md`](FaasColdBootFallbackHigh.md) | FC version upgrade mid-rollout (transient); check `fc_version` label. |
 | `cold_boot_ratio` | warn | [`FaasColdBootRatioHigh.md`](FaasColdBootRatioHigh.md) | High churn customer (CI/CD); check per-account breakdown. |

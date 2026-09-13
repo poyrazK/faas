@@ -94,9 +94,12 @@ type BuildHandle struct {
 // or a marked-failed build row on failure. Named BuildOutcome to avoid
 // clashing with the orchestrator's BuildResult (whole-ProcessOne return).
 type BuildOutcome struct {
-	BuildID      string // echoes handle.BuildID
-	InstanceID   string // echoes handle.Instance
-	ExportDir    string // host dir the artifacts live in (caller may rm)
+	BuildID    string // echoes handle.BuildID
+	InstanceID string // echoes handle.Instance
+	// ExportDir is the node-local handoff directory. imaged leases image.tar
+	// while publishing; BuildExportSweepLoop removes it after the durable
+	// deployment reference is released or the bounded recovery window expires.
+	ExportDir    string
 	OCIImage     string // absolute path to the produced OCI tarball
 	LogTailBytes int64  // bytes guest-init wrote to build-done.json's `log_tail`
 	LogTail      string // bounded guest/Railpack output recovered from build-done.json

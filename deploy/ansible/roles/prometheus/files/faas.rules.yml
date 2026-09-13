@@ -2305,6 +2305,36 @@ groups:
           description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd's default concurrency of 2 microVMs (1 guaranteed + 1 opportunistic per ADR-003), sustained depth > 50 means builds are arriving faster than builderd can drain the queue. Triage: `gregalectl builds list --status=queued` for the in-flight builds, `/v1/admin/obs/builder-heartbeats` for live builderd liveness (a missing builder_tick signature means the writer is wedged), `gregalectl builds sweep-stuck --older-than=15m --yes` to reclaim the wedged 'running' rows. Recover per docs/ops/FaasBuildQueueBacklog.md."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
+      # Issue #2418: builder VM exports are node-local, transient handoffs.
+      # builderd inventories the tree at startup and every five minutes; the
+      # default cap is 8 GiB. Both alerts stay operator-internal because they
+      # describe compute SSD hygiene rather than public API availability.
+      - alert: FaasBuildExportBytesHigh
+        expr: builderd_build_export_bytes > 8589934592
+        for: 15m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_export
+          public_status: internal
+        annotations:
+          summary: "Builder export tree remains above the 8 GiB node cap"
+          description: "builderd_build_export_bytes has remained above the configured default cap for 15m. Active rootfs_path handoffs are protected from pressure eviction, so sustained growth usually means imaged is not consuming successful builds or cleanup cannot remove released directories."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildExportRetention.md"
+
+      - alert: FaasBuildExportCleanupFailing
+        expr: increase(builderd_build_export_cleanup_errors_total[15m]) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_export
+          public_status: internal
+        annotations:
+          summary: "Builder export cleanup is failing"
+          description: "The builderd export sweeper has reported inventory, PostgreSQL lookup, file-lease, or removal errors during the last 15m. Disk usage can now grow outside the completed-export retention contract."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildExportRetention.md"
+
       # ─────────────────────────────────────────────────────────────────
       # PR #1111 follow-on (feat/obs-dashboards-alerts) — operator
       # surface for the obs-meta + trace-IDs metrics shipped by

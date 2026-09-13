@@ -2616,10 +2616,19 @@ func (v *JailerVMM) InstancePID(instance string) (int, bool) {
 // — never blocks the caller). vmmd is the only root component, so the mount
 // is fine; the chroot-local drive1.ext4 is owned by root after provision
 // (pkg/fcvm/vmm.go:stageWritable).
-func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) error {
+func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr error) {
 	if err := os.MkdirAll(exportDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir export: %w", err)
 	}
+	// vmmd is root while builderd and imaged share the export through the
+	// parent directory's owner/group. Always hand ownership back, including
+	// partial/failed exports, so builderd's terminal cleanup can traverse and
+	// unlink vmmd-created children after a daemon restart.
+	defer func() {
+		if err := handoffBuildExportOwnership(exportDir); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("handoff export ownership: %w", err))
+		}
+	}()
 	drive1, err := v.resolveDriveImage(instance)
 	if err != nil {
 		return err
@@ -2662,6 +2671,39 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) error {
 		return copyTree(srcOut, dstOut, v.exportMax())
 	}
 	return nil
+}
+
+func handoffBuildExportOwnership(exportDir string) error {
+	parent, err := os.Stat(filepath.Dir(filepath.Clean(exportDir)))
+	if err != nil {
+		return err
+	}
+	stat, ok := parent.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("export parent %q has unsupported stat metadata", filepath.Dir(exportDir))
+	}
+	return filepath.WalkDir(exportDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := os.Lchown(path, int(stat.Uid), int(stat.Gid)); err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode().Perm()
+		if entry.IsDir() {
+			mode |= 0o750 // owner cleanup + group traversal
+		} else {
+			mode |= 0o640 // builderd read + imaged group read
+		}
+		return os.Chmod(path, mode)
+	})
 }
 
 // layerImageName is the in-chroot basename vmmd provisions for drive1 (see

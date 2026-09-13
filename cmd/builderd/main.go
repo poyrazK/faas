@@ -356,6 +356,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	go builderdpkg.CacheGCSweepLoop(runCtx, cache, gcInterval, cfg.CacheMaxBytes, cfg.CacheMaxAge, log)
 
+	// Completed VM exports are a separate tree from the content-addressed
+	// cache. Sweep immediately at startup and then periodically, consulting the
+	// durable rootfs_path handoff before taking an exclusive artifact lease.
+	go builderdpkg.BuildExportSweepLoop(runCtx, store, ops, builderdpkg.BuildExportGCConfig{
+		Root: cfg.BuildExportDir, MaxBytes: cfg.BuildExportMaxBytes,
+		MaxAge: cfg.BuildExportMaxAge, OrphanMinAge: cfg.BuildExportOrphanMinAge,
+	}, cfg.BuildExportSweepInterval, log)
+
 	// Warm builder snapshots own both vmmd storage objects and a retained
 	// local BuildKit drive. Expire them on the configured idle window even when
 	// no later build arrives to observe the stale state; Drain performs the

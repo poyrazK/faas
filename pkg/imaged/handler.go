@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/buildcache"
+	"github.com/onebox-faas/faas/pkg/buildexport"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -2900,6 +2901,28 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, p snapshotBootPayload)
 		h.log.Warn("imaged: snapshot_boot skipped — rootfs_path empty; waiting on builderd",
 			"deployment", p.DeploymentID)
 		return nil
+	}
+	// A builder export is a durable handoff until SetDeploymentRootfs stamps
+	// the final app layer. Hold a shared lease for the complete consume/publish
+	// attempt so builderd's exclusive cleanup lease cannot race an OCI read.
+	// ErrBusy is retryable: another imaged worker or a cleanup decision won the
+	// race, and the 2s durable recovery loop will re-read the authoritative row.
+	exportLease, isBuildExport, leaseErr := buildexport.AcquireArtifact(dep.RootfsPath)
+	if errors.Is(leaseErr, buildexport.ErrBusy) {
+		h.log.Info("imaged: snapshot_boot build export busy; deferring to recovery",
+			"deployment", dep.ID, "artifact", dep.RootfsPath)
+		return nil
+	}
+	if leaseErr != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, leaseErr, "open builder export handoff")
+		return fmt.Errorf("imaged: acquire build export handoff: %w", leaseErr)
+	}
+	if isBuildExport {
+		defer func() {
+			if closeErr := exportLease.Close(); closeErr != nil {
+				h.log.Warn("imaged: release build export lease", "deployment", dep.ID, "err", closeErr)
+			}
+		}()
 	}
 	// Cache hits arrive through a deployment-specific hard link. Keep it for
 	// crash recovery while this handler runs, then remove it only after the
