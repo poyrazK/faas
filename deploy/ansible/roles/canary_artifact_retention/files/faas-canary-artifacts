@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+"""Inventory and safely remove bounded Gregale validation artifacts."""
+
+import argparse
+import contextlib
+import dataclasses
+import fcntl
+import fnmatch
+import glob
+import hashlib
+import json
+import os
+import pathlib
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Dict, Iterable, List, Optional, Set
+
+
+DEFAULT_CONFIG = "/etc/faas/canary-artifacts.json"
+DEFAULT_STATE_DIR = "/var/lib/faas/canary-artifacts"
+DEFAULT_METRICS = "/var/lib/node_exporter/textfile_collector/faas_canary_artifacts.prom"
+
+
+class PolicyError(RuntimeError):
+    pass
+
+
+class ReferenceProofError(RuntimeError):
+    pass
+
+
+@dataclasses.dataclass
+class Artifact:
+    path: pathlib.Path
+    size: int
+    created_at: float
+    state: str
+    record: Optional[dict]
+
+
+def atomic_write(path: pathlib.Path, content: str, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+        raise
+
+
+_MISSING = object()
+
+
+def load_json(path: pathlib.Path, default=_MISSING):
+    try:
+        with path.open(encoding="utf-8") as stream:
+            return json.load(stream)
+    except FileNotFoundError:
+        if default is not _MISSING:
+            return default
+        raise
+
+
+def artifact_id(path: pathlib.Path) -> str:
+    return hashlib.sha256(os.fsencode(str(path))).hexdigest()
+
+
+class Manager:
+    def __init__(
+        self,
+        config_path: str,
+        state_dir: str,
+        metrics_path: str,
+        proc_root: str = "/proc",
+        systemctl: str = "/usr/bin/systemctl",
+        now=time.time,
+    ):
+        self.config = load_json(pathlib.Path(config_path))
+        self.state_dir = pathlib.Path(state_dir)
+        self.records_dir = self.state_dir / "records"
+        self.metrics_path = pathlib.Path(metrics_path)
+        self.proc_root = pathlib.Path(proc_root)
+        self.systemctl = systemctl
+        self.now = now
+        self.patterns = self._validate_policy()
+
+    def _validate_policy(self):
+        required = (
+            "retention_seconds",
+            "active_lease_seconds",
+            "pressure_grace_seconds",
+            "max_bytes",
+            "allowed_patterns",
+        )
+        for key in required:
+            if key not in self.config:
+                raise PolicyError(f"policy is missing {key}")
+        for key in required[:-1]:
+            if not isinstance(self.config[key], int) or self.config[key] < 0:
+                raise PolicyError(f"policy {key} must be a non-negative integer")
+        if self.config["max_bytes"] == 0:
+            raise PolicyError("policy max_bytes must be greater than zero")
+        result = []
+        for raw in self.config["allowed_patterns"]:
+            pattern = pathlib.Path(raw)
+            if not pattern.is_absolute() or any(ch in str(pattern.parent) for ch in "*?["):
+                raise PolicyError(f"allowed pattern must have a literal absolute parent: {raw}")
+            if not any(ch in pattern.name for ch in "*?["):
+                raise PolicyError(f"allowed pattern must select children, not a root: {raw}")
+            result.append((pathlib.Path(os.path.normpath(str(pattern.parent))), pattern.name, raw))
+        if not result:
+            raise PolicyError("policy allowed_patterns must not be empty")
+        return result
+
+    @contextlib.contextmanager
+    def locked(self):
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.records_dir.mkdir(mode=0o700, exist_ok=True)
+        lock = (self.state_dir / ".lock").open("a+")
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            lock.close()
+
+    def validate_path(self, raw: str, must_exist: bool = True) -> pathlib.Path:
+        path = pathlib.Path(os.path.abspath(raw))
+        matched = any(path.parent == parent and fnmatch.fnmatchcase(path.name, name) for parent, name, _ in self.patterns)
+        if not matched:
+            raise PolicyError(f"path is outside the declared artifact roots: {path}")
+        if must_exist:
+            try:
+                path.lstat()
+            except FileNotFoundError:
+                raise PolicyError(f"artifact does not exist: {path}") from None
+            if pathlib.Path(path).is_symlink():
+                raise PolicyError(f"artifact path must not be a symlink: {path}")
+        return path
+
+    def record_path(self, path: pathlib.Path) -> pathlib.Path:
+        return self.records_dir / f"{artifact_id(path)}.json"
+
+    def write_record(self, record: dict) -> None:
+        atomic_write(self.record_path(pathlib.Path(record["path"])), json.dumps(record, sort_keys=True) + "\n")
+
+    def register(self, raw_path: str, run_id: str, kind: str) -> None:
+        path = self.validate_path(raw_path)
+        if not run_id or len(run_id) > 200 or not run_id.isprintable():
+            raise PolicyError("run-id must be 1..200 printable characters")
+        if not kind or len(kind) > 80 or not kind.replace("-", "").replace("_", "").isalnum():
+            raise PolicyError("kind must be an alphanumeric, dash, or underscore identifier")
+        timestamp = self.now()
+        record = {
+            "artifact_id": artifact_id(path),
+            "path": str(path),
+            "run_id": run_id,
+            "host": socket.gethostname(),
+            "kind": kind,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "state": "active",
+        }
+        with self.locked():
+            self.write_record(record)
+            self.write_metrics(self.scan())
+        print(json.dumps(record, sort_keys=True))
+
+    def finish(self, raw_path: str, state: str) -> None:
+        normalized = {"success": "completed", "completed": "completed", "failure": "failed", "failed": "failed", "cancelled": "failed"}
+        if state not in normalized:
+            raise PolicyError("state must be success, completed, failure, failed, or cancelled")
+        path = self.validate_path(raw_path, must_exist=False)
+        with self.locked():
+            record = load_json(self.record_path(path), default=None)
+            if record is None:
+                record = {
+                    "artifact_id": artifact_id(path),
+                    "path": str(path),
+                    "run_id": "unknown",
+                    "host": socket.gethostname(),
+                    "kind": "unregistered",
+                    "created_at": self._created_at(path),
+                }
+            record["state"] = normalized[state]
+            record["updated_at"] = self.now()
+            self.write_record(record)
+            if path.exists():
+                try:
+                    if not self.has_reference(path):
+                        self.remove(path, record)
+                    else:
+                        print(f"cleanup deferred: {path} is still referenced", file=sys.stderr)
+                except (OSError, ReferenceProofError):
+                    self.increment_counter("cleanup_failures_total")
+                    self.write_metrics(self.scan())
+                    raise
+            else:
+                self.record_path(path).unlink(missing_ok=True)
+            self.write_metrics(self.scan())
+
+    def _created_at(self, path: pathlib.Path) -> float:
+        try:
+            return path.lstat().st_mtime
+        except FileNotFoundError:
+            return self.now()
+
+    def read_records(self) -> Dict[str, dict]:
+        records = {}
+        for record_path in self.records_dir.glob("*.json"):
+            try:
+                record = load_json(record_path)
+                path = self.validate_path(record["path"], must_exist=False)
+                records[str(path)] = record
+            except (KeyError, ValueError, json.JSONDecodeError, PolicyError) as error:
+                raise PolicyError(f"invalid inventory record {record_path}: {error}") from error
+        return records
+
+    def scan(self) -> List[Artifact]:
+        records = self.read_records()
+        paths: Set[pathlib.Path] = set()
+        for _, _, raw_pattern in self.patterns:
+            for raw in glob.glob(raw_pattern):
+                with contextlib.suppress(PolicyError):
+                    paths.add(self.validate_path(raw))
+        artifacts = []
+        for path in sorted(paths):
+            record = records.pop(str(path), None)
+            created_at = float(record.get("created_at", self._created_at(path))) if record else self._created_at(path)
+            artifacts.append(Artifact(path, self.path_bytes(path), created_at, record.get("state", "untracked") if record else "untracked", record))
+        for record in records.values():
+            self.record_path(pathlib.Path(record["path"])).unlink(missing_ok=True)
+        return artifacts
+
+    @staticmethod
+    def path_bytes(path: pathlib.Path) -> int:
+        def allocated(candidate: pathlib.Path) -> int:
+            stat = candidate.lstat()
+            # st_blocks is expressed in 512-byte units and represents durable
+            # disk consumption for sparse Firecracker images. Fall back to the
+            # logical size on filesystems that do not expose it.
+            return stat.st_blocks * 512 if hasattr(stat, "st_blocks") else stat.st_size
+
+        try:
+            if not path.is_dir():
+                return allocated(path)
+            total = allocated(path)
+            for root, dirs, files in os.walk(path, followlinks=False):
+                for name in dirs + files:
+                    candidate = pathlib.Path(root) / name
+                    with contextlib.suppress(FileNotFoundError):
+                        total += allocated(candidate)
+            return total
+        except FileNotFoundError:
+            return 0
+
+    def sweep(self) -> None:
+        with self.locked():
+            artifacts = self.scan()
+            total = sum(item.size for item in artifacts)
+            now = self.now()
+            references = None
+            for item in sorted(artifacts, key=lambda value: value.created_at):
+                age = max(0, now - item.created_at)
+                expired = (
+                    item.state in ("completed", "failed")
+                    or (item.state == "active" and age >= self.config["active_lease_seconds"])
+                    or (item.state == "untracked" and age >= self.config["retention_seconds"])
+                )
+                pressure = (
+                    total > self.config["max_bytes"]
+                    and item.state != "active"
+                    and age >= self.config["pressure_grace_seconds"]
+                )
+                if not expired and not pressure:
+                    continue
+                try:
+                    if references is None:
+                        references = self.reference_values()
+                    if self.has_reference(item.path, references):
+                        continue
+                    self.remove(item.path, item.record)
+                    total -= item.size
+                except ReferenceProofError as error:
+                    self.increment_counter("cleanup_failures_total")
+                    print(f"cleanup proof failed; retaining all remaining artifacts: {error}", file=sys.stderr)
+                    break
+                except OSError as error:
+                    self.increment_counter("cleanup_failures_total")
+                    print(f"cleanup failed for {item.path}: {error}", file=sys.stderr)
+            self.set_counter("last_sweep_timestamp_seconds", int(self.now()))
+            self.write_metrics(self.scan())
+
+    def remove(self, path: pathlib.Path, record: Optional[dict]) -> None:
+        self.validate_path(str(path))
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        self.record_path(path).unlink(missing_ok=True)
+        self.increment_counter("cleanup_total")
+        state = record.get("state", "untracked") if record else "untracked"
+        print(f"removed {path} state={state}")
+
+    @staticmethod
+    def _refers(value: str, candidate: pathlib.Path) -> bool:
+        path = str(candidate)
+        return value == path or value.startswith(path + os.sep) or path in value
+
+    def _ancestor_pids(self) -> Set[int]:
+        result = set()
+        pid = os.getpid()
+        while pid > 1 and pid not in result:
+            result.add(pid)
+            try:
+                stat = (self.proc_root / str(pid) / "stat").read_text(encoding="utf-8")
+                pid = int(stat[stat.rfind(")") + 2 :].split()[1])
+            except (FileNotFoundError, PermissionError, ValueError, IndexError):
+                break
+        return result
+
+    def process_reference_values(self) -> List[str]:
+        references = []
+        excluded = self._ancestor_pids()
+        try:
+            pids = list(self.proc_root.iterdir())
+        except OSError as error:
+            raise ReferenceProofError(f"cannot enumerate {self.proc_root}: {error}") from error
+        for proc in pids:
+            if not proc.name.isdigit() or int(proc.name) in excluded:
+                continue
+            for name in ("cwd", "root", "exe"):
+                try:
+                    references.append(os.readlink(proc / name))
+                except FileNotFoundError:
+                    pass
+                except PermissionError as error:
+                    raise ReferenceProofError(f"cannot inspect {proc / name}: {error}") from error
+            try:
+                for fd in (proc / "fd").iterdir():
+                    with contextlib.suppress(FileNotFoundError):
+                        references.append(os.readlink(fd))
+            except FileNotFoundError:
+                pass
+            except PermissionError as error:
+                raise ReferenceProofError(f"cannot inspect {proc / 'fd'}: {error}") from error
+            for name in ("cmdline", "environ", "maps"):
+                try:
+                    value = (proc / name).read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+                    references.append(value)
+                except FileNotFoundError:
+                    pass
+                except PermissionError as error:
+                    raise ReferenceProofError(f"cannot inspect {proc / name}: {error}") from error
+        return references
+
+    def systemd_reference_values(self) -> List[str]:
+        references = []
+        try:
+            listed = subprocess.run(
+                [
+                    self.systemctl,
+                    "list-units",
+                    "--state=active,activating,reloading,deactivating",
+                    "--plain",
+                    "--no-legend",
+                    "--no-pager",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise ReferenceProofError(f"cannot enumerate active systemd units: {error}") from error
+        units = [line.split()[0] for line in listed.stdout.splitlines() if line.split()]
+        properties = [
+            "FragmentPath",
+            "DropInPaths",
+            "ExecStart",
+            "ExecStartPre",
+            "ExecStartPost",
+            "Environment",
+            "EnvironmentFiles",
+            "WorkingDirectory",
+            "RootDirectory",
+            "RootImage",
+            "BindPaths",
+            "BindReadOnlyPaths",
+        ]
+        for unit in units:
+            try:
+                shown = subprocess.run(
+                    [self.systemctl, "show", unit, *[f"--property={name}" for name in properties], "--no-pager"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+            except (OSError, subprocess.CalledProcessError) as error:
+                raise ReferenceProofError(f"cannot inspect active unit {unit}: {error}") from error
+            references.append(shown.stdout)
+            for line in shown.stdout.splitlines():
+                if not line.startswith(("FragmentPath=", "DropInPaths=", "EnvironmentFiles=")):
+                    continue
+                values = line.partition("=")[2].replace("{", " ").replace("}", " ").split()
+                for value in values:
+                    unit_path = pathlib.Path(value.lstrip("-"))
+                    if not unit_path.is_absolute():
+                        continue
+                    try:
+                        content = unit_path.read_text(encoding="utf-8", errors="replace")
+                    except (FileNotFoundError, IsADirectoryError):
+                        continue
+                    except PermissionError as error:
+                        raise ReferenceProofError(f"cannot inspect active unit file {unit_path}: {error}") from error
+                    references.append(content)
+        return references
+
+    def reference_values(self) -> List[str]:
+        return self.process_reference_values() + self.systemd_reference_values()
+
+    def has_reference(self, candidate: pathlib.Path, references: Optional[List[str]] = None) -> bool:
+        values = self.reference_values() if references is None else references
+        return any(self._refers(value, candidate) for value in values)
+
+    def counters(self) -> dict:
+        return load_json(
+            self.state_dir / "counters.json",
+            default={"cleanup_total": 0, "cleanup_failures_total": 0, "last_sweep_timestamp_seconds": 0},
+        )
+
+    def set_counter(self, name: str, value: int) -> None:
+        counters = self.counters()
+        counters[name] = value
+        atomic_write(self.state_dir / "counters.json", json.dumps(counters, sort_keys=True) + "\n")
+
+    def increment_counter(self, name: str) -> None:
+        counters = self.counters()
+        self.set_counter(name, int(counters.get(name, 0)) + 1)
+
+    def write_metrics(self, artifacts: Iterable[Artifact]) -> None:
+        values = list(artifacts)
+        now = self.now()
+        counters = self.counters()
+        oldest = max((max(0, now - item.created_at) for item in values), default=0)
+        content = """# HELP faas_canary_artifact_bytes Allocated bytes held by declared validation artifact roots.\n# TYPE faas_canary_artifact_bytes gauge\nfaas_canary_artifact_bytes {bytes}\n# HELP faas_canary_artifact_count Artifacts held by declared validation artifact roots.\n# TYPE faas_canary_artifact_count gauge\nfaas_canary_artifact_count {count}\n# HELP faas_canary_artifact_oldest_age_seconds Age of the oldest validation artifact.\n# TYPE faas_canary_artifact_oldest_age_seconds gauge\nfaas_canary_artifact_oldest_age_seconds {oldest:.0f}\n# HELP faas_canary_artifact_cleanup_total Validation artifacts removed by lifecycle cleanup.\n# TYPE faas_canary_artifact_cleanup_total counter\nfaas_canary_artifact_cleanup_total {cleaned}\n# HELP faas_canary_artifact_cleanup_failures_total Validation artifact cleanup or safety-proof failures.\n# TYPE faas_canary_artifact_cleanup_failures_total counter\nfaas_canary_artifact_cleanup_failures_total {failures}\n# HELP faas_canary_artifact_last_sweep_timestamp_seconds Unix time of the last completed periodic artifact sweep.\n# TYPE faas_canary_artifact_last_sweep_timestamp_seconds gauge\nfaas_canary_artifact_last_sweep_timestamp_seconds {last_sweep}\n""".format(
+            bytes=sum(item.size for item in values),
+            count=len(values),
+            oldest=oldest,
+            cleaned=int(counters.get("cleanup_total", 0)),
+            failures=int(counters.get("cleanup_failures_total", 0)),
+            last_sweep=int(counters.get("last_sweep_timestamp_seconds", 0)),
+        )
+        atomic_write(self.metrics_path, content, mode=0o644)
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
+    parser.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
+    parser.add_argument("--metrics-file", default=DEFAULT_METRICS)
+    parser.add_argument("--proc-root", default="/proc", help=argparse.SUPPRESS)
+    parser.add_argument("--systemctl", default="/usr/bin/systemctl", help=argparse.SUPPRESS)
+    commands = parser.add_subparsers(dest="command", required=True)
+    register = commands.add_parser("register")
+    register.add_argument("--path", required=True)
+    register.add_argument("--run-id", required=True)
+    register.add_argument("--kind", required=True)
+    finish = commands.add_parser("finish")
+    finish.add_argument("--path", required=True)
+    finish.add_argument("--state", required=True)
+    commands.add_parser("sweep")
+    args = parser.parse_args(argv)
+    manager = Manager(args.config, args.state_dir, args.metrics_file, args.proc_root, args.systemctl)
+    if args.command == "register":
+        manager.register(args.path, args.run_id, args.kind)
+    elif args.command == "finish":
+        manager.finish(args.path, args.state)
+    else:
+        manager.sweep()
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (PolicyError, ReferenceProofError, OSError, json.JSONDecodeError) as error:
+        print(f"faas-canary-artifacts: {error}", file=sys.stderr)
+        raise SystemExit(1) from None

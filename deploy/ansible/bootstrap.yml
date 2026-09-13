@@ -83,6 +83,7 @@
     - role: nftables
     - role: overlay
     - role: node_exporter
+    - role: canary_artifact_retention
     - role: alertmanager
     - role: prometheus
     - role: grafana
@@ -136,6 +137,7 @@
     - role: nftables
     - role: overlay
     - role: node_exporter
+    - role: canary_artifact_retention
     # Compute-only:
     - role: vmmd_service
     # M9: every compute node owns a node-local schedd for heartbeat and

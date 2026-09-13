@@ -140,7 +140,7 @@ jobs:
           unit="faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "mkdir -p '$remote_root'"
+            --command "mkdir -p '$remote_root' && sudo /usr/local/sbin/faas-canary-artifacts register --path '$remote_root' --run-id '${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --kind native-e2e"
           gcloud compute scp "$RUNNER_TEMP/native-e2e-bundle.tar.gz" \
             "$GCP_INSTANCE:$remote_root/bundle.tar.gz" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE"
@@ -164,7 +164,9 @@ jobs:
       - name: Collect log and remove remote transfer bundle
         if: always() && steps.auth.outcome == 'success'
         run: |
+          set -euo pipefail
           remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup_state="${{ job.status }}"
           log="$RUNNER_TEMP/native-e2e.log"
           gcloud compute scp "$GCP_INSTANCE:$remote_root/native-e2e.log" "$log" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
@@ -173,7 +175,7 @@ jobs:
           fi
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "sudo rm -rf '$remote_root'" || true
+            --command "sudo /usr/local/sbin/faas-canary-artifacts finish --path '$remote_root' --state '$cleanup_state'"
 
       - name: Upload e2e log
         if: always()

@@ -312,6 +312,9 @@ jobs:
       - name: systemd hardening gate
         run: make systemd-hardening-check
 
+      - name: canary artifact retention gate
+        run: make canary-artifact-retention-test
+
       - name: GCP public-beta policy gate
         run: make gcp-public-beta-policy-test
 

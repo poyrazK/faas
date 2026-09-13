@@ -1,0 +1,63 @@
+- name: canary_artifact_retention — create state directory
+  ansible.builtin.file:
+    path: /var/lib/faas/canary-artifacts/records
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: canary_artifact_retention — create configuration directory
+  ansible.builtin.file:
+    path: /etc/faas
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: canary_artifact_retention — create node exporter textfile directory
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    mode: "0755"
+
+- name: canary_artifact_retention — install cleanup helper
+  ansible.builtin.copy:
+    src: faas-canary-artifacts
+    dest: /usr/local/sbin/faas-canary-artifacts
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: canary_artifact_retention — render bounded root policy
+  ansible.builtin.template:
+    src: policy.json.j2
+    dest: /etc/faas/canary-artifacts.json
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: canary_artifact_retention — install cleanup service
+  ansible.builtin.copy:
+    src: faas-canary-artifact-sweep.service
+    dest: /etc/systemd/system/faas-canary-artifact-sweep.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload canary artifact retention
+
+- name: canary_artifact_retention — install cleanup timer
+  ansible.builtin.copy:
+    src: faas-canary-artifact-sweep.timer
+    dest: /etc/systemd/system/faas-canary-artifact-sweep.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload canary artifact retention
+
+- name: canary_artifact_retention — enable periodic cleanup
+  ansible.builtin.systemd:
+    name: faas-canary-artifact-sweep.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  failed_when: false

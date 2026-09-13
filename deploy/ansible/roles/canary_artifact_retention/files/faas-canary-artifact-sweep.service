@@ -1,0 +1,17 @@
+[Unit]
+Description=Remove expired and unreferenced Gregale validation artifacts
+After=local-fs.target
+ConditionPathExists=/etc/faas/canary-artifacts.json
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/faas-canary-artifacts sweep
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=no
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=-/opt/faas/canaries -/var/tmp -/srv/fc /var/lib/faas/canary-artifacts /var/lib/node_exporter/textfile_collector

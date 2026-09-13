@@ -60,6 +60,60 @@ groups:
           description: "The five-minute public status evaluator has not persisted a complete capability bucket set for at least 15 minutes. Check apid logs, Prometheus reachability, and Postgres status_observation_buckets writes."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/StatusPageDegraded.md"
 
+  # Production validation artifacts are bounded to 5 GiB per host. The
+  # node-exporter textfile collector provides one series per host, so the
+  # instance label identifies the cleanup owner without adding path cardinality.
+  - name: faas_canary_artifacts
+    interval: 30s
+    rules:
+      - alert: FaasCanaryArtifactDiskPressure
+        expr: faas_canary_artifact_bytes > 5368709120
+        for: 15m
+        labels:
+          severity: warn
+          component: host
+          family: canary_artifacts
+        annotations:
+          summary: "Validation artifacts exceed the 5 GiB host cap on {{ $labels.instance }}"
+          description: "The bounded canary and diagnostic roots have remained above their host cap across multiple hourly-sweeper opportunities. A protected active lease, a live process or unit reference, or repeated deletion error may be preventing cleanup."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCanaryArtifactRetention.md"
+
+      - alert: FaasCanaryArtifactCleanupFailures
+        expr: increase(faas_canary_artifact_cleanup_failures_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: host
+          family: canary_artifacts
+        annotations:
+          summary: "Validation artifact cleanup failed on {{ $labels.instance }}"
+          description: "The lifecycle finalizer or periodic sweep could not prove an artifact safe to remove or could not delete it. The artifact was retained. Inspect the sweep journal and its active process/systemd references before retrying."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCanaryArtifactRetention.md"
+
+      - alert: FaasCanaryArtifactRetentionStalled
+        expr: faas_canary_artifact_oldest_age_seconds > 108000
+        for: 1h
+        labels:
+          severity: warn
+          component: host
+          family: canary_artifacts
+        annotations:
+          summary: "A validation artifact is older than 30 hours on {{ $labels.instance }}"
+          description: "The oldest declared validation artifact has outlived the 24-hour orphan retention plus multiple sweep windows. Check whether it is intentionally referenced, has a stale active owner record, or is failing cleanup."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCanaryArtifactRetention.md"
+
+      - alert: FaasCanaryArtifactSweepStalled
+        expr: (time() - faas_canary_artifact_last_sweep_timestamp_seconds > 7200) or absent(faas_canary_artifact_last_sweep_timestamp_seconds)
+        for: 30m
+        labels:
+          severity: warn
+          component: host
+          family: canary_artifacts
+        annotations:
+          summary: "The periodic validation artifact sweep is stale on {{ $labels.instance }}"
+          description: "No cleanup sweep has completed for more than two hours. Check the systemd timer and service before relying on the byte cap or orphan retention. An alert without an instance means no scraped host has published the collector metric."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCanaryArtifactRetention.md"
+
   # Compute-host journal pressure (issue #2350). vmmd samples these values
   # once per minute so the existing active-node HTTP-SD job covers every
   # compute host without exposing node_exporter on an additional port.

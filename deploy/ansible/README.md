@@ -44,6 +44,7 @@ In order (each role is independent and verifies its own preconditions):
 | `xfs` | §8 | dedicated fast-root mount, XFS features, `/srv/fc/jail` tmpfs | explicit device contract + `/etc/fstab` |
 | `firecracker` | §4.4 | `/usr/local/bin/{firecracker,jailer}`, `/srv/fc/base/vmlinux-6.1` | content checksums + config-aware rebuild |
 | `systemd_slices` | §13 | three `.slice` unit drops | `creates:` on each |
+| `canary_artifact_retention` | §11 | declared validation roots, durable owner records, hourly bounded sweep, node-exporter metrics | closed path policy + live process/systemd reference proof |
 | `nftables` | §7 | `/etc/nftables.conf` | managed-marker backup + `nft -c` syntax check |
 | `postgres` | §1 (cp slice), §4 | distro PostgreSQL major, `faas` user | apt idempotent, `creates:` on home |
 | `postgres_backup` | §14 M8 | nightly tar-format basebackup + off-host push timers | systemd units, directories, and secret checks are idempotent |

@@ -14,6 +14,7 @@
   serial: 1
   max_fail_percentage: 0
   roles:
+    - role: canary_artifact_retention
     - role: native_acceptance_host
       vars:
         nah_enabled: true

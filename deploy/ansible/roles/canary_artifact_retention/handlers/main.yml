@@ -1,0 +1,13 @@
+- name: detect systemd availability
+  listen: daemon-reload canary artifact retention
+  ansible.builtin.stat:
+    path: /run/systemd/system
+  register: canary_artifact_systemd
+  failed_when: false
+
+- name: daemon-reload canary artifact retention
+  listen: daemon-reload canary artifact retention
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: canary_artifact_systemd.stat.exists | bool
+  failed_when: false
