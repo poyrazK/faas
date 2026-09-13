@@ -68,6 +68,10 @@
       no_log: true
       when: (faas_join_storage_env_source | default('') | trim) != ''
   roles:
+    # Two active compute nodes plus a rolling generation exceed the distro's
+    # default 97 ordinary-client slots. Converge and verify the bounded beta
+    # budget before opening access or activating the joining node.
+    - role: postgres_capacity
     # The generated control-plane host vars contain the complete manifest
     # allowlists. This renders the canonical nftables policy, including the
     # new compute CIDR and scheduler/API ports.

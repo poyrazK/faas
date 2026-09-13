@@ -1,0 +1,10 @@
+---
+# Public-beta database capacity for one control plane and two active compute
+# nodes. pkg/db.DaemonMaxConnections budgets 108 steady sessions and 142
+# during a one-node rollout overlap. Five superuser-only slots plus thirteen
+# ordinary slots remain available at the overlap ceiling.
+faas_postgres_max_connections: 160
+faas_postgres_superuser_reserved_connections: 5
+faas_postgres_two_compute_pool_budget: 108
+faas_postgres_rollout_overlap_pool_budget: 142
+faas_postgres_min_operator_headroom: 10

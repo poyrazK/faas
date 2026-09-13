@@ -49,17 +49,22 @@ unbudgeted client that needs attribution before its pool can be corrected.
    evidence for the incident record.
 
 Do not increase `max_connections` as the first response. More backends raise
-PostgreSQL memory use and hide a pool-budget regression. Keep the normal
-public-beta topology (control plane plus one active compute node) at or below
-90 ordinary sessions. Do not activate the stopped standby node for continuous
-traffic with direct daemon pools: both schedd processes on that node require
-eleven permanent LISTEN sessions plus request headroom, so the complete fleet
-can exceed PostgreSQL's 97 ordinary-client slots. Before running both compute
-nodes continuously, introduce PgBouncer and repeat the API, wake, jobs,
-workflow, and rollout-overlap capacity suite.
+PostgreSQL memory use and hide a pool-budget regression. The public-beta
+configuration is the reviewed exception: `postgres_capacity` provisions 160
+total connections with five superuser-reserved slots after the daemon pools
+have been explicitly bounded and attributed. One control plane plus two active
+compute nodes has a 108-session maximum; a rolling compute generation raises
+that ceiling to 142 and leaves 13 ordinary slots plus the five reserved slots.
+
+Do not grow beyond two active compute nodes with this direct-pool shape.
+PgBouncer transaction pooling cannot carry the daemons' permanent `LISTEN`
+sessions. A larger fleet must first split notification listeners onto a direct
+DSN, route ordinary query pools through PgBouncer, and repeat the API, wake,
+jobs, workflow, and rollout-overlap capacity suite.
 
 ## Verify recovery
 
 The warning clears after utilization remains at or below 75%. Verify that new
-connections carry an application name and that a rollout overlap cannot push
-the exported count beyond the 90-session direct-pool ceiling.
+connections carry an application name, `faas_postgres_ordinary_connection_capacity`
+reports 155, the two-node steady fleet stays at or below 108 sessions, and a
+rollout overlap stays at or below 142 sessions.
