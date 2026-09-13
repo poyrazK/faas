@@ -117,7 +117,7 @@ func TestStatusJSONHandlerIdleHistogramEmitsJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("query")
 		switch {
-		case strings.Contains(query, "gateway_wake_latency_seconds_bucket"):
+		case strings.Contains(query, "gateway_platform_wake_latency_seconds_bucket"):
 			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"NaN"]}]}}`))
 		case strings.Contains(query, "builderd_ops_total"):
 			// Prometheus evaluates the query's idle fallback, vector(100).
@@ -165,7 +165,7 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 			name:     "wake p95",
 			query:    statusWakeP95Query,
 			fallback: "",
-			guard:    "sum(rate(gateway_wake_latency_seconds_count[5m])) > 0",
+			guard:    "sum(increase(gateway_platform_wake_latency_seconds_count[15m])) >= 20",
 		},
 		{
 			name:     "build success",
@@ -173,6 +173,12 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 			fallback: "or vector(100)",
 			guard:    "sum(rate(builderd_ops_total{op=\"build\",code!=\"user_error\"}[5m])) > 0",
 		},
+	}
+	if strings.Contains(statusWakeP95Query, "gateway_wake_latency_seconds") {
+		t.Fatalf("platform 350ms status gate reads legacy end-to-end histogram: %q", statusWakeP95Query)
+	}
+	if !strings.Contains(statusWakeP95Query, "gateway_platform_wake_latency_seconds_bucket[15m]") {
+		t.Fatalf("wake status query is not aligned with the platform SLO window: %q", statusWakeP95Query)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -200,10 +206,63 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 	}
 }
 
+func TestStatusCacheEmptyWakeVectorIsFreshNoSample(t *testing.T) {
+	var logs strings.Builder
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		if strings.Contains(query, "gateway_platform_wake_latency_seconds_bucket") || strings.Contains(query, "ALERTS") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+	}))
+	t.Cleanup(prom.Close)
+
+	c := newStatusCache(prom.URL, slog.New(slog.NewTextHandler(&logs, nil)))
+	evaluation, err := c.getEvaluation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evaluation.dataStatus != "fresh" || !evaluation.indicatorAvailable["wake_p95"] || evaluation.legacy.WakeP95MS != nil {
+		t.Fatalf("evaluation = %+v, want fresh available wake telemetry with no sample", evaluation)
+	}
+	if strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("quiet wake window emitted warning: %s", logs.String())
+	}
+	indicator := statusIndicator("wake_p95", "Platform wake p95", nil, true, "ms", 350, "lte")
+	if indicator.SampleStatus != "no_sample" || indicator.Value != nil {
+		t.Fatalf("indicator = %+v, want explicit no_sample", indicator)
+	}
+}
+
+func TestStatusCacheWakeQueryFailureIsUnavailableAndStale(t *testing.T) {
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		if strings.Contains(query, "gateway_platform_wake_latency_seconds_bucket") {
+			http.Error(w, "prometheus unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if strings.Contains(query, "ALERTS") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+	}))
+	t.Cleanup(prom.Close)
+
+	evaluation, err := newStatusCache(prom.URL, slog.Default()).getEvaluation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evaluation.dataStatus != "stale" || evaluation.indicatorAvailable["wake_p95"] {
+		t.Fatalf("evaluation = %+v, want stale unavailable wake telemetry", evaluation)
+	}
+}
+
 func TestStatusHistoryNoTrafficRemainsUnknown(t *testing.T) {
 	store := state.NewMemStore()
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Query().Get("query"), "gateway_wake_latency_seconds_bucket") {
+		if strings.Contains(r.URL.Query().Get("query"), "gateway_platform_wake_latency_seconds_bucket") {
 			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
 			return
 		}

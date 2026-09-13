@@ -49,8 +49,8 @@ const (
 		and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
 	) or vector(100)`
 	statusWakeP95Query = `(
-		(histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) * 1000)
-		and sum(rate(gateway_wake_latency_seconds_count[5m])) > 0
+		(histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[15m])) by (le)) * 1000)
+		and sum(increase(gateway_platform_wake_latency_seconds_count[15m])) >= 20
 	)`
 	statusBuildSuccessQuery = `(
 		(sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m])) / sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) * 100)
@@ -288,11 +288,17 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 		}
 	}
 
-	// 2. Wake p95 (seconds → ms).
-	if ms, err := c.client.QueryScalar(ctx, statusWakeP95Query); err == nil {
-		snap.legacy.WakeP95MS = &ms
+	// 2. Platform wake p95 (seconds → ms). QueryVector deliberately keeps a
+	// successful empty result distinct from a Prometheus failure. A quiet or
+	// low-population window is healthy telemetry with no statistically valid
+	// sample, so it remains null without making the whole snapshot stale.
+	if samples, err := c.client.QueryVector(ctx, statusWakeP95Query); err == nil {
 		snap.indicatorAvailable["wake_p95"] = true
 		okCount++
+		if len(samples) > 0 {
+			ms := samples[0].Value
+			snap.legacy.WakeP95MS = &ms
+		}
 	} else {
 		c.log.Warn("status: wake_p95 query failed", "err", err)
 		if firstErr == nil {
@@ -544,9 +550,9 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 		DataStatus:    evaluation.dataStatus, UpdatedAt: evaluation.updatedAt, RegionScope: "single-region",
 		Components: components,
 		Indicators: []api.PublicStatusIndicator{
-			statusIndicator("api_availability", "API availability", evaluation.legacy.APIAvailabilityPct, evaluation.indicatorAvailable["api_availability"], "%", 99.9, "gte"),
-			statusIndicator("wake_p95", "Wake p95", statusMetricValue(evaluation.legacy.WakeP95MS), evaluation.indicatorAvailable["wake_p95"] && evaluation.legacy.WakeP95MS != nil, "ms", 350, "lte"),
-			statusIndicator("build_success", "Build success", evaluation.legacy.BuildSuccessPct, evaluation.indicatorAvailable["build_success"], "%", 99, "gte"),
+			statusIndicator("api_availability", "API availability", float64Ptr(evaluation.legacy.APIAvailabilityPct), evaluation.indicatorAvailable["api_availability"], "%", 99.9, "gte"),
+			statusIndicator("wake_p95", "Platform wake p95", evaluation.legacy.WakeP95MS, evaluation.indicatorAvailable["wake_p95"], "ms", 350, "lte"),
+			statusIndicator("build_success", "Build success", float64Ptr(evaluation.legacy.BuildSuccessPct), evaluation.indicatorAvailable["build_success"], "%", 99, "gte"),
 		},
 		ActiveEvents: publicStatusEvents(active), UpcomingMaintenance: publicStatusEvents(upcoming), ResolvedIncidents: publicStatusEvents(resolved),
 	}
@@ -587,19 +593,22 @@ func unavailableStatusEvaluation() statusEvaluation {
 	return statusEvaluation{legacy: StatusPage{AsOf: now, Source: "degraded: unavailable"}, states: states, indicatorAvailable: map[string]bool{}, dataStatus: "unavailable", updatedAt: now}
 }
 
-func statusIndicator(id, label string, value float64, available bool, unit string, target float64, comparison string) api.PublicStatusIndicator {
-	var ptr *float64
-	if available {
-		ptr = &value
+func statusIndicator(id, label string, value *float64, available bool, unit string, target float64, comparison string) api.PublicStatusIndicator {
+	sampleStatus := "unavailable"
+	if !available {
+		value = nil
 	}
-	return api.PublicStatusIndicator{ID: id, Label: label, Value: ptr, Unit: unit, Target: target, Comparison: comparison}
+	if available {
+		sampleStatus = "no_sample"
+		if value != nil {
+			sampleStatus = "available"
+		}
+	}
+	return api.PublicStatusIndicator{ID: id, Label: label, Value: value, SampleStatus: sampleStatus, Unit: unit, Target: target, Comparison: comparison}
 }
 
-func statusMetricValue(value *float64) float64 {
-	if value == nil {
-		return 0
-	}
-	return *value
+func float64Ptr(value float64) *float64 {
+	return &value
 }
 
 func publicStatusEvents(events []state.StatusIncident) []api.PublicStatusEvent {

@@ -3858,12 +3858,13 @@ type PublicStatusDaily struct {
 }
 
 type PublicStatusIndicator struct {
-	ID         string   `json:"id"`
-	Label      string   `json:"label"`
-	Value      *float64 `json:"value"`
-	Unit       string   `json:"unit"`
-	Target     float64  `json:"target"`
-	Comparison string   `json:"comparison"`
+	ID           string   `json:"id"`
+	Label        string   `json:"label"`
+	Value        *float64 `json:"value"`
+	SampleStatus string   `json:"sample_status"`
+	Unit         string   `json:"unit"`
+	Target       float64  `json:"target"`
+	Comparison   string   `json:"comparison"`
 }
 
 type PublicStatusEvent struct {
