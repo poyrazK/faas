@@ -18438,6 +18438,48 @@ func (s *PgStore) LatestSnapshotBytes(ctx context.Context, appID string) (int64,
 	return memBytes, diskBytes, nil
 }
 
+// RetainedLayerBytes sums the physical app-layer artifacts referenced by all
+// non-deleted deployments for an active app. Superseded deployments count
+// because they remain rollback targets and their artifacts remain retained;
+// ClearDeployment removes a row from this accounting by stamping deleted_at.
+// Grouping by storage identity prevents a rebuild or imported legacy row that
+// references the same object from charging capacity twice. Sidecar layers are
+// part of the same retained footprint.
+func (s *PgStore) RetainedLayerBytes(ctx context.Context, appID string) (int64, error) {
+	var total int64
+	err := s.pool.QueryRow(ctx, `
+		select coalesce(sum(retained.bytes), 0)::bigint
+		from (
+			select storage_key, max(bytes)::bigint as bytes
+			from (
+				select coalesce(nullif(d.rootfs_key, ''), nullif(d.rootfs_path, '')) as storage_key,
+				       greatest(coalesce(d.rootfs_bytes, 0), 0)::bigint as bytes
+				from deployments d
+				join apps a on a.id = d.app_id
+				where d.app_id = $1
+				  and a.status <> 'deleted'
+				  and d.deleted_at is null
+				  and coalesce(d.rootfs_bytes, 0) > 0
+				  and coalesce(nullif(d.rootfs_key, ''), nullif(d.rootfs_path, '')) is not null
+				union all
+				select l.storage_key, greatest(l.bytes, 0)::bigint
+				from deployment_sidecar_layers l
+				join deployments d on d.id = l.deployment_id
+				join apps a on a.id = d.app_id
+				where d.app_id = $1
+				  and a.status <> 'deleted'
+				  and d.deleted_at is null
+				  and l.storage_key <> ''
+				  and l.bytes > 0
+			) artifacts
+			group by storage_key
+		) retained`, appID).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 // StorageUsage returns the per-(account, app, day) storage rollup
 // rows. day is a UTC midnight timestamp; only the date portion is
 // used in the predicate (mirrors UsageDaily's AT TIME ZONE 'UTC'

@@ -1197,11 +1197,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-049 §B.3: snapshot/app-layer storage rollup. The store
 	// interface (pkg/meter/storage.go) is a narrow projection over
 	// state.Store so pkg/meter doesn't import the whole surface.
-	// layerFn is nil this PR — overlay staging byte accounting
-	// lands in a follow-up (ADR-049 §B.3 follow-up bullet); the
-	// rollup still emits snapshot_bytes daily.
+	// The layer collector reads every retained rootfs and sidecar artifact for
+	// the app. Superseded rollback targets remain counted until their deployment
+	// is cleared; storage keys are deduplicated in the state query.
 	storageStore := storageStoreAdapter{s: store}
-	go meter.StorageRollupLoop(ctx, storageStore, nil, mc.StorageRollupInterval, log)
+	go meter.StorageRollupLoop(ctx, storageStore, storageStore.RetainedLayerBytes, mc.StorageRollupInterval, log)
 
 	// ADR-049 §B.4: 13-month retention DELETE cron. The pool
 	// satisfies the retentionExecer contract.
@@ -1711,6 +1711,10 @@ func (a storageStoreAdapter) ListAllApps(ctx context.Context) ([]meter.AppRow, e
 
 func (a storageStoreAdapter) LatestSnapshotBytes(ctx context.Context, appID string) (int64, int64, error) {
 	return a.s.LatestSnapshotBytes(ctx, appID)
+}
+
+func (a storageStoreAdapter) RetainedLayerBytes(ctx context.Context, appID string) (int64, error) {
+	return a.s.RetainedLayerBytes(ctx, appID)
 }
 
 func (a storageStoreAdapter) AppendSnapshotStorage(ctx context.Context, accountID, appID string, day time.Time, snapshotBytes, layerBytes int64) error {

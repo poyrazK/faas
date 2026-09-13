@@ -4913,6 +4913,11 @@ type Store interface {
 	// has no snapshot yet — a cold start, not an error. ADR-049
 	// §B.3.
 	LatestSnapshotBytes(ctx context.Context, appID string) (memBytes, diskBytes int64, err error)
+	// RetainedLayerBytes returns the physical app-layer bytes still referenced
+	// by non-deleted deployments for an active app. It includes the rootfs and
+	// sidecar layer artifacts, deduplicated by storage key, so superseded
+	// rollback artifacts remain visible until their deployment is cleared.
+	RetainedLayerBytes(ctx context.Context, appID string) (int64, error)
 	// StorageUsage returns the per-(account, app, day) storage
 	// rollup rows (migrations/00070_snapshot_storage_daily.sql
 	// ::snapshot_storage_daily). day is a UTC midnight time;

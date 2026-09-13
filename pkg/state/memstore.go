@@ -14612,6 +14612,48 @@ func (m *MemStore) LatestSnapshotBytes(_ context.Context, _ string) (int64, int6
 	return 0, 0, nil
 }
 
+// RetainedLayerBytes mirrors PgStore's retained-artifact accounting. The
+// in-memory map is keyed by deployment id rather than storage identity, so use
+// a temporary identity map to preserve the SQL deduplication contract.
+func (m *MemStore) RetainedLayerBytes(_ context.Context, appID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	app, ok := m.apps[appID]
+	if !ok || app.Status == AppDeleted {
+		return 0, nil
+	}
+	artifacts := make(map[string]int64)
+	retainedDeployments := make(map[string]struct{})
+	for _, deployment := range m.deployments {
+		if deployment.AppID != appID || deployment.DeletedAt != nil {
+			continue
+		}
+		retainedDeployments[deployment.ID] = struct{}{}
+		key := deployment.RootfsKey
+		if key == "" {
+			key = deployment.RootfsPath
+		}
+		if key != "" && deployment.RootfsBytes > artifacts[key] {
+			artifacts[key] = deployment.RootfsBytes
+		}
+	}
+	for _, layer := range m.deploymentSidecarLayers {
+		if _, retained := retainedDeployments[layer.DeploymentID]; !retained || layer.StorageKey == "" {
+			continue
+		}
+		if layer.Bytes > artifacts[layer.StorageKey] {
+			artifacts[layer.StorageKey] = layer.Bytes
+		}
+	}
+	var total int64
+	for _, bytes := range artifacts {
+		if bytes > 0 {
+			total += bytes
+		}
+	}
+	return total, nil
+}
+
 // HasStripePushHour + RecordStripePushHour implement the pkg/billing/stripe
 // PushDedupe interface. The MemStore keeps a flat set keyed by
 // (account, hour); PgStore keeps a dedicated table.
