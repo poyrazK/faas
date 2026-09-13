@@ -33,7 +33,8 @@ local checkout and posts a one-shot deploy to the control
 plane. The control plane resolves the durable install row,
 mints an installation token, fetches the codeload archive for
 the SHA, spools it, validates the tarball shape, enqueues a
-build, and returns the build/deployment ids.
+build, applies the `gregale.yaml` triggers and workflow definitions
+from that immutable archive, and returns the build/deployment ids.
 
 Output:
 
@@ -84,6 +85,13 @@ The CLI scopes that logical key to the source-ref transport before sending it
 to apid, so a replay folds to the original build row without colliding with a
 different deploy transport.
 
+The source-ref path reads `gregale.yaml` (or `gregale.yml`) from the fetched
+archive, not from the runner's current directory. Cron and event-trigger
+declarations are validated, quota-checked, deduplicated, and applied before
+the build is accepted; `workflows:` is stored on the deployment. Pass
+`--no-triggers` when a release should deploy code and workflows without
+reconciling trigger declarations.
+
 ## What it is NOT
 
 - **Not a webhook bind.** For push-event auto-deploy use
@@ -98,7 +106,7 @@ different deploy transport.
 ## Wire contract
 
 - `POST /v1/apps/{slug}/deployments/source-ref`
-- Body: `{"repo": "OWNER/NAME", "ref": "<branch|tag|sha>", "format": "tarball"}`
+- Body: `{"repo": "OWNER/NAME", "ref": "<branch|tag|sha>", "format": "tarball", "no_triggers": false}`
 - Auth chain: `authLimited → requireMFA → requireScope(ScopesDeployWriteSurface) → idempotent → handler`
 - SDK binding: `pkg/api.Client.DeployFromSourceRef` (Go) /
   `DeploymentsService.createDeploymentFromSourceRef` (Node).

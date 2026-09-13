@@ -191,6 +191,33 @@ func buildSourceRefTarGz(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
+func buildSourceRefTarGzWithManifest(t *testing.T, manifest string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	entries := map[string]string{
+		"gregale-source-main/index.js":     "exports.handler = () => 1;\n",
+		"gregale-source-main/gregale.yaml": manifest,
+	}
+	for name, body := range entries {
+		hdr := &tar.Header{Name: name, Mode: 0644, Size: int64(len(body))}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatalf("tar header: %v", err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatalf("tar write: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tar close: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
 // sourceRefTestEnv bundles the wiring every test in this file uses:
 // the http.Handler, the programmed fake, the store, the API key,
 // and a pre-baked 1-file tar.gz for the success path.
@@ -502,6 +529,98 @@ func TestSourceRef_HappyPath(t *testing.T) {
 	// Raw install token MUST NOT appear anywhere in the audit row.
 	if bytes.Contains(row.Data, []byte("gh_tok_test")) {
 		t.Errorf("audit payload leaked install token; data=%s", row.Data)
+	}
+}
+
+func TestSourceRef_AppliesArchiveManifest(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, `triggers:
+  - kind: cron
+    app: x
+    schedule: "0 3 * * *"
+    path: /cleanup
+  - kind: queue
+    app: x
+    slug: jobs
+    config:
+      mode: queue
+workflows:
+  - name: process_order
+    trigger:
+      type: manual
+    steps:
+      - name: charge
+        run: charge_order
+`))}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	crons, err := e.store.ListCronsForApp(context.Background(), e.appID)
+	if err != nil || len(crons) != 1 {
+		t.Fatalf("crons = %d, err=%v; want one archive-declared cron", len(crons), err)
+	}
+	triggers, err := e.store.ListTriggersForApp(context.Background(), e.appID)
+	if err != nil || len(triggers) != 1 || triggers[0].Slug != "jobs" {
+		t.Fatalf("triggers = %+v, err=%v; want queue/jobs", triggers, err)
+	}
+	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("deployments = %d, err=%v; want one", len(deps), err)
+	}
+	if !bytes.Contains(deps[0].Workflows, []byte("process_order")) {
+		t.Fatalf("workflows = %s, want archive workflow", deps[0].Workflows)
+	}
+}
+
+func TestSourceRef_NoTriggersStillDeploysWorkflows(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, `triggers:
+  - kind: cron
+    app: x
+    schedule: "0 3 * * *"
+    path: /cleanup
+workflows:
+  - name: process_order
+    steps:
+      - name: charge
+        run: charge_order
+`))}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567", NoTriggers: true,
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	crons, _ := e.store.ListCronsForApp(context.Background(), e.appID)
+	if len(crons) != 0 {
+		t.Fatalf("crons = %d, want 0 with no_triggers", len(crons))
+	}
+	deps, _ := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if len(deps) != 1 || !bytes.Contains(deps[0].Workflows, []byte("process_order")) {
+		t.Fatalf("workflows not persisted with no_triggers: %+v", deps)
+	}
+}
+
+func TestSourceRef_InvalidArchiveManifestFailsBeforeEnqueue(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, `triggers:
+  - kind: cron
+    app: x
+    schedule: not-a-cron
+    path: /cleanup
+`))}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+	})
+	if rec.Code != http.StatusUnprocessableEntity || bodyCode(t, rec) != CodeAppManifestInvalid {
+		t.Fatalf("status/code = %d/%q, want 422/%q; body=%s", rec.Code, bodyCode(t, rec), CodeAppManifestInvalid, rec.Body)
+	}
+	deps, _ := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if len(deps) != 0 {
+		t.Fatalf("deployment accepted invalid archive manifest: %d rows", len(deps))
 	}
 }
 

@@ -31,6 +31,10 @@ export type SourceRefDeployRequest = {
    */
   format?: 'tarball';
   /**
+   * Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed.
+   */
+  no_triggers?: boolean;
+  /**
    * Free-form operator note (≤280 chars). Example: 'Emergency rollback after payment provider incident'.
    */
   reason?: string;

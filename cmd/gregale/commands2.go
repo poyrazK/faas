@@ -1678,47 +1678,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if keyErr != nil {
 			return printErr("Invalid --idempotency-key", keyErr)
 		}
-		// Source-ref deploys target an already-existing app and return
-		// before the single-app upload path below, so stage the local
-		// manifest explicitly here. This keeps source-ref's JSON transport
-		// under the same compensation rule as multipart, resumable, and
-		// image deployments without changing its server-side source pull.
-		var stagedSourceRefTriggerIDs []string
-		var sourceRefClient *Client
-		if !*noTriggers {
-			var authErr error
-			sourceRefClient, authErr = authedClient()
-			if authErr != nil {
-				return printErr("Not logged in", authErr)
-			} else if sourceRefCwd, cwdErr := os.Getwd(); cwdErr == nil {
-				var triggerErr error
-				stagedSourceRefTriggerIDs, triggerErr = deployManifestTriggersWithRollback(ctx, sourceRefClient, slug, sourceRefCwd)
-				if triggerErr != nil {
-					return printErr("Manifest triggers fan-out failed", triggerErr)
-				}
-			}
-		}
-		defer func() {
-			if len(stagedSourceRefTriggerIDs) == 0 {
-				return
-			}
-			if rollbackErr := cleanupManifestTriggers(ctx, sourceRefClient, stagedSourceRefTriggerIDs); rollbackErr != nil {
-				PrintWarn(osStderr, "Manifest trigger rollback incomplete: %v", rollbackErr)
-				return
-			}
-			PrintProgress(osStderr, "Manifest trigger rollback complete (%d trigger(s) removed)", len(stagedSourceRefTriggerIDs))
-		}()
-		code := cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx, slug, *repo, *ref, api.DeployAnnotations{
+		code := cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx, slug, *repo, *ref, api.DeployAnnotations{
 			Reason:         *reason,
 			Tag:            *tag,
 			DeployedBy:     resolveDeployedBy(*deployedBy),
 			PRNumber:       *prNumber,
 			TrafficPercent: optTrafficPercent(*trafficPercent),
 			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
-		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second)
-		if code == 0 {
-			stagedSourceRefTriggerIDs = nil
-		}
+		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers)
 		return code
 	}
 

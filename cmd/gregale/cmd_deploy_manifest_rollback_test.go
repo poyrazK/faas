@@ -144,10 +144,10 @@ func TestCmdDeploySourceRef_RollsBackManifestTriggersWhenRejected(t *testing.T) 
 	if code := cmdDeployTarball([]string{"--repo", "onebox-faas/hello", "--ref", "main", "--name", "rollback-app", "--no-wait"}); code == 0 {
 		t.Fatal("source-ref deploy exit = 0, want rejected deployment failure")
 	}
-	if got, want := events, []string{"list-crons", "whoami", "create-cron", "source-ref", "delete-cron"}; !reflect.DeepEqual(got, want) {
+	if got, want := events, []string{"source-ref"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("request sequence = %v, want %v", got, want)
 	}
-	if !strings.Contains(stderr.String(), "Manifest trigger rollback complete") {
-		t.Fatalf("stderr missing rollback confirmation: %s", stderr.String())
+	if strings.Contains(stderr.String(), "Manifest trigger rollback complete") {
+		t.Fatalf("source-ref CLI should not apply a local manifest: %s", stderr.String())
 	}
 }
