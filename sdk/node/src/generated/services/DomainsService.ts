@@ -186,6 +186,9 @@ export class DomainsService {
     domain,
     idempotencyKey,
   }: {
+    /**
+     * Customer-owned custom domain to re-arm for TXT verification.
+     */
     domain: string,
     /**
      * Idempotency key for the POST. Stored for 24h. On replay the server
