@@ -661,8 +661,10 @@ jobs:
           printf '%s\n' "$COMPUTE_STORAGE_ENV" > "$ARTIFACT_DIR/storage.env"
           printf '%s\n' "$COMPUTE_SIGN_KEY" > "$ARTIFACT_DIR/sign.key"
           printf '%s\n' "$COMPUTE_VERIFY_KEY" > "$ARTIFACT_DIR/sign-pub.pem"
-          printf '%s\n' "$FLEET_AGE_KEY" > "$ARTIFACT_DIR/fleet.age"
-          printf '%s\n' "$FLEET_AGE_RECIPIENT" > "$ARTIFACT_DIR/fleet.age.pub"
+          # Keep the age identity byte-exact: the strict fleet-seal parser
+          # rejects a trailing newline in the secret key.
+          printf '%s' "$FLEET_AGE_KEY" > "$ARTIFACT_DIR/fleet.age"
+          printf '%s' "$FLEET_AGE_RECIPIENT" > "$ARTIFACT_DIR/fleet.age.pub"
           chmod 0400 "$ARTIFACT_DIR/fleet.age"
           chmod 0444 "$ARTIFACT_DIR/fleet.age.pub"
 

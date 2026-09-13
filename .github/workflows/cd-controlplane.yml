@@ -347,8 +347,10 @@ jobs:
           }
           stage="$RUNNER_TEMP/fleet-age"
           install -d -m 0700 "$stage"
-          printf '%s\n' "$FLEET_AGE_KEY" > "$stage/fleet.age"
-          printf '%s\n' "$FLEET_AGE_RECIPIENT" > "$stage/fleet.age.pub"
+          # Age identities are byte-exact single-line values. A trailing
+          # newline makes the strict fleet-seal parser reject the key.
+          printf '%s' "$FLEET_AGE_KEY" > "$stage/fleet.age"
+          printf '%s' "$FLEET_AGE_RECIPIENT" > "$stage/fleet.age.pub"
           chmod 0400 "$stage/fleet.age"
           chmod 0444 "$stage/fleet.age.pub"
           remote_stage="/tmp/gregale-fleet-age-${GITHUB_RUN_ID}"

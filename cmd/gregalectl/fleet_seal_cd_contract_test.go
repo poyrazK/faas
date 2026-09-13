@@ -20,6 +20,8 @@ func TestFleetSealCDContract(t *testing.T) {
 				"FLEET_AGE_KEY: ${{ secrets.FLEET_AGE_KEY }}",
 				"FLEET_AGE_RECIPIENT: ${{ secrets.FLEET_AGE_RECIPIENT }}",
 				"Stage the shared fleet seal identity",
+				`printf '%s' "$FLEET_AGE_KEY" > "$stage/fleet.age"`,
+				`printf '%s' "$FLEET_AGE_RECIPIENT" > "$stage/fleet.age.pub"`,
 				"gregalectl fleet-seal migrate",
 				"gregalectl fleet-seal verify",
 			},
@@ -29,8 +31,8 @@ func TestFleetSealCDContract(t *testing.T) {
 			tokens: []string{
 				"FLEET_AGE_KEY: ${{ secrets.FLEET_AGE_KEY }}",
 				"FLEET_AGE_RECIPIENT: ${{ secrets.FLEET_AGE_RECIPIENT }}",
-				`printf '%s\n' "$FLEET_AGE_KEY" > "$ARTIFACT_DIR/fleet.age"`,
-				`printf '%s\n' "$FLEET_AGE_RECIPIENT" > "$ARTIFACT_DIR/fleet.age.pub"`,
+				`printf '%s' "$FLEET_AGE_KEY" > "$ARTIFACT_DIR/fleet.age"`,
+				`printf '%s' "$FLEET_AGE_RECIPIENT" > "$ARTIFACT_DIR/fleet.age.pub"`,
 			},
 		},
 	}
