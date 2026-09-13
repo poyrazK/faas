@@ -252,8 +252,10 @@ type pendingDomainRow struct {
 // checkTXT does a TXT lookup for _faas-verify.<domain> and reports whether
 // any returned record equals the expected token.
 func checkTXT(ctx context.Context, domain, expected string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	target := state.CustomDomainChallengeName(domain)
-	records, err := txtLookupFunc(ctx, target)
+	records, err := txtLookupFunc(probeCtx, target)
 	if err != nil {
 		return false
 	}
