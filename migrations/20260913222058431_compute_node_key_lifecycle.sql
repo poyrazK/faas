@@ -23,6 +23,7 @@ DELETE FROM compute_node_keys k
  USING ranked r
  WHERE k.compute_node_id = r.compute_node_id
    AND k.key_id = r.key_id
+   AND k.key_state IS NULL
    AND r.position > 2;
 
 WITH ranked AS (
@@ -40,7 +41,8 @@ UPDATE compute_node_keys k
        revoked_at = NULL
   FROM ranked r
  WHERE k.compute_node_id = r.compute_node_id
-   AND k.key_id = r.key_id;
+   AND k.key_id = r.key_id
+   AND k.key_state IS NULL;
 
 ALTER TABLE compute_node_keys
     ALTER COLUMN key_state SET DEFAULT 'current',

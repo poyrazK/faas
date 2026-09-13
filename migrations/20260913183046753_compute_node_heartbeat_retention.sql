@@ -2,7 +2,7 @@
 -- Raw compute heartbeats are an operational troubleshooting window, not the
 -- long-term capacity ledger. Keep compact hourly aggregates before bounded
 -- deletion removes raw samples.
-CREATE TABLE compute_node_heartbeat_hourly (
+CREATE TABLE IF NOT EXISTS compute_node_heartbeat_hourly (
     node_id uuid NOT NULL REFERENCES compute_nodes(id) ON DELETE CASCADE,
     bucket_at timestamptz NOT NULL,
     sample_count bigint NOT NULL CHECK (sample_count > 0),
@@ -17,12 +17,12 @@ CREATE TABLE compute_node_heartbeat_hourly (
     CHECK (first_received_at <= last_received_at)
 );
 
-CREATE INDEX compute_node_heartbeat_hourly_bucket_idx
+CREATE INDEX IF NOT EXISTS compute_node_heartbeat_hourly_bucket_idx
     ON compute_node_heartbeat_hourly (bucket_at DESC);
 
 -- Makes each SKIP LOCKED retention batch an ordered index walk instead of a
 -- table scan while preserving the existing per-node history index.
-CREATE INDEX compute_node_heartbeats_received_at_idx
+CREATE INDEX IF NOT EXISTS compute_node_heartbeats_received_at_idx
     ON compute_node_heartbeats (received_at, id);
 
 -- +goose Down
