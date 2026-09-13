@@ -762,6 +762,14 @@ type ProjectReconcileStore interface {
 	) (ProjectReconcileResult, error)
 }
 
+// BuildProvenanceRunnerDigestStore is the optional persistence seam used by
+// imaged after it injects the function runner. It remains separate from Store
+// so narrow test doubles and older integrations do not need to grow with this
+// post-build metadata update.
+type BuildProvenanceRunnerDigestStore interface {
+	UpdateBuildProvenanceRunnerDigest(ctx context.Context, buildID, runnerDigest string) error
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface

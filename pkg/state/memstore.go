@@ -8074,6 +8074,21 @@ func (m *MemStore) UpdateBuildProvenanceSBOM(_ context.Context, buildID, sbomKey
 	return nil
 }
 
+// UpdateBuildProvenanceRunnerDigest mirrors PgStore.UpdateBuildProvenanceRunnerDigest.
+// The imaged function-layer path calls this after the rootfs builder has
+// copied the exact runner bytes into the artifact.
+func (m *MemStore) UpdateBuildProvenanceRunnerDigest(_ context.Context, buildID, runnerDigest string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.buildProvenance[buildID]
+	if !ok {
+		return ErrNotFound
+	}
+	p.RunnerDigest = runnerDigest
+	m.buildProvenance[buildID] = p
+	return nil
+}
+
 // SweepStuckRunningBuilds mirrors PgStore.SweepStuckRunningBuilds
 // (issue #195 B1.4). Returns the number of rows flipped.
 func (m *MemStore) SweepStuckRunningBuilds(ctx context.Context, threshold time.Time) (int, error) {

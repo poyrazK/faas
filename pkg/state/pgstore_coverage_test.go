@@ -218,6 +218,14 @@ func TestPg_CoverageBuildsAndProvenance(t *testing.T) {
 	if err != nil || got.SBOMStorageKey != "sboms/pg-1" {
 		t.Fatalf("provenance sbom = %+v, %v", got, err)
 	}
+	const runnerDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := s.UpdateBuildProvenanceRunnerDigest(ctx, claimed.ID, runnerDigest); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.BuildProvenanceByBuildID(ctx, claimed.ID)
+	if err != nil || got.RunnerDigest != runnerDigest {
+		t.Fatalf("provenance runner digest = %+v, %v", got, err)
+	}
 	if _, err := s.BuildProvenanceByBuildID(ctx, uuid.NewString()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("provenance missing = %v", err)
 	}

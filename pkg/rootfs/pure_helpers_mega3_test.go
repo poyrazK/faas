@@ -14,6 +14,8 @@ package rootfs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -95,6 +97,31 @@ func TestInjectFunctionRunner_HappyPath_Mega3(t *testing.T) {
 	}
 	if info.Mode().Perm()&0o755 != 0o755 {
 		t.Errorf("dst perms = %o, missing requested 0755 bits (umask-fragile check)", info.Mode().Perm())
+	}
+}
+
+func TestInjectFunctionRunner_DigestMatchesCopiedBytes(t *testing.T) {
+	t.Parallel()
+	staging := t.TempDir()
+	src := filepath.Join(t.TempDir(), "faas-runner-src")
+	data := []byte("#!/bin/sh\necho digest\n")
+	mustWriteFileMega3(t, src, data)
+
+	digest, err := injectFunctionRunner(staging, src)
+	if err != nil {
+		t.Fatalf("injectFunctionRunner: %v", err)
+	}
+	wantSum := sha256.Sum256(data)
+	want := "sha256:" + hex.EncodeToString(wantSum[:])
+	if digest != want {
+		t.Fatalf("digest = %q, want %q", digest, want)
+	}
+	got, err := os.ReadFile(filepath.Join(staging, "usr", "local", "bin", "faas-runner"))
+	if err != nil {
+		t.Fatalf("read injected runner: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Fatalf("injected bytes = %q, want %q", got, data)
 	}
 }
 
