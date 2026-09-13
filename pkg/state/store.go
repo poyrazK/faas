@@ -6147,3 +6147,22 @@ type Store interface {
 	// no open sessions.
 	SumOpenUploadSessionBytesByAccount(ctx context.Context, accountID pgtype.UUID) (int64, error)
 }
+
+// CustomerEventFilter is the tenant-safe query contract for the customer audit
+// timeline. Subjectless events are included only when their app, deployment,
+// build, or instance metadata resolves to an app owned by AccountID.
+type CustomerEventFilter struct {
+	AccountID        string
+	IncludeAnonymous bool
+	KindPrefix       string
+	AppID            string
+	Since            time.Time
+	Limit            int
+}
+
+// CustomerEventLister is implemented by production stores without widening
+// Store for narrow test adapters. Callers must fall back to subject-only reads
+// when the optimized ownership query is unavailable.
+type CustomerEventLister interface {
+	ListCustomerEvents(ctx context.Context, filter CustomerEventFilter) ([]Event, error)
+}

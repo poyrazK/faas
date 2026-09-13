@@ -12791,6 +12791,72 @@ func (m *MemStore) ListEvents(_ context.Context, subject string, limit int) ([]E
 	return out, nil
 }
 
+func (m *MemStore) ListCustomerEvents(_ context.Context, filter CustomerEventFilter) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	subject := parseSubjectID(filter.AccountID)
+	if subject == nil {
+		return nil, nil
+	}
+	if filter.Limit <= 0 {
+		filter.Limit = 50
+	}
+	out := make([]Event, 0, filter.Limit)
+	for i := len(m.events) - 1; i >= 0 && len(out) < filter.Limit; i-- {
+		event := m.events[i]
+		ownedSubject := event.Subject != nil && *event.Subject == *subject
+		appID, ownedAnonymous := m.eventOwnedAppLocked(event.Data, filter.AccountID)
+		if !ownedSubject && !(filter.IncludeAnonymous && event.Subject == nil && ownedAnonymous) {
+			continue
+		}
+		if filter.KindPrefix != "" && !strings.HasPrefix(event.Kind, filter.KindPrefix) {
+			continue
+		}
+		if !filter.Since.IsZero() && event.At.Before(filter.Since) {
+			continue
+		}
+		if filter.AppID != "" && appID != filter.AppID {
+			continue
+		}
+		out = append(out, event)
+	}
+	return out, nil
+}
+
+func (m *MemStore) eventOwnedAppLocked(raw json.RawMessage, accountID string) (string, bool) {
+	var data map[string]any
+	if json.Unmarshal(raw, &data) != nil {
+		return "", false
+	}
+	if appID, _ := data["app_id"].(string); appID != "" {
+		app, ok := m.apps[appID]
+		return appID, ok && app.AccountID == accountID
+	}
+	if deploymentID, _ := data["deployment_id"].(string); deploymentID != "" {
+		if deployment, ok := m.deployments[deploymentID]; ok {
+			app, appOK := m.apps[deployment.AppID]
+			return deployment.AppID, appOK && app.AccountID == accountID
+		}
+	}
+	if buildID, _ := data["build_id"].(string); buildID != "" {
+		if build, ok := m.builds[buildID]; ok {
+			if deployment, depOK := m.deployments[build.DeploymentID]; depOK {
+				app, appOK := m.apps[deployment.AppID]
+				return deployment.AppID, appOK && app.AccountID == accountID
+			}
+		}
+	}
+	instanceID, _ := data["instance_id"].(string)
+	if instanceID == "" {
+		instanceID, _ = data["instance"].(string)
+	}
+	if instance, ok := m.instances[instanceID]; ok {
+		app, appOK := m.apps[instance.AppID]
+		return instance.AppID, appOK && app.AccountID == accountID
+	}
+	return "", false
+}
+
 func (m *MemStore) ListEventsPage(_ context.Context, subject string, beforeAt time.Time, beforeID int64, limit int) ([]Event, error) {
 	if limit <= 0 {
 		return nil, nil
