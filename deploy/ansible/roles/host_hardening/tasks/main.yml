@@ -189,6 +189,74 @@
   notify: converge bounded journal
   when: faas_hardening_journald | bool
 
+# --- rsyslog ----------------------------------------------------------------
+
+- name: host_hardening — inspect the inherited GCE rsyslog policy
+  ansible.builtin.stat:
+    path: /etc/rsyslog.d/90-google.conf
+  register: faas_hardening_google_rsyslog
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — disable the unwritable GCE console sink
+  ansible.builtin.replace:
+    path: /etc/rsyslog.d/90-google.conf
+    regexp: '^([ \t]*daemon,kern\.\*[ \t]+-?/dev/console[ \t]*)$'
+    replace: |-
+      # Gregale: inherited GCE console sink disabled; rsyslog cannot write root:tty /dev/console.
+      # \1
+  notify: restart rsyslog
+  when:
+    - faas_hardening_rsyslog | bool
+    - faas_hardening_google_rsyslog.stat.exists | default(false)
+
+- name: host_hardening — install bounded rsyslog rotation policy
+  ansible.builtin.template:
+    src: rsyslog.logrotate.j2
+    dest: /etc/logrotate.d/rsyslog
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — install hourly rsyslog rotation units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: faas-rsyslog-rotate.service.j2, dest: faas-rsyslog-rotate.service }
+    - { src: faas-rsyslog-rotate.timer.j2, dest: faas-rsyslog-rotate.timer }
+  register: faas_hardening_rsyslog_units
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — enable bounded rsyslog rotation
+  ansible.builtin.systemd_service:
+    name: faas-rsyslog-rotate.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ faas_hardening_rsyslog_units is changed }}"
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — validate the effective rsyslog configuration  # noqa: command-instead-of-module (rsyslog owns the config parser)
+  ansible.builtin.command: rsyslogd -N1
+  changed_when: false
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — reject active file sinks to the unwritable console  # noqa: command-instead-of-module (recursive config validation has no module equivalent)
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -RHE
+      - '^[[:space:]]*daemon,kern\.\*[[:space:]]+-?/dev/console[[:space:]]*$'
+      - /etc/rsyslog.conf
+      - /etc/rsyslog.d
+  register: faas_hardening_console_sink
+  changed_when: false
+  failed_when: faas_hardening_console_sink.rc == 0 or faas_hardening_console_sink.rc > 1
+  when: faas_hardening_rsyslog | bool
+
 # --- sysctl -----------------------------------------------------------------
 
 - name: host_hardening — apply kernel hardening sysctls
