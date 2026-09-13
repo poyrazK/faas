@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestDaemonConnectionBudgetFitsTwoNodePublicBetaFleet(t *testing.T) {
+func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 	// Control plane: apid, schedd, public gateway/control services. Each
 	// compute node: schedd, internal gateway, vmmd, imaged, and builderd.
 	control := []string{"apid", "schedd", "gatewayd-public", "meterd", "githubd", "outboundd", "s3-gatewayd"}
@@ -20,22 +20,35 @@ func TestDaemonConnectionBudgetFitsTwoNodePublicBetaFleet(t *testing.T) {
 		}
 		return total
 	}
-	maxConnections := postgresCapacityDefault(t, "faas_postgres_max_connections")
 	reservedConnections := postgresCapacityDefault(t, "faas_postgres_superuser_reserved_connections")
-	ordinaryCapacity := maxConnections - reservedConnections
 	operatorHeadroom := postgresCapacityDefault(t, "faas_postgres_min_operator_headroom")
-	steadyTotal := sum(control) + 2*sum(compute)
-	rolloutTotal := sum(control) + 3*sum(compute)
-	if steadyTotal*4 > ordinaryCapacity*3 {
-		t.Fatalf("two-compute steady pool budget = %d, want <=75%% of %d ordinary slots", steadyTotal, ordinaryCapacity)
+	declaredControl := postgresCapacityDefault(t, "faas_postgres_control_plane_pool_budget")
+	declaredCompute := postgresCapacityDefault(t, "faas_postgres_per_compute_pool_budget")
+	rolloutNodes := postgresCapacityDefault(t, "faas_postgres_rollout_overlap_nodes")
+	if got := sum(control); got != declaredControl {
+		t.Fatalf("control-plane pool budget = %d, role declares %d", got, declaredControl)
 	}
-	if rolloutTotal+operatorHeadroom > ordinaryCapacity {
-		t.Fatalf("rollout pool budget = %d plus %d operator slots, want <=%d", rolloutTotal, operatorHeadroom, ordinaryCapacity)
+	if got := sum(compute); got != declaredCompute {
+		t.Fatalf("per-compute pool budget = %d, role declares %d", got, declaredCompute)
 	}
-	declaredSteady := postgresCapacityDefault(t, "faas_postgres_two_compute_pool_budget")
-	declaredRollout := postgresCapacityDefault(t, "faas_postgres_rollout_overlap_pool_budget")
-	if steadyTotal != declaredSteady || rolloutTotal != declaredRollout {
-		t.Fatalf("capacity role contract drifted: computed steady/rollout=%d/%d, declared=%d/%d", steadyTotal, rolloutTotal, declaredSteady, declaredRollout)
+	wantMax := map[int32]int32{1: 130, 2: 160, 10: 520, 12: 610}
+	for _, computeNodes := range []int32{1, 2, 10, 12} {
+		steadyTotal := declaredControl + computeNodes*declaredCompute
+		rolloutTotal := declaredControl + (computeNodes+rolloutNodes)*declaredCompute
+		ordinaryForWarning := (steadyTotal*4 + 2) / 3
+		ordinaryForRollout := rolloutTotal + operatorHeadroom
+		ordinaryCapacity := max32(ordinaryForWarning, ordinaryForRollout)
+		maxConnections := roundUp10(ordinaryCapacity + reservedConnections)
+		if maxConnections != wantMax[computeNodes] {
+			t.Fatalf("%d-node max_connections = %d, want %d", computeNodes, maxConnections, wantMax[computeNodes])
+		}
+		configuredOrdinary := maxConnections - reservedConnections
+		if steadyTotal*4 > configuredOrdinary*3 {
+			t.Fatalf("%d-node steady pool budget = %d, want <=75%% of %d ordinary slots", computeNodes, steadyTotal, configuredOrdinary)
+		}
+		if rolloutTotal+operatorHeadroom > configuredOrdinary {
+			t.Fatalf("%d-node rollout pool budget = %d plus %d operator slots, want <=%d", computeNodes, rolloutTotal, operatorHeadroom, configuredOrdinary)
+		}
 	}
 	if got := daemonMaxConnections("faas-schedd"); got != 16 {
 		t.Fatalf("schedd pool = %d, want 16 for eleven subscribers plus request headroom", got)
@@ -46,6 +59,17 @@ func TestDaemonConnectionBudgetFitsTwoNodePublicBetaFleet(t *testing.T) {
 	if got := daemonMaxConnections("migration-tool"); got != defaultMaxConnections {
 		t.Fatalf("unknown process pool = %d, want default %d", got, defaultMaxConnections)
 	}
+}
+
+func max32(a, b int32) int32 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func roundUp10(value int32) int32 {
+	return ((value + 9) / 10) * 10
 }
 
 func postgresCapacityDefault(t *testing.T, key string) int32 {

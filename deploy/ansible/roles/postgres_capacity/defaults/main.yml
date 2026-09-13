@@ -1,10 +1,17 @@
 ---
-# Public-beta database capacity for one control plane and two active compute
-# nodes. pkg/db.DaemonMaxConnections budgets 108 steady sessions and 142
-# during a one-node rollout overlap. Five superuser-only slots plus thirteen
-# ordinary slots remain available at the overlap ceiling.
-faas_postgres_max_connections: 160
+# Fleet-wide direct-pool inputs. The role derives max_connections from the
+# complete [compute_nodes] inventory; it never assumes a two-node ceiling.
+faas_postgres_control_plane_pool_budget: 40
+faas_postgres_per_compute_pool_budget: 34
+faas_postgres_rollout_overlap_nodes: 1
 faas_postgres_superuser_reserved_connections: 5
-faas_postgres_two_compute_pool_budget: 108
-faas_postgres_rollout_overlap_pool_budget: 142
 faas_postgres_min_operator_headroom: 10
+
+# PostgreSQL backends are processes. Keep the small-fleet floor compatible
+# with the 4 GB public-beta control plane, then require 24 MB of additional
+# host RAM for every configured connection above the two-node 160 baseline.
+# A 12-node fleet derives 610 connections and therefore requires about
+# 14.3 GB; an n2-standard-4 (16 GB) control plane satisfies the guard.
+faas_postgres_small_fleet_connections: 160
+faas_postgres_small_fleet_min_memory_mb: 3500
+faas_postgres_incremental_connection_memory_mb: 24

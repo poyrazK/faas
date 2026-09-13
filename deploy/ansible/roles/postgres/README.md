@@ -31,8 +31,8 @@ share the database without opening it to the public interface.
    - `max_wal_senders = 3` (reload)
    - Creates `/var/lib/pgsql/archive` owned `postgres:postgres 0750`.
 8. Hands connection sizing to the adjacent `postgres_capacity` role. The
-   bootstrap and node-join playbooks both run that role so two active public-
-   beta compute nodes fit before admission continues.
+   bootstrap and node-join playbooks both run that role so capacity follows
+   the complete compute inventory before admission continues.
 
 The archive directory is the local authoritative copy — the M8 restore
 drill script (`deploy/scripts/faas-m8-restore-drill.sh`) replays WAL from

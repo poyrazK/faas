@@ -50,21 +50,23 @@ unbudgeted client that needs attribution before its pool can be corrected.
 
 Do not increase `max_connections` as the first response. More backends raise
 PostgreSQL memory use and hide a pool-budget regression. The public-beta
-configuration is the reviewed exception: `postgres_capacity` provisions 160
-total connections with five superuser-reserved slots after the daemon pools
-have been explicitly bounded and attributed. One control plane plus two active
-compute nodes has a 108-session maximum; a rolling compute generation raises
-that ceiling to 142 and leaves 13 ordinary slots plus the five reserved slots.
+configuration is the reviewed exception: `postgres_capacity` derives the
+postmaster ceiling from the complete compute inventory after the daemon pools
+have been explicitly bounded and attributed. It budgets 40 control-plane
+sessions, 34 sessions per compute node, one overlapping rollout node, operator
+headroom, and five superuser-reserved slots. It also refuses admission when
+the database host lacks RAM for the derived ceiling.
 
-Do not grow beyond two active compute nodes with this direct-pool shape.
-PgBouncer transaction pooling cannot carry the daemons' permanent `LISTEN`
-sessions. A larger fleet must first split notification listeners onto a direct
-DSN, route ordinary query pools through PgBouncer, and repeat the API, wake,
-jobs, workflow, and rollout-overlap capacity suite.
+The direct-pool model is validated through twelve compute nodes on an
+appropriately sized database host. Beyond that beta envelope, split permanent
+`LISTEN` sessions onto a direct DSN, route ordinary query pools through
+transaction-mode PgBouncer, and repeat the API, wake, jobs, workflow, and
+rollout-overlap capacity suite.
 
 ## Verify recovery
 
 The warning clears after utilization remains at or below 75%. Verify that new
-connections carry an application name, `faas_postgres_ordinary_connection_capacity`
-reports 155, the two-node steady fleet stays at or below 108 sessions, and a
-rollout overlap stays at or below 142 sessions.
+connections carry an application name, the exported ordinary capacity matches
+the inventory-derived ceiling, the steady fleet stays below 75% of ordinary
+capacity, and one overlapping compute generation still leaves the configured
+operator headroom.
