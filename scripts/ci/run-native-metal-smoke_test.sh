@@ -77,6 +77,80 @@ for batch_test in TestMetalImageBindMount TestMetalIPSetupBatch TestMetalFreshNe
   }
 done
 
+# The combined tally is arithmetic, not a string, so it gets driven with real
+# logs instead of grepped for. Run 34382870842 reported "435 passed, 16
+# skipped" while only 10 tests never executed: the six batch tests were summed
+# as skipped in the package pass AND passed in the batch. A per-pass sum
+# cannot express that, so the runner must not go back to one.
+tally="${repo_root}/scripts/ci/metal-tally.sh"
+[[ -x "${tally}" ]] || {
+  echo "scripts/ci/metal-tally.sh is missing or not executable" >&2
+  exit 1
+}
+if grep -Fq 'skipped + batch_skipped' "${runner}"; then
+  echo "native metal wrapper sums per-pass skip counts again; a test that skips in one pass and runs in the other would be double-counted" >&2
+  exit 1
+fi
+
+tally_work="$(mktemp -d)"
+trap 'rm -rf "${tally_work}"' EXIT
+
+assert_tally() { # label, expected-passed, expected-skipped, expected-failed
+  local label="$1" want_p="$2" want_s="$3" want_f="$4"
+  local out got_p got_s got_f
+  out="$("${tally}" "${tally_work}/pkg.log" "${tally_work}/batch.log")"
+  got_p="$(sed -n 's/^passed=//p' <<<"${out}")"
+  got_s="$(sed -n 's/^skipped=//p' <<<"${out}")"
+  got_f="$(sed -n 's/^failed=//p' <<<"${out}")"
+  if [[ "${got_p}" != "${want_p}" || "${got_s}" != "${want_s}" || "${got_f}" != "${want_f}" ]]; then
+    echo "metal tally ${label}: want ${want_p}/${want_s}/${want_f} passed/skipped/failed, got ${got_p}/${got_s}/${got_f}" >&2
+    printf '%s\n' "${out}" >&2
+    exit 1
+  fi
+}
+
+# The shape that was misreported: one test skips in the package pass and runs
+# in the batch, one skips in both and is the only real gap.
+cat >"${tally_work}/pkg.log" <<'LOG'
+--- PASS: TestMetalHelloBoot (1.00s)
+--- PASS: TestMetalWakeLatency (2.00s)
+--- SKIP: TestMetalIPSetupBatch (0.00s)
+--- SKIP: TestMetalBuilderAcceptance (0.00s)
+LOG
+cat >"${tally_work}/batch.log" <<'LOG'
+--- PASS: TestMetalIPSetupBatch (4.84s)
+LOG
+assert_tally "deferred-to-batch" 3 1 0
+
+# Skipped in both passes is still one gap, not two.
+cat >"${tally_work}/batch.log" <<'LOG'
+--- SKIP: TestMetalIPSetupBatch (0.00s)
+LOG
+assert_tally "skipped-in-both" 2 2 0
+
+# Failing anywhere outranks skipping, and outranks passing in the other pass.
+cat >"${tally_work}/batch.log" <<'LOG'
+--- FAIL: TestMetalIPSetupBatch (4.84s)
+--- FAIL: TestMetalHelloBoot (1.00s)
+LOG
+assert_tally "failed-outranks" 1 1 2
+
+# Subtest result lines are indented; counting them would inflate every number.
+cat >"${tally_work}/pkg.log" <<'LOG'
+--- PASS: TestMetalHelloBoot (1.00s)
+    --- PASS: TestMetalHelloBoot/restore (0.50s)
+    --- SKIP: TestMetalHelloBoot/stub (0.00s)
+--- SKIP: TestMetalBuilderAcceptance (0.00s)
+LOG
+: >"${tally_work}/batch.log"
+assert_tally "subtests-ignored" 1 1 0
+
+# An absent batch log must degrade to the package pass, not crash the summary.
+rm -f "${tally_work}/batch.log"
+assert_tally "missing-batch-log" 1 1 0
+cat >"${tally_work}/batch.log" <<'LOG'
+LOG
+
 base_mountpoints="$(sed -n 's/^base_mountpoints=(\(.*\))$/\1/p' "${runner}")"
 [[ -n "${base_mountpoints}" ]] || {
   echo "could not extract the native metal base mountpoint contract" >&2

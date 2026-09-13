@@ -204,7 +204,9 @@ skipped="$(grep -cE '^--- SKIP: ' "${metal_log}" || true)"
 failed="$(grep -cE '^--- FAIL: ' "${metal_log}" || true)"
 echo "native metal smoke: pkg/fcvm metal — ${passed} passed, ${skipped} skipped, ${failed} failed"
 if [[ "${skipped}" -gt 0 ]]; then
-  echo "native metal smoke: skipped tests (each names the fixture it wants):"
+  # Six of these are the namespace batch below, not a gap. The combined tally
+  # at the end is the one that says what never ran anywhere.
+  echo "native metal smoke: skipped in the package pass (each names the fixture it wants):"
   grep -E '^--- SKIP: ' "${metal_log}" | sed 's/^/  /'
 fi
 if [[ "${passed}" -eq 0 ]]; then
@@ -254,6 +256,16 @@ if [[ "${batch_passed}" -eq 0 ]]; then
   batch_rc=1
 fi
 
-echo "native metal smoke: total — $((passed + batch_passed)) passed, $((skipped + batch_skipped)) skipped, $((failed + batch_failed)) failed"
+# Both passes run the same test binary, so the six batch tests appear in both
+# logs and the totals cannot be per-pass sums — see scripts/ci/metal-tally.sh.
+tally="$("${repo_root}/scripts/ci/metal-tally.sh" "${metal_log}" "${batch_log}")"
+total_passed="$(sed -n 's/^passed=//p' <<<"${tally}")"
+total_skipped="$(sed -n 's/^skipped=//p' <<<"${tally}")"
+total_failed="$(sed -n 's/^failed=//p' <<<"${tally}")"
+echo "native metal smoke: total — ${total_passed} passed, ${total_skipped} skipped, ${total_failed} failed"
+if [[ "${total_skipped}" -gt 0 ]]; then
+  echo "native metal smoke: never executed in either pass:"
+  sed -n 's/^never_ran=/  /p' <<<"${tally}"
+fi
 [[ "${metal_rc}" -eq 0 ]] || exit "${metal_rc}"
 [[ "${batch_rc}" -eq 0 ]] || exit "${batch_rc}"
