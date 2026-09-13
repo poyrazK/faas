@@ -136,6 +136,7 @@ type MemStore struct {
 	deployTokens            map[string]DeployToken
 	deployTokenByHash       map[string]DeployToken
 	apps                    map[string]App
+	appDeletionClaims       map[string]struct{}
 	// consumerKeys is the ADR-120 store. Keyed by ConsumerKey.ID
 	// (UUID, generated at create time). The (appID, prefix) hot-
 	// path index is in-memory only — we walk the map on lookup
@@ -828,6 +829,7 @@ func NewMemStore() *MemStore {
 		deployTokens:            map[string]DeployToken{},
 		deployTokenByHash:       map[string]DeployToken{},
 		apps:                    map[string]App{},
+		appDeletionClaims:       map[string]struct{}{},
 		githubDeployBranches:    map[string]map[string]string{},
 		githubDeployPolicies:    map[string]GitHubDeployPolicy{},
 		githubBindings:          map[string]GitHubBinding{},
@@ -4739,8 +4741,12 @@ func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil 
 		deadline := graceUntil.UTC()
 		a.DeleteGraceUntil = &deadline
 	}
+	wasDeleted := a.Status == AppDeleted
 	a.Status = AppDeleted
 	m.apps[id] = a
+	if !wasDeleted {
+		delete(m.appDeletionClaims, id)
+	}
 	// Retire replica placements immediately while preserving snapshot rows for
 	// GC and a possible restore during the grace window.
 	for i := range m.snapshots {
@@ -4759,13 +4765,14 @@ func (m *MemStore) RestoreApp(_ context.Context, id string) (App, error) {
 	if !ok {
 		return App{}, ErrNotFound
 	}
-	if a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) {
+	if _, claimed := m.appDeletionClaims[id]; claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) {
 		return App{}, ErrConflict
 	}
 	a.Status = AppActive
 	a.DeletedAt = nil
 	a.DeleteGraceUntil = nil
 	m.apps[id] = a
+	delete(m.appDeletionClaims, id)
 	return a, nil
 }
 
@@ -4843,11 +4850,28 @@ func (m *MemStore) ListAppDeletionArtifacts(_ context.Context, appID string) ([]
 	return out, nil
 }
 
-func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
+func (m *MemStore) ClaimAppDeletion(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
 	if !ok || a.Status != AppDeleted || a.DeleteGraceUntil == nil || a.DeleteGraceUntil.After(time.Now()) {
+		return ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return ErrConflict
+		}
+	}
+	m.appDeletionClaims[id] = struct{}{}
+	return nil
+}
+
+func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	_, claimed := m.appDeletionClaims[id]
+	if !ok || !claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || a.DeleteGraceUntil.After(time.Now()) {
 		if ok && a.Status == AppDeleted {
 			return ErrNotFound
 		}
@@ -4858,6 +4882,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	delete(m.appDeletionClaims, id)
 	for key, v := range m.envs {
 		if v.AppID == id {
 			delete(m.envs, key)
@@ -12949,7 +12974,7 @@ func (m *MemStore) ListCustomerEvents(_ context.Context, filter CustomerEventFil
 		event := m.events[i]
 		ownedSubject := event.Subject != nil && *event.Subject == *subject
 		appID, ownedAnonymous := m.eventOwnedAppLocked(event.Data, filter.AccountID)
-		if !ownedSubject && !(filter.IncludeAnonymous && event.Subject == nil && ownedAnonymous) {
+		if !ownedSubject && (!filter.IncludeAnonymous || event.Subject != nil || !ownedAnonymous) {
 			continue
 		}
 		if filter.KindPrefix != "" && !strings.HasPrefix(event.Kind, filter.KindPrefix) {

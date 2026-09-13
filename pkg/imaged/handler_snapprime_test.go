@@ -415,11 +415,11 @@ func TestHandleSnapshotBoot_RetriesBusyBuildExportLease(t *testing.T) {
 	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, artifact, "build", 3); err != nil {
 		t.Fatal(err)
 	}
-	cleaner, err := os.Open(artifact)
+	cleaner, err := os.OpenFile(artifact, os.O_RDONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cleaner.Close()
+	defer func() { _ = cleaner.Close() }()
 	if err := syscall.Flock(int(cleaner.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}

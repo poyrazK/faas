@@ -105,7 +105,7 @@ func boundedGuestReceiverFailureKind(kind string) string {
 
 func guestReceiverFailureDegradesReadiness(kind string) bool {
 	switch kind {
-	case "protocol", "overload":
+	case "read", "write", "protocol", "overload":
 		return false
 	default:
 		return true

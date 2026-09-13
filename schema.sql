@@ -1464,6 +1464,7 @@ CREATE TABLE public.apps (
     declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
     deleted_at timestamp with time zone,
     delete_grace_until timestamp with time zone,
+    purge_claimed_at timestamp with time zone,
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
     CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),

@@ -145,9 +145,9 @@ func removeEntry(item *entry, reason string, result *SweepResult) {
 	if item.removed {
 		return
 	}
-	f, err := os.Open(item.artifact)
+	f, err := os.Open(item.artifact) //nolint:forbidigo // canonical internal builder export validated by inventory.
 	if err == nil {
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 				result.SkippedActive++
@@ -156,7 +156,7 @@ func removeEntry(item *entry, reason string, result *SweepResult) {
 			result.Errors++
 			return
 		}
-		defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck -- best effort after delete
+		defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		result.Errors++
 		return

@@ -16,7 +16,7 @@ func TestPg_MaintainComputeNodeHeartbeatHistoryRollsUpTenNodeFleet(t *testing.T)
 	for i := 0; i < nodeCount; i++ {
 		node, err := store.CreateComputeNode(ctx, state.ComputeNode{
 			Name: fmt.Sprintf("heartbeat-retention-%02d", i), TargetURL: fmt.Sprintf("unix:///run/faas/vmmd-%02d.sock", i),
-			Active: true, VPCPUs: 4, MemMB: 8192, MaxConcurrency: 16, AdmissionCeilingMB: 4096,
+			Active: true, VPCPUs: 4, VCPUBudget: 4, MemMB: 8192, MaxConcurrency: 16, AdmissionCeilingMB: 4096,
 		})
 		if err != nil {
 			t.Fatalf("CreateComputeNode(%d): %v", i, err)

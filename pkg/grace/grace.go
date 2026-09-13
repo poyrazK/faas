@@ -240,6 +240,15 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 		if app.DeleteGraceUntil != nil && app.DeleteGraceUntil.After(now) {
 			continue
 		}
+		if app.DeleteGraceUntil != nil {
+			if err := g.p.Store.ClaimAppDeletion(ctx, app.ID); err != nil {
+				if !errors.Is(err, state.ErrNotFound) {
+					g.metrics.failure("claim_tombstone")
+					g.p.Log.Warn("grace: claim app deletion failed", "app", app.ID, "err", err)
+				}
+				continue
+			}
+		}
 		artifacts, err := g.p.Store.ListAppDeletionArtifacts(ctx, app.ID)
 		if err != nil {
 			g.metrics.failure("list_artifacts")

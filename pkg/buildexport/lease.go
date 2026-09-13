@@ -34,7 +34,7 @@ func AcquireArtifact(path string) (*Lease, bool, error) {
 	if _, ok := ExportDir(path); !ok {
 		return nil, false, nil
 	}
-	f, err := os.Open(filepath.Clean(path))
+	f, err := os.Open(filepath.Clean(path)) //nolint:forbidigo // ExportDir restricts this to the internal builder handoff tree.
 	if err != nil {
 		return nil, true, fmt.Errorf("build export: open artifact: %w", err)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 
@@ -44,7 +45,7 @@ func TestConsumeLogStreamDrainsLogFramesInOrderBeforeTransportError(t *testing.T
 		got = append(got, event.Data)
 		return false, 0
 	})
-	if code != 0 || err != wantErr || len(got) != 2 || got[0] != "first" || got[1] != "second" {
+	if code != 0 || !errors.Is(err, wantErr) || len(got) != 2 || got[0] != "first" || got[1] != "second" {
 		t.Fatalf("consumeLogStream = (%d, %v), events=%v", code, err, got)
 	}
 }

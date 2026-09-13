@@ -2587,8 +2587,7 @@ func (s *PgStore) ListInstancesByNodeID(ctx context.Context, nodeID string) ([]I
 		   from instances i
 		   join apps a on a.id = i.app_id
 		  where a.node_id = $1
-		    and a.status <> 'deleted'
-		    and c.enabled = true`
+		    and a.status <> 'deleted'`
 	rows, err := s.pool.Query(ctx, sel, nodeID)
 	if err != nil {
 		return nil, err
@@ -3847,10 +3846,11 @@ func (s *PgStore) RestoreApp(ctx context.Context, id string) (App, error) {
 	var a App
 	row := s.pool.QueryRow(ctx, `
 		update apps
-		   set status = 'active', deleted_at = null, delete_grace_until = null
+		   set status = 'active', deleted_at = null, delete_grace_until = null, purge_claimed_at = null
 		 where id = $1
 		   and status = 'deleted'
 		   and delete_grace_until > now()
+		   and purge_claimed_at is null
 		 returning `+appsSelectColumns, id)
 	if err := scanAppInto(&a, row); err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -3870,6 +3870,41 @@ func (s *PgStore) ListDeletedApps(ctx context.Context) ([]App, error) {
 	}
 	defer rows.Close()
 	return scanApps(rows)
+}
+
+// ClaimAppDeletion closes the restore window before storage-side deletion.
+// The persisted claim makes retries idempotent while serializing against a
+// restore statement that began just before the deadline.
+func (s *PgStore) ClaimAppDeletion(ctx context.Context, id string) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("state: begin app purge claim: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var activeBuckets int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from object_buckets where app_id = $1 and state <> 'deleted'`, id).Scan(&activeBuckets); err != nil {
+		return fmt.Errorf("state: count app buckets for purge claim: %w", err)
+	}
+	if activeBuckets != 0 {
+		return ErrConflict
+	}
+	tag, err := tx.Exec(ctx, `
+		update apps
+		   set purge_claimed_at = coalesce(purge_claimed_at, now())
+		 where id = $1
+		   and status = 'deleted'
+		   and delete_grace_until <= now()`, id)
+	if err != nil {
+		return fmt.Errorf("state: claim app purge: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit app purge claim: %w", err)
+	}
+	return nil
 }
 
 // ListAppDeletionArtifacts projects every durable artifact reference owned by
@@ -3955,7 +3990,7 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	var exists int
 	if err := tx.QueryRow(ctx,
-		`select 1 from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() for update`, id).Scan(&exists); err != nil {
+		`select 1 from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() and purge_claimed_at is not null for update`, id).Scan(&exists); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -4000,7 +4035,7 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	// webhooks, edge rules, tenant surfaces, and their deliveries).
 	// The parent delete therefore removes those rows atomically as well.
 	tag, err := tx.Exec(ctx,
-		`delete from apps where id = $1 and status = 'deleted' and delete_grace_until <= now()`, id)
+		`delete from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() and purge_claimed_at is not null`, id)
 	if err != nil {
 		return fmt.Errorf("state: purge app %s: %w", id, err)
 	}

@@ -82,6 +82,7 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 	sessionKeyPath := filepath.Join(socketDir, "session.key")
 	hostHMACPath := filepath.Join(socketDir, "host.hmac.key")
 	hostAgePath := filepath.Join(socketDir, "host.age")
+	fleetAgePath := filepath.Join(socketDir, "fleet.age")
 	writeBootKey(t, sessionKeyPath, []byte(randomHexKey(t)), 0o400)
 	writeBootKey(t, hostHMACPath, randomBytes(t, 32), 0o400)
 	identity, err := age.GenerateX25519Identity()
@@ -92,6 +93,7 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 	// newline; keep the boot fixture byte-for-byte equivalent because the
 	// production loader intentionally parses the credential strictly.
 	writeBootKey(t, hostAgePath, []byte(identity.String()), 0o400)
+	writeBootKey(t, fleetAgePath, []byte(identity.String()), 0o400)
 
 	mainAddr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
@@ -127,7 +129,7 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 		"FAAS_PADDLE_API_KEY=pdl_test_boot_contract",
 		"FAAS_PADDLE_WEBHOOK_SECRET=whk_test_boot_contract",
 	}
-	env = append(env, renderedUnitEnvironment(t, unit, sessionKeyPath, hostAgePath, hostHMACPath, advisorySocket, renderRoot)...)
+	env = append(env, renderedUnitEnvironment(t, unit, sessionKeyPath, hostAgePath, fleetAgePath, hostHMACPath, advisorySocket, renderRoot)...)
 
 	proc := exec.Command(apidBinary, "--config", configPath)
 	proc.Env = env
@@ -470,7 +472,7 @@ func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hos
 			}
 			value = dir
 		}
-		if kv.Key == "FAAS_HOST_AGE_IDENTITY_PATH" {
+		if kv.Key == "FAAS_HOST_AGE_IDENTITY_PATH" || kv.Key == "FAAS_FLEET_AGE_IDENTITY_PATH" {
 			value = hostAgePath
 		}
 		if _, ok := runnerKeys[kv.Key]; ok {
@@ -555,19 +557,20 @@ func relocateRenderedDBURL(t *testing.T, configPath, dsn string) {
 	}
 }
 
-func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath, hostAgePath, hostHMACPath, advisorySocket, root string) []string {
+func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath, hostAgePath, fleetAgePath, hostHMACPath, advisorySocket, root string) []string {
 	t.Helper()
 	const wantEnvironmentFiles = "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/otel.env"
 	if unit.EnvironmentFile != wantEnvironmentFiles {
 		t.Fatalf("EnvironmentFile = %q, want %q", unit.EnvironmentFile, wantEnvironmentFiles)
 	}
 	want := map[string]string{
-		"FAAS_SESSION_KEY":            sessionKeyPath,
-		"FAAS_HOST_AGE_IDENTITY_PATH": hostAgePath,
-		"FAAS_HOST_HMAC_KEY_PATH":     hostHMACPath,
-		"FAAS_LOG_ARCHIVE_CREDS_PATH": filepath.Join(root, "optional-archive-creds.json"),
-		"FAAS_APID_ADVISORY_SOCK":     advisorySocket,
-		"FAAS_STATUSPAGE_PATH":        filepath.Join(bootContractRepoRoot(t), "deploy", "statuspage", "index.html"),
+		"FAAS_SESSION_KEY":             sessionKeyPath,
+		"FAAS_HOST_AGE_IDENTITY_PATH":  hostAgePath,
+		"FAAS_FLEET_AGE_IDENTITY_PATH": fleetAgePath,
+		"FAAS_HOST_HMAC_KEY_PATH":      hostHMACPath,
+		"FAAS_LOG_ARCHIVE_CREDS_PATH":  filepath.Join(root, "optional-archive-creds.json"),
+		"FAAS_APID_ADVISORY_SOCK":      advisorySocket,
+		"FAAS_STATUSPAGE_PATH":         filepath.Join(bootContractRepoRoot(t), "deploy", "statuspage", "index.html"),
 	}
 	seen := make(map[string]bool, len(want))
 	var env []string

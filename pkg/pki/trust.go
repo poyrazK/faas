@@ -438,12 +438,15 @@ func recoverInstallJournal(targetRoot string) error {
 }
 
 func syncDirectory(path string) error {
-	dir, err := os.Open(path)
+	dir, err := os.Open(path) //nolint:forbidigo // operator-controlled PKI directory, opened only to fsync metadata.
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
-	return dir.Sync()
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return err
+	}
+	return dir.Close()
 }
 
 func installMetadata(source, destination string) (os.FileMode, int, int, error) {

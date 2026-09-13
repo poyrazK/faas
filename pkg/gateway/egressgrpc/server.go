@@ -318,7 +318,8 @@ func (s *Server) persistPendingLocked(records map[string]egresssink.Record) erro
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath) //nolint:errcheck // absent after successful rename
-	if err := tmp.Chmod(0o600); err == nil {
+	err = tmp.Chmod(0o600)
+	if err == nil {
 		_, err = tmp.Write(b)
 	}
 	if err == nil {
@@ -334,7 +335,7 @@ func (s *Server) persistPendingLocked(records map[string]egresssink.Record) erro
 	if err := os.Rename(tmpPath, s.pendingPath); err != nil {
 		return err
 	}
-	d, err := os.Open(dir)
+	d, err := os.Open(dir) //nolint:forbidigo // internal ledger directory is opened only to fsync the rename.
 	if err != nil {
 		return err
 	}

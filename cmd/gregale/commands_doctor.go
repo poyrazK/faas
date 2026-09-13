@@ -587,7 +587,7 @@ func scanArchitecture(root string, maxHits int) []string {
 	out := make([]string, 0, maxHits)
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if info == nil {
-			return nil
+			return nil //nolint:nilerr // unreadable entries are skipped by this best-effort advisory scan.
 		}
 		if info.IsDir() {
 			if doctorPathExcluded(root, path, info, patterns) {
@@ -596,14 +596,14 @@ func scanArchitecture(root string, maxHits int) []string {
 			return nil
 		}
 		if err != nil || doctorPathExcluded(root, path, info, patterns) || !info.Mode().IsRegular() {
-			return nil
+			return nil //nolint:nilerr // unreadable files are skipped by this best-effort advisory scan.
 		}
 		if len(out) >= maxHits {
 			return filepath.SkipAll
 		}
 		f, openErr := os.Open(path) //nolint:forbidigo // read-only header inspection of a walked customer path.
 		if openErr != nil {
-			return nil
+			return nil //nolint:nilerr // unreadable files are skipped by this best-effort advisory scan.
 		}
 		var header [64]byte
 		n, _ := io.ReadFull(f, header[:])

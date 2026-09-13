@@ -1662,15 +1662,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// worse than the operator-visible degraded-mode log line.
 		identities, loadErr := secretbox.LoadFleetAndHostKeys(filepath.Dir(identityPath))
 		if loadErr != nil {
-			// Keep every unseal and fingerprint caller on the same accessor
-			// even when the optional legacy-overlap scan is unavailable. The
-			// explicitly loaded current identity is still valid; leaving the
-			// multi-identity accessor nil would make secret rotation fail (and
-			// previously allowed a nil-function panic) despite successful boot.
+			// Legacy installations have host.age plus an optional
+			// host.age.previous, but no fleet.age. Preserve that overlap during
+			// the fleet migration so old envelopes can still be unsealed and
+			// rekeyed. If the legacy scan itself fails, the explicitly loaded
+			// identity remains a safe last-resort accessor.
+			if legacy, legacyErr := secretbox.LoadHostKeys(filepath.Dir(identityPath)); legacyErr == nil {
+				identities = legacy
+			} else {
+				identities = []*age.X25519Identity{ident}
+			}
 			SetMFAIdentities(func() []*age.X25519Identity {
-				return []*age.X25519Identity{ident}
+				return identities
 			})
-			log.Warn("apid: fleet and legacy host identity load failed; MFA unseal will work only for envelopes sealed under the current fleet.age",
+			log.Warn("apid: fleet identity load failed; using legacy host identities for MFA unseal",
 				"dir", filepath.Dir(identityPath), "err", loadErr.Error())
 		} else {
 			SetMFAIdentities(func() []*age.X25519Identity { return identities })

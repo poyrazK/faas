@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -21,7 +23,8 @@ func newDomainVerificationMetrics(reg prometheus.Registerer, prefix string) *dom
 	}
 	register := func(c prometheus.Collector) prometheus.Collector {
 		if err := reg.Register(c); err != nil {
-			if already, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			var already prometheus.AlreadyRegisteredError
+			if errors.As(err, &already) {
 				return already.ExistingCollector
 			}
 			panic(err)

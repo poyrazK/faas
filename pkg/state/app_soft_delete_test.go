@@ -80,6 +80,12 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	if _, err := m.ScheduleAppDeletion(ctx, app.ID, time.Now().UTC().Add(-time.Minute)); err != nil {
 		t.Fatalf("expired ScheduleAppDeletion: %v", err)
 	}
+	if err := m.ClaimAppDeletion(ctx, app.ID); err != nil {
+		t.Fatalf("ClaimAppDeletion: %v", err)
+	}
+	if _, err := m.RestoreApp(ctx, app.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
+	}
 	if err := m.DeleteAppPermanently(ctx, app.ID); err != nil {
 		t.Fatalf("DeleteAppPermanently: %v", err)
 	}

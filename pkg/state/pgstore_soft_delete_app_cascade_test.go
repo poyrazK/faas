@@ -23,8 +23,8 @@ import (
 
 func TestPg_ListAppDeletionArtifactsExcludesKeysSharedByAnotherApp(t *testing.T) {
 	s, ctx := pgStore(t)
-	_, firstAppID, firstDeploymentID := seedLiveDeploy(t, s, ctx, "purge-artifact-first-")
-	_, _, secondDeploymentID := seedLiveDeploy(t, s, ctx, "purge-artifact-second-")
+	_, firstAppID, firstDeploymentID := seedLiveDeploy(t, s, ctx, "purge-artifact-first-", "purge-artifact-first")
+	_, _, secondDeploymentID := seedLiveDeploy(t, s, ctx, "purge-artifact-second-", "purge-artifact-second")
 	const sharedRootfs = "apps/shared/rootfs.ext4"
 	if err := s.SetDeploymentRootfs(ctx, firstDeploymentID, "/first/rootfs.ext4", sharedRootfs, 4096); err != nil {
 		t.Fatal(err)

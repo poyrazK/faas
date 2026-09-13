@@ -17,7 +17,15 @@ func TestHostJournalMetricsCountsAllocatedSparseBytes(t *testing.T) {
 	dir := t.TempDir()
 	sparse := filepath.Join(dir, "sparse.journal")
 	const apparentBytes = 32 << 20
-	if err := os.Truncate(sparse, apparentBytes); err != nil {
+	f, err := os.Create(sparse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(apparentBytes); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
 

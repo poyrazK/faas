@@ -336,7 +336,9 @@ func cmdPKIFingerprint(args []string) int {
 	if err != nil {
 		return printErr("pki fingerprint", err)
 	}
-	fmt.Fprintln(os.Stdout, fingerprint)
+	if _, err := fmt.Fprintln(os.Stdout, fingerprint); err != nil {
+		return printErr("pki fingerprint", err)
+	}
 	return 0
 }
 
@@ -492,7 +494,7 @@ func writePKIMetricsAtomic(path string, body []byte) error {
 		return err
 	}
 	tmp := file.Name()
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	if _, err := file.Write(body); err != nil {
 		_ = file.Close()
 		return err
@@ -788,12 +790,6 @@ func formatSANs(dnsNames []string, ips []net.IP) string {
 		parts = append(parts, ip.String())
 	}
 	return strings.Join(parts, ",")
-}
-
-// anyExpiringSoon returns true if any leaf on disk has NotAfter <
-// now+threshold. Used by `status` to surface the rotate countdown.
-func anyExpiringSoon(rootDir string, threshold time.Duration) bool {
-	return anyExpiringSoonForBox(rootDir, "", threshold)
 }
 
 func anyExpiringSoonForBox(rootDir, boxRole string, threshold time.Duration) bool {

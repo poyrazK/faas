@@ -218,7 +218,7 @@ func writeFleetSealMetric(path string, report fleetseal.VerificationReport, read
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := tmp.WriteString(body); err != nil {
 		_ = tmp.Close()
 		return err

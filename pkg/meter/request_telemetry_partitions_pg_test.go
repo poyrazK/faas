@@ -37,7 +37,11 @@ func TestEnsureRequestTelemetryPartitionsMovesDefaultRowsAndIsIdempotent(t *test
 	if err := pool.QueryRow(ctx, `select 'request_telemetry_' || to_char(date_trunc('month', now()), 'YYYYMM')`).Scan(&currentName); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DROP TABLE IF EXISTS public."+currentName); err != nil {
+	var schemaName string
+	if err := pool.QueryRow(ctx, `select current_schema()`).Scan(&schemaName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{schemaName, currentName}.Sanitize()); err != nil {
 		t.Fatal(err)
 	}
 	id := uuid.NewString()

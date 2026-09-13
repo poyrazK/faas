@@ -128,7 +128,7 @@ func (p *fleetStatsParker) ListInstanceStats(ctx context.Context) ([]scheddgrpc.
 				return
 			}
 			if closer, ok := client.(interface{ Close() error }); ok {
-				defer closer.Close()
+				defer func() { _ = closer.Close() }()
 			}
 			rows, err := client.ListInstanceStats(callCtx)
 			results <- fleetStatsResult{nodeID: node.ID, rows: rows, err: err}

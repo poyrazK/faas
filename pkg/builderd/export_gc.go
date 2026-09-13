@@ -37,7 +37,7 @@ func SweepBuildExports(ctx context.Context, store state.Store, cfg BuildExportGC
 		OrphanMinAge: cfg.OrphanMinAge, Now: now,
 		Resolve: func(ctx context.Context, buildID, artifact string) (buildexport.ReferenceState, error) {
 			if _, err := uuid.Parse(buildID); err != nil {
-				return buildexport.ReferenceUnknown, nil
+				return buildexport.ReferenceUnknown, nil //nolint:nilerr // malformed directory names are unowned artifacts, not resolver failures.
 			}
 			build, err := store.BuildByID(ctx, buildID)
 			if errors.Is(err, state.ErrNotFound) {

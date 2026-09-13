@@ -30,14 +30,14 @@ func TestGuestVsockReceiverHealthReadinessAndBoundedMetrics(t *testing.T) {
 	}
 
 	health.Observe(fcvm.VsockGuestEventHostPort, "read", errors.New("short frame"))
-	if ready, reason := health.Signal(guestReceiverEvents).Report(); ready || !strings.Contains(reason, "read failed") {
-		t.Fatalf("failed event signal = %v %q", ready, reason)
+	if ready, reason := health.Signal(guestReceiverEvents).Report(); !ready || reason != "" {
+		t.Fatalf("guest read failure degraded event signal = %v %q", ready, reason)
 	}
 	if got := testutil.ToFloat64(health.errors.WithLabelValues(guestReceiverEvents, "read")); got != 1 {
 		t.Fatalf("read errors = %v", got)
 	}
-	if got := testutil.ToFloat64(health.up.WithLabelValues(guestReceiverEvents)); got != 0 {
-		t.Fatalf("failed receiver up = %v", got)
+	if got := testutil.ToFloat64(health.up.WithLabelValues(guestReceiverEvents)); got != 1 {
+		t.Fatalf("receiver up after guest read failure = %v", got)
 	}
 
 	// Protocol and overload failures are counted, but untrusted or excessive

@@ -426,7 +426,7 @@ func (a *gatewayEgressAdapter) startStream(ctx context.Context, socketPath strin
 // return when the upstream closes or the ctx cancels.
 func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client egresspb.EgressTxServiceClient, log *slog.Logger) bool {
 	if closer, ok := client.(interface{ Close() error }); ok {
-		defer closer.Close()
+		defer func() { _ = closer.Close() }()
 	}
 	stream, err := client.StreamBytes(ctx, &egresspb.StreamBytesRequest{})
 	if err != nil {

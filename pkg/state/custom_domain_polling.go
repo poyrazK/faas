@@ -26,7 +26,7 @@ func (s *PgStore) CreateCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 	if err != nil {
 		return CustomDomain{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var accountID string
 	if err = tx.QueryRow(ctx, `select account_id from apps where id=$1 and status <> 'deleted' for update`, appID).Scan(&accountID); err != nil {
 		return CustomDomain{}, mapErr(err)

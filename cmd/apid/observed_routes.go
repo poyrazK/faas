@@ -152,7 +152,7 @@ func (s *server) collectFleetObservedRoutes(ctx context.Context, appID string) o
 	routeSet := make(map[string]struct{}, len(routeSamples))
 	capHit := false
 	for _, sample := range routeSamples {
-		if _, ok := expected[strings.TrimSpace(sample.Labels["node_id"])]; !ok {
+		if _, ok := healthyIDs[strings.TrimSpace(sample.Labels["node_id"])]; !ok {
 			// Ignore stale series from a drained/replaced node and any series
 			// missing the registry identity attached by HTTP-SD.
 			continue
