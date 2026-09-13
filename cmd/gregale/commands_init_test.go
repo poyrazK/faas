@@ -125,10 +125,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 					t.Errorf("README missing %q; full README:\n%s", want, readme)
 				}
 			}
-			// The "next steps" hint must mention the storage docs URL
-			// (the canonical external-storage page, UX spec §8) so the
-			// customer lands on the right docs regardless of template.
-			if !strings.Contains(stdout.String(), storageDocsURL) {
+			if !strings.Contains(stdout.String(), docsURLForTemplate(c.name)) {
 				t.Errorf("stdout missing docs URL; got: %q", stdout.String())
 			}
 		})
@@ -477,6 +474,26 @@ func TestTemplates_CategoryForCoversAllNames(t *testing.T) {
 		}
 		if !has {
 			t.Errorf("templates.CategoryOrder contains %q but no template classifies under it", cat)
+		}
+	}
+}
+
+func TestTemplateDocsMatchTemplatePurpose(t *testing.T) {
+	wants := map[string]string{
+		"function-node": functionsDocsURL,
+		"hello-node":    deployFromSourceDocsURL,
+		"cron-example":  eventDrivenDocsURL,
+		"s3-uploader":   storageDocsURL,
+	}
+	for _, name := range templates.Names {
+		got := docsURLForTemplate(name)
+		if got == "" || got == cliDocsURL {
+			t.Errorf("docsURLForTemplate(%q) = %q, want a template-specific guide", name, got)
+		}
+	}
+	for name, want := range wants {
+		if got := docsURLForTemplate(name); got != want {
+			t.Errorf("docsURLForTemplate(%q) = %q, want %q", name, got, want)
 		}
 	}
 }

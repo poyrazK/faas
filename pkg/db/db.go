@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,6 +31,35 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 	return open(ctx, dsnOverride, "")
 }
 
+// DaemonMaxConnections is the direct-pool budget for each production daemon.
+// The postgres_capacity Ansible role combines these per-process limits with
+// the complete compute_nodes inventory. It keeps the steady fleet below 75%
+// of ordinary PostgreSQL capacity and reserves one overlapping compute
+// generation plus operator headroom before node admission.
+var DaemonMaxConnections = map[string]int32{
+	"apid": 12,
+	// Each schedd owns eleven permanent LISTEN subscribers in production.
+	// Keep five slots for readiness probes, scheduler queries, and dispatch
+	// transactions. A cap of twelve leaves only one request slot and makes
+	// /readyz fail as soon as one background query holds it.
+	"schedd": 16,
+	// gatewayd-internal owns six permanent LISTEN subscribers in the
+	// production configuration. Reserve two further slots for request-path
+	// reads and startup reconciliation; a cap of three deadlocks before
+	// sd_notify(READY=1) because the first three subscribers exhaust the pool.
+	"gatewayd-internal": 8,
+	"gatewayd-public":   3,
+	"vmmd":              4,
+	"imaged":            3,
+	"builderd":          3,
+	"meterd":            3,
+	"githubd":           2,
+	"outboundd":         2,
+	"s3-gatewayd":       2,
+}
+
+const defaultMaxConnections int32 = 4
+
 // OpenWithAppName is Open plus an application_name tag set on every
 // connection pgxpool acquires. The tag is sent at session-start (via
 // RuntimeParams), so it survives on the long-lived LISTEN connection
@@ -39,6 +69,14 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 // restart cycles.
 func OpenWithAppName(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, error) {
 	return open(ctx, dsnOverride, appName)
+}
+
+func daemonMaxConnections(appName string) int32 {
+	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
+	if limit, ok := DaemonMaxConnections[name]; ok {
+		return limit
+	}
+	return defaultMaxConnections
 }
 
 func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, error) {
@@ -57,14 +95,12 @@ func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, erro
 	if err != nil {
 		return nil, fmt.Errorf("db: parse config: %w", err)
 	}
-	// Sane defaults for a one-box daemon. schedd has several independent
-	// LISTEN subscribers (node keys, placement, migration, deployment
-	// lifecycle, and its dispatch loop), each of which holds a connection for
-	// the daemon lifetime. Keep enough headroom for the listener set plus
-	// ordinary queries and short transactions.
-	cfg.MaxConns = 16
-	cfg.MinConns = 1
-	cfg.MaxConnIdleTime = 5 * time.Minute
+	// Direct pools have per-daemon budgets. MinConns=0 and the short idle
+	// lifetime keep burst capacity from becoming permanent idle ClientRead
+	// sessions; LISTEN subscribers naturally retain only the sessions they use.
+	cfg.MaxConns = daemonMaxConnections(appName)
+	cfg.MinConns = 0
+	cfg.MaxConnIdleTime = time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
 	if appName != "" {
 		cfg.ConnConfig.RuntimeParams["application_name"] = appName

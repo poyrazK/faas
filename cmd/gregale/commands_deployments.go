@@ -298,7 +298,7 @@ func cmdDeploymentsAll(ctx context.Context, client *api.Client, wide bool) int {
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(items))
+		return jsonOut(writeNDJSON(items))
 	}
 	if len(items) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "No deployments yet.")
@@ -320,7 +320,7 @@ func cmdAppDeploymentsAll(ctx context.Context, client *api.Client, slug string, 
 		return printErr("Request failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(items))
+		return jsonOut(writeNDJSON(items))
 	}
 	if len(items) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "No deployments yet for app %q.\n", slug)

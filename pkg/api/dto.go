@@ -69,6 +69,10 @@ type CreateAppRequest struct {
 	StartupDeadlineS int              `json:"startup_deadline_s,omitempty"`
 	MaxRetries       int              `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	// Ports declares additional workload listeners. Named TCP entries may be
+	// selected at the public edge with the `--port-<name>` hostname form;
+	// UDP entries remain guest-only discovery endpoints.
+	Ports []WorkloadPort `json:"ports,omitempty"`
 	// Favicon is an optional base64-encoded payload served at /favicon.ico;
 	// the gateway returns 204 when the decoded payload exceeds 32 KiB.
 	Favicon []byte `json:"favicon,omitempty"`
@@ -214,6 +218,9 @@ type UpdateAppRequest struct {
 	StartupDeadlineS *int             `json:"startup_deadline_s,omitempty"`
 	MaxRetries       *int             `json:"max_retries,omitempty"`
 	ServiceReplicas  *ServiceReplicas `json:"service_replicas,omitempty"`
+	// Ports replaces the app-owned listener declaration. An empty slice clears
+	// the declaration; nil leaves it unchanged.
+	Ports *[]WorkloadPort `json:"ports,omitempty"`
 	// Favicon replaces the per-app edge icon. An empty slice clears it;
 	// nil leaves the existing icon unchanged.
 	Favicon *[]byte `json:"favicon,omitempty"`
@@ -2482,7 +2489,7 @@ type RollbackRequest struct {
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's
-// current plan entitlement resolved into Enabled.
+// current plan entitlement and serving-host readiness resolved into Enabled.
 type CapabilityStatus struct {
 	Key         string             `json:"key"`
 	Name        string             `json:"name"`
@@ -2542,6 +2549,7 @@ type AccountLimits struct {
 	VCPU                        int           `json:"vcpu"`
 	MaxConcurrency              int           `json:"max_concurrency"`
 	DeployedApps                int           `json:"deployed_apps"`
+	DeploysPerHour              int           `json:"deploys_per_hour"`
 	DeveloperApps               int           `json:"developer_apps"`
 	IncludedGBHours             int64         `json:"included_gb_hours"`
 	AppLayerMaxMB               int           `json:"app_layer_max_mb"`
@@ -2555,6 +2563,20 @@ type AccountLimits struct {
 	TriggerMaxAttemptsMax       int           `json:"trigger_max_attempts_max"`
 	TriggerPayloadMaxBytes      int           `json:"trigger_payload_max_bytes"`
 	TriggerTLSSkipVerifyAllowed bool          `json:"trigger_tls_skip_verify_allowed"`
+}
+
+// AccountRateLimitsResponse reports account-wide rate windows that affect
+// customer operations.
+type AccountRateLimitsResponse struct {
+	Deploys AccountDeployRateLimit `json:"deploys"`
+}
+
+// AccountDeployRateLimit is the current fixed one-hour deploy window.
+type AccountDeployRateLimit struct {
+	Used           int       `json:"used"`
+	Limit          int       `json:"limit"`
+	Remaining      int       `json:"remaining"`
+	WindowResetsAt time.Time `json:"window_resets_at"`
 }
 
 // APIKeyResponse is an API key returned to the customer. The plaintext
@@ -2925,6 +2947,9 @@ type InstanceResponse struct {
 	StartedAt     string `json:"started_at,omitempty"`
 	LastRequestAt string `json:"last_request_at,omitempty"`
 	ParkedAt      string `json:"parked_at,omitempty"`
+	// Resident reports whether the row currently holds host memory. Historical
+	// parked/stopped/failed rows return false when explicitly requested.
+	Resident bool `json:"resident"`
 	// WakeID is the per-wake stable identifier minted by schedd at
 	// CreateInstance time (UUIDv7). Distinct from `id` (the row PK):
 	// one row can carry many WakeIDs over its lifetime as the app is
@@ -3456,23 +3481,41 @@ func ValidateAppCPUMillicores(cpuMillicores int) *Problem {
 // customer can rotate their host age key after a restore-from-export
 // without losing the per-secret envelope.
 type AccountExportResponse struct {
-	ExportedAt  string                    `json:"exported_at"`
-	Account     AccountResponse           `json:"account"`
-	Apps        []AppResponse             `json:"apps"`
-	Deployments []DeploymentResponse      `json:"deployments"`
-	Builds      []BuildExportResponse     `json:"builds"`
-	Instances   []InstanceResponse        `json:"instances"`
-	Usage       []UsageExportResponse     `json:"usage"`
-	Domains     []CustomDomainResponse    `json:"domains"`
-	Crons       []CronResponse            `json:"crons"`
-	APIKeys     []APIKeyExportResponse    `json:"api_keys"`
-	AppSecrets  []AppSecretExportResponse `json:"app_secrets"`
+	SchemaVersion  int                           `json:"schema_version"`
+	ExportedAt     string                        `json:"exported_at"`
+	Account        AccountResponse               `json:"account"`
+	Organizations  []OrgResponse                 `json:"organizations"`
+	OrgMemberships []OrgMembershipExportResponse `json:"org_memberships"`
+	OrgInvitations []OrgInvitationResponse       `json:"org_invitations"`
+	OrgAPIKeys     []APIKeyResponse              `json:"org_api_keys"`
+	Apps           []AppResponse                 `json:"apps"`
+	Deployments    []DeploymentResponse          `json:"deployments"`
+	Builds         []BuildExportResponse         `json:"builds"`
+	Instances      []InstanceResponse            `json:"instances"`
+	Usage          []UsageExportResponse         `json:"usage"`
+	Domains        []CustomDomainResponse        `json:"domains"`
+	Crons          []CronResponse                `json:"crons"`
+	APIKeys        []APIKeyExportResponse        `json:"api_keys"`
+	AppSecrets     []AppSecretExportResponse     `json:"app_secrets"`
 	// AuditTrail is the customer's own GDPR ledger slice: every
 	// export/delete/restore the customer has hit. Surfaced in the
 	// bundle so the export is self-describing (the customer can see
 	// "yes, my last deletion request fired at <ts>") without a
 	// separate GET round trip.
 	AuditTrail []GdprAuditExportResponse `json:"audit_trail,omitempty"`
+}
+
+// OrgMembershipExportResponse identifies the organization for each membership
+// and preserves lifecycle attribution that the interactive member list omits.
+type OrgMembershipExportResponse struct {
+	OrgID              string `json:"org_id"`
+	OrgSlug            string `json:"org_slug"`
+	AccountID          string `json:"account_id"`
+	Email              string `json:"email"`
+	Role               string `json:"role"`
+	InvitedByAccountID string `json:"invited_by_account_id,omitempty"`
+	JoinedAt           string `json:"joined_at"`
+	RemovedAt          string `json:"removed_at,omitempty"`
 }
 
 // BuildExportResponse is the per-build row in the export bundle.
@@ -3723,17 +3766,17 @@ type StatusPage struct {
 	// gateway_requests_total, expressed 0..100.
 	APIAvailabilityPct float64 `json:"api_availability_pct"`
 	// WakeP95MS is the p95 of gateway_wake_latency_seconds over the
-	// last 5 minutes, in milliseconds.
-	WakeP95MS float64 `json:"wake_p95_ms"`
+	// last 5 minutes, in milliseconds. It is null when no wake was
+	// observed, so consumers cannot mistake missing data for a 0 ms wake.
+	WakeP95MS *float64 `json:"wake_p95_ms"`
 	// BuildSuccessPct is the rolling 5-minute success rate of
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
 	// Uptime30dPct is the weighted success rate of terminal invocations
-	// observed over the last 30 calendar days. Days without traffic are
-	// represented as 100% in the daily buckets and do not add to the
-	// weighted denominator.
-	Uptime30dPct float64 `json:"uptime_30d_pct"`
+	// observed over the last 30 calendar days. It is null when the period
+	// contains no terminal invocations.
+	Uptime30dPct *float64 `json:"uptime_30d_pct"`
 	// Uptime30d contains one bucket for each of the last 30 calendar
 	// days, oldest first. Successful and Total make the no-traffic case
 	// distinguishable from a day with observed failures.
@@ -3767,7 +3810,7 @@ type StatusPage struct {
 // StatusUptimeBucket is one daily point in StatusPage.Uptime30d.
 type StatusUptimeBucket struct {
 	Date       time.Time `json:"date"`
-	UptimePct  float64   `json:"uptime_pct"`
+	UptimePct  *float64  `json:"uptime_pct"`
 	Successful int64     `json:"successful"`
 	Total      int64     `json:"total"`
 }
@@ -3781,6 +3824,85 @@ type StatusIncident struct {
 	ResolvedAt *time.Time `json:"resolved_at"`
 	Severity   string     `json:"severity"`
 	Summary    string     `json:"summary"`
+}
+
+// PublicStatusOverview is the unauthenticated customer-facing status model
+// served at GET /v1/status. It deliberately contains no operator identities,
+// internal daemon labels, alert names, or PromQL expressions.
+type PublicStatusOverview struct {
+	OverallStatus       string                  `json:"overall_status"`
+	DataStatus          string                  `json:"data_status"`
+	UpdatedAt           time.Time               `json:"updated_at"`
+	RegionScope         string                  `json:"region_scope"`
+	Components          []PublicStatusComponent `json:"components"`
+	Indicators          []PublicStatusIndicator `json:"indicators"`
+	ActiveEvents        []PublicStatusEvent     `json:"active_events"`
+	UpcomingMaintenance []PublicStatusEvent     `json:"upcoming_maintenance"`
+	ResolvedIncidents   []PublicStatusEvent     `json:"resolved_incidents"`
+}
+
+type PublicStatusComponent struct {
+	ID               string              `json:"id"`
+	Name             string              `json:"name"`
+	Status           string              `json:"status"`
+	Uptime30DayPct   *float64            `json:"uptime_30d_pct"`
+	Coverage30DayPct float64             `json:"coverage_30d_pct"`
+	Daily            []PublicStatusDaily `json:"daily"`
+}
+
+type PublicStatusDaily struct {
+	Date        string   `json:"date"`
+	Status      string   `json:"status"`
+	UptimePct   *float64 `json:"uptime_pct"`
+	CoveragePct float64  `json:"coverage_pct"`
+}
+
+type PublicStatusIndicator struct {
+	ID         string   `json:"id"`
+	Label      string   `json:"label"`
+	Value      *float64 `json:"value"`
+	Unit       string   `json:"unit"`
+	Target     float64  `json:"target"`
+	Comparison string   `json:"comparison"`
+}
+
+type PublicStatusEvent struct {
+	ID               string               `json:"id"`
+	Kind             string               `json:"kind"`
+	Title            string               `json:"title"`
+	Impact           string               `json:"impact"`
+	Components       []string             `json:"components"`
+	State            string               `json:"state"`
+	StartsAt         *time.Time           `json:"starts_at,omitempty"`
+	ScheduledStartAt *time.Time           `json:"scheduled_start_at,omitempty"`
+	ScheduledEndAt   *time.Time           `json:"scheduled_end_at,omitempty"`
+	UpdatedAt        time.Time            `json:"updated_at"`
+	ResolvedAt       *time.Time           `json:"resolved_at,omitempty"`
+	Updates          []PublicStatusUpdate `json:"updates"`
+}
+
+type PublicStatusUpdate struct {
+	ID       string    `json:"id"`
+	State    string    `json:"state"`
+	Message  string    `json:"message"`
+	PostedAt time.Time `json:"posted_at"`
+}
+
+type AdminStatusEventCreateRequest struct {
+	Kind             string     `json:"kind"`
+	Title            string     `json:"title"`
+	Impact           string     `json:"impact"`
+	Components       []string   `json:"components"`
+	State            string     `json:"state"`
+	StartsAt         *time.Time `json:"starts_at,omitempty"`
+	ScheduledStartAt *time.Time `json:"scheduled_start_at,omitempty"`
+	ScheduledEndAt   *time.Time `json:"scheduled_end_at,omitempty"`
+	Message          string     `json:"message"`
+}
+
+type AdminStatusEventUpdateRequest struct {
+	State   string `json:"state"`
+	Message string `json:"message"`
 }
 
 // --- Move 2: event-driven surface response shapes ----------------------------
@@ -4286,7 +4408,7 @@ type AppMetricsResponse struct {
 	AppID  string `json:"app_id"`
 	Range  string `json:"range"`  // echoed window, e.g. "5m"
 	Source string `json:"source"` // "prometheus" on success, "degraded: <err>" otherwise
-	AsOf   string `json:"as_of"`  // RFC3339Nano UTC
+	AsOf   string `json:"as_of"`  // RFC3339Nano UTC; latest Prometheus scrape, or request time when unavailable
 	// RequestCount is the count of gateway_requests_total{app} over the
 	// window. Drives the empty-state message: 0 means "no requests in
 	// the last 5m" rather than a row of zeros.
@@ -4626,10 +4748,9 @@ type AppSLOResponse struct {
 	ColdBootRatePct float64     `json:"cold_boot_rate_pct"`
 	InstanceHours   float64     `json:"instance_hours"`
 	GBHours         float64     `json:"gb_hours"`
-	// WakeQueueP95MS is the FLEET wake-queue p95
-	// (gateway_wake_queue_wait_seconds is unlabeled — same as
-	// gateway_wake_latency_seconds on the /metrics surfaces).
-	// Labelled as such in the UI.
+	// WakeQueueP95MS remains zero until the wake-queue histogram carries an
+	// app label. The wire field is retained for compatibility; an unlabeled
+	// fleet value cannot be exposed as an app projection.
 	WakeQueueP95MS float64 `json:"wake_queue_p95_ms"`
 	RequestsTotal  int64   `json:"requests_total"`
 	ThrottledTotal int64   `json:"throttled_total"`
@@ -4814,9 +4935,11 @@ type AccountSLOResponse struct {
 	ColdBootRatePct float64     `json:"cold_boot_rate_pct"`
 	InstanceHours   float64     `json:"instance_hours"`
 	GBHours         float64     `json:"gb_hours"`
-	WakeQueueP95MS  float64     `json:"wake_queue_p95_ms"`
-	RequestsTotal   int64       `json:"requests_total"`
-	ThrottledTotal  int64       `json:"throttled_total"`
+	// WakeQueueP95MS is retained for wire compatibility and remains zero
+	// until wake-queue observations can be scoped to the account's apps.
+	WakeQueueP95MS float64 `json:"wake_queue_p95_ms"`
+	RequestsTotal  int64   `json:"requests_total"`
+	ThrottledTotal int64   `json:"throttled_total"`
 }
 
 // ProjectScanRequest is the multipart body for POST /v1/projects/scan.
@@ -4826,6 +4949,7 @@ type AccountSLOResponse struct {
 type ProjectScanRequest struct {
 	Source           string `json:"source"`            // tar.gz binary blob
 	ProjectSlug      string `json:"project_slug"`      // kebab slug
+	RepoFullName     string `json:"repo_full_name"`    // GitHub owner/name binding
 	ProductionBranch string `json:"production_branch"` // default "main"
 	InstallID        int64  `json:"install_id"`        // GitHub install id (--repo); 0 for unbound
 	Only             string `json:"only"`              // CSV of workload names
@@ -4837,6 +4961,7 @@ type ProjectScanRequest struct {
 type ProjectApplyRequest struct {
 	Source           string `json:"source"`
 	ProjectSlug      string `json:"project_slug"`
+	RepoFullName     string `json:"repo_full_name"`
 	ProductionBranch string `json:"production_branch"`
 	InstallID        int64  `json:"install_id"`
 	Only             string `json:"only"`
@@ -8261,10 +8386,9 @@ type JobTaskResponse struct {
 }
 
 // JobTaskLogResponse is the body of GET /v1/jobs/{name}/runs/
-// {id}/tasks/{idx}/logs. Logs are read from vmmd's tail
-// endpoint (same path the dashboard uses for live app logs);
-// the handler proxies the call to the compute node that owns
-// the instance and streams back the last N bytes.
+// {id}/tasks/{idx}/logs. schedd persists the combined stdout/stderr
+// tail before destroying the terminal task's microVM, so completed
+// job output remains available after host cleanup.
 //
 // Truncated=true means the tail was capped at MaxBytes;
 // clients should re-fetch with a larger limit to see more.
@@ -8370,6 +8494,7 @@ type OperatorDeployment struct {
 	ID           string `json:"id"`
 	AppID        string `json:"app_id"`
 	AppSlug      string `json:"app_slug"`
+	AppStatus    string `json:"app_status"`
 	AccountID    string `json:"account_id"`
 	BuildID      string `json:"build_id,omitempty"`
 	Kind         string `json:"kind"`

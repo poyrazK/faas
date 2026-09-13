@@ -3,7 +3,10 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"net/http"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Accept the documented slug-first form as well as stdlib flags-first.
@@ -15,6 +18,11 @@ func parseAppLogFlags(fs *flag.FlagSet, args []string) error {
 		return fs.Parse(append(reordered, args[0]))
 	}
 	return fs.Parse(args)
+}
+
+func appLogsDegradedProblem(data string) api.Problem {
+	return *api.NewProblem(http.StatusServiceUnavailable, "app_logs_unavailable",
+		"App logs unavailable", appLogsDegradedMessage(data)).WithDocs(cliDocsURL)
 }
 
 func appLogsDegradedMessage(data string) string {

@@ -1943,6 +1943,15 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !ok {
 		return
 	}
+	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"App has no live deployment", "deploy the app before requesting a wake"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not resolve the app's live deployment"))
+		return
+	}
 	st := state.AppActive
 	if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &st}); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not wake app"))
@@ -2073,14 +2082,39 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	instances, err := s.store.ListInstancesForApp(r.Context(), app.ID)
+	limit := app.MaxConcurrency
+	if limit <= 0 {
+		if planLimits, found := api.LimitsFor(acct.Plan); found {
+			limit = planLimits.MaxConcurrency
+		}
+	}
+	if limit <= 0 {
+		limit = 1
+	}
+	var instances []state.Instance
+	var err error
+	if r.URL.Query().Get("history") == "true" {
+		// History is explicit and still bounded for old, frequently-woken apps.
+		instances, err = s.store.ListLatestInstancesForApp(r.Context(), app.ID, 100)
+	} else if activeStore, ok := s.store.(interface {
+		ListActiveInstancesForApp(context.Context, string, int) ([]state.Instance, error)
+	}); ok {
+		instances, err = activeStore.ListActiveInstancesForApp(r.Context(), app.ID, limit)
+	} else {
+		instances, err = s.store.ListLatestInstancesForApp(r.Context(), app.ID, limit)
+		instances = slices.DeleteFunc(instances, func(instance state.Instance) bool {
+			return !state.State(instance.State).CountsForRAM()
+		})
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list instances"))
 		return
 	}
 	out := make([]api.InstanceResponse, 0, len(instances))
 	for _, ins := range instances {
-		out = append(out, instanceResponse(ins, app.EffectiveMinInstances()))
+		response := instanceResponse(ins, app.EffectiveMinInstances())
+		response.Resident = state.State(ins.State).CountsForRAM()
+		out = append(out, response)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -2519,11 +2553,19 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	if !obs.PointsToGregale {
 		ptsStatus = probeFail
 		report.Healthy = false
+		expected := strings.TrimSuffix(strings.TrimSpace(appsDomainFunc()), ".")
 		if ptsObs != "" {
 			ptsDetail = "CNAME does not point at Gregale (observed: " + ptsObs + ")"
-			ptsRem = "Set CNAME " + d.Domain + " → " + ptsObs
 		} else {
-			ptsDetail = "no CNAME at apex; using A/AAAA record instead"
+			ptsDetail = "no Gregale CNAME target was observed"
+		}
+		// The observed target is evidence of the misconfiguration, never a
+		// remediation target. Using it here previously produced self-CNAME
+		// instructions when the customer's record pointed back to itself.
+		if expected != "" && !strings.EqualFold(expected, d.Domain) {
+			ptsRem = "Set CNAME " + d.Domain + " → " + expected
+		} else {
+			ptsRem = "Ask Gregale support for the configured application CNAME target"
 		}
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{

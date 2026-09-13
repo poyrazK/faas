@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -17,6 +18,29 @@ type recordingJobVMM struct {
 	spec  JobVmmSpec
 	err   error
 	calls int
+}
+
+type jobLogStream struct {
+	lines []LogLine
+	next  int
+}
+
+func (s *jobLogStream) Recv() (LogLine, error) {
+	if s.next >= len(s.lines) {
+		return LogLine{}, io.EOF
+	}
+	line := s.lines[s.next]
+	s.next++
+	return line, nil
+}
+
+type jobLogVMM struct {
+	*fakeVMM
+	lines []LogLine
+}
+
+func (v *jobLogVMM) Logs(_ context.Context, nodeID, instanceID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool) (LogStream, error) {
+	return &jobLogStream{lines: append([]LogLine(nil), v.lines...)}, nil
 }
 
 // instanceBeforeClaimStore mirrors PostgreSQL's immediate
@@ -97,6 +121,33 @@ func TestEngineWakeJobCallsVMMWithCompleteSpec(t *testing.T) {
 	}
 	if result.Method != "cold_boot" || result.NodeID != vmm.spec.NodeID {
 		t.Fatalf("result = %+v, want cold_boot and returned node", result)
+	}
+}
+
+func TestHandleJobExitPersistsCombinedTaskOutputBeforeCleanup(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	const (
+		instanceID = "job-log-instance"
+		leaseToken = "6a274117-5aca-4a61-9672-e9e21b691f8b"
+	)
+	if err := store.JobTaskMarkClaimed(context.Background(), run.ID, 0, instanceID, leaseToken, time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
+		t.Fatalf("JobTaskMarkClaimed: %v", err)
+	}
+	vmm := &jobLogVMM{fakeVMM: &fakeVMM{}, lines: []LogLine{
+		{Seq: 1, Stream: "stdout", Line: "beta-job"},
+		{Seq: 2, Stream: "stderr", Line: "warning"},
+	}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if err := e.HandleJobExit(context.Background(), acct.ID, run.ID, 0, 0, "succeeded", leaseToken); err != nil {
+		t.Fatalf("HandleJobExit: %v", err)
+	}
+	task, err := store.JobTaskGet(context.Background(), run.ID, 0)
+	if err != nil {
+		t.Fatalf("JobTaskGet: %v", err)
+	}
+	if task.Status != "succeeded" || task.LogContent != "beta-job\nwarning\n" || task.LogTruncated {
+		t.Fatalf("terminal task = %+v, want persisted complete output", task)
 	}
 }
 

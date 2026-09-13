@@ -88,6 +88,53 @@ func TestCreateExecutionRequestResolveDefaults(t *testing.T) {
 	}
 }
 
+func TestCreateExecutionRequestResolveBundle(t *testing.T) {
+	req := CreateExecutionRequest{
+		Runtime:    ExecutionRuntimeNode24,
+		Entrypoint: "src/main.mjs",
+		Files: []ExecutionFile{
+			{Path: "src/lib.mjs", Content: []byte("export const answer = 41\n")},
+			{Path: "src/main.mjs", Content: []byte("import {answer} from './lib.mjs'; export default async () => answer + 1\n")},
+		},
+		Input: json.RawMessage(`null`),
+	}
+	got, problem := req.Resolve(PlanHobby)
+	if problem != nil {
+		t.Fatalf("Resolve() problem = %+v", problem)
+	}
+	if got.Source != "" || got.Entrypoint != req.Entrypoint || got.SourceBytes() != 97 {
+		t.Fatalf("resolved bundle = %#v (source bytes %d)", got, got.SourceBytes())
+	}
+	req.Files[0].Content[0] = 'X'
+	if got.Files[0].Content[0] == 'X' {
+		t.Fatal("resolved bundle aliases request content")
+	}
+}
+
+func TestCreateExecutionRequestResolveRejectsUnsafeBundle(t *testing.T) {
+	base := func() CreateExecutionRequest {
+		return CreateExecutionRequest{Runtime: ExecutionRuntimeNode22, Entrypoint: "main.mjs", Files: []ExecutionFile{{Path: "main.mjs", Content: []byte("export default () => 1")}}}
+	}
+	for name, mutate := range map[string]func(*CreateExecutionRequest){
+		"traversal": func(r *CreateExecutionRequest) { r.Files[0].Path = "../secret" },
+		"absolute":  func(r *CreateExecutionRequest) { r.Files[0].Path = "/tmp/secret" },
+		"duplicate": func(r *CreateExecutionRequest) { r.Files = append(r.Files, r.Files[0]) },
+		"path conflict": func(r *CreateExecutionRequest) {
+			r.Files = append(r.Files, ExecutionFile{Path: "main.mjs/child", Content: []byte("x")})
+		},
+		"missing entrypoint": func(r *CreateExecutionRequest) { r.Entrypoint = "missing.mjs" },
+		"mixed source":       func(r *CreateExecutionRequest) { r.Source = "export default () => 1" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := base()
+			mutate(&req)
+			if _, problem := req.Resolve(PlanHobby); problem == nil || problem.Code != CodeExecutionSourceInvalid {
+				t.Fatalf("problem = %+v, want source_invalid", problem)
+			}
+		})
+	}
+}
+
 func TestCreateExecutionRequestResolveExplicitEnvelope(t *testing.T) {
 	input := json.RawMessage(`{"items":[1,2,3]}`)
 	req := CreateExecutionRequest{

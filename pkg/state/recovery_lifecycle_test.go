@@ -99,6 +99,34 @@ func TestMemStoreUpdateInstanceStateIfStampsParkedAt(t *testing.T) {
 	}
 }
 
+func TestMemStorePublishInstanceRuntimeIsAtomicCAS(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	instance, err := store.CreateInstance(ctx, "app-publish", "dep-publish", string(state.StateColdBooting), 128, "node-publish", "wake-publish")
+	if err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+
+	published, err := store.PublishInstanceRuntime(ctx, instance.ID, string(state.StateColdBooting), "fc-publish", "10.0.0.8", 20008)
+	if err != nil {
+		t.Fatalf("PublishInstanceRuntime: %v", err)
+	}
+	if published.State != string(state.StateRunning) || published.Netns != "fc-publish" || published.HostIP != "10.0.0.8" || published.GuestUID != 20008 || published.StartedAt.IsZero() {
+		t.Fatalf("published instance = %+v, want RUNNING with runtime identity", published)
+	}
+
+	if _, err := store.PublishInstanceRuntime(ctx, instance.ID, string(state.StateColdBooting), "stale", "10.0.0.9", 20009); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale PublishInstanceRuntime error = %v, want ErrConflict", err)
+	}
+	unchanged, err := store.InstanceByID(ctx, instance.ID)
+	if err != nil {
+		t.Fatalf("reload published instance: %v", err)
+	}
+	if unchanged.Netns != "fc-publish" || unchanged.HostIP != "10.0.0.8" || unchanged.GuestUID != 20008 {
+		t.Fatalf("stale publish changed runtime identity: %+v", unchanged)
+	}
+}
+
 func TestMemStoreListInstancesOnNodeIDUsesPhysicalPlacement(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

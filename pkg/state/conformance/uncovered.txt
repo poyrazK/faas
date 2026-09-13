@@ -316,7 +316,6 @@ JobSoftDelete
 JobTaskCancel
 JobTaskClaimBatch
 JobTaskFindStuck
-JobTaskGet
 JobTaskList
 JobTaskMarkClaimed
 JobTaskMarkTerminal
@@ -406,7 +405,6 @@ ListEnabledAlertRules
 ListEnabledAppLogDrains
 ListEnabledCrons
 ListEnabledTriggers
-ListEvents
 ListEventsBySidecar
 ListEventsByTraceID
 ListEventsByWakeID

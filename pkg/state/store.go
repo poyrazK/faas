@@ -680,6 +680,27 @@ type ComputeNodeUsageBatcher interface {
 	ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// ManagedRealtimeEndpointStore is the optional persistence surface for
+// managed realtime endpoint resources. It is intentionally separate from
+// Store so narrow test doubles and older integrations remain source-
+// compatible while the control-plane resource rolls out.
+type ManagedRealtimeEndpointStore interface {
+	CreateManagedRealtimeEndpointIfUnderQuota(ctx context.Context, endpoint ManagedRealtimeEndpoint, perApp, perAccount int) (ManagedRealtimeEndpoint, error)
+	ManagedRealtimeEndpointByID(ctx context.Context, id string) (ManagedRealtimeEndpoint, error)
+	UpdateManagedRealtimeEndpoint(ctx context.Context, id string, params UpdateManagedRealtimeEndpointParams) (ManagedRealtimeEndpoint, error)
+	DeleteManagedRealtimeEndpoint(ctx context.Context, id string) error
+	ListManagedRealtimeEndpointsForApp(ctx context.Context, appID string) ([]ManagedRealtimeEndpoint, error)
+	ListManagedRealtimeEndpointsForAccount(ctx context.Context, accountID string) ([]ManagedRealtimeEndpoint, error)
+}
+
+// ManagedRealtimeEndpointLister is the optional store-wide read surface used
+// by the apid endpoint reconciler. It is separate from
+// ManagedRealtimeEndpointStore so narrow test doubles and older integrations
+// remain source-compatible while the background repair loop rolls out.
+type ManagedRealtimeEndpointLister interface {
+	ListManagedRealtimeEndpoints(ctx context.Context) ([]ManagedRealtimeEndpoint, error)
+}
+
 // WebhookDeliveryReleaser is an optional rollback seam for webhook ingress.
 // A delivery is claimed before its side effects run to serialize concurrent
 // redeliveries; if those side effects fail, the claim must be removed so the
@@ -752,6 +773,10 @@ type Store interface {
 
 	// Accounts & auth.
 	CreateAccount(ctx context.Context, email string, plan api.Plan) (Account, error)
+	// Account-wide fixed-window deployment admissions. Consume is atomic across
+	// all apps and deploy sources; Read never spends an admission.
+	ConsumeAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (AccountDeployRateSnapshot, error)
+	ReadAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (AccountDeployRateSnapshot, error)
 	// CreateAccountWithPersonalOrg is the PR 3 canonical
 	// account-creation entry point (issue #190 / ADR-061). It runs
 	// the account INSERT + orgs INSERT + org_memberships INSERT
@@ -2690,6 +2715,12 @@ type Store interface {
 	InsertStatusIncident(ctx context.Context, component, severity, message string) (StatusIncident, error)
 	ResolveStatusIncident(ctx context.Context, id int64) error
 	ListOpenStatusIncidents(ctx context.Context) ([]StatusIncident, error)
+	CreatePublicStatusEvent(ctx context.Context, input StatusEventCreate) (StatusIncident, error)
+	AppendPublicStatusUpdate(ctx context.Context, publicID string, input StatusEventUpdateInput) (StatusIncident, error)
+	StatusEventByPublicID(ctx context.Context, publicID string) (StatusIncident, error)
+	ListPublicStatusEvents(ctx context.Context, options StatusEventListOptions) ([]StatusIncident, error)
+	RecordStatusBucket(ctx context.Context, bucket StatusBucket) error
+	ListStatusBuckets(ctx context.Context, from, to time.Time) ([]StatusBucket, error)
 
 	// ADR-122 / issue #975 item #1: per-deployment OpenAPI
 	// document capture. The surface is paid-only (Free plan
@@ -4119,6 +4150,12 @@ type Store interface {
 	// calls this between a successful vmmd boot and the RUNNING transition so the
 	// gateway can route to host_ip:8080 (spec §7).
 	SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error
+	// PublishInstanceRuntime atomically records vmmd's runtime identity and
+	// moves an instance from expectedState to RUNNING. The successful wake
+	// path uses this single compare-and-swap instead of a read, runtime write,
+	// second read, and state write. It returns ErrConflict when the watchdog or
+	// another reconciler changed/deleted the row during the vmmd call.
+	PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error)
 	// RunningInstanceForApp returns the newest RUNNING instance attached to a
 	// currently live deployment with positive traffic, or ErrNotFound when none
 	// is routable. A VM on a superseded or zero-weight generation must not make
@@ -4343,9 +4380,9 @@ type Store interface {
 	// CAS didn't land (the caller is expected to re-read via
 	// NodeGet and decide whether to retry).
 	NodeSetLifecycle(ctx context.Context, id string, expected, next NodeLifecycle) error
-	// NodeListRecoverable returns every node in
-	// ('unavailable','recovering') — the recovery arbiter's input
-	// set. Cold-start sweep + the 1s tick both consume this.
+	// NodeListRecoverable returns recovering nodes and unavailable nodes whose
+	// last heartbeat is less than 24 hours old. Older inventory stays auditable
+	// without causing an endless recovery polling loop.
 	NodeListRecoverable(ctx context.Context) ([]ComputeNode, error)
 	// NodeListDrainable returns every 'active' node with zero live
 	// instances — the set the drain handler is allowed to flip to

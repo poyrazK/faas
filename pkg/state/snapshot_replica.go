@@ -98,10 +98,9 @@ type SnapshotOriginStore interface {
 }
 
 // SnapshotReplicaStore is intentionally optional instead of being folded into
-// Store. That keeps existing test seams and external state implementations
-// source-compatible while PgStore and MemStore gain the same production
-// capability. A worker only starts when the concrete store implements this
-// interface.
+// Store. It exposes only queue and locality reads; lease ownership and
+// completion are carried by SnapshotReplicaLeaseStore so callers cannot
+// accidentally complete a job without its fencing token.
 type SnapshotReplicaStore interface {
 	// EnqueueSnapshotReplicasForNode consumes the global snapshot fan-out event
 	// cursor for this node and creates idempotent warming jobs. Implementations
@@ -112,20 +111,14 @@ type SnapshotReplicaStore interface {
 	// ClaimSnapshotReplica atomically leases one pending/retryable job for the
 	// node. ErrNotFound means the queue is empty.
 	ClaimSnapshotReplica(ctx context.Context, nodeID string) (SnapshotReplicaJob, error)
-	// These legacy completion methods remain for older stores. Production
-	// stores reject unscoped completion; callers should use
-	// SnapshotReplicaLeaseStore when available.
-	MarkSnapshotReplicaReady(ctx context.Context, snapshotID, nodeID string) error
-	MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nodeID string, cause error) error
 	// ReadySnapshotReplicaNodes returns nodes whose local cache has a complete
 	// copy of the snapshot's restore blobs.
 	ReadySnapshotReplicaNodes(ctx context.Context, snapshotID string) ([]string, error)
 }
 
-// SnapshotReplicaLeaseStore is implemented by stores that protect completion
-// writes with the claim lease. SnapshotReplicaStore remains unchanged so
-// external test stores and older integrations remain source-compatible; the
-// production PgStore and MemStore implement this stronger interface.
+// SnapshotReplicaLeaseStore is the complete durable worker contract. Every
+// claim must be renewed and completed with its fencing token; implementations
+// must reject unscoped or stale writes.
 type SnapshotReplicaLeaseStore interface {
 	SnapshotReplicaStore
 	// RenewSnapshotReplicaLease extends the current claim without changing its

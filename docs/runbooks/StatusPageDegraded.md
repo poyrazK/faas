@@ -1,63 +1,115 @@
-# Runbook · StatusPageDegraded
+# Runbook · Gregale public status delayed or degraded
 
-> **Trigger:** `/status/slo.json` returns `degraded: true` or
-> surfaces any open incident with `severity ∈ {degraded, partial_outage, full_outage}`.
-> **Endpoint:** public apid `/status/slo.json` (issue #276 / ADR-130).
-> **Storage:** Postgres `status_incidents` table (migrations/00412).
+> **Customer endpoints:** `GET /v1/status`, `GET /v1/status/incidents/{public_id}`
+>
+> **Compatibility endpoint:** `GET /status/slo.json`
+>
+> **Alert:** `FaasPublicStatusEvaluationStalled`
+> **Storage:** `status_incidents`, `status_incident_updates`, `status_observation_buckets`
 
-## Symptom
+## Symptoms
 
-The public status page (`deploy/statuspage/index.html`) is
-showing a red banner + an active incident. Customers see this on
-the landing page before they see anything else. Time-to-detect
-for an outage is now "the moment the operator filed the incident"
-instead of "when the first customer tweeted about it".
+- `/v1/status` reports `data_status=stale` or `unavailable`.
+- The public page shows “Updates delayed” or “Status temporarily unavailable.”
+- `FaasPublicStatusEvaluationStalled` is firing because no complete rollup has
+  been written for 15 minutes.
+- A public capability is degraded or in outage and needs an operator narrative.
 
-## Why now?
+The site intentionally retains the last snapshot during refresh failures. Do
+not interpret an operational component in a stale snapshot as fresh evidence.
 
-- An operator filed an incident via
-  `gregale status incident post --component=<X> --severity=<Y> --message=<Z>`.
-- OR a customer-impacting event triggered an automated post (the
-  `degraded: true` flag on the slo.json response — driven by
-  meterd's loopback Prometheus exporter tripping an SLO).
-- OR the operator forgot to resolve a prior incident that's now
-  stale.
+## Triage
 
-## Triage (3-signal ladder)
+1. Check the public and compatibility responses:
 
-1. **Read the incident on the page.** The page lists recent and
-   still-open incidents in posted-at DESC order — most recent first.
-   Each incident carries `component`, `severity`, `summary`,
-   `started_at`, and nullable `resolved_at`.
-2. **Cross-reference with the alerting pipeline.** Check whether
-   any of the page's alerts are also firing
-   (`/v1/alerts/active.json` or the equivalent Prometheus
-   alertmanager view). The page and the alerts should
-   agree on which components are degraded.
-3. **Check the SLO ratios.** `api_availability`,
-   `wake_latency_p95`, `build_success_ratio` come from meterd's
-   loopback Prometheus exporter. A degraded: true flag means
-   at least one SLO is below target.
+   ```sh
+   curl -fsS https://api.gregale.dev/v1/status | jq '{overall_status,data_status,updated_at}'
+   curl -fsS https://api.gregale.dev/status/slo.json | jq .
+   ```
 
-## Mitigate
+2. Inspect evaluator freshness and outcomes:
 
-- **Resolve the incident** when the underlying issue is fixed:
-  `gregale status incident resolve <id>`. The page re-fetches
-  on the next load (15s TTL via `Cache-Control: max-age=15`)
-  and drops the banner.
-- **Update the message** in-place if the situation changes
-  (no CLI surface for this yet — open a follow-up issue if
-  the need recurs).
-- **File a follow-up incident** if the underlying issue spans
-  multiple components — link the two incidents via the
-  `message` field.
+   ```promql
+   time() - apid_status_rollup_last_success_timestamp_seconds
+   rate(apid_status_evaluations_total[15m])
+   ```
+
+3. Check `apid` logs for `status: scheduled evaluation failed` or
+   `status: record rollup bucket failed`. Verify Prometheus is reachable from
+   `apid`, the `ALERTS{alertstate="firing"}` query returns labeled vectors, and
+   Postgres accepts writes to `status_observation_buckets`.
+
+4. Confirm five rows exist for the current UTC five-minute bucket and that a
+   retry does not create duplicates. Check clock synchronization if bucket
+   timestamps are not divisible by 300 seconds.
+
+5. List operator events and inspect their public pages:
+
+   ```sh
+   gregalectl status incident list --active
+   gregalectl status maintenance list --active
+   ```
+
+## Publish an incident
+
+Use public capabilities, not daemon names. Messages and titles are plain text;
+Markdown and HTML are displayed literally.
+
+```sh
+gregalectl status incident create \
+  --title "Elevated API errors" \
+  --impact partial_outage \
+  --components api_console,app_execution \
+  --message "We are investigating elevated error rates."
+
+gregalectl status incident update \
+  --id PUBLIC_UUID --state identified \
+  --message "The database connection pool is saturated."
+
+gregalectl status incident update \
+  --id PUBLIC_UUID --state monitoring \
+  --message "Capacity was added and error rates have recovered."
+
+gregalectl status incident resolve \
+  --id PUBLIC_UUID --message "The service has remained healthy."
+```
+
+An incident may move between investigating, identified, and monitoring before
+resolution. Resolution is terminal; create a new incident if impact returns.
+
+## Schedule maintenance
+
+```sh
+gregalectl status maintenance schedule \
+  --title "Network edge maintenance" \
+  --components networking \
+  --start 2026-09-12T22:00:00Z \
+  --end 2026-09-12T23:00:00Z \
+  --message "Traffic may briefly reconnect during the window."
+
+gregalectl status maintenance start --id PUBLIC_UUID --message "Maintenance has started."
+gregalectl status maintenance complete --id PUBLIC_UUID --message "Maintenance completed successfully."
+```
+
+Scheduled maintenance may instead be cancelled. Completed and cancelled events
+are terminal. The overview only advertises maintenance within the next 30 days.
+
+## Recovery
+
+- Restore Prometheus connectivity or the failing Postgres write path. A fresh
+  evaluator run should update the last-success gauge and clear the alert.
+- Publish or update an incident when customers are affected; telemetry never
+  invents an operator-authored major outage.
+- Do not delete public events or edit timeline rows. Correct an inaccurate
+  statement with a new update so the audit trail remains intact.
+- After recovery, verify `data_status=fresh`, the UTC bucket contains all five
+  capabilities, the public permalink works, and `/status/slo.json` remains
+  valid JSON.
 
 ## Follow-up
 
-- Review the open-incident list weekly; stale incidents drift
-  into "this is just the way it is" territory.
-- Track mean-time-to-resolve (MTTR) per component as a quarterly
-  KPI.
-- Add automated posting of incidents when the alertmanager
-  `severity: page` route group fires (currently manual — a
-  follow-on PR).
+- Record the public event UUID in the incident review.
+- Review missing telemetry coverage and evaluator failures separately from the
+  customer-impact root cause.
+- Confirm audit rows include actor, action, prior/new state, and affected
+  capabilities, and review `apid_status_incident_mutations_total` for rejects.

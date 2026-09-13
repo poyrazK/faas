@@ -54,7 +54,7 @@ const dataUpstreamsListMaxLimit = 50
 // across scopes) so the dashboard renders one unified bar.
 func (s *server) listUpstreams(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigDataPlacement, s.dataPlacementEnabled) {
-		api.WriteProblem(w, api.ErrPlanFeatureGated("data_upstreams", acct.Plan))
+		api.WriteProblem(w, api.ErrDataUpstreamsDisabled())
 		return
 	}
 	slug := r.PathValue("slug")
@@ -131,7 +131,7 @@ func (s *server) listUpstreams(w http.ResponseWriter, r *http.Request, acct stat
 // "edit upstream" pane.
 func (s *server) getUpstream(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigDataPlacement, s.dataPlacementEnabled) {
-		api.WriteProblem(w, api.ErrPlanFeatureGated("data_upstreams", acct.Plan))
+		api.WriteProblem(w, api.ErrDataUpstreamsDisabled())
 		return
 	}
 	slug := r.PathValue("slug")
@@ -172,7 +172,7 @@ func (s *server) getUpstream(w http.ResponseWriter, r *http.Request, acct state.
 // customer is explicitly creating the row, not inferring it.
 func (s *server) createUpstream(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigDataPlacement, s.dataPlacementEnabled) {
-		api.WriteProblem(w, api.ErrPlanFeatureGated("data_upstreams", acct.Plan))
+		api.WriteProblem(w, api.ErrDataUpstreamsDisabled())
 		return
 	}
 	slug := r.PathValue("slug")
@@ -318,7 +318,7 @@ func (s *server) createUpstream(w http.ResponseWriter, r *http.Request, acct sta
 // / app_id handles the GDPR path automatically.
 func (s *server) deleteUpstream(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigDataPlacement, s.dataPlacementEnabled) {
-		api.WriteProblem(w, api.ErrPlanFeatureGated("data_upstreams", acct.Plan))
+		api.WriteProblem(w, api.ErrDataUpstreamsDisabled())
 		return
 	}
 	slug := r.PathValue("slug")

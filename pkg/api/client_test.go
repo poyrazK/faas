@@ -339,6 +339,28 @@ func TestDo_BearerAuthHeader(t *testing.T) {
 	})
 }
 
+func TestClientGetBillingStatus(t *testing.T) {
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"mode":"disabled","enabled":false,"provider":"polar","plan":"free","account_status":"active","customer_configured":false,"subscription_configured":false,"usage_reconciliation_enabled":false}`))
+	}))
+	defer srv.Close()
+
+	got, err := NewClient(srv.URL, "customer-token").GetBillingStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/billing/status" || gotAuth != "Bearer customer-token" {
+		t.Fatalf("request path/auth = %q/%q", gotPath, gotAuth)
+	}
+	if got.Mode != "disabled" || got.Enabled || got.Provider != "polar" || got.Plan != PlanFree {
+		t.Fatalf("decoded status = %+v", got)
+	}
+}
+
 // TestDo_ProblemDecodedAsAPIError pins the wire-side error path:
 // any 4xx/5xx with a JSON Problem-shaped body surfaces as *APIError;
 // non-Problem bodies fall through to "API error: <status>".

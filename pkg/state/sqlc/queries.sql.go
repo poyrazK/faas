@@ -2318,6 +2318,80 @@ func (q *Queries) ExecutionListForAccount(ctx context.Context, db DBTX, arg Exec
 	return items, nil
 }
 
+const executionListForAccountStatus = `-- name: ExecutionListForAccountStatus :many
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at FROM executions
+WHERE account_id = $1
+  AND status = $2
+ORDER BY created_at DESC, id DESC
+LIMIT $4::int OFFSET $3::int
+`
+
+type ExecutionListForAccountStatusParams struct {
+	AccountID  pgtype.UUID
+	Status     string
+	PageOffset int32
+	PageLimit  int32
+}
+
+func (q *Queries) ExecutionListForAccountStatus(ctx context.Context, db DBTX, arg ExecutionListForAccountStatusParams) ([]Execution, error) {
+	rows, err := db.Query(ctx, executionListForAccountStatus,
+		arg.AccountID,
+		arg.Status,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Execution{}
+	for rows.Next() {
+		var i Execution
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Runtime,
+			&i.Status,
+			&i.NetworkMode,
+			&i.TimeoutMs,
+			&i.MemoryMb,
+			&i.CpuMillicores,
+			&i.EphemeralDiskMb,
+			&i.MaxOutputBytes,
+			&i.PidsMax,
+			&i.SourceBytes,
+			&i.InputBytes,
+			&i.DeadlineAt,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.Result,
+			&i.ResultBytes,
+			&i.Stdout,
+			&i.Stderr,
+			&i.OutputTruncated,
+			&i.ExitCode,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.WallTimeMs,
+			&i.CpuTimeMs,
+			&i.PeakMemoryMb,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const executionLockAccount = `-- name: ExecutionLockAccount :one
 SELECT id, plan FROM accounts WHERE id = $1 FOR UPDATE
 `
@@ -6633,7 +6707,8 @@ SELECT
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
     last_recovery_outcome
 FROM compute_nodes
-WHERE lifecycle IN ('unavailable', 'recovering')
+WHERE lifecycle = 'recovering'
+   OR (lifecycle = 'unavailable' AND coalesce(last_heartbeat_at, created_at) >= now() - interval '24 hours')
 ORDER BY name
 `
 
@@ -6675,8 +6750,9 @@ type NodeListRecoverableRow struct {
 //	'recovering'   → first post-failure ping succeeded; sweep to
 //	                 confirm zero stranded instances.
 //
-// Caller is the recovery arbiter; one tick enumerates both classes
-// and applies the same decision matrix.
+// Unavailable rows age out of active polling after 24 hours. They remain in
+// inventory for audit; a returning vmmd re-registers through the heartbeat
+// path and becomes active again.
 func (q *Queries) NodeListRecoverable(ctx context.Context, db DBTX) ([]NodeListRecoverableRow, error) {
 	rows, err := db.Query(ctx, nodeListRecoverable)
 	if err != nil {
@@ -10496,7 +10572,11 @@ func (q *Queries) SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifes
 
 const setDeploymentFailed = `-- name: SetDeploymentFailed :one
 update deployments
-   set status = 'failed', error = $2, error_code = $3
+   set status = 'failed', error = $2, error_code = $3,
+       traffic_percent = 0, rollout_state = 'aborted',
+       rollout_completed_at = null,
+       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
  where id = $1
 returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
           coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -11228,7 +11308,15 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 }
 
 const updateDeploymentStatus = `-- name: UpdateDeploymentStatus :exec
-update deployments set status = $2, error = $3 where id = $1
+update deployments
+set status = $2,
+    error = $3,
+    traffic_percent = case when $2 = 'failed' then 0 else traffic_percent end,
+    rollout_state = case when $2 = 'failed' then 'aborted' else rollout_state end,
+    rollout_completed_at = case when $2 = 'failed' then null else rollout_completed_at end,
+    rollout_aborted_at = case when $2 = 'failed' then coalesce(rollout_aborted_at, now()) else rollout_aborted_at end,
+    rollout_aborted_reason = case when $2 = 'failed' then coalesce(nullif($3, ''), 'deployment failed') else rollout_aborted_reason end
+where id = $1
 `
 
 type UpdateDeploymentStatusParams struct {

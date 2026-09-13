@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dispatch"
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 )
 
 // Domain types mirroring the schema (spec §5). These are the rows apid and
@@ -1398,23 +1399,27 @@ type ServiceReplicas struct {
 // as jsonb in Postgres; lifecycle fields are overlaid onto each deployment's
 // image manifest before it is written into the snapshot for guest-init.
 type AppManifest struct {
-	Entrypoint       []string          `json:"entrypoint,omitempty"`
-	Env              map[string]string `json:"env,omitempty"`
-	WorkingDir       string            `json:"working_dir,omitempty"`
-	Port             int               `json:"port,omitempty"`
-	Healthz          string            `json:"healthz,omitempty"`
-	User             string            `json:"user,omitempty"`
-	ExecutionMode    string            `json:"execution_mode,omitempty"`
-	RestartPolicy    string            `json:"restart_policy,omitempty"`
-	StartupDeadlineS int               `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int               `json:"max_retries,omitempty"`
-	ServiceReplicas  *ServiceReplicas  `json:"service_replicas,omitempty"`
-	Favicon          []byte            `json:"favicon,omitempty"`
-	RobotsTxt        string            `json:"robots_txt,omitempty"`
-	HeadWakes        bool              `json:"head_wakes,omitempty"`
-	CrawlerPolicy    string            `json:"crawler_policy,omitempty"`
-	HealthPath       string            `json:"health_path,omitempty"`
-	HealthPathWakes  bool              `json:"health_path_wakes,omitempty"`
+	Entrypoint []string          `json:"entrypoint,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+	WorkingDir string            `json:"working_dir,omitempty"`
+	Port       int               `json:"port,omitempty"`
+	// Ports is the app-owned listener declaration. It is merged into every
+	// deployment manifest so the gateway can expose named TCP listeners while
+	// UDP listeners remain available to workloads through guest discovery.
+	Ports            []api.WorkloadPort `json:"ports"`
+	Healthz          string             `json:"healthz,omitempty"`
+	User             string             `json:"user,omitempty"`
+	ExecutionMode    string             `json:"execution_mode,omitempty"`
+	RestartPolicy    string             `json:"restart_policy,omitempty"`
+	StartupDeadlineS int                `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int                `json:"max_retries,omitempty"`
+	ServiceReplicas  *ServiceReplicas   `json:"service_replicas,omitempty"`
+	Favicon          []byte             `json:"favicon,omitempty"`
+	RobotsTxt        string             `json:"robots_txt,omitempty"`
+	HeadWakes        bool               `json:"head_wakes,omitempty"`
+	CrawlerPolicy    string             `json:"crawler_policy,omitempty"`
+	HealthPath       string             `json:"health_path,omitempty"`
+	HealthPathWakes  bool               `json:"health_path_wakes,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1433,7 +1438,7 @@ func (m AppManifest) EffectiveCrawlerPolicy() string {
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.Entrypoint == nil && m.Env == nil && m.WorkingDir == "" &&
-		m.Port == 0 && m.Healthz == "" && m.User == "" &&
+		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
@@ -2083,11 +2088,14 @@ type Deployment struct {
 // are applied by the store so an operator cannot accidentally load the full
 // deployment history into apid.
 type OperatorDeploymentFilter struct {
-	AccountID string
-	AppID     string
-	Statuses  []DeploymentStatus
-	Limit     int
-	Offset    int
+	AccountID      string
+	AppID          string
+	Statuses       []DeploymentStatus
+	IncludeDeleted bool
+	CreatedBefore  time.Time
+	OldestFirst    bool
+	Limit          int
+	Offset         int
 }
 
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot
@@ -2939,6 +2947,52 @@ type AppWebhook struct {
 	Enabled      bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// ManagedRealtimeEndpoint is the durable control-plane description of one
+// managed WebSocket endpoint (ADR-156). The realtime daemon owns live sockets;
+// apid owns this row and synchronizes it to the daemon. Credentials are age
+// sealed and are never returned by the API.
+type ManagedRealtimeEndpoint struct {
+	ID                      string
+	AppID                   string
+	AccountID               string
+	CallbackURL             string
+	ConnectPath             string
+	MessagePath             string
+	DisconnectPath          string
+	CallbackAuthTokenSealed []byte
+	AuthTokenSealed         []byte
+	Enabled                 bool
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+type UpdateManagedRealtimeEndpointParams struct {
+	CallbackURL             *string
+	ConnectPath             *string
+	MessagePath             *string
+	DisconnectPath          *string
+	CallbackAuthTokenSealed *[]byte
+	AuthTokenSealed         *[]byte
+	Enabled                 *bool
+}
+
+type ManagedRealtimeEndpointQuotaScope string
+
+const (
+	ManagedRealtimeEndpointQuotaScopeApp     ManagedRealtimeEndpointQuotaScope = "app"
+	ManagedRealtimeEndpointQuotaScopeAccount ManagedRealtimeEndpointQuotaScope = "account"
+)
+
+type ManagedRealtimeEndpointQuotaError struct {
+	Scope    ManagedRealtimeEndpointQuotaScope
+	Limit    int
+	Observed int
+}
+
+func (e *ManagedRealtimeEndpointQuotaError) Error() string {
+	return fmt.Sprintf("state: managed realtime endpoint quota exceeded (scope=%s, limit=%d, observed=%d)", e.Scope, e.Limit, e.Observed)
 }
 
 // AppWebhookDelivery is one (event × target) ledger row. The
@@ -6711,6 +6765,106 @@ type StatusIncident struct {
 	Message    string
 	PostedAt   time.Time
 	ResolvedAt *time.Time
+
+	PublicID         string
+	Kind             publicstatus.Kind
+	Title            string
+	Impact           publicstatus.State
+	Components       []publicstatus.Component
+	State            publicstatus.Lifecycle
+	StartsAt         *time.Time
+	ScheduledStartAt *time.Time
+	ScheduledEndAt   *time.Time
+	UpdatedAt        time.Time
+	Updates          []StatusIncidentUpdate
+}
+
+type StatusIncidentUpdate struct {
+	ID             string
+	State          publicstatus.Lifecycle
+	Message        string
+	At             time.Time
+	Actor          string
+	IdempotencyKey string
+}
+
+type StatusEventCreate struct {
+	IdempotencyKey   string
+	Actor            string
+	Kind             publicstatus.Kind
+	Title            string
+	Impact           publicstatus.State
+	Components       []publicstatus.Component
+	State            publicstatus.Lifecycle
+	StartsAt         *time.Time
+	ScheduledStartAt *time.Time
+	ScheduledEndAt   *time.Time
+	Message          string
+}
+
+type StatusEventUpdateInput struct {
+	IdempotencyKey string
+	Actor          string
+	State          publicstatus.Lifecycle
+	Message        string
+	At             time.Time
+}
+
+type StatusEventListOptions struct {
+	Kind       publicstatus.Kind
+	ActiveOnly bool
+	Since      time.Time
+	Limit      int
+}
+
+type StatusBucket struct {
+	Component    publicstatus.Component
+	BucketAt     time.Time
+	State        publicstatus.State
+	HasTelemetry bool
+}
+
+func legacyIncidentPublicComponents(component string) []publicstatus.Component {
+	if component == StatusIncidentComponentFaasControlPlane {
+		return publicstatus.AllComponents()
+	}
+	switch component {
+	case StatusIncidentComponentBuilderd, StatusIncidentComponentImaged:
+		return []publicstatus.Component{publicstatus.ComponentDeployments}
+	case StatusIncidentComponentSchedd, StatusIncidentComponentVmmd:
+		return []publicstatus.Component{publicstatus.ComponentAppExecution}
+	case StatusIncidentComponentGatewayd:
+		return []publicstatus.Component{publicstatus.ComponentNetworking}
+	case StatusIncidentComponentMeterd:
+		return []publicstatus.Component{publicstatus.ComponentObservability}
+	default:
+		return []publicstatus.Component{publicstatus.ComponentAPIConsole}
+	}
+}
+
+func legacyIncidentPublicImpact(severity string) publicstatus.State {
+	switch severity {
+	case StatusIncidentSeverityFullOutage:
+		return publicstatus.StateMajorOutage
+	case StatusIncidentSeverityPartialOutage:
+		return publicstatus.StatePartialOutage
+	case StatusIncidentSeverityMaintenance:
+		return publicstatus.StateMaintenance
+	default:
+		return publicstatus.StateDegraded
+	}
+}
+
+func legacyIncidentTitle(message string) string {
+	title := strings.TrimSpace(message)
+	if title == "" {
+		return "Service incident"
+	}
+	runes := []rune(title)
+	if len(runes) > 160 {
+		return string(runes[:160])
+	}
+	return title
 }
 
 // StatusUptimeBucket is the daily terminal-invocation rollup used by the

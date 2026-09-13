@@ -50,6 +50,7 @@ func cmdScan(args []string) int {
 	tarball := fs.String("tarball", "", "path to source .tar.gz")
 	pathFlag := fs.String("path", "", "path to local repo dir (auto-packed)")
 	repo := fs.String("repo", "", "github owner/name to fetch tarball for")
+	bindingRepo := fs.String("repository", "", "GitHub owner/name to bind to the project (defaults to --repo)")
 	ref := fs.String("ref", "main", "git ref for --repo")
 	only := fs.String("only", "", "comma-separated workload names")
 	// ADR-124 inverse-allowlist. Mutex with --only (overlap rejected
@@ -70,10 +71,10 @@ func cmdScan(args []string) int {
 	// scan + apply pair. The handler ignores it on the scan path.
 	persistExclude := fs.Bool("persist-exclude", false, "record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3)")
 	projectSlug := fs.String("project-slug", "", "kebab slug; default = repo dir basename")
-	installID := fs.Int64("install-id", 0, "GitHub install id (with --repo)")
+	installID := fs.Int64("install-id", 0, "GitHub installation id (with --repository or --repo)")
 	prodBranch := fs.String("production-branch", "main", "production branch for the project")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--show-affected] [--explain] [--exclude NAME,…]", "scan")
+		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--repository OWNER/NAME --install-id N] [--production-branch BRANCH] [--show-affected] [--explain] [--exclude NAME,…]", "scan")
 		return 1
 	}
 
@@ -87,6 +88,9 @@ func cmdScan(args []string) int {
 
 	if *projectSlug == "" {
 		*projectSlug = defaultProjectSlug(srcPath)
+	}
+	if *bindingRepo == "" {
+		*bindingRepo = *repo
 	}
 
 	client, err := authedClientWithDeployTimeout(2 * time.Minute)
@@ -114,7 +118,7 @@ func cmdScan(args []string) int {
 		return printErr("Could not open source", err)
 	}
 	defer func() { _ = src.Close() }()
-	plan, err := client.ScanProject(ctx, src, sourceName, *projectSlug, *prodBranch, *installID, onlyList, excludeList, *persistExclude)
+	plan, err := client.ScanProjectWithBinding(ctx, src, sourceName, *projectSlug, *bindingRepo, *prodBranch, *installID, onlyList, excludeList, *persistExclude)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
@@ -141,7 +145,8 @@ func cmdScan(args []string) int {
 func runProjectDeployPreviewWithMode(
 	ctx context.Context,
 	client *api.Client,
-	tarball, projectSlug, only, exclude string,
+	tarball, projectSlug, bindingRepo, productionBranch, only, exclude string,
+	installID int64,
 	showAffected, emitJSON, strict bool,
 ) int {
 	if tarball == "" {
@@ -163,8 +168,8 @@ func runProjectDeployPreviewWithMode(
 	}
 	defer func() { _ = src.Close() }()
 
-	plan, err := client.ScanProject(ctx, src, filepath.Base(tarball), projectSlug,
-		"main", 0, onlyList, excludeList, false)
+	plan, err := client.ScanProjectWithBinding(ctx, src, filepath.Base(tarball), projectSlug,
+		bindingRepo, productionBranch, installID, onlyList, excludeList, false)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}

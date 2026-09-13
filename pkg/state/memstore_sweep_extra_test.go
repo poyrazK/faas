@@ -86,7 +86,11 @@ func TestMemStore_ListAllAccounts_Populated(t *testing.T) {
 func TestMemStore_UpdateAccountPlan_RoundTrip(t *testing.T) {
 	store := NewMemStore()
 	ctx := context.Background()
-	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
+	created, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "a@x.com", Plan: api.PlanFree})
+	if err != nil {
+		t.Fatalf("create account with personal org: %v", err)
+	}
+	a := created.Account
 	if err := store.UpdateAccountPlan(ctx, a.ID, api.PlanHobby); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -96,6 +100,13 @@ func TestMemStore_UpdateAccountPlan_RoundTrip(t *testing.T) {
 	}
 	if got.Plan != api.PlanHobby {
 		t.Errorf("plan = %q, want Hobby", got.Plan)
+	}
+	org, err := store.OrgByPersonalAccount(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("read personal org: %v", err)
+	}
+	if org.Plan != api.PlanHobby {
+		t.Errorf("personal org plan = %q, want Hobby", org.Plan)
 	}
 }
 

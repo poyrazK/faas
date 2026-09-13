@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -101,6 +102,16 @@ type server struct {
 	// distinguishes "gatewayd not reachable" from "no traffic
 	// yet". Set via env FAAS_GATEWAYD_CONTROL_URL at boot.
 	gatewaydControlURL string
+	// realtimeRegistrar is optional in split-box deployments. When set, apid
+	// mirrors durable endpoint writes onto the local or leased realtime owner.
+	realtimeRegistrar realtimeEndpointRegistrar
+	// realtimeClient is retained so the leased fleet adapter can use the local
+	// Unix owner for endpoint registration and connection discovery.
+	realtimeClient *realtime.Client
+	// realtimeOwner routes customer-facing connection operations to the node
+	// that owns a live socket. Production wires a leased cross-node resolver;
+	// the local Unix client remains the same-box fast path.
+	realtimeOwner realtimeOwner
 	// events is the in-process broadcaster the SSE handlers read from
 	// (slice 5/6). nil falls back to a fresh one so callers can defer
 	// initialization in unit tests.
@@ -192,7 +203,8 @@ type server struct {
 	// statusCache backs GET /status/slo.json (spec §12 public status
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
-	statusCache *statusCache
+	statusCache   *statusCache
+	statusMetrics *statusMetrics
 	// promqlClient is the Prometheus HTTP client shared by the
 	// statusCache and the per-app metrics endpoint (issue #273 /
 	// ADR-042). Owned here so the GET /v1/apps/{slug}/metrics handler
@@ -229,6 +241,10 @@ type server struct {
 	// no *stripe.Client is needed at the apid level). The Paddle path
 	// sets this to a *paddle.Provider at boot.
 	billingProvider billing.Provider
+	// billingProviderName retains the configured provider even for the legacy
+	// Stripe apid path, where billingProvider is intentionally nil.
+	billingProviderName string
+	billingMode         billing.Mode
 	// ops holds the per-daemon Prometheus registry. Wired via
 	// WithOpsMetrics so callers (cmd/apid) control the registry
 	// lifecycle. A dedicated metric observer middleware sits atop
@@ -406,9 +422,13 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	if ops == nil {
 		s.metricsDiscoveryMetrics = nil
 		s.prewarmMetrics = nil
+		s.statusMetrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
 		s.prewarmMetrics = wire.NewPrewarmMetrics(ops.Registry())
+	}
+	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
+		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	// Re-bind the audit counter so the IAM-4 seam can record
 	// failures. If ops is nil (unit tests that don't care about
@@ -481,6 +501,19 @@ func (s *server) WithSBOMStorage(backend artifactstorage.StorageBackend) *server
 // (the legacy stripe.VerifySignature + BillingPortalURL template).
 func (s *server) WithBillingProvider(p billing.Provider) *server {
 	s.billingProvider = p
+	return s
+}
+
+// WithBillingProviderName records the provider selected by the deployment
+// loader. It is separate from WithBillingProvider because Stripe's legacy
+// apid implementation deliberately has no Provider value.
+func (s *server) WithBillingProviderName(name string) *server {
+	s.billingProviderName = strings.TrimSpace(name)
+	return s
+}
+
+func (s *server) WithBillingMode(mode billing.Mode) *server {
+	s.billingMode = mode.Effective()
 	return s
 }
 
@@ -672,6 +705,28 @@ func (s *server) WithGatewaydControlURL(url string) *server {
 	return s
 }
 
+// WithRealtimeSocket attaches the local realtimed management client. The
+// socket is deliberately optional so tests and split-box control planes can
+// persist endpoint state without assuming a local realtime owner.
+func (s *server) WithRealtimeSocket(socket string) *server {
+	if socket != "" {
+		client := realtime.NewUnixClient(socket)
+		s.realtimeRegistrar = client
+		s.realtimeOwner = localRealtimeOwner{client: client}
+		s.realtimeClient = client
+	}
+	return s
+}
+
+// WithRealtimeOwner attaches the owner resolver used by public managed
+// realtime operations. Production installs the leased fleet adapter when the
+// persistence boundary supports it; tests can use this seam independently of
+// a Unix socket.
+func (s *server) WithRealtimeOwner(owner realtimeOwner) *server {
+	s.realtimeOwner = owner
+	return s
+}
+
 // WithInvocationCompletionWaiter attaches the process-wide completion
 // fan-out used by synchronous invocation handlers. The setter preserves the
 // existing server construction seams while allowing production boot to make
@@ -711,6 +766,9 @@ func (s *server) billingPortalURLFor(acct state.Account) string {
 // used by the legacy Stripe path. The short timeout keeps plan-change and
 // billing reads from hanging on a provider outage.
 func (s *server) billingPortalURLForProvider(ctx context.Context, acct state.Account) string {
+	if !s.billingMode.Effective().Enabled() {
+		return ""
+	}
 	resolved, err := s.accountForActiveBillingProvider(ctx, acct)
 	if err != nil {
 		s.log.Warn("billing portal identity unavailable", "account", acct.ID, "err", err)
@@ -1059,6 +1117,7 @@ func (s *server) handler() http.Handler {
 	// /v1/account carries the method default (read or admin).
 	mux.HandleFunc("GET /v1/capabilities", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCapabilities)))
 	mux.HandleFunc("GET /v1/account", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.whoami))))
+	mux.HandleFunc("GET /v1/account/rate-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAccountRateLimits))))
 	mux.HandleFunc("GET /v1/account/usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.accountUsage))))
 	mux.HandleFunc("GET /v1/account/object-storage-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getObjectStorageUsage))))
 	mux.HandleFunc("GET /v1/account/managed-postgres-usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getManagedPostgresUsage))))
@@ -1067,6 +1126,7 @@ func (s *server) handler() http.Handler {
 	// accept work before the restore/execute/destroy path is ready. POST and
 	// DELETE use the existing idempotency/auth chain; all reads remain
 	// account-scoped through the authenticated account argument.
+	mux.HandleFunc("GET /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listExecutions))))
 	mux.HandleFunc("POST /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createExecution)))))
 	mux.HandleFunc("GET /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getExecution))))
 	mux.HandleFunc("DELETE /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelExecution)))))
@@ -1076,8 +1136,7 @@ func (s *server) handler() http.Handler {
 	// adds the spec coverage + the rest of the /v1/orgs/{slug}/...
 	// surface. Loads the org via s.loadOrg (the pkg/authz middleware
 	// that resolves X-Active-Org / ?org=) and returns the membership
-	// role. No header → {"org": null} (passthrough, pre-PR-5 routes
-	// stay account-scoped).
+	// role. No header resolves the caller's personal organization.
 	mux.HandleFunc("GET /v1/orgs/me", s.auth(s.loadOrg(s.whoamiActiveOrg)))
 
 	// Orgs (ADR-061 / IAM-6 / issue #190, PR 5 + PR 7). Customer-
@@ -1867,6 +1926,24 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/deliveries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhookDeliveries))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retryAppWebhookDelivery))))
 
+	// Managed realtime endpoint resources (ADR-156). These routes persist the
+	// callback contract and sealed credentials; live connections remain owned by
+	// realtimed and are reconciled from this durable source of truth.
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listManagedRealtimeEndpoints))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createManagedRealtimeEndpoint)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getManagedRealtimeEndpoint))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateManagedRealtimeEndpoint))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteManagedRealtimeEndpoint))))
+	// Live managed realtime operations are endpoint-scoped so an API key can
+	// never address a connection or channel outside an app it owns. The owner
+	// interface behind these handlers is local today and becomes the leased
+	// cross-node resolver in the next control-plane slice.
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sendManagedRealtimeConnection))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.closeManagedRealtimeConnection))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.subscribeManagedRealtimeConnection))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.unsubscribeManagedRealtimeConnection))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishManagedRealtimeChannel))))
+
 	// Customer runtime log drains (issue #1398 O4). Each destination is
 	// provider-neutral: HTTP JSON covers compatible intake endpoints, while
 	// OTLP targets a collector or any vendor's OTLP/HTTP endpoint (including
@@ -2340,6 +2417,9 @@ func (s *server) handler() http.Handler {
 	// authenticated Stripe session where the customer can mutate billing.
 	// Email verification therefore applies before the redirect leaves Gregale.
 	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.getBillingPortal))))
+	// Customer billing status is a read-only account projection. It must not
+	// depend on operator allowlists or provider-specific catalog APIs.
+	mux.HandleFunc("GET /v1/billing/status", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.getBillingStatus)))
 
 	// Billing retry (issue #242). Closes the customer-trust lie in
 	// pkg/mail/account.go:107,150 (the dunning email promises
@@ -2811,6 +2891,11 @@ func (s *server) handler() http.Handler {
 	// on the public mux so the operator's HTTPS path serves it.
 	mux.HandleFunc("GET /status", s.statusHandler)
 	mux.HandleFunc("GET /status/slo.json", s.statusJSONHandler)
+	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
+	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
+	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))
+	mux.HandleFunc("POST /v1/admin/status/incidents/{public_id}/updates", s.authLimited(s.requireAdminMutation(s.updateAdminStatusEvent)))
+	mux.HandleFunc("GET /v1/admin/status/incidents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireSessionPrincipal(s.listAdminStatusEvents)))))
 
 	// CLI auth device-code flow (spec §2.2). Code minting and exchange
 	// are anonymous because the CLI has no credential yet; the browser

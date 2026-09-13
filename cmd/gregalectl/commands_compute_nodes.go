@@ -41,7 +41,7 @@ import (
 const dispatchComputeNodes = "compute-nodes"
 
 // cmdComputeNodesDispatch fans to add / drain / drain-status /
-// activate / force-drain / retire / list / show. Matches the (args []string) int
+// activate / force-drain / retire / list / show / release-status. Matches the (args []string) int
 // signature every other dispatch* arm uses (see commands_release.go:cmdReleaseDispatch).
 //
 // `add` is the operator-side pre-registration path: it POSTs a row to
@@ -57,7 +57,7 @@ const dispatchComputeNodes = "compute-nodes"
 // explicit --break-glass-db path during an apid outage.
 func cmdComputeNodesDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes: missing subcommand; want add|list|show|drain|drain-status|activate|force-drain|retire")
+		fmt.Fprintln(os.Stderr, "gregalectl compute-nodes: missing subcommand; want add|list|show|release-status|drain|drain-status|activate|force-drain|retire")
 		return 2
 	}
 	switch args[0] {
@@ -67,6 +67,8 @@ func cmdComputeNodesDispatch(args []string) int {
 		return cmdComputeNodesList(args[1:])
 	case "show":
 		return cmdComputeNodesShow(args[1:])
+	case "release-status":
+		return cmdComputeNodesReleaseStatus(args[1:])
 	case "drain":
 		return cmdComputeNodesDrain(args[1:])
 	case "drain-status":
@@ -559,9 +561,11 @@ type computeNodesListJSON struct {
 	Nodes []computeNodeBrief `json:"nodes"`
 }
 
-// computeNodeBrief is the per-node JSON shape. We deliberately
-// drop the detailed pointer fields (CertFingerprint, ReleaseID,
-// ManifestHash, Generation) that the cmd-line show path exposes.
+// computeNodeBrief is the per-node JSON shape. ReleaseID and the last
+// heartbeat are included because a fleet rollout must be able to compare
+// observed node state without issuing one detail request per node. We still
+// drop the other detailed pointer fields (CertFingerprint, ManifestHash,
+// Generation) that the cmd-line show path exposes.
 // HostCertificate never crosses the operator API. The list is meant
 // for fleet-level assertions
 // ("which boxes are registered, what's their role / capacity /
@@ -579,6 +583,8 @@ type computeNodeBrief struct {
 	Lifecycle          string  `json:"lifecycle"`
 	TargetURL          string  `json:"target_url"`
 	GatewayTargetURL   string  `json:"gateway_target_url,omitempty"`
+	ReleaseID          *string `json:"release_id,omitempty"`
+	LastHeartbeatAt    string  `json:"last_heartbeat_at,omitempty"`
 }
 
 func emitComputeNodesListJSON(w io.Writer, nodes []state.ComputeNode) int {
@@ -593,6 +599,7 @@ func emitComputeNodesListJSON(w io.Writer, nodes []state.ComputeNode) int {
 			MaxConcurrency: n.MaxConcurrency, AdmissionCeilingMB: n.AdmissionCeilingMB,
 			Active: n.Active, Lifecycle: string(effectiveComputeNodeLifecycle(n)), TargetURL: n.TargetURL,
 			GatewayTargetURL: computeNodeGatewayTargetValue(n.GatewayTargetURL),
+			ReleaseID:        n.ReleaseID, LastHeartbeatAt: formatComputeNodeTime(n.LastHeartbeatAt),
 		})
 	}
 	body, err := json.Marshal(out)
@@ -710,13 +717,24 @@ func computeNodeFromOperatorResponse(item api.ComputeNodeOperatorResponse) state
 	if item.GatewayTargetURL != "" {
 		gatewayTargetURL = &item.GatewayTargetURL
 	}
-	return state.ComputeNode{
+	row := state.ComputeNode{
 		ID: item.ID, Name: item.Name, TargetURL: item.TargetURL, GatewayTargetURL: gatewayTargetURL,
 		VPCPUs: item.VPCPUs, MemMB: item.MemMB, MaxConcurrency: item.MaxConcurrency,
 		AdmissionCeilingMB: item.AdmissionCeilingMB, Active: item.Active, Lifecycle: state.NodeLifecycle(item.Lifecycle), Role: item.Role,
 		Region: item.Region, Zone: item.Zone, ReleaseID: item.ReleaseID, ManifestHash: item.ManifestHash,
 		CertFingerprint: item.CertFingerprint, Generation: item.Generation,
 	}
+	if item.LastHeartbeatAt != "" {
+		row.LastHeartbeatAt, _ = time.Parse(time.RFC3339Nano, item.LastHeartbeatAt)
+	}
+	return row
+}
+
+func formatComputeNodeTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 // reportComputeNodeShow dumps the row as a multi-line key=value

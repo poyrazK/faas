@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executionpayload"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 )
 
@@ -40,7 +41,17 @@ type RoutedExecutionVMM interface {
 // immutable runtime machine fields before Restore is invoked; source/input
 // remain inside the opaque payload decoder until Execute.
 func NewRoutedVmmdExecutionBackend(router RoutedExecutionVMM, decode ExecutionPayloadDecoder) *VmmdExecutionBackend {
-	return NewVmmdExecutionBackend(func(ctx context.Context, request ExecutionRestoreRequest) (VmmdExecutionTransport, error) {
+	return newRoutedVmmdExecutionBackend(router, normalizeExecutionPayloadDecoder(decode))
+}
+
+// NewRoutedVmmdExecutionBackendWithBundle is the bundle-capable constructor
+// used by schedd once the authenticated v2 payload decoder is wired.
+func NewRoutedVmmdExecutionBackendWithBundle(router RoutedExecutionVMM, decode ExecutionPayloadDecoderV2) *VmmdExecutionBackend {
+	return newRoutedVmmdExecutionBackend(router, normalizeExecutionPayloadDecoder(decode))
+}
+
+func newRoutedVmmdExecutionBackend(router RoutedExecutionVMM, decoder executionPayloadDecoder) *VmmdExecutionBackend {
+	return newVmmdExecutionBackend(func(ctx context.Context, request ExecutionRestoreRequest) (VmmdExecutionTransport, error) {
 		if router == nil || request.NodeID == "" {
 			return nil, ErrExecutionCoordinatorNotWired
 		}
@@ -52,7 +63,7 @@ func NewRoutedVmmdExecutionBackend(router RoutedExecutionVMM, decode ExecutionPa
 			return nil, errors.New("sched: vmmd returned an unexpected execution instance")
 		}
 		return &routedVmmdExecutionTransport{router: router, nodeID: request.NodeID, instance: outcome.Instance}, nil
-	}, decode)
+	}, decoder)
 }
 
 type routedVmmdExecutionTransport struct {
@@ -69,21 +80,66 @@ func (t *routedVmmdExecutionTransport) Destroy(ctx context.Context) error {
 	return t.router.Destroy(ctx, t.nodeID, t.instance)
 }
 
-// ExecutionPayloadDecoder authenticates and decrypts the durable payload in
-// host memory. The plaintext must be discarded by the implementation after it
-// returns; no decoder error is exposed to the caller as raw detail.
+// ExecutionPayloadDecoder is the v1 source/input decoder kept for scheduler
+// integrations that only understand single-file payloads.
 type ExecutionPayloadDecoder func(context.Context, []byte, string) (source string, input json.RawMessage, err error)
+
+// ExecutionPayloadDecoderV2 adds the authenticated ephemeral file bundle
+// without breaking existing scheduler test seams and integrations.
+type ExecutionPayloadDecoderV2 func(context.Context, []byte, string) (executionpayload.DecodedPayload, error)
+
+type executionPayloadDecoder interface {
+	decode(context.Context, []byte, string) (executionpayload.DecodedPayload, error)
+}
+
+type legacyPayloadDecoder ExecutionPayloadDecoder
+
+func (f legacyPayloadDecoder) decode(ctx context.Context, sealed []byte, kid string) (executionpayload.DecodedPayload, error) {
+	source, input, err := f(ctx, sealed, kid)
+	return executionpayload.DecodedPayload{Source: source, Input: input}, err
+}
+
+type bundlePayloadDecoder ExecutionPayloadDecoderV2
+
+func (f bundlePayloadDecoder) decode(ctx context.Context, sealed []byte, kid string) (executionpayload.DecodedPayload, error) {
+	return f(ctx, sealed, kid)
+}
+
+func normalizeExecutionPayloadDecoder(value any) executionPayloadDecoder {
+	switch decoder := value.(type) {
+	case ExecutionPayloadDecoderV2:
+		return bundlePayloadDecoder(decoder)
+	case ExecutionPayloadDecoder:
+		return legacyPayloadDecoder(decoder)
+	case func(context.Context, []byte, string) (executionpayload.DecodedPayload, error):
+		return bundlePayloadDecoder(decoder)
+	case func(context.Context, []byte, string) (string, json.RawMessage, error):
+		return legacyPayloadDecoder(decoder)
+	default:
+		return nil
+	}
+}
 
 // VmmdExecutionBackend bridges the scheduler's opaque durable payload to the
 // vmmd transport. It is deliberately inert until both restore and decode
 // functions are wired by schedd startup.
 type VmmdExecutionBackend struct {
 	restore VmmdExecutionRestoreFunc
-	decode  ExecutionPayloadDecoder
+	decode  executionPayloadDecoder
 }
 
 func NewVmmdExecutionBackend(restore VmmdExecutionRestoreFunc, decode ExecutionPayloadDecoder) *VmmdExecutionBackend {
-	return &VmmdExecutionBackend{restore: restore, decode: decode}
+	return newVmmdExecutionBackend(restore, normalizeExecutionPayloadDecoder(decode))
+}
+
+// NewVmmdExecutionBackendWithBundle is the bundle-capable constructor for
+// callers that have adopted the v2 authenticated payload decoder.
+func NewVmmdExecutionBackendWithBundle(restore VmmdExecutionRestoreFunc, decode ExecutionPayloadDecoderV2) *VmmdExecutionBackend {
+	return newVmmdExecutionBackend(restore, normalizeExecutionPayloadDecoder(decode))
+}
+
+func newVmmdExecutionBackend(restore VmmdExecutionRestoreFunc, decoder executionPayloadDecoder) *VmmdExecutionBackend {
+	return &VmmdExecutionBackend{restore: restore, decode: decoder}
 }
 
 func (b *VmmdExecutionBackend) Restore(ctx context.Context, request ExecutionRestoreRequest) (ExecutionSession, error) {
@@ -103,7 +159,7 @@ func (b *VmmdExecutionBackend) Restore(ctx context.Context, request ExecutionRes
 type vmmdExecutionSession struct {
 	transport VmmdExecutionTransport
 	request   ExecutionRestoreRequest
-	decode    ExecutionPayloadDecoder
+	decode    executionPayloadDecoder
 
 	destroyMu sync.Mutex
 	destroyed bool
@@ -121,7 +177,7 @@ func (s *vmmdExecutionSession) Execute(ctx context.Context, payload ExecutionPay
 	}
 	defer clear(payload.Sealed)
 
-	source, input, err := s.decode(ctx, payload.Sealed, payload.KID)
+	decoded, err := s.decode.decode(ctx, payload.Sealed, payload.KID)
 	if err != nil {
 		// Decoder errors may include key ids, storage paths, or partial
 		// plaintext. The coordinator logs transport errors, so expose only a
@@ -129,11 +185,11 @@ func (s *vmmdExecutionSession) Execute(ctx context.Context, payload ExecutionPay
 		return ExecutionOutcome{}, errors.New("sched: decode execution payload failed")
 	}
 	resolved := api.ResolvedExecutionRequest{
-		Runtime: s.request.Runtime,
-		Source:  source,
-		Input:   append(json.RawMessage(nil), input...),
-		Limits:  s.request.Limits,
-		Network: api.ExecutionNetworkPolicy{Mode: s.request.NetworkMode},
+		Runtime: s.request.Runtime, Source: decoded.Source,
+		Entrypoint: decoded.Entrypoint,
+		Files:      append([]api.ExecutionFile(nil), decoded.Files...),
+		Input:      append(json.RawMessage(nil), decoded.Input...),
+		Limits:     s.request.Limits, Network: api.ExecutionNetworkPolicy{Mode: s.request.NetworkMode},
 	}
 	wireRequest := executionproto.RequestFromResolvedExecution(s.request.ID, resolved)
 	// The durable deadline includes queue and restore time. Never grant a

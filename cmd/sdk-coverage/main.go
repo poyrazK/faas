@@ -300,6 +300,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account":                            "Whoami",
 	"GET /v1/capabilities":                       "GetCapabilities",
 	"POST /v1/executions":                        "CreateExecution",
+	"GET /v1/executions":                         "ListExecutions",
 	"GET /v1/executions/{id}":                    "GetExecution",
 	"DELETE /v1/executions/{id}":                 "CancelExecution",
 	"POST /v1/account/restore":                   "RestoreAccount",
@@ -504,6 +505,18 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/webhooks/{id}/rotate-secret":          "RotateAppWebhookSecret",
 	"GET /v1/apps/{slug}/webhooks/{id}/deliveries":              "ListAppWebhookDeliveries",
 	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry": "RetryAppWebhookDelivery",
+
+	// ADR-156 — durable managed realtime endpoint configuration.
+	"GET /v1/apps/{slug}/realtime/endpoints":                                                             "ListManagedRealtimeEndpoints",
+	"POST /v1/apps/{slug}/realtime/endpoints":                                                            "CreateManagedRealtimeEndpoint",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}":                                                        "GetManagedRealtimeEndpoint",
+	"PATCH /v1/apps/{slug}/realtime/endpoints/{id}":                                                      "UpdateManagedRealtimeEndpoint",
+	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}":                                                     "DeleteManagedRealtimeEndpoint",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send":                      "SendManagedRealtimeConnection",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close":                     "CloseManagedRealtimeConnection",
+	"PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}":    "SubscribeManagedRealtimeConnection",
+	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}": "UnsubscribeManagedRealtimeConnection",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish":                            "PublishManagedRealtimeChannel",
 
 	// Issue #1398 O4 — customer runtime log destinations. Hyphenated path
 	// segments need explicit noun-oriented SDK names.
@@ -736,8 +749,9 @@ var methodRouteMap = map[string]string{
 	// the /metrics entry above which is the 5m dashboard panel.
 	// Per-app pattern mirrors GetAppMetrics; account-scoped
 	// mirrors GetAccountUsage (the usage account-scoped family).
-	"GET /v1/apps/{slug}/slo": "GetAppSLO",
-	"GET /v1/account/slo":     "GetAccountSLO",
+	"GET /v1/apps/{slug}/slo":     "GetAppSLO",
+	"GET /v1/account/slo":         "GetAccountSLO",
+	"GET /v1/account/rate-limits": "GetAccountRateLimits",
 
 	// ADR-093 — per-route observability inside an app. The
 	// auto-derivation would produce GetAppsSlugRoutes

@@ -5,6 +5,12 @@ Production terminates public TLS in Caddy and sends plain HTTP to
 the immediate peer is listed in `FAAS_TRUSTED_INGRESS_CIDRS`; the production
 unit lists `127.0.0.0/8` and `::1/128`.
 
+`faas-gatewayd-public.socket` owns that loopback port. The socket stays open
+while the daemon drains and restarts, so Caddy connections wait in a 4096-entry
+kernel backlog until the new process consumes the inherited descriptor. Keep
+the socket enabled with the service; binding port 8080 directly bypasses the
+zero-connection-refusal rollout contract (issue #607 / ADR-068).
+
 Caddy must reduce the validated proxy chain to one address because the internal
 gateway deliberately rejects ambiguous `X-Forwarded-For` values. For a
 Cloudflare-fronted origin, configure Caddy with Cloudflare's current published

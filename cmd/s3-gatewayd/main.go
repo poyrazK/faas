@@ -54,7 +54,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	pool, err := db.OpenWithAppName(ctx, "", "s3-gatewayd")
+	pool, err := db.OpenWithAppName(ctx, "", "faas-s3-gatewayd")
 	if err != nil {
 		return fmt.Errorf("s3-gatewayd: open db: %w", err)
 	}

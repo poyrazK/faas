@@ -1,6 +1,6 @@
 # ADR-156 — Managed realtime connections
 
-Status: accepted — first implementation slice (2026-09-12)
+Status: accepted — control-plane endpoint resources (2026-09-12)
 
 ## Decision
 
@@ -77,9 +77,22 @@ registry is intentionally node-local.
 
 ## Follow-up work
 
-The first slice provides the socket owner, gateway routing, callbacks, and
-bounded management API. A production control-plane integration still needs a
-durable endpoint/resource table, leased cross-node registry or deterministic
-node routing, and the authenticated customer-facing API in `apid`. Those
-pieces should reuse the existing `pkg/dispatch` retry/lease contracts rather
-than writing Postgres rows from `realtimed`.
+The socket owner, gateway routing, callbacks, durable endpoint/resource table,
+authenticated `apid` CRUD API, and authenticated customer-facing
+send/close/subscribe/publish operations are shipped. Endpoint configuration is
+now fanned out to every active compute node through its private
+`gateway_target_url`. Connection operations use the durable
+`managed_realtime_connection_owners` directory: API replicas discover a live
+connection once, claim a short CAS lease, renew it while operating, and release
+it on close. A failed or expired owner lease is rediscovered rather than guessed;
+publish broadcasts to all active nodes because channel membership is node-local.
+The directory is written by apid/control-plane code only—`realtimed` continues
+to own sockets and never writes Postgres.
+
+The apid control plane also runs a bounded periodic endpoint reconciler. It
+replays the durable endpoint rows (including disabled rows) to the active-node
+registrar immediately at boot and every 30 seconds thereafter. This repairs a
+node that restarts or becomes active after a mutation-time fan-out, while
+keeping endpoint credentials and customer state in the control plane. A
+temporary node or database failure is logged and retried on the next pass; it
+does not prevent apid from serving requests.

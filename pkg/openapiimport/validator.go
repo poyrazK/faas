@@ -42,6 +42,7 @@ import (
 	"fmt"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+	"gopkg.in/yaml.v3"
 
 	"github.com/onebox-faas/faas/pkg/jsonschemautil"
 )
@@ -145,7 +146,7 @@ func IsValidationError(err error) bool {
 // failures (the embedded schema is missing or the compiler is
 // in an unexpected state).
 //
-// The body must be the raw JSON bytes the customer uploaded
+// The body must be the raw JSON or YAML bytes the customer uploaded
 // (utf-8, no whitespace guarantees). The apid handler applies
 // the size cap before calling this function; this function does
 // the JSON parse + meta-schema validate + post-walk for
@@ -161,13 +162,14 @@ func IsValidationError(err error) bool {
 // validator's closed enum guarantees it's one of
 // ValidOpenAPIVersions.
 func ValidateImport(body []byte) (version string, endpointCount int, err error) {
-	// Parse the customer doc first — meta-schema Validate
+	// Parse the customer doc first. YAML 1.2 is a superset of JSON, so one
+	// parser keeps both documented import formats on the same validation path.
 	// operates on parsed values, not raw bytes.
 	var doc any
-	if jsonErr := json.Unmarshal(body, &doc); jsonErr != nil {
+	if parseErr := yaml.Unmarshal(body, &doc); parseErr != nil {
 		return "", 0, &ValidationError{
 			Path:   "",
-			Reason: fmt.Sprintf("invalid JSON: %s", jsonErr.Error()),
+			Reason: fmt.Sprintf("invalid JSON or YAML: %s", parseErr.Error()),
 		}
 	}
 	parsed, ok := doc.(map[string]any)

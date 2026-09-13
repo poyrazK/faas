@@ -18,6 +18,15 @@ func effectiveHealthPath(path string) string {
 	return path
 }
 
+func cloneWorkloadPorts(ports []api.WorkloadPort) []api.WorkloadPort {
+	if ports == nil {
+		return nil
+	}
+	out := make([]api.WorkloadPort, len(ports))
+	copy(out, ports)
+	return out
+}
+
 func lifecycleProblem(plan api.Plan, manifest api.AppManifest, maxConcurrency int) *api.Problem {
 	if manifest.HealthPathWakes && !plan.HealthPathWakesAllowed() {
 		return api.NewProblem(http.StatusForbidden,
@@ -63,6 +72,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		StartupDeadlineS: req.StartupDeadlineS,
 		MaxRetries:       req.MaxRetries,
 		ServiceReplicas:  req.ServiceReplicas,
+		Ports:            cloneWorkloadPorts(req.Ports),
 		Favicon:          append([]byte(nil), req.Favicon...),
 		RobotsTxt:        req.RobotsTxt,
 		HeadWakes:        req.HeadWakes,
@@ -86,6 +96,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		StartupDeadlineS: manifest.StartupDeadlineS,
 		MaxRetries:       manifest.MaxRetries,
 		ServiceReplicas:  replicas,
+		Ports:            cloneWorkloadPorts(manifest.Ports),
 		Favicon:          append([]byte(nil), manifest.Favicon...),
 		RobotsTxt:        manifest.RobotsTxt,
 		HeadWakes:        manifest.HeadWakes,
@@ -109,6 +120,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		StartupDeadlineS: manifest.StartupDeadlineS,
 		MaxRetries:       manifest.MaxRetries,
 		ServiceReplicas:  replicas,
+		Ports:            cloneWorkloadPorts(manifest.Ports),
 		Favicon:          append([]byte(nil), manifest.Favicon...),
 		RobotsTxt:        manifest.RobotsTxt,
 		HeadWakes:        manifest.HeadWakes,
@@ -122,7 +134,7 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
 		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.ServiceReplicas != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil ||
-		req.HealthPath != nil || req.HealthPathWakes != nil
+		req.HealthPath != nil || req.HealthPathWakes != nil || req.Ports != nil
 	if !changed {
 		return api.AppManifest{}, false
 	}
@@ -143,6 +155,9 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 		manifest.ServiceReplicas = req.ServiceReplicas
 	} else if manifest.EffectiveExecutionMode() != api.ExecutionModeService {
 		manifest.ServiceReplicas = nil
+	}
+	if req.Ports != nil {
+		manifest.Ports = cloneWorkloadPorts(*req.Ports)
 	}
 	if req.Favicon != nil {
 		manifest.Favicon = append([]byte(nil), (*req.Favicon)...)

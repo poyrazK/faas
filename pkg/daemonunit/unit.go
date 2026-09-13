@@ -83,17 +83,16 @@ type Unit struct {
 	StartLimitBurst       string
 
 	// [Service]
-	Type               string // "simple" for every faas daemon today
-	User               string
-	Group              string
-	ExecStart          string
-	ExecStartPre       []string // ordered (vmmd has 2; nobody else has any)
-	ExecStartPost      []string // ordered post-start fixups (vmmd runtime dir)
-	Restart            string
-	RestartSec         string
-	RestartCountExport string // systemd 254+; e.g. "SYSTEMD_RESTARTS_ON_FAILURE"
-	TimeoutStartSec    string // bounded allowance for Type=notify startup work
-	Slice              string
+	Type            string // "simple" for every faas daemon today
+	User            string
+	Group           string
+	ExecStart       string
+	ExecStartPre    []string // ordered (vmmd has 2; nobody else has any)
+	ExecStartPost   []string // ordered post-start fixups (vmmd runtime dir)
+	Restart         string
+	RestartSec      string
+	TimeoutStartSec string // bounded allowance for Type=notify startup work
+	Slice           string
 	// MemoryHigh is the soft limit: systemd applies reclaim pressure and
 	// throttles the cgroup past this point instead of killing it. Set it
 	// below MemoryMax so a slow leak degrades the daemon rather than
@@ -145,7 +144,7 @@ func BoolPtr(b bool) *bool { return &b }
 // Render emits the unit file as bytes. Section ordering: [Unit] first,
 // then [Service], then [Install] — matching every shipped faas unit.
 // Inside [Service], field ordering is fixed (Type → User → Group →
-// ExecStartPre → ExecStart → Restart → RestartSec → RestartCountExport →
+// ExecStartPre → ExecStart → Restart → RestartSec →
 // TimeoutStartSec → Slice → MemoryHigh → MemoryMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
@@ -195,7 +194,6 @@ func (u Unit) Render() []byte {
 	}
 	writeStringKV(&buf, "Restart", u.Restart)
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
-	writeStringKV(&buf, "RestartCountExport", u.RestartCountExport)
 	writeStringKV(&buf, "TimeoutStartSec", u.TimeoutStartSec)
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
@@ -493,8 +491,6 @@ func apply(u *Unit, section, key, val string) error {
 		u.Restart = val
 	case "[Service]/RestartSec":
 		u.RestartSec = val
-	case "[Service]/RestartCountExport":
-		u.RestartCountExport = val
 	case "[Service]/TimeoutStartSec":
 		u.TimeoutStartSec = val
 	case "[Service]/Slice":
@@ -676,7 +672,6 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "ExecStartPost", fmt.Sprintf("%v", a.ExecStartPost), fmt.Sprintf("%v", b.ExecStartPost))
 	add("[Service]", "Restart", a.Restart, b.Restart)
 	add("[Service]", "RestartSec", a.RestartSec, b.RestartSec)
-	add("[Service]", "RestartCountExport", a.RestartCountExport, b.RestartCountExport)
 	add("[Service]", "TimeoutStartSec", a.TimeoutStartSec, b.TimeoutStartSec)
 	add("[Service]", "Slice", a.Slice, b.Slice)
 	add("[Service]", "MemoryHigh", a.MemoryHigh, b.MemoryHigh)

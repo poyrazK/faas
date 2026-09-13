@@ -1730,7 +1730,11 @@ func TestParkApp_HappyPath(t *testing.T) {
 // TestWakeApp_HappyPath parks, then wakes — exercises the inverse path.
 func TestWakeApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "wake-me")
+	dep := mustSeedDeployment(t, e, "wake-me")
+	appID := dep.AppID
+	if err := e.store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
+		t.Fatalf("mark deployment live: %v", err)
+	}
 	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{
 		AccountID: e.acct.ID, AppID: appID, TargetURL: "https://example.com/woken",
 		SecretSealed: []byte("sealed"), EventFilter: []string{"app.woken"},
@@ -1754,6 +1758,17 @@ func TestWakeApp_HappyPath(t *testing.T) {
 	}
 	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppWoken || deliveries[0].Status != state.AppWebhookDeliveryPending {
 		t.Fatalf("wake deliveries = %+v, want one pending app.woken row", deliveries)
+	}
+}
+
+func TestWakeApp_RejectsAppWithoutLiveDeployment(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "never-deployed")
+
+	rec := e.do(t, "POST", "/v1/apps/never-deployed/wake", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	if !strings.Contains(rec.Body.String(), "deploy the app") {
+		t.Fatalf("response lacks deploy guidance: %s", rec.Body.String())
 	}
 }
 
@@ -1814,6 +1829,48 @@ func TestListInstances_HappyPath(t *testing.T) {
 	}
 	if len(out) != 1 || out[0].State != string(state.StateRunning) {
 		t.Errorf("got %+v, want 1 instance running", out)
+	}
+	if !out[0].Resident {
+		t.Errorf("running instance should be marked resident: %+v", out[0])
+	}
+}
+
+func TestListInstancesDefaultsToBoundedResidentState(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "inst-current")
+	ctx := context.Background()
+	for i := 0; i < 12; i++ {
+		ins, err := e.store.CreateInstance(ctx, dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := e.store.UpdateInstanceState(ctx, ins.ID, string(state.StateParked)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, err := e.store.CreateInstance(ctx, dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/inst-current/instances", nil, nil)
+	var out []api.InstanceResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].ID != current.ID || !out[0].Resident {
+		t.Fatalf("default ps rows = %+v, want only current resident instance", out)
+	}
+
+	rec = e.do(t, http.MethodGet, "/v1/apps/inst-current/instances?history=true", nil, nil)
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 13 {
+		t.Fatalf("explicit history rows = %d, want 13", len(out))
+	}
+	if out[0].ID != current.ID || !out[0].Resident || out[1].Resident {
+		t.Fatalf("history residency projection is incorrect: %+v", out[:2])
 	}
 }
 

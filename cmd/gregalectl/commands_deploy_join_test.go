@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -154,6 +155,20 @@ func TestNodeJoinFullBootstrapPreservesPlayLevelRoleSemantics(t *testing.T) {
 	}
 }
 
+func TestFleetVerifyUsesPrivateTransportAddressForComputeReadiness(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "fleet_verify", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := string(body)
+	if !strings.Contains(tasks, "faas_private_dns_address") || !strings.Contains(tasks, "faas_private_address") {
+		t.Fatal("fleet_verify must probe compute readiness through the provider-neutral private transport address")
+	}
+	if strings.Contains(tasks, "regex_replace('127\\.0\\.0\\.1', ansible_host)") {
+		t.Fatal("fleet_verify must not use the provider SSH address for private readiness probes")
+	}
+}
+
 func TestNodeJoinPublishesHardwareCapacityBeforeVMMDStarts(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
 	if err != nil {
@@ -176,6 +191,23 @@ func TestNodeJoinPublishesHardwareCapacityBeforeVMMDStarts(t *testing.T) {
 		if !strings.Contains(block, token) {
 			t.Errorf("capacity contract missing %q", token)
 		}
+	}
+}
+
+func TestNodeJoinRemovesEmergencyGatewayReleaseOverrideBeforeRestart(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	remove := strings.Index(playbook, "Remove emergency gateway release override before service activation")
+	restart := strings.Index(playbook, "Enable and restart the compute-only daemon set")
+	if remove < 0 || restart < 0 || remove >= restart {
+		t.Fatal("node_join must remove the emergency gateway release override before restarting the compute services")
+	}
+	block := playbook[remove:restart]
+	if !strings.Contains(block, "/etc/systemd/system/faas-gatewayd-internal.service.d/zz-emergency-release.conf") {
+		t.Fatal("node_join emergency override cleanup targets the wrong path")
 	}
 }
 
@@ -646,6 +678,7 @@ func TestVerifyAndActivateJoinedNodeUsesControlPlaneRow(t *testing.T) {
 	hash := "sha256:" + strings.Repeat("a", 64)
 	certificate := "-----BEGIN CERTIFICATE-----\njoined-node\n-----END CERTIFICATE-----"
 	fingerprint := strings.Repeat("b", 64)
+	staleHeartbeat := time.Now().Add(-48 * time.Hour)
 	row, err := st.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
 		Name:            "fsn-2.faas",
 		TargetURL:       "tcp://fsn-2.gregale.dev:50051",
@@ -654,6 +687,7 @@ func TestVerifyAndActivateJoinedNodeUsesControlPlaneRow(t *testing.T) {
 		ManifestHash:    &hash,
 		HostCertificate: &certificate,
 		CertFingerprint: &fingerprint,
+		LastHeartbeatAt: staleHeartbeat,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -669,7 +703,7 @@ func TestVerifyAndActivateJoinedNodeUsesControlPlaneRow(t *testing.T) {
 		t.Fatalf("verifyAndActivateJoinedNode: %v", err)
 	}
 	got, err := st.ComputeNodeByName(context.Background(), "fsn-2.faas")
-	if err != nil || !got.Active {
+	if err != nil || !got.Active || !got.LastHeartbeatAt.After(staleHeartbeat) {
 		t.Fatalf("row after activation = %#v, err=%v", got, err)
 	}
 }
@@ -806,12 +840,24 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		}
 	}
 	var calls [][]string
+	var rolloutOverlap float64
 	ansiblePlaybookRunner = func(_ context.Context, _ string, args []string) error {
 		calls = append(calls, append([]string(nil), args...))
 		inventory := ""
 		for i := range args {
 			if args[i] == "-i" && i+1 < len(args) {
 				inventory = args[i+1]
+			}
+			if args[i] == "-e" && i+1 < len(args) && strings.HasSuffix(args[i+1], "join-vars.json") {
+				body, err := os.ReadFile(strings.TrimPrefix(args[i+1], "@"))
+				if err != nil {
+					return err
+				}
+				var vars map[string]any
+				if err := json.Unmarshal(body, &vars); err != nil {
+					return err
+				}
+				rolloutOverlap, _ = vars["faas_postgres_rollout_overlap_nodes"].(float64)
 			}
 		}
 		if inventory == "" {
@@ -845,6 +891,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		StorageEnvSource:      storageEnv,
 		RuntimeBasesEnvSource: runtimeBasesEnv,
 		RepoRoot:              repo,
+		PostgresOverlapNodes:  4,
 		SkipFleetPreflight:    true,
 	})
 	if err != nil {
@@ -866,12 +913,16 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		StorageEnvSource:      storageEnv,
 		RuntimeBasesEnvSource: runtimeBasesEnv,
 		RepoRoot:              repo,
+		PostgresOverlapNodes:  4,
 		SkipFleetPreflight:    true,
 	}, &report); err != nil || code != 0 {
 		t.Fatalf("deployJoinApply: code=%d err=%v", code, err)
 	}
 	if len(calls) != 2 {
 		t.Fatalf("Ansible calls = %d, want control-plane convergence plus limited join", len(calls))
+	}
+	if rolloutOverlap != 4 {
+		t.Fatalf("faas_postgres_rollout_overlap_nodes = %v, want 4", rolloutOverlap)
 	}
 	controlPlane := strings.Join(calls[0], " ")
 	if !strings.Contains(controlPlane, "--limit control_plane") || !strings.Contains(controlPlane, "node_join_control_plane.yml") {

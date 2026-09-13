@@ -145,3 +145,20 @@ func (e *Engine) ClearSnapshotBackoff(ctx context.Context, deploymentID string) 
 	}
 	return nil
 }
+
+// clearSnapshotBackoffAfterWake removes bookkeeping from the successful wake
+// response path. RUNNING is already committed before this is called, and a
+// live instance prevents an immediate second snapshot admission, so the
+// idempotent reset can safely finish under its own short lifecycle deadline.
+func (e *Engine) clearSnapshotBackoffAfterWake(ctx context.Context, deploymentID string) {
+	if e == nil || e.store == nil || deploymentID == "" {
+		return
+	}
+	go func() {
+		clearCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		if err := e.ClearSnapshotBackoff(clearCtx, deploymentID); err != nil && e.log != nil {
+			e.log.Warn("wake: clear snapshot backoff after successful boot", "deployment_id", deploymentID, "err", err)
+		}
+	}()
+}

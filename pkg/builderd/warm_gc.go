@@ -29,7 +29,7 @@ func warmSnapshotCleanupKeyFor(snapshot WarmSnapshot) warmSnapshotCleanupKey {
 }
 
 func (b *Builderd) enqueueWarmSnapshotCleanup(snapshot WarmSnapshot) {
-	if b == nil || snapshot.StorageKey == "" {
+	if b == nil || !snapshot.hasCleanupTarget() {
 		return
 	}
 	b.warmCleanupMu.Lock()

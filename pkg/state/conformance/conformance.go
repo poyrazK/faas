@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -65,11 +66,116 @@ func Run(t *testing.T, open Open) {
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
+		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
+		{"account_deploy_rate_window_is_fixed_and_durable", testAccountDeployRateWindow},
+		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
+		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testAccountDeployRateWindow(t *testing.T, fx *Fixture) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	initial, err := fx.Store.ReadAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now)
+	if err != nil {
+		t.Fatalf("ReadAccountDeployRate(initial): %v", err)
+	}
+	if initial.Used != 0 || initial.Remaining != 2 || !initial.Allowed || !initial.WindowStart.Equal(now) {
+		t.Fatalf("initial deploy rate = %+v, want used=0 remaining=2 allowed with window=%s", initial, now)
+	}
+	first, err := fx.Store.ConsumeAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now)
+	if err != nil {
+		t.Fatalf("ConsumeAccountDeployRate(first): %v", err)
+	}
+	second, err := fx.Store.ConsumeAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("ConsumeAccountDeployRate(second): %v", err)
+	}
+	blocked, err := fx.Store.ConsumeAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("ConsumeAccountDeployRate(blocked): %v", err)
+	}
+	if !first.Allowed || !second.Allowed || blocked.Allowed || blocked.Used != 2 || blocked.Remaining != 0 {
+		t.Fatalf("deploy admissions = first=%+v second=%+v blocked=%+v", first, second, blocked)
+	}
+	reset, err := fx.Store.ReadAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now.Add(state.AccountDeployRateWindow))
+	if err != nil {
+		t.Fatalf("ReadAccountDeployRate(reset): %v", err)
+	}
+	if reset.Used != 0 || reset.Remaining != 2 || !reset.WindowStart.Equal(now.Add(state.AccountDeployRateWindow)) {
+		t.Fatalf("reset deploy rate = %+v", reset)
+	}
+}
+
+func testPublishInstanceRuntime(t *testing.T, fx *Fixture) {
+	instance, err := fx.Store.CreateInstance(
+		fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateColdBooting),
+		256, fx.Node.ID, "",
+	)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	published, err := fx.Store.PublishInstanceRuntime(
+		fx.Ctx, instance.ID, string(state.StateColdBooting),
+		"fc-conformance", "10.99.0.8", 20008,
+	)
+	if err != nil {
+		t.Fatalf("PublishInstanceRuntime: %v", err)
+	}
+	if published.State != string(state.StateRunning) || published.Netns != "fc-conformance" || published.HostIP != "10.99.0.8" || published.GuestUID != 20008 || published.StartedAt.IsZero() {
+		t.Fatalf("published runtime = %+v", published)
+	}
+	if _, err := fx.Store.PublishInstanceRuntime(
+		fx.Ctx, instance.ID, string(state.StateColdBooting),
+		"stale", "10.99.0.9", 20009,
+	); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale PublishInstanceRuntime error = %v, want ErrConflict", err)
+	}
+}
+
+func testJobTaskTerminalLogs(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(
+		fx.Ctx, fx.Account.ID, "logs-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"},
+		128, 60, 1, 0, nil,
+	)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	parallelism := 1
+	run, tasks, err := fx.Store.JobRunCreate(
+		fx.Ctx, job.ID, fx.Account.ID, "manual", &parallelism,
+		nil, nil, nil, 1,
+	)
+	if err != nil {
+		t.Fatalf("JobRunCreate: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("JobRunCreate tasks = %d, want 1", len(tasks))
+	}
+	finished := time.Date(2026, 9, 12, 12, 30, 0, 0, time.UTC)
+	if err := fx.Store.JobTaskMarkTerminalWithLogs(
+		fx.Ctx, run.ID, tasks[0].TaskIndex, "succeeded", 0,
+		"", "", "hello from task\n", true, finished,
+	); err != nil {
+		t.Fatalf("JobTaskMarkTerminalWithLogs: %v", err)
+	}
+	got, err := fx.Store.JobTaskGet(fx.Ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil {
+		t.Fatalf("JobTaskGet: %v", err)
+	}
+	if got.Status != "succeeded" || got.ExitCode == nil || *got.ExitCode != 0 || got.LogContent != "hello from task\n" || !got.LogTruncated || got.FinishedAt == nil {
+		t.Fatalf("terminal task = %+v", got)
+	}
+	if err := fx.Store.JobTaskMarkTerminalWithLogs(
+		fx.Ctx, run.ID, tasks[0].TaskIndex, "failed", 1,
+		"user_error", "late", "replacement", false, finished.Add(time.Second),
+	); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("terminal replay error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -697,6 +803,10 @@ func testExecutionIntentLifecycle(t *testing.T, fx *Fixture) {
 	if err != nil || len(listed) != 1 || listed[0].ID != created.ID {
 		t.Fatalf("ListExecutions = %#v, %v", listed, err)
 	}
+	queued, err := fx.Store.ListExecutionsByStatus(fx.Ctx, fx.Account.ID, api.ExecutionStatusQueued, 10, 0)
+	if err != nil || len(queued) != 1 || queued[0].ID != created.ID {
+		t.Fatalf("ListExecutionsByStatus = %#v, %v", queued, err)
+	}
 	claim, err := fx.Store.ClaimExecution(fx.Ctx, "conformance-schedd", base.Add(10*time.Millisecond), time.Second)
 	if err != nil {
 		t.Fatalf("ClaimExecution: %v", err)
@@ -742,6 +852,79 @@ func testExecutionIntentLifecycle(t *testing.T, fx *Fixture) {
 	}
 	if sweep.ExpiredQueued != 1 || sweep.PayloadsDeleted != 1 {
 		t.Fatalf("SweepExecutions = %#v", sweep)
+	}
+}
+
+func testPublicStatusLifecycle(t *testing.T, fx *Fixture) {
+	startsAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	input := state.StatusEventCreate{
+		IdempotencyKey: "status-create-" + uuid.NewString(), Actor: fx.Account.ID,
+		Kind: publicstatus.KindIncident, Title: "Conformance incident", Impact: publicstatus.StateDegraded,
+		Components: []publicstatus.Component{publicstatus.ComponentAPIConsole}, State: publicstatus.LifecycleInvestigating,
+		StartsAt: &startsAt, Message: "Investigating from the shared state contract.",
+	}
+	created, err := fx.Store.CreatePublicStatusEvent(fx.Ctx, input)
+	if err != nil {
+		t.Fatalf("CreatePublicStatusEvent: %v", err)
+	}
+	replayed, err := fx.Store.CreatePublicStatusEvent(fx.Ctx, input)
+	if err != nil || replayed.PublicID != created.PublicID {
+		t.Fatalf("CreatePublicStatusEvent replay = (%q,%v), want %q", replayed.PublicID, err, created.PublicID)
+	}
+
+	updateKey := "status-update-" + uuid.NewString()
+	errs := make(chan error, 8)
+	for i := 0; i < cap(errs); i++ {
+		go func() {
+			_, updateErr := fx.Store.AppendPublicStatusUpdate(fx.Ctx, created.PublicID, state.StatusEventUpdateInput{
+				IdempotencyKey: updateKey, Actor: fx.Account.ID, State: publicstatus.LifecycleIdentified,
+				Message: "The cause has been identified.",
+			})
+			errs <- updateErr
+		}()
+	}
+	for i := 0; i < cap(errs); i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent AppendPublicStatusUpdate: %v", err)
+		}
+	}
+
+	got, err := fx.Store.StatusEventByPublicID(fx.Ctx, created.PublicID)
+	if err != nil {
+		t.Fatalf("StatusEventByPublicID: %v", err)
+	}
+	if got.State != publicstatus.LifecycleIdentified || len(got.Updates) != 2 || got.Updates[0].At.After(got.Updates[1].At) {
+		t.Fatalf("status event after retries = %+v, want one chronological update", got)
+	}
+	listed, err := fx.Store.ListPublicStatusEvents(fx.Ctx, state.StatusEventListOptions{Kind: publicstatus.KindIncident, ActiveOnly: true, Limit: 10})
+	if err != nil || len(listed) != 1 || listed[0].PublicID != created.PublicID {
+		t.Fatalf("ListPublicStatusEvents = (%+v,%v)", listed, err)
+	}
+
+	bucketAt := time.Now().UTC().Truncate(5 * time.Minute)
+	if err := fx.Store.RecordStatusBucket(fx.Ctx, state.StatusBucket{Component: publicstatus.ComponentAPIConsole, BucketAt: bucketAt, State: publicstatus.StateOperational, HasTelemetry: true}); err != nil {
+		t.Fatalf("RecordStatusBucket: %v", err)
+	}
+	if err := fx.Store.RecordStatusBucket(fx.Ctx, state.StatusBucket{Component: publicstatus.ComponentAPIConsole, BucketAt: bucketAt.Add(time.Minute), State: publicstatus.StateMajorOutage, HasTelemetry: true}); err != nil {
+		t.Fatalf("RecordStatusBucket replay: %v", err)
+	}
+	buckets, err := fx.Store.ListStatusBuckets(fx.Ctx, bucketAt.Add(-time.Minute), bucketAt.Add(6*time.Minute))
+	if err != nil || len(buckets) != 1 || buckets[0].State != publicstatus.StateOperational {
+		t.Fatalf("ListStatusBuckets = (%+v,%v), want first bucket retained", buckets, err)
+	}
+
+	audits, err := fx.Store.ListEvents(fx.Ctx, fx.Account.ID, 10)
+	if err != nil {
+		t.Fatalf("ListEvents status audits: %v", err)
+	}
+	statusAudits := 0
+	for _, event := range audits {
+		if event.Kind == "status.event.created" || event.Kind == "status.event.updated" {
+			statusAudits++
+		}
+	}
+	if statusAudits != 2 {
+		t.Fatalf("status audit count = %d, want create and update", statusAudits)
 	}
 }
 

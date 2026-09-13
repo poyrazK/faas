@@ -197,6 +197,9 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 
 	sourceURL := "local-tar://" + sidecar.Repo
 	commitSHA := sidecar.Ref // informational only; not used by the build pipeline
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
 
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 		AppID:           app.ID,

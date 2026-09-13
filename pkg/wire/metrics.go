@@ -156,9 +156,8 @@ type OpsMetrics struct {
 	// daemonRestartCount (issue #573 / ADR-128) is the per-(daemon,
 	// version) counter that records how many times systemd has
 	// restarted THIS process in its lifetime. The producer is the
-	// wire.Daemon() boot path, which reads the
-	// $SYSTEMD_RESTARTS_ON_FAILURE env var (set by the systemd unit
-	// Restart=on-failure + RestartCountExport logic) and calls
+	// wire.Daemon() boot path, which reads an optional externally supplied
+	// $SYSTEMD_RESTARTS_ON_FAILURE env var and calls
 	// RecordDaemonRestart(name, Version) once at startup. The
 	// counter's purpose is to backstop node_exporter's
 	// node_systemd_restart_count{name=~"faas-.*\\.service"} metric
@@ -169,7 +168,7 @@ type OpsMetrics struct {
 	// fall back to daemon_restart_count{daemon} with a longer
 	// for-window. Labels are bounded by the closed daemon set
 	// (apid, gatewayd-public, gatewayd-internal, schedd, vmmd,
-	// imaged, meterd, builderd, githubd, gregale) × the wire.Version
+	// imaged, meterd, builderd, githubd, outboundd, gregale) × the wire.Version
 	// string, so the cartesian is pre-instantiated at boot to
 	// surface zero rows from idle.
 	daemonRestartCount *prometheus.CounterVec
@@ -178,10 +177,10 @@ type OpsMetrics struct {
 	// identity of the running binary. Always 1 (the gauge's value
 	// is meaningless — the labels carry the signal). Operator
 	// dashboards query this metric for the "Daemon versions
-	// fleet-wide" heatmap panel. The label set is bounded at 10
+	// fleet-wide" heatmap panel. The label set is bounded at 11
 	// daemon names × the wire.Version × git_sha × build_time
 	// cartesian, but in practice git_sha and build_time are
-	// constant per binary so the realistic cardinality is 10 (one
+	// constant per binary so the realistic cardinality is 11 (one
 	// row per daemon, all sharing the same version+git_sha
 	// tuple). Pre-instantiated at boot — see SetDaemonBuildInfo.
 	daemonBuildInfo *prometheus.GaugeVec
@@ -270,6 +269,19 @@ type OpsMetrics struct {
 	// Pre-instantiated at boot so the wake-tier-mix panel has zero
 	// rows from idle fleet, non-zero as soon as production wakes happen.
 	wakeSnapshotTier *prometheus.CounterVec
+	// executionActive, executionTotal, executionPhaseDuration, and
+	// executionFailures are the scheduler-owned disposable-run signals.
+	// Labels are deliberately closed and payload-free: runtime is the four
+	// admitted interpreter images (plus unknown overflow), status is the six
+	// terminal API states, phase is the restore/execute/teardown/finalize
+	// lifecycle, and reason is a bounded internal failure class. Execution IDs,
+	// account IDs, source, input, and guest output never become metric labels.
+	executionActive        *prometheus.GaugeVec
+	executionTotal         *prometheus.CounterVec
+	executionPhaseDuration *prometheus.HistogramVec
+	executionFailures      *prometheus.CounterVec
+	executionOutputBytes   *prometheus.CounterVec
+	executionSweeps        *prometheus.CounterVec
 	// wakeFailure (issue #1059 / ADR-127) — operator-facing wake
 	// failure-mode counter. Labelled by (box, reason). The closed
 	// reason vocabulary is
@@ -1230,6 +1242,13 @@ type OpsMetrics struct {
 	imagedOCIBlobCacheHits      prometheus.Counter
 	imagedOCIBlobCacheMisses    prometheus.Counter
 	imagedOCIBlobCacheEvictions prometheus.Counter
+	// staleDeploymentOldestAge exposes the oldest deployment that has
+	// exceeded imaged's reconciliation deadline and remains nonterminal.
+	// staleDeploymentsReconciled counts rows safely moved to cancelled by
+	// the bounded reconciler. Both are unlabelled fleet signals; row detail
+	// stays in structured logs and the operator audit trail.
+	staleDeploymentOldestAge   prometheus.Gauge
+	staleDeploymentsReconciled prometheus.Counter
 	// issue #170 / PR-A: per-{app,node} instance-stats gauges. The
 	// (app, node) label tuple is unbounded because it grows with the
 	// customer count, so it cannot be pre-instantiated at boot.
@@ -1978,14 +1997,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// call).
 	daemonRestartCount := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_daemon_restart_count",
-		Help: "Count of systemd-driven restarts of THIS daemon process (issue #573 / ADR-128), labelled by (daemon, version). Producer is wire.Daemon() reading $SYSTEMD_RESTARTS_ON_FAILURE at boot; alert rules prefer node_exporter's node_systemd_restart_count{name=~'faas-.*\\.service'} when the systemd collector is enabled (commit 6 of the cluster B mega-PR added --collector.systemd to the node_exporter unit). This counter is the backstop for environments where the systemd collector is disabled. Closed daemon set: apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, gregale.",
+		Help: "Count of systemd-driven restarts of THIS daemon process (issue #573 / ADR-128), labelled by (daemon, version). Producer is wire.Daemon() reading $SYSTEMD_RESTARTS_ON_FAILURE at boot; alert rules prefer node_exporter's node_systemd_restart_count{name=~'faas-.*\\.service'} when the systemd collector is enabled (commit 6 of the cluster B mega-PR added --collector.systemd to the node_exporter unit). This counter is the backstop for environments where the systemd collector is disabled. Closed daemon set: apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, outboundd, gregale.",
 	}, []string{"daemon", "version"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale", "other"} {
+	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale", "other"} {
 		daemonRestartCount.WithLabelValues(daemon, Version)
 	}
 	// Issue #586 / ADR-129: per-daemon build info + uptime + ready.
-	// Closed daemon set mirrors daemonRestartCount above (10 closed
-	// + "other" overflow = 11). Pre-instantiated with the
+	// Closed daemon set mirrors daemonRestartCount above (11 closed
+	// + "other" overflow = 12). Pre-instantiated with the
 	// current wire.Version, GitSHA, BuildTime so /metrics surfaces
 	// the daemon identity from boot — the operator dashboard
 	// "Daemon versions fleet-wide" panel renders a non-empty
@@ -1995,7 +2014,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Ready starts at 0 and is driven by the daemon's /readyz probe.
 	daemonBuildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_daemon_build_info",
-		Help: "Always-1 gauge that exposes the running binary's identity (issue #586 / ADR-129), labelled by (daemon, version, git_sha, build_time). The labels carry the signal — the gauge value is meaningless. Operator dashboards query this metric for the 'Daemon versions fleet-wide' heatmap panel. The closed daemon set (apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, gregale) is pre-instantiated at boot so /metrics surfaces the identity from process start.",
+		Help: "Always-1 gauge that exposes the running binary's identity (issue #586 / ADR-129), labelled by (daemon, version, git_sha, build_time). The labels carry the signal — the gauge value is meaningless. Operator dashboards query this metric for the 'Daemon versions fleet-wide' heatmap panel. The closed daemon set (apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged, meterd, builderd, githubd, outboundd, gregale) is pre-instantiated at boot so /metrics surfaces the identity from process start.",
 	}, []string{"daemon", "version", "git_sha", "build_time"})
 	daemonUptimeSeconds := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_daemon_uptime_seconds",
@@ -2009,7 +2028,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_daemon_ready_reason",
 		Help: "One-hot readiness reason classification (issue #586 / ADR-129), labelled by daemon and a closed reason class. reason ∈ {ready, draining, database, vmmd, grpc, storage, credentials, stale, process, other}; detailed error text remains in /readyz and logs to keep metric cardinality bounded.",
 	}, []string{"daemon", "reason"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale", "other"} {
+	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale", "other"} {
 		daemonBuildInfo.WithLabelValues(daemon, Version, GitSHA, BuildTime).Set(1)
 		daemonUptimeSeconds.WithLabelValues(daemon).Set(0)
 		daemonReady.WithLabelValues(daemon).Set(0)
@@ -2093,6 +2112,55 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	wakeSnapshotTier.WithLabelValues("warm")
 	wakeSnapshotTier.WithLabelValues("init")
 	wakeSnapshotTier.WithLabelValues("cold_boot_fallback")
+	// Disposable execution observability (ADR-171). Keep every label drawn
+	// from a closed set so untrusted runtime values and backend errors cannot
+	// create unbounded Prometheus series. The unknown rows are intentional
+	// defensive overflow buckets for malformed or future values.
+	executionActive := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_execution_active",
+		Help: "Currently claimed disposable executions, labelled by admitted runtime. Source, input, account, and execution IDs are never exposed.",
+	}, []string{"runtime"})
+	executionTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_execution_total",
+		Help: "Terminal disposable executions, labelled by admitted runtime and caller-visible terminal status.",
+	}, []string{"runtime", "status"})
+	executionPhaseDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_execution_phase_duration_seconds",
+		Help:    "Disposable execution lifecycle phase duration in seconds, labelled by admitted runtime and closed phase {restore, execute, teardown, finalize}.",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+	}, []string{"runtime", "phase"})
+	executionFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_execution_failures_total",
+		Help: "Disposable execution failures observed before terminal acknowledgement, labelled by runtime and bounded internal failure class.",
+	}, []string{"runtime", "reason"})
+	executionOutputBytes := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_execution_output_bytes_total",
+		Help: "Admitted disposable execution result and stream bytes returned after normalization, labelled by runtime. Values contain no output content.",
+	}, []string{"runtime"})
+	executionSweeps := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_execution_sweeps_total",
+		Help: "Disposable execution recovery sweeps, labelled by bounded outcome {ok, error}.",
+	}, []string{"outcome"})
+	executionRuntimes := []string{"node22", "node24", "python312", "python313", "unknown"}
+	executionStatuses := []string{"succeeded", "failed", "timed_out", "out_of_memory", "cancelled", "unknown"}
+	executionPhases := []string{"restore", "execute", "teardown", "finalize"}
+	executionFailureReasons := []string{"restore", "execute", "teardown", "finalize", "lease_lost", "protocol", "output_limit", "unknown"}
+	for _, runtime := range executionRuntimes {
+		executionActive.WithLabelValues(runtime).Set(0)
+		for _, status := range executionStatuses {
+			executionTotal.WithLabelValues(runtime, status)
+		}
+		for _, phase := range executionPhases {
+			executionPhaseDuration.WithLabelValues(runtime, phase)
+		}
+		for _, reason := range executionFailureReasons {
+			executionFailures.WithLabelValues(runtime, reason)
+		}
+		executionOutputBytes.WithLabelValues(runtime)
+	}
+	for _, outcome := range []string{"ok", "error"} {
+		executionSweeps.WithLabelValues(outcome)
+	}
 	// wakeFailure (issue #1059 / ADR-127) — see OpsMetrics.wakeFailure
 	// field doc comment for the closed reason vocabulary. The box
 	// label is resolved through boxLabel() at the call site (the
@@ -2889,6 +2957,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_oci_blob_cache_evictions_total",
 		Help: "Count of OCI registry blob cache entries evicted by the byte budget.",
 	})
+	staleDeploymentOldestAge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_stale_deployment_oldest_age_seconds",
+		Help: "Age in seconds of the oldest deployment beyond imaged's reconciliation deadline that remains nonterminal; zero means no stale backlog.",
+	})
+	staleDeploymentsReconciled := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_stale_deployments_reconciled_total",
+		Help: "Count of stale nonterminal deployments safely cancelled by imaged's bounded reconciler.",
+	})
 	// issue #170 / PR-A: per-{app,node} instance-stats gauges. Sized
 	// for the poller’s 200 ms cadence — the per-tick histogram tops
 	// out at the 200 ms interval so a regression that doubles the
@@ -3277,7 +3353,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
-		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal, residentGBPerCustomer, billingCapExceededTotal,
@@ -3295,6 +3371,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		wakeIDV4Fallback,
 		snapshotDiskDrift,
 		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
+		staleDeploymentOldestAge, staleDeploymentsReconciled,
 		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
@@ -4526,6 +4603,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		gatewayDrainWaitSeconds:                    gatewayDrainWaitSeconds,
 		gatewayInflightRequests:                    gatewayInflightRequests,
 		wakeSnapshotTier:                           wakeSnapshotTier,
+		executionActive:                            executionActive,
+		executionTotal:                             executionTotal,
+		executionPhaseDuration:                     executionPhaseDuration,
+		executionFailures:                          executionFailures,
+		executionOutputBytes:                       executionOutputBytes,
+		executionSweeps:                            executionSweeps,
 		wakeFailure:                                wakeFailure,
 		wakeLatency:                                wakeLatency,
 		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
@@ -4639,6 +4722,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		imagedOCIBlobCacheHits:                                imagedOCIBlobCacheHits,
 		imagedOCIBlobCacheMisses:                              imagedOCIBlobCacheMisses,
 		imagedOCIBlobCacheEvictions:                           imagedOCIBlobCacheEvictions,
+		staleDeploymentOldestAge:                              staleDeploymentOldestAge,
+		staleDeploymentsReconciled:                            staleDeploymentsReconciled,
 		instanceCPUPct:                                        instanceCPUPct,
 		instanceRSSMB:                                         instanceRSSMB,
 		instanceInflightReqs:                                  instanceInflightReqs,
@@ -4824,9 +4909,8 @@ func (m *OpsMetrics) SetServiceReplicaStatus(app string, desired, ready, startin
 
 // RecordDaemonRestart (issue #573 / ADR-128) records the systemd
 // restart count for the calling daemon. The wire.Daemon() boot
-// path reads $SYSTEMD_RESTARTS_ON_FAILURE (set by the systemd
-// unit's Restart=on-failure + RestartCountExport logic — see
-// deploy/ansible/roles/<daemon>/files/<daemon>.service) and calls
+// path reads an optional externally supplied
+// $SYSTEMD_RESTARTS_ON_FAILURE value and calls
 // this accessor once at startup. Add(1) is called n-1 times where
 // n is the systemd restart count, so the counter ends at n minus
 // the increment at the boot immediately after — operators see
@@ -4837,7 +4921,7 @@ func (m *OpsMetrics) SetServiceReplicaStatus(app string, desired, ready, startin
 //
 // The daemon label is normalised through the closed set
 // (apid, gatewayd-public, gatewayd-internal, schedd, vmmd, imaged,
-// meterd, builderd, githubd, gregale) — anything else collapses to "other"
+// meterd, builderd, githubd, outboundd, gregale) — anything else collapses to "other"
 // so the label cardinality stays bounded across the daemon's
 // lifetime. nil-receiver guard mirrors LivenessRestarts /
 // WorkloadOOMKills so unit tests without metrics keep working.
@@ -4846,7 +4930,7 @@ func (m *OpsMetrics) RecordDaemonRestart(daemon, version string, n int) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -4870,7 +4954,7 @@ func (m *OpsMetrics) SetDaemonBuildInfo(daemon, version, gitSHA, buildTime strin
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -4893,7 +4977,7 @@ func (m *OpsMetrics) SetDaemonUptime(daemon string, seconds float64) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -4919,7 +5003,7 @@ func (m *OpsMetrics) MarkReady(daemon string, ready bool, reason string) {
 		return
 	}
 	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "gregale":
+	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "gregale":
 		// closed set, admit unchanged
 	default:
 		daemon = "other"
@@ -5297,6 +5381,81 @@ func (m *OpsMetrics) WakeSnapshotTier(tier string) prometheus.Counter {
 		return nil
 	}
 	return m.wakeSnapshotTier.WithLabelValues(tier)
+}
+
+// RecordExecutionStarted increments the active disposable-execution gauge.
+// Runtime is normalized to the closed interpreter set; malformed values use
+// the "unknown" overflow row. Nil-safe so the coordinator remains usable in
+// focused tests without metrics wiring.
+func (m *OpsMetrics) RecordExecutionStarted(runtime string) {
+	if m == nil || m.executionActive == nil {
+		return
+	}
+	m.executionActive.WithLabelValues(normalizeExecutionRuntimeLabel(runtime)).Inc()
+}
+
+// RecordExecutionFinished decrements the active gauge for runtime. It is
+// intentionally separate from RecordExecutionTerminal because teardown or
+// lease loss can end a claimed worker without a terminal acknowledgement.
+func (m *OpsMetrics) RecordExecutionFinished(runtime string) {
+	if m == nil || m.executionActive == nil {
+		return
+	}
+	m.executionActive.WithLabelValues(normalizeExecutionRuntimeLabel(runtime)).Dec()
+}
+
+// RecordExecutionTerminal records the caller-visible terminal status after
+// durable acknowledgement succeeds. The status label is closed and never
+// carries backend or guest-provided text.
+func (m *OpsMetrics) RecordExecutionTerminal(runtime, status string) {
+	if m == nil || m.executionTotal == nil {
+		return
+	}
+	m.executionTotal.WithLabelValues(normalizeExecutionRuntimeLabel(runtime), normalizeExecutionStatusLabel(status)).Inc()
+}
+
+// ObserveExecutionPhase records one scheduler lifecycle phase. Phase labels
+// are closed to restore, execute, teardown, and finalize.
+func (m *OpsMetrics) ObserveExecutionPhase(runtime, phase string, duration time.Duration) {
+	if m == nil || m.executionPhaseDuration == nil || duration < 0 {
+		return
+	}
+	phase = normalizeExecutionPhaseLabel(phase)
+	if phase == "unknown" {
+		return
+	}
+	m.executionPhaseDuration.WithLabelValues(normalizeExecutionRuntimeLabel(runtime), phase).Observe(duration.Seconds())
+}
+
+// RecordExecutionFailure records a bounded internal failure class. Raw
+// backend errors are deliberately not accepted as labels.
+func (m *OpsMetrics) RecordExecutionFailure(runtime, reason string) {
+	if m == nil || m.executionFailures == nil {
+		return
+	}
+	m.executionFailures.WithLabelValues(normalizeExecutionRuntimeLabel(runtime), normalizeExecutionFailureReason(reason)).Inc()
+}
+
+// ObserveExecutionOutput adds the number of normalized result/stream bytes
+// returned to the caller. It records size only; output content is never
+// placed in a metric label or exemplar.
+func (m *OpsMetrics) ObserveExecutionOutput(runtime string, bytes int) {
+	if m == nil || m.executionOutputBytes == nil || bytes <= 0 {
+		return
+	}
+	m.executionOutputBytes.WithLabelValues(normalizeExecutionRuntimeLabel(runtime)).Add(float64(bytes))
+}
+
+// RecordExecutionSweep records one bounded recovery-sweep outcome.
+func (m *OpsMetrics) RecordExecutionSweep(err error) {
+	if m == nil || m.executionSweeps == nil {
+		return
+	}
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	m.executionSweeps.WithLabelValues(outcome).Inc()
 }
 
 // WakeFailure returns the per-(box, app, reason) counter the
@@ -7067,6 +7226,29 @@ func (m *OpsMetrics) ImagedOCIBlobCacheEviction() {
 	m.imagedOCIBlobCacheEvictions.Inc()
 }
 
+// SetStaleDeploymentOldestAge publishes the current stale nonterminal
+// deployment backlog age. A zero value explicitly clears the signal after a
+// successful sweep. Safe on a nil receiver.
+func (m *OpsMetrics) SetStaleDeploymentOldestAge(age time.Duration) {
+	if m == nil {
+		return
+	}
+	seconds := age.Seconds()
+	if seconds < 0 {
+		seconds = 0
+	}
+	m.staleDeploymentOldestAge.Set(seconds)
+}
+
+// IncrementStaleDeploymentsReconciled records one successful CAS-protected
+// stale deployment repair. Safe on a nil receiver.
+func (m *OpsMetrics) IncrementStaleDeploymentsReconciled() {
+	if m == nil {
+		return
+	}
+	m.staleDeploymentsReconciled.Inc()
+}
+
 // SetResidentGBPerCustomer writes one sample to the
 // <daemon>_resident_gb_per_customer gauge (ADR-031, PR #141).
 // Spec §12 target is 0.305 average resident GB per paying customer
@@ -8274,6 +8456,39 @@ const anonymousIPLabel = "anonymous"
 // here keeps goconst at 0 occurrences (golangci-lint v2.4.0 fires on
 // repeated string literals ≥ 3×).
 const labelUnknown = "unknown"
+
+func normalizeExecutionRuntimeLabel(value string) string {
+	if api.ExecutionRuntime(value).Valid() {
+		return value
+	}
+	return labelUnknown
+}
+
+func normalizeExecutionStatusLabel(value string) string {
+	status := api.ExecutionStatus(value)
+	if status.Terminal() {
+		return value
+	}
+	return labelUnknown
+}
+
+func normalizeExecutionPhaseLabel(value string) string {
+	switch value {
+	case "restore", "execute", "teardown", "finalize":
+		return value
+	default:
+		return labelUnknown
+	}
+}
+
+func normalizeExecutionFailureReason(value string) string {
+	switch value {
+	case "restore", "execute", "teardown", "finalize", "lease_lost", "protocol", "output_limit":
+		return value
+	default:
+		return labelUnknown
+	}
+}
 
 // serviceReplicaMetricStates is the closed label vocabulary for the
 // scheduler's service-capacity gauge. Keep this list in one place so the

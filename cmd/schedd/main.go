@@ -199,15 +199,17 @@ type runDeps struct {
 	executionArtifacts func(context.Context, api.ExecutionRuntime, api.ExecutionSnapshotShape) (sched.ExecutionRuntimeArtifacts, error)
 	// executionPayloadDecoder is the authenticated host-side payload decoder.
 	// Production must inject it before enabling execution; nil is fail-closed.
-	executionPayloadDecoder sched.ExecutionPayloadDecoder
+	executionPayloadDecoder any
 }
 
 func defaultDeps() runDeps {
 	return runDeps{
 		configPath: envOr("FAAS_SCHEDD_CONFIG", "/etc/faas/schedd.toml"),
-		openDB:     db.Open,
-		migrate:    db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
-		detectFC:   fcvm.DetectFirecrackerVersion,
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-schedd")
+		},
+		migrate:  db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
+		detectFC: fcvm.DetectFirecrackerVersion,
 		dialVMM: func(ctx context.Context, target string, tlsCfg *tls.Config) (sched.VMM, error) {
 			return sched.DialVMMContext(ctx, target, tlsCfg)
 		},
@@ -296,9 +298,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// DEPLOY-1 / ADR-075 capdecl gate. schedd's capsDecl is
-	// the empty declaration (no Allow, no Deny) — schedd is
-	// unprivileged. The capCheck seam (review finding M2)
+	// DEPLOY-1 / ADR-075 capdecl gate. schedd permits only CAP_NET_ADMIN for
+	// read-only conntrack enumeration. The capCheck seam (review finding M2)
 	// lets tests stub the live /proc/self/status check.
 	capCheck := deps.capCheck
 	if capCheck == nil {
@@ -328,7 +329,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if identityErr != nil {
 				return fmt.Errorf("schedd: authenticated payload decoder unavailable: load host age identities: %w", identityErr)
 			}
-			deps.executionPayloadDecoder = sched.NewAgeExecutionPayloadDecoder(executionHostAgeIdentities)
+			deps.executionPayloadDecoder = sched.NewAgeExecutionBundlePayloadDecoder(executionHostAgeIdentities)
 			if deps.executionPayloadDecoder == nil {
 				return errors.New("schedd: authenticated payload decoder unavailable: no host age identities")
 			}
@@ -1790,10 +1791,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			sched.ExecutionRuntimeArtifactsFunc(deps.executionArtifacts),
 			executionNodeID,
 		)
-		backend := sched.NewRoutedVmmdExecutionBackend(vmmRouter, deps.executionPayloadDecoder)
+		decoder, ok := deps.executionPayloadDecoder.(sched.ExecutionPayloadDecoderV2)
+		if !ok || decoder == nil {
+			return errors.New("schedd: execution payload decoder is not bundle-capable")
+		}
+		backend := sched.NewRoutedVmmdExecutionBackendWithBundle(vmmRouter, decoder)
 		executionCoordinator = sched.NewExecutionCoordinator(store, backend, sched.ExecutionCoordinatorConfig{
 			Enabled: true,
 			Owner:   executionNodeID,
+			Metrics: ops,
 		}, log).WithClaimResolver(resolver)
 		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "storage-digest-pair")
 	}

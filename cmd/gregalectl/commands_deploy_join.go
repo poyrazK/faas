@@ -61,6 +61,7 @@ type deployJoinOptions struct {
 	ArtifactDir           string
 	AnsibleVarsFile       string
 	RepoRoot              string
+	PostgresOverlapNodes  int
 	SkipFleetPreflight    bool
 	Resume                bool
 	Timeout               time.Duration
@@ -196,6 +197,7 @@ func cmdDeployJoinNode(args []string) int {
 		ArtifactDir:           *artifactDir,
 		AnsibleVarsFile:       *ansibleVars,
 		RepoRoot:              *repoRoot,
+		PostgresOverlapNodes:  1,
 		SkipFleetPreflight:    *skipPreflight,
 		Resume:                *resume,
 		Timeout:               *timeout,
@@ -369,6 +371,7 @@ func executeDeployJoin(opts deployJoinOptions, report *deployJoinReport) (int, e
 }
 
 func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
+	rolloutOverlapNodes := postgresRolloutOverlapNodes(opts.PostgresOverlapNodes)
 	report := deployJoinReport{
 		Node:           opts.Node,
 		DatabaseNode:   canonicalComputeNodeName(opts.Node, roleComputeOnly),
@@ -390,6 +393,9 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 			"verify every active compute daemon executes the installed release",
 			"run the node-scoped doctor and verify the control-plane row before activation",
 		},
+	}
+	if rolloutOverlapNodes < 1 {
+		return report, errors.New("PostgreSQL rollout overlap must be positive")
 	}
 	if opts.ManifestFile == "" {
 		return report, errors.New("--manifest-file is required")
@@ -557,6 +563,13 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	return report, nil
 }
 
+func postgresRolloutOverlapNodes(configured int) int {
+	if configured == 0 {
+		return 1
+	}
+	return configured
+}
+
 func deployJoinApply(opts *deployJoinOptions, report *deployJoinReport) (int, error) {
 	return deployJoinApplyWithContext(context.Background(), opts, report, nil)
 }
@@ -685,6 +698,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_release_sbom_source":       sbom,
 		"faas_join_builder_base_ref":          builderBaseRef,
 		"faas_join_bootstrap_contract_sha256": bootstrapContractSHA256,
+		"faas_postgres_rollout_overlap_nodes": postgresRolloutOverlapNodes(opts.PostgresOverlapNodes),
 		// A clean provider-created host does not have the release binary or
 		// rendered daemon configuration yet. Defer bootstrap service handlers
 		// and readiness verification until node_join.yml has installed and
@@ -917,6 +931,15 @@ func verifyAndActivateJoinedNode(ctx context.Context, report *deployJoinReport, 
 	}
 	if err := validateComputeTargetURL(row.TargetURL); err != nil {
 		return err
+	}
+	// Establish a fresh liveness baseline before making a long-idle standby
+	// admitting. Peer schedds compare last_heartbeat_at with the 90-second
+	// staleness budget and can observe the activation immediately. Leaving the
+	// old timestamp in place lets that observer demote an otherwise healthy
+	// node before its owner runs its first heartbeat tick. Nodes older than the
+	// recovery inventory window then cannot recover without operator action.
+	if err := store.HeartbeatComputeNode(ctx, row.ID); err != nil {
+		return fmt.Errorf("refresh row %s heartbeat before activation: %w", row.ID, err)
 	}
 	if !row.Active {
 		if err := store.SetComputeNodeActive(ctx, row.ID, true); err != nil {

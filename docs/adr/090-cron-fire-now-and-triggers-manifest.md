@@ -75,7 +75,7 @@ Add two coupled surfaces, both built on the existing `POST /v1/crons` write path
 
 - **Pre-count race**: the CLI pre-count is a UX fast-fail only. Authority stays with `CreateCronIfUnderQuota` (`pkg/state/pgstore.go:5177-5257`), which takes `FOR UPDATE` on the apps row, so two concurrent deploys cannot both win. The CLI renders `CronQuotaError{Scope, Limit, Observed}` (`pkg/state/store.go:141-162`) verbatim when the server rejects a clean pre-count.
 
-- **Failure mode — fail-fast**: stop on the first `CreateCron` error; report both halves. The deploy is **not** rolled back (the tarball has already shipped); exit non-zero. Re-running is safe because identical triples are deduped via the `(app_id, schedule, path)` key on the existing `crons` table.
+- **Failure mode — fail-fast with compensation**: stop on the first `CreateCron` error; delete any rows created by this invocation before reporting both halves. The CLI keeps the staged IDs armed while upload/build/submission runs and compensates them when that deployment fails or never reaches `live`; a successful queued `--no-wait` request commits the rows. Re-running is safe because identical triples are deduped via the `(app_id, schedule, path)` key on the existing `crons` table. Cleanup uses a short context independent of the failed request's cancellation and warns if the API cannot remove a staged row.
 
 ### Sub-decisions
 
@@ -135,7 +135,7 @@ Add two coupled surfaces, both built on the existing `POST /v1/crons` write path
 
 - The audit payload struct gains a `trigger` field. Existing audit-event allowlists must learn `cron.fired.manually` before merge or the new event's rows get silently dropped. Documented in PR description.
 - The `triggers:` schema is YAML only. TOML is rejected explicitly. A future request to add TOML would be a new ADR.
-- The CLI's pre-count + fan-out is a new failure mode for `gregale deploy`: a manifest with a typo'd schedule makes the deploy fail mid-way with a partial creation. The fail-fast summary message is the only mitigation.
+- Manifest fan-out still adds a second API write before the deployment request, so a customer can observe a short-lived staged trigger while the upload is in flight. The CLI compensates those rows on rejected/failed/unknown deployments; if the cleanup API is unavailable, it reports the incomplete rollback so the operator can remove the named trigger manually.
 
 ### Compatible
 

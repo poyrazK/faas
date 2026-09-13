@@ -740,6 +740,11 @@ func validChannel(channel string) bool {
 		strings.TrimSpace(channel) == channel && !strings.ContainsAny(channel, "/?#\r\n")
 }
 
+// ValidateChannel reports whether channel is valid for endpoint-scoped
+// subscriptions and publishes. It is exported so public API handlers can
+// reject malformed path values before forwarding them to an owner node.
+func ValidateChannel(channel string) bool { return validChannel(channel) }
+
 func (m *Manager) connection(id string) (*connection, bool) {
 	m.mu.RLock()
 	c, ok := m.conns[id]

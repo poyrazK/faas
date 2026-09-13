@@ -144,6 +144,21 @@ func TestPrepareWarmBuilderDiscardsForeignScope(t *testing.T) {
 	}
 }
 
+func TestCleanupWarmSnapshotHandlesIncompleteMetadata(t *testing.T) {
+	vm := &warmBuilderTestVM{}
+	b := New(nil, nil, vm, NewCache(t.TempDir()), nil, nil, Config{}, nil)
+	snapshot := WarmSnapshot{
+		VMStatePath: "/var/lib/faas/snapshots/incomplete.vmstate",
+		LayerPath:   "/var/lib/faas/build-drive/incomplete.ext4",
+	}
+	if err := b.cleanupWarmSnapshot(context.Background(), vm, snapshot); err != nil {
+		t.Fatalf("cleanupWarmSnapshot: %v", err)
+	}
+	if len(vm.deleted) != 1 || vm.deleted[0] != snapshot {
+		t.Fatalf("deleted snapshots = %+v, want the incomplete snapshot", vm.deleted)
+	}
+}
+
 func TestProcessOneCleansConsumedWarmSnapshotAfterRestore(t *testing.T) {
 	store := state.NewMemStore()
 	source := filepath.Join(t.TempDir(), "src.tar.gz")

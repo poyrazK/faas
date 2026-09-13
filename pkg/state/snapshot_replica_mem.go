@@ -185,10 +185,6 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 	}, nil
 }
 
-func (m *MemStore) MarkSnapshotReplicaReady(_ context.Context, snapshotID, nodeID string) error {
-	return errors.New("state: snapshot replica lease token required")
-}
-
 func (m *MemStore) RenewSnapshotReplicaLease(_ context.Context, snapshotID, nodeID, leaseToken string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -230,10 +226,6 @@ func (m *MemStore) MarkSnapshotReplicaReadyWithLease(_ context.Context, snapshot
 	row.nextAttemptAt = time.Time{}
 	m.snapshotReplicas[key] = row
 	return nil
-}
-
-func (m *MemStore) MarkSnapshotReplicaFailed(_ context.Context, snapshotID, nodeID string, cause error) error {
-	return errors.New("state: snapshot replica lease token required")
 }
 
 func (m *MemStore) MarkSnapshotReplicaFailedWithLease(_ context.Context, snapshotID, nodeID, leaseToken string, cause error) error {

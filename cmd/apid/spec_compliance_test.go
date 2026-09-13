@@ -46,6 +46,7 @@ const (
 	orgsFile              = "orgs.go"            // issue #190 / IAM-6 / ADR-061 PR 5
 	scanFile              = "dto_scan.go"        // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
 	webhooksFile          = "webhooks.go"        // issue #476 / ADR-076
+	realtimeFile          = "realtime.go"        // ADR-156 — managed realtime endpoint DTOs
 	logDrainsFile         = "logdrains.go"       // issue #1398 O4 — customer runtime log destinations
 	billingFile           = "billing.go"         // PR-P3 — admin reconcile + future billing DTOs
 	diffFile              = "diff.go"            // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
@@ -277,6 +278,7 @@ var dtoExclude = map[string]bool{
 	"StatusPage":                   true, // GET /status/slo.json (public status)
 	"SessionsRevokeRequest":        true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
 	"ManagedPostgresPlanLimits":    true, // internal plan policy, not a wire DTO
+	"RealtimeLimits":               true, // internal plan policy, not a wire DTO
 	"ExecutionSnapshotShape":       true, // internal snapshot compatibility key, not a wire DTO
 	"ResolvedExecutionRequest":     true, // sealed scheduler intent, not a public DTO
 	"AlertRuleRow":                 true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
@@ -464,12 +466,16 @@ var codeExclude = map[string]bool{
 // Either inline anonymous structs in handlers, or pure-documentation shapes
 // (error envelopes that don't directly mirror a Go type).
 var schemaSpecOnly = map[string]bool{
-	"ChangePlanRequest":      true, // inline {Plan string} in cmd/apid/handlers_ext.go
-	"CreateKeyRequest":       true, // inline {Label string} in cmd/apid/handlers_ext.go
-	"RateLimitPlain":         true, // documentation-only shape for the authlimiter 429
-	"Trace":                  true, // issue #555: gatewayd-public GET /v1/traces/{trace_id} response; gateway-internal type, not a pkg/api DTO
-	"TraceSpan":              true, // issue #555: subtree of Trace; gateway-internal type
-	"RaiseOverageCapRequest": true, // issue #561: inline {OverageCapCents *int64} in cmd/apid/handlers_ext.go
+	// Status create is decoded into the shared Go request DTO, while the
+	// OpenAPI discriminator exposes stricter kind-specific SDK request shapes.
+	"AdminStatusIncidentCreateRequest":    true,
+	"AdminStatusMaintenanceCreateRequest": true,
+	"ChangePlanRequest":                   true, // inline {Plan string} in cmd/apid/handlers_ext.go
+	"CreateKeyRequest":                    true, // inline {Label string} in cmd/apid/handlers_ext.go
+	"RateLimitPlain":                      true, // documentation-only shape for the authlimiter 429
+	"Trace":                               true, // issue #555: gatewayd-public GET /v1/traces/{trace_id} response; gateway-internal type, not a pkg/api DTO
+	"TraceSpan":                           true, // issue #555: subtree of Trace; gateway-internal type
+	"RaiseOverageCapRequest":              true, // issue #561: inline {OverageCapCents *int64} in cmd/apid/handlers_ext.go
 	// Issue #757 / ADR-100 — trigger-enum schemas. Each is the
 	// typed string from pkg/api/trigger.go (TriggerKind,
 	// TriggerRecordState, TriggerRoutedTo, TriggerDeadLetterReason).
@@ -901,6 +907,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", orgsFile),
 		filepath.Join(root, "pkg", "api", scanFile),
 		filepath.Join(root, "pkg", "api", webhooksFile),
+		filepath.Join(root, "pkg", "api", realtimeFile),
 		filepath.Join(root, "pkg", "api", logDrainsFile),
 		filepath.Join(root, "pkg", "api", billingFile),
 		filepath.Join(root, "pkg", "api", diffFile),

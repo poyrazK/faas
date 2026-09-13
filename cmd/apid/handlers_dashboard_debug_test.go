@@ -94,6 +94,98 @@ func TestDashboardHandler_DebugPageDegradesWhenTelemetryUnavailable(t *testing.T
 	if !strings.Contains(body, "Debugger telemetry is temporarily unavailable") {
 		t.Fatalf("degraded telemetry copy missing from response: %s", body)
 	}
+	if !strings.Contains(body, "Why is this app running?") || !strings.Contains(body, "No scheduler observation was retained") {
+		t.Fatalf("running debugger empty state missing from response: %s", body)
+	}
+}
+
+func TestDashboardHandler_DebugRunningPanelProjectsObservation(t *testing.T) {
+	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	if err := store.UpdateAccountPlan(t.Context(), acct.ID, api.PlanHobby); err != nil {
+		t.Fatalf("UpdateAccountPlan: %v", err)
+	}
+	acct, err = store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail after plan update: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "debug-running-panel", Status: state.AppActive})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	at := time.Now().UTC().Add(-time.Minute)
+	payload, err := json.Marshal(debugRunningEvent{
+		SchemaVersion:          1,
+		AppID:                  app.ID,
+		ObservedAt:             at.Format(time.RFC3339Nano),
+		RunningInstances:       1,
+		ConfiguredMinInstances: 0,
+		EffectiveMinInstances:  0,
+		IdleTimeoutSeconds:     60,
+		Causes: []api.DebugRunningCause{{
+			Code:            api.DebugRunningReasonOpenConnection,
+			Summary:         "1 active TCP connection(s) keep the instance warm; protocol is not identified.",
+			InstanceCount:   1,
+			OpenConnections: 1,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal running event: %v", err)
+	}
+	subject := app.ID
+	if err := store.AppendEventAt(t.Context(), "schedd", debugRunningEventKind, &subject, payload, at); err != nil {
+		t.Fatalf("AppendEventAt: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/apps/debug-running-panel/debug?since=3h", nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Why is this app running?",
+		"Current observed causes",
+		"Open connection",
+		"1 active TCP connection(s) keep the instance warm",
+		"Configuration context",
+		"Recent observations",
+		"gregale debug running --since 3h debug-running-panel",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("running panel missing %q\nbody = %s", want, body)
+		}
+	}
+}
+
+func TestDashboardDebugRunningCauseLabels(t *testing.T) {
+	for _, tt := range []struct {
+		code string
+		want string
+	}{
+		{api.DebugRunningReasonRequestActivity, "Request activity"},
+		{api.DebugRunningReasonOpenConnection, "Open connection"},
+		{api.DebugRunningReasonTailTasks, "Background tasks"},
+		{api.DebugRunningReasonMinInstances, "Configured minimum"},
+		{api.DebugRunningReasonPrewarmFloor, "Prewarm floor"},
+		{api.DebugRunningReasonScaleInCooldown, "Scale-in cooldown"},
+		{api.DebugRunningReasonWorkloadMode, "Workload mode"},
+		{api.DebugRunningReasonStartupGrace, "Startup grace"},
+		{api.DebugRunningReasonUnknownActivity, "Activity signal unavailable"},
+		{api.DebugRunningReasonNoBlockerObserved, "No blocker observed"},
+		{"future_reason", "Observed cause"},
+	} {
+		t.Run(tt.code, func(t *testing.T) {
+			if got := dashboardDebugRunningCauseLabel(tt.code); got != tt.want {
+				t.Fatalf("dashboardDebugRunningCauseLabel(%q) = %q, want %q", tt.code, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestDashboardDebugReplayRequiresCSRF(t *testing.T) {

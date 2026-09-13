@@ -542,6 +542,9 @@ const (
 	// endpoint, not a billing gate. Maps to HTTP 429 + Retry-After:
 	// the window is 24h so the retry hint is in seconds-until-reset.
 	CodeExportRateLimited = "export_rate_limited"
+	// CodeDeployRateLimited marks an account that exhausted its plan's
+	// deployment admissions in the current one-hour window.
+	CodeDeployRateLimited = "deploy_rate_limited"
 	CodeUnauthorized      = "unauthorized"
 	// CodeForbidden is returned when the authenticated principal lacks
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
@@ -838,6 +841,10 @@ const (
 	// split at line 533/534.
 	CodePlanDataUpstreamsNotAllowed = "plan_data_upstreams_not_allowed" // 402, Free
 	CodePlanLimitDataUpstreams      = "plan_limit_data_upstreams"       // 403, per-app cap reached
+	// CodeDataUpstreamsDisabled distinguishes an operator runtime switch
+	// from a customer plan entitlement. It prevents an entitled Scale
+	// account from receiving impossible downgrade guidance.
+	CodeDataUpstreamsDisabled = "data_upstreams_disabled"
 
 	// ADR-098 §D4 + §11: explicit-upstream write surface validation.
 	// Distinct codes from CodeEnvVarInvalidKey / CodeEnvVarValueTooLarge
@@ -1665,12 +1672,12 @@ func StatusForCode(code string) int {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
 		return http.StatusForbidden
-	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited:
+	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited, CodeDeployRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
-		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeHandlerMissing, CodeImageRequired,
+		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
 		CodeOpenAPIPolicyConfirmationRequired:
@@ -1683,7 +1690,7 @@ func StatusForCode(code string) int {
 	case CodeCapacity, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled:
 		return http.StatusServiceUnavailable
-	case CodeAPIContractDiffDisabled:
+	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -1975,6 +1982,10 @@ func StatusForCode(code string) int {
 	case CodePlanWebhooksNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanWebhookQuota:
+		return http.StatusForbidden
+	case CodePlanRealtimeNotAllowed:
+		return http.StatusPaymentRequired
+	case CodePlanRealtimeQuota:
 		return http.StatusForbidden
 	case CodePlanLogDrainsNotAllowed:
 		return http.StatusPaymentRequired
@@ -2370,6 +2381,20 @@ func ErrExportRateLimited(retryAfterS int) *Problem {
 		"Only one account export is allowed per 24h window; retry after the indicated back-off.").
 		WithHeader("Retry-After", fmt.Sprintf("%d", retryAfterS)).
 		WithDocs("https://docs.gregale.dev/gdpr#export-rate-limit")
+}
+
+// ErrDeployRateLimited reports an exhausted account deploy window. The
+// remaining/reset headers are added by apid from the atomic store result.
+func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeDeployRateLimited,
+		"Deploy rate limited",
+		fmt.Sprintf("This account has used all %d deploys in its current one-hour window.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://docs.gregale.dev/deployments#rate-limit")
 }
 
 // ErrInternal is the catch-all 500 envelope for handler-side failures
@@ -3013,6 +3038,15 @@ const CodePlanWebhooksNotAllowed = "plan_webhooks_not_allowed"
 // reached. Distinct from CodePlanWebhooksNotAllowed so the CLI
 // can branch on upsell-vs-delete copy without parsing the body.
 const CodePlanWebhookQuota = "plan_webhook_quota"
+
+// Managed realtime endpoint errors (ADR-156). Realtime is an opt-in
+// connection service; Free is gated, while paid plans have bounded endpoint
+// inventories so quiet connections cannot become an unmetered resource.
+const (
+	CodePlanRealtimeNotAllowed = "plan_realtime_not_allowed"
+	CodePlanRealtimeQuota      = "plan_realtime_quota"
+	CodeRealtimeInvalid        = "realtime_invalid"
+)
 
 // CodePlanLogDrainsNotAllowed is the 402 returned when the plan does not
 // include customer-configurable runtime log destinations.
@@ -3664,6 +3698,28 @@ func ErrPlanWebhookQuota(plan Plan, scope string, limit, observed int) *Problem 
 		WithDocs(docsBase + "/plans#webhooks")
 }
 
+func ErrPlanRealtimeNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanRealtimeNotAllowed,
+		"Managed realtime unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include managed realtime endpoints; upgrade to Hobby or above to keep WebSocket clients connected while your app sleeps.", p)).
+		WithDocs(docsBase + "/plans#realtime")
+}
+
+func ErrPlanRealtimeQuota(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodePlanRealtimeQuota,
+		"Managed realtime endpoint limit reached",
+		fmt.Sprintf("%s plan caps managed realtime endpoints at %d for %s; you have %d. Delete one to add another.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#realtime")
+}
+
+func ErrRealtimeInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid,
+		"Invalid managed realtime endpoint", reason)
+}
+
 // ErrPlanTriggersNotAllowed is returned by apid's createTrigger /
 // listTriggers handlers when the customer's plan has
 // TriggerLimitPerApp == 0 (Free today, issue #757 / ADR-0NN).
@@ -3883,6 +3939,16 @@ func ErrPlanDataUpstreamsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanDataUpstreamsNotAllowed,
 		"Data-placement hints unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include data-placement hints; upgrade to Hobby or above to capture upstreams.", p)).
+		WithDocs(docsBase + "/plans#data-placement")
+}
+
+// ErrDataUpstreamsDisabled reports cluster configuration independently of
+// plan entitlement. Operators can enable the runtime switch without asking an
+// already-entitled customer to change plans.
+func ErrDataUpstreamsDisabled() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeDataUpstreamsDisabled,
+		"Data placement is disabled",
+		"data-placement APIs are not enabled on this cluster; contact the platform operator").
 		WithDocs(docsBase + "/plans#data-placement")
 }
 
@@ -5011,6 +5077,18 @@ func ErrPlanSourceBytes(limit int, observed int64) *Problem {
 // nudge). Code differs from CodePlanLimit* because the failure mode
 // is plan-gating, not "you used more than the plan allows".
 func ErrPlanFeatureGated(feature string, p Plan) *Problem {
+	if feature == "analytics" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include analytics",
+			fmt.Sprintf("the %s plan doesn't include request analytics; upgrade to Hobby or higher for historical observability.", p)).
+			WithDocs(docsBase + "/plans#analytics")
+	}
+	if feature == "sync_invoke" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include synchronous invocation",
+			fmt.Sprintf("the %s plan doesn't include synchronous invocation; use the app's public HTTPS endpoint or upgrade to Hobby or higher.", p)).
+			WithDocs(docsBase + "/plans#synchronous-invocation")
+	}
 	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 		"Plan doesn't include this feature",
 		fmt.Sprintf("the %s plan doesn't unlock %s; upgrade to Hobby or higher to use event-driven features.", p, feature)).

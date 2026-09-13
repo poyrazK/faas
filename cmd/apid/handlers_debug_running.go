@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -69,11 +70,31 @@ func (s *server) debugRunningHandler(w http.ResponseWriter, r *http.Request, acc
 	}
 
 	now := time.Now().UTC()
-	windowStart := now.Add(-since)
-	// Events are shared with the audit stream, so over-read enough rows to
-	// find the requested number of debugger observations without making an
-	// unbounded query. A full page is still marked truncated when the cap is
-	// reached; customers can widen the window or inspect the next tick.
+	response, err := s.readDebugRunning(r.Context(), app, now.Add(-since), now, limit, limits.IdleTimeoutS)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("list running debugger observations"))
+		return
+	}
+	response.Since = echoDebugSince(sinceRaw, since)
+	response.RetentionClamped = retentionClamped
+	writeJSON(w, http.StatusOK, response)
+}
+
+func nonNilRunningCauses(causes []api.DebugRunningCause) []api.DebugRunningCause {
+	if causes == nil {
+		return []api.DebugRunningCause{}
+	}
+	return causes
+}
+
+// readDebugRunning returns the bounded scheduler observations used by both
+// the public API and the server-rendered dashboard. The caller owns plan and
+// window parsing; keeping the event projection here prevents the two customer
+// surfaces from drifting apart during rolling upgrades.
+func (s *server) readDebugRunning(ctx context.Context, app state.App, windowStart, windowEnd time.Time, limit, idleTimeoutSeconds int) (api.DebugRunningResponse, error) {
+	if limit <= 0 {
+		limit = 20
+	}
 	eventCap := limit * 4
 	if eventCap < 40 {
 		eventCap = 40
@@ -81,15 +102,14 @@ func (s *server) debugRunningHandler(w http.ResponseWriter, r *http.Request, acc
 	if eventCap > 400 {
 		eventCap = 400
 	}
-	events, err := s.store.ListEvents(r.Context(), app.ID, eventCap+1)
+	events, err := s.store.ListEvents(ctx, app.ID, eventCap+1)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("list running debugger observations"))
-		return
+		return api.DebugRunningResponse{}, err
 	}
 
 	history := make([]api.DebugRunningObservation, 0, limit)
 	for _, row := range events {
-		if row.Kind != debugRunningEventKind || row.At.Before(windowStart) || row.At.After(now.Add(time.Minute)) {
+		if row.Kind != debugRunningEventKind || row.At.Before(windowStart) || row.At.After(windowEnd.Add(time.Minute)) {
 			continue
 		}
 		var event debugRunningEvent
@@ -118,7 +138,7 @@ func (s *server) debugRunningHandler(w http.ResponseWriter, r *http.Request, acc
 	config := api.DebugRunningConfig{
 		ConfiguredMinInstances: app.EffectiveMinInstances(),
 		EffectiveMinInstances:  app.EffectiveMinInstances(),
-		IdleTimeoutSeconds:     limits.IdleTimeoutS,
+		IdleTimeoutSeconds:     idleTimeoutSeconds,
 	}
 	var current []api.DebugRunningCause
 	var currentObservedAt string
@@ -133,24 +153,14 @@ func (s *server) debugRunningHandler(w http.ResponseWriter, r *http.Request, acc
 	if current == nil {
 		current = []api.DebugRunningCause{}
 	}
-
-	writeJSON(w, http.StatusOK, api.DebugRunningResponse{
+	return api.DebugRunningResponse{
 		AppID:             app.ID,
-		Since:             echoDebugSince(sinceRaw, since),
-		WindowStart:       windowStart.Format(time.RFC3339Nano),
-		WindowEnd:         now.Format(time.RFC3339Nano),
-		RetentionClamped:  retentionClamped,
+		WindowStart:       windowStart.UTC().Format(time.RFC3339Nano),
+		WindowEnd:         windowEnd.UTC().Format(time.RFC3339Nano),
 		Current:           current,
 		CurrentObservedAt: currentObservedAt,
 		Config:            config,
 		History:           history,
 		HistoryTruncated:  len(history) == limit,
-	})
-}
-
-func nonNilRunningCauses(causes []api.DebugRunningCause) []api.DebugRunningCause {
-	if causes == nil {
-		return []api.DebugRunningCause{}
-	}
-	return causes
+	}, nil
 }

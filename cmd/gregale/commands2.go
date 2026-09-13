@@ -900,6 +900,47 @@ type manifestCronClient interface {
 	Whoami(ctx context.Context) (api.AccountResponse, error)
 }
 
+// manifestCronDeleteClient is the optional destructive half of the cron
+// surface used to compensate a deployment that never becomes durable. Keep
+// it separate from manifestCronClient so the helper's small unit-test seam
+// remains source-compatible with fakes that only exercise fan-out.
+type manifestCronDeleteClient interface {
+	DeleteCron(ctx context.Context, id string) error
+}
+
+const manifestTriggerCleanupTimeout = 10 * time.Second
+
+// cleanupManifestTriggers removes only the rows created by this deploy. A
+// cancellation of the deployment request must not also cancel the cleanup;
+// otherwise a rejected upload can leave schedules firing against an app with
+// no live release. Deleting in reverse order makes the compensation mirror
+// the staging order and keeps partial cleanup deterministic.
+func cleanupManifestTriggers(ctx context.Context, client manifestCronClient, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	deleter, ok := client.(manifestCronDeleteClient)
+	if !ok {
+		return errors.New("client does not support trigger deletion")
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), manifestTriggerCleanupTimeout)
+	defer cancel()
+	var cleanupErrs []error
+	for i := len(ids) - 1; i >= 0; i-- {
+		if ids[i] == "" {
+			continue
+		}
+		if err := deleter.DeleteCron(cleanupCtx, ids[i]); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete trigger %s: %w", ids[i], err))
+		}
+	}
+	return errors.Join(cleanupErrs...)
+}
+
+func manifestCronKey(schedule, path string) string {
+	return schedule + "\x00" + path
+}
+
 // loadWorkflowManifestForDeploy performs the workflow-only preflight before
 // the CLI creates or fetches the target app and returns the definitions to
 // include in the deployment request.
@@ -938,9 +979,10 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 // No manifest → no-op (returns nil). Bad manifest → wrapped error
 // from gregalemanifest.Validate, surfaced verbatim by printErr. The
 // fan-out itself is fail-fast: stop on the first CreateCron error,
-// report progress, exit non-zero. Identical (app, schedule, path)
-// triples are deduped by the server-side UNIQUE on crons, so a
-// re-running deploy is a no-op for the rows that already exist.
+// compensate rows already created in this invocation, report progress,
+// and exit non-zero. Identical (schedule, path) triples already returned
+// by ListCrons are skipped locally, so re-running a deploy is a no-op for
+// rows that already exist; the server-side UNIQUE remains the final guard.
 //
 // Pre-count: the CLI tallies `existing` + `wanted` against the
 // account's plan limit and aborts with a clean 402 message before
@@ -948,15 +990,25 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 // (CreateCronIfUnderQuota takes FOR UPDATE on the apps row); the
 // pre-count is UX fast-fail only.
 func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug, cwd string) error {
+	_, err := deployManifestTriggersWithRollback(ctx, client, slug, cwd)
+	return err
+}
+
+// deployManifestTriggersWithRollback stages manifest triggers and returns
+// the IDs created by this invocation. The caller owns those IDs after a
+// successful return and must either commit them or call
+// cleanupManifestTriggers when the deployment is rejected. If staging itself
+// fails, already-created rows are compensated before the error is returned.
+func deployManifestTriggersWithRollback(ctx context.Context, client manifestCronClient, slug, cwd string) ([]string, error) {
 	m, ok, err := gregalemanifest.Load(cwd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !ok {
-		return nil // no manifest — nothing to do
+		return nil, nil // no manifest — nothing to do
 	}
 	if err := m.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	// Filter to triggers for THIS app's slug. Triggers targeting
 	// other slugs in a multi-app project are silently ignored on
@@ -969,7 +1021,7 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 		}
 	}
 	if len(matching) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Pre-count against the server. ListCrons returns the existing
@@ -980,7 +1032,7 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 	// 402 ErrPlanCronsNotAllowed on the first CreateCron).
 	existing, err := client.ListCrons(ctx, slug)
 	if err != nil {
-		return fmt.Errorf("list existing crons: %w", err)
+		return nil, fmt.Errorf("list existing crons: %w", err)
 	}
 	var plan api.Limits
 	if acct, err := client.Whoami(ctx); err == nil {
@@ -988,15 +1040,34 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 			plan = l
 		}
 	}
-	wanted := len(matching)
+	existingKeys := make(map[string]struct{}, len(existing))
+	for _, cron := range existing {
+		existingKeys[manifestCronKey(cron.Schedule, cron.Path)] = struct{}{}
+	}
+	wanted := 0
+	for _, trigger := range matching {
+		if _, alreadyPresent := existingKeys[manifestCronKey(trigger.Schedule, trigger.Path)]; !alreadyPresent {
+			wanted++
+		}
+	}
 	headroom := plan.CronLimitPerApp - len(existing)
-	if headroom < wanted {
-		return fmt.Errorf("cron quota exceeded: %d triggers in manifest, plan allows %d (currently %d/%d); raise plan or drop triggers",
+	if wanted > 0 && headroom < wanted {
+		return nil, fmt.Errorf("cron quota exceeded: %d triggers in manifest, plan allows %d (currently %d/%d); raise plan or drop triggers",
 			wanted, plan.CronLimitPerApp, len(existing), plan.CronLimitPerApp)
 	}
 
 	created := 0
+	createdIDs := make([]string, 0, len(matching))
+	existingIDs := make(map[string]struct{}, len(existing))
+	for _, cron := range existing {
+		if cron.ID != "" {
+			existingIDs[cron.ID] = struct{}{}
+		}
+	}
 	for i, t := range matching {
+		if _, alreadyPresent := existingKeys[manifestCronKey(t.Schedule, t.Path)]; alreadyPresent {
+			continue
+		}
 		enabled := t.IsEnabled()
 		req := api.CreateCronRequest{
 			AppID:    slug,
@@ -1004,22 +1075,37 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 			Path:     t.Path,
 			Enabled:  &enabled,
 		}
-		if _, err := client.CreateCron(ctx, slug, req); err != nil {
+		createdCron, err := client.CreateCron(ctx, slug, req)
+		if err != nil {
+			rollbackErr := cleanupManifestTriggers(ctx, client, createdIDs)
 			// Staticcheck ST1005 — the format string must not end
 			// in a newline+period. The summary block reads as two
 			// sentences; the trailing newline from the original
 			// design flipped the staticcheck rule, so the second
 			// sentence now flows inline. Operators still see the
 			// "N triggers created, M not attempted" progress line.
-			return fmt.Errorf("trigger %d/%d (%s %q %s) rejected: %w — %d triggers created, %d not attempted (re-run deploy after fixing; creation is idempotent by (app, schedule, path))",
+			triggerErr := fmt.Errorf("trigger %d/%d (%s %q %s) rejected: %w — %d triggers created, %d not attempted (re-run deploy after fixing; creation is idempotent by (app, schedule, path))",
 				i+1, len(matching), t.App, t.Schedule, t.Path, err, created, len(matching)-i)
+			if rollbackErr != nil {
+				triggerErr = fmt.Errorf("%w; trigger rollback incomplete: %w", triggerErr, rollbackErr)
+			} else if len(createdIDs) > 0 {
+				triggerErr = fmt.Errorf("%w; staged trigger rollback complete (%d trigger(s) removed)", triggerErr, len(createdIDs))
+			}
+			return createdIDs, triggerErr
+		}
+		if createdCron.ID != "" {
+			if _, alreadyPresent := existingIDs[createdCron.ID]; alreadyPresent {
+				created++
+				continue
+			}
+			createdIDs = append(createdIDs, createdCron.ID)
 		}
 		created++
 	}
 	if !jsonOutput && created > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  ✓ %s: %d trigger(s) applied\n", slug, created)
 	}
-	return nil
+	return createdIDs, nil
 }
 
 // templateFunctionConfig returns the wire defaults for templates whose
@@ -1113,6 +1199,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// explicit 1-exit error.
 	repo := fs.String("repo", "", "GitHub repo to deploy from (owner/name)")
 	ref := fs.String("ref", "", "git ref for --repo (branch, tag, or 40-char SHA)")
+	bindingRepo := fs.String("repository", "", "GitHub owner/name to bind to a project")
+	installID := fs.Int64("install-id", 0, "GitHub installation id for a project binding")
+	productionBranch := fs.String("production-branch", "main", "production branch for a project binding")
 	// Issue #270: --github emits a copy-paste-ready GitHub Actions
 	// workflow snippet to stdout and exits 0. No auth, no side effects,
 	// mirrors `cmdBillingPortal --print` (commands_billing.go:104-157).
@@ -1209,8 +1298,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	trafficPercent := fs.Int("traffic-percent", -1, "split weight for this deployment (0-100, Pro/Scale only; -1 = server default 100)")
 	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
 	// The flag is the explicit opt-out; without it, a present
-	// gregale.yaml with a `triggers:` block is applied AFTER CreateApp
-	// (and BEFORE the deploy body ships) — see deployManifestTriggers.
+	// gregale.yaml with a `triggers:` block is applied after app
+	// provisioning (and before the deploy body ships) — see
+	// deployManifestTriggers. The source-ref path stages against its
+	// already-existing app before posting its JSON request.
 	noTriggers := fs.Bool("no-triggers", false, "skip the `gregale.yaml` triggers fan-out (issue #791 PR-C)")
 	// Deployment completion is wait-by-default for compatibility with the
 	// existing deploy command; --no-wait returns once apid queues the
@@ -1290,7 +1381,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff|--create-only] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--dry-run|--diff|--create-only] [--doctor-strict|--no-doctor] [--path DIR] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -1348,8 +1439,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *doctorStrict && *noDoctor {
 		return printErr("Invalid flags", fmt.Errorf("--doctor-strict and --no-doctor are mutually exclusive"))
 	}
-	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "" || *deployOnly != "" || *projectDeploy || *projectSlug != "") {
-		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, --repo, --only, --project, or --project-slug"))
+	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "") {
+		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, or --repo"))
 	}
 	if *projectDeploy {
 		if *image != "" {
@@ -1435,10 +1526,21 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
+		if explicit["no-triggers"] {
+			return printErr("Unsupported project deploy flags", errors.New(
+				"--no-triggers cannot be combined with --project, --project-slug, or --only; project deploy trigger suppression is not yet supported"))
+		}
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "canary-preset", "canary-stages",
 			"reason", "tag", "deployed-by", "pr-number",
+			// Project plans currently infer each workload's execution
+			// configuration from the scanned source. Reject single-app
+			// overrides here instead of silently dropping them from both
+			// the scan and apply requests.
+			"function", "app", "runtime", "handler", "dockerfile",
+			"vcpu", "profile", "require-authn", "no-require-authn",
+			"app-protocol",
 		} {
 			if explicit[name] {
 				unsupported = append(unsupported, "--"+name)
@@ -1576,7 +1678,37 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if keyErr != nil {
 			return printErr("Invalid --idempotency-key", keyErr)
 		}
-		return cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx, slug, *repo, *ref, api.DeployAnnotations{
+		// Source-ref deploys target an already-existing app and return
+		// before the single-app upload path below, so stage the local
+		// manifest explicitly here. This keeps source-ref's JSON transport
+		// under the same compensation rule as multipart, resumable, and
+		// image deployments without changing its server-side source pull.
+		var stagedSourceRefTriggerIDs []string
+		var sourceRefClient *Client
+		if !*noTriggers {
+			var authErr error
+			sourceRefClient, authErr = authedClient()
+			if authErr != nil {
+				return printErr("Not logged in", authErr)
+			} else if sourceRefCwd, cwdErr := os.Getwd(); cwdErr == nil {
+				var triggerErr error
+				stagedSourceRefTriggerIDs, triggerErr = deployManifestTriggersWithRollback(ctx, sourceRefClient, slug, sourceRefCwd)
+				if triggerErr != nil {
+					return printErr("Manifest triggers fan-out failed", triggerErr)
+				}
+			}
+		}
+		defer func() {
+			if len(stagedSourceRefTriggerIDs) == 0 {
+				return
+			}
+			if rollbackErr := cleanupManifestTriggers(ctx, sourceRefClient, stagedSourceRefTriggerIDs); rollbackErr != nil {
+				PrintWarn(osStderr, "Manifest trigger rollback incomplete: %v", rollbackErr)
+				return
+			}
+			PrintProgress(osStderr, "Manifest trigger rollback complete (%d trigger(s) removed)", len(stagedSourceRefTriggerIDs))
+		}()
+		code := cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx, slug, *repo, *ref, api.DeployAnnotations{
 			Reason:         *reason,
 			Tag:            *tag,
 			DeployedBy:     resolveDeployedBy(*deployedBy),
@@ -1584,6 +1716,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent: optTrafficPercent(*trafficPercent),
 			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second)
+		if code == 0 {
+			stagedSourceRefTriggerIDs = nil
+		}
+		return code
 	}
 
 	// --template materializes an embedded starter project. For function
@@ -2108,7 +2244,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --project, --only, or --project-slug"))
 			}
 			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
-				*deployOnly, *deployExclude, *deployShowAffected, *diffJSON,
+				*bindingRepo, *productionBranch, *deployOnly, *deployExclude, *installID,
+				*deployShowAffected, *diffJSON,
 				*diffStrict || !*diffLenient)
 		}
 		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
@@ -2142,12 +2279,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
 				errors.New("no source resolved"))
 		}
+		if (*bindingRepo == "") != (*installID == 0) {
+			return printErr("Invalid project binding", errors.New("--repository and --install-id must be provided together"))
+		}
+		if *bindingRepo != "" {
+			if err := validateRepoSlug(*bindingRepo); err != nil {
+				return printErr("Invalid --repository", err)
+			}
+		}
 		openTarball, err := openCustomerFile(*tarball)
 		if err != nil {
 			return printErr("Could not open tarball", err)
 		}
 		defer func() { _ = openTarball.Close() }()
-		prodBranch := "main"
+		prodBranch := *productionBranch
 		onlyList := splitCSV(*deployOnly)
 		excludeList := splitCSV(*deployExclude)
 		if ok, clash := intersect(onlyList, excludeList); ok {
@@ -2155,8 +2300,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				"--only and --exclude share workload(s): %s",
 				strings.Join(clash, ", ")))
 		}
-		plan, err := client.ScanProject(ctx, openTarball, filepath.Base(*tarball),
-			*projectSlug, prodBranch, 0, onlyList, excludeList, *deployPersistExclude)
+		plan, err := client.ScanProjectWithBinding(ctx, openTarball, filepath.Base(*tarball),
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude)
 		if err != nil {
 			return printErr("Scan failed", err)
 		}
@@ -2202,12 +2347,26 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not reopen tarball", err)
 		}
 		defer func() { _ = openTarball2.Close() }()
-		apply, err := client.ApplyProjectPlan(ctx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
-			*projectSlug, prodBranch, 0, onlyList, excludeList, *deployPersistExclude)
+		apply, err := client.ApplyProjectPlanWithBinding(ctx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude)
 		if err != nil {
 			return printErr("Apply failed", err)
 		}
 		applyStatus := summarizeProjectApply(apply)
+		// Project deploys share the same sealed app-secret storage as
+		// single-app deploys. Apply the validated bundle to every workload
+		// selected by this project plan before returning the apply receipt;
+		// this keeps existing host-key rekey and secret redaction paths in
+		// force while making one-command monorepo deploys usable.
+		if len(deploySecrets) > 0 {
+			configured, secretErr := setProjectDeploySecrets(ctx, client, plan.Workloads, deploySecrets)
+			if secretErr != nil {
+				return printErr("Could not configure --secrets-file", secretErr)
+			}
+			if !jsonOutput {
+				PrintOK(osStdout, "Configured %d secret(s) across %d workload(s)", len(deploySecrets), configured)
+			}
+		}
 		if jsonOutput {
 			if code := jsonOut(writeJSON(apply)); code != 0 {
 				return code
@@ -2263,17 +2422,35 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 
-	// Issue #791 PR-C / ADR-090: gregale.yaml triggers fan-out. Runs
-	// after CreateApp so the slug exists for the FK, and before
-	// DeployTarball so a deploy-body error doesn't leave partial
-	// trigger rows in a confused state. Fail-fast on the first
-	// CreateCron error; the deploy is not rolled back (the tarball
-	// hasn't shipped yet, but CreateCronIfUnderQuota is the durable
-	// record). --no-triggers opts out of the entire fan-out.
-	if !*noTriggers {
-		if err := deployManifestTriggers(ctx, client, slug, sourceDir); err != nil {
-			return printErr("Manifest triggers fan-out failed", err)
+	// Issue #791 PR-C / ADR-090: gregale.yaml triggers are staged after
+	// CreateApp so the slug exists for the FK, and before the deployment
+	// request. If upload/build/submission fails, the deferred compensation
+	// removes only rows created by this invocation, preserving the prior
+	// trigger set. A queued no-wait deployment commits the staged rows;
+	// waited deployments commit only once they reach live. --no-triggers
+	// opts out of the entire fan-out.
+	var stagedManifestTriggerIDs []string
+	defer func() {
+		if len(stagedManifestTriggerIDs) == 0 {
+			return
 		}
+		if err := cleanupManifestTriggers(ctx, client, stagedManifestTriggerIDs); err != nil {
+			PrintWarn(osStderr, "Manifest trigger rollback incomplete: %v", err)
+			return
+		}
+		PrintProgress(osStderr, "Manifest trigger rollback complete (%d trigger(s) removed)", len(stagedManifestTriggerIDs))
+	}()
+	commitManifestTriggers := func() {
+		stagedManifestTriggerIDs = nil
+	}
+	if !*noTriggers {
+		var triggerErr error
+		var triggerIDs []string
+		triggerIDs, triggerErr = deployManifestTriggersWithRollback(ctx, client, slug, sourceDir)
+		if triggerErr != nil {
+			return printErr("Manifest triggers fan-out failed", triggerErr)
+		}
+		stagedManifestTriggerIDs = triggerIDs
 	}
 
 	if *tarball != "" {
@@ -2374,17 +2551,26 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			if !jsonWait {
-				return jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
+				code := jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
+				if code == 0 {
+					commitManifestTriggers()
+				}
+				return code
 			}
 		}
 		if !waitForDeploy {
+			commitManifestTriggers()
 			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 			return 0
 		}
 		if jsonWait {
-			return writeWaitedDeploymentReceiptUntil(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second)
+			code := writeWaitedDeploymentReceiptUntil(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second)
+			if code == 0 {
+				commitManifestTriggers()
+			}
+			return code
 		}
-		return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
+		code := streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 			onStage:         execution.onStage,
 			onTerminal:      execution.onTerminal,
 			onFailure:       execution.onFailure,
@@ -2392,6 +2578,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			quiet:           streamLogsOnJSON,
 			waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 		})
+		if code == 0 {
+			commitManifestTriggers()
+		}
+		return code
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
 	// (CreateDeploymentRequest), so the annotation fields ride on the
@@ -2436,16 +2626,25 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// the CLI-known slug (not the 32-hex AppID — the
 		// gateway routes on slug, so the receipt's URL has to
 		// be slug-shaped to actually resolve).
-		return jsonOut(writeJSON(newDeployReceipt(dep, nil, deployedAppURL(slug), "")))
+		code := jsonOut(writeJSON(newDeployReceipt(dep, nil, deployedAppURL(slug), "")))
+		if code == 0 {
+			commitManifestTriggers()
+		}
+		return code
 	}
 	if !waitForDeploy {
+		commitManifestTriggers()
 		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 		return 0
 	}
 	if jsonWait {
-		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", slug, time.Duration(*waitTimeoutSeconds)*time.Second)
+		code := writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", slug, time.Duration(*waitTimeoutSeconds)*time.Second)
+		if code == 0 {
+			commitManifestTriggers()
+		}
+		return code
 	}
-	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
+	code := streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
 		onStage:         execution.onStage,
 		onTerminal:      execution.onTerminal,
 		onFailure:       execution.onFailure,
@@ -2453,6 +2652,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		quiet:           streamLogsOnJSON,
 		waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 	})
+	if code == 0 {
+		commitManifestTriggers()
+	}
+	return code
 }
 
 const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id>] [--json]"
@@ -2951,6 +3154,10 @@ func cmdKeys(args []string) int {
 		}
 		return 0
 	case subAdd:
+		if hasHelpFlag(args[1:]) {
+			PrintUsage(osStdout, "usage: gregale keys add <label>", "keys")
+			return 0
+		}
 		if len(args) < 2 {
 			PrintUsage(os.Stderr, "usage: gregale keys add <label>", "keys")
 			return 1
@@ -3823,7 +4030,11 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 			// side). Move 3's `not_implemented` shape is dead code;
 			// removed.
 			if e.Event == "degraded" {
-				fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
+				if jsonOutput {
+					_ = writeJSONProblem(appLogsDegradedProblem(e.Data))
+				} else {
+					fmt.Fprintln(os.Stderr, appLogsDegradedMessage(e.Data))
+				}
 				if collector != nil {
 					collector.flush(os.Stdout)
 				}
@@ -4475,7 +4686,8 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 
 // mapFailureMessage returns the user-facing copy for one of the four
 // failure classes UX §2.4 enumerates. Anything else falls back to
-// "Build failed: <err>" so the customer sees the raw class at least.
+// "Deploy failed: <err>" because post-build imaging and snapshot failures
+// reach this same renderer.
 //
 // Error-explanations cluster (spec §6.4 amendment 1): when the
 // caller already has a *api.Problem, the whycopy catalog lookup
@@ -4495,7 +4707,7 @@ func mapFailureMessage(err string) string {
 	case "infra":
 		return "Our build system hiccuped — we've been alerted and requeued your build automatically."
 	}
-	return "Build failed: " + err
+	return "Deploy failed: " + err
 }
 
 // mapFailureProblem maps a deployment's *api.Problem to the

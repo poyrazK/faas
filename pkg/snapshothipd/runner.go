@@ -32,7 +32,7 @@ const (
 // and shared storage, so no private IP, SSH path, or provider-specific API is
 // needed.
 type Runner struct {
-	store              state.SnapshotReplicaStore
+	store              state.SnapshotReplicaLeaseStore
 	backend            storage.StorageBackend
 	nodeID             string
 	log                *slog.Logger
@@ -42,7 +42,7 @@ type Runner struct {
 	leaseRenewInterval time.Duration
 }
 
-func New(store state.SnapshotReplicaStore, backend storage.StorageBackend, nodeID string, log *slog.Logger) *Runner {
+func New(store state.SnapshotReplicaLeaseStore, backend storage.StorageBackend, nodeID string, log *slog.Logger) *Runner {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
@@ -187,11 +187,7 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 }
 
 func (r *Runner) syncJob(ctx context.Context, job state.SnapshotReplicaJob) error {
-	leased, ok := r.store.(state.SnapshotReplicaLeaseStore)
-	if !ok || job.LeaseToken == "" {
-		return syncJob(ctx, r.backend, job)
-	}
-	return syncJobWithLease(ctx, leased, r.backend, job, r.leaseRenewInterval)
+	return syncJobWithLease(ctx, r.store, r.backend, job, r.leaseRenewInterval)
 }
 
 func syncJobWithLease(ctx context.Context, store state.SnapshotReplicaLeaseStore, backend storage.StorageBackend, job state.SnapshotReplicaJob, renewInterval time.Duration) error {
@@ -242,17 +238,11 @@ func syncJobWithLease(ctx context.Context, store state.SnapshotReplicaLeaseStore
 }
 
 func (r *Runner) markReplicaReady(ctx context.Context, job state.SnapshotReplicaJob) error {
-	if leased, ok := r.store.(state.SnapshotReplicaLeaseStore); ok {
-		return leased.MarkSnapshotReplicaReadyWithLease(ctx, job.SnapshotID, job.NodeID, job.LeaseToken)
-	}
-	return r.store.MarkSnapshotReplicaReady(ctx, job.SnapshotID, job.NodeID)
+	return r.store.MarkSnapshotReplicaReadyWithLease(ctx, job.SnapshotID, job.NodeID, job.LeaseToken)
 }
 
 func (r *Runner) markReplicaFailed(ctx context.Context, job state.SnapshotReplicaJob, cause error) error {
-	if leased, ok := r.store.(state.SnapshotReplicaLeaseStore); ok {
-		return leased.MarkSnapshotReplicaFailedWithLease(ctx, job.SnapshotID, job.NodeID, job.LeaseToken, cause)
-	}
-	return r.store.MarkSnapshotReplicaFailed(ctx, job.SnapshotID, job.NodeID, cause)
+	return r.store.MarkSnapshotReplicaFailedWithLease(ctx, job.SnapshotID, job.NodeID, job.LeaseToken, cause)
 }
 
 func (r *Runner) metricsObserve(outcome, region string) {

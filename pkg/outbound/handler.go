@@ -33,6 +33,7 @@ type Handler struct {
 	Resolver     Resolver
 	Backend      Backend
 	Client       *http.Client
+	Metrics      *Metrics
 	MaxBodyBytes int64
 }
 
@@ -113,15 +114,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		LeaseTTL: integration.RequestTimeout,
 	})
 	if err != nil {
+		h.Metrics.ObserveAdmission(integration.ID, "error")
+		h.Metrics.ObserveRejection(integration.ID, "backend_unavailable")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_admission_unavailable", "Outbound admission is temporarily unavailable", "1")
 		return
 	}
 	if !decision.Granted {
+		h.Metrics.ObserveAdmission(integration.ID, "rejected")
+		h.Metrics.ObserveRejection(integration.ID, decision.Reason)
 		retry := retryAfterSeconds(decision.RetryAfter)
 		w.Header().Set("X-Gregale-Outbound-Rejection", decision.Reason)
 		writeProblem(w, http.StatusTooManyRequests, "outbound_budget_exhausted", "Outbound integration budget is exhausted", retry)
 		return
 	}
+	h.Metrics.ObserveAdmission(integration.ID, "granted")
+	h.Metrics.IncInFlight(integration.ID)
 
 	ctx := r.Context()
 	if integration.RequestTimeout > 0 {
@@ -129,23 +136,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel = context.WithTimeout(ctx, integration.RequestTimeout)
 		defer cancel()
 	}
-	defer func() { _ = h.Backend.Release(context.WithoutCancel(ctx), integration.ID, decision.LeaseID) }()
+	defer func() {
+		h.Metrics.DecInFlight(integration.ID)
+		_ = h.Backend.Release(context.WithoutCancel(ctx), integration.ID, decision.LeaseID)
+	}()
+	upstreamStarted := time.Now()
 	upstreamURL, err := targetURL(integration.Origin, path, r.URL.RawQuery)
 	if err != nil {
+		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_target_invalid", "Outbound integration target is invalid", "")
 		return
 	}
 	upstreamReq, err := http.NewRequestWithContext(ctx, r.Method, upstreamURL, r.Body)
 	if err != nil {
+		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_request_invalid", "Outbound request could not be constructed", "")
 		return
 	}
 	upstreamReq.Header = forwardedHeaders(r.Header)
 	resp, err := h.Client.Do(upstreamReq)
 	if err != nil {
+		h.Metrics.ObserveUpstreamError(integration.ID, time.Since(upstreamStarted))
 		writeProblem(w, http.StatusBadGateway, "outbound_upstream_unavailable", "Outbound provider could not be reached", "1")
 		return
 	}
+	h.Metrics.ObserveUpstream(integration.ID, resp.StatusCode, time.Since(upstreamStarted))
 	defer func() { _ = resp.Body.Close() }()
 	for k, values := range resp.Header {
 		if isHopByHop(resp.Header, k) {

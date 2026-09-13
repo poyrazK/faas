@@ -13,6 +13,8 @@
 //     Prometheus exemplar; the trace_id is metadata on a sample, not a
 //     time-series label, so it does not expand cardinality.
 //   - gateway_wake_latency_seconds                    histogram
+//   - gateway_platform_wake_latency_seconds           histogram (public-beta
+//     platform-only admission-to-first-byte release gate)
 //   - gateway_wake_queue_wait_seconds                 histogram (M8 §12 dashboard)
 //   - gateway_queue_depth{app, account_id}           gauge (set/cleared by
 //     WakeGate.SetGaugeSink). The account_id label is admitted
@@ -107,6 +109,11 @@ type Metrics struct {
 	requestTelemetryShipped     prometheus.Counter
 	requestTelemetryOverwritten prometheus.Counter
 	wakeLatency                 prometheus.Histogram
+	// platformWakeLatency is the public-beta restore gate: gateway
+	// capacity-admission start through the first upstream byte. It excludes
+	// request routing/auth work before admission and every public edge/client
+	// hop, while retaining scheduler, VM restore, and internal proxy overhead.
+	platformWakeLatency prometheus.Histogram
 	// drainWaitSeconds (issue #587 / PR-A) is the per-daemon
 	// graceful-shutdown drain histogram (see ObserveDrainWait).
 	drainWaitSeconds *prometheus.HistogramVec
@@ -968,6 +975,13 @@ func NewMetrics() *Metrics {
 				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
 			},
 		}),
+		platformWakeLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name: "gateway_platform_wake_latency_seconds",
+			Help: "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency. Public-beta SSD gate: p95 < 0.35 seconds.",
+			Buckets: []float64{
+				0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.325, 0.35, 0.4, 0.5, 0.8, 1.0, 1.5, 3.0,
+			},
+		}),
 		// PR #4 / ADR-092 §3.5. Same bucket layout as wakeLatency
 		// — same distribution, same SLO targets — just labelled
 		// by node_id so the per-node p95/p99 surfaces. Do NOT
@@ -1547,7 +1561,7 @@ func NewMetrics() *Metrics {
 	// cartesian) is the same pattern as the rest of the family.
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
-	reg.MustRegister(m.requests, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -2108,6 +2122,16 @@ func (m *Metrics) ObserveColdBootWithTrace(appID string, latency time.Duration, 
 		label = "__unknown"
 	}
 	observeWithTraceExemplar(m.wakeLatencyByNode.WithLabelValues(label), latency.Seconds(), traceID)
+}
+
+// ObservePlatformWakeWithTrace records the stricter public-beta boundary that
+// starts when the gateway begins capacity admission. The legacy wake histogram
+// intentionally keeps its ingress-to-first-byte contract for compatibility.
+func (m *Metrics) ObservePlatformWakeWithTrace(latency time.Duration, traceID string) {
+	if m == nil || m.platformWakeLatency == nil || latency < 0 {
+		return
+	}
+	observeWithTraceExemplar(m.platformWakeLatency, latency.Seconds(), traceID)
 }
 
 // observeWithTraceExemplar keeps the exemplar path optional. Older/custom

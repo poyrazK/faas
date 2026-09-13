@@ -73,6 +73,17 @@ func (s WarmSnapshot) valid() bool {
 		s.FCVersion != ""
 }
 
+// hasCleanupTarget reports whether a snapshot carries anything that the VM
+// driver may need to release. A snapshot can be incomplete and therefore
+// unusable for restore while still retaining a local builder drive or a
+// legacy vmstate path.
+func (s WarmSnapshot) hasCleanupTarget() bool {
+	return s.StorageKey != "" ||
+		s.VMStateStorageKey != "" ||
+		s.VMStatePath != "" ||
+		s.LayerPath != ""
+}
+
 // WarmLifecycle serializes transitions for the guaranteed warm builder slot.
 // A cold start is reported as a miss; a paused snapshot can be restored only
 // before its idle deadline and with the same Firecracker version.

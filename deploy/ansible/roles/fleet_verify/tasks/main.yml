@@ -60,7 +60,11 @@
   ansible.builtin.uri:
     url: >-
       {{ faas_daemon_probes[item].readyz_url
-         | regex_replace('127\.0\.0\.1', ansible_host)
+         | regex_replace(
+             '127\.0\.0\.1',
+             faas_private_dns_address
+             | default(faas_private_address | default(ansible_default_ipv4.address, true), true)
+           )
          if faas_box_role == 'compute-only' and item in faas_verify_private_readyz_units
          else faas_daemon_probes[item].readyz_url | default('') }}
     method: GET

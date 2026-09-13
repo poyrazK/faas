@@ -101,6 +101,36 @@ func TestEnvelopeAndDecodeBounds(t *testing.T) {
 	}
 }
 
+func TestSealDecodeBundleRoundTrip(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := api.ResolvedExecutionRequest{
+		Entrypoint: "src/main.mjs",
+		Files: []api.ExecutionFile{
+			{Path: "src/main.mjs", Content: []byte("export default () => 42")},
+			{Path: "src/lib.mjs", Content: []byte("export const value = 41")},
+		},
+		Input: json.RawMessage(`{"ok":true}`),
+	}
+	sealed, err := SealRequest(identity.Recipient(), req)
+	if err != nil {
+		t.Fatalf("SealRequest: %v", err)
+	}
+	decoded, err := DecodeRequest(context.Background(), []*age.X25519Identity{identity}, sealed, identity.Recipient().String())
+	if err != nil {
+		t.Fatalf("DecodeRequest: %v", err)
+	}
+	if decoded.Source != "" || decoded.Entrypoint != req.Entrypoint || string(decoded.Input) != string(req.Input) || len(decoded.Files) != 2 {
+		t.Fatalf("decoded = %#v", decoded)
+	}
+	req.Files[0].Content[0] = 'X'
+	if decoded.Files[0].Content[0] == 'X' {
+		t.Fatal("decoded bundle aliases request")
+	}
+}
+
 func sealRaw(identity *age.X25519Identity, namespace string, envelope Envelope) ([]byte, error) {
 	plaintext, err := json.Marshal(envelope)
 	if err != nil {

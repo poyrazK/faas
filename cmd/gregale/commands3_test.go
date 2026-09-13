@@ -12,6 +12,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,6 +22,54 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestSetProjectDeploySecrets(t *testing.T) {
+	var paths []string
+	var bodies []api.PutAppSecretRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		paths = append(paths, r.URL.Path)
+		var body api.PutAppSecretRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode secret request: %v", err)
+			return
+		}
+		bodies = append(bodies, body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "fp_test")
+	workloads := []api.PlanWorkload{
+		{Name: "api"},
+		{Name: "worker"},
+		{Name: "API"}, // merged detector output must not cause a duplicate write
+		{Name: ""},
+	}
+	pairs := []secretsPair{{Key: "DATABASE_URL", Value: "postgres://user:password@example/db"}}
+	configured, err := setProjectDeploySecrets(context.Background(), client, workloads, pairs)
+	if err != nil {
+		t.Fatalf("setProjectDeploySecrets() error = %v", err)
+	}
+	if configured != 2 {
+		t.Fatalf("configured = %d, want 2", configured)
+	}
+	wantPaths := []string{"/v1/apps/api/secrets/DATABASE_URL", "/v1/apps/worker/secrets/DATABASE_URL"}
+	if len(paths) != len(wantPaths) {
+		t.Fatalf("got %d secret writes, want %d (%v)", len(paths), len(wantPaths), paths)
+	}
+	for i, want := range wantPaths {
+		if paths[i] != want {
+			t.Errorf("write %d path = %q, want %q", i, paths[i], want)
+		}
+		if bodies[i].Value != pairs[0].Value {
+			t.Errorf("write %d value = %q, want original value", i, bodies[i].Value)
+		}
+	}
+}
 
 // secretsSink is a tiny programmable fake-apid that records every secrets
 // request and lets the test inspect body / respond with a chosen status.

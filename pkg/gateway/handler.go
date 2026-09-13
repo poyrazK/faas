@@ -193,6 +193,10 @@ type App struct {
 	// the App struct keeps the hot path allocation-free
 	// after first sight.
 	Sidecars []AppSidecar
+	// Ports is the app-owned listener roster. The public edge only selects
+	// TCP entries through the reserved `--port-<name>` hostname form;
+	// UDP entries remain guest-only.
+	Ports []AppPort
 	// RequireAuthn (issue #560) is the per-deployment
 	// token-gate opt-in. When true, ServeHTTP demands a
 	// valid `Authorization: Bearer <token>` header on every
@@ -400,6 +404,15 @@ const (
 type AppSidecar struct {
 	Name string
 	Port int
+}
+
+// AppPort is the gateway-local projection of one app listener declaration.
+// Protocol is kept as a string to avoid making the gateway depend on the
+// state-layer manifest type.
+type AppPort struct {
+	Name     string
+	Port     int
+	Protocol string
 }
 
 // RequireAuthnAuthenticator (issue #560) is the narrow slice of
@@ -5497,21 +5510,24 @@ haveApp:
 		// resolved above, no point doing it twice).
 	}
 
-	// Issue #463 / ADR-069 / ADR-071 / PR-C §5: resolve the
-	// sidecar port when sidecarName != "". A sidecarName
-	// that doesn't match the deployment's sidecar roster
-	// is a 404 — the customer-facing URL `host--sidecar`
-	// only succeeds if the deployment actually declares
-	// that sidecar. The port is stored on a local variable
-	// so the picker's Target.Port assignment later in this
-	// handler sees the sidecar override instead of the
-	// main app's port.
+	// Resolve a selector when sidecarName != "". Existing sidecar selectors
+	// keep the ADR-069 hostname contract; the reserved `port-` namespace
+	// selects an app-owned TCP listener (ADR-176). Unknown selectors are a 404.
 	if sidecarName != "" {
-		port, sidecarOK := SidecarSelectorForApp(app, sidecarName)
-		if !sidecarOK {
+		port := 0
+		selectorOK := false
+		selectorProblem := "No such sidecar"
+		selectorDetail := fmt.Sprintf("app %q has no sidecar named %q", app.ID, sidecarName)
+		if strings.HasPrefix(sidecarName, PublicPortSelectorPrefix) {
+			port, selectorOK = PublicPortSelectorForApp(app, sidecarName)
+			selectorProblem = "No such public port"
+			selectorDetail = fmt.Sprintf("app %q has no public TCP listener named %q", app.ID, strings.TrimPrefix(sidecarName, PublicPortSelectorPrefix))
+		} else {
+			port, selectorOK = SidecarSelectorForApp(app, sidecarName)
+		}
+		if !selectorOK {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound,
-				api.CodeNotFound, "No such sidecar",
-				fmt.Sprintf("app %q has no sidecar named %q", app.ID, sidecarName)))
+				api.CodeNotFound, selectorProblem, selectorDetail))
 			h.observe(r, rec.status, app.ID, "", false, Target{})
 			return
 		}
@@ -5593,10 +5609,11 @@ haveApp:
 	defer burstDone()
 	limits, _ := api.LimitsFor(app.Plan)
 	var (
-		cold       bool
-		wakeID     string
-		wakeMethod WakeMethod
-		err        error
+		cold              bool
+		wakeID            string
+		wakeMethod        WakeMethod
+		platformWakeStart time.Time
+		err               error
 	)
 
 	// PickWarm is the combined warm-path decision for the production backend. A
@@ -5624,6 +5641,11 @@ haveApp:
 		}
 	}
 	if !pick.OK {
+		// This is the canonical platform-only boundary. Authentication,
+		// routing, rate limiting, and the public edge have already completed;
+		// scheduler admission, VM restore, and the internal first-byte hop are
+		// included.
+		platformWakeStart = time.Now()
 		// Per-app fan-out admission (issue #168). The WakeGate's
 		// shouldWake predicate runs HealthyCount against the plan's
 		// effective max_concurrency, so a burst of N requests admits up to
@@ -5726,6 +5748,9 @@ haveApp:
 	// hits are recovered via the next deployment_changed notify
 	// that re-seeds the cache.
 	if !pick.OK && pick.ColdBucket != "" {
+		if platformWakeStart.IsZero() {
+			platformWakeStart = time.Now()
+		}
 		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(r.Context(), "gateway.wake_fanout",
 			attribute.String("app_id", app.ID),
 			attribute.String("deployment_id", pick.ColdBucket),
@@ -5772,7 +5797,20 @@ haveApp:
 	// the request waits on the selected VM until its own budget expires.
 	var vmRelease func()
 	var vmWaited bool
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(r.Context(), app, pick, perVMConcurrency)
+	capacityCtx, capacitySpan := pkgtrace.StartSpan(r.Context(), "gateway.capacity_wait",
+		attribute.String("app_id", app.ID),
+		attribute.String("instance_id", pick.Target.InstanceID),
+		attribute.Int("concurrency_per_vm", perVMConcurrency),
+	)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency)
+	capacitySpan.SetAttributes(
+		attribute.Bool("waited", vmWaited),
+		attribute.String("selected_instance_id", pick.Target.InstanceID),
+	)
+	if err != nil {
+		capacitySpan.RecordError(err)
+	}
+	capacitySpan.End()
 	if vmWaited {
 		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
 	}
@@ -6247,6 +6285,9 @@ haveApp:
 			firstByteAt = time.Now()
 		}
 		h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceIDFromContext(r.Context()))
+		if !platformWakeStart.IsZero() {
+			h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceIDFromContext(r.Context()))
+		}
 		// Wake-locality classifier (PR scale-out readiness). Increment
 		// AFTER the existing first-byte observation so the 350 ms
 		// measurement path is unchanged. Only fires on a real admit

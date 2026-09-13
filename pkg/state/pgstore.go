@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -621,13 +622,47 @@ func scanAPIKey(row pgx.Row) (APIKey, error) {
 }
 
 func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Plan) error {
-	_, err := s.pool.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set plan = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, string(plan)); err != nil {
+		return fmt.Errorf("state: sync personal org plan: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PgStore) UpdateAccountStatus(ctx context.Context, id string, status AccountStatus) error {
-	_, err := s.pool.Exec(ctx, `update accounts set status = $2 where id = $1`, id, string(status))
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `update accounts set status = $2 where id = $1`, id, string(status))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set status = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, string(status)); err != nil {
+		return fmt.Errorf("state: sync personal org status: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 // UpdateAccountProviderCustomerID records the Stripe `cus_…` ID on the
@@ -647,6 +682,12 @@ func (s *PgStore) UpdateAccountProviderCustomerID(ctx context.Context, id, strip
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set provider_customer_id = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, stripeCustomerID); err != nil {
+		return err
 	}
 	provider := billingProviderForCustomerID(stripeCustomerID)
 	_, err = tx.Exec(ctx,
@@ -678,6 +719,12 @@ func (s *PgStore) UpdateAccountStripeSubscriptionItem(ctx context.Context, id, s
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		update orgs
+		   set stripe_subscription_item = $2, updated_at = now()
+		 where personal_org = true and personal_owner_account_id = $1`, id, subItem); err != nil {
+		return err
 	}
 	_, err = tx.Exec(ctx,
 		`update billing_identities bi
@@ -2083,7 +2130,19 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		return App{}, fmt.Errorf("state: lock account %s: %w", app.AccountID, err)
 	}
 
-	// 2. Authoritative count under the lock. Developer environments use
+	// 2. Preserve idempotent create-or-fetch behavior at the quota boundary.
+	// Callers use ErrConflict to fetch an already-reserved slug and deploy it;
+	// returning the quota error first strands a customer's first app forever
+	// on plans with a single slot.
+	var slugExists bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from apps where slug = $1 and status <> 'deleted')`, app.Slug).Scan(&slugExists); err != nil {
+		return App{}, fmt.Errorf("state: check app slug %s: %w", app.Slug, err)
+	}
+	if slugExists {
+		return App{}, ErrConflict
+	}
+
+	// 3. Authoritative count under the lock. Developer environments use
 	//    their own cap; production apps and PR previews use DeployedApps.
 	//    Keeping both counts inside the account lock closes the same TOCTOU
 	//    window for either quota family.
@@ -2109,7 +2168,7 @@ func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api
 		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
 	}
 
-	// 3. Conditional insert. The slug unique index surfaces a collision
+	// 4. Conditional insert. The slug unique index surfaces a concurrent collision
 	//    as a pgx unique-violation SQLSTATE; mapErr wraps it in ErrConflict.
 	manifest := app.Manifest
 	if manifest.IsZero() {
@@ -6635,7 +6694,8 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 // ListDeploymentsForOperator returns the bounded deployment incident view
 // used by provider operators. Filters are pushed into Postgres so a fleet
 // query never materializes the full deployment history in apid. Deleted apps
-// and soft-deleted deployment rows are intentionally excluded.
+// and soft-deleted deployment rows are excluded unless an explicit operator
+// repair requests them.
 func (s *PgStore) ListDeploymentsForOperator(ctx context.Context, filter OperatorDeploymentFilter) ([]Deployment, error) {
 	if filter.Limit <= 0 {
 		return nil, nil
@@ -6664,15 +6724,25 @@ func (s *PgStore) ListDeploymentsForOperator(ctx context.Context, filter Operato
 			statuses = append(statuses, string(status))
 		}
 	}
+	var createdBefore *time.Time
+	if !filter.CreatedBefore.IsZero() {
+		value := filter.CreatedBefore.UTC()
+		createdBefore = &value
+	}
 	rows, err := s.pool.Query(ctx,
 		`select `+deploymentSelectColumnsQualified+`
 		 from deployments d join apps a on a.id = d.app_id
-		 where a.status <> 'deleted' and d.deleted_at is null
-		   and ($1::uuid is null or a.account_id = $1::uuid)
-		   and ($2::uuid is null or d.app_id = $2::uuid)
-		   and (cardinality($3::text[]) = 0 or d.status = any($3::text[]))
-		 order by d.created_at desc, d.id desc
-		 limit $4 offset $5`, accountID, appID, statuses, filter.Limit, filter.Offset)
+		 where ($1 or (a.status <> 'deleted' and d.deleted_at is null))
+		   and ($2::uuid is null or a.account_id = $2::uuid)
+		   and ($3::uuid is null or d.app_id = $3::uuid)
+		   and (cardinality($4::text[]) = 0 or d.status = any($4::text[]))
+		   and ($5::timestamptz is null or d.created_at < $5::timestamptz)
+		 order by
+		   case when $6 then d.created_at end asc,
+		   case when $6 then d.id end asc,
+		   case when not $6 then d.created_at end desc,
+		   case when not $6 then d.id end desc
+		 limit $7 offset $8`, filter.IncludeDeleted, accountID, appID, statuses, createdBefore, filter.OldestFirst, filter.Limit, filter.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -6735,6 +6805,38 @@ func (s *PgStore) ListDeploymentsForAccountPage(ctx context.Context, accountID s
 }
 
 func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
+	if status == DeployFailed {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		var appID string
+		tag, err := tx.Exec(ctx, `
+			update deployments
+			   set status = 'failed', error = $2, traffic_percent = 0,
+			       rollout_state = 'aborted', rollout_completed_at = null,
+			       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+			       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
+			 where id = $1 and status <> 'cancelled'`, id, nullString(errMsg))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			var current DeploymentStatus
+			if err := tx.QueryRow(ctx, `select status from deployments where id = $1`, id).Scan(&current); err != nil {
+				return mapErr(err)
+			}
+			return ErrInvalidStateTransition
+		}
+		if err := tx.QueryRow(ctx, `select app_id from deployments where id=$1`, id).Scan(&appID); err != nil {
+			return mapErr(err)
+		}
+		if err := rebalanceTrafficAfterFailure(ctx, tx, appID, id); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		update deployments set status = $2, error = $3
 		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')`, id, string(status), nullString(errMsg))
@@ -6747,6 +6849,35 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 			return mapErr(err)
 		}
 		return ErrInvalidStateTransition
+	}
+	return nil
+}
+
+// rebalanceTrafficAfterFailure restores the most highly weighted surviving
+// live deployment to 100%. It is called in the same transaction that marks a
+// deployment failed so readers can never observe failed traffic or a split
+// rollout with no 100% fallback.
+func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedID string) error {
+	var fallbackID string
+	err := tx.QueryRow(ctx, `
+		select id
+		  from deployments
+		 where app_id=$1 and id<>$2 and status='live' and deleted_at is null
+		 order by traffic_percent desc, created_at desc, id desc
+		 limit 1
+		 for update`, appID, failedID).Scan(&fallbackID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		update deployments set traffic_percent=0
+		 where app_id=$1 and id<>$2 and status='live' and deleted_at is null`, appID, failedID); err != nil {
+		return err
+	}
+	if fallbackID != "" {
+		if _, err := tx.Exec(ctx, `update deployments set traffic_percent=100 where id=$1`, fallbackID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -7485,11 +7616,13 @@ func (s *PgStore) CancelDeploymentTx(ctx context.Context, id, principal string, 
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: resolve deployment app: %w", err)
 	}
 
-	// Lock the parent apps row to serialise against concurrent
-	// creates and app teardown, then lock the deployment. This order
-	// matches CreateDeployment and SoftDeleteAppCascade.
+	// Lock the parent apps row to serialise against concurrent creates and app
+	// teardown, then lock the deployment. Retained deployments can outlive a
+	// soft-deleted parent and still need system cancellation, so the lock must
+	// include deleted apps. This order matches CreateDeployment and
+	// SoftDeleteAppCascade.
 	var locked int
-	if err := tx.QueryRow(ctx, `SELECT 1 FROM apps WHERE id = $1 AND status = 'active' FOR UPDATE`, appID).Scan(&locked); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM apps WHERE id = $1 FOR UPDATE`, appID).Scan(&locked); err != nil {
 		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: lock apps row: %w", err)
 	}
 	if err := tx.QueryRow(ctx, `SELECT status FROM deployments WHERE id = $1 FOR UPDATE`, id).Scan(&status); err != nil {
@@ -8455,20 +8588,37 @@ func (s *PgStore) RecordRestart(ctx context.Context, deploymentID string) error 
 // closed (23514). The id is BIGSERIAL; we RETURN it for the CLI
 // to render ("incident <id> posted").
 func (s *PgStore) InsertStatusIncident(ctx context.Context, component, severity, message string) (StatusIncident, error) {
-	var inc StatusIncident
-	inc.Component = component
-	inc.Severity = severity
-	inc.Message = message
-	err := s.pool.QueryRow(ctx,
-		`insert into status_incidents (component, severity, message)
-		 values ($1, $2, $3)
-		 returning id, posted_at`,
-		component, severity, message,
-	).Scan(&inc.ID, &inc.PostedAt)
+	publicID := uuid.NewString()
+	idempotencyKey := "legacy-create:" + publicID
+	now := time.Now().UTC()
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return StatusIncident{}, err
 	}
-	return inc, nil
+	defer func() { _ = tx.Rollback(ctx) }()
+	var id int64
+	err = tx.QueryRow(ctx, `insert into status_incidents (
+		component,severity,message,public_id,kind,title,impact,affected_components,
+		lifecycle_state,starts_at,updated_at,create_idempotency_key,created_by)
+		values($1,$2,$3,$4,'incident',$5,$6,$7,'investigating',$8,$8,$9,'legacy-api')
+		returning id`, component, severity, message, publicID, legacyIncidentTitle(message),
+		string(legacyIncidentPublicImpact(severity)), componentStrings(legacyIncidentPublicComponents(component)), now, idempotencyKey).Scan(&id)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	initialMessage := message
+	if strings.TrimSpace(initialMessage) == "" {
+		initialMessage = legacyIncidentTitle(message)
+	}
+	_, err = tx.Exec(ctx, `insert into status_incident_updates(incident_id,lifecycle_state,message,posted_at,actor,idempotency_key)
+		values($1,'investigating',$2,$3,'legacy-api',$4) on conflict(idempotency_key) do nothing`, id, initialMessage, now, idempotencyKey)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return StatusIncident{}, err
+	}
+	return s.StatusEventByPublicID(ctx, publicID)
 }
 
 // ResolveStatusIncident (issue #599 / ADR-130) stamps resolved_at
@@ -8477,18 +8627,32 @@ func (s *PgStore) InsertStatusIncident(ctx context.Context, component, severity,
 // resolve without surfacing 23514 / not-found. ErrNotFound when
 // the id doesn't exist.
 func (s *PgStore) ResolveStatusIncident(ctx context.Context, id int64) error {
-	tag, err := s.pool.Exec(ctx,
-		`update status_incidents
-		    set resolved_at = coalesce(resolved_at, now())
-		  where id = $1`,
-		id)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer func() { _ = tx.Rollback(ctx) }()
+	var publicID string
+	var resolvedAt *time.Time
+	err = tx.QueryRow(ctx, `select public_id::text,resolved_at from status_incidents where id=$1 for update`, id).Scan(&publicID, &resolvedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if resolvedAt != nil {
+		return tx.Commit(ctx)
+	}
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `update status_incidents set lifecycle_state='resolved',resolved_at=$2,updated_at=$2 where id=$1`, id, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `insert into status_incident_updates(incident_id,lifecycle_state,message,posted_at,actor,idempotency_key)
+		values($1,'resolved','Resolved',$2,'legacy-api',$3) on conflict(idempotency_key) do nothing`, id, now, fmt.Sprintf("legacy-resolve:%d", id)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // ListOpenStatusIncidents (issue #599 / ADR-130) reads the partial
@@ -8515,6 +8679,366 @@ func (s *PgStore) ListOpenStatusIncidents(ctx context.Context) ([]StatusIncident
 		out = append(out, inc)
 	}
 	return out, rows.Err()
+}
+
+func (s *PgStore) CreatePublicStatusEvent(ctx context.Context, input StatusEventCreate) (StatusIncident, error) {
+	if input.IdempotencyKey == "" {
+		return StatusIncident{}, &publicstatus.ValidationError{Code: "status_invalid_idempotency_key", Message: "idempotency key is required"}
+	}
+	if err := publicstatus.ValidateEvent(publicstatus.EventInput{
+		Kind: input.Kind, Title: input.Title, Impact: input.Impact, Components: input.Components,
+		State: input.State, StartsAt: input.StartsAt, ScheduledStartAt: input.ScheduledStartAt,
+		ScheduledEndAt: input.ScheduledEndAt,
+	}); err != nil {
+		return StatusIncident{}, err
+	}
+	if err := publicstatus.ValidateMessage(input.Message); err != nil {
+		return StatusIncident{}, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	components := componentStrings(input.Components)
+	legacyComponent := legacyStatusComponent(input.Components[0])
+	legacySeverity := legacyStatusSeverity(input.Impact)
+	publicID := uuid.NewString()
+	var inc StatusIncident
+	var dbComponents []string
+	var inserted bool
+	err = tx.QueryRow(ctx, `
+		insert into status_incidents (
+			component,severity,message,public_id,kind,title,impact,affected_components,
+			lifecycle_state,starts_at,scheduled_start_at,scheduled_end_at,updated_at,
+			create_idempotency_key,created_by)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),$13,$14)
+		on conflict (create_idempotency_key) do update
+		set create_idempotency_key=excluded.create_idempotency_key
+		returning id,component,severity,message,posted_at,resolved_at,public_id::text,kind,
+		          title,impact,affected_components,lifecycle_state,starts_at,scheduled_start_at,
+		          scheduled_end_at,updated_at,(xmax = 0)`,
+		legacyComponent, legacySeverity, input.Message, publicID, string(input.Kind), strings.TrimSpace(input.Title),
+		string(input.Impact), components, string(input.State), input.StartsAt, input.ScheduledStartAt,
+		input.ScheduledEndAt, input.IdempotencyKey, input.Actor,
+	).Scan(&inc.ID, &inc.Component, &inc.Severity, &inc.Message, &inc.PostedAt, &inc.ResolvedAt, &inc.PublicID,
+		(*string)(&inc.Kind), &inc.Title, (*string)(&inc.Impact), &dbComponents, (*string)(&inc.State),
+		&inc.StartsAt, &inc.ScheduledStartAt, &inc.ScheduledEndAt, &inc.UpdatedAt, &inserted)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	if inserted {
+		if err := appendStatusMutationAudit(ctx, tx, "status.event.created", input.Actor, inc.PublicID, input.Kind, "create", "", input.State, input.Components); err != nil {
+			return StatusIncident{}, err
+		}
+	}
+	inc.Components = parseComponents(dbComponents)
+	_, err = tx.Exec(ctx, `insert into status_incident_updates(incident_id,lifecycle_state,message,posted_at,actor,idempotency_key)
+		values($1,$2,$3,$4,$5,$6) on conflict(idempotency_key) do nothing`,
+		inc.ID, string(input.State), input.Message, inc.PostedAt, input.Actor, input.IdempotencyKey)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return StatusIncident{}, err
+	}
+	return s.StatusEventByPublicID(ctx, inc.PublicID)
+}
+
+func appendStatusMutationAudit(ctx context.Context, tx pgx.Tx, eventKind, actor, publicID string, kind publicstatus.Kind, action string, prior, next publicstatus.Lifecycle, components []publicstatus.Component) error {
+	if len(components) == 0 {
+		var raw []string
+		if err := tx.QueryRow(ctx, `select affected_components from status_incidents where public_id=$1`, publicID).Scan(&raw); err != nil {
+			return err
+		}
+		components = parseComponents(raw)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"actor": actor, "event_id": publicID, "event_kind": kind, "action": action,
+		"prior_state": prior, "new_state": next, "affected_capabilities": componentStrings(components),
+	})
+	if err != nil {
+		return err
+	}
+	var subject *uuid.UUID
+	if parsed, parseErr := uuid.Parse(actor); parseErr == nil {
+		subject = &parsed
+	}
+	_, err = tx.Exec(ctx, `insert into events(actor,kind,subject,data) values('apid',$1,$2,$3::jsonb)`, eventKind, subject, payload)
+	return err
+}
+
+func (s *PgStore) AppendPublicStatusUpdate(ctx context.Context, publicID string, input StatusEventUpdateInput) (StatusIncident, error) {
+	if input.IdempotencyKey == "" {
+		return StatusIncident{}, &publicstatus.ValidationError{Code: "status_invalid_idempotency_key", Message: "idempotency key is required"}
+	}
+	if err := publicstatus.ValidateMessage(input.Message); err != nil {
+		return StatusIncident{}, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var replayID string
+	err = tx.QueryRow(ctx, `select i.public_id::text from status_incident_updates u join status_incidents i on i.id=u.incident_id where u.idempotency_key=$1`, input.IdempotencyKey).Scan(&replayID)
+	if err == nil {
+		if replayID != publicID {
+			return StatusIncident{}, &publicstatus.ValidationError{Code: publicstatus.CodeIdempotencyConflict, Message: "idempotency key belongs to a different status event"}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return StatusIncident{}, err
+		}
+		return s.StatusEventByPublicID(ctx, replayID)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return StatusIncident{}, err
+	}
+	var id int64
+	var kind string
+	var oldState string
+	var updatedAt time.Time
+	err = tx.QueryRow(ctx, `select id,kind,lifecycle_state,updated_at from status_incidents where public_id=$1 for update`, publicID).Scan(&id, &kind, &oldState, &updatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return StatusIncident{}, ErrNotFound
+	}
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	if validation := publicstatus.ValidateTransition(publicstatus.Kind(kind), publicstatus.Lifecycle(oldState), input.State); validation != nil {
+		return StatusIncident{}, validation
+	}
+	at := input.At.UTC()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	if at.Before(updatedAt) {
+		at = updatedAt
+	}
+	var updateID string
+	err = tx.QueryRow(ctx, `insert into status_incident_updates(incident_id,lifecycle_state,message,posted_at,actor,idempotency_key)
+		values($1,$2,$3,$4,$5,$6) on conflict(idempotency_key) do nothing returning id::text`,
+		id, string(input.State), input.Message, at, input.Actor, input.IdempotencyKey).Scan(&updateID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `select i.public_id::text from status_incident_updates u join status_incidents i on i.id=u.incident_id where u.idempotency_key=$1`, input.IdempotencyKey).Scan(&replayID)
+		if err != nil {
+			return StatusIncident{}, err
+		}
+		if replayID != publicID {
+			return StatusIncident{}, &publicstatus.ValidationError{Code: publicstatus.CodeIdempotencyConflict, Message: "idempotency key belongs to a different status event"}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return StatusIncident{}, err
+		}
+		return s.StatusEventByPublicID(ctx, replayID)
+	}
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	terminal := input.State == publicstatus.LifecycleResolved || input.State == publicstatus.LifecycleCompleted || input.State == publicstatus.LifecycleCancelled
+	_, err = tx.Exec(ctx, `update status_incidents set lifecycle_state=$2,message=$3,updated_at=$4,resolved_at=case when $5 then $4 else resolved_at end where id=$1`,
+		id, string(input.State), input.Message, at, terminal)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	if err := appendStatusMutationAudit(ctx, tx, "status.event.updated", input.Actor, publicID, publicstatus.Kind(kind), "update", publicstatus.Lifecycle(oldState), input.State, nil); err != nil {
+		return StatusIncident{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return StatusIncident{}, err
+	}
+	return s.StatusEventByPublicID(ctx, publicID)
+}
+
+func (s *PgStore) StatusEventByPublicID(ctx context.Context, publicID string) (StatusIncident, error) {
+	inc, err := s.readPublicStatusEvent(ctx, `where public_id=$1`, publicID)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	updates, err := s.readPublicStatusUpdates(ctx, inc.ID)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	inc.Updates = updates
+	return inc, nil
+}
+
+func (s *PgStore) ListPublicStatusEvents(ctx context.Context, options StatusEventListOptions) ([]StatusIncident, error) {
+	limit := options.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+	rows, err := s.pool.Query(ctx, `select id,component,severity,message,posted_at,resolved_at,public_id::text,kind,title,impact,affected_components,lifecycle_state,starts_at,scheduled_start_at,scheduled_end_at,updated_at
+		from status_incidents
+		where ($1='' or kind=$1) and (not $2 or resolved_at is null) and ($3::timestamptz is null or updated_at >= $3)
+		order by updated_at desc limit $4`, string(options.Kind), options.ActiveOnly, nullableTime(options.Since), limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StatusIncident, 0)
+	for rows.Next() {
+		inc, err := scanPublicStatusEvent(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, inc)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if len(out) == 0 {
+		return out, nil
+	}
+	// Load every selected timeline in one bounded query. This keeps the public
+	// status endpoint at two database round trips rather than one per event.
+	ids := make([]int64, len(out))
+	byID := make(map[int64]int, len(out))
+	for i := range out {
+		ids[i] = out[i].ID
+		byID[out[i].ID] = i
+	}
+	updateRows, err := s.pool.Query(ctx, `select incident_id,id::text,lifecycle_state,message,posted_at,actor,idempotency_key
+		from status_incident_updates where incident_id=any($1) order by incident_id,posted_at,id`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer updateRows.Close()
+	for updateRows.Next() {
+		var incidentID int64
+		var update StatusIncidentUpdate
+		var lifecycle string
+		if err := updateRows.Scan(&incidentID, &update.ID, &lifecycle, &update.Message, &update.At, &update.Actor, &update.IdempotencyKey); err != nil {
+			return nil, err
+		}
+		update.State = publicstatus.Lifecycle(lifecycle)
+		if index, ok := byID[incidentID]; ok {
+			out[index].Updates = append(out[index].Updates, update)
+		}
+	}
+	if err := updateRows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *PgStore) readPublicStatusEvent(ctx context.Context, clause string, arg any) (StatusIncident, error) {
+	row := s.pool.QueryRow(ctx, `select id,component,severity,message,posted_at,resolved_at,public_id::text,kind,title,impact,affected_components,lifecycle_state,starts_at,scheduled_start_at,scheduled_end_at,updated_at from status_incidents `+clause, arg)
+	inc, err := scanPublicStatusEvent(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return StatusIncident{}, ErrNotFound
+	}
+	return inc, err
+}
+
+type statusScanner interface{ Scan(dest ...any) error }
+
+func scanPublicStatusEvent(row statusScanner) (StatusIncident, error) {
+	var inc StatusIncident
+	var kind, impact, lifecycle string
+	var components []string
+	err := row.Scan(&inc.ID, &inc.Component, &inc.Severity, &inc.Message, &inc.PostedAt, &inc.ResolvedAt, &inc.PublicID,
+		&kind, &inc.Title, &impact, &components, &lifecycle, &inc.StartsAt, &inc.ScheduledStartAt, &inc.ScheduledEndAt, &inc.UpdatedAt)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	inc.Kind = publicstatus.Kind(kind)
+	inc.Impact = publicstatus.State(impact)
+	inc.State = publicstatus.Lifecycle(lifecycle)
+	inc.Components = parseComponents(components)
+	return inc, nil
+}
+
+func (s *PgStore) readPublicStatusUpdates(ctx context.Context, incidentID int64) ([]StatusIncidentUpdate, error) {
+	rows, err := s.pool.Query(ctx, `select id::text,lifecycle_state,message,posted_at,actor,idempotency_key from status_incident_updates where incident_id=$1 order by posted_at,id`, incidentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]StatusIncidentUpdate, 0)
+	for rows.Next() {
+		var update StatusIncidentUpdate
+		var lifecycle string
+		if err := rows.Scan(&update.ID, &lifecycle, &update.Message, &update.At, &update.Actor, &update.IdempotencyKey); err != nil {
+			return nil, err
+		}
+		update.State = publicstatus.Lifecycle(lifecycle)
+		out = append(out, update)
+	}
+	return out, rows.Err()
+}
+
+func (s *PgStore) RecordStatusBucket(ctx context.Context, bucket StatusBucket) error {
+	if !publicstatus.ValidComponent(bucket.Component) {
+		return ErrNotFound
+	}
+	bucket.BucketAt = bucket.BucketAt.UTC().Truncate(5 * time.Minute)
+	_, err := s.pool.Exec(ctx, `insert into status_observation_buckets(component,bucket_at,status,has_telemetry) values($1,$2,$3,$4) on conflict(component,bucket_at) do nothing`,
+		string(bucket.Component), bucket.BucketAt, string(bucket.State), bucket.HasTelemetry)
+	return err
+}
+
+func (s *PgStore) ListStatusBuckets(ctx context.Context, from, to time.Time) ([]StatusBucket, error) {
+	rows, err := s.pool.Query(ctx, `select component,bucket_at,status,has_telemetry from status_observation_buckets where bucket_at >= $1 and bucket_at < $2 order by bucket_at,component`, from.UTC(), to.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]StatusBucket, 0)
+	for rows.Next() {
+		var component, status string
+		var bucket StatusBucket
+		if err := rows.Scan(&component, &bucket.BucketAt, &status, &bucket.HasTelemetry); err != nil {
+			return nil, err
+		}
+		bucket.Component = publicstatus.Component(component)
+		bucket.State = publicstatus.State(status)
+		out = append(out, bucket)
+	}
+	return out, rows.Err()
+}
+
+func componentStrings(components []publicstatus.Component) []string {
+	out := make([]string, len(components))
+	for i, v := range components {
+		out[i] = string(v)
+	}
+	return out
+}
+func parseComponents(components []string) []publicstatus.Component {
+	out := make([]publicstatus.Component, len(components))
+	for i, v := range components {
+		out[i] = publicstatus.Component(v)
+	}
+	return out
+}
+func legacyStatusComponent(component publicstatus.Component) string {
+	switch component {
+	case publicstatus.ComponentDeployments:
+		return StatusIncidentComponentBuilderd
+	case publicstatus.ComponentAppExecution:
+		return StatusIncidentComponentVmmd
+	case publicstatus.ComponentNetworking:
+		return StatusIncidentComponentGatewayd
+	case publicstatus.ComponentObservability:
+		return StatusIncidentComponentMeterd
+	default:
+		return StatusIncidentComponentApid
+	}
+}
+func legacyStatusSeverity(impact publicstatus.State) string {
+	switch impact {
+	case publicstatus.StateMajorOutage:
+		return StatusIncidentSeverityFullOutage
+	case publicstatus.StatePartialOutage:
+		return StatusIncidentSeverityPartialOutage
+	case publicstatus.StateMaintenance:
+		return StatusIncidentSeverityMaintenance
+	default:
+		return StatusIncidentSeverityDegraded
+	}
 }
 
 // SetDeploymentSidecarLayer is the per-workload filesystem handle
@@ -8637,13 +9161,32 @@ func (s *PgStore) SetDeploymentSourceURL(ctx context.Context, id, sourceURL, com
 // Idempotent on (status='failed') rows: a redeploy after a fix will
 // overwrite both columns.
 func (s *PgStore) SetDeploymentFailed(ctx context.Context, id, code, message string) (Deployment, error) {
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
 		`update deployments
-		    set status = 'failed', error = $2, error_code = $3
+		    set status = 'failed', error = $2, error_code = $3,
+		        traffic_percent = 0, rollout_state = 'aborted',
+		        rollout_completed_at = null,
+		        rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
 		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code))
-	return scanDeploymentWithRootfs(row)
+	failed, err := scanDeploymentWithRootfs(row)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := rebalanceTrafficAfterFailure(ctx, tx, failed.AppID, failed.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, err
+	}
+	return failed, nil
 }
 
 // SetDeploymentFailedEx is the error-explanations cluster (spec §6.4
@@ -8672,17 +9215,36 @@ func (s *PgStore) SetDeploymentFailedEx(
 	ctx context.Context, id, code, message, hint, why, fix string, logs []api.LogExcerpt,
 ) (Deployment, error) {
 	logsJSON := logExcerptsJSON(logs)
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx,
 		`update deployments
 		    set status = 'failed', error = $2, error_code = $3,
 		        error_hint = $4, error_why = $5, error_fix = $6,
-		        error_relevant_logs = $7
+		        error_relevant_logs = $7,
+		        traffic_percent = 0, rollout_state = 'aborted',
+		        rollout_completed_at = null,
+		        rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+		        rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
 		  where id = $1 and status <> 'cancelled'
 		  returning `+deploymentSelectColumnsWithRootfs,
 		id, nullString(message), nullString(code),
 		nullString(hint), nullString(why), nullString(fix),
 		logsJSON)
-	return scanDeploymentWithRootfs(row)
+	failed, err := scanDeploymentWithRootfs(row)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if err := rebalanceTrafficAfterFailure(ctx, tx, failed.AppID, failed.ID); err != nil {
+		return Deployment{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, err
+	}
+	return failed, nil
 }
 
 // --- builds ------------------------------------------------------------------
@@ -8752,15 +9314,25 @@ func (s *PgStore) FailSourceDeployment(ctx context.Context, id, message string) 
 	// A commit response may be lost while the queue transaction still owns
 	// this row. Acquire its lock before checking builds on a fresh snapshot.
 	var status DeploymentStatus
-	if err := tx.QueryRow(ctx, `select status from deployments where id=$1 for update`, id).Scan(&status); err != nil {
+	var appID string
+	if err := tx.QueryRow(ctx, `select status,app_id from deployments where id=$1 for update`, id).Scan(&status, &appID); err != nil {
 		return mapErr(err)
 	}
 	if status != DeployPending && status != DeployBuilding {
 		return nil
 	}
-	if _, err := tx.Exec(ctx, `update deployments set status='failed',error=$2 where id=$1
-	and not exists(select 1 from builds where deployment_id=$1)`, id, message); err != nil {
+	tag, err := tx.Exec(ctx, `update deployments set status='failed',error=$2,
+	traffic_percent=0,rollout_state='aborted',rollout_completed_at=null,
+	rollout_aborted_at=coalesce(rollout_aborted_at,now()),
+	rollout_aborted_reason=coalesce(nullif($2,''),'deployment failed') where id=$1
+	and not exists(select 1 from builds where deployment_id=$1)`, id, message)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() > 0 {
+		if err := rebalanceTrafficAfterFailure(ctx, tx, appID, id); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -9183,6 +9755,24 @@ func (s *PgStore) RequeueBuild(ctx context.Context, id string) error {
 		id)
 	if err != nil {
 		return fmt.Errorf("state: requeue build %s: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RequeueBuildIfClaim resets a matching running claim back to queued. The
+// deployment and started_at predicates ensure a stale worker cannot requeue a
+// newer claim for the same build.
+func (s *PgStore) RequeueBuildIfClaim(ctx context.Context, claim Build) error {
+	tag, err := s.pool.Exec(ctx,
+		`update builds
+		   set status = 'queued', started_at = NULL
+		 where id = $1 and deployment_id = $2 and status = 'running' and started_at = $3`,
+		claim.ID, claim.DeploymentID, claim.StartedAt)
+	if err != nil {
+		return fmt.Errorf("state: requeue build claim %s: %w", claim.ID, err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -11966,6 +12556,7 @@ func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json
 		       outcome = 'success',
 		       completed_at = now(),
 		       received_at = coalesce(received_at, now()),
+		       last_error = '',
 		       result = coalesce($2, result)
 		 where id = $1 and state = 'dispatching'
 		 returning account_id`, id, nullableJSON(result)).Scan(&accountID); err != nil {
@@ -12851,6 +13442,26 @@ func (s *PgStore) ListInstancesForApp(ctx context.Context, appID string) ([]Inst
 	return scanInstances(rows)
 }
 
+// ListActiveInstancesForApp is the customer `ps` read path. It filters at the
+// database boundary so years of parked/stopped wake history cannot make a
+// current-state request unbounded.
+func (s *PgStore) ListActiveInstancesForApp(ctx context.Context, appID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		        coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
+		 from instances
+		 where app_id = $1 and state in ('waking','cold_booting','running','snapshotting','migrating')
+		 order by started_at desc limit $2`, appID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanInstances(rows)
+}
+
 // ListLatestInstancesForApp returns up to `limit` instance rows for
 // appID, ordered by started_at DESC. Used by the dashboard's app-detail
 // "Recent wakes" table (gaps analysis 2026-07-23). The LIMIT pushdown
@@ -13426,6 +14037,26 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *PgStore) PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error) {
+	row := s.pool.QueryRow(ctx,
+		`update instances
+		    set netns = $3,
+		        host_ip = $4::inet,
+		        guest_uid = $5,
+		        started_at = now(),
+		        state = 'running'
+		  where id = $1
+		    and state = $2
+		 returning id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count`,
+		id, expectedState, netns, hostIP, guestUID)
+	ins, err := scanInstance(row)
+	if errors.Is(err, ErrNotFound) {
+		return Instance{}, ErrConflict
+	}
+	return ins, err
 }
 
 func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Instance, error) {
@@ -15244,8 +15875,8 @@ func (s *PgStore) NodeSetLifecycle(ctx context.Context, id string, expected, nex
 	return nil
 }
 
-// NodeListRecoverable returns every node in ('unavailable','recovering') —
-// the recovery arbiter's input set.
+// NodeListRecoverable returns recovering nodes and recently unavailable nodes;
+// terminally stale unavailable inventory is kept for audit but not polled.
 func (s *PgStore) NodeListRecoverable(ctx context.Context) ([]ComputeNode, error) {
 	rows, err := s.triggerQueries().NodeListRecoverable(ctx, s.pool)
 	if err != nil {

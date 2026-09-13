@@ -48,7 +48,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`login`](#login) | Authenticate this machine (--token for CI) |
 | [`logout`](#logout) | Remove the stored token |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
-| [`logs`](#logs) | Tail app or deployment logs (--follow) |
+| [`logs`](#logs) | Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the follow alias) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (gregale metrics &lt;slug&gt; [--range 5m] \| --account) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
@@ -80,6 +80,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`traffic`](#traffic) | Manage deployment traffic split (issue #556; Pro/Scale only) |
 | [`mirror`](#mirror) | Manage traffic mirroring (mirror list\|create\|info\|update\|rm\|summary --app &lt;slug&gt;; issue #72 / ADR-124; Pro/Scale only) |
 | [`cache`](#cache) | Manage response cache (cache purge &lt;slug&gt; [--path GLOB]) |
+| [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Print a shell completion script (bash\|zsh\|fish\|powershell) |
@@ -198,7 +199,7 @@ Alert preset catalog (preset list|enable --app &lt;slug&gt;)
 
 Audit-log query (audit-events list|get &lt;id&gt;)
 
-`gregale audit-events [<subcommand>] <id>`
+`gregale audit-events [<subcommand>] [<id>]`
 
 ### audit-events list
 
@@ -213,12 +214,11 @@ Show one audit event
 
 List your apps
 
-`gregale apps [<subcommand>] [--q] [--quiet]`
+`gregale apps [<subcommand>] [--quiet]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--q` | delete one app |  |
-| `--quiet` | delete one app |  |
+| `--quiet` | delete one app without prompting (short form: -q) |  |
 
 ### apps ls
 
@@ -249,7 +249,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
 
-`gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>] [--only-declared-routes] [--no-only-declared-routes]`
+`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -310,22 +310,6 @@ Show the card on file
 ### billing status
 
 Show subscription status
-
-### billing price-catalog
-
-Inspect the price catalog (admin)
-
-### billing reconcile
-
-Reconcile an invoice with the provider (admin)
-
-### billing reconcile-paddle-overage
-
-Reconcile Paddle overage charges (admin)
-
-### billing webhook-test
-
-Send a signed test webhook (operator)
 
 
 ## canary
@@ -781,7 +765,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -790,6 +774,9 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--path <DIR>` | deploy a selected local source directory (relative to the current directory) |  |
 | `--worktree` | deploy the selected source directory from the working tree, including local changes |  |
 | `--repo <OWNER/NAME>` | deploy from a GitHub repo |  |
+| `--repository <OWNER/NAME>` | GitHub owner/name to bind to a project |  |
+| `--install-id <N>` | GitHub installation id for a project binding |  |
+| `--production-branch <BRANCH>` | production branch for a project binding |  |
 | `--ref <REF>` | git ref for --repo (branch, tag, or 40-char SHA) |  |
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` |
@@ -1116,6 +1103,16 @@ Inspect or cancel isolated disposable runs
 
 `gregale runs [<subcommand>] <id>`
 
+### runs list
+
+List runs
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | maximum number of runs (1..200) |  |
+| `--offset <N>` | number of matching runs to skip |  |
+| `--status <STATUS>` | filter by lifecycle status | one of `queued` · `restoring` · `running` · `succeeded` · `failed` · `timed_out` · `out_of_memory` · `cancelled` |
+
 ### runs get
 
 Show one run
@@ -1148,7 +1145,7 @@ Show one invocation
 
 Production debugger (ADR-127)
 
-`gregale debug [<subcommand>] <slug>`
+`gregale debug [<subcommand>] [flags] <slug> [<request-id>]`
 
 ### debug requests
 
@@ -1256,13 +1253,18 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 ## logs
 
-Tail app or deployment logs (--follow)
+Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the follow alias)
 
-`gregale logs [--follow]`
+`gregale logs <slug> [--follow] [--deployment <ID>] [--grep <SUBSTR>] [--since <RFC3339>] [--level <LEVEL>] [--explain]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--follow` | stream logs until interrupted |  |
+| `--deployment <ID>` | deployment id (default: latest) |  |
+| `--grep <SUBSTR>` | only show lines containing this substring |  |
+| `--since <RFC3339>` | only show lines at or after this RFC3339 timestamp |  |
+| `--level <LEVEL>` | only show lines at this level | one of `info` · `warn` · `error` |
+| `--explain` | summarize the last failure and common error patterns |  |
 
 
 ## metrics
@@ -1555,13 +1557,17 @@ Manually advance / promote / abort a stuck rollout (operator escape hatch)
 
 Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 
-`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
+`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--project-slug <SLUG>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--tarball <PATH>` | scan a source tarball |  |
 | `--path <DIR>` | scan a local directory |  |
 | `--repo <OWNER/NAME>` | scan a GitHub repo |  |
+| `--repository <OWNER/NAME>` | GitHub owner/name to bind to the project (defaults to --repo) |  |
+| `--install-id <N>` | GitHub installation id (with --repository or --repo) |  |
+| `--production-branch <BRANCH>` | production branch for the project |  |
+| `--project-slug <SLUG>` | kebab slug; default = repo dir basename |  |
 | `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
 | `--show-affected` | render the WillDeploy + Unaffected tables (ADR-124) |  |
 | `--explain` | show why each workload was detected (detector, marker, priority) |  |
@@ -1855,6 +1861,27 @@ Purge cached responses for an app
 | Flag | Meaning | |
 |---|---|---|
 | `--path <GLOB>` | optional normalized request path glob |  |
+
+
+## upload-cache
+
+Inspect or clean resumable source-upload recovery state
+
+`gregale upload-cache [<subcommand>]`
+
+### upload-cache list
+
+List resumable, stale, and orphaned cache entries
+
+### upload-cache cleanup
+
+Remove stale and excess state safely
+
+| Flag | Meaning | |
+|---|---|---|
+| `--older-than <D>` | maximum recovery-state age |  |
+| `--max-entries <N>` | maximum recovery records to retain |  |
+| `--dry-run` | show actions without deleting files |  |
 
 
 ## webhooks

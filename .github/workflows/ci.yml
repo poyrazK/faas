@@ -117,7 +117,9 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # golangci-lint alone has an 8-minute cold-cache budget; leave enough
+    # time for setup, build, and the policy gates that follow it.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -309,6 +311,9 @@ jobs:
 
       - name: systemd hardening gate
         run: make systemd-hardening-check
+
+      - name: GCP public-beta policy gate
+        run: make gcp-public-beta-policy-test
 
       - name: OTLP unit wiring gate
         run: make otlp-unit-check
@@ -1093,6 +1098,11 @@ jobs:
           # ADR-143: the post-activation verify playbook is production
           # tooling (`make verify-fleet`) and must stay parseable.
           ansible-playbook --syntax-check verify.yml
+          # Gate-F: the opt-in acceptance playbooks. Neither was parsed by any
+          # job, so a syntax error in them would only surface when an operator
+          # ran one by hand against a real host.
+          ansible-playbook --syntax-check metal-h2c-acceptance.yml
+          ansible-playbook --syntax-check native-acceptance-host.yml
           # Gate-E: render and validate the 1/10/100/1000 compute-node
           # topologies, then run Ansible check-mode against the largest one.
           cd ../..

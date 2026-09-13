@@ -379,16 +379,16 @@ spinner) and PR #51 (the closeout batch):
   now emit from the build lifecycle, and `apid /status` computes the
   build-success SLO from real build data instead of the old vmmd
   cold-boot proxy (which measured wake, not build).
-- **§12 public status page** — `apid` serves `GET /status` (static
-  HTML, `deploy/statuspage/index.html`) and `GET /status/slo.json`
-  (4 PromQL queries against the local Prometheus with a 30 s
-  in-process cache and graceful degradation on transient failures;
-  never 5xx the route). The JSON also includes a bounded 30-day
-  terminal-invocation rollup and recent operator incidents from Postgres;
-  history reads are best-effort and cannot block current SLI reporting.
-  The fourth query drives the `degraded` flag
-  surfaced by the alert pipeline — see
-  [M8 — alert pipeline](#m8--alert-pipeline--this-pr) below.
+- **§12 public status page** — `apid` serves the unauthenticated
+  `GET /v1/status` overview and `GET /v1/status/incidents/{public_id}`
+  timeline. A five-minute evaluator maps labeled alerts into five public
+  capabilities, overlays operator incidents/maintenance, and persists real
+  UTC rollup buckets for 30-day uptime and coverage. Admin publishing is
+  guarded by admin scope, allowlist, MFA, recent step-up, same-origin, and
+  idempotency checks. `GET /status/slo.json` remains a compatible, always-JSON
+  projection with its existing best-effort 30-day invocation rollup and recent
+  operator incident history, while `GET /status` remains the minimal API-host fallback. The
+  indexed React experience is served by `faas-web` at `/status`; see ADR-130.
 - **§14 restore drill wired** —
   `deploy/scripts/faas-m8-restore-drill.sh` plus WAL-archiving
   knobs in the postgres ansible role. The drill now extracts the tar-format
@@ -1020,13 +1020,12 @@ explicitly open issues that the doc otherwise implies are closed.
   `cmd/gatewayd-public/main.go`; three alert rules land in `faas.rules.yml`;
   operator runbook at `docs/ops/gatewayd-public-tls-cutover.md` (the legacy `docs/ops/gatewayd-tls-cutover.md` retains the pre-PR-A cut-over steps; current process lives in the public-edge runbook).
 - **§14 V2 latency driver** — 100 platform-only park→wake cycles per app class,
-  p95 < 350 ms from `wake.boot_started` through `wake.boot_completed` on
-  the reference SSD node. The internal gateway first-byte cohort now also
-  enforces p99 ≤ 500 ms and p999 ≤ 800 ms in
-  `TestDeployWakeMetal/wake-latency-p99-100cycles`; its per-phase p99/p999
-  view is the `Wake phase latency (p99 / p999)` dashboard panel. The gate is
-  wired via `pkg/fcvm/TestMetalParkWakeCycle`; the internal gateway cohort
-  remains a separate diagnostic. Reference-SSD execution is recorded here
+  p95 < 350 ms from capacity admission/`wake.boot_started` through the first
+  upstream byte on the reference SSD node. The reusable
+  `scripts/ops/wake_performance_gate.py` reports the full-wake and raw-restore
+  p50/p90/p95/p99 distributions and rejects incomplete runtime cohorts. CDN,
+  Internet and client-distance timing stays outside this gate. Reference-SSD
+  execution is recorded here
   when the metal acceptance run is available. Runs on
   `make metal-lima RUN_ARGS='-run TestDeployWakeMetal'`.
 - **Documented timed restore drill** — §14 M8: PG + one app back
@@ -1068,9 +1067,11 @@ explicitly open issues that the doc otherwise implies are closed.
   (ADR-168), and a tenant-bridge guest listener with HostIP caller binding
   (ADR-169). ADR-170 adds node-local DNS for `<slug>.svc.gregale`, backed by
   the same `HostBridgeIP:10080` proxy; the netns firewall admits DNS and proxy
-  traffic before the lateral-movement deny. Host ports and public multi-port
-  routing remain separate follow-ups; loopback discovery within one task remains
-  supported (ADR-164 and ADR-165).
+  traffic before the lateral-movement deny. Named TCP public multi-port routing
+  now uses the `app--port-<name>` selector and the existing vmmd bridge
+  (ADR-176); host-port leasing, UDP ingress, and custom per-port TLS remain
+  separate follow-ups. Loopback discovery within one task remains supported
+  (ADR-164 and ADR-165).
 - **Resource and cost isolation** — named RAM/CPU profiles, per-node vCPU
   admission, ephemeral disk ceilings, and the account-level compute + S3 +
   managed-PostgreSQL usage projection are present; runtime per-container
@@ -1080,8 +1081,8 @@ explicitly open issues that the doc otherwise implies are closed.
   64 MiB default for inherited profiles. ADR-175 adds a customer-selectable
   16..512 MiB sidecar scratch quota and named per-workload guest `io.weight`
   policies (`low`, `standard`, `high`); omitted values preserve the inherited
-  defaults. Persistent volumes, host-port allocation, and public multi-port
-  routing remain follow-up work.
+  defaults. Persistent volumes and host-port allocation remain follow-up work;
+  public named TCP listeners are now covered by ADR-176.
 
 ### Open security & infrastructure issues
 

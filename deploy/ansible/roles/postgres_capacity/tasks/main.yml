@@ -1,0 +1,138 @@
+---
+# This role only changes PostgreSQL connection capacity. It is deliberately
+# separate from the bootstrap postgres role so cd-compute can converge the
+# already-provisioned control plane before activating another compute node.
+
+- name: postgres capacity — calculate the inventory-derived plan
+  ansible.builtin.import_tasks: plan.yml
+
+- name: postgres capacity — read the current postmaster ceiling
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - -d
+      - postgres
+      - -c
+      - show max_connections
+  register: postgres_capacity_current_max
+  changed_when: false
+
+- name: postgres capacity — preserve a larger existing postmaster ceiling
+  ansible.builtin.set_fact:
+    postgres_capacity_max_connections: >-
+      {{ [
+      (postgres_capacity_computed_max_connections | int),
+      (postgres_capacity_current_max.stdout | trim | int)
+      ] | max }}
+
+- name: postgres capacity — derive the control-plane RAM floor
+  ansible.builtin.set_fact:
+    postgres_capacity_min_memory_mb: >-
+      {{ [
+      (faas_postgres_small_fleet_min_memory_mb | int),
+      ((faas_postgres_small_fleet_min_memory_mb | int)
+      + ([0, ((postgres_capacity_max_connections | int)
+      - (faas_postgres_small_fleet_connections | int))] | max)
+      * (faas_postgres_incremental_connection_memory_mb | int))
+      ] | max }}
+
+- name: postgres capacity — validate the fleet budget and host memory
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((postgres_capacity_steady_pool_budget | int) * 4)
+        <= ((postgres_capacity_ordinary_connections | int) * 3)
+      - >-
+        (postgres_capacity_rollout_pool_budget | int)
+        + (faas_postgres_min_operator_headroom | int)
+        <= (postgres_capacity_ordinary_connections | int)
+      - (ansible_memtotal_mb | int) >= (postgres_capacity_min_memory_mb | int)
+    fail_msg: >-
+      PostgreSQL cannot safely admit {{ postgres_capacity_compute_nodes }}
+      compute nodes on this control-plane host. The derived ceiling is
+      {{ postgres_capacity_max_connections }} connections and requires at
+      least {{ postgres_capacity_min_memory_mb }} MB RAM, but Ansible reports
+      {{ ansible_memtotal_mb }} MB. Resize the database host or reduce the
+      complete inventory before activation.
+
+- name: postgres capacity — discover PostgreSQL cluster config
+  ansible.builtin.find:
+    paths: /etc/postgresql
+    file_type: directory
+    recurse: false
+  register: postgres_capacity_cluster_dirs
+  changed_when: false
+
+- name: postgres capacity — require an installed PostgreSQL cluster
+  ansible.builtin.assert:
+    that:
+      - (postgres_capacity_cluster_dirs.files | default([]) | length) > 0
+    fail_msg: >-
+      PostgreSQL capacity cannot be converged because no cluster exists under
+      /etc/postgresql.
+
+- name: postgres capacity — derive active cluster config directory
+  ansible.builtin.set_fact:
+    postgres_capacity_major_version: >-
+      {{ (postgres_capacity_cluster_dirs.files
+      | map(attribute='path') | map('basename') | list | sort | last) }}
+    postgres_capacity_config_dir: >-
+      /etc/postgresql/{{ (postgres_capacity_cluster_dirs.files
+      | map(attribute='path') | map('basename') | list | sort | last) }}/main
+
+- name: postgres capacity — set max_connections
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_capacity_config_dir }}/postgresql.conf"
+    regexp: "^\\s*#?\\s*max_connections\\s*="
+    line: "max_connections = {{ postgres_capacity_max_connections | int }}"
+    create: false
+  notify: restart postgresql for capacity
+
+- name: postgres capacity — reserve operator connections
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_capacity_config_dir }}/postgresql.conf"
+    regexp: "^\\s*#?\\s*superuser_reserved_connections\\s*="
+    line: >-
+      superuser_reserved_connections = {{ faas_postgres_superuser_reserved_connections | int }}
+    create: false
+  notify: restart postgresql for capacity
+
+- name: postgres capacity — activate postmaster settings before node admission
+  ansible.builtin.meta: flush_handlers
+
+- name: postgres capacity — read live postmaster settings
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - -d
+      - postgres
+      - -c
+      - >-
+        select current_setting('max_connections') || ':' ||
+        current_setting('superuser_reserved_connections')
+  register: postgres_capacity_live
+  changed_when: false
+  retries: 15
+  delay: 2
+  until: postgres_capacity_live.rc == 0
+
+- name: postgres capacity — verify live ordinary-client capacity
+  ansible.builtin.assert:
+    that:
+      - >-
+        (postgres_capacity_live.stdout | trim)
+        == ((postgres_capacity_max_connections | int | string)
+        + ':' + (faas_postgres_superuser_reserved_connections | int | string))
+    fail_msg: >-
+      PostgreSQL restarted without the requested max/reserved connection
+      settings; refusing to admit another compute node.

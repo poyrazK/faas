@@ -44,7 +44,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -348,12 +347,10 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	}
 	// The gRPC client handler propagates the current span to vmmd, but
 	// the guest request is a new HTTP carrier assembled from this init
-	// frame. Inject the W3C context here so customer OTel SDKs can join
-	// the platform trace. Use TraceContext directly rather than the
-	// process-wide composite propagator: baggage is customer-controlled
-	// and must not be copied into the guest bridge implicitly.
+	// frame. Inject the request-scoped W3C context here so customer OTel
+	// SDKs can join the platform trace, including on warm instances.
 	guestHeaders := stripHopByHop(r.Header)
-	propagation.TraceContext{}.Inject(r.Context(), propagation.HeaderCarrier(guestHeaders))
+	injectGuestTraceContext(r.Context(), guestHeaders)
 	for name, vals := range guestHeaders {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
 			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, "x-faas-invocation-id")) {
@@ -987,7 +984,7 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 			headers.Del(name)
 		}
 	}
-	propagation.TraceContext{}.Inject(r.Context(), propagation.HeaderCarrier(headers))
+	injectGuestTraceContext(r.Context(), headers)
 
 	var buf bytes.Buffer
 	if _, err := fmt.Fprintf(&buf, "%s %s %s\r\n", method, requestURI, proto); err != nil {

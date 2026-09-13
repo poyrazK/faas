@@ -24,6 +24,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -122,6 +123,7 @@ type MemStore struct {
 	objectUploadCompletions map[string]ObjectUploadCompletion
 	mu                      sync.Mutex
 	accounts                map[string]Account
+	accountDeployRates      map[string]accountDeployRateRow
 	keys                    map[string]APIKey
 	keyByHash               map[string]APIKey
 	deployTokens            map[string]DeployToken
@@ -174,8 +176,11 @@ type MemStore struct {
 	// Append-only + resolved_at-stamped; the partial-index read
 	// (status_incidents_open WHERE resolved_at IS NULL) is mirrored
 	// by the ListOpenStatusIncidents loop filter.
-	statusIncidents []StatusIncident
-	builds          map[string]Build
+	statusIncidents  []StatusIncident
+	statusCreateKeys map[string]string
+	statusUpdateKeys map[string]string
+	statusBuckets    map[string]StatusBucket
+	builds           map[string]Build
 	// builderVMCleanup mirrors builder_vm_cleanup. Rows are durable in
 	// production and intentionally private here; tests exercise the same
 	// claim/complete capability through the state interface.
@@ -256,11 +261,13 @@ type MemStore struct {
 	// invariant is enforced at insert time. MemStore holds no
 	// concurrency control beyond m.mu — the dispatcher's claim
 	// query is a single goroutine today.
-	appWebhooks          map[string]AppWebhook
-	appWebhookDeliveries map[string]AppWebhookDelivery
-	appLogDrains         map[string]AppLogDrain
-	appLogDrainHealth    map[string]AppLogDrainHealth
-	appLogDrainAnalytics map[string]AppLogDrainDeliveryAnalytics
+	appWebhooks              map[string]AppWebhook
+	appWebhookDeliveries     map[string]AppWebhookDelivery
+	managedRealtimeEndpoints map[string]ManagedRealtimeEndpoint
+	managedRealtimeOwners    map[string]ManagedRealtimeConnectionOwner
+	appLogDrains             map[string]AppLogDrain
+	appLogDrainHealth        map[string]AppLogDrainHealth
+	appLogDrainAnalytics     map[string]AppLogDrainDeliveryAnalytics
 	// deploymentScopeExclusions backs the ADR-124 follow-up #3
 	// persistent --exclude history (migration 00418). Keyed by row
 	// id (uuid string) for symmetry with appWebhooks; the (account,
@@ -805,6 +812,7 @@ func NewMemStore() *MemStore {
 		objectUploadRoutes:      map[string]ObjectUploadRoute{},
 		objectUploadCompletions: map[string]ObjectUploadCompletion{},
 		accounts:                map[string]Account{},
+		accountDeployRates:      map[string]accountDeployRateRow{},
 		keys:                    map[string]APIKey{},
 		keyByHash:               map[string]APIKey{},
 		deployTokens:            map[string]DeployToken{},
@@ -822,6 +830,9 @@ func NewMemStore() *MemStore {
 		mailSuppressions:    map[string]mailSuppressionRow{},
 		deployFailedEmailAt: map[string]time.Time{},
 		deployments:         map[string]Deployment{},
+		statusCreateKeys:    map[string]string{},
+		statusUpdateKeys:    map[string]string{},
+		statusBuckets:       map[string]StatusBucket{},
 		builds:              map[string]Build{},
 		builderVMCleanup:    map[string]builderVMCleanupRow{},
 		// buildProvenance is the ADR-038 "what ran?" map keyed by
@@ -863,6 +874,8 @@ func NewMemStore() *MemStore {
 		alertDeliveries:           map[string]AlertDelivery{},
 		appWebhooks:               map[string]AppWebhook{},
 		appWebhookDeliveries:      map[string]AppWebhookDelivery{},
+		managedRealtimeEndpoints:  map[string]ManagedRealtimeEndpoint{},
+		managedRealtimeOwners:     map[string]ManagedRealtimeConnectionOwner{},
 		appLogDrains:              map[string]AppLogDrain{},
 		appLogDrainHealth:         map[string]AppLogDrainHealth{},
 		appLogDrainAnalytics:      map[string]AppLogDrainDeliveryAnalytics{},
@@ -1479,6 +1492,14 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 	}
 	a.Plan = plan
 	m.accounts[id] = a
+	now := time.Now().UTC()
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.Plan = plan
+			org.UpdatedAt = now
+			m.orgs[orgID] = org
+		}
+	}
 	return nil
 }
 
@@ -1491,6 +1512,14 @@ func (m *MemStore) UpdateAccountStatus(_ context.Context, id string, status Acco
 	}
 	a.Status = status
 	m.accounts[id] = a
+	now := time.Now().UTC()
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.Status = OrgStatus(status)
+			org.UpdatedAt = now
+			m.orgs[orgID] = org
+		}
+	}
 	return nil
 }
 
@@ -1703,6 +1732,13 @@ func (m *MemStore) UpdateAccountProviderCustomerID(_ context.Context, id, provid
 	}
 	a.ProviderCustomerID = providerCustomerID
 	m.accounts[id] = a
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.ProviderCustomerID = providerCustomerID
+			org.UpdatedAt = time.Now().UTC()
+			m.orgs[orgID] = org
+		}
+	}
 	// Maintain the reverse-lookup map for AccountByProviderCustomerID.
 	for k, v := range m.stripeByCustomer {
 		if v == id && k != providerCustomerID {
@@ -1750,6 +1786,13 @@ func (m *MemStore) UpdateAccountStripeSubscriptionItem(_ context.Context, id, su
 	}
 	a.StripeSubscriptionItem = subItem
 	m.accounts[id] = a
+	for orgID, org := range m.orgs {
+		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			org.StripeSubscriptionItem = subItem
+			org.UpdatedAt = time.Now().UTC()
+			m.orgs[orgID] = org
+		}
+	}
 	for key, identity := range m.billingIdentities {
 		if identity.AccountID == id && identity.CustomerID == a.ProviderCustomerID {
 			identity.SubscriptionID = subItem
@@ -3026,7 +3069,14 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	if _, ok := m.accounts[app.AccountID]; !ok {
 		return App{}, ErrNotFound
 	}
-	// 1. Authoritative count under the same lock. Mirrors the PgStore
+	// 1. Return the slug collision before quota. Deploy clients use this
+	// signal to fetch and continue with an app they previously reserved.
+	for _, a := range m.apps {
+		if a.Slug == app.Slug && a.Status != AppDeleted {
+			return App{}, ErrConflict
+		}
+	}
+	// 2. Authoritative count under the same lock. Mirrors the PgStore
 	//    predicates, including the separate developer-environment cap.
 	observed := 0
 	developer := IsDeveloperApp(app)
@@ -3051,14 +3101,8 @@ func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.
 	if observed >= limit {
 		return App{}, &QuotaError{Kind: kind, Limit: limit, Observed: observed}
 	}
-	// 2. Conditional insert. Slug uniqueness is enforced by the same
-	//    loop CreateApp uses; returning ErrConflict keeps the wire
-	//    contract identical to PgStore's apps.slug unique-index path.
-	for _, a := range m.apps {
-		if a.Slug == app.Slug && a.Status != AppDeleted {
-			return App{}, ErrConflict
-		}
-	}
+	// 3. Conditional insert. The lock keeps the collision check above and
+	// insert atomic for MemStore.
 	if app.ID == "" {
 		app.ID = newID()
 	}
@@ -6064,7 +6108,7 @@ func (m *MemStore) ListDeploymentsForOperator(_ context.Context, filter Operator
 	defer m.mu.Unlock()
 	ownedApps := make(map[string]App)
 	for id, app := range m.apps {
-		if app.Status == AppDeleted {
+		if app.Status == AppDeleted && !filter.IncludeDeleted {
 			continue
 		}
 		if filter.AccountID != "" && app.AccountID != filter.AccountID {
@@ -6083,7 +6127,7 @@ func (m *MemStore) ListDeploymentsForOperator(_ context.Context, filter Operator
 	}
 	all := make([]Deployment, 0)
 	for _, deployment := range m.deployments {
-		if deployment.DeletedAt != nil {
+		if deployment.DeletedAt != nil && !filter.IncludeDeleted {
 			continue
 		}
 		if _, ok := ownedApps[deployment.AppID]; !ok {
@@ -6094,11 +6138,20 @@ func (m *MemStore) ListDeploymentsForOperator(_ context.Context, filter Operator
 				continue
 			}
 		}
+		if !filter.CreatedBefore.IsZero() && !deployment.CreatedAt.Before(filter.CreatedBefore) {
+			continue
+		}
 		all = append(all, deployment)
 	}
 	sort.Slice(all, func(i, j int) bool {
 		if all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			if filter.OldestFirst {
+				return all[i].ID < all[j].ID
+			}
 			return all[i].ID > all[j].ID
+		}
+		if filter.OldestFirst {
+			return all[i].CreatedAt.Before(all[j].CreatedAt)
 		}
 		return all[i].CreatedAt.After(all[j].CreatedAt)
 	})
@@ -6189,13 +6242,53 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
-	d.Status = status
-	d.Error = errMsg
-	m.deployments[id] = d
+	if status == DeployFailed {
+		m.failDeploymentLocked(d, errMsg)
+	} else {
+		d.Status = status
+		d.Error = errMsg
+		m.deployments[id] = d
+	}
 	if status == DeployFailed || status == DeployCancelled {
 		m.markDeploymentSnapshotsStaleLocked(id)
 	}
 	return nil
+}
+
+func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
+	d.Status = DeployFailed
+	d.Error = message
+	d.TrafficPercent = 0
+	d.RolloutState = "aborted"
+	d.RolloutCompletedAt = nil
+	if d.RolloutAbortedAt == nil {
+		now := time.Now().UTC()
+		d.RolloutAbortedAt = &now
+	}
+	if message == "" {
+		message = "deployment failed"
+	}
+	d.RolloutAbortedReason = message
+	m.deployments[d.ID] = d
+
+	var fallbackID string
+	var fallback Deployment
+	for id, candidate := range m.deployments {
+		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive {
+			continue
+		}
+		if fallbackID == "" || candidate.TrafficPercent > fallback.TrafficPercent ||
+			(candidate.TrafficPercent == fallback.TrafficPercent && candidate.CreatedAt.After(fallback.CreatedAt)) {
+			fallbackID, fallback = id, candidate
+		}
+		candidate.TrafficPercent = 0
+		m.deployments[id] = candidate
+	}
+	if fallbackID != "" {
+		fallback = m.deployments[fallbackID]
+		fallback.TrafficPercent = 100
+		m.deployments[fallbackID] = fallback
+	}
 }
 
 func (m *MemStore) markDeploymentSnapshotsStaleLocked(deploymentID string) {
@@ -7044,14 +7137,20 @@ func (m *MemStore) InsertStatusIncident(_ context.Context, component, severity, 
 	if len(message) > 1024 {
 		return StatusIncident{}, ErrNotFound
 	}
+	now := time.Now().UTC()
+	publicID := uuid.NewString()
+	updateKey := "legacy-create:" + publicID
 	inc := StatusIncident{
-		ID:        int64(len(m.statusIncidents) + 1),
-		Component: component,
-		Severity:  severity,
-		Message:   message,
-		PostedAt:  time.Now(),
+		ID: int64(len(m.statusIncidents) + 1), Component: component, Severity: severity,
+		Message: message, PostedAt: now, PublicID: publicID, Kind: publicstatus.KindIncident,
+		Title: legacyIncidentTitle(message), Impact: legacyIncidentPublicImpact(severity),
+		Components: legacyIncidentPublicComponents(component), State: publicstatus.LifecycleInvestigating,
+		StartsAt: &now, UpdatedAt: now,
+		Updates: []StatusIncidentUpdate{{ID: uuid.NewString(), State: publicstatus.LifecycleInvestigating,
+			Message: message, At: now, Actor: "legacy-api", IdempotencyKey: updateKey}},
 	}
 	m.statusIncidents = append(m.statusIncidents, inc)
+	m.statusCreateKeys[updateKey] = publicID
 	return inc, nil
 }
 
@@ -7063,8 +7162,16 @@ func (m *MemStore) ResolveStatusIncident(_ context.Context, id int64) error {
 	for i := range m.statusIncidents {
 		if m.statusIncidents[i].ID == id {
 			if m.statusIncidents[i].ResolvedAt == nil {
-				now := time.Now()
+				now := time.Now().UTC()
 				m.statusIncidents[i].ResolvedAt = &now
+				m.statusIncidents[i].State = publicstatus.LifecycleResolved
+				m.statusIncidents[i].UpdatedAt = now
+				key := fmt.Sprintf("legacy-resolve:%d", id)
+				m.statusIncidents[i].Updates = append(m.statusIncidents[i].Updates, StatusIncidentUpdate{
+					ID: uuid.NewString(), State: publicstatus.LifecycleResolved, Message: "Resolved",
+					At: now, Actor: "legacy-api", IdempotencyKey: key,
+				})
+				m.statusUpdateKeys[key] = m.statusIncidents[i].PublicID
 			}
 			return nil
 		}
@@ -7084,6 +7191,183 @@ func (m *MemStore) ListOpenStatusIncidents(_ context.Context) ([]StatusIncident,
 		}
 	}
 	return out, nil
+}
+
+func (m *MemStore) CreatePublicStatusEvent(_ context.Context, input StatusEventCreate) (StatusIncident, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if publicID, ok := m.statusCreateKeys[input.IdempotencyKey]; ok {
+		return m.statusEventByPublicIDLocked(publicID)
+	}
+	if input.IdempotencyKey == "" {
+		return StatusIncident{}, &publicstatus.ValidationError{Code: "status_invalid_idempotency_key", Message: "idempotency key is required"}
+	}
+	if err := publicstatus.ValidateEvent(publicstatus.EventInput{
+		Kind: input.Kind, Title: input.Title, Impact: input.Impact, Components: input.Components,
+		State: input.State, StartsAt: input.StartsAt, ScheduledStartAt: input.ScheduledStartAt,
+		ScheduledEndAt: input.ScheduledEndAt,
+	}); err != nil {
+		return StatusIncident{}, err
+	}
+	if err := publicstatus.ValidateMessage(input.Message); err != nil {
+		return StatusIncident{}, err
+	}
+	now := time.Now().UTC()
+	inc := StatusIncident{
+		ID: int64(len(m.statusIncidents) + 1), PublicID: uuid.NewString(), Kind: input.Kind,
+		Title: strings.TrimSpace(input.Title), Impact: input.Impact,
+		Components: slices.Clone(input.Components), State: input.State,
+		StartsAt: cloneTimePtr(input.StartsAt), ScheduledStartAt: cloneTimePtr(input.ScheduledStartAt),
+		ScheduledEndAt: cloneTimePtr(input.ScheduledEndAt), PostedAt: now, UpdatedAt: now,
+		Message: input.Message,
+	}
+	inc.Updates = []StatusIncidentUpdate{{
+		ID: uuid.NewString(), State: input.State, Message: input.Message, At: now,
+		Actor: input.Actor, IdempotencyKey: input.IdempotencyKey,
+	}}
+	m.statusIncidents = append(m.statusIncidents, inc)
+	m.statusCreateKeys[input.IdempotencyKey] = inc.PublicID
+	m.appendStatusMutationAuditLocked("status.event.created", input.Actor, inc, "create", "", input.State)
+	return cloneStatusIncident(inc), nil
+}
+
+func (m *MemStore) AppendPublicStatusUpdate(_ context.Context, publicID string, input StatusEventUpdateInput) (StatusIncident, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existingPublicID, ok := m.statusUpdateKeys[input.IdempotencyKey]; ok {
+		if existingPublicID != publicID {
+			return StatusIncident{}, &publicstatus.ValidationError{Code: publicstatus.CodeIdempotencyConflict, Message: "idempotency key belongs to a different status event"}
+		}
+		return m.statusEventByPublicIDLocked(existingPublicID)
+	}
+	if input.IdempotencyKey == "" {
+		return StatusIncident{}, &publicstatus.ValidationError{Code: "status_invalid_idempotency_key", Message: "idempotency key is required"}
+	}
+	if err := publicstatus.ValidateMessage(input.Message); err != nil {
+		return StatusIncident{}, err
+	}
+	for i := range m.statusIncidents {
+		inc := &m.statusIncidents[i]
+		if inc.PublicID != publicID {
+			continue
+		}
+		if err := publicstatus.ValidateTransition(inc.Kind, inc.State, input.State); err != nil {
+			return StatusIncident{}, err
+		}
+		oldState := inc.State
+		at := input.At.UTC()
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		if at.Before(inc.UpdatedAt) {
+			at = inc.UpdatedAt
+		}
+		inc.State = input.State
+		inc.Message = input.Message
+		inc.UpdatedAt = at
+		if input.State == publicstatus.LifecycleResolved || input.State == publicstatus.LifecycleCompleted || input.State == publicstatus.LifecycleCancelled {
+			inc.ResolvedAt = &at
+		}
+		inc.Updates = append(inc.Updates, StatusIncidentUpdate{
+			ID: uuid.NewString(), State: input.State, Message: input.Message, At: at,
+			Actor: input.Actor, IdempotencyKey: input.IdempotencyKey,
+		})
+		m.statusUpdateKeys[input.IdempotencyKey] = publicID
+		m.appendStatusMutationAuditLocked("status.event.updated", input.Actor, *inc, "update", oldState, input.State)
+		return cloneStatusIncident(*inc), nil
+	}
+	return StatusIncident{}, ErrNotFound
+}
+
+func (m *MemStore) appendStatusMutationAuditLocked(eventKind, actor string, event StatusIncident, action string, prior, next publicstatus.Lifecycle) {
+	payload, _ := json.Marshal(map[string]any{
+		"actor": actor, "event_id": event.PublicID, "event_kind": event.Kind, "action": action,
+		"prior_state": prior, "new_state": next, "affected_capabilities": componentStrings(event.Components),
+	})
+	m.events = append(m.events, Event{
+		ID: int64(len(m.events) + 1), At: time.Now().UTC(), Actor: "apid", Kind: eventKind,
+		Subject: parseSubjectID(actor), Data: payload,
+	})
+}
+
+func (m *MemStore) StatusEventByPublicID(_ context.Context, publicID string) (StatusIncident, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.statusEventByPublicIDLocked(publicID)
+}
+
+func (m *MemStore) statusEventByPublicIDLocked(publicID string) (StatusIncident, error) {
+	for _, inc := range m.statusIncidents {
+		if inc.PublicID == publicID {
+			return cloneStatusIncident(inc), nil
+		}
+	}
+	return StatusIncident{}, ErrNotFound
+}
+
+func (m *MemStore) ListPublicStatusEvents(_ context.Context, options StatusEventListOptions) ([]StatusIncident, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]StatusIncident, 0)
+	for i := len(m.statusIncidents) - 1; i >= 0; i-- {
+		inc := m.statusIncidents[i]
+		if options.Kind != "" && inc.Kind != options.Kind {
+			continue
+		}
+		if options.ActiveOnly && inc.ResolvedAt != nil {
+			continue
+		}
+		if !options.Since.IsZero() && inc.UpdatedAt.Before(options.Since) {
+			continue
+		}
+		out = append(out, cloneStatusIncident(inc))
+		if options.Limit > 0 && len(out) >= options.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) RecordStatusBucket(_ context.Context, bucket StatusBucket) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !publicstatus.ValidComponent(bucket.Component) {
+		return ErrNotFound
+	}
+	bucket.BucketAt = bucket.BucketAt.UTC().Truncate(5 * time.Minute)
+	key := string(bucket.Component) + "\x00" + bucket.BucketAt.Format(time.RFC3339)
+	if _, exists := m.statusBuckets[key]; !exists {
+		m.statusBuckets[key] = bucket
+	}
+	return nil
+}
+
+func (m *MemStore) ListStatusBuckets(_ context.Context, from, to time.Time) ([]StatusBucket, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]StatusBucket, 0)
+	for _, bucket := range m.statusBuckets {
+		if !bucket.BucketAt.Before(from) && bucket.BucketAt.Before(to) {
+			out = append(out, bucket)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].BucketAt.Equal(out[j].BucketAt) {
+			return out[i].Component < out[j].Component
+		}
+		return out[i].BucketAt.Before(out[j].BucketAt)
+	})
+	return out, nil
+}
+
+func cloneStatusIncident(in StatusIncident) StatusIncident {
+	in.Components = slices.Clone(in.Components)
+	in.Updates = slices.Clone(in.Updates)
+	in.StartsAt = cloneTimePtr(in.StartsAt)
+	in.ScheduledStartAt = cloneTimePtr(in.ScheduledStartAt)
+	in.ScheduledEndAt = cloneTimePtr(in.ScheduledEndAt)
+	in.ResolvedAt = cloneTimePtr(in.ResolvedAt)
+	return in
 }
 
 // ---------------------------------------------------------------------------
@@ -7488,10 +7772,9 @@ func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message stri
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
 	}
-	d.Status = DeployFailed
-	d.Error = message
 	d.ErrorCode = code
-	m.deployments[id] = d
+	m.failDeploymentLocked(d, message)
+	d = m.deployments[id]
 	m.markDeploymentSnapshotsStaleLocked(id)
 	return d, nil
 }
@@ -7535,14 +7818,13 @@ func (m *MemStore) SetDeploymentFailedEx(
 	if d.Status == DeployCancelled {
 		return Deployment{}, ErrInvalidStateTransition
 	}
-	d.Status = DeployFailed
-	d.Error = message
 	d.ErrorCode = code
 	d.ErrorHint = hint
 	d.ErrorWhy = why
 	d.ErrorFix = fix
 	d.ErrorRelevantLogs = logs
-	m.deployments[id] = d
+	m.failDeploymentLocked(d, message)
+	d = m.deployments[id]
 	m.markDeploymentSnapshotsStaleLocked(id)
 	return d, nil
 }
@@ -7672,8 +7954,8 @@ func (m *MemStore) FailSourceDeployment(_ context.Context, id, message string) e
 			return nil
 		}
 	}
-	d.Status, d.Error = DeployFailed, message
-	m.deployments[id] = d
+	m.failDeploymentLocked(d, message)
+	m.markDeploymentSnapshotsStaleLocked(id)
 	return nil
 }
 
@@ -8148,6 +8430,22 @@ func (m *MemStore) RequeueBuild(_ context.Context, id string) error {
 	b.Status = BuildQueued
 	b.StartedAt = time.Time{}
 	m.builds[id] = b
+	return nil
+}
+
+// RequeueBuildIfClaim resets a matching running claim back to queued. The
+// deployment and started_at checks ensure a stale worker cannot requeue a
+// newer claim for the same build.
+func (m *MemStore) RequeueBuildIfClaim(_ context.Context, claim Build) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.builds[claim.ID]
+	if !ok || b.Status != BuildRunning || b.DeploymentID != claim.DeploymentID || !b.StartedAt.Equal(claim.StartedAt) {
+		return ErrNotFound
+	}
+	b.Status = BuildQueued
+	b.StartedAt = time.Time{}
+	m.builds[claim.ID] = b
 	return nil
 }
 
@@ -9385,6 +9683,7 @@ func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.
 		return ErrNotFound
 	}
 	inv.State = InvocationCompleted
+	inv.LastError = ""
 	if len(result) > 0 {
 		inv.Result = result
 	}
@@ -10135,6 +10434,25 @@ func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Insta
 	return out, nil
 }
 
+func (m *MemStore) ListActiveInstancesForApp(_ context.Context, appID string, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Instance, 0, limit)
+	for _, ins := range m.instances {
+		if ins.AppID == appID && State(ins.State).CountsForRAM() {
+			out = append(out, ins)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // ListLatestInstancesForApp returns up to `limit` rows for appID
 // ordered by started_at DESC. Mirror of the PgStore method added
 // alongside the dashboard "Recent wakes" feature (gaps analysis
@@ -10691,6 +11009,22 @@ func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP strin
 	ins.StartedAt = time.Now()
 	m.instances[id] = ins
 	return nil
+}
+
+func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ins, ok := m.instances[id]
+	if !ok || ins.State != expectedState {
+		return Instance{}, ErrConflict
+	}
+	ins.Netns = netns
+	ins.HostIP = hostIP
+	ins.GuestUID = guestUID
+	ins.StartedAt = time.Now().UTC()
+	ins.State = string(StateRunning)
+	m.instances[id] = ins
+	return ins, nil
 }
 
 func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Instance, error) {
@@ -11776,14 +12110,20 @@ func (m *MemStore) NodeSetLifecycle(_ context.Context, id string, expected, next
 	return nil
 }
 
-// NodeListRecoverable returns every node in
-// ('unavailable','recovering') — the recovery arbiter's input set.
+// NodeListRecoverable excludes terminally stale unavailable inventory while
+// retaining recovering rows until their in-flight sweep completes.
 func (m *MemStore) NodeListRecoverable(_ context.Context) ([]ComputeNode, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]ComputeNode, 0, len(m.computeNodes))
+	now := time.Now()
 	for _, n := range m.computeNodes {
-		if n.Lifecycle == NodeLifecycleUnavailable || n.Lifecycle == NodeLifecycleRecovering {
+		lastSeen := n.LastHeartbeatAt
+		if lastSeen.IsZero() {
+			lastSeen = n.CreatedAt
+		}
+		if n.Lifecycle == NodeLifecycleRecovering ||
+			(n.Lifecycle == NodeLifecycleUnavailable && !lastSeen.Before(now.Add(-24*time.Hour))) {
 			out = append(out, n)
 		}
 	}

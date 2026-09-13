@@ -137,7 +137,12 @@ func (h *Handler) EnsureBaseExt4(
 		// fallback is deliberately limited to an artifact that the storage
 		// backend can open; a missing base remains fail-closed below.
 		if existingErr := h.validateExistingBaseArtifact(ctx, be, baseKey); existingErr == nil {
-			if baseSidecarGuestInitCurrent(ctx, be, digestKey, guestInitDigest) {
+			// "Preserve the installed artifact" only makes sense when one is
+			// installed. With the registry unreachable AND no local image we
+			// cannot stage either, so fail closed on the pull error below
+			// rather than reporting a base this node does not have.
+			if baseSidecarGuestInitCurrent(ctx, be, digestKey, guestInitDigest) &&
+				!h.baseSkipDeclined(be, baseKey, outImage, "registry unreachable") {
 				h.log.Warn("imaged: base manifest pull failed; using existing on-disk base image",
 					"ref", ref, "key", baseKey, "err", err)
 				return BaseStageResult{
@@ -169,7 +174,8 @@ func (h *Handler) EnsureBaseExt4(
 		haveBytes, rerr := io.ReadAll(haveRC)
 		_ = haveRC.Close()
 		if rerr == nil && baseDigestSidecarMatches(string(haveBytes), wantDigest, guestInitDigest) {
-			if existingErr := h.validateExistingBaseArtifact(ctx, be, baseKey); existingErr == nil {
+			if existingErr := h.validateExistingBaseArtifact(ctx, be, baseKey); existingErr == nil &&
+				!h.baseSkipDeclined(be, baseKey, outImage, "digest sidecar match") {
 				// A digest match proves the ext4 bytes are current, but
 				// older imaged versions could have written the scan sidecar
 				// from the legacy compatibility path. Refresh a sidecar that
@@ -381,6 +387,11 @@ func (h *Handler) trySkipPinnedBaseLocally(
 		return BaseStageResult{}, false
 	}
 	if err := h.validateExistingBaseArtifact(ctx, be, baseKey); err != nil {
+		return BaseStageResult{}, false
+	}
+	// Sidecar evidence can outlive the artifact it describes. Refuse the
+	// fully-local fast path when the node has no image to show for it.
+	if h.baseSkipDeclined(be, baseKey, outImage, "pinned-ref local evidence") {
 		return BaseStageResult{}, false
 	}
 	if !h.scanSidecarSourceCurrent(ctx, be, baseKey, outImage, ref) {
@@ -682,6 +693,67 @@ func (h *Handler) validateExistingBaseArtifact(ctx context.Context, be storage.S
 		return fmt.Errorf("close existing base %q: %w", baseKey, err)
 	}
 	return h.validateBaseArtifact(ctx, be, baseKey)
+}
+
+// localBaseImageReady proves that a skip would hand back an artifact the
+// consumer can actually open on THIS node.
+//
+// Every skip path returns BaseStageResult{OutImage: outImage, Skipped: true},
+// which asserts a usable base is present. validateExistingBaseArtifact alone
+// does not establish that: when the backend is not a LocalPathResolver (or
+// resolves no local copy) it falls through to be.Get(baseKey), which proves
+// only that the object is *fetchable from the backend* — a remote object store
+// answers that happily while the node's filesystem holds nothing.
+//
+// Observed in production on 2026-09-12: imaged logged "reused pinned base from
+// local evidence" and "imaged ready" with
+// builder_base_path=/srv/fc/base/builder-base.ext4 and
+// builder_base_skipped=true, on a host where neither that path nor the
+// canonical base/runner-builder-amd64.ext4 existed anywhere. The base had been
+// wiped while the backend's copy and the sidecars survived, so every restart
+// re-confirmed evidence for an artifact that was gone, and the next build would
+// have failed on a missing drive0.
+//
+// Resolution order mirrors scanSourceForBase and vmmd's publishedLocalPath: the
+// backend's local path for baseKey when it has one, otherwise the legacy
+// outImage path. An empty outImage with no resolvable local path means the
+// caller consumes the artifact straight from the backend (the shape every
+// unit test uses), so there is nothing local to require.
+func (h *Handler) localBaseImageReady(be storage.StorageBackend, baseKey, outImage string) error {
+	if resolver, ok := be.(storage.LocalPathResolver); ok {
+		path, exists, err := resolver.LocalPath(baseKey)
+		if err == nil && exists && path != "" {
+			// validateExistingBaseArtifact already stats this path.
+			return nil
+		}
+	}
+	if outImage == "" {
+		return nil
+	}
+	info, err := os.Stat(outImage)
+	if err != nil {
+		return fmt.Errorf("stat staged base %q: %w", outImage, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("staged base %q is a directory, not an image", outImage)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("staged base %q is empty", outImage)
+	}
+	return nil
+}
+
+// baseSkipDeclined logs why a skip was refused and reports whether the caller
+// must restage. Keeping it in one place means the "evidence says yes, disk says
+// no" case is always visible in the daemon log rather than inferred from a
+// later build failure.
+func (h *Handler) baseSkipDeclined(be storage.StorageBackend, baseKey, outImage, reason string) bool {
+	if err := h.localBaseImageReady(be, baseKey, outImage); err != nil {
+		h.log.Warn("imaged: staged base is missing locally; restaging instead of skipping",
+			"key", baseKey, "out_image", outImage, "evidence", reason, "err", err)
+		return true
+	}
+	return false
 }
 
 // mountOverlayFn / umountOverlayFn (the package-level test seams)

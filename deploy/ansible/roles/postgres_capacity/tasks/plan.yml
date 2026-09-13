@@ -1,0 +1,48 @@
+---
+# Connection-free capacity planning shared by node admission and the generated
+# inventory scale check. Keep this file free of host mutations and commands.
+
+- name: postgres capacity plan — derive the complete compute fleet size
+  ansible.builtin.set_fact:
+    postgres_capacity_compute_nodes: >-
+      {{ (groups['compute_nodes'] | default([]) | length) | int }}
+
+- name: postgres capacity plan — require declared fleet budgets
+  ansible.builtin.assert:
+    that:
+      - (postgres_capacity_compute_nodes | int) >= 1
+      - (faas_postgres_control_plane_pool_budget | int) > 0
+      - (faas_postgres_per_compute_pool_budget | int) > 0
+      - (faas_postgres_rollout_overlap_nodes | int) >= 1
+      - (faas_postgres_superuser_reserved_connections | int) >= 3
+      - (faas_postgres_min_operator_headroom | int) >= 1
+    fail_msg: >-
+      PostgreSQL capacity needs the complete [compute_nodes] inventory and
+      positive daemon, rollout-overlap, reserved, and operator budgets.
+
+- name: postgres capacity plan — calculate fleet pool budgets
+  ansible.builtin.set_fact:
+    postgres_capacity_steady_pool_budget: >-
+      {{ (faas_postgres_control_plane_pool_budget | int)
+      + ((postgres_capacity_compute_nodes | int)
+      * (faas_postgres_per_compute_pool_budget | int)) }}
+    postgres_capacity_rollout_pool_budget: >-
+      {{ (faas_postgres_control_plane_pool_budget | int)
+      + (((postgres_capacity_compute_nodes | int)
+      + (faas_postgres_rollout_overlap_nodes | int))
+      * (faas_postgres_per_compute_pool_budget | int)) }}
+
+- name: postgres capacity plan — derive the ordinary-client ceiling
+  ansible.builtin.set_fact:
+    postgres_capacity_ordinary_connections: >-
+      {{ [
+      ((((postgres_capacity_steady_pool_budget | int) * 4) + 2) // 3),
+      ((postgres_capacity_rollout_pool_budget | int)
+      + (faas_postgres_min_operator_headroom | int))
+      ] | max }}
+
+- name: postgres capacity plan — round the postmaster ceiling up to ten
+  ansible.builtin.set_fact:
+    postgres_capacity_computed_max_connections: >-
+      {{ (((postgres_capacity_ordinary_connections | int)
+      + (faas_postgres_superuser_reserved_connections | int) + 9) // 10) * 10 }}

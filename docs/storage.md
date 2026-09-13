@@ -79,6 +79,12 @@ For a new app, use `gregale deploy --secrets-file <path>` (or
 creates the app, seals the bundle, and starts the first deployment in
 that order; run `faas secrets set` only after the app exists.
 
+For a monorepo project, the same bundle can be applied in one command with
+`gregale deploy --project --secrets-file <path>`. Gregale seals the values
+through the existing per-app secret path for every workload selected by the
+project plan; use `faas secrets set` afterward when one workload needs an
+override.
+
 ```sh
 faas secrets set --app <slug> DATABASE_URL='postgres://user:pass@host/db?sslmode=require'
 ```
