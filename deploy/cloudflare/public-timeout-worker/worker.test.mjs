@@ -119,3 +119,36 @@ test("fails closed when the origin is not configured", async () => {
   });
   assert.equal(response.status, 500);
 });
+
+for (const path of ["/", "/dashboard", "/dashboard/apps/example"]) {
+  test(`hardens frontend HTML route ${path}`, async () => {
+    const request = new Request(`https://gregale.dev${path}`);
+    const response = await handleRequest(request, {}, async () => new Response("<html></html>", {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Access-Control-Allow-Origin": "*",
+      },
+    }));
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("Content-Security-Policy"), /frame-ancestors 'none'/);
+    assert.match(response.headers.get("Content-Security-Policy"), /connect-src 'self' https:\/\/api\.gregale\.dev wss:\/\/api\.gregale\.dev/);
+    assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+    assert.equal(response.headers.get("Referrer-Policy"), "strict-origin-when-cross-origin");
+    assert.equal(response.headers.get("Permissions-Policy"), "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+    assert.equal(response.headers.get("X-Frame-Options"), "DENY");
+    assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
+  });
+}
+
+test("does not impose document headers on frontend assets", async () => {
+  const origin = new Response("export default {}", {
+    status: 200,
+    headers: { "Content-Type": "text/javascript", "Access-Control-Allow-Origin": "*" },
+  });
+  const response = await handleRequest(new Request("https://gregale.dev/app.js"), {}, async () => origin);
+  assert.equal(response, origin);
+  assert.equal(response.headers.get("Content-Security-Policy"), null);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), "*");
+});

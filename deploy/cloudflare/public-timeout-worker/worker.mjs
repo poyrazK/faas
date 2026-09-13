@@ -1,10 +1,11 @@
 /*
- * Gregale public-timeout edge adapter.
+ * Gregale public edge adapter.
  *
  * Cloudflare Free may replace an origin 502/504 body with its own generic
  * error page. The gateway marks its own request-budget 504s with
  * X-Faas-Error-Code, so this Worker can safely reconstruct only that known
- * platform error and leave genuine CDN/origin failures untouched.
+ * platform error and leave genuine CDN/origin failures untouched. The same
+ * route applies the frontend document security policy at the CDN boundary.
  */
 
 const ERROR_CODE = "request_budget_exceeded";
@@ -14,6 +15,23 @@ const ORIGINAL_STATUS_HEADER = "X-Faas-Edge-Original-Status";
 const ORIGIN_504_TRANSPORT_STATUS = 409;
 const PROBLEM_CONTENT_TYPE = "application/problem+json";
 const PROBLEM_TYPE = "https://docs.gregale.dev/errors/request-budget-exceeded";
+const DEFAULT_FRONTEND_HOSTNAME = "gregale.dev";
+const FRONTEND_CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "script-src 'self' 'unsafe-inline'",
+  "script-src-attr 'none'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self' https://api.gregale.dev wss://api.gregale.dev",
+  "form-action 'self'",
+  "manifest-src 'self'",
+  "worker-src 'self' blob:",
+  "upgrade-insecure-requests",
+].join("; ");
 
 const HOP_BY_HOP_HEADERS = [
   "connection",
@@ -66,9 +84,43 @@ function isStructuredBudgetBody(body, contentType) {
   }
 }
 
+function withFrontendSecurityHeaders(response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("text/html")) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set("Content-Security-Policy", FRONTEND_CSP);
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+  headers.set("X-Frame-Options", "DENY");
+  headers.delete("Access-Control-Allow-Origin");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 // Exported separately so the contract tests can exercise the Worker with a
 // stub fetch implementation. Cloudflare invokes the default export below.
 export async function handleRequest(request, env, fetchImpl = globalThis.fetch) {
+  const requestHost = new URL(request.url).hostname.toLowerCase();
+  const frontendHost = String(env?.FRONTEND_HOSTNAME || DEFAULT_FRONTEND_HOSTNAME)
+    .trim()
+    .toLowerCase();
+  if (requestHost === frontendHost) {
+    try {
+      return withFrontendSecurityHeaders(await fetchImpl(request));
+    } catch (_) {
+      return new Response("frontend origin unavailable", {
+        status: 502,
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+  }
+
   const originHost = String(env?.ORIGIN_HOSTNAME || "").trim();
   if (!originHost) {
     return new Response("public-timeout-worker: ORIGIN_HOSTNAME is not configured", {

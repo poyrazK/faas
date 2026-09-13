@@ -8,9 +8,11 @@ workers_dev = false
 # `cf.resolveOverride` to preserve the customer Host header.
 [vars]
 ORIGIN_HOSTNAME = "origin.gregale.dev"
+FRONTEND_HOSTNAME = "gregale.dev"
 
 # Configure the route in the Cloudflare dashboard or with your deployment
 # pipeline. Keep the Worker on the customer-facing routes only:
+#   gregale.dev/*
 #   api.gregale.dev/*
 #   *.gregale.dev/*
 #   *.apps.gregale.dev/*
