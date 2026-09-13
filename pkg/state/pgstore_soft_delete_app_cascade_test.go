@@ -15,10 +15,45 @@ package state_test
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestPg_ListAppDeletionArtifactsExcludesKeysSharedByAnotherApp(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, firstAppID, firstDeploymentID := seedLiveDeploy(t, s, ctx, "purge-artifact-first-")
+	_, _, secondDeploymentID := seedLiveDeploy(t, s, ctx, "purge-artifact-second-")
+	const sharedRootfs = "apps/shared/rootfs.ext4"
+	if err := s.SetDeploymentRootfs(ctx, firstDeploymentID, "/first/rootfs.ext4", sharedRootfs, 4096); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDeploymentRootfs(ctx, secondDeploymentID, "/second/rootfs.ext4", sharedRootfs, 4096); err != nil {
+		t.Fatal(err)
+	}
+	snapshotKey := state.SnapMemKey(firstDeploymentID)
+	if _, err := s.CreateSnapshot(ctx, state.Snapshot{
+		ID: "00000000-0000-0000-0000-000000002466", DeploymentID: firstDeploymentID,
+		FCVersion: "1.10.0", StorageKey: snapshotKey, StoredBytes: 8192,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := s.ListAppDeletionArtifacts(ctx, firstAppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		keys = append(keys, artifact.Key)
+	}
+	if slices.Contains(keys, sharedRootfs) {
+		t.Fatalf("shared rootfs was returned as exclusively deletable: %v", keys)
+	}
+	if !slices.Contains(keys, snapshotKey) || !slices.Contains(keys, state.SnapshotVMStateKey(state.Snapshot{DeploymentID: firstDeploymentID, StorageKey: snapshotKey})) {
+		t.Fatalf("snapshot pair missing from deletion artifacts: %v", keys)
+	}
+}
 
 // TestPg_SoftDeleteAppCascade_UpdatesStatus pins the canonical
 // happy path: a live app + SoftDeleteAppCascade returns the

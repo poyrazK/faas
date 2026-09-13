@@ -53,7 +53,7 @@ ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
 ReadOnlyPaths=/etc/faas
-ReadWritePaths=/var/lib/faas /var/log/faas /var/spool/faas
+ReadWritePaths=/srv/fc /var/lib/faas /var/log/faas /var/spool/faas
 
 [Install]
 WantedBy=multi-user.target

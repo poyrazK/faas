@@ -1319,6 +1319,16 @@ type App struct {
 	CreatedAt          time.Time
 }
 
+// AppDeletionArtifact is a durable artifact owned exclusively by an app that
+// is waiting for permanent deletion. Shared keys are excluded by the Store so
+// the grace sweeper can remove every returned key without breaking another
+// app. Bytes is the best available physical allocation and is used for the
+// overdue-artifact gauge; zero means the writer predates byte accounting.
+type AppDeletionArtifact struct {
+	Key   string
+	Bytes int64
+}
+
 // DeclaredRoute is the persisted explicit route-list shape used by the
 // only-declared-routes policy. Path parameters use OpenAPI's `{name}` segment
 // syntax and Methods contains uppercase HTTP verbs.

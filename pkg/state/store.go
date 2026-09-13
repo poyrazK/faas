@@ -2074,6 +2074,10 @@ type Store interface {
 	RestoreApp(ctx context.Context, id string) (App, error)
 	// ListDeletedApps returns tombstones for the app grace sweeper.
 	ListDeletedApps(ctx context.Context) ([]App, error)
+	// ListAppDeletionArtifacts returns storage keys referenced by this app and
+	// no other app. The grace sweeper deletes these before removing database
+	// state so a failed storage operation remains durably retryable.
+	ListAppDeletionArtifacts(ctx context.Context, appID string) ([]AppDeletionArtifact, error)
 	// DeleteAppPermanently removes an expired app and its dependent state.
 	DeleteAppPermanently(ctx context.Context, id string) error
 

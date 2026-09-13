@@ -2951,7 +2951,15 @@ func (m *MemStore) ApplyProjectReconcile(
 			out.Changed = append(out.Changed, app)
 		case "remove":
 			app := m.apps[mutation.App.ID]
+			now := time.Now().UTC()
+			deadline := now.Add(AppDeleteGraceDuration())
 			app.Status = AppDeleted
+			if app.DeletedAt == nil {
+				app.DeletedAt = &now
+			}
+			if app.DeleteGraceUntil == nil {
+				app.DeleteGraceUntil = &deadline
+			}
 			m.apps[app.ID] = app
 			out.Removed = append(out.Removed, app)
 		}
@@ -4776,6 +4784,59 @@ func (m *MemStore) ListDeletedApps(_ context.Context) ([]App, error) {
 	return out, nil
 }
 
+func (m *MemStore) ListAppDeletionArtifacts(_ context.Context, appID string) ([]AppDeletionArtifact, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	type ref struct {
+		owners map[string]struct{}
+		bytes  int64
+	}
+	refs := make(map[string]*ref)
+	add := func(owner, key string, bytes int64) {
+		if key == "" {
+			return
+		}
+		r := refs[key]
+		if r == nil {
+			r = &ref{owners: make(map[string]struct{})}
+			refs[key] = r
+		}
+		r.owners[owner] = struct{}{}
+		if bytes > r.bytes {
+			r.bytes = bytes
+		}
+	}
+	for _, d := range m.deployments {
+		add(d.AppID, d.RootfsKey, d.RootfsBytes)
+	}
+	for _, layer := range m.deploymentSidecarLayers {
+		if d, ok := m.deployments[layer.DeploymentID]; ok {
+			add(d.AppID, layer.StorageKey, layer.Bytes)
+		}
+	}
+	for _, snap := range m.snapshots {
+		if d, ok := m.deployments[snap.DeploymentID]; ok {
+			add(d.AppID, snap.StorageKey, snap.StoredBytes)
+			add(d.AppID, SnapshotVMStateKey(snap), 0)
+		}
+	}
+	for buildID, provenance := range m.buildProvenance {
+		if b, ok := m.builds[buildID]; ok {
+			if d, ok := m.deployments[b.DeploymentID]; ok {
+				add(d.AppID, provenance.SBOMStorageKey, 0)
+			}
+		}
+	}
+	out := make([]AppDeletionArtifact, 0)
+	for key, r := range refs {
+		if _, owns := r.owners[appID]; owns && len(r.owners) == 1 {
+			out = append(out, AppDeletionArtifact{Key: key, Bytes: r.bytes})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
+}
+
 func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -4838,10 +4899,20 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.deployments, key)
 		}
 	}
+	for key, layer := range m.deploymentSidecarLayers {
+		if _, ok := depIDs[layer.DeploymentID]; ok {
+			delete(m.deploymentSidecarLayers, key)
+		}
+	}
+	buildIDs := make(map[string]struct{})
 	for key, b := range m.builds {
 		if _, ok := depIDs[b.DeploymentID]; ok {
+			buildIDs[key] = struct{}{}
 			delete(m.builds, key)
 		}
+	}
+	for buildID := range buildIDs {
+		delete(m.buildProvenance, buildID)
 	}
 	filtered := m.snapshots[:0]
 	for _, snap := range m.snapshots {
@@ -4881,7 +4952,15 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 			return App{}, ErrConflict
 		}
 	}
+	now := time.Now().UTC()
+	deadline := now.Add(AppDeleteGraceDuration())
 	a.Status = AppDeleted
+	if a.DeletedAt == nil {
+		a.DeletedAt = &now
+	}
+	if a.DeleteGraceUntil == nil {
+		a.DeleteGraceUntil = &deadline
+	}
 	m.apps[id] = a
 	for cronID, cron := range m.crons {
 		if cron.AppID == id && cron.Enabled {
@@ -4889,7 +4968,6 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 			m.crons[cronID] = cron
 		}
 	}
-	now := time.Now().UTC()
 	for deploymentID, d := range m.deployments {
 		if d.AppID != id || !d.Status.IsCancelEligible() {
 			continue

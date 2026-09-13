@@ -2798,3 +2798,32 @@ groups:
           summary: "Raw compute-heartbeat backlog exceeds the seven-day policy"
           description: "The oldest raw compute heartbeat is more than eight days old, so bounded cleanup is not catching up within its one-day tolerance. Hourly rollups remain the long-term capacity record."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeHeartbeatRetentionStalled.md"
+
+  - name: app_deletion_grace
+    interval: 1m
+    rules:
+      - alert: FaasAppDeletionDeadlineMissing
+        expr: apid_app_grace_missing_deadlines > 0
+        for: 10m
+        labels:
+          severity: page
+          component: apid
+          family: app_deletion_grace
+          public_status: internal
+        annotations:
+          summary: "Deleted app tombstones are missing purge deadlines"
+          description: "Apid quarantined at least one deleted app because its deletion deadline is missing. The row and its artifacts will remain until the deadline invariant is repaired."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"
+
+      - alert: FaasAppDeletionArtifactsRetained
+        expr: apid_app_grace_expired_artifact_bytes > 0
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: app_deletion_grace
+          public_status: internal
+        annotations:
+          summary: "Expired app artifacts remain on persistent storage"
+          description: "Known artifact bytes remain after their app deletion grace expired. Apid retains the database references and retries cleanup rather than orphaning the objects."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"

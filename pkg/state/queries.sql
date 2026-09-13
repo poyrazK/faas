@@ -98,7 +98,11 @@ returning id, account_id, slug, type, coalesce(runtime, ''), ram_mb, coalesce(id
 update apps set manifest = $2 where id = $1;
 
 -- name: DeleteApp :exec
-update apps set status = 'deleted' where id = $1;
+update apps
+set status = 'deleted',
+    deleted_at = coalesce(deleted_at, now()),
+    delete_grace_until = coalesce(delete_grace_until, now() + interval '7 days')
+where id = $1;
 
 -- name: CreateDeployment :one
 insert into deployments (id, app_id, build_id, image_digest, kind, source_path, source_root, source_bytes, handler, log_path, status)

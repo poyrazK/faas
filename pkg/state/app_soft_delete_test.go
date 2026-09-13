@@ -93,3 +93,37 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 		t.Fatalf("ScheduleAppDeletion missing app = %v, want ErrNotFound", err)
 	}
 }
+
+func TestMemStoreSoftDeleteCascadeAlwaysStampsDeadlineAndDeduplicatesSharedArtifacts(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	acct, err := m.CreateAccount(ctx, "shared-artifact@example.com", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "first", Status: AppActive})
+	second, _ := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "second", Status: AppActive})
+	firstDep, _ := m.CreateDeployment(ctx, Deployment{ID: "first-dep", AppID: first.ID, Status: DeployLive})
+	secondDep, _ := m.CreateDeployment(ctx, Deployment{ID: "second-dep", AppID: second.ID, Status: DeployLive})
+	const shared = "apps/shared/rootfs.ext4"
+	if err := m.SetDeploymentRootfs(ctx, firstDep.ID, "/first", shared, 1024); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDeploymentRootfs(ctx, secondDep.ID, "/second", shared, 1024); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := m.SoftDeleteAppCascade(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.DeletedAt == nil || deleted.DeleteGraceUntil == nil || !deleted.DeleteGraceUntil.After(*deleted.DeletedAt) {
+		t.Fatalf("incomplete deletion deadline: %+v", deleted)
+	}
+	artifacts, err := m.ListAppDeletionArtifacts(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 0 {
+		t.Fatalf("shared artifact returned as exclusively deletable: %+v", artifacts)
+	}
+}

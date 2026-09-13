@@ -3872,6 +3872,70 @@ func (s *PgStore) ListDeletedApps(ctx context.Context) ([]App, error) {
 	return scanApps(rows)
 }
 
+// ListAppDeletionArtifacts projects every durable artifact reference owned by
+// appID. Keys referenced by another app are deliberately excluded; after one
+// deleted owner is purged, the last owner will become eligible on its pass.
+func (s *PgStore) ListAppDeletionArtifacts(ctx context.Context, appID string) ([]AppDeletionArtifact, error) {
+	rows, err := s.pool.Query(ctx, `
+		with refs(app_id, storage_key, bytes) as materialized (
+			select d.app_id, d.rootfs_key, greatest(coalesce(d.rootfs_bytes, 0), 0)::bigint
+			  from deployments d where d.rootfs_key <> ''
+			union all
+			select d.app_id, l.storage_key, greatest(coalesce(l.bytes, 0), 0)::bigint
+			  from deployment_sidecar_layers l join deployments d on d.id = l.deployment_id
+			 where l.storage_key <> ''
+			union all
+			select d.app_id, sn.storage_key,
+			       greatest(case when coalesce(sn.stored_bytes, 0) > 0
+			                     then sn.stored_bytes
+			                     else coalesce(sn.mem_bytes, 0) + coalesce(sn.disk_bytes, 0)
+			                end, 0)::bigint
+			  from snapshots sn join deployments d on d.id = sn.deployment_id
+			 where sn.storage_key <> ''
+			union all
+			select d.app_id,
+			       case when sn.storage_key like '%/mem'
+			            then left(sn.storage_key, length(sn.storage_key) - 4) || '/vmstate'
+			            else 'snap/' || sn.deployment_id::text ||
+			                 case when sn.tier = 'warm' then '/warm/vmstate' else '/vmstate' end
+			       end,
+			       0::bigint
+			  from snapshots sn join deployments d on d.id = sn.deployment_id
+			 where sn.storage_key <> ''
+			union all
+			select d.app_id, bp.sbom_storage_key, 0::bigint
+			  from build_provenance bp
+			  join builds b on b.id = bp.build_id
+			  join deployments d on d.id = b.deployment_id
+			 where coalesce(bp.sbom_storage_key, '') <> ''
+		)
+		select r.storage_key, max(r.bytes)::bigint
+		  from refs r
+		 where r.app_id = $1
+		   and not exists (
+		       select 1 from refs other
+		        where other.storage_key = r.storage_key and other.app_id <> $1
+		   )
+		 group by r.storage_key
+		 order by r.storage_key`, appID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list app deletion artifacts: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AppDeletionArtifact, 0)
+	for rows.Next() {
+		var artifact AppDeletionArtifact
+		if err := rows.Scan(&artifact.Key, &artifact.Bytes); err != nil {
+			return nil, fmt.Errorf("state: scan app deletion artifact: %w", err)
+		}
+		out = append(out, artifact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate app deletion artifacts: %w", err)
+	}
+	return out, nil
+}
+
 // DeleteAppPermanently removes an expired app and all state that is not
 // covered by an ON DELETE CASCADE. It deliberately rechecks the deadline in
 // the final DELETE so a concurrent restore cannot be lost.
@@ -3964,6 +4028,7 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 		return App{}, mapErr(err)
 	}
 	now := time.Now().UTC()
+	deadline := now.Add(AppDeleteGraceDuration())
 	if _, err := tx.Exec(ctx, `
 		update deployments
 		   set status = 'cancelled',
@@ -4006,9 +4071,12 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 	}
 	var a App
 	if err := scanAppInto(&a, tx.QueryRow(ctx, `
-		update apps set status = 'deleted'
-		where id = $1
-		returning `+appsSelectColumns, id)); err != nil {
+			update apps
+			   set status = 'deleted',
+			       deleted_at = coalesce(deleted_at, $2),
+			       delete_grace_until = coalesce(delete_grace_until, $3)
+			where id = $1
+			returning `+appsSelectColumns, id, now, deadline)); err != nil {
 		return App{}, mapErr(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -4766,6 +4834,7 @@ func softDeleteAppInTx(ctx context.Context, tx pgx.Tx, id string) (App, error) {
 		return App{}, mapErr(err)
 	}
 	now := time.Now().UTC()
+	deadline := now.Add(AppDeleteGraceDuration())
 	if _, err := tx.Exec(ctx, `update deployments set status='cancelled', cancelled_at=$2, cancelled_by_principal='system:app-delete', cancel_reason='system' where app_id=$1 and status in ('pending','building','imaging','snapshotting')`, id, now); err != nil {
 		return App{}, err
 	}
@@ -4773,7 +4842,9 @@ func softDeleteAppInTx(ctx context.Context, tx pgx.Tx, id string) (App, error) {
 		return App{}, err
 	}
 	var app App
-	if err := scanAppInto(&app, tx.QueryRow(ctx, `update apps set status='deleted' where id=$1 returning `+appsSelectColumns, id)); err != nil {
+	if err := scanAppInto(&app, tx.QueryRow(ctx, `update apps
+		set status='deleted', deleted_at=coalesce(deleted_at,$2), delete_grace_until=coalesce(delete_grace_until,$3)
+		where id=$1 returning `+appsSelectColumns, id, now, deadline)); err != nil {
 		return App{}, mapErr(err)
 	}
 	return app, nil

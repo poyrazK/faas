@@ -1565,7 +1565,11 @@ func (q *Queries) DeleteAPIKeyReturning(ctx context.Context, db DBTX, arg Delete
 }
 
 const deleteApp = `-- name: DeleteApp :exec
-update apps set status = 'deleted' where id = $1
+update apps
+set status = 'deleted',
+    deleted_at = coalesce(deleted_at, now()),
+    delete_grace_until = coalesce(delete_grace_until, now() + interval '7 days')
+where id = $1
 `
 
 func (q *Queries) DeleteApp(ctx context.Context, db DBTX, id pgtype.UUID) error {

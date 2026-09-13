@@ -738,10 +738,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ListAllAccounts walk so it stays bounded by the customer
 		// count on the one box.
 		graceLoop := grace.New(grace.Params{
-			Store:    srv.store,
-			Mailer:   graceSenderAdapter{m: srv.mailer},
-			Log:      log,
-			Interval: graceIntervalFromEnv(log),
+			Store:     srv.store,
+			Mailer:    graceSenderAdapter{m: srv.mailer},
+			Log:       log,
+			Interval:  graceIntervalFromEnv(log),
+			Artifacts: srv.sbomStorage,
+			Registry:  srv.ops.Registry(),
 			Notif: func(ctx context.Context, ch, payload string) error {
 				return srv.notif.Notify(ctx, ch, payload)
 			},

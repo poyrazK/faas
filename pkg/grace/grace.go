@@ -25,9 +25,12 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // Sender is the slice of mail.Sender the post-delete notification
@@ -58,19 +61,22 @@ type Auditor interface {
 // fields except Store are optional and fall back to no-op behavior;
 // Store must be non-nil (the constructor panics otherwise).
 type Params struct {
-	Store    state.Store
-	Mailer   Sender
-	Interval time.Duration // default 60s
-	Now      func() time.Time
-	Log      *slog.Logger
-	Notif    Notifier
-	Audit    Auditor // optional; PR-5.5 emits account.deleted after DeleteAccount fires
+	Store     state.Store
+	Mailer    Sender
+	Interval  time.Duration // default 60s
+	Now       func() time.Time
+	Log       *slog.Logger
+	Notif     Notifier
+	Audit     Auditor // optional; PR-5.5 emits account.deleted after DeleteAccount fires
+	Artifacts storage.StorageBackend
+	Registry  prometheus.Registerer
 }
 
 // Grace is the 30-day deletion-grace timer. Owns the ticker + the
 // sweep loop; Run exits cleanly when ctx is cancelled.
 type Grace struct {
-	p Params
+	p       Params
+	metrics *metrics
 }
 
 // New returns a Grace ready to Run. Defaults: Interval 60s, Now
@@ -97,7 +103,7 @@ func New(p Params) *Grace {
 	if p.Audit == nil {
 		p.Audit = noopAuditor{}
 	}
-	return &Grace{p: p}
+	return &Grace{p: p, metrics: newMetrics(p.Registry)}
 }
 
 // noopAuditor discards every emit. Default for tests.
@@ -224,20 +230,69 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 func (g *Grace) RunAppsOnce(ctx context.Context) error {
 	rows, err := g.p.Store.ListDeletedApps(ctx)
 	if err != nil {
+		g.metrics.failure("list_tombstones")
 		return err
 	}
 	now := g.p.Now()
+	missingDeadlines := 0
+	var retainedArtifactBytes int64
 	for _, app := range rows {
-		if app.DeleteGraceUntil == nil || app.DeleteGraceUntil.After(now) {
+		if app.DeleteGraceUntil != nil && app.DeleteGraceUntil.After(now) {
+			continue
+		}
+		artifacts, err := g.p.Store.ListAppDeletionArtifacts(ctx, app.ID)
+		if err != nil {
+			g.metrics.failure("list_artifacts")
+			g.p.Log.Warn("grace: list app deletion artifacts failed", "app", app.ID, "err", err)
+			if app.DeleteGraceUntil == nil {
+				missingDeadlines++
+			}
+			continue
+		}
+		var appArtifactBytes int64
+		for _, artifact := range artifacts {
+			if artifact.Bytes > 0 {
+				appArtifactBytes += artifact.Bytes
+			}
+		}
+		if app.DeleteGraceUntil == nil {
+			missingDeadlines++
+			retainedArtifactBytes += appArtifactBytes
+			g.p.Log.Error("grace: quarantined deleted app without purge deadline",
+				"app", app.ID, "slug", app.Slug, "artifact_bytes", appArtifactBytes)
+			continue
+		}
+		if len(artifacts) != 0 && g.p.Artifacts == nil {
+			retainedArtifactBytes += appArtifactBytes
+			g.metrics.failure("artifact_backend_missing")
+			g.p.Log.Error("grace: refusing app purge without artifact backend",
+				"app", app.ID, "artifact_count", len(artifacts), "artifact_bytes", appArtifactBytes)
+			continue
+		}
+		artifactFailed := false
+		for _, artifact := range artifacts {
+			if err := g.p.Artifacts.Delete(ctx, artifact.Key); err != nil && !storage.IsNotFound(err) {
+				artifactFailed = true
+				if artifact.Bytes > 0 {
+					retainedArtifactBytes += artifact.Bytes
+				}
+				g.metrics.failure("delete_artifact")
+				g.p.Log.Warn("grace: app artifact delete failed", "app", app.ID,
+					"key", artifact.Key, "bytes", artifact.Bytes, "err", err)
+			}
+		}
+		if artifactFailed {
 			continue
 		}
 		if err := g.p.Store.DeleteAppPermanently(ctx, app.ID); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				continue
 			}
+			g.metrics.failure("delete_database")
 			g.p.Log.Warn("grace: app hard delete failed", "app", app.ID, "err", err)
 			continue
 		}
+		g.metrics.deleted.Inc()
 		// Reuse the existing lifecycle channel so schedd's cleanup path
 		// gets a durable redelivery signal. The app row has already been
 		// removed, so consumers treat a missing row as an idempotent no-op.
@@ -251,5 +306,8 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 		})
 		g.p.Log.Info("grace: app hard-deleted", "app", app.ID, "slug", app.Slug)
 	}
+	g.metrics.missingDeadlines.Set(float64(missingDeadlines))
+	g.metrics.expiredArtifactBytes.Set(float64(retainedArtifactBytes))
+	g.metrics.lastSuccess.SetToCurrentTime()
 	return nil
 }
