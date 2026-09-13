@@ -702,6 +702,16 @@ func (c *LocalCacheBackend) List(ctx context.Context, prefix string) ([]string, 
 	return keys, nil
 }
 
+// ReconcileSnapshotRepositoryIndex forwards durable enumeration maintenance to
+// the shared parent. The node-local cache has no repository inventory of its
+// own and must not turn cached keys into the remote source of truth.
+func (c *LocalCacheBackend) ReconcileSnapshotRepositoryIndex(ctx context.Context, deploymentIDs []string) error {
+	if indexer, ok := c.parent.(SnapshotRepositoryIndexer); ok {
+		return indexer.ReconcileSnapshotRepositoryIndex(ctx, deploymentIDs)
+	}
+	return nil
+}
+
 // cacheEntry is the metadata the LRU index carries alongside
 // the cached blob. The key is the storage key (re-derivable
 // from the sidecar file, not the path).

@@ -271,6 +271,21 @@ func (r *PrefixRouter) List(ctx context.Context, prefix string) ([]string, error
 	return r.local.List(ctx, prefix)
 }
 
+// ReconcileSnapshotRepositoryIndex forwards to the backend that owns snap/.
+// Remote-only production uses the fallback LocalCacheBackend → OCI chain;
+// local-prefix deployments resolve to a local backend and need no index.
+func (r *PrefixRouter) ReconcileSnapshotRepositoryIndex(ctx context.Context, deploymentIDs []string) error {
+	const probe = "snap/00000000-0000-0000-0000-000000000000/mem"
+	b, _, _, err := r.dispatch(probe)
+	if err != nil {
+		return err
+	}
+	if indexer, ok := b.(SnapshotRepositoryIndexer); ok {
+		return indexer.ReconcileSnapshotRepositoryIndex(ctx, deploymentIDs)
+	}
+	return nil
+}
+
 // aggregatedLister fans List out across the router's backends and
 // re-prefixes the result so the caller sees the full logical key.
 type aggregatedLister struct {

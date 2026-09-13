@@ -984,10 +984,9 @@ func TestOCIListUnderApps(t *testing.T) {
 	}
 }
 
-// TestOCIListUnderSnap exercises the snap/ fan-out via knownRepos.
-// We pre-warm knownRepos by issuing Puts; on a cold start without a
-// populated knownRepos the list would be empty (the registry's
-// /v2/_catalog is not implemented by most public registries).
+// TestOCIListUnderSnap exercises the durable snap/ fan-out. The reader is a
+// fresh backend with an empty process-local cache, proving enumeration survives
+// daemon restart without the registry's optional /v2/_catalog endpoint.
 func TestOCIListUnderSnap(t *testing.T) {
 	f := newFakeRegistry(t)
 	defer f.srv.Close()
@@ -1000,7 +999,8 @@ func TestOCIListUnderSnap(t *testing.T) {
 	if err := be.Put(ctx, "snap/"+depUUID+"/vmstate", bytes.NewReader([]byte("v"))); err != nil {
 		t.Fatalf("Put snap vmstate: %v", err)
 	}
-	got, err := be.List(ctx, "snap/")
+	fresh := f.client(t)
+	got, err := fresh.List(ctx, "snap/")
 	if err != nil {
 		t.Fatalf("List snap: %v", err)
 	}
@@ -1019,6 +1019,63 @@ func TestOCIListUnderSnap(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("List missing keys: %v", want)
+	}
+}
+
+func TestOCIListUnderSnapWithoutDurableIndexIsExplicitlyIncomplete(t *testing.T) {
+	f := newFakeRegistry(t)
+	defer f.srv.Close()
+	got, err := f.client(t).List(context.Background(), "snap/")
+	if !errors.Is(err, ErrIncompleteEnumeration) {
+		t.Fatalf("List snap/ error = %v, want ErrIncompleteEnumeration (keys=%v)", err, got)
+	}
+	if got != nil {
+		t.Fatalf("List snap/ keys = %v, want nil on incomplete inventory", got)
+	}
+}
+
+func TestOCIReconcileSnapshotRepositoryIndexUpgradesLegacyArtifacts(t *testing.T) {
+	f := newFakeRegistry(t)
+	defer f.srv.Close()
+	ctx := context.Background()
+	depID := "550e8400-e29b-41d4-a716-446655440000"
+	writer := f.client(t)
+	if err := writer.Put(ctx, "snap/"+depID+"/mem", bytes.NewReader([]byte("memory"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Put(ctx, "snap/"+depID+"/vmstate", bytes.NewReader([]byte("state"))); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate artifacts produced before snap-index existed.
+	f.mu.Lock()
+	delete(f.manifests, "faas/"+repoSnapIdx)
+	f.mu.Unlock()
+
+	reconciler := f.client(t)
+	cache, err := NewLocalCacheBackend(reconciler, t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router, err := NewPrefixRouter(nil, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := router.ReconcileSnapshotRepositoryIndex(ctx, []string{depID}); err != nil {
+		t.Fatalf("ReconcileSnapshotRepositoryIndex: %v", err)
+	}
+	got, err := f.client(t).List(ctx, "snap/")
+	if err != nil {
+		t.Fatalf("fresh List after reconcile: %v", err)
+	}
+	want := map[string]bool{
+		"snap/" + depID + "/mem":     true,
+		"snap/" + depID + "/vmstate": true,
+	}
+	for _, key := range got {
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("fresh List missing legacy keys: %v (got %v)", want, got)
 	}
 }
 
@@ -1104,6 +1161,7 @@ func TestOCIListFanOutContinuesOnPartialFailure(t *testing.T) {
 		goodRepo: {status: http.StatusOK, body: `{"name":"snap-good","tags":["mem"]}`},
 	})
 	manipulateKnownReposForTest(be, []string{badRepo, goodRepo})
+	initializeSnapshotRepoIndexForTest(f)
 
 	got, err := be.List(context.Background(), "snap/")
 	if err == nil {
@@ -1205,6 +1263,7 @@ func TestOCIListFanOutAllFailingReturnsError(t *testing.T) {
 		"snap-zzz2": {status: http.StatusInternalServerError, body: "registry down"},
 	})
 	manipulateKnownReposForTest(be, []string{"snap-zzz1", "snap-zzz2"})
+	initializeSnapshotRepoIndexForTest(f)
 
 	got, err := be.List(context.Background(), "snap/")
 	if err == nil {
@@ -1236,6 +1295,15 @@ func manipulateKnownReposForTest(be *OCIRegistryStorageBackend, repos []string) 
 	for _, r := range repos {
 		be.knownRepos.Store(prefix+"/"+r, true)
 	}
+}
+
+func initializeSnapshotRepoIndexForTest(f *fakeRegistry) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.manifests["faas/"+repoSnapIdx] == nil {
+		f.manifests["faas/"+repoSnapIdx] = map[string][]byte{}
+	}
+	f.manifests["faas/"+repoSnapIdx][snapshotRepoIndexVersionTag] = []byte(`{"schemaVersion":2}`)
 }
 
 // TestOCIRequiresRegistry verifies the constructor's empty-registry

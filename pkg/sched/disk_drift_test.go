@@ -684,6 +684,26 @@ type fakeStorageLister struct {
 	err  error
 }
 
+type recoveringSnapshotLister struct {
+	globalCalls int
+	keys        []string
+}
+
+func (f *recoveringSnapshotLister) Put(context.Context, string, io.Reader) error { return nil }
+func (f *recoveringSnapshotLister) Get(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+func (f *recoveringSnapshotLister) Delete(context.Context, string) error { return nil }
+func (f *recoveringSnapshotLister) List(_ context.Context, prefix string) ([]string, error) {
+	if prefix == "snap/" {
+		f.globalCalls++
+		if f.globalCalls == 1 {
+			return nil, storage.ErrIncompleteEnumeration
+		}
+	}
+	return f.keys, nil
+}
+
 func (f *fakeStorageLister) Put(_ context.Context, _ string, _ io.Reader) error {
 	return nil
 }
@@ -722,6 +742,27 @@ func TestDiskDrift_StorageBackend_PresenceMatch(t *testing.T) {
 	}
 	if drift != 0 {
 		t.Errorf("drift = %d, want 0 (all keys present)", drift)
+	}
+}
+
+func TestDiskDrift_StorageBackendSeedsIncompleteSnapshotIndex(t *testing.T) {
+	store := state.NewMemStore()
+	lister := &recoveringSnapshotLister{keys: []string{
+		"snap/d-1/mem",
+		"snap/d-1/vmstate",
+	}}
+	dd := NewDiskDrift(store, nil).WithStorage(lister)
+	ctx := context.Background()
+	seedDriftRow(ctx, t, store, "d-1")
+	drift, err := dd.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if drift != 0 {
+		t.Fatalf("drift = %d, want 0 after durable index bootstrap", drift)
+	}
+	if lister.globalCalls != 2 {
+		t.Fatalf("global List calls = %d, want initial incomplete read plus retry", lister.globalCalls)
 	}
 }
 

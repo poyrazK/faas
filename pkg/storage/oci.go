@@ -22,6 +22,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"golang.org/x/sync/errgroup"
 )
 
 // OCIRegistryStorageBackend is the remote-distribution driver for the
@@ -68,13 +69,16 @@ type OCIRegistryStorageBackend struct {
 	// stale entry just costs one round-trip.
 	tokenCache sync.Map
 
-	// knownRepos maps "faas/snap-<dep>" → true for repos we've ever
-	// touched via Put. The GC path's snap/ List fan-out consults this
-	// when the registry doesn't expose /v2/_catalog (most public
-	// registries don't, per the distribution spec — catalog is
-	// optional). Without it, List(snap/) would return nothing on a
-	// cold start, defeating the GC's job.
+	// knownRepos maps "faas/snap-<dep>" → true for repositories touched in
+	// this process. It is only a cache: global enumeration is rooted in the
+	// fixed registry-side index so daemon restarts remain complete.
 	knownRepos sync.Map
+
+	// indexedSnapshotRepos avoids rewriting the durable registry-side snapshot
+	// repository marker on every mem/vmstate Put in this process. Unlike
+	// knownRepos, the source of truth is the fixed snap-index repository and is
+	// therefore recoverable by a fresh daemon without registry catalog access.
+	indexedSnapshotRepos sync.Map
 
 	// inFlight tracks in-progress refresh-token POSTs so concurrent
 	// callers on the same scope coalesce into one round-trip (issue
@@ -253,7 +257,10 @@ const (
 	repoSigs    = "sigs"
 	repoSources = "sources"
 	repoSBOMs   = "sboms"
+	repoSnapIdx = "snap-index"
 )
+
+const snapshotRepoIndexVersionTag = "v1"
 
 // defaultRepoPrefix is the per-namespace repo prefix the driver uses
 // when WithRepoPrefix is not supplied. Promoted to a constant because
@@ -500,6 +507,11 @@ func (o *OCIRegistryStorageBackend) Put(ctx context.Context, key string, r io.Re
 	if err := o.pushManifest(ctx, repo, tag, manifestJSON); err != nil {
 		return fmt.Errorf("storage: oci put %q: manifest: %w", key, err)
 	}
+	if strings.HasPrefix(repo, repoSnap+"-") {
+		if err := o.persistSnapshotRepoIndex(ctx, repo); err != nil {
+			return fmt.Errorf("storage: oci put %q: persist repository index: %w", key, err)
+		}
+	}
 	return nil
 }
 
@@ -603,13 +615,13 @@ func (o *OCIRegistryStorageBackend) Delete(ctx context.Context, key string) erro
 
 // --- List --------------------------------------------------------------
 
-// List returns every key under prefix, walking the registry's tags
-// endpoint for each resolved repo. The snap/ prefix requires the
-// known-repos cache to be warm (Put populated it); on a cold start the
-// registry's optional /v2/_catalog endpoint may surface additional
-// repos if the registry supports it (most don't).
+// List returns every key under prefix, walking the registry's tags endpoint
+// for each resolved repo. The snap/ prefix first reads the fixed snap-index
+// repository, whose deployment-ID tags make process-local caches and the
+// registry's optional /v2/_catalog endpoint unnecessary.
 //
-// Empty results are NOT an error. A missing tag-list endpoint surfaces
+// Empty results are not an error once enumeration is known complete; an
+// uninitialized snapshot index returns ErrIncompleteEnumeration. A missing tag-list endpoint surfaces
 // as a wrapped non-fatal error per-repo (the iteration continues); a
 // fan-out prefix (e.g. "snap/") that fails on EVERY repo returns the
 // joined error so the GC walk can react. A single-repo prefix that
@@ -625,7 +637,14 @@ func (o *OCIRegistryStorageBackend) List(ctx context.Context, prefix string) ([]
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("storage: oci list %q: %w", prefix, err)
 	}
-	repos := o.reposForPrefix(prefix)
+	repos, err := o.reposForPrefix(ctx, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("storage: oci list %q: %w", prefix, err)
+	}
+	exactSnapshotRepo := ""
+	if len(repos) == 1 && strings.HasPrefix(repos[0], repoSnap+"-") {
+		exactSnapshotRepo = repos[0]
+	}
 	var (
 		keys       []string
 		errs       []error
@@ -645,6 +664,14 @@ func (o *OCIRegistryStorageBackend) List(ctx context.Context, prefix string) ([]
 			}
 			if prefix == "" || strings.HasPrefix(key, prefix) {
 				keys = append(keys, key)
+			}
+		}
+		// An exact per-deployment list is also the rollout bridge for artifacts
+		// written before the durable index existed. Only register a repository
+		// after proving it contains at least one accessible tag.
+		if repo == exactSnapshotRepo && len(tags) > 0 {
+			if err := o.persistSnapshotRepoIndex(ctx, repo); err != nil {
+				errs = append(errs, fmt.Errorf("repo %q index: %w", repo, err))
 			}
 		}
 	}
@@ -667,39 +694,64 @@ func (o *OCIRegistryStorageBackend) List(ctx context.Context, prefix string) ([]
 	}
 }
 
-// reposForPrefix returns the repos the OCIRegistryStorageBackend might
-// have populated for a given storage-key prefix. The mapping mirrors
-// plan()'s first-segment → repo-name convention; for snap/ it adds the
-// in-memory knownRepos fan-out since each deployment has its own repo.
-func (o *OCIRegistryStorageBackend) reposForPrefix(prefix string) []string {
+// reposForPrefix returns the repos the OCIRegistryStorageBackend might have
+// populated for a given storage-key prefix. The mapping mirrors plan()'s
+// first-segment → repo-name convention; snap/ reads the durable index and then
+// merges repositories touched by this process.
+func (o *OCIRegistryStorageBackend) reposForPrefix(ctx context.Context, prefix string) ([]string, error) {
 	prefix = strings.TrimSuffix(prefix, "/")
 	switch prefix {
 	case repoApps:
-		return []string{repoApps}
+		return []string{repoApps}, nil
 	case repoSnap, "":
-		// Walk knownRepos for any "<prefix>/snap-<id>" we've touched;
-		// include the canonical "snap" repo for back-compat. The
-		// knownRepos keys are fullRepo ("<prefix>/snap-<id>") — we strip
-		// the prefix to get back the bare repo name for fetchTags.
-		var out []string
-		out = append(out, repoSnap)
+		// The registry catalog is optional, so enumerate the fixed snap-index
+		// repository first. A missing version marker means the inventory may
+		// predate the index and must be reported as incomplete rather than as an
+		// authoritative empty success.
+		indexed, err := o.fetchTags(ctx, repoSnapIdx)
+		if err != nil {
+			return nil, fmt.Errorf("read snapshot repository index: %w", err)
+		}
+		initialized := false
+		repos := map[string]struct{}{repoSnap: {}}
+		for _, tag := range indexed {
+			if tag == snapshotRepoIndexVersionTag {
+				initialized = true
+				o.indexedSnapshotRepos.Store(snapshotRepoIndexVersionTag, true)
+				continue
+			}
+			if !depIDCharset.MatchString(tag) {
+				continue
+			}
+			repo := repoSnap + "-" + tag
+			repos[repo] = struct{}{}
+			o.knownRepos.Store(o.fullRepo(repo), true)
+			o.indexedSnapshotRepos.Store(repo, true)
+		}
+		if !initialized {
+			return nil, fmt.Errorf("%w: snapshot repository index %s:%s is absent", ErrIncompleteEnumeration, o.fullRepo(repoSnapIdx), snapshotRepoIndexVersionTag)
+		}
 		snapPrefix := o.prefix + "/snap-"
 		o.knownRepos.Range(func(k, _ any) bool {
 			ks := k.(string)
 			if strings.HasPrefix(ks, snapPrefix) {
-				out = append(out, strings.TrimPrefix(ks, o.prefix+"/"))
+				repos[strings.TrimPrefix(ks, o.prefix+"/")] = struct{}{}
 			}
 			return true
 		})
-		return out
+		out := make([]string, 0, len(repos))
+		for repo := range repos {
+			out = append(out, repo)
+		}
+		return out, nil
 	case repoBase:
-		return []string{repoBase}
+		return []string{repoBase}, nil
 	case repoLayers:
-		return []string{repoLayers}
+		return []string{repoLayers}, nil
 	case repoKernel:
-		return []string{repoKernel}
+		return []string{repoKernel}, nil
 	case repoScans:
-		return []string{repoScans}
+		return []string{repoScans}, nil
 	case repoSigs:
 		var out []string
 		sigPrefix := o.prefix + "/" + repoSigs + "/"
@@ -710,18 +762,126 @@ func (o *OCIRegistryStorageBackend) reposForPrefix(prefix string) []string {
 			}
 			return true
 		})
-		return out
+		return out, nil
 	case repoSources:
-		return []string{repoSources}
+		return []string{repoSources}, nil
 	case repoSBOMs:
-		return []string{repoSBOMs}
+		return []string{repoSBOMs}, nil
 	default:
 		parts := strings.Split(prefix, "/")
 		if len(parts) >= 2 && parts[0] == repoSnap && depIDCharset.MatchString(parts[1]) {
-			return []string{"snap-" + parts[1]}
+			return []string{"snap-" + parts[1]}, nil
 		}
+		return nil, nil
+	}
+}
+
+// persistSnapshotRepoIndex records one per-deployment repository as a tag in a
+// fixed registry repository. Listing that repository works on registries that
+// do not expose the optional /v2/_catalog endpoint. The deployment marker is
+// published before the version marker so a partial first write remains loudly
+// incomplete and cannot be mistaken for a complete empty inventory.
+func (o *OCIRegistryStorageBackend) persistSnapshotRepoIndex(ctx context.Context, repo string) error {
+	if _, loaded := o.indexedSnapshotRepos.Load(repo); loaded {
 		return nil
 	}
+	depID := strings.TrimPrefix(repo, repoSnap+"-")
+	if !depIDCharset.MatchString(depID) || repo != repoSnap+"-"+depID {
+		return fmt.Errorf("invalid snapshot repository %q", repo)
+	}
+	marker, err := o.snapshotRepoIndexMarker(ctx)
+	if err != nil {
+		return err
+	}
+	if err := o.pushManifest(ctx, repoSnapIdx, depID, marker); err != nil {
+		return fmt.Errorf("push deployment marker: %w", err)
+	}
+	if err := o.persistSnapshotRepoIndexVersion(ctx, marker); err != nil {
+		return fmt.Errorf("push version marker: %w", err)
+	}
+	o.knownRepos.Store(o.fullRepo(repo), true)
+	o.indexedSnapshotRepos.Store(repo, true)
+	return nil
+}
+
+func (o *OCIRegistryStorageBackend) snapshotRepoIndexMarker(ctx context.Context) ([]byte, error) {
+	configDigest, err := o.pushConfigStub(ctx, repoSnapIdx)
+	if err != nil {
+		return nil, fmt.Errorf("push config: %w", err)
+	}
+	marker, err := buildImageManifest(configDigest, configDigest, int64(len(configStubJSON)), "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("build marker: %w", err)
+	}
+	return marker, nil
+}
+
+func (o *OCIRegistryStorageBackend) persistSnapshotRepoIndexVersion(ctx context.Context, marker []byte) error {
+	if _, initialized := o.indexedSnapshotRepos.Load(snapshotRepoIndexVersionTag); initialized {
+		return nil
+	}
+	if err := o.pushManifest(ctx, repoSnapIdx, snapshotRepoIndexVersionTag, marker); err != nil {
+		return err
+	}
+	o.indexedSnapshotRepos.Store(snapshotRepoIndexVersionTag, true)
+	return nil
+}
+
+// ReconcileSnapshotRepositoryIndex upgrades repositories written before the
+// durable index existed. A repository is recorded only after its tags endpoint
+// proves at least one artifact is accessible; a DB row whose repository is
+// genuinely missing remains absent so the drift sweep reports it.
+func (o *OCIRegistryStorageBackend) ReconcileSnapshotRepositoryIndex(ctx context.Context, deploymentIDs []string) error {
+	repos := make([]string, 0, len(deploymentIDs))
+	for _, depID := range deploymentIDs {
+		if !depIDCharset.MatchString(depID) {
+			return fmt.Errorf("%w: invalid snapshot deployment %q", ErrInvalidKey, depID)
+		}
+		repo := repoSnap + "-" + depID
+		if _, indexed := o.indexedSnapshotRepos.Load(repo); indexed {
+			continue
+		}
+		repos = append(repos, repo)
+	}
+	if len(repos) == 0 {
+		if _, initialized := o.indexedSnapshotRepos.Load(snapshotRepoIndexVersionTag); initialized {
+			return nil
+		}
+	}
+	marker, err := o.snapshotRepoIndexMarker(ctx)
+	if err != nil {
+		return err
+	}
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(8)
+	for _, repo := range repos {
+		repo := repo
+		group.Go(func() error {
+			tags, err := o.fetchTags(groupCtx, repo)
+			if err != nil {
+				return fmt.Errorf("inspect snapshot repository %q: %w", repo, err)
+			}
+			if len(tags) == 0 {
+				return nil
+			}
+			depID := strings.TrimPrefix(repo, repoSnap+"-")
+			if err := o.pushManifest(groupCtx, repoSnapIdx, depID, marker); err != nil {
+				return fmt.Errorf("index snapshot repository %q: %w", repo, err)
+			}
+			o.knownRepos.Store(o.fullRepo(repo), true)
+			o.indexedSnapshotRepos.Store(repo, true)
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return err
+	}
+	// Publish completeness only after every DB-known repository was inspected
+	// and every accessible legacy repository has a durable marker.
+	if err := o.persistSnapshotRepoIndexVersion(ctx, marker); err != nil {
+		return fmt.Errorf("publish snapshot repository index version: %w", err)
+	}
+	return nil
 }
 
 // unplan is the inverse of plan(): given a repo + tag, return the

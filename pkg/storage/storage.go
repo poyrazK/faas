@@ -94,6 +94,14 @@ type LocalArtifactLister interface {
 	List(ctx context.Context, prefix string) ([]string, error)
 }
 
+// SnapshotRepositoryIndexer is an optional capability for backends that map
+// snapshots across per-deployment repositories. The caller supplies the
+// authoritative deployment IDs so an upgrade can make repositories created by
+// older daemons durably discoverable without a registry catalog.
+type SnapshotRepositoryIndexer interface {
+	ReconcileSnapshotRepositoryIndex(ctx context.Context, deploymentIDs []string) error
+}
+
 // ErrNotFound is the canonical sentinel for a missing key. Callers
 // across the imaged + vmmdgrpc packages used errors.Is(err, os.ErrNotExist)
 // in single-box mode; the local backend still wraps os.ErrNotExist
@@ -114,6 +122,12 @@ var ErrInvalidKey = errors.New("storage: invalid key")
 // evict local caches and rely on the service's retention policy for the
 // remote object.
 var ErrDeleteUnsupported = errors.New("storage: delete unsupported")
+
+// ErrIncompleteEnumeration reports that a backend cannot prove a prefix list
+// is complete. Callers must not interpret the accompanying empty key set as an
+// authoritative inventory. OCI snapshot storage uses this while upgrading
+// registries that predate its durable repository index.
+var ErrIncompleteEnumeration = errors.New("storage: incomplete enumeration")
 
 // IsNotFound reports whether err is (or wraps) ErrNotFound. Use this
 // in cold-boot-fallback code paths so callers stay agnostic of the

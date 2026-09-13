@@ -97,6 +97,9 @@ type DiskDrift struct {
 	// stays in place for local backends; remote backends (OCI)
 	// degrade the comparison to a presence check. ADR-054 §3.
 	storage storage.LocalArtifactLister
+	// snapshotIndexer upgrades OCI repositories created before the durable
+	// registry-side index existed. It is nil for ordinary local storage.
+	snapshotIndexer storage.SnapshotRepositoryIndexer
 }
 
 // DefaultDiskDriftTickTimeout bounds the per-tick wall-clock cost of
@@ -190,6 +193,9 @@ func (d *DiskDrift) WithStorage(b storage.StorageBackend) *DiskDrift {
 	}
 	if lister, ok := b.(storage.LocalArtifactLister); ok {
 		d.storage = lister
+	}
+	if indexer, ok := b.(storage.SnapshotRepositoryIndexer); ok {
+		d.snapshotIndexer = indexer
 	}
 	return d
 }
@@ -337,7 +343,33 @@ func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs 
 // valuable — a missing snapshot mem or vmstate is drift regardless
 // of where it lives.
 func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]state.SnapshotForGC, rows []state.SnapshotForGC) (int, error) {
+	if d.snapshotIndexer != nil {
+		deploymentIDs := make([]string, 0, len(expected))
+		for depID := range expected {
+			deploymentIDs = append(deploymentIDs, depID)
+		}
+		if err := d.snapshotIndexer.ReconcileSnapshotRepositoryIndex(ctx, deploymentIDs); err != nil {
+			d.log.Warn("disk-drift: snapshot repository index reconciliation failed; falling back to disk read",
+				"err", err, "snap_dir", SnapDir())
+			return d.tickOnDiskFallback(ctx, expected, rows)
+		}
+	}
 	keys, err := d.storage.List(ctx, "snap/")
+	if errors.Is(err, storage.ErrIncompleteEnumeration) {
+		// Repositories written before the durable OCI snapshot index can be
+		// discovered from the authoritative DB rows without a registry catalog.
+		// Exact lists seed the backend index, after which the global retry also
+		// recovers orphan detection for future sweeps.
+		for depID := range expected {
+			if _, seedErr := d.storage.List(ctx, "snap/"+depID+"/"); seedErr != nil {
+				err = fmt.Errorf("seed snapshot repository %s: %w", depID, seedErr)
+				break
+			}
+		}
+		if err != nil && errors.Is(err, storage.ErrIncompleteEnumeration) {
+			keys, err = d.storage.List(ctx, "snap/")
+		}
+	}
 	if err != nil {
 		d.log.Warn("disk-drift: storage.List failed; falling back to disk read",
 			"err", err, "snap_dir", SnapDir())
