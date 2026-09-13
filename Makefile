@@ -364,10 +364,18 @@ gateway-bench: ## Bench gatewayd-internal cold/hot/concurrent paths with -race; 
 	$(GO) test -race -bench=. -benchmem -run=^$ ./pkg/gateway/
 
 .PHONY: test-metal
-test-metal: ## Integration tests tagged //go:build metal — needs KVM + root
+# RUN_REGEX is the ENVIRONMENT-passed `-run` filter. Use it instead of putting
+# a regex in RUN_ARGS: RUN_ARGS is expanded by Make and then re-parsed by the
+# shell, so an alternation like ^(TestA|TestB)$ loses its trailing anchor to
+# Make ($ is Make syntax) and then dies in the shell on the unquoted ( and |
+# — `syntax error near unexpected token '('`. That silently ran ZERO tests on
+# the native e2e gate (dispatch 34760212826, 2026-09-13). Read from the
+# environment and quoted here, the regex reaches go test byte-for-byte.
+test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (RUN_REGEX=<re> filters via -run)
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
-	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) $(PKGS)
+	  if [ -n "$${RUN_REGEX:-}" ]; then set -- -run "$$RUN_REGEX"; else set --; fi; \
+	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
 
 .PHONY: test-metal-builder
 test-metal-builder: ## Native KVM builder acceptance — requires staged release assets and root

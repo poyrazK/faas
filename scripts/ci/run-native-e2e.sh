@@ -262,7 +262,11 @@ for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
     die "required test ${required} is not in the metal-tagged set; it lost its //go:build metal tag or was renamed"
 done
 
-run_regex="^($(printf '%s\n' "${metal_tests}" | paste -sd'|' -))\$"
+# Passed to make through the ENVIRONMENT, never through RUN_ARGS: Make eats the
+# trailing `$` and the shell then chokes on the unquoted `(` and `|`, which ran
+# zero tests on 2026-09-13 while every guard reported healthy.
+RUN_REGEX="^($(printf '%s\n' "${metal_tests}" | paste -sd'|' -))$"
+export RUN_REGEX
 echo "native e2e: run ${metal_test_count} metal-tagged tests from ./cmd/e2e"
 # Distinct from the transient unit's own native-e2e.log: the unit already
 # appends this script's stdout there, and tee-ing into the same file would
@@ -270,7 +274,7 @@ echo "native e2e: run ${metal_test_count} metal-tagged tests from ./cmd/e2e"
 e2e_log="${FAAS_E2E_TRANSFER_ROOT:-/var/tmp}/cmd-e2e.log"
 set +e
 make GO="${FAAS_E2E_GO}" PKGS=./cmd/e2e/... \
-  RUN_ARGS="-timeout=75m -v -run ${run_regex}" test-metal 2>&1 | tee "${e2e_log}"
+  RUN_ARGS='-timeout=75m -v' test-metal 2>&1 | tee "${e2e_log}"
 e2e_rc="${PIPESTATUS[0]}"
 set -e
 

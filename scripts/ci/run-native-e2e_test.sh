@@ -185,11 +185,47 @@ grep -Fq 'no metal-tagged tests found in cmd/e2e' "${runner}" ||
 grep -Fq 'is not in the metal-tagged set' "${runner}" ||
   fail "the wrapper does not verify every required test is in the derived set"
 
+# EXECUTE make with a regex carrying the two characters that broke it, and
+# assert the filter reaches `go test` byte-for-byte.
+#
+# RUN_ARGS used to carry the regex. Make expands RUN_ARGS and the shell then
+# re-parses it, so `^(TestA|TestB)$` lost its trailing anchor to Make ($ is Make
+# syntax) and then died in the shell on the unquoted `(` and `|` with
+# "syntax error near unexpected token '('". go test never ran; the gate reported
+# 0 passed / 0 skipped / 0 failed (dispatch 34760212826). A `make -n` check
+# could not catch it — the breakage is in what the shell does with the expanded
+# line, not in the expansion.
+probe_bin="$(mktemp -d)/showargs"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' > "${probe_bin}"
+chmod +x "${probe_bin}"
+probe_args="$(
+  RUN_REGEX='^(TestAlpha|TestBeta)$' make -C "${repo_root}" GO="${probe_bin}" \
+    PKGS=./cmd/e2e/... RUN_ARGS='-timeout=75m -v' test-metal 2>/dev/null
+)"
+grep -Fqx -- '-run' <<<"${probe_args}" ||
+  fail "make did not pass a -run flag through from RUN_REGEX"
+# -F: the pattern IS the regex we are asserting arrived intact, so it must be
+# matched literally, not interpreted.
+grep -Fqx -- '^(TestAlpha|TestBeta)$' <<<"${probe_args}" || {
+  printf '%s\n' "${probe_args}" >&2
+  fail "the -run regex was mangled in transit; it must reach go test byte-for-byte"
+}
+# And with RUN_REGEX unset, no -run flag appears at all — the whole-package
+# behaviour every other caller of test-metal relies on.
+probe_plain="$(
+  make -C "${repo_root}" GO="${probe_bin}" PKGS=./cmd/e2e/... \
+    RUN_ARGS='-timeout=75m -v' test-metal 2>/dev/null
+)"
+if grep -Fqx -- '-run' <<<"${probe_plain}"; then
+  fail "test-metal injects -run even when RUN_REGEX is unset"
+fi
+rm -rf "$(dirname "${probe_bin}")"
+
 expanded="$(
   make -n -C "${repo_root}" GO=/usr/bin/true PKGS=./cmd/e2e/... \
-    RUN_ARGS="-timeout=75m -v -run ^(TestExample)\$" test-metal
+    RUN_ARGS="-timeout=75m -v" test-metal
 )"
-grep -Fq -- '/usr/bin/true test -tags metal -race -count=1 -timeout=75m -v -run' <<<"${expanded}" || {
+grep -Fq -- '/usr/bin/true test -tags metal -race -count=1 -timeout=75m -v' <<<"${expanded}" || {
   printf '%s\n' "${expanded}" >&2
   fail "the invocation expanded incorrectly"
 }
