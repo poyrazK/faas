@@ -13,6 +13,14 @@ The worker runs immediately at process start and hourly afterward. It exports:
 - `schedd_compute_heartbeat_retention_rollup_buckets_total`
 - `schedd_compute_heartbeat_retention_failures_total`
 
+## Symptom
+
+The stalled alert fires when raw heartbeat retention has not completed within
+the expected interval. The backlog alert fires when the oldest raw heartbeat
+is older than the configured retention window plus its recovery allowance.
+
+## Check
+
 When the stalled alert fires, first confirm the writer and maintenance worker:
 
 ```sh
@@ -35,6 +43,8 @@ Check for a long transaction that prevents cleanup, then repair database
 connectivity or cancel only the confirmed blocking transaction. Restarting
 schedd is safe and triggers an immediate bounded pass. Do not run a standalone
 `DELETE`: it bypasses the hourly rollup and destroys capacity history.
+
+## Recover
 
 For an existing backlog, leave the service running and watch the deleted
 counter increase after each pass. At ten nodes and the normal 30-second writer
