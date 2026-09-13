@@ -600,11 +600,18 @@ The §12 dashboard pipeline is wired end-to-end:
 
 #### Status page history contract
 
-- `uptime_30d_pct` is the weighted terminal-invocation success rate for the
-  last 30 UTC calendar days. `uptime_30d` always contains 30 daily points;
-  each point carries `successful`, `total`, and `uptime_pct`. Pending work is
-  excluded, and a day with no terminal traffic is shown as no traffic rather
-  than as a failure.
+- `uptime_30d_pct` is the time-weighted availability of complete five-minute
+  platform observations for the last 30 UTC calendar days. It is derived from
+  the same component telemetry and operator incident overlays as the public
+  status endpoint; customer function results, timeouts, dead letters, and
+  cancellations never lower platform uptime.
+- `uptime_30d` always contains 30 daily points. The compatibility fields
+  `successful` and `total` count available and observed five-minute platform
+  intervals. A day with no complete platform telemetry has `total: 0` and
+  `uptime_pct: null`, so missing coverage is not published as an outage.
+- The switch to platform observations intentionally resets the legacy 30-day
+  history to the observation-bucket retention window. Historical customer
+  invocation failures are not backfilled into the new series.
 - `incidents` contains incidents posted in the last 30 days, plus any still-
   open older incident. The public projection includes `started_at`,
   `resolved_at`, `severity`, `summary`, and the affected `component`.

@@ -10,7 +10,7 @@ import (
 func (m *MemStore) StatusUptimeBuckets(_ context.Context, since time.Time) ([]StatusUptimeBucket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return statusUptimeBuckets(m.invocations, since.UTC()), nil
+	return statusUptimeBuckets(m.statusBuckets, since.UTC()), nil
 }
 
 // ListStatusIncidentsSince is the MemStore mirror of the public incident

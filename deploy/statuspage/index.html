@@ -204,7 +204,7 @@ function renderUptime(buckets) {
   const svg = document.getElementById('uptime-sparkline');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   if (!Array.isArray(buckets) || buckets.length === 0) {
-    document.getElementById('uptime-traffic').textContent = 'No traffic';
+    document.getElementById('uptime-traffic').textContent = 'No platform telemetry';
     return;
   }
 
@@ -255,11 +255,11 @@ function renderUptime(buckets) {
     circle.setAttribute('r', '4');
     circle.setAttribute('fill', !point.available ? '#707781' : point.pct < RED_API ? 'var(--red)' : point.pct < WARN_API ? 'var(--yellow)' : 'var(--green)');
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-    title.textContent = `${formatTime(point.date)}: ${!point.available ? 'no traffic / no data' : point.pct.toFixed(2) + '% uptime'}`;
+    title.textContent = `${formatTime(point.date)}: ${!point.available ? 'no platform telemetry' : point.pct.toFixed(2) + '% uptime'}`;
     circle.appendChild(title);
     svg.appendChild(circle);
   });
-  document.getElementById('uptime-traffic').textContent = observed + ' requests observed';
+  document.getElementById('uptime-traffic').textContent = observed + ' platform intervals observed';
 }
 
 function renderIncidents(incidents) {

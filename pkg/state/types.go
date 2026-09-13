@@ -6876,10 +6876,11 @@ func legacyIncidentTitle(message string) string {
 	return title
 }
 
-// StatusUptimeBucket is the daily terminal-invocation rollup used by the
-// public status page. It deliberately lives in state so both PgStore and
-// MemStore can expose the same optional read seam without widening Store's
-// large compatibility interface.
+// StatusUptimeBucket is the daily platform-observation rollup used by the
+// legacy public status page. Successful and Total count complete five-minute
+// intervals, not customer workload outcomes. It deliberately lives in state
+// so both PgStore and MemStore can expose the same optional read seam without
+// widening Store's large compatibility interface.
 type StatusUptimeBucket struct {
 	Day        time.Time
 	Successful int64

@@ -15246,14 +15246,14 @@ components:
 
   schemas:
     StatusUptimeBucket:
-      description: Daily public status uptime point.
+      description: Daily platform-availability point. Successful and total count available and observed complete five-minute platform intervals; customer workload outcomes are excluded.
       type: object
       required: [date, uptime_pct, successful, total]
       properties:
         date: { type: string, format: date-time }
         uptime_pct: { type: number, format: double, minimum: 0, maximum: 100 }
-        successful: { type: integer, format: int64, minimum: 0 }
-        total: { type: integer, format: int64, minimum: 0 }
+        successful: { type: integer, format: int64, minimum: 0, description: Complete five-minute platform intervals that were available. }
+        total: { type: integer, format: int64, minimum: 0, description: Complete five-minute platform intervals with telemetry. }
     StatusIncident:
       description: Public operator-authored status incident.
       type: object

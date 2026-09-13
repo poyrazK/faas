@@ -17,10 +17,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestStatusHistoryRollup seeds 90 days of terminal invocation rows and
-// verifies that the public status projection keeps exactly the last 30 days,
-// calculates weighted uptime, and includes the operator incident timeline
-// (issue #276 / spec §12).
+// TestStatusHistoryRollup seeds 90 days of platform observation rows and
+// verifies that the legacy projection keeps exactly the last 30 days,
+// calculates time-weighted uptime, ignores customer outcomes, and includes
+// the operator incident timeline.
 func TestStatusHistoryRollup(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
@@ -40,19 +40,27 @@ func TestStatusHistoryRollup(t *testing.T) {
 
 	now := time.Now().UTC()
 	for daysAgo := 0; daysAgo < 90; daysAgo++ {
-		createdAt := now.AddDate(0, 0, -daysAgo)
+		observedAt := utcDay(now.AddDate(0, 0, -daysAgo)).Add(time.Hour)
 		for i := 0; i < 3; i++ {
-			stateValue := state.InvocationCompleted
+			stateValue := publicstatus.StateOperational
 			if daysAgo >= statusHistoryDays || i == 2 {
-				stateValue = state.InvocationFailed
+				stateValue = publicstatus.StatePartialOutage
 			}
-			if _, err := store.EnqueueInvocation(ctx, state.Invocation{
-				AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke,
-				State: stateValue, CreatedAt: createdAt, DueAt: createdAt,
-			}); err != nil {
-				t.Fatalf("EnqueueInvocation day %d row %d: %v", daysAgo, i, err)
+			for _, component := range publicstatus.AllComponents() {
+				if err := store.RecordStatusBucket(ctx, state.StatusBucket{
+					Component: component, BucketAt: observedAt.Add(time.Duration(i) * 5 * time.Minute),
+					State: stateValue, HasTelemetry: true,
+				}); err != nil {
+					t.Fatalf("RecordStatusBucket day %d interval %d component %s: %v", daysAgo, i, component, err)
+				}
 			}
 		}
+	}
+	if _, err := store.EnqueueInvocation(ctx, state.Invocation{
+		AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke,
+		State: state.InvocationFailed, CreatedAt: now, DueAt: now,
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation customer failure: %v", err)
 	}
 	if _, err := store.InsertStatusIncident(ctx, state.StatusIncidentComponentApid,
 		state.StatusIncidentSeverityDegraded, "API latency elevated"); err != nil {

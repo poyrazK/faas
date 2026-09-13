@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 )
 
 func TestMemStoreObjectUploadRoutesLifecycle(t *testing.T) {
@@ -85,25 +87,17 @@ func TestMemStoreStatusHistoryRollupsAndIncidentWindow(t *testing.T) {
 	day1 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	day2 := day1.AddDate(0, 0, 1)
 	since := day1.Add(-time.Hour)
-	failure := OutcomeFailed
-	success := OutcomeSuccess
-	m.invocations = map[string]Invocation{
-		"success":         {CreatedAt: day1.Add(time.Hour), State: InvocationPending, Outcome: &success},
-		"failed":          {CreatedAt: day1.Add(2 * time.Hour), State: InvocationFailed},
-		"outcome-failure": {CreatedAt: day1.Add(3 * time.Hour), State: InvocationFailed, Outcome: &failure},
-		"cancelled":       {CreatedAt: day2.Add(time.Hour), State: InvocationCancelled},
-		"dead-letter":     {CreatedAt: day2.Add(2 * time.Hour), State: InvocationDeadLetter},
-		"pending":         {CreatedAt: day2.Add(3 * time.Hour), State: InvocationPending},
-		"old":             {CreatedAt: since.Add(-time.Minute), State: InvocationCompleted},
-	}
+	recordCompleteStatusInterval(t, m, day1.Add(time.Hour), "", publicstatus.StateOperational)
+	recordCompleteStatusInterval(t, m, day1.Add(2*time.Hour), publicstatus.ComponentObservability, publicstatus.StateDegraded)
+	recordCompleteStatusInterval(t, m, day2.Add(time.Hour), publicstatus.ComponentNetworking, publicstatus.StateMaintenance)
 	buckets, err := m.StatusUptimeBuckets(ctx, since)
 	if err != nil || len(buckets) != 2 {
 		t.Fatalf("buckets = %+v, err=%v", buckets, err)
 	}
-	if !buckets[0].Day.Equal(day1) || buckets[0].Successful != 1 || buckets[0].Total != 3 {
+	if !buckets[0].Day.Equal(day1) || buckets[0].Successful != 1 || buckets[0].Total != 2 {
 		t.Fatalf("day1 bucket = %+v", buckets[0])
 	}
-	if !buckets[1].Day.Equal(day2) || buckets[1].Successful != 0 || buckets[1].Total != 2 {
+	if !buckets[1].Day.Equal(day2) || buckets[1].Successful != 1 || buckets[1].Total != 1 {
 		t.Fatalf("day2 bucket = %+v", buckets[1])
 	}
 

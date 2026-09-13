@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 )
 
 func TestStatusUptimeBucketsAndIncidentsCoverage(t *testing.T) {
@@ -11,24 +13,14 @@ func TestStatusUptimeBucketsAndIncidentsCoverage(t *testing.T) {
 	m := NewMemStore()
 	base := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
 	since := base.Add(-24 * time.Hour)
-	success := OutcomeSuccess
-	failure := OutcomeFailed
-	m.invocations = map[string]Invocation{
-		"old":          {CreatedAt: since.Add(-time.Second), State: InvocationCompleted},
-		"pending":      {CreatedAt: base, State: InvocationPending},
-		"completed":    {CreatedAt: base, State: InvocationCompleted},
-		"failed":       {CreatedAt: base.Add(time.Hour), State: InvocationFailed},
-		"cancelled":    {CreatedAt: base.Add(2 * time.Hour), State: InvocationCancelled},
-		"dead":         {CreatedAt: base.Add(3 * time.Hour), State: InvocationDeadLetter},
-		"outcome-ok":   {CreatedAt: base.Add(4 * time.Hour), State: InvocationPending, Outcome: &success},
-		"outcome-fail": {CreatedAt: base.Add(5 * time.Hour), State: InvocationPending, Outcome: &failure},
-	}
+	recordCompleteStatusInterval(t, m, base, "", publicstatus.StateOperational)
+	recordCompleteStatusInterval(t, m, base.Add(5*time.Minute), publicstatus.ComponentAppExecution, publicstatus.StateMajorOutage)
 	buckets, err := m.StatusUptimeBuckets(ctx, since)
 	if err != nil {
 		t.Fatalf("StatusUptimeBuckets: %v", err)
 	}
-	if len(buckets) != 1 || buckets[0].Total != 6 || buckets[0].Successful != 2 {
-		t.Fatalf("buckets = %+v, want one day with 6 total and 2 successful", buckets)
+	if len(buckets) != 1 || buckets[0].Total != 2 || buckets[0].Successful != 1 {
+		t.Fatalf("buckets = %+v, want one day with two platform observations and one available", buckets)
 	}
 
 	resolved := base.Add(-2 * time.Hour)

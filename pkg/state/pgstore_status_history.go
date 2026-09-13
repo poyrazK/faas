@@ -5,40 +5,27 @@ import (
 	"time"
 )
 
-// StatusUptimeBuckets rolls terminal invocations into UTC calendar days. The
-// generated day series keeps the public response stable at 30 points even on
-// an idle box; days with no terminal traffic have zero counts and are treated
-// as 100% by the API projection.
+// StatusUptimeBuckets rolls complete, platform-owned five-minute observations
+// into UTC calendar days. A partially written interval is omitted, preserving
+// the distinction between missing telemetry and a measured outage. Customer
+// workload outcomes are intentionally absent from this query.
 func (s *PgStore) StatusUptimeBuckets(ctx context.Context, since time.Time) ([]StatusUptimeBucket, error) {
 	rows, err := s.pool.Query(ctx, `
-		with days as (
-			select generate_series(
-				(($1::timestamptz at time zone 'UTC')::date)::timestamp,
-				((now() at time zone 'UTC')::date)::timestamp,
-				interval '1 day'
-			) as day
-		), counts as (
-			select (created_at at time zone 'UTC')::date::timestamp as day,
-			       count(*) filter (
-					where outcome = 'success'
-					   or (outcome is null and state = 'completed')
-			       )::bigint as successful,
-			       count(*) filter (
-					where outcome is not null
-					   or state in ('completed', 'failed', 'cancelled', 'dead_letter')
-			       )::bigint as total
-			  from invocations
-			 where created_at >= $1
-			   and (outcome is not null
-				or state in ('completed', 'failed', 'cancelled', 'dead_letter'))
-			 group by 1
+		with complete_intervals as (
+			select bucket_at,
+			       bool_and(status in ('operational', 'maintenance')) as available
+			  from status_observation_buckets
+			 where bucket_at >= $1
+			   and has_telemetry
+			 group by bucket_at
+			having count(distinct component) = 5
 		)
-		select days.day,
-		       coalesce(counts.successful, 0)::bigint,
-		       coalesce(counts.total, 0)::bigint
-		  from days
-		  left join counts using (day)
-		 order by days.day`, since.UTC())
+		select (bucket_at at time zone 'UTC')::date::timestamp as day,
+		       count(*) filter (where available)::bigint as successful,
+		       count(*)::bigint as total
+		  from complete_intervals
+		 group by 1
+		 order by 1`, since.UTC())
 	if err != nil {
 		return nil, err
 	}

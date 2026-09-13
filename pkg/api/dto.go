@@ -3773,13 +3773,15 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
-	// Uptime30dPct is the weighted success rate of terminal invocations
-	// observed over the last 30 calendar days. It is null when the period
-	// contains no terminal invocations.
+	// Uptime30dPct is the time-weighted availability of complete five-minute
+	// platform observations over the last 30 calendar days. Customer workload
+	// outcomes never contribute. It is null when the period has no complete
+	// platform telemetry.
 	Uptime30dPct *float64 `json:"uptime_30d_pct"`
 	// Uptime30d contains one bucket for each of the last 30 calendar
-	// days, oldest first. Successful and Total make the no-traffic case
-	// distinguishable from a day with observed failures.
+	// days, oldest first. Successful and Total count complete five-minute
+	// platform intervals, making missing telemetry distinguishable from an
+	// observed outage.
 	Uptime30d []StatusUptimeBucket `json:"uptime_30d"`
 	// Incidents contains status incidents posted in the last 30 days,
 	// plus any still-open incident posted earlier. Results are newest
@@ -3807,7 +3809,9 @@ type StatusPage struct {
 	Source string `json:"source"`
 }
 
-// StatusUptimeBucket is one daily point in StatusPage.Uptime30d.
+// StatusUptimeBucket is one daily platform-availability point in
+// StatusPage.Uptime30d. Successful and Total retain their original wire names
+// for compatibility, but count available and observed five-minute intervals.
 type StatusUptimeBucket struct {
 	Date       time.Time `json:"date"`
 	UptimePct  *float64  `json:"uptime_pct"`
