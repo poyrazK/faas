@@ -1799,6 +1799,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		executionCoordinator = sched.NewExecutionCoordinator(store, backend, sched.ExecutionCoordinatorConfig{
 			Enabled: true,
 			Owner:   executionNodeID,
+			Metrics: ops,
 		}, log).WithClaimResolver(resolver)
 		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "storage-digest-pair")
 	}
