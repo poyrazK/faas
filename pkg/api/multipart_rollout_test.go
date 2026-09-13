@@ -18,6 +18,7 @@ func TestMultipartDeployPreservesExplicitZeroAndCanary(t *testing.T) {
 	}{
 		{name: "explicit zero", ann: DeployAnnotations{TrafficPercent: &zero}, wantField: "traffic_percent", wantValue: "0"},
 		{name: "canary", ann: DeployAnnotations{Canary: &CanaryPresetSpec{Preset: "balanced"}}, wantField: "canary", wantValue: `{"preset":"balanced"}`},
+		{name: "scope", ann: DeployAnnotations{Scope: "production"}, wantField: "scope", wantValue: "production"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var body bytes.Buffer

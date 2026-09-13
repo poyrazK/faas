@@ -38,6 +38,9 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	if sourceRoot != "" {
 		_ = w.WriteField("source_root", sourceRoot)
 	}
+	if a.Scope != "" {
+		_ = w.WriteField("scope", a.Scope)
+	}
 	if a.SourceURL != "" {
 		_ = w.WriteField("source_url", a.SourceURL)
 	}
@@ -98,6 +101,11 @@ func newDevSourceMultipartWriter(dst *bytes.Buffer, slug string, dockerfile bool
 // re-derived from the column scan via the coalesce-on-read pattern
 // at pkg/state/pgstore.go.
 type DeployAnnotations struct {
+	// Scope selects the named environment scope the deployment should read at
+	// wake time. Empty means the server's default scope. The CLI populates it
+	// from declarative managed-database dependencies so compute and database
+	// bindings always resolve the same sealed environment.
+	Scope string
 	// SourceURL and CommitSHA identify the exact upstream revision that
 	// produced a local source deployment. They are provenance-only: the
 	// server never fetches from SourceURL and the archive bytes remain the

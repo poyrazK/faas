@@ -12,6 +12,10 @@ export type UploadDeployOptions = {
   dockerfile?: boolean;
   source_root?: string;
   /**
+   * Named environment scope applied when the upload is committed; omitted uses default.
+   */
+  scope?: string;
+  /**
    * Informational repository provenance URL; never fetched by apid.
    */
   source_url?: string;

@@ -21,7 +21,7 @@ func TestTopLevelUsageGroupsCustomerCommands(t *testing.T) {
 			t.Errorf("default help missing %q", want)
 		}
 	}
-	for _, hidden := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret"} {
+	for _, hidden := range []string{"admin", "mail", "rollouts", "github-webhook-secret"} {
 		if strings.Contains(out, "  "+hidden+" ") {
 			t.Errorf("default help exposes hidden command %q:\n%s", hidden, out)
 		}

@@ -259,6 +259,10 @@ export class DeploymentsService {
       handler?: string;
       source_root?: string;
       /**
+       * Named environment scope read by the deployment; omitted uses default.
+       */
+      scope?: string;
+      /**
        * Optional JSON workflow-definition array attached to this developer deployment.
        */
       workflows?: string;

@@ -580,6 +580,12 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
+	if opts.Scope != "" {
+		if prob := api.ValidateScope(opts.Scope); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	if app.Type == state.AppTypeFunction {
 		if opts.Dockerfile {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
@@ -654,6 +660,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		DeployedBy:       opts.DeployedBy,
 		PRNumber:         opts.PRNumber,
 		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
+		Scope:            opts.Scope,
 		HostingObserver:  s.ops,
 		HostingFlow:      "first_deploy",
 		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,
