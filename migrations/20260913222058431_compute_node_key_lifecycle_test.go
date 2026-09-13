@@ -13,8 +13,9 @@ import (
 
 func TestComputeNodeKeyLifecycleBoundsTrustedRows(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.OpenMigrated(t)
+	pool := pgtest.Open(t)
 	defer pool.Close()
+	migrateUpOnce(ctx, t, pool)
 	nodeID := insertComputeNode(ctx, t, pool, "key-life-"+uuid.NewString()[:8])
 
 	currentID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
