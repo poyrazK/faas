@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -184,6 +186,10 @@ type BuildResult struct {
 	// did not configure SBOMRun + SBOMStorageKey, or when the
 	// emission failed (best-effort: the build still succeeds).
 	SBOMKey string
+	// RunnerDigest is the canonical sha256 digest of the exact function
+	// runner bytes copied to /usr/local/bin/faas-runner. Empty when no
+	// function runner was injected.
+	RunnerDigest string
 }
 
 // Build runs the pipeline. It stages into a temp dir that is always removed.
@@ -285,8 +291,11 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 			return BuildResult{}, err
 		}
 	}
+	runnerDigest := ""
 	if in.FunctionRunnerPath != "" {
-		if err := InjectFunctionRunner(staging, in.FunctionRunnerPath); err != nil {
+		var err error
+		runnerDigest, err = injectFunctionRunner(staging, in.FunctionRunnerPath)
+		if err != nil {
 			return BuildResult{}, err
 		}
 	}
@@ -357,7 +366,12 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 		return BuildResult{}, err
 	}
 
-	res := BuildResult{SizeMB: sizeMB, ContentBytes: stats.ContentBytes, SBOMKey: sbomKey}
+	res := BuildResult{
+		SizeMB:       sizeMB,
+		ContentBytes: stats.ContentBytes,
+		SBOMKey:      sbomKey,
+		RunnerDigest: runnerDigest,
+	}
 	if in.OutImage != "" {
 		res.ImagePath = in.OutImage
 	} else {
@@ -1225,18 +1239,27 @@ func wrapPythonFunctionHandler(target string, source []byte) error {
 // /usr/local/bin/faas-runner so guest-init can exec it (spec §4.9).
 // Empty path = no-op (image deploys don't need it).
 func InjectFunctionRunner(staging, runnerPath string) error {
+	_, err := injectFunctionRunner(staging, runnerPath)
+	return err
+}
+
+// injectFunctionRunner copies the runner and returns the digest of the exact
+// bytes written. Keeping hashing beside the copy prevents provenance from
+// drifting if the source file changes between a separate hash and injection.
+func injectFunctionRunner(staging, runnerPath string) (string, error) {
 	data, err := os.ReadFile(runnerPath)
 	if err != nil {
-		return fmt.Errorf("rootfs: read function runner: %w", err)
+		return "", fmt.Errorf("rootfs: read function runner: %w", err)
 	}
+	sum := sha256.Sum256(data)
 	dst := filepath.Join(staging, "usr", "local", "bin", "faas-runner")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return "", err
 	}
 	if err := os.WriteFile(dst, data, 0o755); err != nil {
-		return fmt.Errorf("rootfs: write function runner: %w", err)
+		return "", fmt.Errorf("rootfs: write function runner: %w", err)
 	}
-	return nil
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 // limitsFor resolves the plan limits a build enforces (app-layer cap,

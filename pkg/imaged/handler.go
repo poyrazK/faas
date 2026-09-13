@@ -2378,6 +2378,15 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "build function layer: "+err.Error())
 		return fmt.Errorf("imaged: build function layer: %w", err)
 	}
+	// A function artifact without the runner digest cannot produce complete
+	// provenance. The production rootfs builder computes this from the exact
+	// bytes it injects; fail closed if a builder ever omits it.
+	if result.RunnerDigest == "" {
+		const msg = "function runner digest missing from rootfs build"
+		_ = h.transition(ctx, dep.ID, state.DeployFailed, msg)
+		return fmt.Errorf("imaged: %s", msg)
+	}
+	h.updateBuildProvenanceRunnerDigest(ctx, dep.ID, result.RunnerDigest)
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
 	if err := h.store.SetDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
 		_ = h.transition(ctx, dep.ID, state.DeployFailed, "stamp rootfs: "+err.Error())
@@ -3657,6 +3666,37 @@ func (h *Handler) updateBuildProvenanceSBOM(ctx context.Context, deploymentID, s
 		// load-bearing artefact.
 		h.log.Warn("imaged: stamp sbom_storage_key",
 			"build", build.ID, "sbom_key", sbomKey, "err", err)
+	}
+}
+
+// updateBuildProvenanceRunnerDigest stamps the digest of the runner bytes
+// injected into a function artifact. The build row and provenance row are
+// created by builderd before imaged assembles the final layer, so this is a
+// post-build update. Image-only deployments have no build row and are
+// intentionally ignored.
+func (h *Handler) updateBuildProvenanceRunnerDigest(ctx context.Context, deploymentID, runnerDigest string) {
+	if deploymentID == "" || runnerDigest == "" {
+		return
+	}
+	runnerStore, ok := h.store.(state.BuildProvenanceRunnerDigestStore)
+	if !ok {
+		h.log.Warn("imaged: runner digest persistence unavailable", "deployment", deploymentID)
+		return
+	}
+	build, err := h.store.BuildByDeployment(ctx, deploymentID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			// Image-only deploy or pre-build state — no
+			// build_provenance row to stamp.
+			return
+		}
+		h.log.Warn("imaged: build_provenance lookup failed",
+			"deployment", deploymentID, "err", err)
+		return
+	}
+	if err := runnerStore.UpdateBuildProvenanceRunnerDigest(ctx, build.ID, runnerDigest); err != nil {
+		h.log.Warn("imaged: stamp runner_digest",
+			"build", build.ID, "runner_digest", runnerDigest, "err", err)
 	}
 }
 

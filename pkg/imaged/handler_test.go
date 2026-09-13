@@ -104,15 +104,23 @@ func (f failingPuller) PullLayers(_ context.Context, _ string) (oci.PullLayersRe
 // fakeBuilder records every BuildInput so tests can assert the manifest,
 // paths, and layer plumbing. Set buildErr to make Build return an error.
 type fakeBuilder struct {
-	calls    []rootfs.BuildInput
-	bytesOut int64
-	buildErr error
+	calls            []rootfs.BuildInput
+	bytesOut         int64
+	buildErr         error
+	runnerDigest     string
+	omitRunnerDigest bool
 }
+
+const testRunnerDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
 	b.calls = append(b.calls, in)
 	if b.buildErr != nil {
 		return rootfs.BuildResult{}, b.buildErr
+	}
+	runnerDigest := b.runnerDigest
+	if in.FunctionRunnerPath != "" && runnerDigest == "" && !b.omitRunnerDigest {
+		runnerDigest = testRunnerDigest
 	}
 	// #96: the handler publishes the produced ext4 via Storage.Put under
 	// the apps/<slug>/<dep>.ext4 key. The fake mirrors real mkfs by
@@ -127,6 +135,7 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 		return rootfs.BuildResult{
 			ImageKey:     in.StorageKey,
 			ContentBytes: b.bytesOut,
+			RunnerDigest: runnerDigest,
 		}, nil
 	}
 	if in.OutImage != "" {
@@ -136,9 +145,10 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 		return rootfs.BuildResult{
 			ImagePath:    in.OutImage,
 			ContentBytes: b.bytesOut,
+			RunnerDigest: runnerDigest,
 		}, nil
 	}
-	return rootfs.BuildResult{ContentBytes: b.bytesOut}, nil
+	return rootfs.BuildResult{ContentBytes: b.bytesOut, RunnerDigest: runnerDigest}, nil
 }
 
 // BuildBase is part of the LayerBuilder interface (M6); the existing
@@ -1756,6 +1766,47 @@ func TestBuildFunctionLayer_Runtimes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildFunctionLayer_StampsRunnerDigest(t *testing.T) {
+	h := newFunctionTestHarness(t, api.PlanHobby, RuntimeNode22)
+	build, err := h.store.CreateBuild(context.Background(), h.dep.ID, state.DeploymentKindTarball, 0, "")
+	if err != nil {
+		t.Fatalf("CreateBuild: %v", err)
+	}
+	if err := h.store.CreateBuildProvenance(context.Background(), state.BuildProvenance{BuildID: build.ID}); err != nil {
+		t.Fatalf("CreateBuildProvenance: %v", err)
+	}
+
+	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
+	handler.WithFunctionRunnerNode22("/runners/node22")
+	if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+		t.Fatalf("buildFunctionLayer: %v", err)
+	}
+
+	prov, err := h.store.BuildProvenanceByBuildID(context.Background(), build.ID)
+	if err != nil {
+		t.Fatalf("BuildProvenanceByBuildID: %v", err)
+	}
+	if prov.RunnerDigest != testRunnerDigest {
+		t.Fatalf("RunnerDigest = %q, want %q", prov.RunnerDigest, testRunnerDigest)
+	}
+}
+
+func TestBuildFunctionLayer_MissingRunnerDigestFailsClosed(t *testing.T) {
+	h := newFunctionTestHarness(t, api.PlanHobby, RuntimeNode22)
+	h.bld.omitRunnerDigest = true
+	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
+	handler.WithFunctionRunnerNode22("/runners/node22")
+
+	err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct)
+	if err == nil || !strings.Contains(err.Error(), "function runner digest missing") {
+		t.Fatalf("buildFunctionLayer error = %v, want missing digest", err)
+	}
+	got, _ := h.store.DeploymentByID(context.Background(), h.dep.ID)
+	if got.Status != state.DeployFailed {
+		t.Fatalf("deployment status = %s, want failed", got.Status)
 	}
 }
 

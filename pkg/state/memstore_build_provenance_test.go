@@ -103,6 +103,34 @@ func TestMemStore_BuildProvenance_NotFound(t *testing.T) {
 	}
 }
 
+func TestMemStore_BuildProvenance_RunnerDigestUpdate(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+
+	acc, _ := m.CreateAccount(ctx, "prov-mem-runner@example.com", api.PlanHobby)
+	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "runner-digest"})
+	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:runner"})
+	build, _ := m.CreateBuild(ctx, dep.ID, DeploymentKindTarball, 0, "")
+	if err := m.CreateBuildProvenance(ctx, BuildProvenance{BuildID: build.ID}); err != nil {
+		t.Fatalf("CreateBuildProvenance: %v", err)
+	}
+
+	const want = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := m.UpdateBuildProvenanceRunnerDigest(ctx, build.ID, want); err != nil {
+		t.Fatalf("UpdateBuildProvenanceRunnerDigest: %v", err)
+	}
+	got, err := m.BuildProvenanceByBuildID(ctx, build.ID)
+	if err != nil {
+		t.Fatalf("BuildProvenanceByBuildID: %v", err)
+	}
+	if got.RunnerDigest != want {
+		t.Fatalf("RunnerDigest = %q, want %q", got.RunnerDigest, want)
+	}
+	if err := m.UpdateBuildProvenanceRunnerDigest(ctx, "missing", want); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing update = %v, want ErrNotFound", err)
+	}
+}
+
 func TestMemStore_BuildProvenance_IdempotentReplace(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
