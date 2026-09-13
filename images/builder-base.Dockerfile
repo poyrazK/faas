@@ -35,6 +35,7 @@ ARG MISE_SHA256_ARM64=926914f938c55e86e48875f1c9253573ddf6d5efb5abb6e8721ea061fe
 # the VM boundary is the actual security perimeter (ADR-003).
 ARG BUILDKIT_VERSION=0.32.2
 ARG BUILDKIT_SOURCE_SHA256=b19deba3f8cf3eb05407aa85c246e22839770c437439a04d880ef3d645aed0aa
+ARG BUILDKIT_REVISION=991535e0973488b6a429096d21fa13f81f2d89d8
 ARG GO_ARCHIVE_VERSION=0.3.0
 ARG BUILDKIT_GRPC_VERSION=1.83.2
 ARG RUNC_EBPF_VERSION=0.22.0
@@ -129,6 +130,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 FROM --platform=$BUILDPLATFORM golang:1.26.6@sha256:0d1d3a794be25f809dd2cb3160d8c73276c4056a9f8242a138e908ddeee7b6b6 AS buildkit-client-build
 WORKDIR /src/buildkit
 ARG BUILDKIT_VERSION
+ARG BUILDKIT_REVISION
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUILDKIT_SOURCE_SHA256
@@ -171,10 +173,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
         -e "s#google.golang.org/grpc v1.82.1#google.golang.org/grpc v${BUILDKIT_GRPC_VERSION}#" \
         vendor/modules.txt && \
       go test -mod=vendor ./frontend/gateway -run '^TestServeWaitsForColdFrontend$' -count=1 && \
+      BUILDKIT_LDFLAGS="-X github.com/moby/buildkit/version.Version=v${BUILDKIT_VERSION} -X github.com/moby/buildkit/version.Revision=${BUILDKIT_REVISION} -X github.com/moby/buildkit/version.Package=github.com/moby/buildkit" && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-        go build -mod=vendor -trimpath -o /out/buildkitd ./cmd/buildkitd && \
+        go build -mod=vendor -trimpath -ldflags "${BUILDKIT_LDFLAGS}" -o /out/buildkitd ./cmd/buildkitd && \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-        go build -mod=vendor -trimpath -o /out/buildctl ./cmd/buildctl
+        go build -mod=vendor -trimpath -ldflags "${BUILDKIT_LDFLAGS}" -o /out/buildctl ./cmd/buildctl
 
 # ---- stage 2: assemble the runtime rootfs -------------------------------
 # See the stage 1 FROM above re: $TARGETPLATFORM handling.
