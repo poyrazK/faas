@@ -188,14 +188,14 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 	stagedManifest := sourceRefManifestStaged{appID: app.ID}
 	manifestCommitted := false
-	defer func() {
+	defer func(ctx context.Context) {
 		if manifestCommitted || (len(stagedManifest.cronIDs) == 0 && len(stagedManifest.triggerIDs) == 0) {
 			return
 		}
-		if rollbackErr := s.rollbackSourceRefManifest(context.WithoutCancel(r.Context()), stagedManifest); rollbackErr != nil {
+		if rollbackErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), stagedManifest); rollbackErr != nil {
 			s.log.Warn("source-ref manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
-	}()
+	}(r.Context())
 	if !req.NoTriggers {
 		stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest)
 		if manifestProblem != nil {

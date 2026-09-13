@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path"
 	"strings"
 
@@ -66,7 +65,7 @@ func readSourceRefManifestBytes(sourcePath, sourceRoot string) ([]byte, bool, er
 		wanted[prefix+"gregale.yml"] = i*2 + 2
 		wanted[prefix+"gregale.toml"] = i*2 + 3
 	}
-	f, err := os.Open(sourcePath) // sourcePath is an apid-owned spool file.
+	f, err := openSpoolFile(sourcePath)
 	if err != nil {
 		return nil, false, err
 	}
