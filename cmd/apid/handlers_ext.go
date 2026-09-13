@@ -2114,7 +2114,7 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 	var err error
 	if r.URL.Query().Get("history") == "true" {
 		// History is explicit and still bounded for old, frequently-woken apps.
-		instances, err = s.store.ListLatestInstancesForApp(r.Context(), app.ID, 100)
+		instances, err = s.store.ListLatestInstancesForApp(r.Context(), app.ID, api.DefaultInstanceHistoryLimit)
 	} else if activeStore, ok := s.store.(interface {
 		ListActiveInstancesForApp(context.Context, string, int) ([]state.Instance, error)
 	}); ok {

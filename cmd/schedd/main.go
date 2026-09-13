@@ -1393,9 +1393,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).
-		// PR #74: §17 retention sweep — DELETEs STOPPED/FAILED rows older
-		// than cfg.RetentionDuration (defaults to api.DefaultInstanceRetention
-		// when zero). Ticker fires at api.DefaultRetentionInterval (1h).
+		// §17 / issue #2415 retention sweep — DELETEs STOPPED/FAILED rows
+		// from terminal_at and obsolete PARKED history from parked_at after
+		// cfg.RetentionDuration (default api.DefaultInstanceRetention).
 		WithRetention(sched.NewRetention(store, log).WithRetention(time.Duration(cfg.RetentionDuration))).
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).

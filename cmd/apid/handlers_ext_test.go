@@ -1927,7 +1927,7 @@ func TestListInstancesDefaultsToBoundedResidentState(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	dep := mustSeedDeployment(t, e, "inst-current")
 	ctx := context.Background()
-	for i := 0; i < 12; i++ {
+	for i := 0; i < 105; i++ {
 		ins, err := e.store.CreateInstance(ctx, dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", "")
 		if err != nil {
 			t.Fatal(err)
@@ -1954,8 +1954,8 @@ func TestListInstancesDefaultsToBoundedResidentState(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 13 {
-		t.Fatalf("explicit history rows = %d, want 13", len(out))
+	if len(out) != api.DefaultInstanceHistoryLimit {
+		t.Fatalf("explicit history rows = %d, want documented cap %d", len(out), api.DefaultInstanceHistoryLimit)
 	}
 	if out[0].ID != current.ID || !out[0].Resident || out[1].Resident {
 		t.Fatalf("history residency projection is incorrect: %+v", out[:2])

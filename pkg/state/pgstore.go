@@ -14038,6 +14038,44 @@ func (s *PgStore) ListInstancesInTerminalStatesOlderThan(ctx context.Context, st
 	return scanInstancesWithTerminal(rows)
 }
 
+// DeleteParkedInstancesOlderThan removes a bounded batch of obsolete wake
+// history. The candidate rows are locked and the lifecycle predicates are
+// repeated on DELETE, so a PARKED -> WAKING transition can never lose its
+// active row to a retention race. Snapshot rows are keyed by deployment and
+// have no instance foreign key, so the current restore artifact is untouched.
+func (s *PgStore) DeleteParkedInstancesOlderThan(ctx context.Context, threshold time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `
+		with doomed as (
+			select id
+			  from instances
+			 where app_id is not null
+			   and state = 'parked'
+			   and lease_token is null
+			   and migration_started_at is null
+			   and parked_at is not null
+			   and parked_at < $1
+			 order by parked_at asc, id asc
+			 for update skip locked
+			 limit $2
+		)
+		delete from instances i
+		 using doomed d
+		 where i.id = d.id
+		   and i.app_id is not null
+		   and i.state = 'parked'
+		   and i.lease_token is null
+		   and i.migration_started_at is null
+		   and i.parked_at is not null
+		   and i.parked_at < $1`, threshold, limit)
+	if err != nil {
+		return 0, fmt.Errorf("state: delete parked instances older than %s: %w", threshold.UTC().Format(time.RFC3339), err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // DeleteInstance removes one instance row unconditionally (PR #74).
 // Returns ErrNotFound when the row is gone (the sweep swallows that
 // case for redelivery). No FK cascade — events.subject and

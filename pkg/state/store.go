@@ -4144,6 +4144,16 @@ type Store interface {
 	// successfully has a stale started_at). PgStore relies on migration
 	// 00017's partial index for the state predicate.
 	ListInstancesInTerminalStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
+	// DeleteParkedInstancesOlderThan atomically removes at most limit
+	// wake-history rows whose current lifecycle state is PARKED and whose
+	// parked_at anchor is strictly older than threshold. Rows carrying a live
+	// migration lease/start marker are recovery-owned and ineligible even if
+	// their state was left PARKED. Implementations must re-check the lifecycle
+	// predicates in the DELETE statement: a row selected before a concurrent
+	// PARKED -> WAKING transition must survive. PARKED rows are not reused by
+	// Wake; snapshots are separate durable rows keyed by deployment and must
+	// not be changed by this operation. limit <= 0 is a no-op.
+	DeleteParkedInstancesOlderThan(ctx context.Context, threshold time.Time, limit int) (int64, error)
 	// DeleteInstance removes a single instance row unconditionally
 	// (PR #74). Returns ErrNotFound when the row is already gone — the
 	// retention sweep swallows that case for redelivery. There are NO

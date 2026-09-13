@@ -6527,9 +6527,24 @@ paths:
       tags: [instances]
       operationId: listInstances
       summary: Read-only instance list for an app.
+      description: |
+        By default this returns only resident and in-flight instances, bounded
+        by the app's effective concurrency limit. Set `history=true` to return
+        the newest 100 retained lifecycle rows. The history view is not a
+        complete audit log: PARKED wake rows expire after the configured
+        instance-retention window (30 days by default), and only the newest
+        100 retained rows are returned. Snapshots are durable deployment
+        artifacts with their own lifecycle and are not removed with PARKED
+        instance history.
+      parameters:
+        - name: history
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: "When true, include the newest 100 retained lifecycle rows; PARKED rows expire after 30 days by default."
       responses:
         '200':
-          description: Instances belonging to the app.
+          description: Current instances, or the bounded retained history when `history=true`.
           content:
             application/json:
               schema:

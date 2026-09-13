@@ -10987,6 +10987,46 @@ func (m *MemStore) ListInstancesInTerminalStatesOlderThan(_ context.Context, sta
 	return out, nil
 }
 
+// DeleteParkedInstancesOlderThan mirrors PgStore's atomic lifecycle-gated
+// cleanup. Holding m.mu across selection and deletion is the in-memory
+// equivalent of the PostgreSQL row locks: a wake cannot move a selected row
+// back into an active state between the eligibility check and DELETE.
+func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	type candidate struct {
+		id       string
+		parkedAt time.Time
+	}
+	candidates := make([]candidate, 0)
+	for id, ins := range m.instances {
+		// Job-task rows are linked from job_tasks.instance_id and have their
+		// own result-retention contract. Ordinary wake/build rows always carry
+		// AppID; keep the cleanup scoped to that shape.
+		if ins.AppID == "" || State(ins.State) != StateParked || ins.LeaseToken != "" || ins.MigrationStartedAt != nil ||
+			ins.ParkedAt.IsZero() || !ins.ParkedAt.Before(threshold) {
+			continue
+		}
+		candidates = append(candidates, candidate{id: id, parkedAt: ins.ParkedAt})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].parkedAt.Equal(candidates[j].parkedAt) {
+			return candidates[i].id < candidates[j].id
+		}
+		return candidates[i].parkedAt.Before(candidates[j].parkedAt)
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	for _, row := range candidates {
+		delete(m.instances, row.id)
+	}
+	return int64(len(candidates)), nil
+}
+
 // DeleteInstance removes an instance row unconditionally (PR #74).
 // Returns ErrNotFound when the row is already gone — the retention
 // sweep swallows that case for redelivery. There are no FK cascades;

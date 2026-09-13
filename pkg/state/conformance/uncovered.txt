@@ -159,7 +159,6 @@ CreateProject
 CreateRuntimeConfigOperation
 CreateSession
 CreateSessionWithBinding
-CreateSnapshot
 CreateTenantHostnameIfUnderQuota
 CreateTenantSurfaceIfUnderQuota
 CreateTriggerIfUnderQuota
@@ -326,7 +325,6 @@ LatestBuilderHeartbeatStats
 LatestDeployment
 LatestHeartbeatStats
 LatestParkedDeploymentForApp
-LatestSnapshot
 LatestSnapshotBytes
 LatestSnapshotForTier
 LatestSupersededDeployment
@@ -486,12 +484,10 @@ MarkComputeNodeInactive
 MarkCronFired
 MarkDeploymentCancelled
 MarkDeploymentStageFailed
-MarkDeploymentSuperseded
 MarkDomainVerified
 MarkDunningStep
 MarkFireNowRequestFailed
 MarkFireNowRequestSucceeded
-MarkInstanceMigrating
 MarkMFAEnrolled
 MarkOldSnapshotsStale
 MarkOperatorIntentFailed
@@ -677,9 +673,7 @@ UpdateCustomDomainCertStatus
 UpdateDeploymentMinInstances
 UpdateDeploymentTraffic
 UpdateEdgeRule
-UpdateInstanceStateIf
 UpdateInstanceStateToTerminal
-UpdateInstanceStateWithTimestamp
 UpdateMirrorRule
 UpdateOrgMemberRole
 UpdateOrgName

@@ -1099,6 +1099,9 @@ var cliCommands = []cliCommand{
 		Name:    "ps",
 		DocSlug: "ps",
 		Short:   "Show live instances + state for an app",
+		Flags: []cliFlag{
+			{Name: "all", Short: "include the newest 100 retained history rows (parked rows expire after 30d by default)"},
+		},
 	},
 	{
 		Name:    "queue",

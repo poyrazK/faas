@@ -82,7 +82,7 @@ func validCLISlug(s string) bool {
 func cmdPS(args []string) int {
 	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	history := fs.Bool("all", false, "include up to 100 historical instance rows")
+	history := fs.Bool("all", false, "include the newest 100 retained history rows (parked rows expire after 30d by default)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale ps [--all] <app>", "ps")
 		return 1
@@ -95,6 +95,10 @@ func cmdPS(args []string) int {
 	ins, err := client.ListInstancesWithHistory(context.Background(), slug, *history)
 	if err != nil {
 		return printErr("Could not list instances", err)
+	}
+	if *history && len(ins) == api.DefaultInstanceHistoryLimit {
+		_, _ = fmt.Fprintf(osStderr, "Showing the newest %d retained instance rows; parked history expires after %d days by default.\n",
+			api.DefaultInstanceHistoryLimit, api.DefaultInstanceRetention/(24*time.Hour))
 	}
 	if jsonOutput {
 		// NDJSON: empty slice renders as zero lines (no header), which

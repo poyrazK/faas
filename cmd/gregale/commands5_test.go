@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -216,6 +217,34 @@ func TestCmdPS_RendersInstancesAndHumanizesParked(t *testing.T) {
 	}
 	if !strings.Contains(out, "running") {
 		t.Errorf("running instance should render as running: %q", out)
+	}
+}
+
+func TestCmdPS_AllMakesHistoryCapVisible(t *testing.T) {
+	rows := make([]api.InstanceResponse, api.DefaultInstanceHistoryLimit)
+	for i := range rows {
+		rows[i] = api.InstanceResponse{ID: fmt.Sprintf("i-%03d", i), State: "parked", RAMMB: 128}
+	}
+	srv := httptest.NewServer(&multiSink{onListApp: func(string) (int, any) {
+		return http.StatusOK, rows
+	}})
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	_, restoreOut := captureStdout(t)
+	defer restoreOut()
+	var stderr bytes.Buffer
+	oldErr := osStderr
+	osStderr = &stderr
+	defer func() { osStderr = oldErr }()
+	if code := cmdPS([]string{"--all", "hello"}); code != 0 {
+		t.Fatalf("cmdPS --all exit = %d, want 0", code)
+	}
+	for _, want := range []string{"newest 100", "parked history expires", "30 days"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("history-cap notice missing %q: %q", want, stderr.String())
+		}
 	}
 }
 

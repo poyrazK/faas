@@ -1468,7 +1468,11 @@ Manage app database bindings
 
 Show live instances + state for an app
 
-`gregale ps`
+`gregale ps [--all]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | include the newest 100 retained history rows (parked rows expire after 30d by default) |  |
 
 
 ## queue

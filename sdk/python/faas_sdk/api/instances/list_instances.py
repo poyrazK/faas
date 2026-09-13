@@ -8,18 +8,27 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.instance_response import InstanceResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    history: bool | Unset = False,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["history"] = history
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/apps/{slug}/instances".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -74,11 +83,22 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    history: bool | Unset = False,
 ) -> Response[Problem | list[InstanceResponse]]:
     """Read-only instance list for an app.
 
+     By default this returns only resident and in-flight instances, bounded
+    by the app's effective concurrency limit. Set `history=true` to return
+    the newest 100 retained lifecycle rows. The history view is not a
+    complete audit log: PARKED wake rows expire after the configured
+    instance-retention window (30 days by default), and only the newest
+    100 retained rows are returned. Snapshots are durable deployment
+    artifacts with their own lifecycle and are not removed with PARKED
+    instance history.
+
     Args:
         slug (str):
+        history (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -90,6 +110,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        history=history,
     )
 
     response = client.get_httpx_client().request(
@@ -103,11 +124,22 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    history: bool | Unset = False,
 ) -> Problem | list[InstanceResponse] | None:
     """Read-only instance list for an app.
 
+     By default this returns only resident and in-flight instances, bounded
+    by the app's effective concurrency limit. Set `history=true` to return
+    the newest 100 retained lifecycle rows. The history view is not a
+    complete audit log: PARKED wake rows expire after the configured
+    instance-retention window (30 days by default), and only the newest
+    100 retained rows are returned. Snapshots are durable deployment
+    artifacts with their own lifecycle and are not removed with PARKED
+    instance history.
+
     Args:
         slug (str):
+        history (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,6 +152,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        history=history,
     ).parsed
 
 
@@ -127,11 +160,22 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    history: bool | Unset = False,
 ) -> Response[Problem | list[InstanceResponse]]:
     """Read-only instance list for an app.
 
+     By default this returns only resident and in-flight instances, bounded
+    by the app's effective concurrency limit. Set `history=true` to return
+    the newest 100 retained lifecycle rows. The history view is not a
+    complete audit log: PARKED wake rows expire after the configured
+    instance-retention window (30 days by default), and only the newest
+    100 retained rows are returned. Snapshots are durable deployment
+    artifacts with their own lifecycle and are not removed with PARKED
+    instance history.
+
     Args:
         slug (str):
+        history (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,6 +187,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        history=history,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -154,11 +199,22 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    history: bool | Unset = False,
 ) -> Problem | list[InstanceResponse] | None:
     """Read-only instance list for an app.
 
+     By default this returns only resident and in-flight instances, bounded
+    by the app's effective concurrency limit. Set `history=true` to return
+    the newest 100 retained lifecycle rows. The history view is not a
+    complete audit log: PARKED wake rows expire after the configured
+    instance-retention window (30 days by default), and only the newest
+    100 retained rows are returned. Snapshots are durable deployment
+    artifacts with their own lifecycle and are not removed with PARKED
+    instance history.
+
     Args:
         slug (str):
+        history (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -172,5 +228,6 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            history=history,
         )
     ).parsed

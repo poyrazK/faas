@@ -10,22 +10,39 @@ import { request as __request } from '../core/request.js';
 export class InstancesService {
   /**
    * Read-only instance list for an app.
-   * @returns InstanceResponse Instances belonging to the app.
+   * By default this returns only resident and in-flight instances, bounded
+   * by the app's effective concurrency limit. Set `history=true` to return
+   * the newest 100 retained lifecycle rows. The history view is not a
+   * complete audit log: PARKED wake rows expire after the configured
+   * instance-retention window (30 days by default), and only the newest
+   * 100 retained rows are returned. Snapshots are durable deployment
+   * artifacts with their own lifecycle and are not removed with PARKED
+   * instance history.
+   *
+   * @returns InstanceResponse Current instances, or the bounded retained history when `history=true`.
    * @throws ApiError
    */
   public static listInstances({
     slug,
+    history = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * When true, include the newest 100 retained lifecycle rows; PARKED rows expire after 30 days by default.
+     */
+    history?: boolean,
   }): CancelablePromise<Array<InstanceResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/instances',
       path: {
         'slug': slug,
+      },
+      query: {
+        'history': history,
       },
       errors: {
         401: `code: unauthorized`,
