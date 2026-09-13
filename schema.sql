@@ -1765,8 +1765,12 @@ CREATE TABLE public.compute_node_keys (
     key_id text NOT NULL,
     public_key_pem text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    key_state text DEFAULT 'current'::text NOT NULL,
+    valid_until timestamp with time zone,
+    revoked_at timestamp with time zone,
     CONSTRAINT compute_node_keys_key_id_shape CHECK ((key_id ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT compute_node_keys_pem_shape CHECK ((public_key_pem ~~ '-----BEGIN PUBLIC KEY-----%'::text))
+    CONSTRAINT compute_node_keys_pem_shape CHECK ((public_key_pem ~~ '-----BEGIN PUBLIC KEY-----%'::text)),
+    CONSTRAINT compute_node_keys_state_check CHECK ((((key_state = 'current'::text) AND (valid_until IS NULL) AND (revoked_at IS NULL)) OR ((key_state = 'overlap'::text) AND (valid_until IS NOT NULL) AND (revoked_at IS NULL)) OR ((key_state = 'revoked'::text) AND (revoked_at IS NOT NULL))))
 );
 
 
@@ -5780,6 +5784,20 @@ CREATE INDEX compute_node_heartbeats_received_at_idx ON public.compute_node_hear
 --
 
 CREATE INDEX compute_node_keys_node_idx ON public.compute_node_keys USING btree (compute_node_id);
+
+
+--
+-- Name: compute_node_keys_one_current_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX compute_node_keys_one_current_idx ON public.compute_node_keys USING btree (compute_node_id) WHERE (key_state = 'current'::text);
+
+
+--
+-- Name: compute_node_keys_usable_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX compute_node_keys_usable_idx ON public.compute_node_keys USING btree (compute_node_id, key_id, valid_until) WHERE ((key_state = ANY (ARRAY['current'::text, 'overlap'::text])) AND (revoked_at IS NULL));
 
 
 --

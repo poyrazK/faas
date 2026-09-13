@@ -94,7 +94,7 @@ func generateP256Row(t *testing.T) (*ecdsa.PrivateKey, NodeKeyRow) {
 	if err != nil {
 		t.Fatalf("KeyIDForPublicKey: %v", err)
 	}
-	return priv, NodeKeyRow{KeyID: keyID, PublicKeyPEM: string(pemBytes)}
+	return priv, NodeKeyRow{ComputeNodeID: "node-1", KeyID: keyID, PublicKeyPEM: string(pemBytes)}
 }
 
 // TestNodeKeyRegistry_RefreshAndLookup pins the happy path:
@@ -128,6 +128,28 @@ func TestNodeKeyRegistry_RefreshAndLookup(t *testing.T) {
 	if _, ok := reg.PublicKey("deadbeef"); ok {
 		t.Error("PublicKey on unknown key_id returned ok; want miss")
 	}
+	if _, ok := reg.PublicKeyForNode(row.ComputeNodeID, row.KeyID); !ok {
+		t.Error("PublicKeyForNode on owner returned miss; want hit")
+	}
+	if _, ok := reg.PublicKeyForNode("node-2", row.KeyID); ok {
+		t.Error("PublicKeyForNode accepted key for a different node")
+	}
+}
+
+func TestNodeKeyRegistry_RejectsKeyIDSharedAcrossNodes(t *testing.T) {
+	_, row := generateP256Row(t)
+	other := row
+	other.ComputeNodeID = "node-2"
+	reg := NewNodeKeyRegistry(&stubLoader{}, silentLog{})
+	if got := reg.ReplaceAll([]NodeKeyRow{row, other}); got != 0 {
+		t.Fatalf("ReplaceAll accepted %d keys, want 0 for conflicting ownership", got)
+	}
+	if _, ok := reg.PublicKeyForNode(row.ComputeNodeID, row.KeyID); ok {
+		t.Fatal("conflicted key remains trusted by original owner")
+	}
+	if _, ok := reg.PublicKeyForNode(other.ComputeNodeID, other.KeyID); ok {
+		t.Fatal("conflicted key remains trusted by second owner")
+	}
 }
 
 // TestNodeKeyRegistry_ReplaceAllSkipsUnparseableRows pins the
@@ -140,7 +162,7 @@ func TestNodeKeyRegistry_ReplaceAllSkipsUnparseableRows(t *testing.T) {
 	_, good := generateP256Row(t)
 	loader := &stubLoader{rows: []NodeKeyRow{
 		good,
-		{KeyID: "bad", PublicKeyPEM: "not a pem block"},
+		{ComputeNodeID: "node-1", KeyID: "bad", PublicKeyPEM: "not a pem block"},
 	}}
 	reg := NewNodeKeyRegistry(loader, silentLog{})
 	n, err := reg.Refresh(context.Background())

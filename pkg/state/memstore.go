@@ -110,6 +110,12 @@ type auditEventOutboxRow struct {
 // concurrent use and enforces the same uniqueness constraints as the schema
 // (unique email, unique slug, unique key hash) so tests exercise real error
 // paths. It is NOT durable — production uses the Postgres store.
+type memComputeNodeKey struct {
+	publicKeyPEM string
+	state        string
+	validUntil   time.Time
+}
+
 type MemStore struct {
 	objectBuckets           map[string]ObjectBucket
 	objectUsage             map[string]ObjectBucketUsage
@@ -613,7 +619,7 @@ type MemStore struct {
 	// — same as a fresh Postgres cluster with no vmmd registered
 	// yet. The pkg/sched.NodeKeyRegistry's Refresh path treats
 	// both as "no rows, return empty map".
-	computeNodeKeys map[string]string
+	computeNodeKeys map[string]memComputeNodeKey
 	// computeNodeHeartbeats is the append-only history (CP-1,
 	// migration 00065). Mirrors the same wire shape as the SQL
 	// table; rows are append-only, never mutated, and dropped with
@@ -1013,7 +1019,7 @@ func NewMemStore() *MemStore {
 		// signature path inject rows by calling the method
 		// directly; tests that don't care about slice-3 see
 		// an empty map (same as a fresh Postgres cluster).
-		computeNodeKeys: map[string]string{},
+		computeNodeKeys: map[string]memComputeNodeKey{},
 		// computeNodeHeartbeats is the CP-1 history mirror. Empty here;
 		// rows accumulate via AppendComputeNodeHeartbeat as the schedd
 		// Heartbeat.Tick goroutine (or test setup) drives them.
@@ -12133,11 +12139,24 @@ func (m *MemStore) UpsertNodeKey(_ context.Context, nodeID string, keyID string,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	const overlap = 24 * time.Hour
 	composite := nodeID + "\x00" + keyID
-	if _, ok := m.computeNodeKeys[composite]; ok {
+	if existing, ok := m.computeNodeKeys[composite]; ok && existing.state == "current" {
 		return nil
 	}
-	m.computeNodeKeys[composite] = publicKeyPEM
+	for candidate, existing := range m.computeNodeKeys {
+		if !strings.HasPrefix(candidate, nodeID+"\x00") {
+			continue
+		}
+		if existing.state == "current" {
+			existing.state = "overlap"
+			existing.validUntil = time.Now().Add(overlap)
+			m.computeNodeKeys[candidate] = existing
+			continue
+		}
+		delete(m.computeNodeKeys, candidate)
+	}
+	m.computeNodeKeys[composite] = memComputeNodeKey{publicKeyPEM: publicKeyPEM, state: "current"}
 	return nil
 }
 
@@ -12155,8 +12174,11 @@ func (m *MemStore) LookupNodeKey(_ context.Context, computeNodeID string, keyID 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	pem, ok := m.computeNodeKeys[computeNodeID+"\x00"+keyID]
-	return pem, ok
+	entry, ok := m.computeNodeKeys[computeNodeID+"\x00"+keyID]
+	if !ok || (entry.state == "overlap" && !entry.validUntil.After(time.Now())) {
+		return "", false
+	}
+	return entry.publicKeyPEM, true
 }
 
 // SetComputeNodeActive flips active on a row by id (issue #98 /

@@ -500,7 +500,7 @@ func strictModeKeyRegistry(t *testing.T) (*sched.NodeKeyRegistry, *ecdsa.Private
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 	loader := &stubKeyLoaderVmmd{
 		rows: []sched.NodeKeyRow{
-			{KeyID: keyID, PublicKeyPEM: string(pemBytes)},
+			{ComputeNodeID: "0193f7c0-rtt-7bbb-9def-0123456789ab", KeyID: keyID, PublicKeyPEM: string(pemBytes)},
 		},
 	}
 	reg := sched.NewNodeKeyRegistry(loader, nil)

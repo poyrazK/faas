@@ -623,6 +623,9 @@ type ComputeNodeKey struct {
 	KeyID         string
 	PublicKeyPem  string
 	CreatedAt     pgtype.Timestamptz
+	KeyState      string
+	ValidUntil    pgtype.Timestamptz
+	RevokedAt     pgtype.Timestamptz
 }
 
 type ConsumerKey struct {

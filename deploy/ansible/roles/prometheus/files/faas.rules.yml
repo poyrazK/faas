@@ -2869,3 +2869,19 @@ groups:
           summary: "Expired app artifacts remain on persistent storage"
           description: "Known artifact bytes remain after their app deletion grace expired. Apid retains the database references and retries cleanup rather than orphaning the objects."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"
+
+  - name: compute_node_key_lifecycle
+    interval: 1m
+    rules:
+      - alert: FaasComputeNodeTrustedKeyOverflow
+        expr: schedd_compute_node_trusted_keys > 2
+        for: 5m
+        labels:
+          severity: page
+          component: schedd
+          family: compute_node_key_lifecycle
+          public_status: internal
+        annotations:
+          summary: "A compute node has too many trusted capacity signing keys"
+          description: "Schedd trusts more than the current key and one bounded rotation-overlap key for a compute node. Treat the extra credentials as a capacity-report authentication incident."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeTrustedKeyOverflow.md"

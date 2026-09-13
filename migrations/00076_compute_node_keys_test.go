@@ -127,6 +127,9 @@ func Test00076_ComputeNodeKeys_TableShape(t *testing.T) {
 		"key_id":          "NO|text",
 		"public_key_pem":  "NO|text",
 		"created_at":      "NO|timestamp with time zone",
+		"key_state":       "NO|text",
+		"valid_until":     "YES|timestamp with time zone",
+		"revoked_at":      "YES|timestamp with time zone",
 	}
 	for col, expect := range want {
 		if got[col] != expect {

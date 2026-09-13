@@ -1,15 +1,14 @@
 package sched
 
-// nodekeys.go — in-memory registry of (key_id → *ecdsa.PublicKey)
-// populated from the compute_node_keys table (migration 00076).
+// nodekeys.go — in-memory registry of trusted capacity signing keys,
+// populated from compute_node_keys and bound to their compute-node owners.
 //
 // Background. ADR-053 closes the CapacityReport trust gap:
 // every report carries a 64-byte ECDSA-P-256 (r||s) signature
 // over the canonical payload, and the schedd handler verifies
 // it against a key registered in this table. The registry is
-// keyed by key_id — the SHA-256 hex of the leaf's
-// SubjectPublicKeyInfo — so a rotated key doesn't accept
-// signatures minted under the old one.
+// keyed by key_id — the SHA-256 hex of the leaf's SubjectPublicKeyInfo —
+// with compute_node_id retained as an authorization constraint.
 //
 // The registry is the load-bearing enforcement; without it, a
 // misconfigured vmmd (or an attacker with the wire) could send
@@ -25,12 +24,9 @@ package sched
 // map read under RWMutex.RLock; the chooser goroutine is the
 // only reader.
 //
-// Out of scope (here, deferred to #316 + a future ADR):
-//   - Overlap-window key rotation (one key_id stays accepted
-//     for N hours after a new key_id is added).
-//   - Audit table for rotations.
-//
-// Both ship when the runbook (issue #316) lands.
+// The database loader admits only active nodes and either the current key or
+// one unexpired overlap key. A rollout preserves the on-host key; an explicit
+// rotation keeps the former key usable for 24 hours.
 
 import (
 	"context"
@@ -44,35 +40,51 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
-// NodeKeyLookup is the production-style accessor exported for
-// other schedd internals (the gRPC handler in
-// pkg/scheddgrpc.Server.ReportCapacity). It composes the same
-// shape as nodeKeyLookup so callers can inject a stub in tests.
-//
-// PublicKey returns the registered *ecdsa.PublicKey for keyID.
-// OK=false when the registry is nil or the key is unknown.
+// PublicKey is a diagnostic and compatibility accessor. Authentication paths
+// must call PublicKeyForNode so a valid key cannot claim another node's ID.
 func (r *NodeKeyRegistry) PublicKey(keyID string) (*ecdsa.PublicKey, bool) {
 	if r == nil {
 		return nil, false
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	pub, ok := r.keys[keyID]
-	return pub, ok
+	entry, ok := r.keys[keyID]
+	return entry.publicKey, ok
 }
 
-// NodeKeyRegistry is the in-memory key_id → *ecdsa.PublicKey
-// map. Constructed once at schedd startup; refreshed via the
+// PublicKeyForNode resolves a key only for the compute identity that owns it.
+// The report's node_id is caller supplied, so this check is part of signature
+// authentication rather than an optional authorization layer.
+func (r *NodeKeyRegistry) PublicKeyForNode(nodeID, keyID string) (*ecdsa.PublicKey, bool) {
+	if r == nil || nodeID == "" || keyID == "" {
+		return nil, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.keys[keyID]
+	if !ok || entry.computeNodeID != nodeID {
+		return nil, false
+	}
+	return entry.publicKey, true
+}
+
+type trustedNodeKey struct {
+	computeNodeID string
+	publicKey     *ecdsa.PublicKey
+}
+
+// NodeKeyRegistry is the in-memory key_id → owner/public-key map. It is
+// constructed once at schedd startup and refreshed via the
 // 'compute_node_changed' pg_notify listener.
 //
-// RWMutex guards the map. Read path (PublicKey) takes RLock;
+// RWMutex guards the map. Read paths take RLock;
 // write path (ReplaceAll) takes WLock. Refresh is full-snapshot
 // (read every row, swap the map) — partial updates would
 // require a per-row delta log and aren't worth the complexity
 // at the typical fleet size (handful of rows).
 type NodeKeyRegistry struct {
 	mu   sync.RWMutex
-	keys map[string]*ecdsa.PublicKey
+	keys map[string]trustedNodeKey
 	// loader is the production-side row loader; tests inject a
 	// stub. Returns one (key_id, public_key_pem) tuple per row.
 	// Returning an error aborts the refresh — schedd keeps the
@@ -80,16 +92,28 @@ type NodeKeyRegistry struct {
 	loader NodeKeyLoader
 	// log is optional; pass nil in unit tests, the daemon's
 	// slog.Logger at wiring time.
-	log NodeKeyLogger
+	log           NodeKeyLogger
+	countObserver func(map[string]int)
+}
+
+// SetCountObserver installs the bounded per-node trusted-key metric sink. The
+// callback runs after each atomic snapshot replacement and never under r.mu.
+func (r *NodeKeyRegistry) SetCountObserver(observer func(map[string]int)) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.countObserver = observer
+	r.mu.Unlock()
 }
 
 // NodeKeyLoader is the production-side Postgres loader. schedd
-// constructs an implementation that runs
+// constructs an implementation that reads
 //
-//	select key_id, public_key_pem from compute_node_keys
+//	select compute_node_id, key_id, public_key_pem
 //
-// against the pool. The interface lets tests inject an
-// in-memory loader without spinning up a database.
+// for active nodes and usable lifecycle states. The interface lets tests
+// inject an in-memory loader without spinning up a database.
 type NodeKeyLoader interface {
 	LoadNodeKeys(ctx context.Context) ([]NodeKeyRow, error)
 }
@@ -97,8 +121,9 @@ type NodeKeyLoader interface {
 // NodeKeyRow is one row from compute_node_keys. Loaded fresh on
 // every Refresh; replaced atomically in the registry map.
 type NodeKeyRow struct {
-	KeyID        string
-	PublicKeyPEM string
+	ComputeNodeID string
+	KeyID         string
+	PublicKeyPEM  string
 }
 
 // NodeKeyLogger is the minimal slog.Logger interface so schedd's
@@ -117,7 +142,7 @@ type NodeKeyLogger interface {
 // silently de-sync the map.
 func NewNodeKeyRegistry(loader NodeKeyLoader, log NodeKeyLogger) *NodeKeyRegistry {
 	return &NodeKeyRegistry{
-		keys:   make(map[string]*ecdsa.PublicKey),
+		keys:   make(map[string]trustedNodeKey),
 		loader: loader,
 		log:    log,
 	}
@@ -134,8 +159,12 @@ func (r *NodeKeyRegistry) ReplaceAll(rows []NodeKeyRow) int {
 	if r == nil {
 		return 0
 	}
-	fresh := make(map[string]*ecdsa.PublicKey, len(rows))
+	fresh := make(map[string]trustedNodeKey, len(rows))
+	conflicted := make(map[string]struct{})
 	for _, row := range rows {
+		if row.ComputeNodeID == "" {
+			continue
+		}
 		pub, err := parsePublicKeyPEM(row.PublicKeyPEM)
 		if err != nil {
 			if r.log != nil {
@@ -144,17 +173,34 @@ func (r *NodeKeyRegistry) ReplaceAll(rows []NodeKeyRow) int {
 			}
 			continue
 		}
-		fresh[row.KeyID] = pub
+		if existing, ok := fresh[row.KeyID]; ok && existing.computeNodeID != row.ComputeNodeID {
+			delete(fresh, row.KeyID)
+			conflicted[row.KeyID] = struct{}{}
+			if r.log != nil {
+				r.log.Warn("sched: reject node key assigned to multiple compute nodes", "key_id", row.KeyID)
+			}
+			continue
+		}
+		if _, conflict := conflicted[row.KeyID]; conflict {
+			continue
+		}
+		fresh[row.KeyID] = trustedNodeKey{computeNodeID: row.ComputeNodeID, publicKey: pub}
+	}
+	counts := make(map[string]int)
+	for _, entry := range fresh {
+		counts[entry.computeNodeID]++
 	}
 	r.mu.Lock()
 	r.keys = fresh
+	observer := r.countObserver
 	r.mu.Unlock()
+	if observer != nil {
+		observer(counts)
+	}
 	return len(fresh)
 }
 
-// Size returns the count of registered keys. Useful for
-// Prometheus metrics (a future slice adds
-// node_key_registry_size).
+// Size returns the count of registered keys for diagnostics.
 func (r *NodeKeyRegistry) Size() int {
 	if r == nil {
 		return 0

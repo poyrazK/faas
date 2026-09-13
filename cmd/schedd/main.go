@@ -699,6 +699,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ErrUnknownNodeKey, which is the safer default (silent
 	// unsigned-accept is the failure mode slice-3 closes).
 	keys := sched.NewNodeKeyRegistry(pgNodeKeyLoader{pool: pool}, log)
+	wireNodeKeyMetrics(ops.Registry(), keys)
 	engine.WithNodeKeyRegistry(keys)
 	if n, err := keys.Refresh(ctx); err != nil {
 		log.Warn("schedd: initial node key registry refresh failed; first notify will populate",

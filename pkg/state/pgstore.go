@@ -15664,27 +15664,70 @@ func (s *PgStore) loadComputeNodeCertFingerprint(ctx context.Context, name strin
 // node signing key (cmd/vmmd/main.go::loadNodeSigningKey) and
 // computed the key_id (the SHA-256 hex of the SubjectPublicKeyInfo).
 //
-// ON CONFLICT is a no-op (DO NOTHING) because key material is
-// write-once — re-applying public_key_pem on conflict would
-// silently overwrite a rotation that produced a different key
-// (the PK is (compute_node_id, key_id), so a rotated key on the
-// same node has a different key_id and lands as a fresh row).
-// Re-stamping public_key_pem on the same key_id would be a
-// defensive no-op anyway (the bytes are deterministic) but we
-// keep the explicit semantics to flag the omit-intent at review
-// time. Migration 00075's CHECK constraints
+// Re-registering the current key is a no-op because key material is
+// write-once. A new key atomically demotes the current key to a 24-hour
+// overlap and removes any older overlap, bounding the trust set at two rows.
+// Migration 00075's CHECK constraints
 // (compute_node_keys_key_id_shape, compute_node_keys_pem_shape)
 // reject malformed shapes at INSERT — a vmmd that mints a
 // non-64-hex-char key_id or a non-PEM block fails loud at the
 // persist step rather than corrupting the registry.
 func (s *PgStore) UpsertNodeKey(ctx context.Context, nodeID string, keyID string, publicKeyPEM string) error {
-	_, err := s.pool.Exec(ctx, `
-		insert into compute_node_keys (compute_node_id, key_id, public_key_pem)
-		values ($1, $2, $3)
-		on conflict (compute_node_id, key_id) do nothing
-	`, nodeID, keyID, publicKeyPEM)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("state: upsert compute_node_keys (node=%q, key=%s): %w", nodeID, keyID, err)
+		return fmt.Errorf("state: begin compute node key rotation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Serialize rotations with node lifecycle changes. The node row is also
+	// the FK authority, so a missing/deleted node fails before any key changes.
+	var lockedNodeID string
+	if err := tx.QueryRow(ctx, `
+		select id::text from compute_nodes where id = $1 for update
+	`, nodeID).Scan(&lockedNodeID); err != nil {
+		return fmt.Errorf("state: lock compute node for key rotation (node=%q): %w", nodeID, err)
+	}
+
+	var currentID string
+	err = tx.QueryRow(ctx, `
+		select key_id
+		  from compute_node_keys
+		 where compute_node_id = $1 and key_state = 'current'
+		 for update
+	`, nodeID).Scan(&currentID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("state: read current compute node key (node=%q): %w", nodeID, err)
+	}
+	if err == nil && currentID == keyID {
+		return tx.Commit(ctx)
+	}
+
+	// At most one previous key may overlap. A second rotation revokes and
+	// prunes the older overlap before promoting the former current key.
+	if _, err := tx.Exec(ctx, `
+		delete from compute_node_keys
+		 where compute_node_id = $1 and key_state <> 'current'
+	`, nodeID); err != nil {
+		return fmt.Errorf("state: prune previous compute node keys (node=%q): %w", nodeID, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update compute_node_keys
+		   set key_state = 'overlap',
+		       valid_until = statement_timestamp() + interval '24 hours',
+		       revoked_at = null
+		 where compute_node_id = $1 and key_state = 'current'
+	`, nodeID); err != nil {
+		return fmt.Errorf("state: overlap current compute node key (node=%q): %w", nodeID, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into compute_node_keys
+		       (compute_node_id, key_id, public_key_pem, key_state, valid_until, revoked_at)
+		values ($1, $2, $3, 'current', null, null)
+	`, nodeID, keyID, publicKeyPEM); err != nil {
+		return fmt.Errorf("state: insert current compute node key (node=%q, key=%s): %w", nodeID, keyID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit compute node key rotation (node=%q, key=%s): %w", nodeID, keyID, err)
 	}
 	return nil
 }

@@ -125,10 +125,9 @@ func sha256Hex(b []byte) []byte {
 // second method here is a wire-incompatible break; add a new
 // interface and compose.
 type nodeKeyLookup interface {
-	// PublicKey returns the registered ECDSA P-256 public key
-	// for keyID and whether the lookup succeeded. OK=false
-	// means the registry has no entry for keyID (the report
-	// is from a node whose key was rotated out, or from an
-	// unauthorised node).
-	PublicKey(keyID string) (pub *ecdsa.PublicKey, ok bool)
+	// PublicKeyForNode returns the registered ECDSA P-256 public key only
+	// when keyID is currently trusted for nodeID. Binding both values closes
+	// the cross-node impersonation gap where any trusted key could previously
+	// sign a report carrying another node's ID.
+	PublicKeyForNode(nodeID, keyID string) (pub *ecdsa.PublicKey, ok bool)
 }

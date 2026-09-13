@@ -241,22 +241,42 @@
         mode: "0444"
       no_log: true
 
-    - name: Stage the per-node capacity signing key
+    - name: Inspect the existing per-node capacity signing key
+      ansible.builtin.stat:
+        path: /etc/faas/secrets/vmmd/node.key
+      register: faas_join_existing_node_key
+
+    - name: Inspect the existing per-node capacity public key
+      ansible.builtin.stat:
+        path: /etc/faas/secrets/vmmd/node.pub
+      register: faas_join_existing_node_pub
+
+    - name: Refuse a partial per-node capacity keypair
+      ansible.builtin.assert:
+        that:
+          - (faas_join_existing_node_key.stat.exists | bool) == (faas_join_existing_node_pub.stat.exists | bool)
+        fail_msg: >-
+          node.key and node.pub must either both exist or both be absent; repair the
+          pair with gregalectl node-key before resuming this node join
+
+    - name: Stage the per-node capacity signing key on first enrollment
       ansible.builtin.copy:
         src: "{{ faas_join_node_key_source }}"
         dest: /etc/faas/secrets/vmmd/node.key
         owner: root
         group: root
         mode: "0400"
+        force: false
       no_log: true
 
-    - name: Stage the per-node capacity public key
+    - name: Stage the per-node capacity public key on first enrollment
       ansible.builtin.copy:
         src: "{{ faas_join_node_pub_source }}"
         dest: /etc/faas/secrets/vmmd/node.pub
         owner: root
         group: root
         mode: "0444"
+        force: false
       no_log: true
 
     - name: Stage the manifest consumed by the on-host renderer
