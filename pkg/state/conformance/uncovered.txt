@@ -182,7 +182,6 @@ DeleteAppErrorRequestsOlderThan
 DeleteAppErrorsByIDs
 DeleteAppLogDrain
 DeleteAppOpenAPIDoc
-DeleteAppPermanently
 DeleteAppRegistryCredential
 DeleteAppSecret
 DeleteAppSecretInScope
@@ -589,7 +588,6 @@ ResealAppSecretWithKidAndValueHashInScope
 ResetAppWebhookDeliveryFromDead
 ResolveStatusIncident
 RestoreAccount
-RestoreApp
 RetireRuntimeSnapshot
 RetryDeploymentFromStage
 RetryQueueDeadLetter
@@ -606,7 +604,6 @@ RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
 SafedeployStampRollout
-ScheduleAppDeletion
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow

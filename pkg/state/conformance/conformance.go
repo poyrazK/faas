@@ -71,12 +71,34 @@ func Run(t *testing.T, open Open) {
 		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
 		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
+		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testAppDeletionClaim(t *testing.T, fx *Fixture) {
+	deadline := time.Now().UTC().Add(-time.Minute)
+	if _, err := fx.Store.ScheduleAppDeletion(fx.Ctx, fx.App.ID, deadline); err != nil {
+		t.Fatalf("ScheduleAppDeletion: %v", err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := fx.Store.ClaimAppDeletion(fx.Ctx, fx.App.ID); err != nil {
+			t.Fatalf("ClaimAppDeletion attempt %d: %v", attempt, err)
+		}
+	}
+	if _, err := fx.Store.RestoreApp(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
+	}
+	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); err != nil {
+		t.Fatalf("DeleteAppPermanently: %v", err)
+	}
+	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("repeated DeleteAppPermanently = %v, want ErrNotFound", err)
 	}
 }
 

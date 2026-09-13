@@ -273,11 +273,13 @@ func TestBootContract_ImagedRenderedConfigAndFunctionRunners(t *testing.T) {
 
 	fixtureRoot := t.TempDir()
 	hostAgePath := filepath.Join(fixtureRoot, "host.age")
+	fleetAgePath := filepath.Join(fixtureRoot, "fleet.age")
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatalf("generate host age identity: %v", err)
 	}
 	writeBootKey(t, hostAgePath, []byte(identity.String()), 0o400)
+	writeBootKey(t, fleetAgePath, []byte(identity.String()), 0o400)
 
 	guestInitPath := filepath.Join(fixtureRoot, "guest-init")
 	guestInitBody := []byte("#!/bin/sh\nexit 0\n")
@@ -317,7 +319,7 @@ func TestBootContract_ImagedRenderedConfigAndFunctionRunners(t *testing.T) {
 		// imaged must accept the already-provisioned base.
 		"FAAS_BUILDER_BASE_REF=" + strings.TrimPrefix(registry.URL, "http://") + "/builder-base@sha256:" + strings.Repeat("0", 64),
 	}
-	env = append(env, renderedImagedUnitEnvironment(t, unit, fixtureRoot, hostAgePath)...)
+	env = append(env, renderedImagedUnitEnvironment(t, unit, fixtureRoot, hostAgePath, fleetAgePath)...)
 
 	proc := exec.Command(buildBootContractBinary(t, "cmd/imaged"), "--config", configPath)
 	proc.Env = env
@@ -442,7 +444,7 @@ func relocateRenderedMetricsAddr(t *testing.T, configPath, addr string) {
 	}
 }
 
-func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hostAgePath string) []string {
+func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hostAgePath, fleetAgePath string) []string {
 	t.Helper()
 	const wantEnvironmentFiles = "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/runtime-bases.env -/etc/faas/otel.env"
 	if unit.EnvironmentFile != wantEnvironmentFiles {
@@ -472,8 +474,11 @@ func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hos
 			}
 			value = dir
 		}
-		if kv.Key == "FAAS_HOST_AGE_IDENTITY_PATH" || kv.Key == "FAAS_FLEET_AGE_IDENTITY_PATH" {
+		if kv.Key == "FAAS_HOST_AGE_IDENTITY_PATH" {
 			value = hostAgePath
+		}
+		if kv.Key == "FAAS_FLEET_AGE_IDENTITY_PATH" {
+			value = fleetAgePath
 		}
 		if _, ok := runnerKeys[kv.Key]; ok {
 			runnerKeys[kv.Key] = true

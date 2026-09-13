@@ -267,6 +267,7 @@ type App struct {
 	DeclaredRoutes            []byte
 	DeletedAt                 pgtype.Timestamptz
 	DeleteGraceUntil          pgtype.Timestamptz
+	PurgeClaimedAt            pgtype.Timestamptz
 }
 
 type AppEnv struct {
