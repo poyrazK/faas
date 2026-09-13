@@ -4562,47 +4562,30 @@ type RouteRow struct {
 	ErrorPct float64 `json:"error_pct"`
 }
 
-// AppRoutesResponse is the per-route label snapshot returned by
-// GET /v1/apps/{slug}/routes (ADR-093). The shape is intentionally
-// narrower than AppMetricsResponse — only the bounded label set
-// the gatewayd-internal control listener emits (method + raw
-// path, capped at 50 + __route_other__). The Prometheus-derived
-// per-route rollup (count, percentiles, error_pct) lives on
-// AppMetricsResponse.Routes, computed lazily when the dashboard
-// needs it. Splitting the two surfaces keeps the lightweight
-// reader cheap (one in-memory map read on gatewayd-internal, one
-// HTTP round-trip from apid) and lets the dashboard render the
-// "what routes is this app serving?" panel without a Prometheus
-// query.
-//
-// Source is "live" when the gatewayd control listener responded
-// 200; "unavailable" when the dial failed (gatewayd not
-// reachable, X-Faas-Routes-State: unavailable header). Routes
-// is []string (not nil) on the unavailable path so the JSON
-// encoder emits `[]` rather than `null`.
-//
-// CapHit (ADR-093 Tier B item #1, issue #273 follow-up) is true
-// iff the app's routeLabelSet has reached RouteMetricsPerAppCap
-// (pkg/api.RouteMetricsPerAppCap = 50) and additional routes are
-// collapsing into the reserved __route_other__ bucket. On the
-// "live" path the dashboard renders CapHit=true as a "you have
-// hit the 50-route cap" chip rather than counting Routes and
-// trying to disambiguate "5 real routes + __route_other__
-// because of one wildcard probe" from "50 real routes +
-// overflow". On the "unavailable" path CapHit is the zero
-// value (false) — the upstream decode doesn't carry it, and
-// the dashboard already renders unavailable as a distinct chip.
+// AppRoutesResponse is the fleet route snapshot returned by
+// GET /v1/apps/{slug}/routes (ADR-093 / issue #2416). Production reads a
+// bounded Prometheus union across all active compute collectors. Source and
+// collector counts distinguish healthy no traffic, partial telemetry, and a
+// total bridge failure. Single-box development retains the loopback gateway
+// control endpoint when Prometheus is not configured.
 type AppRoutesResponse struct {
-	Slug   string   `json:"slug"`
-	AppID  string   `json:"app_id,omitempty"`
-	Routes []string `json:"routes"`
-	Source string   `json:"source"`
-	// CapHit mirrors gatewayd-internal's routesResponseJSON.CapHit.
-	// ADR-093 §D2 invariant: when CapHit==true, len(Routes) ==
-	// RouteMetricsPerAppCap + 2 (the +2 is reservedRouteLabelEmpty
-	// + __route_other__).
+	Slug               string   `json:"slug"`
+	AppID              string   `json:"app_id,omitempty"`
+	Routes             []string `json:"routes"`
+	Source             string   `json:"source"`
+	CollectorsExpected int      `json:"collectors_expected"`
+	CollectorsHealthy  int      `json:"collectors_healthy"`
+	// CapHit is true when a collector emitted __route_other__ or the fleet
+	// union reaches RouteMetricsPerAppCap. It is encoded false when Source is
+	// unavailable, where cap state is unknown.
 	CapHit bool `json:"cap_hit"`
 }
+
+const (
+	AppRoutesSourceLive        = "live"
+	AppRoutesSourcePartial     = "partial"
+	AppRoutesSourceUnavailable = "unavailable"
+)
 
 // AppStreamingStatus is the per-request streaming classification
 // returned by GET /v1/apps/{slug}/streaming-cap (ADR-102 D6). It is
@@ -7614,12 +7597,15 @@ type EdgeRuleSuggestion struct {
 // that match it so a developer can see contract drift and policy coverage
 // before changing any rules.
 type AppOpenAPIPolicyPreviewResponse struct {
-	AppID             string                         `json:"app_id"`
-	Source            string                         `json:"source"`
-	ObservedAvailable bool                           `json:"observed_available"`
-	OpenAPIVersion    string                         `json:"openapi_version,omitempty"`
-	Routes            []AppOpenAPIPolicyPreviewRoute `json:"routes"`
-	Suggestions       []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
+	AppID              string                         `json:"app_id"`
+	Source             string                         `json:"source"`
+	ObservedAvailable  bool                           `json:"observed_available"`
+	ObservedSource     string                         `json:"observed_source"`
+	CollectorsExpected int                            `json:"collectors_expected"`
+	CollectorsHealthy  int                            `json:"collectors_healthy"`
+	OpenAPIVersion     string                         `json:"openapi_version,omitempty"`
+	Routes             []AppOpenAPIPolicyPreviewRoute `json:"routes"`
+	Suggestions        []EdgeRuleSuggestion           `json:"suggestions,omitempty"`
 }
 
 // ApplyAppOpenAPIPolicyRequest controls the explicit OpenAPI policy apply

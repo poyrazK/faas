@@ -204,10 +204,13 @@ export class OpenapiImportService {
    * route labels and the app's edge rules. Each route is classified as
    * `matched`, `declared_only`, or `observed_only`; `covered` is true
    * when at least one enabled edge rule matches the path and method.
-   * When the gateway bridge is unavailable the response remains useful,
-   * sets `observed_available` to false, and reports
-   * `source=degraded: routes_unavailable`. No policy or document writes
-   * occur on this endpoint.
+   * Observed routes come from the fleet-wide Prometheus aggregate. A
+   * partial scrape returns the available union with
+   * `source=degraded: routes_partial`; a total bridge failure sets
+   * `observed_available` to false and reports
+   * `source=degraded: routes_unavailable`. Collector counts distinguish
+   * both states from a healthy fleet that has not received traffic. No
+   * policy or document writes occur on this endpoint.
    *
    * @returns AppOpenAPIPolicyPreviewResponse Declared-vs-observed route and policy preview.
    * @throws ApiError

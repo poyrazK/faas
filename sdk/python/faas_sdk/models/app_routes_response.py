@@ -14,38 +14,34 @@ T = TypeVar("T", bound="AppRoutesResponse")
 
 @_attrs_define
 class AppRoutesResponse:
-    """Per-route label snapshot (ADR-093). The bounded route label
-    set the gatewayd-internal control listener emits for the app.
+    """Fleet-wide per-route label snapshot (ADR-093). The control-plane
+    Prometheus instance aggregates every active, scrape-ready compute
+    gateway; collector counts distinguish complete, partial, and
+    unavailable observations from a healthy no-traffic result.
     Each item is `"<METHOD> <PATH>"` (pre-edge-rule-rewrite) for
     an admitted route, or the reserved `"__route_other__"` overflow
-    bucket label. Bounded at 50 distinct real routes + the reserved
-    overflow per app (ADR-093 D2).
+    bucket label. The fleet union is bounded again at 50 distinct real
+    routes plus the reserved overflow bucket (ADR-093 D2).
 
-    `cap_hit` (ADR-093 Tier B item #1) is true iff the app's
-    route label set has reached `RouteMetricsPerAppCap` (50) and
-    additional routes are collapsing into the reserved
-    `__route_other__` overflow bucket. When `cap_hit` is true,
-    `len(routes) == RouteMetricsPerAppCap + 2` (50 real + the
-    reserved empty label + `__route_other__`). When false, the
-    dashboard can render "you have N admitted routes" without
-    having to count the array (which is ambiguous: 5 real routes
-    + `__route_other__` is indistinguishable from 50 real routes
-    + overflow). Omitted on the `source: unavailable` path —
-    the gatewayd-internal dial failed, the cap state is unknown.
+    `cap_hit` is true when a compute collector emitted the overflow
+    bucket or the fleet union reached the 50-route bound. It is false
+    on `source: unavailable`, where cap state is unknown.
 
     """
 
     slug: str
     routes: list[str]
     source: AppRoutesResponseSource
-    app_id: str | Unset = UNSET
-    cap_hit: bool | Unset = False
-    """True iff the route label set has hit `RouteMetricsPerAppCap`
-    (50) and additional routes are collapsing into
-    `__route_other__`. Omitted on `source: unavailable` paths
-    (cap state is unknown when the gatewayd-internal dial
-    fails).
+    collectors_expected: int
+    """Active scrape-ready compute route collectors in the registry."""
+    collectors_healthy: int
+    """Expected collectors with a current successful Prometheus scrape."""
+    cap_hit: bool = False
+    """True when the fleet route union reaches `RouteMetricsPerAppCap`
+    (50) or a collector reports `__route_other__`. False on
+    `source: unavailable`, where cap state is unknown.
     """
+    app_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,9 +51,13 @@ class AppRoutesResponse:
 
         source: str = self.source
 
-        app_id = self.app_id
+        collectors_expected = self.collectors_expected
+
+        collectors_healthy = self.collectors_healthy
 
         cap_hit = self.cap_hit
+
+        app_id = self.app_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -66,12 +66,13 @@ class AppRoutesResponse:
                 "slug": slug,
                 "routes": routes,
                 "source": source,
+                "collectors_expected": collectors_expected,
+                "collectors_healthy": collectors_healthy,
+                "cap_hit": cap_hit,
             }
         )
         if app_id is not UNSET:
             field_dict["app_id"] = app_id
-        if cap_hit is not UNSET:
-            field_dict["cap_hit"] = cap_hit
 
         return field_dict
 
@@ -84,16 +85,22 @@ class AppRoutesResponse:
 
         source = check_app_routes_response_source(d.pop("source"))
 
-        app_id = d.pop("app_id", UNSET)
+        collectors_expected = d.pop("collectors_expected")
 
-        cap_hit = d.pop("cap_hit", UNSET)
+        collectors_healthy = d.pop("collectors_healthy")
+
+        cap_hit = d.pop("cap_hit")
+
+        app_id = d.pop("app_id", UNSET)
 
         app_routes_response = cls(
             slug=slug,
             routes=routes,
             source=source,
-            app_id=app_id,
+            collectors_expected=collectors_expected,
+            collectors_healthy=collectors_healthy,
             cap_hit=cap_hit,
+            app_id=app_id,
         )
 
         app_routes_response.additional_properties = d

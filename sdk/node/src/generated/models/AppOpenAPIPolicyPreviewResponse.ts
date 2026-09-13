@@ -13,13 +13,25 @@ import type { EdgeRuleSuggestion } from './EdgeRuleSuggestion.js';
 export type AppOpenAPIPolicyPreviewResponse = {
   app_id: string;
   /**
-   * preview, empty: no_import, or degraded: routes_unavailable.
+   * preview, empty: no_import, degraded: routes_partial, or degraded: routes_unavailable.
    */
   source: string;
   /**
-   * Whether the gatewayd observed-route bridge returned successfully.
+   * Whether at least one collector returned current route telemetry.
    */
   observed_available: boolean;
+  /**
+   * Completeness of the fleet-wide observed-route input.
+   */
+  observed_source: 'live' | 'partial' | 'unavailable';
+  /**
+   * Number of registry compute gateways expected to contribute route observations.
+   */
+  collectors_expected: number;
+  /**
+   * Expected compute route collectors currently healthy in Prometheus.
+   */
+  collectors_healthy: number;
   /**
    * OpenAPI version from the persisted declaration, when present.
    */

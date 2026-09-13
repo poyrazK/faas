@@ -86,11 +86,13 @@ type inspectResourceSummary struct {
 }
 
 type inspectAPISummary struct {
-	Available      bool   `json:"available"`
-	Source         string `json:"source,omitempty"`
-	OpenAPIVersion string `json:"openapi_version,omitempty"`
-	Paths          int    `json:"paths"`
-	Endpoints      int    `json:"endpoints"`
+	Available          bool   `json:"available"`
+	Source             string `json:"source,omitempty"`
+	OpenAPIVersion     string `json:"openapi_version,omitempty"`
+	Paths              int    `json:"paths"`
+	Endpoints          int    `json:"endpoints"`
+	CollectorsExpected int    `json:"collectors_expected,omitempty"`
+	CollectorsHealthy  int    `json:"collectors_healthy,omitempty"`
 }
 
 type inspectDataSummary struct {
@@ -311,9 +313,15 @@ func inspectOpenAPI(raw []byte) inspectAPISummary {
 		return inspectAPISummary{}
 	}
 	var doc struct {
-		OpenAPI string                                `json:"openapi"`
-		Swagger string                                `json:"swagger"`
-		Paths   map[string]map[string]json.RawMessage `json:"paths"`
+		OpenAPI        string                                `json:"openapi"`
+		Swagger        string                                `json:"swagger"`
+		Paths          map[string]map[string]json.RawMessage `json:"paths"`
+		ObservedRoutes *struct {
+			Source             string `json:"source"`
+			Available          bool   `json:"available"`
+			CollectorsExpected int    `json:"collectors_expected"`
+			CollectorsHealthy  int    `json:"collectors_healthy"`
+		} `json:"x-faas-observed-routes"`
 	}
 	if json.Unmarshal(raw, &doc) != nil {
 		return inspectAPISummary{}
@@ -331,7 +339,14 @@ func inspectOpenAPI(raw []byte) inspectAPISummary {
 			}
 		}
 	}
-	return inspectAPISummary{Available: true, Source: "auto", OpenAPIVersion: version, Paths: len(doc.Paths), Endpoints: endpoints}
+	summary := inspectAPISummary{Available: true, Source: "auto", OpenAPIVersion: version, Paths: len(doc.Paths), Endpoints: endpoints}
+	if doc.ObservedRoutes != nil {
+		summary.Available = doc.ObservedRoutes.Available
+		summary.Source = doc.ObservedRoutes.Source
+		summary.CollectorsExpected = doc.ObservedRoutes.CollectorsExpected
+		summary.CollectorsHealthy = doc.ObservedRoutes.CollectorsHealthy
+	}
+	return summary
 }
 
 func inspectData(in inspectSummaryInputs) inspectDataSummary {

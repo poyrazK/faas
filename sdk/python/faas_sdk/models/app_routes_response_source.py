@@ -1,9 +1,10 @@
 from typing import Literal
 
-AppRoutesResponseSource = Literal["live", "unavailable"]
+AppRoutesResponseSource = Literal["live", "partial", "unavailable"]
 
 APP_ROUTES_RESPONSE_SOURCE_VALUES: set[AppRoutesResponseSource] = {
     "live",
+    "partial",
     "unavailable",
 }
 

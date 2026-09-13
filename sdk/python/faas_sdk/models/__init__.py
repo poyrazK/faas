@@ -114,6 +114,7 @@ from .app_open_api_import_response_openapi_version import AppOpenAPIImportRespon
 from .app_open_api_import_response_source import AppOpenAPIImportResponseSource
 from .app_open_api_policy_apply_response import AppOpenAPIPolicyApplyResponse
 from .app_open_api_policy_preview_response import AppOpenAPIPolicyPreviewResponse
+from .app_open_api_policy_preview_response_observed_source import AppOpenAPIPolicyPreviewResponseObservedSource
 from .app_open_api_policy_preview_route import AppOpenAPIPolicyPreviewRoute
 from .app_open_api_policy_preview_route_method import AppOpenAPIPolicyPreviewRouteMethod
 from .app_open_api_policy_preview_route_status import AppOpenAPIPolicyPreviewRouteStatus
@@ -1170,6 +1171,7 @@ __all__ = (
     "AppOpenAPIImportResponseSource",
     "AppOpenAPIPolicyApplyResponse",
     "AppOpenAPIPolicyPreviewResponse",
+    "AppOpenAPIPolicyPreviewResponseObservedSource",
     "AppOpenAPIPolicyPreviewRoute",
     "AppOpenAPIPolicyPreviewRouteMethod",
     "AppOpenAPIPolicyPreviewRouteStatus",

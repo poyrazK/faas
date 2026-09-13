@@ -3,39 +3,39 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Per-route label snapshot (ADR-093). The bounded route label
- * set the gatewayd-internal control listener emits for the app.
+ * Fleet-wide per-route label snapshot (ADR-093). The control-plane
+ * Prometheus instance aggregates every active, scrape-ready compute
+ * gateway; collector counts distinguish complete, partial, and
+ * unavailable observations from a healthy no-traffic result.
  * Each item is `"<METHOD> <PATH>"` (pre-edge-rule-rewrite) for
  * an admitted route, or the reserved `"__route_other__"` overflow
- * bucket label. Bounded at 50 distinct real routes + the reserved
- * overflow per app (ADR-093 D2).
+ * bucket label. The fleet union is bounded again at 50 distinct real
+ * routes plus the reserved overflow bucket (ADR-093 D2).
  *
- * `cap_hit` (ADR-093 Tier B item #1) is true iff the app's
- * route label set has reached `RouteMetricsPerAppCap` (50) and
- * additional routes are collapsing into the reserved
- * `__route_other__` overflow bucket. When `cap_hit` is true,
- * `len(routes) == RouteMetricsPerAppCap + 2` (50 real + the
- * reserved empty label + `__route_other__`). When false, the
- * dashboard can render "you have N admitted routes" without
- * having to count the array (which is ambiguous: 5 real routes
- * + `__route_other__` is indistinguishable from 50 real routes
- * + overflow). Omitted on the `source: unavailable` path —
- * the gatewayd-internal dial failed, the cap state is unknown.
+ * `cap_hit` is true when a compute collector emitted the overflow
+ * bucket or the fleet union reached the 50-route bound. It is false
+ * on `source: unavailable`, where cap state is unknown.
  *
  */
 export type AppRoutesResponse = {
   slug: string;
   app_id?: string;
   routes: Array<string>;
-  source: 'live' | 'unavailable';
+  source: 'live' | 'partial' | 'unavailable';
   /**
-   * True iff the route label set has hit `RouteMetricsPerAppCap`
-   * (50) and additional routes are collapsing into
-   * `__route_other__`. Omitted on `source: unavailable` paths
-   * (cap state is unknown when the gatewayd-internal dial
-   * fails).
+   * Active scrape-ready compute route collectors in the registry.
+   */
+  collectors_expected: number;
+  /**
+   * Expected collectors with a current successful Prometheus scrape.
+   */
+  collectors_healthy: number;
+  /**
+   * True when the fleet route union reaches `RouteMetricsPerAppCap`
+   * (50) or a collector reports `__route_other__`. False on
+   * `source: unavailable`, where cap state is unknown.
    *
    */
-  cap_hit?: boolean;
+  cap_hit: boolean;
 };
 

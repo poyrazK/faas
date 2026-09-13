@@ -215,8 +215,11 @@ func TestGetAppOpenAPI_Auto_NoImports(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("X-OpenAPI-Doc-Source"); got != openapidiff.SourceEmptyImportRules {
-		t.Errorf("X-OpenAPI-Doc-Source=%q, want %q", got, openapidiff.SourceEmptyImportRules)
+	if got := rec.Header().Get("X-OpenAPI-Doc-Source"); got != openapidiff.SourceDegradedRoutes {
+		t.Errorf("X-OpenAPI-Doc-Source=%q, want %q", got, openapidiff.SourceDegradedRoutes)
+	}
+	if !strings.Contains(rec.Body.String(), `"x-faas-observed-routes":{"available":false`) {
+		t.Errorf("auto document does not preserve unavailable observed-route source: %s", rec.Body.String())
 	}
 }
 

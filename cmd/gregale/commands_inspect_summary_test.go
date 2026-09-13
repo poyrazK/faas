@@ -13,6 +13,23 @@ import (
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 )
 
+func TestInspectOpenAPIPreservesObservedRouteAvailability(t *testing.T) {
+	raw := []byte(`{
+		"openapi":"3.1.0",
+		"paths":{},
+		"x-faas-observed-routes":{
+			"source":"unavailable",
+			"available":false,
+			"collectors_expected":3,
+			"collectors_healthy":0
+		}
+	}`)
+	got := inspectOpenAPI(raw)
+	if got.Available || got.Source != "unavailable" || got.CollectorsExpected != 3 || got.CollectorsHealthy != 0 {
+		t.Fatalf("inspect API summary masked unavailable route source: %+v", got)
+	}
+}
+
 const (
 	inspectAppID = "0123456789abcdef0123456789abcdef"
 	inspectDepID = "abcdef0123456789abcdef0123456789"
