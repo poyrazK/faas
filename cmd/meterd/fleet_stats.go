@@ -16,6 +16,15 @@ import (
 
 const fleetStatsRPCTimeout = 5 * time.Second
 
+func tlsForService(cfg *tls.Config, serverName string) *tls.Config {
+	if cfg == nil {
+		return nil
+	}
+	clone := cfg.Clone()
+	clone.ServerName = serverName
+	return clone
+}
+
 // fleetNodeSource is deliberately narrower than state.Store. Meterd only
 // needs active-node discovery and the physical instance view to fan telemetry
 // in and expose gaps; tests can therefore model a split fleet without a DB.
@@ -113,7 +122,7 @@ func (p *fleetStatsParker) ListInstanceStats(ctx context.Context) ([]scheddgrpc.
 			defer wg.Done()
 			callCtx, cancel := context.WithTimeout(ctx, fleetStatsRPCTimeout)
 			defer cancel()
-			client, err := p.dial(callCtx, strings.TrimSpace(*node.ScheddTargetURL), p.tlsCfg)
+			client, err := p.dial(callCtx, strings.TrimSpace(*node.ScheddTargetURL), tlsForService(p.tlsCfg, "schedd.faas"))
 			if err != nil {
 				results <- fleetStatsResult{nodeID: node.ID, err: err}
 				return
