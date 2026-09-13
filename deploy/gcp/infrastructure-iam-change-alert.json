@@ -10,7 +10,7 @@
     {
       "displayName": "Production project IAM policy changed",
       "conditionThreshold": {
-        "filter": "resource.type=\"project\" AND metric.type=\"logging.googleapis.com/user/gregale_infrastructure_iam_change\"",
+        "filter": "resource.type=\"global\" AND metric.type=\"logging.googleapis.com/user/gregale_infrastructure_iam_change\"",
         "comparison": "COMPARISON_GT",
         "thresholdValue": 0,
         "duration": "0s",
