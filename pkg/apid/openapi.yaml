@@ -18745,43 +18745,6 @@ components:
           type: integer
           minimum: 1
           description: "Pull-request number that drove this source-ref deploy request (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."
-        # Issue #961 leaf 8 / ADR-118 / Mega-C PR-2: per-deployment
-        # auto-rollback echo. The migration 00354 column shape is
-        # mirrored verbatim onto the wire so the dashboard, CLI
-        # history, and SDK consumers can render the auto-rollback
-        # counters without an audit round-trip. rollback_on_5xx
-        # is always present (NOT NULL DEFAULT false); the four
-        # counters / timestamps are omitempty so pre-PR-2 rows
-        # render with all four absent (byte-identical to the
-        # pre-PR-2 wire shape). The closed-set vocabulary on
-        # last_auto_rollback_reason is enforced at the schema
-        # layer via deployments_last_auto_rollback_reason_check.
-        rollback_on_5xx:
-          type: boolean
-          default: false
-          description: "Per-deployment auto-rollback opt-in (issue #961 leaf 8 / ADR-118 / Mega-C PR-2). Customer sets this at create time (Pro+ only); schedd fires the rollback when first_5xx_count crosses the per-plan threshold inside first_5xx_window_ends_at."
-        first_wake_at:
-          type: [string, "null"]
-          format: date-time
-          description: "Wall-clock timestamp of the first customer-visible wake response (anchor for the auto-rollback window). NULL until the gateway stamps it on the first wake.proxy_first_byte event."
-        first_5xx_window_ends_at:
-          type: [string, "null"]
-          format: date-time
-          description: "Wall-clock timestamp the auto-rollback window closes (first_wake_at + 5 min). NULL until the gateway stamps it on the first wake. The schedd scan checks `now() < first_5xx_window_ends_at` before firing the rollback."
-        first_5xx_count:
-          type: integer
-          minimum: 0
-          default: 0
-          description: "Atomic 5xx counter incremented by schedd on every wake.response_5xx event for this row. Default 0; NOT NULL DEFAULT 0 enforced at the schema layer."
-        last_auto_rollback_at:
-          type: [string, "null"]
-          format: date-time
-          description: "Wall-clock timestamp the most recent auto-rollback fired (idempotent across retries; updated by schedd when the rollback tx commits). NULL until the first auto-rollback."
-        last_auto_rollback_reason:
-          type: [string, "null"]
-          enum: [null, threshold_exceeded, first_window_expired]
-          description: "Closed-set classifier for the most recent auto-rollback trigger. `threshold_exceeded` = first_5xx_count crossed the per-plan threshold inside the window. `first_window_expired` = the window expired without crossing the threshold (clean wake window). Closed-set is enforced at the schema layer via deployments_last_auto_rollback_reason_check."
-
         # SAFE-RELEASES-A/F: canary ladder and durable rollout state.
         canary_preset:
           type: string
@@ -19055,7 +19018,7 @@ components:
       properties:
         field:
           type: string
-          enum: [status, kind, build_id, image_digest, source_url, commit_sha, source_root, scope, build_plan, min_instances, traffic_percent, has_overrides, canary_preset, rollback_on_5xx, rollout_state]
+          enum: [status, kind, build_id, image_digest, source_url, commit_sha, source_root, scope, build_plan, min_instances, traffic_percent, has_overrides, canary_preset, rollout_state]
         before:
           type: [string, number, boolean, object, "null"]
         after:
@@ -19752,14 +19715,6 @@ components:
           type: [integer, "null"]
           minimum: 1
           description: "PR number (when known). 0 / NULL collapses to NULL on the row (DB CHECK rejects 0)."
-        # Issue #961 leaf 8 / ADR-118 / Mega-C PR-2: per-deployment
-        # auto-rollback opt-in. Pro+ only (Hobby/Free get 403
-        # plan_rollback_on_5xx_not_allowed at handler validation).
-        # nil/omitted = server default false (no auto-rollback).
-        rollback_on_5xx:
-          type: [boolean, "null"]
-          description: "Per-deployment auto-rollback opt-in (issue #961 leaf 8 / ADR-118 / Mega-C PR-2). Pro+ only. nil = server default false."
-          example: true
         # Issue #976 / ADR-122 / SAFE-RELEASES-A + production-leveling
         # Stream F: per-deployment canary ladder. nil/omitted =
         # server default 'none' (no canary; traffic_percent stays at

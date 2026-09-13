@@ -55,10 +55,6 @@ export type CreateDeploymentRequest = {
    */
   pr_number?: number | null;
   /**
-   * Per-deployment auto-rollback opt-in (issue #961 leaf 8 / ADR-118 / Mega-C PR-2). Pro+ only. nil = server default false.
-   */
-  rollback_on_5xx?: boolean | null;
-  /**
    * Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'. For preset='custom', stages carries the customer ladder.
    */
   canary?: (CanaryPresetSpec | null);

@@ -28,18 +28,6 @@ from ..models.deployment_response_deployed_via_type_3_type_1 import (
     DeploymentResponseDeployedViaType3Type1,
     check_deployment_response_deployed_via_type_3_type_1,
 )
-from ..models.deployment_response_last_auto_rollback_reason_type_1 import (
-    DeploymentResponseLastAutoRollbackReasonType1,
-    check_deployment_response_last_auto_rollback_reason_type_1,
-)
-from ..models.deployment_response_last_auto_rollback_reason_type_2_type_1 import (
-    DeploymentResponseLastAutoRollbackReasonType2Type1,
-    check_deployment_response_last_auto_rollback_reason_type_2_type_1,
-)
-from ..models.deployment_response_last_auto_rollback_reason_type_3_type_1 import (
-    DeploymentResponseLastAutoRollbackReasonType3Type1,
-    check_deployment_response_last_auto_rollback_reason_type_3_type_1,
-)
 from ..models.deployment_response_parked_reason_type_1 import (
     DeploymentResponseParkedReasonType1,
     check_deployment_response_parked_reason_type_1,
@@ -228,33 +216,6 @@ class DeploymentResponse:
     pr_number: int | Unset = UNSET
     """Pull-request number that drove this source-ref deploy request (githubd pull_request.number; Action ${{
     github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."""
-    rollback_on_5xx: bool | Unset = False
-    """Per-deployment auto-rollback opt-in (issue #961 leaf 8 / ADR-118 / Mega-C PR-2). Customer sets this at
-    create time (Pro+ only); schedd fires the rollback when first_5xx_count crosses the per-plan threshold inside
-    first_5xx_window_ends_at."""
-    first_wake_at: datetime.datetime | None | Unset = UNSET
-    """Wall-clock timestamp of the first customer-visible wake response (anchor for the auto-rollback window). NULL
-    until the gateway stamps it on the first wake.proxy_first_byte event."""
-    first_5xx_window_ends_at: datetime.datetime | None | Unset = UNSET
-    """Wall-clock timestamp the auto-rollback window closes (first_wake_at + 5 min). NULL until the gateway stamps
-    it on the first wake. The schedd scan checks `now() < first_5xx_window_ends_at` before firing the rollback."""
-    first_5xx_count: int | Unset = 0
-    """Atomic 5xx counter incremented by schedd on every wake.response_5xx event for this row. Default 0; NOT NULL
-    DEFAULT 0 enforced at the schema layer."""
-    last_auto_rollback_at: datetime.datetime | None | Unset = UNSET
-    """Wall-clock timestamp the most recent auto-rollback fired (idempotent across retries; updated by schedd when
-    the rollback tx commits). NULL until the first auto-rollback."""
-    last_auto_rollback_reason: (
-        DeploymentResponseLastAutoRollbackReasonType1
-        | DeploymentResponseLastAutoRollbackReasonType2Type1
-        | DeploymentResponseLastAutoRollbackReasonType3Type1
-        | None
-        | Unset
-    ) = UNSET
-    """Closed-set classifier for the most recent auto-rollback trigger. `threshold_exceeded` = first_5xx_count
-    crossed the per-plan threshold inside the window. `first_window_expired` = the window expired without crossing
-    the threshold (clean wake window). Closed-set is enforced at the schema layer via
-    deployments_last_auto_rollback_reason_check."""
     canary_preset: DeploymentResponseCanaryPreset | Unset = UNSET
     """Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment
     path."""
@@ -509,46 +470,6 @@ class DeploymentResponse:
 
         pr_number = self.pr_number
 
-        rollback_on_5xx = self.rollback_on_5xx
-
-        first_wake_at: None | str | Unset
-        if isinstance(self.first_wake_at, Unset):
-            first_wake_at = UNSET
-        elif isinstance(self.first_wake_at, datetime.datetime):
-            first_wake_at = self.first_wake_at.isoformat()
-        else:
-            first_wake_at = self.first_wake_at
-
-        first_5xx_window_ends_at: None | str | Unset
-        if isinstance(self.first_5xx_window_ends_at, Unset):
-            first_5xx_window_ends_at = UNSET
-        elif isinstance(self.first_5xx_window_ends_at, datetime.datetime):
-            first_5xx_window_ends_at = self.first_5xx_window_ends_at.isoformat()
-        else:
-            first_5xx_window_ends_at = self.first_5xx_window_ends_at
-
-        first_5xx_count = self.first_5xx_count
-
-        last_auto_rollback_at: None | str | Unset
-        if isinstance(self.last_auto_rollback_at, Unset):
-            last_auto_rollback_at = UNSET
-        elif isinstance(self.last_auto_rollback_at, datetime.datetime):
-            last_auto_rollback_at = self.last_auto_rollback_at.isoformat()
-        else:
-            last_auto_rollback_at = self.last_auto_rollback_at
-
-        last_auto_rollback_reason: None | str | Unset
-        if isinstance(self.last_auto_rollback_reason, Unset):
-            last_auto_rollback_reason = UNSET
-        elif isinstance(self.last_auto_rollback_reason, str):
-            last_auto_rollback_reason = self.last_auto_rollback_reason
-        elif isinstance(self.last_auto_rollback_reason, str):
-            last_auto_rollback_reason = self.last_auto_rollback_reason
-        elif isinstance(self.last_auto_rollback_reason, str):
-            last_auto_rollback_reason = self.last_auto_rollback_reason
-        else:
-            last_auto_rollback_reason = self.last_auto_rollback_reason
-
         canary_preset: str | Unset = UNSET
         if not isinstance(self.canary_preset, Unset):
             canary_preset = self.canary_preset
@@ -687,18 +608,6 @@ class DeploymentResponse:
             field_dict["deployed_by"] = deployed_by
         if pr_number is not UNSET:
             field_dict["pr_number"] = pr_number
-        if rollback_on_5xx is not UNSET:
-            field_dict["rollback_on_5xx"] = rollback_on_5xx
-        if first_wake_at is not UNSET:
-            field_dict["first_wake_at"] = first_wake_at
-        if first_5xx_window_ends_at is not UNSET:
-            field_dict["first_5xx_window_ends_at"] = first_5xx_window_ends_at
-        if first_5xx_count is not UNSET:
-            field_dict["first_5xx_count"] = first_5xx_count
-        if last_auto_rollback_at is not UNSET:
-            field_dict["last_auto_rollback_at"] = last_auto_rollback_at
-        if last_auto_rollback_reason is not UNSET:
-            field_dict["last_auto_rollback_reason"] = last_auto_rollback_reason
         if canary_preset is not UNSET:
             field_dict["canary_preset"] = canary_preset
         if canary_step is not UNSET:
@@ -1141,113 +1050,6 @@ class DeploymentResponse:
 
         pr_number = d.pop("pr_number", UNSET)
 
-        rollback_on_5xx = d.pop("rollback_on_5xx", UNSET)
-
-        def _parse_first_wake_at(data: object) -> datetime.datetime | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, str):
-                    raise TypeError()
-                first_wake_at_type_0 = datetime.datetime.fromisoformat(data)
-
-                return first_wake_at_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(datetime.datetime | None | Unset, data)
-
-        first_wake_at = _parse_first_wake_at(d.pop("first_wake_at", UNSET))
-
-        def _parse_first_5xx_window_ends_at(data: object) -> datetime.datetime | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, str):
-                    raise TypeError()
-                first_5xx_window_ends_at_type_0 = datetime.datetime.fromisoformat(data)
-
-                return first_5xx_window_ends_at_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(datetime.datetime | None | Unset, data)
-
-        first_5xx_window_ends_at = _parse_first_5xx_window_ends_at(d.pop("first_5xx_window_ends_at", UNSET))
-
-        first_5xx_count = d.pop("first_5xx_count", UNSET)
-
-        def _parse_last_auto_rollback_at(data: object) -> datetime.datetime | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, str):
-                    raise TypeError()
-                last_auto_rollback_at_type_0 = datetime.datetime.fromisoformat(data)
-
-                return last_auto_rollback_at_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(datetime.datetime | None | Unset, data)
-
-        last_auto_rollback_at = _parse_last_auto_rollback_at(d.pop("last_auto_rollback_at", UNSET))
-
-        def _parse_last_auto_rollback_reason(
-            data: object,
-        ) -> (
-            DeploymentResponseLastAutoRollbackReasonType1
-            | DeploymentResponseLastAutoRollbackReasonType2Type1
-            | DeploymentResponseLastAutoRollbackReasonType3Type1
-            | None
-            | Unset
-        ):
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, str):
-                    raise TypeError()
-                last_auto_rollback_reason_type_1 = check_deployment_response_last_auto_rollback_reason_type_1(data)
-
-                return last_auto_rollback_reason_type_1
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            try:
-                if not isinstance(data, str):
-                    raise TypeError()
-                last_auto_rollback_reason_type_2_type_1 = (
-                    check_deployment_response_last_auto_rollback_reason_type_2_type_1(data)
-                )
-
-                return last_auto_rollback_reason_type_2_type_1
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            try:
-                if not isinstance(data, str):
-                    raise TypeError()
-                last_auto_rollback_reason_type_3_type_1 = (
-                    check_deployment_response_last_auto_rollback_reason_type_3_type_1(data)
-                )
-
-                return last_auto_rollback_reason_type_3_type_1
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(
-                DeploymentResponseLastAutoRollbackReasonType1
-                | DeploymentResponseLastAutoRollbackReasonType2Type1
-                | DeploymentResponseLastAutoRollbackReasonType3Type1
-                | None
-                | Unset,
-                data,
-            )
-
-        last_auto_rollback_reason = _parse_last_auto_rollback_reason(d.pop("last_auto_rollback_reason", UNSET))
-
         _canary_preset = d.pop("canary_preset", UNSET)
         canary_preset: DeploymentResponseCanaryPreset | Unset
         if isinstance(_canary_preset, Unset):
@@ -1383,12 +1185,6 @@ class DeploymentResponse:
             tag=tag,
             deployed_by=deployed_by,
             pr_number=pr_number,
-            rollback_on_5xx=rollback_on_5xx,
-            first_wake_at=first_wake_at,
-            first_5xx_window_ends_at=first_5xx_window_ends_at,
-            first_5xx_count=first_5xx_count,
-            last_auto_rollback_at=last_auto_rollback_at,
-            last_auto_rollback_reason=last_auto_rollback_reason,
             canary_preset=canary_preset,
             canary_step=canary_step,
             canary_total_steps=canary_total_steps,

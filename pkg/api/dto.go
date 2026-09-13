@@ -2130,25 +2130,6 @@ type DeploymentResponse struct {
 	Tag        string `json:"tag,omitempty"`
 	DeployedBy string `json:"deployed_by,omitempty"`
 	PRNumber   int    `json:"pr_number,omitempty"`
-	// Issue #961 leaf 8 / ADR-118 / Mega-C PR-2: per-deployment
-	// auto-rollback echo. rollback_on_5xx is always present on
-	// the wire (false for pre-PR-2 rows; the column has a NOT
-	// NULL DEFAULT false so pgx scans it cleanly into the bool).
-	// first_wake_at / first_5xx_window_ends_at / last_auto_rollback_at
-	// are nullable timestamps, stamped by schedd when the gateway
-	// emits the corresponding wake kind; omitempty keeps pre-PR-2
-	// rows byte-identical to the old wire shape. first_5xx_count
-	// is a non-nullable counter (default 0 in the schema). The
-	// closed-set vocabulary on last_auto_rollback_reason is enforced
-	// at the schema layer via deployments_last_auto_rollback_reason_check;
-	// the wire projection coalesces NULL → '' so pre-rollback rows
-	// omit the field.
-	RollbackOn5xx          bool       `json:"rollback_on_5xx"`
-	FirstWakeAt            *time.Time `json:"first_wake_at,omitempty"`
-	First5xxWindowEndsAt   *time.Time `json:"first_5xx_window_ends_at,omitempty"`
-	First5xxCount          int        `json:"first_5xx_count"`
-	LastAutoRollbackAt     *time.Time `json:"last_auto_rollback_at,omitempty"`
-	LastAutoRollbackReason string     `json:"last_auto_rollback_reason,omitempty"`
 	// Canary ladder echo (issue #976 / ADR-122 /
 	// SAFE-RELEASES-A). CanaryPreset is the catalog name; the
 	// handler resolves it via pkg/api/canary.LookupPreset so

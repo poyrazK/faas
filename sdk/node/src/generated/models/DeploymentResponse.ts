@@ -184,30 +184,6 @@ export type DeploymentResponse = {
    */
   pr_number?: number;
   /**
-   * Per-deployment auto-rollback opt-in (issue #961 leaf 8 / ADR-118 / Mega-C PR-2). Customer sets this at create time (Pro+ only); schedd fires the rollback when first_5xx_count crosses the per-plan threshold inside first_5xx_window_ends_at.
-   */
-  rollback_on_5xx?: boolean;
-  /**
-   * Wall-clock timestamp of the first customer-visible wake response (anchor for the auto-rollback window). NULL until the gateway stamps it on the first wake.proxy_first_byte event.
-   */
-  first_wake_at?: string | null;
-  /**
-   * Wall-clock timestamp the auto-rollback window closes (first_wake_at + 5 min). NULL until the gateway stamps it on the first wake. The schedd scan checks `now() < first_5xx_window_ends_at` before firing the rollback.
-   */
-  first_5xx_window_ends_at?: string | null;
-  /**
-   * Atomic 5xx counter incremented by schedd on every wake.response_5xx event for this row. Default 0; NOT NULL DEFAULT 0 enforced at the schema layer.
-   */
-  first_5xx_count?: number;
-  /**
-   * Wall-clock timestamp the most recent auto-rollback fired (idempotent across retries; updated by schedd when the rollback tx commits). NULL until the first auto-rollback.
-   */
-  last_auto_rollback_at?: string | null;
-  /**
-   * Closed-set classifier for the most recent auto-rollback trigger. `threshold_exceeded` = first_5xx_count crossed the per-plan threshold inside the window. `first_window_expired` = the window expired without crossing the threshold (clean wake window). Closed-set is enforced at the schema layer via deployments_last_auto_rollback_reason_check.
-   */
-  last_auto_rollback_reason?: 'threshold_exceeded' | 'first_window_expired';
-  /**
    * Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment path.
    */
   canary_preset?: 'none' | 'slow' | 'balanced' | 'aggressive' | '1-10-50-100';
