@@ -41,8 +41,14 @@ func TestHostJournalMetricsSample(t *testing.T) {
 			}
 			return []byte("persistent link failed\n\nnetworkctl list failed\n"), nil
 		case name == "du" && args[len(args)-1] == "/var/log/journal":
+			if got := strings.Join(args, " "); got != "-sB1 -- /var/log/journal" {
+				t.Errorf("du args = %q, want allocated-byte accounting", got)
+			}
 			return []byte("1048576\t/var/log/journal\n"), nil
 		case name == "du" && args[len(args)-1] == "/run/log/journal":
+			if got := strings.Join(args, " "); got != "-sB1 -- /run/log/journal" {
+				t.Errorf("du args = %q, want allocated-byte accounting", got)
+			}
 			return []byte("2048\t/run/log/journal\n"), nil
 		default:
 			return nil, errors.New("unexpected command")

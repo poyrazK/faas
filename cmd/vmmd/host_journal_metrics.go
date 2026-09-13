@@ -104,7 +104,12 @@ func (m *hostJournalMetrics) sample(ctx context.Context) error {
 		usageErrs    []error
 	)
 	for _, dir := range hostJournalDirs {
-		out, err := m.run(ctx, "du", "-sb", "--", dir)
+		// GNU du -b reports apparent size. Journald files are sparse, so that
+		// can overstate the blocks actually occupied on disk and trip the
+		// near-limit alert while the journal is still below its allocation
+		// threshold. Ask du for one-byte output units while preserving its
+		// default allocated-size accounting.
+		out, err := m.run(ctx, "du", "-sB1", "--", dir)
 		if err != nil {
 			usageErrs = append(usageErrs, fmt.Errorf("du %s: %w", dir, err))
 			continue
