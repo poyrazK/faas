@@ -812,7 +812,7 @@ type APIKey struct {
 	Hash          []byte
 	Label         string
 	Scopes        []string
-	LastUsedAt    time.Time
+	LastUsedAt    *time.Time
 	CreatedAt     time.Time
 	ExpiresAt     *time.Time
 	Status        string

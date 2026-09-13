@@ -323,8 +323,11 @@ func TestTouchKeyLastUsed_Mega4(t *testing.T) {
 	}
 	after, _ := m.GetAPIKey(context.Background(), "acc-1", k.ID)
 
-	if !after.LastUsedAt.After(before.LastUsedAt) && !after.LastUsedAt.Equal(before.LastUsedAt) {
-		t.Errorf("LastUsedAt did not advance: %v → %v", before.LastUsedAt, after.LastUsedAt)
+	if before.LastUsedAt != nil {
+		t.Fatalf("fresh key LastUsedAt = %v, want nil", before.LastUsedAt)
+	}
+	if after.LastUsedAt == nil {
+		t.Fatal("touched key LastUsedAt = nil")
 	}
 
 	// Missing.

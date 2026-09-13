@@ -242,7 +242,7 @@ func (s *PgStore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, e
 func (s *PgStore) APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		        coalesce(last_used_at, 'epoch'::timestamptz),
+		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
 		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
 		 from api_keys where key_sha256 = $1`, hash)
@@ -1189,7 +1189,7 @@ func (s *PgStore) CreateAPIKey(ctx context.Context, accountID string, hash []byt
 		              and personal_org = true
 		            limit 1))
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		           coalesce(last_used_at, 'epoch'::timestamptz),
+		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		accountID, hash, nullString(label), scopes)
@@ -1216,7 +1216,7 @@ func (s *PgStore) CreateAPIKeyWithExpiry(ctx context.Context, accountID string, 
 		              and personal_org = true
 		            limit 1))
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		           coalesce(last_used_at, 'epoch'::timestamptz),
+		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		accountID, hash, nullString(label), scopes, nullableTimestamptzPtr(expiresAt))
@@ -1238,7 +1238,7 @@ func (s *PgStore) CreateAPIKeyWithExpiryAndProvenance(ctx context.Context, accou
 		            limit 1),
 		         $6, $7, $8)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		           coalesce(last_used_at, 'epoch'::timestamptz),
+		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		accountID, hash, nullString(label), scopes, nullableTimestamptzPtr(expiresAt),
@@ -1268,7 +1268,7 @@ func (s *PgStore) DeleteAPIKeyReturning(ctx context.Context, accountID, keyID st
 	row := s.pool.QueryRow(ctx,
 		`delete from api_keys where id = $1 and account_id = $2
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		           coalesce(last_used_at, 'epoch'::timestamptz),
+		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		keyID, accountID)
@@ -1278,7 +1278,7 @@ func (s *PgStore) DeleteAPIKeyReturning(ctx context.Context, accountID, keyID st
 func (s *PgStore) ListAPIKeys(ctx context.Context, accountID string) ([]APIKey, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		        coalesce(last_used_at, 'epoch'::timestamptz),
+		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
 		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
 		 from api_keys where account_id = $1 order by created_at desc`,
@@ -1309,7 +1309,7 @@ func (s *PgStore) ListAPIKeys(ctx context.Context, accountID string) ([]APIKey, 
 func (s *PgStore) GetAPIKey(ctx context.Context, accountID, keyID string) (APIKey, error) {
 	return scanAPIKey(s.pool.QueryRow(ctx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		        coalesce(last_used_at, 'epoch'::timestamptz),
+		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
 		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
 		   from api_keys where account_id = $1 and id = $2`,
@@ -1354,7 +1354,7 @@ func (s *PgStore) MarkAPIKeyRevoked(ctx context.Context, accountID, keyID string
 		        revoked_at = coalesce(revoked_at, now())
 		  where id = $1 and account_id = $2
 		  returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		            coalesce(last_used_at, 'epoch'::timestamptz),
+		            last_used_at,
 		            expires_at, status, revoked_at, rotated_from_id,
 		            coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		keyID, accountID)
@@ -1419,7 +1419,7 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 	// projection is consistent with the lock above.
 	old, err := scanAPIKeyRow(ctx, tx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		        coalesce(last_used_at, 'epoch'::timestamptz),
+		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
 		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
 		   from api_keys where id = $1`, oldKeyID)
@@ -1443,7 +1443,7 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id)
 		 values ($1, $2, $3, $4, 'active', $5, $6)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		           coalesce(last_used_at, 'epoch'::timestamptz),
+		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		accountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID)
@@ -1463,7 +1463,7 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 			        revoked_at = coalesce(revoked_at, now())
 			  where id = $1
 			  returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-			            coalesce(last_used_at, 'epoch'::timestamptz),
+			            last_used_at,
 			            expires_at, status, revoked_at, rotated_from_id,
 		            coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 			oldKeyID)
@@ -1477,7 +1477,7 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 			        expires_at = now() + ($1)::interval
 			  where id = $2
 			  returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-			            coalesce(last_used_at, 'epoch'::timestamptz),
+			            last_used_at,
 			            expires_at, status, revoked_at, rotated_from_id,
 		            coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 			graceWindow.String(), oldKeyID)
@@ -1579,7 +1579,7 @@ func (s *PgStore) CreateOrgAPIKey(ctx context.Context, orgID, accountID string, 
 		`insert into api_keys (account_id, key_sha256, label, scopes, expires_at, org_id)
 		 values ($1, $2, $3, $4, $5, $6)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		           coalesce(last_used_at, 'epoch'::timestamptz),
+		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		accountID, hash, nullString(label), scopes, nullableTimestamptzPtr(expiresAt), orgID)
@@ -1597,7 +1597,7 @@ func (s *PgStore) CreateOrgAPIKeyWithProvenance(ctx context.Context, orgID, acco
 		`insert into api_keys (account_id, key_sha256, label, scopes, expires_at, org_id, created_ip, created_ua, parent_key_id)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		           coalesce(last_used_at, 'epoch'::timestamptz),
+		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		accountID, hash, nullString(label), scopes, nullableTimestamptzPtr(expiresAt), orgID,
@@ -1613,7 +1613,7 @@ func (s *PgStore) CreateOrgAPIKeyWithProvenance(ctx context.Context, orgID, acco
 func (s *PgStore) ListOrgAPIKeys(ctx context.Context, orgID string) ([]APIKey, error) {
 	rows, err := s.pool.Query(ctx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		        coalesce(last_used_at, 'epoch'::timestamptz),
+		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
 		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
 		 from api_keys
@@ -1644,7 +1644,7 @@ func (s *PgStore) ListOrgAPIKeys(ctx context.Context, orgID string) ([]APIKey, e
 func (s *PgStore) GetOrgAPIKey(ctx context.Context, orgID, keyID string) (APIKey, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		        coalesce(last_used_at, 'epoch'::timestamptz),
+		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
 		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
 		 from api_keys
@@ -1665,7 +1665,7 @@ func (s *PgStore) RevokeOrgAPIKey(ctx context.Context, orgID, keyID string) (API
 		        revoked_at = coalesce(revoked_at, now())
 		  where id = $1 and org_id = $2
 		  returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		            coalesce(last_used_at, 'epoch'::timestamptz),
+		            last_used_at,
 		            expires_at, status, revoked_at, rotated_from_id,
 		            coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		keyID, orgID)
@@ -1713,7 +1713,7 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 	// new key inherits them.
 	old, err := scanAPIKeyRow(ctx, tx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		        coalesce(last_used_at, 'epoch'::timestamptz),
+		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
 		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
 		   from api_keys where id = $1`, oldKeyID)
@@ -1730,7 +1730,7 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id)
 		 values ($1, $2, $3, $4, 'active', $5, $6)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		           coalesce(last_used_at, 'epoch'::timestamptz),
+		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID)
@@ -1749,7 +1749,7 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 			        revoked_at = coalesce(revoked_at, now())
 			  where id = $1
 			  returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-			            coalesce(last_used_at, 'epoch'::timestamptz),
+			            last_used_at,
 			            expires_at, status, revoked_at, rotated_from_id,
 		            coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 			oldKeyID)
@@ -1763,7 +1763,7 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 			        expires_at = now() + ($1)::interval
 			  where id = $2
 			  returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-			            coalesce(last_used_at, 'epoch'::timestamptz),
+			            last_used_at,
 			            expires_at, status, revoked_at, rotated_from_id,
 		            coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 			graceWindow.String(), oldKeyID)
@@ -1818,7 +1818,7 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 	// Step 2: read the old row's content (label, scopes, account_id)
 	old, err := scanAPIKeyRow(ctx, tx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		        coalesce(last_used_at, 'epoch'::timestamptz),
+		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
 		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
 		   from api_keys where id = $1`, oldKeyID)
@@ -1834,7 +1834,7 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, created_ip, created_ua, parent_key_id)
 		 values ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-		           coalesce(last_used_at, 'epoch'::timestamptz),
+		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID,
@@ -1852,7 +1852,7 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 			        revoked_at = coalesce(revoked_at, now())
 			  where id = $1
 			  returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-			            coalesce(last_used_at, 'epoch'::timestamptz),
+			            last_used_at,
 			            expires_at, status, revoked_at, rotated_from_id,
 			            coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 			oldKeyID)
@@ -1866,7 +1866,7 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 			        expires_at = now() + ($1)::interval
 			  where id = $2
 			  returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
-			            coalesce(last_used_at, 'epoch'::timestamptz),
+			            last_used_at,
 			            expires_at, status, revoked_at, rotated_from_id,
 			            coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 			graceWindow.String(), oldKeyID)

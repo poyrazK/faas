@@ -319,7 +319,7 @@ func TestMemStore_TouchKeyLastUsed_HitMiss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read-back: %v", err)
 	}
-	if !got.LastUsedAt.After(before) {
+	if got.LastUsedAt == nil || !got.LastUsedAt.After(before) {
 		t.Errorf("LastUsedAt %v not after %v", got.LastUsedAt, before)
 	}
 

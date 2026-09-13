@@ -2387,6 +2387,35 @@ func TestListKeys_HappyPath(t *testing.T) {
 	}
 }
 
+func TestListKeys_NeverUsedTimestampIsOmitted(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	_, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, "never-used", api.ScopesReadSurface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, http.MethodGet, "/v1/keys", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row["id"] == k.ID {
+			if value, exists := row["last_used_at"]; exists {
+				t.Fatalf("never-used key serialized last_used_at=%v", value)
+			}
+			return
+		}
+	}
+	t.Fatalf("never-used key %s missing", k.ID)
+}
+
 // TestDeleteKey_HappyPath deletes the test fixture key.
 func TestDeleteKey_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)

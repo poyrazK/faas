@@ -3152,7 +3152,7 @@ func (s *server) listKeys(w http.ResponseWriter, r *http.Request, acct state.Acc
 			CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
 			Status:    k.Status,
 		}
-		if !k.LastUsedAt.IsZero() {
+		if k.LastUsedAt != nil {
 			resp.LastUsedAt = k.LastUsedAt.UTC().Format(time.RFC3339)
 		}
 		if k.ExpiresAt != nil {

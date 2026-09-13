@@ -2084,7 +2084,8 @@ func (m *MemStore) TouchKeyLastUsed(_ context.Context, keyID string) error {
 	if !ok {
 		return ErrNotFound
 	}
-	k.LastUsedAt = time.Now()
+	now := time.Now()
+	k.LastUsedAt = &now
 	m.keys[keyID] = k
 	return nil
 }

@@ -1663,7 +1663,7 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 			CreatedAt: k.CreatedAt.UTC().Format("2006-01-02"),
 			CanRevoke: k.Status != string(state.APIKeyStatusRevoked),
 		}
-		if !k.LastUsedAt.IsZero() {
+		if k.LastUsedAt != nil {
 			item.LastUsedAt = k.LastUsedAt.UTC().Format("2006-01-02 15:04 MST")
 		}
 		keyItems = append(keyItems, item)

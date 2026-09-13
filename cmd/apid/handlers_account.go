@@ -1093,7 +1093,7 @@ func listKeysForAccountExport(ctx context.Context, st state.Store, accountID str
 			Prefix:    prefixFromHash(k.Hash),
 			Label:     k.Label,
 			CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
-			LastUsed:  formatTimeOrEmpty(k.LastUsedAt),
+			LastUsed:  formatTimePtrOrEmpty(k.LastUsedAt),
 		})
 	}
 	return out, nil
@@ -1105,6 +1105,13 @@ func listKeysForAccountExport(ctx context.Context, st state.Store, accountID str
 // truth instead of every helper re-deriving the empty-string rule.
 func formatTimeOrEmpty(t time.Time) string {
 	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func formatTimePtrOrEmpty(t *time.Time) string {
+	if t == nil {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)

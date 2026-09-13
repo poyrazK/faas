@@ -423,7 +423,7 @@ func orgAPIKeyResponse(k state.APIKey) api.APIKeyResponse {
 		CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
 		Status:    k.Status,
 	}
-	if !k.LastUsedAt.IsZero() {
+	if k.LastUsedAt != nil {
 		resp.LastUsedAt = k.LastUsedAt.UTC().Format(time.RFC3339)
 	}
 	if k.ExpiresAt != nil {
