@@ -33,6 +33,10 @@ type UploadDeployOptions struct {
 	DeployedBy string         `json:"deployed_by,omitempty"`
 	PRNumber   int            `json:"pr_number,omitempty"`
 	Workflows  []WorkflowSpec `json:"workflows,omitempty"`
+	// RollbackOn5xx is persisted with the resumable session so a commit
+	// retry applies the same deployment safety policy as a single-shot
+	// deploy. nil/omitted keeps the server default false.
+	RollbackOn5xx *bool `json:"rollback_on_5xx,omitempty"`
 }
 
 // UploadStartRequest is the JSON body of POST /v1/uploads. total_size

@@ -480,6 +480,10 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, p)
 		return
 	}
+	if p := validateDeploymentRollbackOptions(&req, acct.Plan); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if !isDigestPinned(req.Image) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
 			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))

@@ -57,6 +57,9 @@ class SourceRefDeployRequest:
     stages a dark live revision."""
     canary: CanaryPresetSpec | None | Unset = UNSET
     """Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent."""
+    rollback_on_5xx: bool | None | Unset = UNSET
+    """Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
+    defaulting to false."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -94,6 +97,12 @@ class SourceRefDeployRequest:
         else:
             canary = self.canary
 
+        rollback_on_5xx: bool | None | Unset
+        if isinstance(self.rollback_on_5xx, Unset):
+            rollback_on_5xx = UNSET
+        else:
+            rollback_on_5xx = self.rollback_on_5xx
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -116,6 +125,8 @@ class SourceRefDeployRequest:
             field_dict["traffic_percent"] = traffic_percent
         if canary is not UNSET:
             field_dict["canary"] = canary
+        if rollback_on_5xx is not UNSET:
+            field_dict["rollback_on_5xx"] = rollback_on_5xx
 
         return field_dict
 
@@ -174,6 +185,15 @@ class SourceRefDeployRequest:
 
         canary = _parse_canary(d.pop("canary", UNSET))
 
+        def _parse_rollback_on_5xx(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
+
         source_ref_deploy_request = cls(
             repo=repo,
             ref=ref,
@@ -184,6 +204,7 @@ class SourceRefDeployRequest:
             pr_number=pr_number,
             traffic_percent=traffic_percent,
             canary=canary,
+            rollback_on_5xx=rollback_on_5xx,
         )
 
         source_ref_deploy_request.additional_properties = d

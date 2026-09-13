@@ -39,5 +39,9 @@ export type SourceTarballDeployRequest = {
    * Canary rollout policy for this source-tarball deployment. Mutually exclusive with traffic_percent.
    */
   canary?: (CanaryPresetSpec | null);
+  /**
+   * Source-tarball deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
+   */
+  rollback_on_5xx?: boolean | null;
 };
 

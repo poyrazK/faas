@@ -54,5 +54,9 @@ export type SourceRefDeployRequest = {
    * Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent.
    */
   canary?: (CanaryPresetSpec | null);
+  /**
+   * Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
+   */
+  rollback_on_5xx?: boolean | null;
 };
 

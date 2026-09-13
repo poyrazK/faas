@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
@@ -31,6 +31,9 @@ class UploadDeployOptions:
     deployed_by: str | Unset = UNSET
     pr_number: int | Unset = UNSET
     workflows: list[WorkflowSpec] | Unset = UNSET
+    rollback_on_5xx: bool | None | Unset = UNSET
+    """Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback,
+    while omitted or null keeps the default false."""
 
     def to_dict(self) -> dict[str, Any]:
         runtime = self.runtime
@@ -60,6 +63,12 @@ class UploadDeployOptions:
                 workflows_item = workflows_item_data.to_dict()
                 workflows.append(workflows_item)
 
+        rollback_on_5xx: bool | None | Unset
+        if isinstance(self.rollback_on_5xx, Unset):
+            rollback_on_5xx = UNSET
+        else:
+            rollback_on_5xx = self.rollback_on_5xx
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -85,6 +94,8 @@ class UploadDeployOptions:
             field_dict["pr_number"] = pr_number
         if workflows is not UNSET:
             field_dict["workflows"] = workflows
+        if rollback_on_5xx is not UNSET:
+            field_dict["rollback_on_5xx"] = rollback_on_5xx
 
         return field_dict
 
@@ -122,6 +133,15 @@ class UploadDeployOptions:
 
                 workflows.append(workflows_item)
 
+        def _parse_rollback_on_5xx(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
+
         upload_deploy_options = cls(
             runtime=runtime,
             handler=handler,
@@ -134,6 +154,7 @@ class UploadDeployOptions:
             deployed_by=deployed_by,
             pr_number=pr_number,
             workflows=workflows,
+            rollback_on_5xx=rollback_on_5xx,
         )
 
         return upload_deploy_options
