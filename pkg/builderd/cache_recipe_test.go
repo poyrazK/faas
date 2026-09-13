@@ -123,6 +123,7 @@ func TestBuildRecipeCachePartitionsInputs(t *testing.T) {
 		"plan":      func(r *BuildCacheRecipe) { r.Plan = api.PlanHobby },
 		"builder":   func(r *BuildCacheRecipe) { r.BuilderBaseIdentity = "builder-b" },
 		"platform":  func(r *BuildCacheRecipe) { r.TargetPlatform = "linux/arm64" },
+		"function":  func(r *BuildCacheRecipe) { r.Function = !r.Function },
 	}
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {

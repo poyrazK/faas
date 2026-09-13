@@ -4,14 +4,14 @@
 /* eslint-disable */
 import type { OrgWithRole } from './OrgWithRole.js';
 /**
- * GET /v1/orgs/me response. `org` is null when no X-Active-Org /
- * ?org= hint was supplied (the passthrough case every
- * pre-PR-5 route depends on).
+ * GET /v1/orgs/me response. Without an X-Active-Org / ?org= hint,
+ * `org` is the caller's personal organization. It is null only for a
+ * legacy account that predates the personal-org backfill.
  *
  */
 export type OrgMeResponse = {
   /**
-   * null when no active-org hint was supplied; otherwise the active org + caller's role.
+   * The active org + caller's role, or null only for a legacy account without a personal organization.
    */
   org: OrgWithRole;
 };

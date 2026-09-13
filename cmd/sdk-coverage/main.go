@@ -300,6 +300,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account":                            "Whoami",
 	"GET /v1/capabilities":                       "GetCapabilities",
 	"POST /v1/executions":                        "CreateExecution",
+	"GET /v1/executions":                         "ListExecutions",
 	"GET /v1/executions/{id}":                    "GetExecution",
 	"DELETE /v1/executions/{id}":                 "CancelExecution",
 	"POST /v1/account/restore":                   "RestoreAccount",
@@ -748,8 +749,9 @@ var methodRouteMap = map[string]string{
 	// the /metrics entry above which is the 5m dashboard panel.
 	// Per-app pattern mirrors GetAppMetrics; account-scoped
 	// mirrors GetAccountUsage (the usage account-scoped family).
-	"GET /v1/apps/{slug}/slo": "GetAppSLO",
-	"GET /v1/account/slo":     "GetAccountSLO",
+	"GET /v1/apps/{slug}/slo":     "GetAppSLO",
+	"GET /v1/account/slo":         "GetAccountSLO",
+	"GET /v1/account/rate-limits": "GetAccountRateLimits",
 
 	// ADR-093 — per-route observability inside an app. The
 	// auto-derivation would produce GetAppsSlugRoutes

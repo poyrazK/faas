@@ -76,7 +76,8 @@ func (m *MemStore) FailBuild(_ context.Context, claim Build, fc FailureClass, me
 		return ErrNotFound
 	}
 	b.Status, b.FailureClass, b.FinishedAt = BuildFailed, fc, time.Now()
-	d.Status, d.Error = DeployFailed, message
-	m.builds[b.ID], m.deployments[d.ID] = b, d
+	m.builds[b.ID] = b
+	m.failDeploymentLocked(d, message)
+	m.markDeploymentSnapshotsStaleLocked(d.ID)
 	return nil
 }

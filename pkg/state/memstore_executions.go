@@ -119,12 +119,20 @@ func (m *MemStore) ExecutionByID(_ context.Context, accountID, executionID strin
 }
 
 func (m *MemStore) ListExecutions(_ context.Context, accountID string, limit, offset int) ([]Execution, error) {
+	return m.listExecutions(accountID, "", limit, offset)
+}
+
+func (m *MemStore) ListExecutionsByStatus(_ context.Context, accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
+	return m.listExecutions(accountID, status, limit, offset)
+}
+
+func (m *MemStore) listExecutions(accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
 	limit, offset = normalizeExecutionPage(limit, offset)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rows := make([]Execution, 0)
 	for _, row := range m.executions {
-		if row.AccountID == accountID {
+		if row.AccountID == accountID && (status == "" || row.Status == status) {
 			rows = append(rows, cloneExecution(row))
 		}
 	}

@@ -205,9 +205,11 @@ type runDeps struct {
 func defaultDeps() runDeps {
 	return runDeps{
 		configPath: envOr("FAAS_SCHEDD_CONFIG", "/etc/faas/schedd.toml"),
-		openDB:     db.Open,
-		migrate:    db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
-		detectFC:   fcvm.DetectFirecrackerVersion,
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-schedd")
+		},
+		migrate:  db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
+		detectFC: fcvm.DetectFirecrackerVersion,
 		dialVMM: func(ctx context.Context, target string, tlsCfg *tls.Config) (sched.VMM, error) {
 			return sched.DialVMMContext(ctx, target, tlsCfg)
 		},
@@ -296,9 +298,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// DEPLOY-1 / ADR-075 capdecl gate. schedd's capsDecl is
-	// the empty declaration (no Allow, no Deny) — schedd is
-	// unprivileged. The capCheck seam (review finding M2)
+	// DEPLOY-1 / ADR-075 capdecl gate. schedd permits only CAP_NET_ADMIN for
+	// read-only conntrack enumeration. The capCheck seam (review finding M2)
 	// lets tests stub the live /proc/self/status check.
 	capCheck := deps.capCheck
 	if capCheck == nil {
@@ -1798,6 +1799,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		executionCoordinator = sched.NewExecutionCoordinator(store, backend, sched.ExecutionCoordinatorConfig{
 			Enabled: true,
 			Owner:   executionNodeID,
+			Metrics: ops,
 		}, log).WithClaimResolver(resolver)
 		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "storage-digest-pair")
 	}

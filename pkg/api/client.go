@@ -384,6 +384,11 @@ func apiErrorFromResponse(resp *http.Response, data []byte) error {
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
 		p = *p.WithHeader("Retry-After", ra)
 	}
+	for _, name := range []string{"RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"} {
+		if value := resp.Header.Get(name); value != "" {
+			p = *p.WithHeader(name, value)
+		}
+	}
 	return &APIError{Problem: p}
 }
 
@@ -396,6 +401,13 @@ var ErrNoBody = errors.New("api: response body was empty")
 func (c *Client) Whoami(ctx context.Context) (AccountResponse, error) {
 	var out AccountResponse
 	return out, c.do(ctx, "GET", "/v1/account", nil, &out)
+}
+
+// GetAccountRateLimits returns the authenticated account's current deploy
+// rate window and plan-derived limit.
+func (c *Client) GetAccountRateLimits(ctx context.Context) (AccountRateLimitsResponse, error) {
+	var out AccountRateLimitsResponse
+	return out, c.do(ctx, "GET", "/v1/account/rate-limits", nil, &out)
 }
 
 // GetCapabilities returns the canonical feature maturity and plan
@@ -1599,8 +1611,16 @@ func (c *Client) PurgeAppCache(ctx context.Context, slug, pathGlob string) error
 }
 
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResponse, error) {
+	return c.ListInstancesWithHistory(ctx, slug, false)
+}
+
+func (c *Client) ListInstancesWithHistory(ctx context.Context, slug string, history bool) ([]InstanceResponse, error) {
 	var out []InstanceResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/instances", nil, &out)
+	endpoint := "/v1/apps/" + slug + "/instances"
+	if history {
+		endpoint += "?history=true"
+	}
+	return out, c.do(ctx, "GET", endpoint, nil, &out)
 }
 
 // GetInstances returns every live instance across the caller's account
@@ -1779,10 +1799,9 @@ func (c *Client) DeleteCron(ctx context.Context, id string) error {
 // Methods mirror the /v1/jobs surface added in M11.4. Routes are
 // keyed on the customer's slug (`name`) for create/list/update/delete;
 // runs + tasks use the opaque run id (uuid) so cross-account
-// enumeration cannot scrape run ids. Logs are read from vmmd's tail
-// endpoint (same path the dashboard uses for live app logs); the
-// handler proxies the call to the compute node that owns the
-// instance. The CLI surface lives in cmd/gregale/commands_jobs.go.
+// enumeration cannot scrape run ids. Task logs are a durable combined
+// stdout/stderr tail captured before the terminal microVM is destroyed.
+// The CLI surface lives in cmd/gregale/commands_jobs.go.
 
 // ListJobs returns one account-scoped page of jobs (the /v1/jobs GET route).
 // The optional arguments are limit and offset; omitting them, or passing zero
@@ -1907,8 +1926,8 @@ func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJ
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks", nil, &out)
 }
 
-// GetJobTaskLogs tails the task's stdout/stderr via vmmd's tail
-// endpoint (issue #1184 Workstream A). Wire shape:
+// GetJobTaskLogs returns the task's durable combined stdout/stderr tail
+// (issue #1184 Workstream A). Wire shape:
 // JobTaskLogResponse (task_status + log_content + truncated +
 // max_bytes). Truncated=true means the tail was capped at
 // MaxBytes; clients should re-fetch with a larger limit to see
@@ -3716,6 +3735,17 @@ func (c *Client) GetBillingPortalFull(ctx context.Context) (BillingPortalRespons
 	return out, nil
 }
 
+// GetBillingStatus returns the authenticated customer's provider-independent
+// billing projection. Unlike the operator catalog surface, this endpoint is
+// available to ordinary usage:read credentials and works for every provider.
+func (c *Client) GetBillingStatus(ctx context.Context) (BillingStatusResponse, error) {
+	var out BillingStatusResponse
+	if err := c.do(ctx, "GET", "/v1/billing/status", nil, &out); err != nil {
+		return BillingStatusResponse{}, err
+	}
+	return out, nil
+}
+
 // PostBillingRetry retries the latest unpaid invoice / transaction
 // for the authenticated account (issue #242). Closes the
 // customer-trust lie in pkg/mail/account.go:107,150 — the dunning
@@ -4337,9 +4367,9 @@ func (c *Client) GetAccountDPA(ctx context.Context) ([]byte, error) {
 
 // --- /v1/orgs/me (IAM-6 / ADR-061) ----------------------------------------
 //
-// Returns the caller's currently-active org + membership role, or
-// {"org": null} when neither X-Active-Org nor ?org= was supplied
-// (cmd/apid/handlers_org_me.go:59). Drives `gregale orgs me`.
+// Returns the caller's currently-active org + membership role. Without an
+// explicit X-Active-Org / ?org= hint, the server returns the caller's personal
+// organization. Drives `gregale orgs me`.
 func (c *Client) GetMyOrg(ctx context.Context) (OrgMeResponse, error) {
 	var out OrgMeResponse
 	return out, c.do(ctx, "GET", "/v1/orgs/me", nil, &out)

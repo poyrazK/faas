@@ -10,29 +10,27 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func TestCmdTrustedPublishersList_JSON_EmptyIsZeroRecords(t *testing.T) {
+func TestTrustedPublishersEmptyJSONEmitsNoProse(t *testing.T) {
+	resetJSONOut(t)
+	jsonOutput = true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/apps/jnjk/trusted_signers" {
-			t.Errorf("path = %q, want trusted signer list route", r.URL.Path)
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo/trusted_signers" {
+			http.NotFound(w, r)
+			return
 		}
 		_ = json.NewEncoder(w).Encode(api.AppTrustedSignerListResponse{Signers: []api.TrustedSigner{}})
 	}))
 	defer srv.Close()
-
 	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Setenv("FAAS_TOKEN", "test-token")
 	var stdout bytes.Buffer
 	oldOut := osStdout
 	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
-
-	if code := cmdTrustedPublishers([]string{"list", "jnjk"}); code != 0 {
-		t.Fatalf("cmdTrustedPublishers list = %d, want 0", code)
+	t.Cleanup(func() { osStdout = oldOut })
+	if code := cmdTrustedPublishersList([]string{"demo"}); code != 0 {
+		t.Fatalf("trusted-publishers list = %d", code)
 	}
-	if got := stdout.String(); got != "" {
-		t.Fatalf("empty NDJSON list emitted %q; want zero records", got)
+	if stdout.Len() != 0 {
+		t.Fatalf("empty NDJSON stream = %q, want no records", stdout.String())
 	}
 }

@@ -142,7 +142,9 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 	// exhausted" message.
 	// TODO: wire against apid_request_total{account_id, code}
 	// once the per-plan SLO target lands on Limits.
-	resp.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
+	if resp.AsOf == "" {
+		resp.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	if target != nil {
 		emitOperatorActionView(r, s, acct, target.ID, "metrics")
 	}

@@ -69,7 +69,7 @@ One control-plane node runs everything today; the architecture below extends to 
 
 **Request path (hot):** TLS → `gatewayd-public` → `gatewayd-internal` → routing cache hit → proxy to instance IP:8080 → response. Budget: < 2 ms added latency.
 
-**Request path (cold wake):** `gatewayd-public` accepts TLS, hands to `gatewayd-internal` which sees app has no running instance → holds the request → asks `schedd` → admission check (RAM headroom, plan concurrency) → `vmmd` restores snapshot into fresh netns/TAP → guest resumes (app already initialized in snapshot memory) → readiness ping → proxy. The platform-only snapshot wake gate is p95 < 350 ms through RUNNING (§6.3). First-byte and public-request timings include separate proxy, application, Cloudflare, network, and distance costs.
+**Request path (cold wake):** `gatewayd-public` accepts TLS, hands to `gatewayd-internal` which sees app has no running instance → holds the request → asks `schedd` → admission check (RAM headroom, plan concurrency) → `vmmd` restores snapshot into fresh netns/TAP → guest resumes (app already initialized in snapshot memory) → readiness ping → proxy. The platform-only snapshot wake gate is p95 < 350 ms from capacity admission/boot start through the first upstream byte (§6.3). Cloudflare, public network and client distance remain separate end-to-end costs.
 
 **Deploy path:** `apid` accepts source (≤ 100 MB) or OCI reference → `builderd` runs the build in an ephemeral builder microVM → OCI image → `imaged` converts it to a per-app **app layer** over a shared read-only base (two-drive scheme, §4.6) + injects `guest-init` → boots once, waits ready, pauses, snapshots → app state = `PARKED`. First deploy of an app is also its first snapshot.
 
@@ -1027,17 +1027,17 @@ Timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FA
 | snapshot load (file-backed, NVMe) + resume | 150–250 |
 | guest resume hook (entropy, clock) + readiness | 40 |
 | schedd records the ready instance as RUNNING | 5 |
+| internal gateway proxy to first byte | included |
 | **Platform snapshot wake p95 target** | **< 350** |
-| internal gateway proxy to first byte (diagnostic, not the restore gate) | ≤ 800 p95 |
 
 The sub-350 ms release gate is platform-only on the reference SSD node under
 normal traffic and bursts within host capacity. Its boundary is
-`wake.boot_started` through `wake.boot_completed`, corroborated by
-`wake.restore_breakdown.total_ms` from VMMD entry through the first successful
-readiness probe. It excludes proxy first byte, application response time,
-Cloudflare, the public Internet, client location, and physical distance.
-`gateway_wake_latency_seconds` and public probes remain useful end-to-end
-diagnostics, but they cannot pass or fail the snapshot-restore gate.
+gateway capacity admission/`wake.boot_started` through the first
+`wake.proxy_first_byte`, corroborated by `wake.restore_breakdown.total_ms` from
+VMMD entry through the first successful readiness probe. It excludes the rest
+of the application response, Cloudflare, the public Internet, client location,
+and physical distance. `gateway_platform_wake_latency_seconds` is the canonical
+fleet series; public probes remain separate end-to-end diagnostics.
 
 The schedd-side wake path is decomposed into three `schedd_wake_rpc_duration_seconds{app, phase}` histograms (ADR-097, P1B) so operators can attribute a p95 regression to a specific phase without re-running the wake under a profiler:
 
@@ -1978,7 +1978,7 @@ Every row is an experiment with a pre-committed pass threshold. Run V1–V5 on a
 | # | Assumption at risk | Experiment | Pass threshold | When |
 |---|---|---|---|---|
 | V1 | 130 MB avg snapshot (C-grade) | Deploy 10 representative apps (Express, Next.js, Flask, FastAPI+pandas, Go static, …); park; measure mem+vmstate+app-layer per plan | Plan-weighted avg ≤ 130 MB, p95 ≤ 300 MB | pre-M1 |
-| V2 | Platform snapshot wake p95 < 350 ms | 100 park→wake cycles per app class on NVMe, file-backed restore; `wake.boot_started` through `wake.boot_completed` | p95 < 350 ms; public edge and first byte excluded | pre-M1 |
+| V2 | Platform snapshot wake p95 < 350 ms | 100 park→wake cycles per app class on NVMe, file-backed restore; capacity admission/`wake.boot_started` through first upstream byte | p95 < 350 ms; CDN, Internet and client distance excluded | pre-M1 |
 | V3 | 8 MB per-VM overhead | Boot 120 × 128 MB VMs; host RSS delta ÷ 120 | ≤ 8 MB incl. TAP/jailer | pre-M1 |
 | V4 | Density / CPU overcommit 8× | 120 resident VMs + synthetic load on 20; measure p95 latency degradation | < 20 % degradation | pre-M1 |
 | V5 | 2 GB builder VM suffices | Build top-20 OSS starter repos (Node/Python) under the cap | ≥ 90 % succeed without OOM | pre-M6 |

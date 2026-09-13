@@ -903,6 +903,23 @@ func TestMetricsWakePhaseDurationPreinstantiated(t *testing.T) {
 	}
 }
 
+func TestMetricsPlatformWakeLatencyUsesDedicatedGateHistogram(t *testing.T) {
+	m := NewMetrics()
+	m.ObservePlatformWakeWithTrace(340*time.Millisecond, "")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	m.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_platform_wake_latency_seconds_bucket{le="0.35"} 1`,
+		`gateway_platform_wake_latency_seconds_count 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing exposition line %q in body:\n%s", want, body)
+		}
+	}
+}
+
 // TestMetricsObserveWakePhaseRoundTrip (ADR-098 C11) asserts that
 // ObserveWakePhase increments the labelled histogram and that the
 // scalar (legacy) ObserveWakeQueueWait dual-writes into the

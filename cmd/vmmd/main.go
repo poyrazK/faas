@@ -403,10 +403,12 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath:          envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
-		detectFC:            fcvm.DetectFirecrackerVersion,
-		listen:              wire.ListenAs,
-		openDB:              db.Open,
+		configPath: envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
+		detectFC:   fcvm.DetectFirecrackerVersion,
+		listen:     wire.ListenAs,
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-vmmd")
+		},
 		openStore:           state.NewPgStore,
 		detectOverlayIP:     nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
 		loadHostKey:         secretbox.LoadHostKey,
@@ -1307,6 +1309,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Optional /metrics endpoint.
 	var httpSrv *http.Server
 	if cfg.MetricsAddr != "" {
+		// Issue #2350: sample compute-host journal pressure and remaining
+		// networkd-dispatcher errors out of band. vmmd's endpoint is already
+		// discovered per active compute node, so these host signals reach the
+		// control-plane Prometheus without exposing node_exporter on a new port.
+		hostMetrics := newHostJournalMetrics(ops.Registry(), nil, nil)
+		go hostMetrics.runSampler(ctx, log)
 		mux := newMetricsMux(ops, cbm, frm, wpm, dsm)
 		if identitySigner != nil {
 			mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {

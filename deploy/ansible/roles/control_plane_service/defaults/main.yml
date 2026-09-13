@@ -12,3 +12,7 @@ faas_meterd_schedd_tls_ca_path: ""
 faas_meterd_egress_tls_cert_path: /etc/faas/tls/meterd/egress-client.crt
 faas_meterd_egress_tls_key_path: /etc/faas/tls/meterd/egress-client.key
 faas_meterd_egress_tls_ca_path: /etc/faas/tls/ca/ca.crt
+
+# Initial public beta runs without charging. Set to live at the launch-date
+# transition to activate provider delivery and reconciliation paging.
+faas_billing_mode: disabled

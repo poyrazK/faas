@@ -79,10 +79,12 @@ registry is intentionally node-local.
 
 The socket owner, gateway routing, callbacks, durable endpoint/resource table,
 authenticated `apid` CRUD API, and authenticated customer-facing
-send/close/subscribe/publish operations are now shipped. The public operations
-are endpoint-scoped and route through an owner interface; the current adapter
-targets the local Unix socket and fails closed with `503` when no owner is
-configured. The remaining production work is a leased cross-node registry or
-deterministic node routing. That resolver should reuse the existing
-`pkg/dispatch` retry/lease contracts rather than writing Postgres rows from
-`realtimed`.
+send/close/subscribe/publish operations are shipped. Endpoint configuration is
+now fanned out to every active compute node through its private
+`gateway_target_url`. Connection operations use the durable
+`managed_realtime_connection_owners` directory: API replicas discover a live
+connection once, claim a short CAS lease, renew it while operating, and release
+it on close. A failed or expired owner lease is rediscovered rather than guessed;
+publish broadcasts to all active nodes because channel membership is node-local.
+The directory is written by apid/control-plane code only—`realtimed` continues
+to own sockets and never writes Postgres.

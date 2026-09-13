@@ -1005,6 +1005,42 @@ func TestMemStore_SetDeploymentFailedEx_PersistsExplanationFields(t *testing.T) 
 	}
 }
 
+func TestMemStoreDeploymentFailureClearsTrafficAndRestoresFallback(t *testing.T) {
+	m := NewMemStore()
+	ctx := context.Background()
+	acc, _ := m.CreateAccount(ctx, "failed-traffic@x.com", api.PlanHobby)
+	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "failed-traffic"})
+	stable, err := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, ImageDigest: "sha256:stable", Status: DeployLive,
+		TrafficPercent: 20, RolloutState: "complete",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := m.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, ImageDigest: "sha256:candidate", Status: DeployLive,
+		TrafficPercent: 80, RolloutState: "rolling_out",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	failed, err := m.SetDeploymentFailed(ctx, candidate.ID, api.CodeAppStartupTimeout, "startup timeout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.TrafficPercent != 0 || failed.RolloutState != "aborted" || failed.RolloutAbortedAt == nil || failed.RolloutAbortedReason == "" {
+		t.Fatalf("failed deployment retained active rollout state: %+v", failed)
+	}
+	gotStable, err := m.DeploymentByID(ctx, stable.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotStable.TrafficPercent != 100 {
+		t.Fatalf("fallback traffic = %d, want 100", gotStable.TrafficPercent)
+	}
+}
+
 // TestMemStore_SetDeploymentFailedEx_EmptyFieldsPersistAsEmpty locks
 // the empty-input fallthrough path: a non-sentinel failure (no
 // catalog row) leaves all four prose fields empty strings + nil

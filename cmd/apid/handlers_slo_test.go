@@ -14,8 +14,14 @@ import (
 
 func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	e.s.store = nil
+	appID := mustSeedApp(t, e, "slo-owned")
 	installPromFixture(t, &e, func(query string) string {
+		if !strings.Contains(query, appID) {
+			t.Errorf("account SLO query lacks owned app ID: %q", query)
+		}
+		if strings.Contains(query, "gateway_wake_queue_wait_seconds") {
+			t.Errorf("account SLO queried unlabeled fleet wake metric: %q", query)
+		}
 		if strings.Contains(query, "gateway_rate_limited_total") {
 			if !strings.Contains(query, "or vector(0)") {
 				t.Errorf("throttling query lacks zero fallback: %q", query)
@@ -42,7 +48,7 @@ func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
 
 func TestFetchAccountSLO_ThrottleFailurePreservesCollectedMetrics(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	e.s.store = nil
+	mustSeedApp(t, e, "slo-throttle")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Query().Get("query"), "gateway_rate_limited_total") {
 			w.WriteHeader(http.StatusInternalServerError)

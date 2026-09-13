@@ -90,7 +90,9 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		openDB: db.Open,
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-imaged")
+		},
 		migrate: func(ctx context.Context, pool *pgxpool.Pool) error {
 			// F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap.
 			return db.MigrateUp(ctx, pool)

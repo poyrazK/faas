@@ -1340,6 +1340,7 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 	}
 
 	config := map[string]any{}
+	generatedFunctionStart := false
 	if existed && len(strings.TrimSpace(string(original))) > 0 {
 		if err := json.Unmarshal(original, &config); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -1354,6 +1355,45 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 		return nil, fmt.Errorf("parse %s deploy.base: %w", path, err)
 	}
 	base["image"] = m.RuntimeBaseRef
+	if packageName, version := railpackRuntimePackage(m.Runtime); packageName != "" {
+		packages, objectErr := nestedObject(config, "packages")
+		if objectErr != nil {
+			return nil, fmt.Errorf("parse %s packages: %w", path, objectErr)
+		}
+		packages[packageName] = version
+	}
+	if m.Function && functionSourceNeedsCopyOnlyPlan(m) {
+		// Railpack's language providers intentionally require a package/dependency
+		// manifest, while Gregale functions also support a single handler file.
+		// Give that source shape an explicit plan: start from the pinned runtime
+		// base and copy the source into /app. imaged replaces the placeholder
+		// start command with the function runner contract.
+		if _, configured := config["provider"]; !configured {
+			config["provider"] = "shell"
+			startPath := filepath.Join(m.Workdir, "start.sh")
+			if _, statErr := os.Lstat(startPath); errors.Is(statErr, os.ErrNotExist) {
+				if writeErr := os.WriteFile(startPath, []byte("#!/bin/sh\nexec /bin/true\n"), 0o755); writeErr != nil {
+					return nil, fmt.Errorf("write function build start script: %w", writeErr)
+				}
+				generatedFunctionStart = true
+			} else if statErr != nil {
+				return nil, fmt.Errorf("stat function build start script: %w", statErr)
+			}
+			steps, objectErr := nestedObject(config, "steps")
+			if objectErr != nil {
+				return nil, fmt.Errorf("parse %s steps: %w", path, objectErr)
+			}
+			build, objectErr := nestedObject(steps, "build")
+			if objectErr != nil {
+				return nil, fmt.Errorf("parse %s steps.build: %w", path, objectErr)
+			}
+			build["inputs"] = []any{
+				map[string]any{"image": m.RuntimeBaseRef},
+				map[string]any{"local": true, "include": []any{"."}},
+			}
+			deploy["startCommand"] = "/bin/true"
+		}
+	}
 	// Alpine runner bases and base-minimal cannot execute Railpack's default
 	// apt install phase. Preserve an explicit customer list, but make the
 	// platform default empty for musl runtimes and minimal scratch bases.
@@ -1378,14 +1418,63 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 	}
 
 	return func() error {
+		var restoreErr error
+		if generatedFunctionStart {
+			restoreErr = os.Remove(filepath.Join(m.Workdir, "start.sh"))
+			if errors.Is(restoreErr, os.ErrNotExist) {
+				restoreErr = nil
+			}
+		}
 		if existed {
 			if err := os.WriteFile(path, original, originalMode); err != nil {
-				return err
+				return errors.Join(restoreErr, err)
 			}
-			return os.Chmod(path, originalMode)
+			return errors.Join(restoreErr, os.Chmod(path, originalMode))
 		}
-		return os.Remove(path)
+		return errors.Join(restoreErr, os.Remove(path))
 	}, nil
+}
+
+// functionSourceNeedsCopyOnlyPlan reports whether Railpack 0.38 lacks the
+// marker it needs to select the runtime provider. Function runtime selection
+// is already explicit in the API, so these markerless source shapes need only
+// be copied over the corresponding pinned runtime base.
+func functionSourceNeedsCopyOnlyPlan(m api.BuildManifest) bool {
+	var markers []string
+	switch m.Framework {
+	case api.FrameworkRailpackNode:
+		markers = []string{"package.json"}
+	case api.FrameworkRailpackPython:
+		markers = []string{
+			"main.py", "app.py", "start.py", "bot.py", "hello.py", "server.py",
+			"requirements.txt", "pyproject.toml", "Pipfile",
+		}
+	default:
+		return false
+	}
+	for _, marker := range markers {
+		if info, err := os.Stat(filepath.Join(m.Workdir, marker)); err == nil && !info.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+func railpackRuntimePackage(runtime string) (string, string) {
+	switch runtime {
+	case "node22":
+		return "node", "22"
+	case "node24":
+		return "node", "24"
+	case "python312":
+		return "python", "3.12"
+	case "python313":
+		return "python", "3.13"
+	case "go124", "go124-alpine":
+		return "go", "1.24"
+	default:
+		return "", ""
+	}
 }
 
 func nestedObject(parent map[string]any, key string) (map[string]any, error) {

@@ -155,9 +155,8 @@ func isTrustedSignerNotFound(err error) bool {
 }
 
 // cmdTrustedPublishersList prints every trusted-publisher on the
-// app. Human output is line-oriented (one row per signer); JSON
-// output is NDJSON so an empty list emits zero records, consistent
-// with the other list commands.
+// app. Human output is line-oriented. JSON mode follows the CLI's list
+// contract and emits one signer per NDJSON line; an empty list emits no rows.
 func cmdTrustedPublishersList(args []string) int {
 	fs := flag.NewFlagSet("trusted-publishers list", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {

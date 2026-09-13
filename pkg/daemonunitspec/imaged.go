@@ -48,13 +48,12 @@ func UnitImaged() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "notify",
-		User:               "faas-imaged",
-		Group:              "faas",
-		ExecStart:          `/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml`,
-		Restart:            "on-failure",
-		RestartSec:         "2s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		Type:       "notify",
+		User:       "faas-imaged",
+		Group:      "faas",
+		ExecStart:  `/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml`,
+		Restart:    "on-failure",
+		RestartSec: "2s",
 		// imaged reconciles every runtime base assigned to the node before
 		// sd_notify(READY=1). A new generation can require OCI downloads,
 		// extraction, content validation and vulnerability scans. The

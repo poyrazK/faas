@@ -1,0 +1,5 @@
+---
+- name: restart postgresql for capacity
+  ansible.builtin.service:
+    name: "postgresql@{{ postgres_capacity_major_version }}-main.service"
+    state: restarted

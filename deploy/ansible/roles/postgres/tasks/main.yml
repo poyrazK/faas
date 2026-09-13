@@ -47,6 +47,48 @@
   register: pg_svc
   failed_when: false  # CI/chroot may not have systemd
 
+- name: postgres — allow metrics collector to publish node_exporter textfiles
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: postgres
+    group: node_exporter
+    mode: "0755"
+
+- name: postgres — install ordinary-connection capacity collector
+  ansible.builtin.copy:
+    src: faas-postgres-connection-metrics
+    dest: /usr/local/bin/faas-postgres-connection-metrics
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: postgres — install connection metrics service
+  ansible.builtin.copy:
+    src: faas-postgres-connection-metrics.service
+    dest: /etc/systemd/system/faas-postgres-connection-metrics.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload postgres
+
+- name: postgres — install connection metrics timer
+  ansible.builtin.copy:
+    src: faas-postgres-connection-metrics.timer
+    dest: /etc/systemd/system/faas-postgres-connection-metrics.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload postgres
+
+- name: postgres — enable connection metrics timer
+  ansible.builtin.systemd:
+    name: faas-postgres-connection-metrics.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  failed_when: false
+
 - name: postgres — inspect existing system user `faas`
   ansible.builtin.getent:
     database: passwd

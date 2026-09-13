@@ -25,10 +25,13 @@ POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish
 ```
 
 The API persists endpoint configuration in the control plane, applies the
-per-plan inventory cap, returns masked credentials, and best-effort mirrors the
-row to a local realtimed owner when `FAAS_REALTIME_SOCKET` is configured. The
-daemon-socket example below remains useful for node-local bootstrap and
-recovery tooling.
+per-plan inventory cap, returns masked credentials, and mirrors enabled rows to
+active realtime nodes. In a single-box install this is the local
+`FAAS_REALTIME_SOCKET`; in a multi-node install apid uses each node's private
+`gateway_target_url` and the `gatewayd-internal` control proxy. Connection
+operations are routed through the leased owner directory, while publish is
+broadcast to active nodes. The daemon-socket example below remains useful for
+node-local bootstrap and recovery tooling.
 
 ```
 curl --unix-socket /run/faas/realtimed.sock -X POST http://localhost/internal/endpoints \
@@ -41,11 +44,12 @@ wakes a sleeping VM; the quiet WebSocket itself remains owned by `realtimed`.
 Use the authenticated API (or `pkg/realtime.Client` for node-local tooling) to
 send to a `connection_id`, subscribe/publish channels, or close a connection.
 Send and publish bodies contain `data_base64` and an optional `binary` flag;
-decoded frames are limited to 1 MiB. The current registry is node-local, so
-public management calls succeed only when an owner resolver is configured for
-the target node; deployments without one fail closed with `503` rather than
-guessing an owner. Cross-node routing will replace this adapter with a leased
-resolver.
+decoded frames are limited to 1 MiB. In multi-node mode, apid discovers and
+leases the connection owner, renews the lease for the operation, and retries a
+stale owner once. Endpoint registration must be able to reach each node's
+private `gateway_target_url`; missing or unreachable nodes remain fail-closed
+for connection operations (`503`) and are skipped when another node accepts a
+publish.
 
 Inspect health and counters from the `faas` group:
 

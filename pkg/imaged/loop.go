@@ -31,6 +31,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
+const (
+	staleDeploymentSweepEvery = 5 * time.Minute
+	staleDeploymentThreshold  = 2 * time.Hour
+	staleDeploymentBatchSize  = 64
+)
+
 // Loop is the imaged M8 daemon loop. cmd/imaged constructs it after wiring
 // the Handler's collaborators (store, notifier, OCI puller, builder).
 type Loop struct {
@@ -132,6 +138,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	// imaged conversion in this process, and deployment status deduplicates it.
 	buildTicker := time.NewTicker(2 * time.Second)
 	defer buildTicker.Stop()
+	staleDeploymentTicker := time.NewTicker(staleDeploymentSweepEvery)
+	defer staleDeploymentTicker.Stop()
 
 	if l.gcCh == nil {
 		t := time.NewTicker(l.gcEvery)
@@ -180,6 +188,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 
 	l.recoverBuildHandoffs(ctx)
+	l.reconcileStaleDeployments(ctx)
 	// A daemon that restarts more often than gcEvery would otherwise never
 	// reclaim anything because every restart resets the ticker. Run one sweep
 	// after recovery so cleanup makes progress on frequently updated nodes.
@@ -204,6 +213,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-buildTicker.C:
 			l.recoverBuildHandoffs(ctx)
+		case <-staleDeploymentTicker.C:
+			l.reconcileStaleDeployments(ctx)
 		case <-l.gcCh:
 			l.runGCTick(ctx, l.now())
 		case <-l.fcCh:
@@ -215,6 +226,89 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// reconcileStaleDeployments terminates old pipeline rows that have no active
+// build behind them. The candidate query is bounded and the final
+// CancelDeploymentTx transition is CAS-guarded, so a row that becomes live or
+// terminal after selection is preserved. Builder-backed rows remain owned by
+// builderd's stuck-build reaper and are skipped here.
+func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
+	if l == nil || l.store == nil {
+		return
+	}
+	now := l.now().UTC()
+	cutoff := now.Add(-staleDeploymentThreshold)
+	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		Statuses: []state.DeploymentStatus{
+			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
+		},
+		IncludeDeleted: true,
+		CreatedBefore:  cutoff,
+		OldestFirst:    true,
+		Limit:          staleDeploymentBatchSize,
+	})
+	if err != nil {
+		l.log.Warn("imaged: list stale deployments", "err", err)
+		return
+	}
+	for _, deployment := range rows {
+		build, buildErr := l.store.BuildByDeployment(ctx, deployment.ID)
+		if buildErr == nil && (build.Status == state.BuildQueued || build.Status == state.BuildRunning) {
+			continue
+		}
+		if buildErr != nil && !errors.Is(buildErr, state.ErrNotFound) {
+			l.log.Warn("imaged: inspect stale deployment build", "deployment", deployment.ID, "err", buildErr)
+			continue
+		}
+		started := time.Now()
+		age := now.Sub(deployment.CreatedAt).Round(time.Second)
+		principal := fmt.Sprintf("system:stale-deployment-reconciler:%s:%ds", deployment.Status, int64(age.Seconds()))
+		_, _, cancelErr := l.store.CancelDeploymentTx(ctx, deployment.ID, principal, state.CancelReasonSystem)
+		if l.handler != nil && l.handler.ops != nil {
+			l.handler.ops.Observe("stale_deployment_reconcile", time.Since(started), cancelErr)
+		}
+		if cancelErr != nil {
+			if errors.Is(cancelErr, state.ErrInvalidStateTransition) || errors.Is(cancelErr, state.ErrCancelLiveForbidden) {
+				continue
+			}
+			l.log.Warn("imaged: reconcile stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "err", cancelErr)
+			continue
+		}
+		if l.handler != nil && l.handler.ops != nil {
+			l.handler.ops.IncrementStaleDeploymentsReconciled()
+		}
+		l.log.Info("imaged: reconciled stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "actor", principal)
+	}
+	l.observeStaleDeploymentBacklog(ctx, cutoff, now)
+}
+
+// observeStaleDeploymentBacklog refreshes the alert gauge after mutations, so
+// repaired rows do not leave a false positive until the next five-minute
+// sweep. The query is oldest-first and limit-one: its single row is the true
+// fleet maximum even when a sweep had more candidates than its mutation cap.
+func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now time.Time) {
+	if l.handler == nil || l.handler.ops == nil {
+		return
+	}
+	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		Statuses: []state.DeploymentStatus{
+			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
+		},
+		IncludeDeleted: true,
+		CreatedBefore:  cutoff,
+		OldestFirst:    true,
+		Limit:          1,
+	})
+	if err != nil {
+		l.log.Warn("imaged: observe stale deployment backlog", "err", err)
+		return
+	}
+	if len(rows) == 0 {
+		l.handler.ops.SetStaleDeploymentOldestAge(0)
+		return
+	}
+	l.handler.ops.SetStaleDeploymentOldestAge(now.Sub(rows[0].CreatedAt))
 }
 
 // HandleNotification exposes the handler to the durable replay worker while

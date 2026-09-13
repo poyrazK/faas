@@ -575,8 +575,8 @@ func cmdInvitationsAccept(args []string) int {
 
 // cmdOrgsMe fetches GET /v1/orgs/me (Tier B audit gap, IAM-6
 // follow-up). Returns the caller's currently-active org plus their
-// role on it, or {org:null} when no X-Active-Org hint was sent (the
-// caller is operating in the account scope). CI scripts that switch
+// role on it. Without an X-Active-Org hint, the server returns the caller's
+// personal organization. CI scripts that switch
 // orgs need this to introspect which org they're currently scoped
 // to without re-parsing env vars.
 //

@@ -50,6 +50,17 @@ func TestExecutionAPIIsDisabledByDefault(t *testing.T) {
 	}
 }
 
+func TestExecutionFreePlanRejectedBeforeRuntimeGate(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	rec := e.do(t, http.MethodPost, "/v1/executions", executionRequest(), nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("POST /v1/executions for Free with gate off = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), api.CodeExecutionsNotAllowed) {
+		t.Fatalf("free-plan response missing plan-limit code: %s", rec.Body.String())
+	}
+}
+
 func TestCreateExecutionSealsPayloadAndReturnsQueuedProjection(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	identity := enableExecutionAPIForTest(t, &e)
@@ -150,6 +161,67 @@ func TestExecutionStatusAndCancellationAreAccountScoped(t *testing.T) {
 	}
 	if cancelled.Status != api.ExecutionStatusCancelled || cancelled.FinishedAt == nil {
 		t.Fatalf("cancelled response = %+v", cancelled)
+	}
+}
+
+func TestListExecutionsPaginatesAndFiltersByStatus(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	enableExecutionAPIForTest(t, &e)
+
+	first := e.do(t, http.MethodPost, "/v1/executions", executionRequest(), nil)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first create = %d; body=%s", first.Code, first.Body.String())
+	}
+	var firstResponse api.ExecutionResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &firstResponse); err != nil {
+		t.Fatal(err)
+	}
+	if cancel := e.do(t, http.MethodDelete, "/v1/executions/"+firstResponse.ID, nil, nil); cancel.Code != http.StatusAccepted {
+		t.Fatalf("first cancel = %d; body=%s", cancel.Code, cancel.Body.String())
+	}
+	second := e.do(t, http.MethodPost, "/v1/executions", executionRequest(), nil)
+	if second.Code != http.StatusAccepted {
+		t.Fatalf("second create = %d; body=%s", second.Code, second.Body.String())
+	}
+
+	page := e.do(t, http.MethodGet, "/v1/executions?limit=1", nil, nil)
+	if page.Code != http.StatusOK {
+		t.Fatalf("list = %d; body=%s", page.Code, page.Body.String())
+	}
+	var listed api.ExecutionListResponse
+	if err := json.Unmarshal(page.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Executions) != 1 || listed.Limit != 1 || listed.Offset != 0 || listed.NextOffset != 1 {
+		t.Fatalf("first page = %+v", listed)
+	}
+	last := e.do(t, http.MethodGet, "/v1/executions?limit=1&offset=1", nil, nil)
+	if last.Code != http.StatusOK {
+		t.Fatalf("last page = %d; body=%s", last.Code, last.Body.String())
+	}
+	var lastPage api.ExecutionListResponse
+	if err := json.Unmarshal(last.Body.Bytes(), &lastPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(lastPage.Executions) != 1 || lastPage.NextOffset != -1 {
+		t.Fatalf("last page = %+v", lastPage)
+	}
+
+	cancelled := e.do(t, http.MethodGet, "/v1/executions?status=cancelled", nil, nil)
+	if cancelled.Code != http.StatusOK {
+		t.Fatalf("cancelled list = %d; body=%s", cancelled.Code, cancelled.Body.String())
+	}
+	var cancelledPage api.ExecutionListResponse
+	if err := json.Unmarshal(cancelled.Body.Bytes(), &cancelledPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(cancelledPage.Executions) != 1 || cancelledPage.Executions[0].Status != api.ExecutionStatusCancelled || cancelledPage.NextOffset != -1 {
+		t.Fatalf("cancelled page = %+v", cancelledPage)
+	}
+
+	bad := e.do(t, http.MethodGet, "/v1/executions?status=unknown", nil, nil)
+	if bad.Code != http.StatusBadRequest || !strings.Contains(bad.Body.String(), api.CodeValidation) {
+		t.Fatalf("bad status = %d %s", bad.Code, bad.Body.String())
 	}
 }
 

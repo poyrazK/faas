@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdRunSubmitJSON(t *testing.T) {
@@ -50,6 +52,57 @@ func TestCmdRunSubmitJSON(t *testing.T) {
 	}
 	if receipt["id"] != "01234567-89ab-4cde-8012-3456789abcde" || receipt["status"] != "queued" {
 		t.Fatalf("receipt = %#v", receipt)
+	}
+}
+
+func TestCmdRunsListJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/executions" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("limit"); got != "2" {
+			t.Fatalf("limit = %q, want 2", got)
+		}
+		if got := r.URL.Query().Get("offset"); got != "4" {
+			t.Fatalf("offset = %q, want 4", got)
+		}
+		if got := r.URL.Query().Get("status"); got != "running" {
+			t.Fatalf("status = %q, want running", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"executions":[{"id":"01234567-89ab-4cde-8012-3456789abcde","status":"running","runtime":"node24","limits":{"timeout_ms":5000,"memory_mb":128,"cpu_millicores":250,"ephemeral_disk_mb":64,"max_output_bytes":262144,"pids_max":64},"output_truncated":false,"created_at":"2026-01-01T00:00:00Z"}],"limit":2,"offset":4,"next_offset":6}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+	out, _, restore := swapIO(t)
+	defer restore()
+
+	if got := cmdRuns([]string{"list", "--limit", "2", "--offset", "4", "--status", "running"}); got != 0 {
+		t.Fatalf("cmdRuns list exit = %d", got)
+	}
+	var response api.ExecutionListResponse
+	if err := json.Unmarshal(out.Bytes(), &response); err != nil {
+		t.Fatalf("response JSON: %v; output=%q", err, out.String())
+	}
+	if len(response.Executions) != 1 || response.NextOffset != 6 {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestCmdRunsListRejectsInvalidStatus(t *testing.T) {
+	t.Setenv("FAAS_API", "http://127.0.0.1:1")
+	t.Setenv("FAAS_TOKEN", "test-token")
+	_, errOut, restore := swapIO(t)
+	defer restore()
+	if got := cmdRuns([]string{"list", "--status", "not-a-status"}); got == 0 {
+		t.Fatal("invalid status unexpectedly succeeded")
+	}
+	if !strings.Contains(errOut(), "usage: gregale runs list") {
+		t.Fatalf("stderr = %q", errOut())
 	}
 }
 

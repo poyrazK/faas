@@ -542,6 +542,9 @@ const (
 	// endpoint, not a billing gate. Maps to HTTP 429 + Retry-After:
 	// the window is 24h so the retry hint is in seconds-until-reset.
 	CodeExportRateLimited = "export_rate_limited"
+	// CodeDeployRateLimited marks an account that exhausted its plan's
+	// deployment admissions in the current one-hour window.
+	CodeDeployRateLimited = "deploy_rate_limited"
 	CodeUnauthorized      = "unauthorized"
 	// CodeForbidden is returned when the authenticated principal lacks
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
@@ -838,6 +841,10 @@ const (
 	// split at line 533/534.
 	CodePlanDataUpstreamsNotAllowed = "plan_data_upstreams_not_allowed" // 402, Free
 	CodePlanLimitDataUpstreams      = "plan_limit_data_upstreams"       // 403, per-app cap reached
+	// CodeDataUpstreamsDisabled distinguishes an operator runtime switch
+	// from a customer plan entitlement. It prevents an entitled Scale
+	// account from receiving impossible downgrade guidance.
+	CodeDataUpstreamsDisabled = "data_upstreams_disabled"
 
 	// ADR-098 §D4 + §11: explicit-upstream write surface validation.
 	// Distinct codes from CodeEnvVarInvalidKey / CodeEnvVarValueTooLarge
@@ -1665,7 +1672,7 @@ func StatusForCode(code string) int {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
 		return http.StatusForbidden
-	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited:
+	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited, CodeDeployRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -1683,7 +1690,7 @@ func StatusForCode(code string) int {
 	case CodeCapacity, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled:
 		return http.StatusServiceUnavailable
-	case CodeAPIContractDiffDisabled:
+	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -2374,6 +2381,20 @@ func ErrExportRateLimited(retryAfterS int) *Problem {
 		"Only one account export is allowed per 24h window; retry after the indicated back-off.").
 		WithHeader("Retry-After", fmt.Sprintf("%d", retryAfterS)).
 		WithDocs("https://docs.gregale.dev/gdpr#export-rate-limit")
+}
+
+// ErrDeployRateLimited reports an exhausted account deploy window. The
+// remaining/reset headers are added by apid from the atomic store result.
+func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeDeployRateLimited,
+		"Deploy rate limited",
+		fmt.Sprintf("This account has used all %d deploys in its current one-hour window.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://docs.gregale.dev/deployments#rate-limit")
 }
 
 // ErrInternal is the catch-all 500 envelope for handler-side failures
@@ -3921,6 +3942,16 @@ func ErrPlanDataUpstreamsNotAllowed(p Plan) *Problem {
 		WithDocs(docsBase + "/plans#data-placement")
 }
 
+// ErrDataUpstreamsDisabled reports cluster configuration independently of
+// plan entitlement. Operators can enable the runtime switch without asking an
+// already-entitled customer to change plans.
+func ErrDataUpstreamsDisabled() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeDataUpstreamsDisabled,
+		"Data placement is disabled",
+		"data-placement APIs are not enabled on this cluster; contact the platform operator").
+		WithDocs(docsBase + "/plans#data-placement")
+}
+
 // ErrPlanLimitDataUpstreams (ADR-098 §D5) is the 403 returned when
 // CreateDataUpstreamIfUnderQuota surfaces a state-layer quota
 // error. Mirrors ErrPlanWebhookQuota at line 1900 — the plan DOES
@@ -5046,6 +5077,18 @@ func ErrPlanSourceBytes(limit int, observed int64) *Problem {
 // nudge). Code differs from CodePlanLimit* because the failure mode
 // is plan-gating, not "you used more than the plan allows".
 func ErrPlanFeatureGated(feature string, p Plan) *Problem {
+	if feature == "analytics" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include analytics",
+			fmt.Sprintf("the %s plan doesn't include request analytics; upgrade to Hobby or higher for historical observability.", p)).
+			WithDocs(docsBase + "/plans#analytics")
+	}
+	if feature == "sync_invoke" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include synchronous invocation",
+			fmt.Sprintf("the %s plan doesn't include synchronous invocation; use the app's public HTTPS endpoint or upgrade to Hobby or higher.", p)).
+			WithDocs(docsBase + "/plans#synchronous-invocation")
+	}
 	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 		"Plan doesn't include this feature",
 		fmt.Sprintf("the %s plan doesn't unlock %s; upgrade to Hobby or higher to use event-driven features.", p, feature)).

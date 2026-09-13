@@ -217,7 +217,8 @@ type ListOrgsResponse = OrgListResponse
 // OrgMeResponse is the GET /v1/orgs/me wire shape (PR 4's
 // whoamiActiveOrg handler). The Org field is the canonical
 // OrgResponse + the caller's role on the org. When no X-Active-Org
-// hint was supplied, Org is nil — pre-PR-5 routes stay account-scoped.
+// hint is supplied, the server returns the caller's personal organization.
+// Org is nil only for a legacy account that predates the personal-org backfill.
 //
 // Supersedes the PR 4 cmd/apid/handlers_org_me.go::orgMeResponse
 // local type. PR 5 rewrites whoamiActiveOrg to render OrgMeResponse

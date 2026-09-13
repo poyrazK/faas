@@ -625,6 +625,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	if opts.Dockerfile {
 		kind = state.DeploymentKindDockerfile
 	}
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
 	sourceURL := opts.SourceURL
 	if sourceURL == "" {
 		sourceURL = "local-tar://upload-session/" + uploadID

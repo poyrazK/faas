@@ -23,10 +23,20 @@
     mode: "0644"
   register: gatewayd_public_unit
 
+- name: gatewayd_public_service — install durable listener socket
+  notify: restart faas-gatewayd-public
+  ansible.builtin.copy:
+    src: faas-gatewayd-public.socket
+    dest: /etc/systemd/system/faas-gatewayd-public.socket
+    owner: root
+    group: root
+    mode: "0644"
+  register: gatewayd_public_socket
+
 - name: gatewayd_public_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
-  when: gatewayd_public_unit.changed
+  when: gatewayd_public_unit.changed or gatewayd_public_socket.changed
 
 - name: gatewayd_public_service — create systemd drop-in directory
   ansible.builtin.file:
@@ -86,3 +96,18 @@
     group: root
     mode: "0644"
   notify: restart faas-gatewayd-public
+
+- name: gatewayd_public_service — inspect existing gateway enablement  # noqa: command-instead-of-module (read-only query / no module equivalent)
+  ansible.builtin.command: systemctl is-enabled faas-gatewayd-public.service
+  register: gatewayd_public_enabled
+  changed_when: false
+  failed_when: false
+
+- name: gatewayd_public_service — keep the durable socket enabled with an enabled gateway
+  ansible.builtin.systemd_service:
+    name: faas-gatewayd-public.socket
+    enabled: true
+    state: started
+  when:
+    - gatewayd_public_enabled.rc == 0
+    - not (faas_join_defer_service_handlers | default(false) | bool)

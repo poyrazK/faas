@@ -67,6 +67,14 @@
     - daemon-reload
     - restart node_exporter
 
+- name: node_exporter — create textfile collector directory
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: node_exporter
+    group: node_exporter
+    mode: "0755"
+
 - name: node_exporter — read rendered systemd unit
   ansible.builtin.slurp:
     src: /etc/systemd/system/node_exporter.service

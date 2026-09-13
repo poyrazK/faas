@@ -24,12 +24,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -143,38 +143,16 @@ func (s *server) rollbackCreatedSession(ctx context.Context, sid, accountID stri
 	return nil
 }
 
-// clientIPFromRequest extracts the host/IP part of r.RemoteAddr,
-// stripping the ":port" suffix. Returns "" when RemoteAddr is
-// empty, unparseable, or a Unix socket (a Unix-socket request has
-// no IP at all — the dashboard client never legitimately arrives
-// that way at apid, so "" is correct rather than "unknown").
-//
-// The gateway strips the X-Forwarded-For we read here is NOT
-// trusted: the dashboard fronts through gatewayd-public which stamps
-// RemoteAddr with the TCP peer IP. A direct apid exposure with
-// a forged XFF is a separate threat to model. Per spec §11 the
-// peer-IP is what we audit; XFF transparency is a future PR.
+// clientIPFromRequest uses the same trusted-loopback proxy contract as the
+// authentication limiter. Keeping session provenance and audit rows on the
+// canonical helper prevents the local gateway hop (127.0.0.1) from replacing
+// the customer IP while still refusing a spoofed X-Forwarded-For value on a
+// directly connected request.
 func clientIPFromRequest(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		// RemoteAddr was either empty, a bare host (no port), or
-		// a Unix socket — fall back to the raw value only when
-		// it's a literal IP. net.ParseAccepts forms like
-		// "192.0.2.1" but rejects "192.0.2.1:443"; we already
-		// peeled the port above, so this branch handles
-		// "192.0.2.1" without a port.
-		if ip := net.ParseIP(r.RemoteAddr); ip != nil {
-			return ip.String()
-		}
-		return ""
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.String()
-	}
-	return ""
+	return middleware.ClientIP(r)
 }
 
 // _ reserves the api import for compile-time parity checks

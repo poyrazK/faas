@@ -18,14 +18,18 @@ func (s *server) getCapabilities(w http.ResponseWriter, _ *http.Request, acct st
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Capability registry unavailable", err.Error()))
 		return
 	}
-	// Plan entitlement alone is not enough to advertise disposable runs. The
-	// execution handlers use this same boot-time gate and return 501 while the
-	// scheduler/VM isolation path is unavailable. Keep the capability registry
-	// fail-closed so clients do not try an API that this host cannot serve.
+	// Entitlement is only one half of availability. A capability must also be
+	// backed by a runtime that is enabled and configured on this control plane;
+	// otherwise clients would advertise a feature whose first request returns
+	// 501/503.
 	for i := range capabilities.Capabilities {
-		if capabilities.Capabilities[i].Key == disposableRunsCapabilityKey {
+		switch capabilities.Capabilities[i].Key {
+		case "openapi-contract-preview":
+			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && api.ApiContractDiffEnabled()
+		case disposableRunsCapabilityKey:
 			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.executionAPIEnabled
-			break
+		case "object-storage":
+			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.objectStorageEnabled()
 		}
 	}
 	writeJSON(w, http.StatusOK, capabilities)

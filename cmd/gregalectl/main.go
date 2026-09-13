@@ -54,9 +54,10 @@ Commands:
   backup       Operator rclone / archive credentials (backup init|unseal-archive-creds|unseal-rclone)
   secrets      Post-bootstrap secrets init (secrets init|rotate|status|stamp; PR-X / issue #911 / ADR-110)
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
-  compute-nodes  Compute-node state machine (add|drain|drain-status|activate|force-drain|retire; PR-A / multi-host scale-out)
+  compute-nodes  Compute-node state and release readiness (add|list|show|release-status|drain|activate|retire)
   instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart)
   accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
+  billing      Operator billing catalog, reconciliation, and webhook diagnostics
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
   audit        Correlate operator intents and events by trace ID (audit trace)
   builds       Authenticated recovery for stuck builds (builds sweep-stuck)
@@ -197,6 +198,8 @@ func run(args []string) int {
 		// mutations require a recent MFA step-up, confirmation, reason,
 		// idempotency key, and trace ID through apid.
 		return cmdAccountsDispatch(args[1:])
+	case dispatchBilling:
+		return cmdBillingDispatch(args[1:])
 	case dispatchConfig:
 		// Runtime configuration reads and hot-only mutations through
 		// apid. The CLI refuses apply modes that require a rollout.

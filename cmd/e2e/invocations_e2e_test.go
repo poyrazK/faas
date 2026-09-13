@@ -594,12 +594,20 @@ func TestColdWake_FloorKeepsInstancesWarm(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID, nil)
-	key := h.SeedAccount(context.Background(), api.PlanPro)
+	ctx := context.Background()
+	key := h.SeedAccount(ctx, api.PlanPro)
 
-	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: "floor-warm", RAMMB: 512}); status != http.StatusCreated {
+	raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps",
+		api.CreateAppRequest{Slug: "floor-warm", RAMMB: 512})
+	if status != http.StatusCreated {
 		t.Fatalf("create app: status=%d", status)
 	}
+	var created api.AppResponse
+	if err := json.Unmarshal(raw, &created); err != nil {
+		t.Fatalf("decode created app: %v body=%s", err, raw)
+	}
+	store := state.NewPgStore(h.Pool)
+	seedLiveDeployment(t, ctx, store, created.ID, defaultLocalComputeNodeID(t, ctx, store))
 	minInstances := 1
 	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/floor-warm",
 		api.UpdateAppRequest{MinInstances: &minInstances}); status != http.StatusOK {
@@ -618,7 +626,7 @@ func TestColdWake_FloorKeepsInstancesWarm(t *testing.T) {
 	// after the wake cycle. A regression where the wake handler
 	// clears the floor (e.g. by overwriting with the apps row's
 	// default) fails here.
-	raw, status := doReq(t, h, key, http.MethodGet, "/v1/apps/floor-warm", nil)
+	raw, status = doReq(t, h, key, http.MethodGet, "/v1/apps/floor-warm", nil)
 	if status != http.StatusOK {
 		t.Fatalf("GET /v1/apps/floor-warm: status=%d body=%s", status, raw)
 	}

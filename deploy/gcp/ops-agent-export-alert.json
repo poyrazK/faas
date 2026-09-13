@@ -1,0 +1,27 @@
+{
+  "displayName": "Gregale Ops Agent export failures",
+  "documentation": {
+    "content": "A production VM is dropping off-host telemetry. Check Ops Agent logs, VM OAuth scopes, and roles/logging.logWriter before trusting incident evidence.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "enabled": true,
+  "conditions": [
+    {
+      "displayName": "Ops Agent dropped exports",
+      "conditionThreshold": {
+        "filter": "resource.type=\"gce_instance\" AND metric.type=\"logging.googleapis.com/user/gregale_ops_agent_export_failures\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_SUM"
+          }
+        ],
+        "trigger": {"count": 1}
+      }
+    }
+  ]
+}

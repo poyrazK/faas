@@ -4,8 +4,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const vmConcurrencyRetryInterval = 10 * time.Millisecond
@@ -20,18 +18,14 @@ func effectiveAppConcurrencyLimit(app App, planLimit int) int {
 	return app.MaxConcurrency
 }
 
-// effectiveVMConcurrencyLimit keeps the gateway's request slots aligned with
-// the execution capacity inside a function guest. Generated function runners
-// have a fixed-size interpreter pool; admitting more concurrent requests than
-// that pool can execute only creates an in-guest queue and hides the pressure
-// that should add another VM. Request-mode apps retain the plan limit because
-// their servers own their concurrency model. Empty type is the legacy
-// function value.
-func effectiveVMConcurrencyLimit(app App, planLimit int) int {
-	if planLimit <= 0 || app.Type == AppTypeApp {
-		return planLimit
-	}
-	return min(planLimit, api.FunctionInterpreterMaxWorkers)
+// effectiveVMConcurrencyLimit is the listener-level concurrency contract
+// published as concurrency_per_vm. Generated function runners keep their
+// smaller interpreter pool as an internal execution queue; it must not become
+// a second, undocumented gateway limit. Doing so made a Scale function that
+// advertised 80 requests per VM block its fifth request in the gateway and
+// intermittently exhaust the request budget during ordinary 20-way bursts.
+func effectiveVMConcurrencyLimit(_ App, planLimit int) int {
+	return planLimit
 }
 
 // vmConcurrencyManager owns the request slots for routable instances. The

@@ -123,6 +123,7 @@ type ExecutionStore interface {
 	CreateExecution(ctx context.Context, params CreateExecutionParams) (Execution, error)
 	ExecutionByID(ctx context.Context, accountID, executionID string) (Execution, error)
 	ListExecutions(ctx context.Context, accountID string, limit, offset int) ([]Execution, error)
+	ListExecutionsByStatus(ctx context.Context, accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error)
 	ClaimExecution(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error)
 	MarkExecutionRunning(ctx context.Context, executionID, leaseToken string, startedAt time.Time) (Execution, error)
 	RenewExecutionLease(ctx context.Context, executionID, leaseToken string, renewedAt time.Time, leaseDuration time.Duration) error

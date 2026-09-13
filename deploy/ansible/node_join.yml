@@ -641,6 +641,11 @@
         path: /etc/systemd/system/faas-vmmd.service.d/99-schedd-target.conf
         state: absent
 
+    - name: Remove emergency gateway release override before service activation
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-gatewayd-internal.service.d/zz-emergency-release.conf
+        state: absent
+
     - name: Stage the reusable box-age identity when supplied
       ansible.builtin.copy:
         src: "{{ faas_join_box_age_key_source }}"

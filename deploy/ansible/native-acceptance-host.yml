@@ -1,0 +1,19 @@
+# Provision a node designated for the disruptive native CI gates
+# (builder-native.yml, e2e-native.yml). Dedicated playbook; never included by
+# bootstrap.yml or node_join.yml — see roles/native_acceptance_host/README.md.
+#
+# The inventory must define a `native_acceptance` group. Keep the host out of
+# `compute_nodes` in any inventory that also runs the normal bootstrap, or a
+# routine converge will fight the acceptance provisioning.
+#
+#   ansible-playbook -i inventory/native-acceptance.ini native-acceptance-host.yml
+- name: Provision the designated native acceptance host
+  hosts: native_acceptance
+  become: true
+  gather_facts: true
+  serial: 1
+  max_fail_percentage: 0
+  roles:
+    - role: native_acceptance_host
+      vars:
+        nah_enabled: true

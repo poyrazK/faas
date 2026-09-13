@@ -3,9 +3,11 @@ package sched
 // adr: 171 — disposable one-shot execution lease, dispatch, and teardown invariants.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,6 +15,8 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
+	dto "github.com/prometheus/client_model/go"
 )
 
 type executionBackendFunc func(context.Context, ExecutionRestoreRequest) (ExecutionSession, error)
@@ -166,6 +170,141 @@ func TestExecutionCoordinatorDispatchFenceAndTeardownBeforeCompletion(t *testing
 	if checkingStore.complete.Load() != 1 {
 		t.Fatalf("CompleteExecution calls = %d, want 1", checkingStore.complete.Load())
 	}
+}
+
+func TestExecutionCoordinatorEmitsBoundedLifecycleMetrics(t *testing.T) {
+	store, account, executions, _ := newExecutionCoordinatorFixture(t, 1, 2000)
+	ops := wire.NewOpsMetrics("schedd")
+	backend := executionBackendFunc(func(context.Context, ExecutionRestoreRequest) (ExecutionSession, error) {
+		return executionSessionFuncs{
+			execute: func(context.Context, ExecutionPayload) (ExecutionOutcome, error) {
+				return ExecutionOutcome{
+					Status: api.ExecutionStatusSucceeded, Result: []byte(`{"ok":true}`),
+					Stdout: "ok\n", Stderr: "warning\n",
+				}, nil
+			},
+			destroy: func(context.Context) error { return nil },
+		}, nil
+	})
+	config := executionCoordinatorTestConfig()
+	config.Metrics = ops
+	coordinator := NewExecutionCoordinator(store, backend, config, nil)
+
+	if processed, err := coordinator.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("ProcessNext = %v, %v", processed, err)
+	}
+	if got := executionMetricValue(t, ops, "schedd_execution_active", map[string]string{"runtime": "node22"}); got != 0 {
+		t.Fatalf("active executions = %v, want 0 after teardown", got)
+	}
+	if got := executionMetricValue(t, ops, "schedd_execution_total", map[string]string{"runtime": "node22", "status": "succeeded"}); got != 1 {
+		t.Fatalf("terminal executions = %v, want 1", got)
+	}
+	if got := executionMetricValue(t, ops, "schedd_execution_output_bytes_total", map[string]string{"runtime": "node22"}); got != float64(len(`{"ok":true}`)+len("ok\n")+len("warning\n")) {
+		t.Fatalf("output bytes = %v, want %d", got, len(`{"ok":true}`)+len("ok\n")+len("warning\n"))
+	}
+	for _, phase := range []string{"restore", "execute", "teardown", "finalize"} {
+		if got := executionMetricHistogramCount(t, ops, "schedd_execution_phase_duration_seconds", map[string]string{"runtime": "node22", "phase": phase}); got != 1 {
+			t.Fatalf("%s phase observations = %d, want 1", phase, got)
+		}
+	}
+	if got := executionMetricValue(t, ops, "schedd_execution_failures_total", map[string]string{"runtime": "node22", "reason": "unknown"}); got != 0 {
+		t.Fatalf("unknown failures = %v, want 0", got)
+	}
+	row, err := store.ExecutionByID(context.Background(), account.ID, executions[0].ID)
+	if err != nil || row.Status != api.ExecutionStatusSucceeded {
+		t.Fatalf("execution row = %#v, err=%v", row, err)
+	}
+}
+
+func TestExecutionCoordinatorLogsNoBackendPayloadAndUsesBoundedFailureLabels(t *testing.T) {
+	store, account, executions, _ := newExecutionCoordinatorFixture(t, 1, 2000)
+	ops := wire.NewOpsMetrics("schedd")
+	var logBuffer bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	backend := executionBackendFunc(func(context.Context, ExecutionRestoreRequest) (ExecutionSession, error) {
+		return nil, errors.New("payload=TOP_SECRET_SOURCE input=TOP_SECRET_INPUT")
+	})
+	config := executionCoordinatorTestConfig()
+	config.Metrics = ops
+	coordinator := NewExecutionCoordinator(store, backend, config, logger)
+
+	if processed, err := coordinator.ProcessNext(context.Background()); err != nil || !processed {
+		t.Fatalf("ProcessNext = %v, %v", processed, err)
+	}
+	if strings.Contains(logBuffer.String(), "TOP_SECRET") {
+		t.Fatalf("backend payload leaked into log: %s", logBuffer.String())
+	}
+	if got := executionMetricValue(t, ops, "schedd_execution_failures_total", map[string]string{"runtime": "node22", "reason": "restore"}); got != 1 {
+		t.Fatalf("restore failures = %v, want 1", got)
+	}
+	if got := executionMetricValue(t, ops, "schedd_execution_total", map[string]string{"runtime": "node22", "status": "failed"}); got != 1 {
+		t.Fatalf("failed executions = %v, want 1", got)
+	}
+	if got := executionMetricValue(t, ops, "schedd_execution_active", map[string]string{"runtime": "node22"}); got != 0 {
+		t.Fatalf("active executions = %v, want 0", got)
+	}
+	row, err := store.ExecutionByID(context.Background(), account.ID, executions[0].ID)
+	if err != nil || row.FailureCode == nil || *row.FailureCode != "restore_failed" {
+		t.Fatalf("execution failure row = %#v, err=%v", row, err)
+	}
+}
+
+func executionMetricValue(t *testing.T, metrics *wire.OpsMetrics, name string, labels map[string]string) float64 {
+	t.Helper()
+	families, err := metrics.Registry().Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if !executionMetricLabelsMatch(metric.GetLabel(), labels) {
+				continue
+			}
+			if metric.Counter != nil {
+				return metric.GetCounter().GetValue()
+			}
+			if metric.Gauge != nil {
+				return metric.GetGauge().GetValue()
+			}
+		}
+	}
+	t.Fatalf("metric %s with labels %#v not found", name, labels)
+	return 0
+}
+
+func executionMetricHistogramCount(t *testing.T, metrics *wire.OpsMetrics, name string, labels map[string]string) uint64 {
+	t.Helper()
+	families, err := metrics.Registry().Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if executionMetricLabelsMatch(metric.GetLabel(), labels) {
+				return metric.GetHistogram().GetSampleCount()
+			}
+		}
+	}
+	t.Fatalf("metric %s with labels %#v not found", name, labels)
+	return 0
+}
+
+func executionMetricLabelsMatch(labels []*dto.LabelPair, want map[string]string) bool {
+	if len(labels) != len(want) {
+		return false
+	}
+	for _, label := range labels {
+		if want[label.GetName()] != label.GetValue() {
+			return false
+		}
+	}
+	return true
 }
 
 func TestExecutionCoordinatorCancellationStopsGuestAndAcknowledgesAfterTeardown(t *testing.T) {

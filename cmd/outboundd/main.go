@@ -27,7 +27,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	ops := wire.NewOpsMetrics("outboundd")
 	wire.BootStamps(ctx, "outboundd", ops)
 	wire.RegisterDefaultOps(ops)
-	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "outboundd")
+	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-outboundd")
 	if err != nil {
 		return fmt.Errorf("outboundd: open db: %w", err)
 	}

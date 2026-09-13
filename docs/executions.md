@@ -13,6 +13,7 @@ ephemeral scratch filesystem.
 ```sh
 gregale run --runtime node22 --file handler.js --input '{"url":"https://example.invalid"}' --wait
 gregale run --runtime node22 --dir . --entrypoint src/index.mjs --wait
+gregale runs list --status running --json
 gregale runs status <execution-id>
 gregale runs cancel <execution-id>
 ```
@@ -29,6 +30,7 @@ receipt.
 The API is account-scoped and requires a Bearer API key:
 
 * `POST /v1/executions` — admit a run and return a queued receipt.
+* `GET /v1/executions` — list account-scoped receipts with `limit`, `offset`, and optional `status` filters.
 * `GET /v1/executions/{id}` — read the current or terminal receipt.
 * `DELETE /v1/executions/{id}` — request idempotent cancellation.
 
@@ -42,6 +44,21 @@ and are never returned by reads.
 The control-plane and scheduler gates are explicit. Set
 `FAAS_EXECUTION_API_ENABLED=1` on apid and `FAAS_EXECUTION_DISPATCH=1` on
 schedd only after the host's restore/execute/destroy isolation checks pass.
+
+## Scheduler observability
+
+The schedd `/metrics` registry exposes payload-free execution signals:
+
+* `schedd_execution_active{runtime}` — claimed runs currently in restore or execution.
+* `schedd_execution_total{runtime,status}` — runs durably acknowledged in a terminal state.
+* `schedd_execution_phase_duration_seconds{runtime,phase}` — restore, execute, teardown, and finalize latency.
+* `schedd_execution_failures_total{runtime,reason}` — bounded restore, transport, teardown, finalization, lease, protocol, and output-limit failures.
+* `schedd_execution_output_bytes_total{runtime}` — result/stdout/stderr byte volume, without output content.
+* `schedd_execution_sweeps_total{outcome}` — recovery-sweep success and error counts.
+
+Runtime, status, phase, and reason labels are closed sets. Execution IDs,
+account IDs, source, input, guest output, and raw backend errors are not
+exported in metrics or scheduler logs.
 
 ## Production smoke
 

@@ -76,6 +76,11 @@ type AccountView struct {
 	AppCount                   int
 	EmailVerified              bool
 	EmailVerificationGraceEnds string
+	DeployRateUsed             int
+	DeployRateLimit            int
+	DeployRateRemaining        int
+	DeployRateResetsAt         string
+	DeployRateResetsLabel      string
 }
 
 // DPAView is the page-specific payload for the dashboard DPA route

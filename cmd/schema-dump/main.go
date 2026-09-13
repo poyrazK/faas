@@ -117,7 +117,7 @@ func (liveRunner) pgDump(ctx context.Context, dsn string) ([]byte, error) {
 }
 
 func (liveRunner) openPool(ctx context.Context) (poolCloser, error) {
-	pool, err := db.Open(ctx, "")
+	pool, err := db.OpenWithAppName(ctx, "", "faas-schema-dump")
 	if err != nil {
 		return nil, err
 	}

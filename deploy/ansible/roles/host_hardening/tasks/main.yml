@@ -38,10 +38,13 @@
     that:
       - not (faas_hardening_sshd_password_auth | bool == false) or
         (faas_hardening_authkeys.stat.exists and faas_hardening_authkeys.stat.size > 0)
+      - faas_hardening_sshd_permit_root_login != 'no' or
+        (ansible_env.SUDO_USER | default('root')) != 'root'
     fail_msg: >-
-      faas_hardening_sshd_password_auth=false but {{ faas_hardening_authkeys.stat.path | default('~/.ssh/authorized_keys') }}
-      is missing or empty for the connecting user. Add a key first or set
-      faas_hardening_sshd_password_auth=true; this role will not lock you out.
+      The requested SSH posture would lock out the current connection. A
+      password-disabled user needs an authorized key, and PermitRootLogin=no
+      requires Ansible to connect as a named sudo-capable administrator. Test
+      OS Login/IAP first; this role will not remove its own access path.
   when: faas_hardening_sshd | bool
 
 - name: host_hardening — render the sshd hardening drop-in
@@ -128,6 +131,63 @@
     enabled: true
     state: started
   when: faas_hardening_auditd | bool
+
+# --- Caddy ------------------------------------------------------------------
+
+- name: host_hardening — inspect the control-plane Caddy unit  # noqa: command-instead-of-module (read-only query / no module equivalent)
+  ansible.builtin.command: systemctl cat caddy.service
+  register: faas_hardening_caddy_unit
+  changed_when: false
+  failed_when: false
+  when:
+    - faas_hardening_caddy | bool
+    - "'control_plane' in group_names"
+
+- name: host_hardening — create the Caddy drop-in directory
+  ansible.builtin.file:
+    path: "{{ faas_hardening_caddy_dropin | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - faas_hardening_caddy | bool
+    - "'control_plane' in group_names"
+    - faas_hardening_caddy_unit.rc == 0
+
+- name: host_hardening — install the least-privilege Caddy sandbox
+  ansible.builtin.template:
+    src: 90-gregale-caddy-hardening.conf.j2
+    dest: "{{ faas_hardening_caddy_dropin }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd for Caddy hardening
+  when:
+    - faas_hardening_caddy | bool
+    - "'control_plane' in group_names"
+    - faas_hardening_caddy_unit.rc == 0
+
+# --- journald ---------------------------------------------------------------
+
+- name: host_hardening — create journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_hardening_journald | bool
+
+- name: host_hardening — install bounded journal policy
+  ansible.builtin.template:
+    src: 60-faas-journal-bounds.conf.j2
+    dest: /etc/systemd/journald.conf.d/60-faas-journal-bounds.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: converge bounded journal
+  when: faas_hardening_journald | bool
 
 # --- sysctl -----------------------------------------------------------------
 

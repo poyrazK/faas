@@ -13,15 +13,14 @@ func UnitRealtimed() daemonunit.Unit {
 		After:         []string{"faas-cp.slice", "faas-vmmd.service"},
 		Wants:         []string{"faas-cp.slice", "faas-vmmd.service"},
 
-		Type:               "simple",
-		User:               "faas",
-		Group:              "faas",
-		ExecStart:          "/opt/faas/current/bin/realtimed",
-		Restart:            "on-failure",
-		RestartSec:         "2s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
-		Slice:              FaasCPSlice,
-		MemoryMax:          "512M",
+		Type:       "simple",
+		User:       "faas",
+		Group:      "faas",
+		ExecStart:  "/opt/faas/current/bin/realtimed",
+		Restart:    "on-failure",
+		RestartSec: "2s",
+		Slice:      FaasCPSlice,
+		MemoryMax:  "512M",
 
 		EnvironmentFile: "-/etc/faas/secrets/realtimed/realtimed.env",
 		Environment: []daemonunit.KV{

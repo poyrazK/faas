@@ -117,15 +117,15 @@ func TestVMConcurrencyManagerWakesWaiterOnRelease(t *testing.T) {
 	}
 }
 
-func TestEffectiveVMConcurrencyLimitCapsFunctionWorkerPool(t *testing.T) {
+func TestEffectiveVMConcurrencyLimitMatchesPublishedListenerLimit(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		app  App
 		plan int
 		want int
 	}{
-		{name: "function", app: App{Type: AppTypeFunction}, plan: 80, want: 4},
-		{name: "legacy function", app: App{}, plan: 25, want: 4},
+		{name: "function", app: App{Type: AppTypeFunction}, plan: 80, want: 80},
+		{name: "legacy function", app: App{}, plan: 25, want: 25},
 		{name: "smaller plan", app: App{Type: AppTypeFunction}, plan: 1, want: 1},
 		{name: "request mode app", app: App{Type: AppTypeApp}, plan: 80, want: 80},
 	} {
@@ -134,6 +134,22 @@ func TestEffectiveVMConcurrencyLimitCapsFunctionWorkerPool(t *testing.T) {
 				t.Fatalf("effectiveVMConcurrencyLimit() = %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAdvertisedScaleFunctionBurstDoesNotWaitForCapacity(t *testing.T) {
+	m := newVMConcurrencyManager(nil)
+	const concurrency = 20
+	releases := make([]func(), 0, concurrency)
+	for i := 0; i < concurrency; i++ {
+		release, ok := m.tryAcquire("vm-a", "scale", effectiveVMConcurrencyLimit(App{Type: AppTypeFunction}, 80))
+		if !ok {
+			t.Fatalf("request %d entered a capacity wait below the advertised 80-request limit", i+1)
+		}
+		releases = append(releases, release)
+	}
+	for _, release := range releases {
+		release()
 	}
 }
 

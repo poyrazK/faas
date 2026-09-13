@@ -43,6 +43,7 @@ type VMRequest struct {
 	Framework      Framework
 	Runtime        string // app runtime id (node22, python312, go124-alpine, ...)
 	RuntimeBaseRef string // resolved OCI ref used by Railpack for this build
+	Function       bool   // handler build; allows markerless Node/Python sources
 	// DependencyCacheKey is a platform-derived, tenant-scoped digest. Empty
 	// keeps the builder fully ephemeral; developer sessions set it so matching
 	// BuildKit layers can cross otherwise-isolated builder VM lifetimes.
@@ -98,6 +99,7 @@ type BuildOutcome struct {
 	ExportDir    string // host dir the artifacts live in (caller may rm)
 	OCIImage     string // absolute path to the produced OCI tarball
 	LogTailBytes int64  // bytes guest-init wrote to build-done.json's `log_tail`
+	LogTail      string // bounded guest/Railpack output recovered from build-done.json
 	ExitCode     int    // the in-VM build's exit code (0 = success)
 	FailureClass string // mirrors builderd's FailureClass table; "" on success
 	// FailureCode is the RFC 7807 stable code guest-init stamped on

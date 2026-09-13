@@ -73,13 +73,12 @@ bumps the counter at `Add(n-1)` so "n restarts" surfaces as
 "this process is the nth incarnation" rather than "n increments
 across n processes" — operators see a stable per-process counter.
 
-`wire.Daemon()` reads `$SYSTEMD_RESTARTS_ON_FAILURE` (set by the
-systemd unit's `Restart=on-failure` + `RestartCountExport` pattern,
-systemd 254+) at boot and calls
+`wire.Daemon()` reads an optional externally supplied
+`$SYSTEMD_RESTARTS_ON_FAILURE` value at boot and calls
 `defaultOps.RecordDaemonRestart(name, Version, n)` once after
-the slog is configured. The env var reads as 0 when unset (older
-systemd, dev runs without a unit), and the counter stays at 0 —
-the alert rules fall back to node_exporter's metric in that case.
+the slog is configured. The env var reads as 0 when unset, which is
+the production systemd case, and the counter stays at 0. Alert rules
+use node_exporter's systemd metric.
 
 A package-level `defaultOps` field + `RegisterDefaultOps(ops)` setter
 is added so each `cmd/<daemon>/main.go` can publish its `*OpsMetrics`
@@ -138,11 +137,9 @@ patterns observed in production:
 - The closed-set vocabulary (10 daemon names × 1 version) bounds
   the counter's cardinality — fleet-wide 90 series, well below
   the Prometheus "tens of thousands" guideline.
-- The systemd unit pattern `Restart=on-failure` +
-  `RestartCountExport` (systemd 254+) is required for the
-  per-daemon counter to surface a non-zero value; older systemd
-  falls back to node_exporter's collector. Both paths feed the
-  same alerts.
+- systemd has no `RestartCountExport` service directive. Restart-loop alerts
+  use node-exporter's `node_systemd_restart_count`; the daemon-local counter is
+  non-zero only under a launcher that explicitly supplies the optional env.
 - Adding the systemd collector widens node_exporter's metric set
   from ~200 to ~400 series (systemd exposes per-unit / per-service
   state for every unit on the box). The scrape interval is already

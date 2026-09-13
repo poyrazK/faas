@@ -2088,11 +2088,14 @@ type Deployment struct {
 // are applied by the store so an operator cannot accidentally load the full
 // deployment history into apid.
 type OperatorDeploymentFilter struct {
-	AccountID string
-	AppID     string
-	Statuses  []DeploymentStatus
-	Limit     int
-	Offset    int
+	AccountID      string
+	AppID          string
+	Statuses       []DeploymentStatus
+	IncludeDeleted bool
+	CreatedBefore  time.Time
+	OldestFirst    bool
+	Limit          int
+	Offset         int
 }
 
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot
