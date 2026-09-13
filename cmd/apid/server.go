@@ -53,7 +53,7 @@ type server struct {
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
 	managedPostgresUsageCollector    *managedpostgres.UsageCollector
 	store                            state.Store
-	domainVerificationMetrics       *domainVerificationMetrics
+	domainVerificationMetrics        *domainVerificationMetrics
 	log                              *slog.Logger
 	// devSourceCacheMu serializes reconstruction with best-effort cache
 	// replacement. The cache is node-local and disposable; this lock is not
