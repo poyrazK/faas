@@ -4,13 +4,43 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
 	egresspb "github.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+type replayTestStream struct {
+	grpc.ClientStream
+	frame *egresspb.BytesFrame
+	sent  bool
+}
+
+func (s *replayTestStream) Recv() (*egresspb.BytesFrame, error) {
+	if s.sent {
+		return nil, io.EOF
+	}
+	s.sent = true
+	return s.frame, nil
+}
+
+type replayTestClient struct {
+	stream *replayTestStream
+	acked  []string
+}
+
+func (c *replayTestClient) StreamBytes(context.Context, *egresspb.StreamBytesRequest, ...grpc.CallOption) (egresspb.EgressTxService_StreamBytesClient, error) {
+	return c.stream, nil
+}
+
+func (c *replayTestClient) AckBytes(_ context.Context, req *egresspb.AckBytesRequest, _ ...grpc.CallOption) (*egresspb.AckBytesResponse, error) {
+	c.acked = append(c.acked, req.GetEventIds()...)
+	return &egresspb.AckBytesResponse{Acknowledged: uint32(len(req.GetEventIds()))}, nil
+}
 
 type fleetEgressNodeSource struct {
 	nodes []state.ComputeNode
@@ -102,5 +132,38 @@ func TestTLSForServiceClonesWithoutMutatingSharedConfig(t *testing.T) {
 	clone := tlsForService(original, "egress.faas")
 	if clone == original || clone.ServerName != "egress.faas" || original.ServerName != "static.invalid" {
 		t.Fatalf("clone=%p/%q original=%p/%q", clone, clone.ServerName, original, original.ServerName)
+	}
+}
+
+func TestGatewayEgressAdapterPersistsBeforeAcknowledgingReplayFrame(t *testing.T) {
+	t.Parallel()
+	eventID := "11111111-1111-4111-8111-111111111111"
+	frame := &egresspb.BytesFrame{
+		EventId: eventID, InstanceId: "22222222-2222-4222-8222-222222222222",
+		Minute: timestamppb.Now(), Bytes: 10, Requests: 2,
+	}
+	client := &replayTestClient{stream: &replayTestStream{frame: frame}}
+	persisted := false
+	a := &gatewayEgressAdapter{
+		persistFrame: func(context.Context, *egresspb.BytesFrame) error {
+			persisted = true
+			return nil
+		},
+	}
+	if !a.consumeStream(context.Background(), client, nil) {
+		t.Fatal("opened stream reported false")
+	}
+	if !persisted || len(client.acked) != 1 || client.acked[0] != eventID {
+		t.Fatalf("persisted=%v acked=%v", persisted, client.acked)
+	}
+	if a.Tracked() != 0 {
+		t.Fatal("durable replay frame was also retained in the legacy in-memory accumulator")
+	}
+
+	client = &replayTestClient{stream: &replayTestStream{frame: frame}}
+	a.persistFrame = func(context.Context, *egresspb.BytesFrame) error { return errors.New("postgres down") }
+	a.consumeStream(context.Background(), client, nil)
+	if len(client.acked) != 0 {
+		t.Fatalf("acked frame before persistence: %v", client.acked)
 	}
 }

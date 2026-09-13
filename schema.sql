@@ -2890,6 +2890,18 @@ CREATE TABLE public.meter_network_checkpoints (
     CONSTRAINT meter_network_checkpoints_net_tx_bytes_check CHECK ((net_tx_bytes >= 0))
 );
 
+--
+-- Name: meter_gateway_usage_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.meter_gateway_usage_events (
+    node_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
 
 --
 -- Name: mirror_invocation_results; Type: TABLE; Schema: public; Owner: -
@@ -4649,6 +4661,16 @@ ALTER TABLE ONLY public.instance_billing_intervals
 
 ALTER TABLE ONLY public.instances
     ADD CONSTRAINT instances_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: meter_gateway_usage_events meter_gateway_usage_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meter_gateway_usage_events
+    ADD CONSTRAINT meter_gateway_usage_events_pkey PRIMARY KEY (node_id, event_id);
+
+CREATE INDEX meter_gateway_usage_events_recorded_at_idx ON public.meter_gateway_usage_events USING btree (recorded_at);
 
 
 --

@@ -27,6 +27,10 @@ type activeComputeNodeSource interface {
 	ActiveComputeNodes(context.Context) ([]state.ComputeNode, error)
 }
 
+type gatewayUsageEventStore interface {
+	AppendGatewayUsageEvent(context.Context, string, string, string, time.Time, int64, int64, int32) error
+}
+
 type fleetEgressMetrics struct {
 	registry  *prometheus.Registry
 	expected  prometheus.Gauge
@@ -75,6 +79,7 @@ func (c *closableGatewayEgressClient) Close() error { return c.close() }
 // the tail of the previous stream.
 type fleetGatewayEgressAdapter struct {
 	nodes   activeComputeNodeSource
+	store   gatewayUsageEventStore
 	tlsCfg  *tls.Config
 	dialFn  func(context.Context, string, *tls.Config) (egresspb.EgressTxServiceClient, error)
 	now     func() time.Time
@@ -154,6 +159,18 @@ func (a *fleetGatewayEgressAdapter) reconcile(ctx context.Context) {
 			tlsCfg: tlsForService(a.tlsCfg, "egress.faas"),
 			data:   make(map[string]map[int64]gatewayUsageBucket),
 			dialFn: a.dialFn,
+		}
+		if a.store != nil {
+			adapter.persistFrame = func(persistCtx context.Context, frame *egresspb.BytesFrame) error {
+				err := a.store.AppendGatewayUsageEvent(
+					persistCtx, nodeID, frame.GetEventId(), frame.GetInstanceId(), frame.GetMinute().AsTime(),
+					int64(frame.GetRequests()), int64(frame.GetBytes()), int32(frame.GetColdBoots()),
+				)
+				if err != nil {
+					a.metrics.failures.WithLabelValues("persist").Inc()
+				}
+				return err
+			}
 		}
 		entry := &fleetEgressEntry{nodeID: nodeID, target: target, adapter: adapter, cancel: cancel}
 		a.active[nodeID] = entry

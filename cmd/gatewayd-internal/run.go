@@ -2178,7 +2178,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if !isUnixSocketPath(egressGRPCSocket) && deps.egressTLS == nil {
 		return fmt.Errorf("gatewayd: egress target %q is non-unix but egress_tls_* is empty (set egress_tls_cert_path / key_path / ca_path or point the target at a unix socket for single-box mode)", egressGRPCSocket)
 	}
-	egressGRPCSrv := egressgrpc.NewServer(egressSink, log)
+	egressGRPCSrv, err := egressgrpc.NewPersistentServer(egressSink, log, egressgrpc.DefaultPendingPath)
+	if err != nil {
+		return fmt.Errorf("gatewayd: open durable egress replay ledger: %w", err)
+	}
 	deps.egressGRPC = newEgressGRPCListener(egressGRPCSocket, deps.egressTLS, egressGRPCSrv, log)
 	// Best-effort start, mirroring the synth listener pattern
 	// (runWithDeps internal RPC). If the unix socket can't bind

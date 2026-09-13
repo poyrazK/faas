@@ -1229,6 +1229,14 @@ type MailSuppression struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type MeterGatewayUsageEvent struct {
+	NodeID     pgtype.UUID
+	EventID    pgtype.UUID
+	InstanceID pgtype.UUID
+	Minute     pgtype.Timestamptz
+	RecordedAt pgtype.Timestamptz
+}
+
 type MeterNetworkCheckpoint struct {
 	InstanceID pgtype.UUID
 	NetTxBytes int64

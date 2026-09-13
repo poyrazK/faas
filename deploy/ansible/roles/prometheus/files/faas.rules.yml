@@ -1138,6 +1138,18 @@ groups:
           description: "{{ $labels.daemon }} has exposed daemon_ready=0 for 5m. Check its /readyz response and dependency-specific reason before routing traffic or restarting it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDaemonNotReady.md"
 
+      - alert: FaasMeterdFleetEgressStreamsMissing
+        expr: meterd_fleet_egress_expected_streams > meterd_fleet_egress_connected_streams
+        for: 2m
+        labels:
+          severity: page
+          component: meterd
+          family: usage_collection
+        annotations:
+          summary: "Meterd is missing one or more compute usage streams"
+          description: "Meterd's expected active-compute stream count is {{ $value }}, while fewer gateway streams are connected. Request, response-byte, and cold-boot usage remains in each gateway's durable replay ledger until connectivity and persistence recover."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMeterdFleetEgressStreamsMissing.md"
+
       # Outbound admission is deliberately reject-first in v1. A sustained
       # rejection rate means an attached application is exhausting the
       # provider budget or the integration's in-flight ceiling; it is a

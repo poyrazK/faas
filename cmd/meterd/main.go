@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -295,8 +296,9 @@ type gatewayEgressAdapter struct {
 	// single-box default-local path; mTLS-wrapped remote
 	// gatewayd-internal deployments pass the loaded *tls.Config here
 	// (ADR-052).
-	dialFn    func(ctx context.Context, socketPath string, tlsCfg *tls.Config) (egresspb.EgressTxServiceClient, error)
-	connected atomic.Bool
+	dialFn       func(ctx context.Context, socketPath string, tlsCfg *tls.Config) (egresspb.EgressTxServiceClient, error)
+	persistFrame func(context.Context, *egresspb.BytesFrame) error
+	connected    atomic.Bool
 }
 
 // EgressBytes returns the latest drained (instanceID,
@@ -441,6 +443,34 @@ func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client egressp
 				log.Debug("gatewayEgressAdapter: stream recv ended", "err", err)
 			}
 			return true
+		}
+		if frame.GetEventId() != "" && a.persistFrame != nil {
+			if frame.GetInstanceId() == "" || frame.GetMinute() == nil {
+				if log != nil {
+					log.Error("gatewayEgressAdapter: invalid replay frame", "event_id", frame.GetEventId())
+				}
+				return true
+			}
+			if frame.GetBytes() > math.MaxInt64 || frame.GetRequests() > math.MaxInt32 || frame.GetColdBoots() > math.MaxInt32 {
+				if log != nil {
+					log.Error("gatewayEgressAdapter: replay frame counters overflow", "event_id", frame.GetEventId())
+				}
+				return true
+			}
+			if err := a.persistFrame(ctx, frame); err != nil {
+				if log != nil {
+					log.Warn("gatewayEgressAdapter: persist replay frame failed", "event_id", frame.GetEventId(), "err", err)
+				}
+				return true
+			}
+			ack, err := client.AckBytes(ctx, &egresspb.AckBytesRequest{EventIds: []string{frame.GetEventId()}})
+			if err != nil || ack.GetAcknowledged() != 1 {
+				if log != nil {
+					log.Debug("gatewayEgressAdapter: frame ack failed; reconnecting for replay", "event_id", frame.GetEventId(), "acknowledged", ack.GetAcknowledged(), "err", err)
+				}
+				return true
+			}
+			continue
 		}
 		a.recordFrame(frame)
 	}
@@ -1055,7 +1085,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if cfg.Role == role.RoleControlPlane {
 		fleetEgress := &fleetGatewayEgressAdapter{
-			nodes: store, tlsCfg: gwEgressTLS, dialFn: dialGatewayEgressStream,
+			nodes: store, store: store, tlsCfg: gwEgressTLS, dialFn: dialGatewayEgressStream,
 			now: deps.now, log: log, metrics: egressMetrics,
 			active: make(map[string]*fleetEgressEntry),
 		}

@@ -126,6 +126,9 @@ func TestServer_StreamBytes_EmitsRecordedBytes(t *testing.T) {
 		if frame.Minute == nil {
 			t.Fatalf("frame has nil minute: %+v", frame)
 		}
+		if frame.EventId == "" {
+			t.Fatalf("frame has empty durable event id: %+v", frame)
+		}
 		if got := frame.Minute.AsTime().Truncate(time.Minute); !got.Equal(frame.Minute.AsTime()) {
 			t.Fatalf("minute not truncated: %v", frame.Minute.AsTime())
 		}
@@ -133,6 +136,10 @@ func TestServer_StreamBytes_EmitsRecordedBytes(t *testing.T) {
 			t.Fatalf("inst-1 activity = requests:%d cold_boots:%d, want 1/1", frame.Requests, frame.ColdBoots)
 		}
 		seen[frame.InstanceId] = frame.Bytes
+		ack, err := client.AckBytes(ctx, &egresspb.AckBytesRequest{EventIds: []string{frame.EventId}})
+		if err != nil || ack.GetAcknowledged() != 1 {
+			t.Fatalf("ack %q = %+v, %v", frame.EventId, ack, err)
+		}
 	}
 	if seen["inst-1"] != 1024 {
 		t.Fatalf("inst-1 bytes = %d, want 1024", seen["inst-1"])

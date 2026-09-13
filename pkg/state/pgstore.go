@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/netip"
 	"sort"
@@ -16709,7 +16710,8 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 		`insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 on conflict (instance_id, minute) do update
-		   set cpu_usec        = usage_minutes.cpu_usec        + EXCLUDED.cpu_usec,
+		   set mb_seconds      = case when usage_minutes.mb_seconds = 0 and EXCLUDED.mb_seconds > 0 then EXCLUDED.mb_seconds else usage_minutes.mb_seconds end,
+		       cpu_usec        = usage_minutes.cpu_usec        + EXCLUDED.cpu_usec,
 		       tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
 		       net_tx_bytes    = usage_minutes.net_tx_bytes    + EXCLUDED.net_tx_bytes,
 		       net_rx_bytes    = usage_minutes.net_rx_bytes    + EXCLUDED.net_rx_bytes,
@@ -16717,6 +16719,56 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 		       tail_seconds    = usage_minutes.tail_seconds    + EXCLUDED.tail_seconds`,
 		accountID, appID, instanceID, minute, mbSeconds, requests, cpuUsec, txBytes, netTxBytes, netRxBytes, coldBootCount, tailSeconds)
 	return err
+}
+
+// AppendGatewayUsageEvent durably deduplicates one replayable gateway frame
+// and applies its counters in the same transaction. The caller may ACK the
+// frame only after this method returns nil.
+func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32) error {
+	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 {
+		return fmt.Errorf("state: invalid gateway usage counters")
+	}
+	node, err := parsePgUUID(nodeID)
+	if err != nil {
+		return err
+	}
+	event, err := parsePgUUID(eventID)
+	if err != nil {
+		return err
+	}
+	instance, err := parsePgUUID(instanceID)
+	if err != nil {
+		return err
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	inserted, err := q.RegisterGatewayUsageEvent(ctx, tx, sqlc.RegisterGatewayUsageEventParams{
+		NodeID: node, EventID: event, InstanceID: instance,
+		Minute: pgtype.Timestamptz{Time: minute.UTC().Truncate(time.Minute), Valid: true},
+	})
+	if err != nil {
+		return err
+	}
+	if inserted {
+		rows, applyErr := q.ApplyGatewayUsageEvent(ctx, tx, sqlc.ApplyGatewayUsageEventParams{
+			ID:      instance,
+			Column2: pgtype.Timestamptz{Time: minute.UTC().Truncate(time.Minute), Valid: true},
+			Column3: int32(requests),
+			Column4: txBytes,
+			Column5: coldBoots,
+		})
+		if applyErr != nil {
+			return applyErr
+		}
+		if rows != 1 {
+			return fmt.Errorf("state: gateway usage instance %s not found", instanceID)
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // AppendNetworkUsageObservation converts vmmd's cumulative host-interface

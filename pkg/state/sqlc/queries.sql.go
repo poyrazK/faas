@@ -384,7 +384,8 @@ const appendUsage = `-- name: AppendUsage :exec
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 on conflict (instance_id, minute) do update
-   set cpu_usec        = usage_minutes.cpu_usec        + EXCLUDED.cpu_usec,
+   set mb_seconds      = case when usage_minutes.mb_seconds = 0 and EXCLUDED.mb_seconds > 0 then EXCLUDED.mb_seconds else usage_minutes.mb_seconds end,
+       cpu_usec        = usage_minutes.cpu_usec        + EXCLUDED.cpu_usec,
        tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
        net_tx_bytes    = usage_minutes.net_tx_bytes    + EXCLUDED.net_tx_bytes,
        net_rx_bytes    = usage_minutes.net_rx_bytes    + EXCLUDED.net_rx_bytes,
@@ -441,6 +442,40 @@ func (q *Queries) AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParam
 		arg.TailSeconds,
 	)
 	return err
+}
+
+const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
+insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
+select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
+  from instances i
+  join apps a on a.id = i.app_id
+ where i.id = $1
+on conflict (instance_id, minute) do update
+   set requests        = usage_minutes.requests        + EXCLUDED.requests,
+       tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
+       cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count
+`
+
+type ApplyGatewayUsageEventParams struct {
+	ID      pgtype.UUID
+	Column2 pgtype.Timestamptz
+	Column3 int32
+	Column4 int64
+	Column5 int32
+}
+
+func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error) {
+	result, err := db.Exec(ctx, applyGatewayUsageEvent,
+		arg.ID,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const buildByDeployment = `-- name: BuildByDeployment :one
@@ -9455,6 +9490,35 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 		&i.FinalizedAt,
 	)
 	return i, err
+}
+
+const registerGatewayUsageEvent = `-- name: RegisterGatewayUsageEvent :one
+with inserted as (
+  insert into meter_gateway_usage_events (node_id, event_id, instance_id, minute)
+  values ($1, $2, $3, $4)
+  on conflict (node_id, event_id) do nothing
+  returning 1
+)
+select exists(select 1 from inserted) as inserted
+`
+
+type RegisterGatewayUsageEventParams struct {
+	NodeID     pgtype.UUID
+	EventID    pgtype.UUID
+	InstanceID pgtype.UUID
+	Minute     pgtype.Timestamptz
+}
+
+func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error) {
+	row := db.QueryRow(ctx, registerGatewayUsageEvent,
+		arg.NodeID,
+		arg.EventID,
+		arg.InstanceID,
+		arg.Minute,
+	)
+	var inserted bool
+	err := row.Scan(&inserted)
+	return inserted, err
 }
 
 const requestTelemetryAnalyticsByDimension = `-- name: RequestTelemetryAnalyticsByDimension :many
