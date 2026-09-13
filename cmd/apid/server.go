@@ -1187,6 +1187,7 @@ func (s *server) handler() http.Handler {
 	// and changePlan — the OpenAPI spec advertises Idempotency-Key
 	// and a retry without one would emit two overage.cap_changed
 	// audit rows for the same logical operation (review finding #9).
+	mux.HandleFunc("GET /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOverageCap))))
 	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.raiseOverageCap)))))
 	// IAM-5 (issue #189): per-account rotation grace-window
 	// override. Admin-only because the rotation primitive is
