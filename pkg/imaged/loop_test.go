@@ -15,6 +15,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // gcFixture wires a Loop with a memstore, an injected tick channel, and a
@@ -913,11 +915,7 @@ func nan() float64 {
 	return z / z // 0/0 → NaN, deterministic, no math import
 }
 
-// TestLoop_ConstructionNoReaper is a sanity test confirming imaged no
-// longer carries the PR-A reaper channel/config (PR-B). builderd
-// owns the build-queue durability surface now; imaged reacts to
-// deployment_changed + snapshot_boot signals only.
-func TestLoop_ConstructionNoReaper(t *testing.T) {
+func TestLoop_ConstructionDefaults(t *testing.T) {
 	loop := NewLoop(LoopConfig{
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -928,13 +926,60 @@ func TestLoop_ConstructionNoReaper(t *testing.T) {
 	if loop.handler != nil {
 		t.Error("NewLoop should leave handler nil until caller wires it")
 	}
-	// The reap channel/config must be gone (no public surface on
-	// LoopConfig, no fields on Loop). Construction with the bare
-	// config returning a usable Loop is the assertion — any future
-	// re-introduction of reapCh / ReapBuildEvery will surface via a
-	// unused-but-still-public interface in code review, and the
-	// reference to Loop.gcCh above is the only knob tests should
-	// ever need to drive the loop.
+}
+
+func TestReconcileStaleDeploymentsCancelsOrphanAndKeepsActiveBuild(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "stale@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 13, 4, 0, 0, 0, time.UTC)
+	makeDeployment := func(slug string, age time.Duration) state.Deployment {
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: slug})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{
+			AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployBuilding,
+			CreatedAt: now.Add(-age),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return deployment
+	}
+	orphan := makeDeployment("stale-orphan", 3*time.Hour)
+	active := makeDeployment("stale-active", 4*time.Hour)
+	if _, err := store.CreateBuild(ctx, active.ID, state.DeploymentKindTarball, 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	ops := wire.NewOpsMetrics("imaged_test")
+	loop := NewLoop(LoopConfig{
+		Handler: &Handler{ops: ops}, Store: store, Now: func() time.Time { return now },
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	loop.reconcileStaleDeployments(ctx)
+	gotOrphan, _ := store.DeploymentByID(ctx, orphan.ID)
+	if gotOrphan.Status != state.DeployCancelled || !strings.Contains(gotOrphan.CancelledByPrincipal, "stale-deployment-reconciler:building") {
+		t.Fatalf("orphan = status %s principal %q", gotOrphan.Status, gotOrphan.CancelledByPrincipal)
+	}
+	gotActive, _ := store.DeploymentByID(ctx, active.ID)
+	if gotActive.Status != state.DeployBuilding {
+		t.Fatalf("active build deployment = %s, want building", gotActive.Status)
+	}
+	recorder := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	metrics := recorder.Body.String()
+	for _, want := range []string{
+		"imaged_test_stale_deployments_reconciled_total 1",
+		"imaged_test_stale_deployment_oldest_age_seconds 14400",
+	} {
+		if !strings.Contains(metrics, want) {
+			t.Errorf("metrics missing %q", want)
+		}
+	}
 }
 
 // countingStore wraps *state.MemStore and tallies the GC-path method

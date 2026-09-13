@@ -419,6 +419,17 @@ func TestProcessOne_OOMExitClassified(t *testing.T) {
 	}
 }
 
+func TestBoundedGuestBuildLogTailKeepsNewestDiagnostic(t *testing.T) {
+	raw := strings.Repeat("x", 4*1024) + "\nrailpack: script start.sh not found\n"
+	got := boundedGuestBuildLogTail(raw)
+	if len(got) > 3*1024 {
+		t.Fatalf("bounded tail = %d bytes, want <= 3072", len(got))
+	}
+	if !strings.Contains(got, "railpack: script start.sh not found") {
+		t.Fatalf("bounded tail lost newest diagnostic: %q", got)
+	}
+}
+
 // TestProcessOne_FrameworkDetectFailsFlipsDeployment covers the user_error
 // path in markFailed — every failure class has to propagate to the owning
 // deployment so the dashboard reflects reality, not just the build row.
@@ -486,7 +497,7 @@ func TestProcessOne_MarkerlessFunctionUsesRuntimeFramework(t *testing.T) {
 	if _, err := b.ProcessOne(context.Background(), build.ID); err != nil {
 		t.Fatalf("ProcessOne: %v", err)
 	}
-	if fvm.lastRequest.Framework != FrameworkPython || fvm.lastRequest.Runtime != "python313" {
+	if fvm.lastRequest.Framework != FrameworkPython || fvm.lastRequest.Runtime != "python313" || !fvm.lastRequest.Function {
 		t.Fatalf("VM request = %+v, want python framework with python313 runtime", fvm.lastRequest)
 	}
 }

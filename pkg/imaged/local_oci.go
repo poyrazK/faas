@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 
@@ -31,6 +32,11 @@ type localOCIIndex struct {
 // Bound local layer extraction so a malformed archive cannot consume an
 // unbounded amount of disk while imaged copies a builderd artifact.
 const maxLocalOCILayerBytes = 16 << 30
+
+// Scale is the largest public plan and permits a 2 GiB app layer. Keep the
+// filter bounded to that same ceiling before rootfs assembly applies the
+// account-specific, usually smaller limit.
+const maxFunctionAppUncompressedBytes int64 = 2 << 30
 
 // loadLocalOCIArchive opens a builderd-produced OCI layout tarball, extracts
 // its gzip-compressed layer blobs to temporary files, and parses the image
@@ -188,7 +194,148 @@ func (h *Handler) functionBuildArtifact(ctx context.Context, runtime, archivePat
 		cleanup()
 		return nil, "", func() {}, fmt.Errorf("runtime base layer boundary %d is outside artifact layer count %d", start, len(layers))
 	}
-	return layersAsReaders(layers[start:]), sourcePath, cleanup, nil
+	filtered, filteredCleanup, err := makeFunctionAppLayers(layers[start:])
+	if err != nil {
+		cleanup()
+		return nil, "", func() {}, fmt.Errorf("select runtime function files: %w", err)
+	}
+	// The filtered files are self-contained, so release the much larger local
+	// OCI extraction before rootfs assembly begins.
+	cleanup()
+	return filtered, sourcePath, filteredCleanup, nil
+}
+
+// makeFunctionAppLayers retains only /app from Railpack's deploy layers.
+// The Gregale runtime is already present on immutable drive0; copying
+// Railpack's mise installation and build caches into drive1 made a hello-world
+// Node function 429 MiB and violated the Free plan's 256 MiB app-layer cap.
+// Python dependencies live under /app/.venv and Node dependencies under
+// /app/node_modules, so preserving the layered /app tree keeps runtime inputs
+// while dropping builder-only /mise, /opt/*-cache, and /root/.cache content.
+func makeFunctionAppLayers(layers []io.ReadCloser) ([]io.Reader, func(), error) {
+	tmpDir, err := os.MkdirTemp("", "faas-function-layers-")
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("create function layer tempdir: %w", err)
+	}
+	var files []*os.File
+	var retainedBytes int64
+	cleanup := func() {
+		for _, file := range files {
+			_ = file.Close()
+		}
+		_ = os.RemoveAll(tmpDir)
+	}
+	fail := func(err error) ([]io.Reader, func(), error) {
+		cleanup()
+		return nil, func() {}, err
+	}
+
+	for i, layer := range layers {
+		zr, err := gzip.NewReader(layer)
+		if err != nil {
+			return fail(fmt.Errorf("open function layer %d: %w", i, err))
+		}
+		out, err := os.Create(filepath.Join(tmpDir, fmt.Sprintf("layer-%03d.tar.gz", i)))
+		if err != nil {
+			_ = zr.Close()
+			return fail(fmt.Errorf("create filtered function layer %d: %w", i, err))
+		}
+		zw := gzip.NewWriter(out)
+		tw := tar.NewWriter(zw)
+		tr := tar.NewReader(zr)
+		entries := 0
+		for {
+			hdr, nextErr := tr.Next()
+			if errors.Is(nextErr, io.EOF) {
+				break
+			}
+			if nextErr != nil {
+				_ = tw.Close()
+				_ = zw.Close()
+				_ = out.Close()
+				_ = zr.Close()
+				return fail(fmt.Errorf("read function layer %d: %w", i, nextErr))
+			}
+			name, keep := functionAppEntryName(hdr.Name)
+			if !keep {
+				continue
+			}
+			copyHeader := *hdr
+			copyHeader.Name = name
+			if copyHeader.Size < 0 || copyHeader.Size > maxFunctionAppUncompressedBytes-retainedBytes {
+				_ = tw.Close()
+				_ = zw.Close()
+				_ = out.Close()
+				_ = zr.Close()
+				return fail(fmt.Errorf("function layers exceed %d uncompressed bytes", maxFunctionAppUncompressedBytes))
+			}
+			if copyHeader.Typeflag == tar.TypeLink {
+				linkName, linkOK := functionAppEntryName(copyHeader.Linkname)
+				if !linkOK {
+					_ = tw.Close()
+					_ = zw.Close()
+					_ = out.Close()
+					_ = zr.Close()
+					return fail(fmt.Errorf("function layer %d hardlink %q leaves /app", i, copyHeader.Linkname))
+				}
+				copyHeader.Linkname = linkName
+			}
+			if err := tw.WriteHeader(&copyHeader); err != nil {
+				_ = tw.Close()
+				_ = zw.Close()
+				_ = out.Close()
+				_ = zr.Close()
+				return fail(fmt.Errorf("write function layer %d header: %w", i, err))
+			}
+			if _, err := io.CopyN(tw, tr, copyHeader.Size); err != nil {
+				_ = tw.Close()
+				_ = zw.Close()
+				_ = out.Close()
+				_ = zr.Close()
+				return fail(fmt.Errorf("write function layer %d content: %w", i, err))
+			}
+			retainedBytes += copyHeader.Size
+			entries++
+		}
+		closeErr := errors.Join(tw.Close(), zw.Close(), zr.Close())
+		if closeErr != nil {
+			_ = out.Close()
+			return fail(fmt.Errorf("close function layer %d: %w", i, closeErr))
+		}
+		if entries == 0 {
+			name := out.Name()
+			_ = out.Close()
+			_ = os.Remove(name)
+			continue
+		}
+		if _, err := out.Seek(0, io.SeekStart); err != nil {
+			_ = out.Close()
+			return fail(fmt.Errorf("rewind function layer %d: %w", i, err))
+		}
+		files = append(files, out)
+	}
+	if len(files) == 0 {
+		return fail(errors.New("builder artifact contains no /app files"))
+	}
+	readers := make([]io.Reader, len(files))
+	for i, file := range files {
+		readers[i] = file
+	}
+	return readers, cleanup, nil
+}
+
+func functionAppEntryName(name string) (string, bool) {
+	if name == "" || pathpkg.IsAbs(name) {
+		return "", false
+	}
+	clean := pathpkg.Clean(name)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", false
+	}
+	if clean != "app" && !strings.HasPrefix(clean, "app/") {
+		return "", false
+	}
+	return clean, true
 }
 
 func functionHandlerPaths(runtime string) (source, target string, err error) {

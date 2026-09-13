@@ -2670,3 +2670,18 @@ groups:
           summary: "Managed PostgreSQL usage collection is partially deferred"
           description: "At least one managed PostgreSQL usage sweep was degraded or failed during the last 15m. The collector preserves complete-window accounting and leaves incomplete resources for retry; inspect deferred counts before changing COGS ceilings."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+  - name: faas_stale_deployments
+    interval: 30s
+    rules:
+      - alert: FaasStaleDeploymentBacklog
+        expr: max(imaged_stale_deployment_oldest_age_seconds) > 7200
+        for: 10m
+        labels:
+          severity: page
+          component: imaged
+          family: stale_deployment
+        annotations:
+          summary: "A deployment pipeline has remained nonterminal for more than two hours"
+          description: "imaged's bounded stale-deployment reconciler still sees a pending, building, imaging, or snapshotting deployment older than two hours. The row may have active build work, a failed CAS repair, or a backlog larger than one sweep batch. Inspect the deployment and use the supported repair command from the runbook."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasStaleDeploymentBacklog.md"

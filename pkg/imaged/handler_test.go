@@ -1749,6 +1749,12 @@ func TestBuildFunctionLayer_Runtimes(t *testing.T) {
 			if in.Manifest.Healthz != "/healthz" {
 				t.Errorf("Manifest.Healthz = %q, want \"/healthz\"", in.Manifest.Healthz)
 			}
+			if strings.HasPrefix(tc.runtime, "python") {
+				want := "/app/.venv/lib/python" + strings.TrimPrefix(tc.runtime, "python")[:1] + "." + strings.TrimPrefix(tc.runtime, "python")[1:] + "/site-packages"
+				if got := in.Manifest.Env["PYTHONPATH"]; got != want {
+					t.Errorf("Manifest PYTHONPATH = %q, want %q", got, want)
+				}
+			}
 		})
 	}
 }

@@ -15,7 +15,7 @@ import (
 
 // buildCacheRecipeVersion separates these entries from the old archive-only
 // identity. Bump it whenever the meaning or encoding of recipe inputs changes.
-const buildCacheRecipeVersion = 2
+const buildCacheRecipeVersion = 3
 
 // BuildCacheRecipe identifies a selected application within a source archive.
 // The archive digest still covers the full context, including sibling packages.
@@ -27,6 +27,7 @@ type BuildCacheRecipe struct {
 	Framework           Framework `json:"framework"`
 	Plan                api.Plan  `json:"plan"`
 	RuntimeBaseRef      string    `json:"runtime_base_ref"`
+	Function            bool      `json:"function"`
 	BuilderBaseIdentity string    `json:"builder_base_identity"`
 	TargetPlatform      string    `json:"target_platform"`
 }

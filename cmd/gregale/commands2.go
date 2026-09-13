@@ -4704,7 +4704,8 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 
 // mapFailureMessage returns the user-facing copy for one of the four
 // failure classes UX §2.4 enumerates. Anything else falls back to
-// "Build failed: <err>" so the customer sees the raw class at least.
+// "Deploy failed: <err>" because post-build imaging and snapshot failures
+// reach this same renderer.
 //
 // Error-explanations cluster (spec §6.4 amendment 1): when the
 // caller already has a *api.Problem, the whycopy catalog lookup
@@ -4724,7 +4725,7 @@ func mapFailureMessage(err string) string {
 	case "infra":
 		return "Our build system hiccuped — we've been alerted and requeued your build automatically."
 	}
-	return "Build failed: " + err
+	return "Deploy failed: " + err
 }
 
 // mapFailureProblem maps a deployment's *api.Problem to the

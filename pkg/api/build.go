@@ -57,6 +57,11 @@ type BuildManifest struct {
 	// the pinned Gregale runner base used during image materialisation.
 	Runtime        string `json:"runtime,omitempty"`
 	RuntimeBaseRef string `json:"runtime_base_ref,omitempty"`
+	// Function identifies source builds whose public contract is a handler
+	// rather than a long-running process. The guest uses this bit to provide a
+	// deterministic copy-only plan for handler-only Node/Python sources that
+	// intentionally have no package manifest for Railpack to detect.
+	Function bool `json:"function,omitempty"`
 	// DependencyCache enables the developer-session BuildKit cache exporter.
 	// Import is set only when builderd successfully staged a prior cache into
 	// this otherwise-ephemeral builder VM. Production builds leave both false.

@@ -2231,6 +2231,12 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 			"--handler", "/app/node22.js",
 		},
 	}
+	if runtime == RuntimePython312 {
+		manifest.Env = map[string]string{"PYTHONPATH": "/app/.venv/lib/python3.12/site-packages"}
+	}
+	if runtime == RuntimePython313 {
+		manifest.Env = map[string]string{"PYTHONPATH": "/app/.venv/lib/python3.13/site-packages"}
+	}
 	// node22 has no explicit override here — its `/app/node22.js`
 	// matches the default above. Adding `case RuntimeNode22 { ... }`
 	// for symmetry would silently diverge from the runner default.

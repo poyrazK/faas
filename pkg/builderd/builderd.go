@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -759,6 +760,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	recipe := BuildCacheRecipe{
 		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
 		Framework: fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
+		Function: app.Type == state.AppTypeFunction,
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
 	if cacheAvailable {
@@ -854,6 +856,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Framework:          fw,
 		Runtime:            runtimeName,
 		RuntimeBaseRef:     runtimeBaseRef,
+		Function:           app.Type == state.AppTypeFunction,
 		DependencyCacheKey: dependencyCacheKey,
 		LogPath:            dep.LogPath,
 		RAMMB:              api.BuildVMRAMMB,
@@ -1003,6 +1006,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next sync may reinstall dependencies\n")
 	} else if out.DependencyCacheStored {
 		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next developer sync\n")
+	}
+	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
+		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")
 	}
 	if out.ExitCode != 0 {
 		// Prefer the failure class the guest-init captured in build-done.json
@@ -1511,6 +1517,19 @@ func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
 	if err := b.notif.Notify(ctx, db.NotifyBuildLog, payload); err != nil {
 		b.log.Warn("builderd: notify log", "build", buildID, "err", err)
 	}
+}
+
+// boundedGuestBuildLogTail keeps the diagnostic recovered from build-done in
+// the durable customer build log while staying below PostgreSQL NOTIFY's 8 KiB
+// payload ceiling after JSON escaping. The guest already bounds its source
+// tail; this tighter transport cap retains the newest, usually actionable,
+// Railpack or BuildKit lines.
+func boundedGuestBuildLogTail(raw string) string {
+	const maxBytes = 3 * 1024
+	if len(raw) > maxBytes {
+		raw = raw[len(raw)-maxBytes:]
+	}
+	return strings.TrimSpace(strings.ToValidUTF8(raw, "\uFFFD"))
 }
 
 // materializeSource preserves the package-local helper used by older tests;

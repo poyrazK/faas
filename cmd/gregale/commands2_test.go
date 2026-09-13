@@ -1508,6 +1508,16 @@ func TestMapFailureMessage_BuildLimitsDocsLinks(t *testing.T) {
 	})
 }
 
+func TestMapFailureMessage_PostBuildFailureDoesNotClaimBuildFailed(t *testing.T) {
+	got := mapFailureMessage("build function layer: app_layer_too_large")
+	if !strings.Contains(got, "Deploy failed:") {
+		t.Fatalf("post-build failure copy = %q, want deployment phase", got)
+	}
+	if strings.Contains(got, "Build failed:") {
+		t.Fatalf("post-build failure copy mislabels a successful build: %q", got)
+	}
+}
+
 // TestCmdOpenDocs pins the open docs subcommand (Tier A8.1):
 //   - command topics resolve to the consolidated /docs/cli page
 //   - curated page slugs resolve to their /docs/<slug> route
