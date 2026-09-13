@@ -1879,6 +1879,18 @@ groups:
           description: "The dns_poller doctor pass (cmd/apid/dns_poller.go::runDoctorOnce, ADR-120) has not completed in >26m. The gauge apid_domain_doctor_oldest_observation_seconds stops updating when the loop stalls; Prometheus scrapes see a stale value. Customers' `gregale domains doctor <domain>` and the dashboard /apps/{slug}/domains/{domain}/doctor page will return stale observations. Drill down per the runbook: check apid logs for `dns_poller: list domains for doctor failed`, then query Postgres for the MIN(observed_at) row, then escalate."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDomainDoctorStalled.md"
 
+      - alert: FaasDomainVerificationStalled
+        expr: absent(apid_domain_verification_last_success_unixtime) or apid_domain_verification_last_success_unixtime == 0 or (apid_domain_verification_backlog > 0 and time() - apid_domain_verification_last_success_unixtime > 120)
+        for: 5m
+        labels:
+          severity: page
+          component: apid
+          family: domain_verification
+        annotations:
+          summary: "custom-domain verification loop is absent or stalled"
+          description: "Pending custom domains are not being processed. Check backlog, oldest-due age, cycle results, and Postgres connectivity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDomainDoctorStalled.md"
+
       - alert: FaasDomainDoctorStretched
         # The doctor loop ran but the cadence has stretched past
         # 3x the 30s interval (>1.5m stale). Either the dns_poller

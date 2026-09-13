@@ -8737,6 +8737,25 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/domains/{domain}/retry:
+    parameters:
+      - name: domain
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9.\-]+$' }
+    post:
+      tags: [domains]
+      operationId: retryDomainVerification
+      summary: Re-arm an expired or backed-off TXT verification challenge.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202': { description: Verification was queued for the next bounded poller cycle. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The domain is already verified. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/domains/{domain}/doctor:
     parameters:
       - name: domain

@@ -53,6 +53,7 @@ type server struct {
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
 	managedPostgresUsageCollector    *managedpostgres.UsageCollector
 	store                            state.Store
+	domainVerificationMetrics       *domainVerificationMetrics
 	log                              *slog.Logger
 	// devSourceCacheMu serializes reconstruction with best-effort cache
 	// replacement. The cache is node-local and disposable; this lock is not
@@ -420,10 +421,12 @@ const anonymousAccountLabel = "anonymous"
 func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *server {
 	s.ops = ops
 	if ops == nil {
+		s.domainVerificationMetrics = nil
 		s.metricsDiscoveryMetrics = nil
 		s.prewarmMetrics = nil
 		s.statusMetrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
+		s.domainVerificationMetrics = newDomainVerificationMetrics(ops.Registry(), ops.MetricPrefix())
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
 		s.prewarmMetrics = wire.NewPrewarmMetrics(ops.Registry())
 	}

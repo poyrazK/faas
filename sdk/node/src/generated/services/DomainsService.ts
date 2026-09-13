@@ -178,6 +178,43 @@ export class DomainsService {
     });
   }
   /**
+   * Re-arm an expired or backed-off TXT verification challenge.
+   * @returns any Verification was queued for the next bounded poller cycle.
+   * @throws ApiError
+   */
+  public static retryDomainVerification({
+    domain,
+    idempotencyKey,
+  }: {
+    domain: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<any> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/domains/{domain}/retry',
+      path: {
+        'domain': domain,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `The domain is already verified.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Run the 5-check domain doctor (ADR-120).
    * Returns the per-domain doctor report. The five checks map
    * 1:1 to the Render-style custom-domain check: dns_record,

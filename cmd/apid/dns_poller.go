@@ -67,12 +67,32 @@ func startDNSPoller(ctx context.Context, s *server, log *slog.Logger) {
 func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 	pending, err := s.pendingUnverifiedDomains(ctx)
 	if err != nil {
+		if s.domainVerificationMetrics != nil {
+			s.domainVerificationMetrics.cycles.WithLabelValues("error").Inc()
+			s.domainVerificationMetrics.results.WithLabelValues("error").Inc()
+		}
 		log.Warn("dns_poller: list failed", "err", err)
 		return
+	}
+	if s.domainVerificationMetrics != nil {
+		s.domainVerificationMetrics.cycles.WithLabelValues("success").Inc()
+		s.domainVerificationMetrics.batch.Set(float64(len(pending)))
+		s.domainVerificationMetrics.lastSuccess.Set(float64(time.Now().Unix()))
+	}
+	if stats, ok := s.store.(interface {
+		CustomDomainVerificationStats(context.Context) (int, time.Duration, error)
+	}); ok && s.domainVerificationMetrics != nil {
+		if n, age, e := stats.CustomDomainVerificationStats(ctx); e == nil {
+			s.domainVerificationMetrics.backlog.Set(float64(n))
+			s.domainVerificationMetrics.oldest.Set(age.Seconds())
+		}
 	}
 	for _, d := range pending {
 		checkedAt := time.Now().UTC()
 		if checkTXT(ctx, d.Domain, d.ChallengeToken) {
+			if s.domainVerificationMetrics != nil {
+				s.domainVerificationMetrics.results.WithLabelValues("success").Inc()
+			}
 			if d.CertStatus == state.CustomDomainCertDNSDrifted {
 				// Drifted domains must repair the routing target before the
 				// TXT challenge can restore verification. This prevents a
@@ -94,6 +114,9 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 			_ = s.notif.Notify(ctx, db.NotifyDomainVerify, `{"domain":"`+d.Domain+`"}`)
 			log.Info("domain verified", "domain", d.Domain)
 		} else if d.CertStatus != state.CustomDomainCertDNSDrifted {
+			if s.domainVerificationMetrics != nil {
+				s.domainVerificationMetrics.results.WithLabelValues("failure").Inc()
+			}
 			// Keep dns_drifted durable until the customer has both fixed the
 			// target and satisfied the TXT challenge. A failed TXT lookup on
 			// the next tick must not downgrade the warning back to pending.

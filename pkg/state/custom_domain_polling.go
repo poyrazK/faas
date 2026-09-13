@@ -64,6 +64,23 @@ func (s *PgStore) ClaimCustomDomainsForVerification(ctx context.Context, limit i
 	defer rows.Close()
 	return scanDomains(rows)
 }
+
+func (s *PgStore) CustomDomainVerificationStats(ctx context.Context) (int, time.Duration, error) {
+	var n int
+	var oldest *time.Time
+	err := s.pool.QueryRow(ctx, `select count(*),min(verification_next_check_at) from custom_domains where verified_at is null and verification_expires_at>now()`).Scan(&n, &oldest)
+	if err != nil {
+		return 0, 0, err
+	}
+	if oldest == nil {
+		return n, 0, nil
+	}
+	age := time.Since(*oldest)
+	if age < 0 {
+		age = 0
+	}
+	return n, age, nil
+}
 func (s *PgStore) RetryCustomDomainVerification(ctx context.Context, domain string) error {
 	tag, err := s.pool.Exec(ctx, `update custom_domains set verification_next_check_at=now(),verification_expires_at=now()+interval '7 days',verification_attempts=0 where domain=$1 and verified_at is null`, domain)
 	if err != nil {
@@ -147,4 +164,29 @@ func (m *MemStore) RetryCustomDomainVerification(_ context.Context, domain strin
 	d.VerificationExpiresAt = time.Now().Add(7 * 24 * time.Hour)
 	m.domains[domain] = d
 	return nil
+}
+
+func (m *MemStore) CustomDomainVerificationStats(_ context.Context) (int, time.Duration, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	n := 0
+	var oldest time.Time
+	for _, d := range m.domains {
+		if d.Verified() || (!d.VerificationExpiresAt.IsZero() && !d.VerificationExpiresAt.After(now)) {
+			continue
+		}
+		n++
+		if oldest.IsZero() || d.VerificationNextCheckAt.Before(oldest) {
+			oldest = d.VerificationNextCheckAt
+		}
+	}
+	if oldest.IsZero() {
+		return n, 0, nil
+	}
+	age := now.Sub(oldest)
+	if age < 0 {
+		age = 0
+	}
+	return n, age, nil
 }

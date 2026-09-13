@@ -1,5 +1,14 @@
 # FaasDomainDoctorStalled
 
+The same poller owns TXT verification. Inspect `apid_domain_verification_cycles_total`,
+`apid_domain_verification_batch_size`, `apid_domain_verification_backlog`,
+`apid_domain_verification_oldest_due_seconds`, and
+`apid_domain_verification_results_total`. A bounded batch is expected; a growing
+oldest-due age with no cycle increments indicates a stalled loop. Failed TXT
+lookups back off from 30 seconds to one hour and expire after seven days.
+Customers can re-arm an expired pending challenge with
+`POST /v1/domains/{domain}/retry`; this resets its attempts and seven-day window.
+
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 Metrics: `apid_domain_doctor_oldest_observation_seconds` (gauge),
 `apid_domain_doctor_skipped_flag_disabled_total` (counter).
