@@ -11208,8 +11208,8 @@ paths:
         the body, is sealed with secretbox.SealBytes under the
         APP_WEBHOOK namespace, and is NEVER returned in plaintext
         — the response shape carries the masked constant. event_filter
-        is an optional allowlist; empty subscribes to every event in
-        the closed vocabulary.
+        is an optional allowlist; empty subscribes to every currently
+        supported producer-backed event.
       requestBody:
         required: true
         content:
@@ -11218,7 +11218,7 @@ paths:
             example:
               target_url: "https://example.com/hook"
               webhook_secret: "shh"
-              event_filter: ["cron.fired", "app.created"]
+              event_filter: ["app.parked", "app.woken"]
               retry_policy: "default"
               enabled: true
       responses:
@@ -27396,7 +27396,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         enabled: { type: boolean }
@@ -27408,7 +27408,7 @@ components:
         account_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c"
         target_url: "https://example.com/hook"
         webhook_secret_sealed_masked: "***"
-        event_filter: ["cron.fired", "app.created"]
+        event_filter: ["app.parked", "app.woken"]
         retry_policy: "default"
         enabled: true
         created_at: "2026-08-06T10:00:00Z"
@@ -27599,14 +27599,14 @@ components:
           type: array
           items:
             type: string
-            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         enabled: { type: boolean, default: true }
       example:
         target_url: "https://example.com/hook"
         webhook_secret: "shh"
-        event_filter: ["cron.fired", "app.created"]
+        event_filter: ["app.parked", "app.woken"]
         retry_policy: "default"
         enabled: true
 
@@ -27623,7 +27623,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["cron.fired", "cron.fired.manually", "app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken", "build.succeeded", "build.failed", "deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "usage_statement.finalized"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         enabled: { type: boolean }

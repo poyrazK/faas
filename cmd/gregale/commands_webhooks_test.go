@@ -31,7 +31,7 @@ func TestCmdWebhooks_Add_HappyPath(t *testing.T) {
 			AccountID:                 "acct-1",
 			TargetURL:                 "https://example.com/hook",
 			WebhookSecretSealedMasked: api.AppWebhookSecretMasked,
-			EventFilter:               []string{"cron.fired"},
+			EventFilter:               []string{"app.parked"},
 			RetryPolicy:               "default",
 			Enabled:                   true,
 		})
@@ -49,7 +49,7 @@ func TestCmdWebhooks_Add_HappyPath(t *testing.T) {
 		"--app", "demo",
 		"--target-url", "https://example.com/hook",
 		"--secret", "shh",
-		"--event", "cron.fired",
+		"--event", "app.parked",
 	}); code != 0 {
 		t.Errorf("add = %d, want 0", code)
 	}
