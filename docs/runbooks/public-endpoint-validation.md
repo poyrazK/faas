@@ -27,6 +27,12 @@ The check verifies all of the following:
 - a representative standard-library API client user agent (`Python-urllib/3.13`)
   receives the same 2xx response instead of a CDN browser-integrity block;
 - optional HTTP traffic redirects to HTTPS.
+- the platform API `/metrics` returns 404 and neither it nor the app-host
+  `/metrics` path contains gateway daemon metric families. The app path remains
+  customer-owned and may return the workload's own response.
+
+`PUBLIC_PLATFORM_API_URL` defaults to `https://api.gregale.dev`; set it when
+validating a staging edge.
 
 The Cloudflare zone keeps Browser Integrity Check enabled on the apex and
 reserved platform hosts. A Configuration Rule named

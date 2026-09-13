@@ -2970,10 +2970,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		unifiedMux.Handle("POST /v1/invocations:dispatch_batch", deps.synth.Mux())
 		unifiedMux.Handle("/healthz", internalHealthRoute(deps.synth.Mux(), publicHandler))
 		// The compute data-plane listener is private: the generated nftables
-		// policy admits port 8080 only from the control plane. Expose the
-		// control metrics there so the control-plane Prometheus can scrape
-		// every compute node without a provider-specific IP, second Prometheus
-		// installation, or an unauthenticated 0.0.0.0:9090 control bind.
+		// policy admits port 8080 only from the control plane. Expose metrics at
+		// a private platform path so Prometheus can scrape every compute node
+		// without stealing a customer's ordinary /metrics application route.
 		// Do not install this route on the single-box/public role.
 		installComputeMetricsRoute(unifiedMux, cfg.Role, controlMux)
 		// Wrap with h2c so the in-process unix-socket hop negotiates
@@ -3384,16 +3383,18 @@ func serviceDiscoveryUpstreams() []string {
 	return upstreams
 }
 
-// installComputeMetricsRoute exposes only /metrics on a compute node's
+const computeMetricsPath = "/v1/internal/metrics"
+
+// installComputeMetricsRoute exposes only the private metrics path on a compute node's
 // private data-plane listener. The listener is admitted from the control
 // plane by the generated firewall; the single-box/public role never gets
-// this route, so an accidentally public application listener cannot expose
-// daemon metrics.
+// this route. The ordinary /metrics path remains customer-owned, including
+// when gatewayd-public forwards an app-host request over its private hop.
 func installComputeMetricsRoute(mux *http.ServeMux, boxRole role.Role, control http.Handler) {
 	if mux == nil || control == nil || boxRole != role.RoleComputeOnly {
 		return
 	}
-	mux.Handle("/metrics", control)
+	mux.Handle(computeMetricsPath, control)
 }
 
 // weightsStoreAdapter (issue #556 / PR-B) adapts pkg/state.PgStore to

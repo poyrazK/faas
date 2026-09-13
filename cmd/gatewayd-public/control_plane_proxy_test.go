@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 )
 
@@ -137,6 +139,52 @@ func TestControlPlaneProxyDoesNotExposeMetricsDiscovery(t *testing.T) {
 	}
 	if upstreamHits != 0 {
 		t.Fatalf("upstream hits=%d, want 0", upstreamHits)
+	}
+}
+
+func TestControlPlaneProxyScopesMetricsByHost(t *testing.T) {
+	t.Setenv("FAAS_APPS_DOMAIN", "gregale.dev")
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("platform /metrics must not reach apid")
+	}))
+	t.Cleanup(controlPlane.Close)
+	app := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(w, "customer_workload_metric 1\n")
+	})
+	handler, err := newControlPlaneProxy(controlPlane.URL, app, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("platform API returns problem JSON", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "https://api.gregale.dev/metrics", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+		if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "application/problem+json") {
+			t.Fatalf("Content-Type = %q, want application/problem+json", got)
+		}
+		var problem api.Problem
+		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+			t.Fatalf("decode problem: %v", err)
+		}
+		if problem.Code != api.CodeNotFound {
+			t.Fatalf("problem code = %q, want %q", problem.Code, api.CodeNotFound)
+		}
+	})
+
+	for _, host := range []string{"demo.gregale.dev", "customer.example"} {
+		t.Run(host+" reaches workload", func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://"+host+"/metrics", nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if got := rec.Body.String(); got != "customer_workload_metric 1\n" {
+				t.Fatalf("body = %q, want customer workload response", got)
+			}
+		})
 	}
 }
 

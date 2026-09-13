@@ -78,6 +78,14 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// The platform API has no public Prometheus surface. Customer app hosts,
+	// however, may legitimately implement /metrics themselves, so keep those
+	// requests on the ordinary compute data plane.
+	if r.URL.Path == "/metrics" && isPlatformHealthHost(r.Host, p.appsDomain) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+			"Not found", "the requested API route does not exist"))
+		return
+	}
 	if r.URL.Path == apid.ApidRootHealthz {
 		if isPlatformHealthHost(r.Host, p.appsDomain) {
 			p.proxy.ServeHTTP(w, r)

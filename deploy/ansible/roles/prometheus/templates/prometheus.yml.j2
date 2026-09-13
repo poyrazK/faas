@@ -72,7 +72,7 @@ scrape_configs:
       - url: "{{ prom_compute_metrics_discovery_url }}"
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
     target_limit: {{ prom_compute_metrics_target_limit }}
-    metrics_path: "/metrics"
+    metrics_path: "/v1/internal/metrics"
   - job_name: "vmmd"
     http_sd_configs:
       - url: "{{ prom_compute_vmmd_discovery_url }}"

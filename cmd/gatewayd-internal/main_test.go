@@ -360,12 +360,19 @@ func TestInstallComputeMetricsRoute(t *testing.T) {
 
 	t.Run("compute role exposes private metrics route", func(t *testing.T) {
 		mux := http.NewServeMux()
-		mux.Handle("/", http.NotFoundHandler())
+		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}))
 		installComputeMetricsRoute(mux, role.RoleComputeOnly, control)
 		r := httptest.NewRecorder()
-		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://compute/metrics", nil))
+		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://compute"+computeMetricsPath, nil))
 		if r.Code != http.StatusTeapot {
 			t.Fatalf("metrics status = %d, want %d", r.Code, http.StatusTeapot)
+		}
+		r = httptest.NewRecorder()
+		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://app.example/metrics", nil))
+		if r.Code != http.StatusCreated {
+			t.Fatalf("customer /metrics status = %d, want %d", r.Code, http.StatusCreated)
 		}
 	})
 
@@ -374,7 +381,7 @@ func TestInstallComputeMetricsRoute(t *testing.T) {
 		mux.Handle("/", http.NotFoundHandler())
 		installComputeMetricsRoute(mux, role.RoleSingleBox, control)
 		r := httptest.NewRecorder()
-		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://single/metrics", nil))
+		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://single"+computeMetricsPath, nil))
 		if r.Code != http.StatusNotFound {
 			t.Fatalf("single-box metrics status = %d, want %d", r.Code, http.StatusNotFound)
 		}

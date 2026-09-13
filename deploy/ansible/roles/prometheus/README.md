@@ -28,7 +28,7 @@ gateway explicitly rejects the internal endpoints.
 - `githubd`   `:8083`
 - `alertmanager` `:9094`
 - `node`      `:9100`
-- `gatewayd-internal` each compute node `:8080/metrics` through its
+- `gatewayd-internal` each compute node `:8080/v1/internal/metrics` through its
   private control-plane allowlist. Targets use generated `faas_node_name`
   aliases, not provider-specific IP addresses.
 
@@ -46,10 +46,12 @@ ansible-playbook -e prom_version=2.55.0 \
 + modules + cgroups protected. The binary runs as the `prometheus`
 system user.
 
-Prometheus listens on `127.0.0.1:9095`. The compute `/metrics` route is
+Prometheus listens on `127.0.0.1:9095`. The compute
+`/v1/internal/metrics` route is
 available only on the private compute data-plane listener, and the generated
 nftables policy allows that port from the control plane. It is not added to
-the public edge or to provider DNS.
+the public edge or to provider DNS. `/metrics` remains an ordinary
+customer-workload path on app hostnames.
 
 The systemd unit is rendered as a template. This is required because its
 storage path, retention, and listen address are Jinja variables; copying the
