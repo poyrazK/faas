@@ -2710,3 +2710,35 @@ groups:
           summary: "A deployment pipeline has remained nonterminal for more than two hours"
           description: "imaged's bounded stale-deployment reconciler still sees a pending, building, imaging, or snapshotting deployment older than two hours. The row may have active build work, a failed CAS repair, or a backlog larger than one sweep batch. Inspect the deployment and use the supported repair command from the runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasStaleDeploymentBacklog.md"
+
+  - name: compute_heartbeat_retention
+    interval: 1m
+    rules:
+      - alert: FaasComputeHeartbeatRetentionStalled
+        expr: |
+          schedd_compute_heartbeat_retention_last_success_timestamp_seconds == 0
+          or time() - schedd_compute_heartbeat_retention_last_success_timestamp_seconds > 7200
+          or absent(schedd_compute_heartbeat_retention_last_success_timestamp_seconds)
+        for: 15m
+        labels:
+          severity: page
+          component: schedd
+          family: compute_heartbeat_retention
+          public_status: internal
+        annotations:
+          summary: "Raw compute-heartbeat retention has stalled"
+          description: "Schedd has not completed the bounded heartbeat rollup and retention pass for more than two hours. Raw compute_node_heartbeats storage is unbounded until this is repaired."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeHeartbeatRetentionStalled.md"
+
+      - alert: FaasComputeHeartbeatRetentionBacklog
+        expr: schedd_compute_heartbeat_retention_oldest_raw_age_seconds > 691200
+        for: 30m
+        labels:
+          severity: warn
+          component: schedd
+          family: compute_heartbeat_retention
+          public_status: internal
+        annotations:
+          summary: "Raw compute-heartbeat backlog exceeds the seven-day policy"
+          description: "The oldest raw compute heartbeat is more than eight days old, so bounded cleanup is not catching up within its one-day tolerance. Hourly rollups remain the long-term capacity record."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeHeartbeatRetentionStalled.md"

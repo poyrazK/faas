@@ -606,6 +606,18 @@ type ComputeNodeHeartbeat struct {
 	DiskUsedBytes   pgtype.Int8
 }
 
+type ComputeNodeHeartbeatHourly struct {
+	NodeID           pgtype.UUID
+	BucketAt         pgtype.Timestamptz
+	SampleCount      int64
+	CpuSampleCount   int64
+	CpuPctSum        float64
+	DiskUsedMaxBytes pgtype.Int8
+	FirstReceivedAt  pgtype.Timestamptz
+	LastReceivedAt   pgtype.Timestamptz
+	LastHeartbeatAt  pgtype.Timestamptz
+}
+
 type ComputeNodeKey struct {
 	ComputeNodeID pgtype.UUID
 	KeyID         string

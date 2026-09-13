@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/heartbeatretention"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -548,6 +549,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops := wire.NewOpsMetrics("schedd")
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
+	heartbeatRetentionMetrics := heartbeatretention.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	heartbeatRetention := heartbeatretention.New(store, log, heartbeatRetentionMetrics)
+	go heartbeatRetention.Run(ctx)
 	workflowMetrics := wire.NewWorkflowMetrics(ops.Registry())
 	prewarmMetrics := wire.NewPrewarmMetrics(ops.Registry())
 	// Dashboard gauges (spec §12): schedd owns the snapshots table and the

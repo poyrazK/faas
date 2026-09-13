@@ -14866,6 +14866,77 @@ func (s *PgStore) ListComputeNodeHeartbeats(ctx context.Context, nodeID string, 
 	return out, nil
 }
 
+// MaintainComputeNodeHeartbeatHistory folds one bounded batch of expired raw
+// samples into hourly capacity buckets and deletes those exact samples in the
+// same transaction. SKIP LOCKED keeps concurrent maintenance workers from
+// blocking heartbeat inserts or each other during a rollout overlap.
+func (s *PgStore) MaintainComputeNodeHeartbeatHistory(ctx context.Context, cutoff time.Time, batchSize int) (ComputeNodeHeartbeatMaintenanceResult, error) {
+	if batchSize <= 0 {
+		return ComputeNodeHeartbeatMaintenanceResult{}, fmt.Errorf("state: maintain compute heartbeat history: batch size must be positive")
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ComputeNodeHeartbeatMaintenanceResult{}, fmt.Errorf("state: begin compute heartbeat maintenance: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var result ComputeNodeHeartbeatMaintenanceResult
+	err = tx.QueryRow(ctx, `
+		with candidates as materialized (
+			select id, node_id, received_at, last_heartbeat_at, cpu_pct_60s, disk_used_bytes
+			  from compute_node_heartbeats
+			 where received_at < $1
+			 order by received_at, id
+			 for update skip locked
+			 limit $2
+		), rollups as (
+			insert into compute_node_heartbeat_hourly (
+				node_id, bucket_at, sample_count, cpu_sample_count, cpu_pct_sum,
+				disk_used_max_bytes, first_received_at, last_received_at, last_heartbeat_at
+			)
+			select node_id,
+			       date_trunc('hour', received_at at time zone 'UTC') at time zone 'UTC',
+			       count(*), count(cpu_pct_60s), coalesce(sum(cpu_pct_60s), 0),
+			       max(disk_used_bytes), min(received_at), max(received_at), max(last_heartbeat_at)
+			  from candidates
+			 group by node_id, date_trunc('hour', received_at at time zone 'UTC') at time zone 'UTC'
+			on conflict (node_id, bucket_at) do update set
+				sample_count = compute_node_heartbeat_hourly.sample_count + excluded.sample_count,
+				cpu_sample_count = compute_node_heartbeat_hourly.cpu_sample_count + excluded.cpu_sample_count,
+				cpu_pct_sum = compute_node_heartbeat_hourly.cpu_pct_sum + excluded.cpu_pct_sum,
+				disk_used_max_bytes = case
+					when compute_node_heartbeat_hourly.disk_used_max_bytes is null then excluded.disk_used_max_bytes
+					when excluded.disk_used_max_bytes is null then compute_node_heartbeat_hourly.disk_used_max_bytes
+					else greatest(compute_node_heartbeat_hourly.disk_used_max_bytes, excluded.disk_used_max_bytes)
+				end,
+				first_received_at = least(compute_node_heartbeat_hourly.first_received_at, excluded.first_received_at),
+				last_received_at = greatest(compute_node_heartbeat_hourly.last_received_at, excluded.last_received_at),
+				last_heartbeat_at = greatest(compute_node_heartbeat_hourly.last_heartbeat_at, excluded.last_heartbeat_at)
+			returning 1
+		), deleted as (
+			delete from compute_node_heartbeats h
+			 using candidates c
+			 where h.id = c.id
+			 returning h.id
+		)
+		select (select count(*) from deleted), (select count(*) from rollups)`, cutoff, batchSize).
+		Scan(&result.Deleted, &result.RollupBuckets)
+	if err != nil {
+		return ComputeNodeHeartbeatMaintenanceResult{}, fmt.Errorf("state: roll up compute heartbeat history: %w", err)
+	}
+	var oldest sql.NullTime
+	if err := tx.QueryRow(ctx, `select min(received_at) from compute_node_heartbeats`).Scan(&oldest); err != nil {
+		return ComputeNodeHeartbeatMaintenanceResult{}, fmt.Errorf("state: read oldest compute heartbeat: %w", err)
+	}
+	if oldest.Valid {
+		result.OldestRawAt = oldest.Time
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ComputeNodeHeartbeatMaintenanceResult{}, fmt.Errorf("state: commit compute heartbeat maintenance: %w", err)
+	}
+	return result, nil
+}
+
 // AppendComputeNodeHeartbeatWithStats (PR #4 / ADR-091 §3.6
 // amendment) extends AppendComputeNodeHeartbeat with the cpu_pct_60s
 // and disk_used_bytes columns added by migration 00199. The two new

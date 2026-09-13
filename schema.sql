@@ -1701,6 +1701,27 @@ CREATE TABLE public.cluster_signing_keys (
 
 
 --
+-- Name: compute_node_heartbeat_hourly; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.compute_node_heartbeat_hourly (
+    node_id uuid NOT NULL,
+    bucket_at timestamp with time zone NOT NULL,
+    sample_count bigint NOT NULL,
+    cpu_sample_count bigint DEFAULT 0 NOT NULL,
+    cpu_pct_sum double precision DEFAULT 0 NOT NULL,
+    disk_used_max_bytes bigint,
+    first_received_at timestamp with time zone NOT NULL,
+    last_received_at timestamp with time zone NOT NULL,
+    last_heartbeat_at timestamp with time zone NOT NULL,
+    CONSTRAINT compute_node_heartbeat_hourly_bucket_at_check CHECK ((bucket_at = (date_trunc('hour'::text, (bucket_at AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT compute_node_heartbeat_hourly_cpu_sample_count_check CHECK ((cpu_sample_count >= 0)),
+    CONSTRAINT compute_node_heartbeat_hourly_first_received_at_check CHECK ((first_received_at <= last_received_at)),
+    CONSTRAINT compute_node_heartbeat_hourly_sample_count_check CHECK ((sample_count > 0))
+);
+
+
+--
 -- Name: compute_node_heartbeats; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4368,6 +4389,14 @@ ALTER TABLE ONLY public.cluster_signing_keys
 
 
 --
+-- Name: compute_node_heartbeat_hourly compute_node_heartbeat_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.compute_node_heartbeat_hourly
+    ADD CONSTRAINT compute_node_heartbeat_hourly_pkey PRIMARY KEY (node_id, bucket_at);
+
+
+--
 -- Name: compute_node_heartbeats compute_node_heartbeats_node_at_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5726,10 +5755,24 @@ CREATE INDEX cli_auth_codes_pending_idx ON public.cli_auth_codes USING btree (st
 
 
 --
+-- Name: compute_node_heartbeat_hourly_bucket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX compute_node_heartbeat_hourly_bucket_idx ON public.compute_node_heartbeat_hourly USING btree (bucket_at DESC);
+
+
+--
 -- Name: compute_node_heartbeats_node_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX compute_node_heartbeats_node_at_idx ON public.compute_node_heartbeats USING btree (node_id, received_at DESC);
+
+
+--
+-- Name: compute_node_heartbeats_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX compute_node_heartbeats_received_at_idx ON public.compute_node_heartbeats USING btree (received_at, id);
 
 
 --
@@ -7898,6 +7941,14 @@ ALTER TABLE ONLY public.builds
 
 ALTER TABLE ONLY public.cli_auth_codes
     ADD CONSTRAINT cli_auth_codes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: compute_node_heartbeat_hourly compute_node_heartbeat_hourly_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.compute_node_heartbeat_hourly
+    ADD CONSTRAINT compute_node_heartbeat_hourly_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
 
 
 --

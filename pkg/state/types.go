@@ -3979,6 +3979,15 @@ type ComputeNodeHeartbeat struct {
 	DiskUsedBytes *int64
 }
 
+// ComputeNodeHeartbeatMaintenanceResult reports one bounded raw-history
+// maintenance transaction. Deleted raw samples have already been folded into
+// durable hourly buckets when this value is returned.
+type ComputeNodeHeartbeatMaintenanceResult struct {
+	Deleted       int64
+	RollupBuckets int64
+	OldestRawAt   time.Time
+}
+
 // ComputeNodeHeartbeatStats is the read shape for LatestHeartbeatStats
 // (PR #4). One row per compute node; NodeID + the latest heartbeat's
 // stats fields. The handler folds this onto the ObsNodeRow projection.
