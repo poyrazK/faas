@@ -37,7 +37,7 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 // requires the PgBouncer connection-capacity gate documented in the Postgres
 // runbook.
 var DaemonMaxConnections = map[string]int32{
-	"apid":   12,
+	"apid": 12,
 	// Each schedd owns eleven permanent LISTEN subscribers in production.
 	// Keep five slots for readiness probes, scheduler queries, and dispatch
 	// transactions. A cap of twelve leaves only one request slot and makes
