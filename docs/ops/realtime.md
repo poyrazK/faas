@@ -57,7 +57,9 @@ wakes a sleeping VM; the quiet WebSocket itself remains owned by `realtimed`.
 Use the authenticated API (or `pkg/realtime.Client` for node-local tooling) to
 send to a `connection_id`, subscribe/publish channels, or close a connection.
 Send and publish bodies contain `data_base64` and an optional `binary` flag;
-decoded frames are limited to 1 MiB. In multi-node mode, apid discovers and
+decoded frames are limited to 1 MiB. The built-in HTTP callback hook retries
+transient network failures and 408/429/5xx responses up to three total attempts
+with a bounded backoff before reporting a callback error. In multi-node mode, apid discovers and
 leases the connection owner, renews the lease for the operation, and retries a
 stale owner once. Endpoint registration must be able to reach each node's
 private `gateway_target_url`; missing or unreachable nodes remain fail-closed

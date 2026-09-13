@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestHTTPHooksSendsCallbackAuthAndOmitsSecretsFromEvent(t *testing.T) {
@@ -43,6 +45,70 @@ func TestHTTPHooksSendsCallbackAuthAndOmitsSecretsFromEvent(t *testing.T) {
 	}
 	if strings.Contains(raw, "callback-secret") || strings.Contains(raw, server.URL) {
 		t.Fatalf("callback secrets leaked into event JSON: %s", raw)
+	}
+}
+
+func TestHTTPHooksRetriesTransientCallbackFailures(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) < 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	hooks := HTTPHooks{MaxAttempts: 3, RetryBackoff: time.Millisecond}
+	event := Event{ID: "evt_retry", Type: EventMessage, ConnectionID: "rt_retry", CallbackURL: server.URL, CallbackPath: "/events"}
+	if err := hooks.Message(context.Background(), event); err != nil {
+		t.Fatalf("Message callback: %v", err)
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("callback attempts = %d, want 3", got)
+	}
+}
+
+func TestHTTPHooksDoesNotRetryTerminalCallbackFailures(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	hooks := HTTPHooks{MaxAttempts: 3, RetryBackoff: time.Millisecond}
+	event := Event{ID: "evt_terminal", Type: EventMessage, ConnectionID: "rt_terminal", CallbackURL: server.URL, CallbackPath: "/events"}
+	if err := hooks.Message(context.Background(), event); err == nil {
+		t.Fatal("Message callback unexpectedly succeeded")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("callback attempts = %d, want 1", got)
+	}
+}
+
+func TestHTTPHooksRetryBackoffHonorsContext(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	hooks := HTTPHooks{MaxAttempts: 3, RetryBackoff: time.Hour}
+	go func() {
+		for attempts.Load() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	event := Event{ID: "evt_cancel", Type: EventMessage, ConnectionID: "rt_cancel", CallbackURL: server.URL, CallbackPath: "/events"}
+	if err := hooks.Message(ctx, event); err == nil {
+		t.Fatal("Message callback unexpectedly succeeded")
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("callback attempts = %d, want 1 before cancellation", got)
 	}
 }
 

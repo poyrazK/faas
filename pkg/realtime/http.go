@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+)
+
+const (
+	defaultCallbackAttempts     = 3
+	defaultCallbackRetryBackoff = 100 * time.Millisecond
+	maxCallbackRetryBackoff     = 5 * time.Second
 )
 
 // HTTPHooks turns lifecycle events into ordinary POST callbacks. It is kept
@@ -19,6 +27,12 @@ import (
 type HTTPHooks struct {
 	Client  *http.Client
 	Headers func(Event) http.Header
+	// MaxAttempts is the total number of callback requests, including the
+	// initial attempt. Zero uses the production default of three attempts.
+	MaxAttempts int
+	// RetryBackoff is the base delay for transient callback failures. Delays
+	// grow exponentially and are capped at five seconds. Zero uses 100ms.
+	RetryBackoff time.Duration
 }
 
 func (h HTTPHooks) Connect(ctx context.Context, event Event) (bool, error) {
@@ -74,23 +88,21 @@ func (h HTTPHooks) deliver(ctx context.Context, event Event) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("realtime: encode callback: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), strings.NewReader(string(body)))
-	if err != nil {
-		return 0, fmt.Errorf("realtime: build callback request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Gregale-Realtime-Event-ID", event.ID)
-	req.Header.Set("X-Gregale-Realtime-Connection-ID", event.ConnectionID)
-	req.Header.Set("X-Gregale-Realtime-Event-Type", string(event.Type))
+	target := base.String()
+	headers := make(http.Header)
+	headers.Set("Content-Type", "application/json")
+	headers.Set("X-Gregale-Realtime-Event-ID", event.ID)
+	headers.Set("X-Gregale-Realtime-Connection-ID", event.ConnectionID)
+	headers.Set("X-Gregale-Realtime-Event-Type", string(event.Type))
 	if h.Headers != nil {
 		for key, values := range h.Headers(event) {
 			for _, value := range values {
-				req.Header.Add(key, value)
+				headers.Add(key, value)
 			}
 		}
 	}
 	if event.CallbackAuthToken != "" {
-		req.Header.Set("Authorization", "Bearer "+event.CallbackAuthToken)
+		headers.Set("Authorization", "Bearer "+event.CallbackAuthToken)
 	}
 	client := h.Client
 	if client == nil {
@@ -101,13 +113,67 @@ func (h HTTPHooks) deliver(ctx context.Context, event Event) (int, error) {
 			return http.ErrUseLastResponse
 		}}
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("realtime: callback request: %w", err)
+	attempts := h.MaxAttempts
+	if attempts <= 0 {
+		attempts = defaultCallbackAttempts
 	}
-	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-	return resp.StatusCode, nil
+	backoff := h.RetryBackoff
+	if backoff <= 0 {
+		backoff = defaultCallbackRetryBackoff
+	}
+	var status int
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 {
+			if err := waitCallbackRetry(ctx, backoff, attempt-2); err != nil {
+				return 0, fmt.Errorf("realtime: callback request: %w", err)
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+		if err != nil {
+			return 0, fmt.Errorf("realtime: build callback request: %w", err)
+		}
+		req.Header = headers.Clone()
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil || attempt == attempts {
+				return 0, fmt.Errorf("realtime: callback request: %w", err)
+			}
+			continue
+		}
+		status = resp.StatusCode
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		_ = resp.Body.Close()
+		if !retryableCallbackStatus(status) || attempt == attempts {
+			return status, nil
+		}
+	}
+	return status, nil
+}
+
+func retryableCallbackStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
+}
+
+func waitCallbackRetry(ctx context.Context, base time.Duration, retry int) error {
+	delay := base
+	for i := 0; i < retry && delay < maxCallbackRetryBackoff; i++ {
+		if delay > maxCallbackRetryBackoff/2 {
+			delay = maxCallbackRetryBackoff
+			break
+		}
+		delay *= 2
+	}
+	if delay > maxCallbackRetryBackoff {
+		delay = maxCallbackRetryBackoff
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // HealthHandler returns the handler for the daemon's health listener. It

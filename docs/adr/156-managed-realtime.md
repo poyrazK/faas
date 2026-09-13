@@ -45,7 +45,10 @@ ordinary HTTP handlers. `data` is JSON's base64 representation of the frame
 bytes; `binary` preserves the WebSocket frame kind. Connect is accepted only
 when the callback returns a 2xx response. Applications receive a stable
 `connection_id` and can call the management API to send or close that
-connection. Channel membership is explicit and publish is endpoint-scoped.
+connection. Channel membership is explicit and publish is endpoint-scoped. The
+built-in HTTP callback hook retries network failures and 408/429/5xx responses
+up to three total attempts with a bounded exponential backoff; a caller can
+set `MaxAttempts` to one when a custom hook owns delivery policy.
 
 Management examples:
 
