@@ -225,6 +225,21 @@ func (p *Poller) Tick(ctx context.Context) error {
 	if p.Telemetry != nil {
 		rows, rolled := p.decodeTelemetrySnapshot(
 			p.Telemetry.Snapshot(p.now()), instances, sidecarByDeploy)
+		if p.Metrics != nil && len(rows) < len(instances) {
+			reported := make(map[string]struct{}, len(rows))
+			for _, row := range rows {
+				reported[row.InstanceID] = struct{}{}
+			}
+			missingNodes := make(map[string]struct{})
+			for _, instance := range instances {
+				if _, ok := reported[instance.ID]; !ok && instance.NodeID != "" {
+					missingNodes[instance.NodeID] = struct{}{}
+				}
+			}
+			for nodeID := range missingNodes {
+				p.Metrics.InstanceStatsPartialError(nodeID)
+			}
+		}
 		p.Reader.Replace(rows)
 		p.enforceDiskPressure(ctx, rows)
 		if p.Metrics != nil {

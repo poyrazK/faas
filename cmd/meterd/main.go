@@ -765,6 +765,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if scheddAddr == "" {
 		return fmt.Errorf("meterd: FAAS_SCHEDD_ADDR (or socket_path in meterd.toml) is required")
 	}
+	scheddTLS, err := cfg.LoadScheddTLS()
+	if err != nil {
+		return fmt.Errorf("meterd: load schedd TLS: %w", err)
+	}
 	parker := deps.parker
 	if parker == nil {
 		if deps.dialSchedd == nil {
@@ -774,10 +778,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// Single-box deployments keep all three paths empty and
 		// LoadScheddTLS returns (nil, nil); multi-box deployments
 		// pass tcp:// or dns:// + a TLS cluster.
-		scheddTLS, err := cfg.LoadScheddTLS()
-		if err != nil {
-			return fmt.Errorf("meterd: load schedd TLS: %w", err)
-		}
 		c, err := deps.dialSchedd(ctx, scheddAddr, scheddTLS)
 		if err != nil {
 			return fmt.Errorf("meterd: dial schedd %q: %w", scheddAddr, err)
@@ -978,7 +978,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// box (ADR-015) and refreshes the snapshot at most once per 30 s
 	// — bounded staleness without forcing a gRPC round trip per
 	// instance.
-	cpu := &scheddCPUAdapter{parker: parker, now: deps.now}
+	statsMetrics := newFleetStatsMetrics()
+	statsParker := parker
+	if cfg.Role == role.RoleControlPlane {
+		fleetDial := deps.dialSchedd
+		if fleetDial == nil {
+			fleetDial = defaultDeps().dialSchedd
+		}
+		statsParker = &fleetStatsParker{
+			nodes:     store,
+			fallback:  parker,
+			dial:      fleetDial,
+			tlsCfg:    scheddTLS,
+			now:       deps.now,
+			log:       log,
+			metrics:   statsMetrics,
+			snapshots: make(map[string][]scheddgrpc.InstanceStatsRow),
+		}
+	}
+	cpu := &scheddCPUAdapter{parker: statsParker, now: deps.now}
 	// ADR-046 (PR-1 + PR-2): wire the egress adapters so the
 	// sampler can append tx_bytes + net_tx_bytes to
 	// usage_minutes. PR-1 leaves the gateway adapter as a
@@ -1236,7 +1254,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// handler is mounted. Both wire + reconciler registries are
 		// isolated so pkg/billing/reconciler stays free of an import
 		// on pkg/wire. ADR-049 §B.1.
-		gatherers := prometheus.Gatherers{ops.Registry(), recRegistry, jobMetrics.Registry(), prometheus.DefaultGatherer}
+		gatherers := prometheus.Gatherers{ops.Registry(), recRegistry, jobMetrics.Registry(), statsMetrics.registry, prometheus.DefaultGatherer}
 		mux.Handle(metricsPath, promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{}))
 		// /healthz — 200 when every tracked timer (sample / quota /
 		// stripe / dunning) has fired within
