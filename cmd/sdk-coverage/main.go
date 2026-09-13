@@ -300,6 +300,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account":                            "Whoami",
 	"GET /v1/capabilities":                       "GetCapabilities",
 	"POST /v1/executions":                        "CreateExecution",
+	"POST /v1/domains/{domain}/retry":            "RetryDomainVerification",
 	"GET /v1/executions":                         "ListExecutions",
 	"GET /v1/executions/{id}":                    "GetExecution",
 	"DELETE /v1/executions/{id}":                 "CancelExecution",

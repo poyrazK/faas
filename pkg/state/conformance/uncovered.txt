@@ -621,8 +621,6 @@ SetComputeNodeRole
 SetDeploymentFailed
 SetDeploymentFailedEx
 SetDeploymentParked
-SetDeploymentRootfs
-SetDeploymentSidecarLayer
 SetDeploymentSourceURL
 SetInstanceFrameworkReadyAt
 SetInstanceMode

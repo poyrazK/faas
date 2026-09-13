@@ -167,6 +167,7 @@ func TestDo_MutatingCallsCarryIdempotencyKey(t *testing.T) {
 			return err
 		}},
 		{"DeleteDomain", func(c *Client) error { return c.DeleteDomain(context.Background(), "x") }},
+		{"RetryDomainVerification", func(c *Client) error { return c.RetryDomainVerification(context.Background(), "x") }},
 		{"UpdateCron", func(c *Client) error {
 			_, err := c.UpdateCron(context.Background(), "1", UpdateCronRequest{})
 			return err

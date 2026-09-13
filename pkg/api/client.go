@@ -1668,6 +1668,13 @@ func (c *Client) VerifyDomain(ctx context.Context, domain string) (CustomDomainR
 	return out, c.do(ctx, "POST", "/v1/domains/"+domain+"/verify", nil, &out)
 }
 
+// RetryDomainVerification re-arms a pending domain after its bounded polling
+// backoff or retry budget expires. The server returns 202 with no response
+// body; mutating-call idempotency is supplied by Client.do.
+func (c *Client) RetryDomainVerification(ctx context.Context, domain string) error {
+	return c.do(ctx, "POST", "/v1/domains/"+domain+"/retry", nil, nil)
+}
+
 // GetDomain (issue #961 / Mega-A PR-3) returns a domain's durable
 // row + the live cert chain (NotAfter, SANs). Backed by GET
 // /v1/domains/{domain}. The cert dial is on-demand; failures to

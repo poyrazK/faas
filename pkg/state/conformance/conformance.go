@@ -70,12 +70,50 @@ func Run(t *testing.T, open Open) {
 		{"account_deploy_rate_window_is_fixed_and_durable", testAccountDeployRateWindow},
 		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
 		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
+		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testRetainedLayersAndDeletionArtifacts(t *testing.T, fx *Fixture) {
+	const (
+		rootfsKey  = "conformance/layers/rootfs.ext4"
+		sidecarKey = "conformance/layers/proxy.ext4"
+	)
+	if err := fx.Store.SetDeploymentRootfs(fx.Ctx, fx.Deployment.ID, "/srv/fc/rootfs.ext4", rootfsKey, 10); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	if _, err := fx.Store.SetDeploymentSidecarLayer(fx.Ctx, state.DeploymentSidecarLayer{
+		DeploymentID:  fx.Deployment.ID,
+		SidecarName:   "proxy",
+		StorageKey:    sidecarKey,
+		Bytes:         5,
+		ContentDigest: "sha256:conformance-sidecar",
+	}); err != nil {
+		t.Fatalf("SetDeploymentSidecarLayer: %v", err)
+	}
+	retained, err := fx.Store.RetainedLayerBytes(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("RetainedLayerBytes: %v", err)
+	}
+	if retained != 15 {
+		t.Fatalf("RetainedLayerBytes = %d, want 15", retained)
+	}
+	artifacts, err := fx.Store.ListAppDeletionArtifacts(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("ListAppDeletionArtifacts: %v", err)
+	}
+	got := make(map[string]int64, len(artifacts))
+	for _, artifact := range artifacts {
+		got[artifact.Key] = artifact.Bytes
+	}
+	if len(got) != 2 || got[rootfsKey] != 10 || got[sidecarKey] != 5 {
+		t.Fatalf("deletion artifacts = %+v, want rootfs=10 and sidecar=5", got)
 	}
 }
 
