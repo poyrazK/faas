@@ -633,6 +633,84 @@ func TestMakeGoHandlerLayerExtractsExecutableServer(t *testing.T) {
 	}
 }
 
+func TestMakeFunctionAppLayersDropsBuildToolchainAndCaches(t *testing.T) {
+	makeLayer := func(entries map[string][]byte) io.ReadCloser {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "layer.tar.gz")
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zw := gzip.NewWriter(file)
+		tw := tar.NewWriter(zw)
+		for name, body := range entries {
+			if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tw.Write(body); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := errors.Join(tw.Close(), zw.Close(), file.Close()); err != nil {
+			t.Fatal(err)
+		}
+		//nolint:forbidigo // test-created layer fixture.
+		reader, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reader
+	}
+	layers := []io.ReadCloser{
+		makeLayer(map[string][]byte{
+			"mise/installs/node/22/bin/node": []byte("build-only-runtime"),
+			"root/.cache/npm/index":          []byte("cache"),
+			"app/handler.js":                 []byte("handler"),
+		}),
+		makeLayer(map[string][]byte{
+			"app/node_modules/dep/index.js": []byte("dependency"),
+			"opt/corepack/shim":             []byte("build-tool"),
+		}),
+	}
+	defer func() {
+		for _, layer := range layers {
+			_ = layer.Close()
+		}
+	}()
+	filtered, cleanup, err := makeFunctionAppLayers(layers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	staging := t.TempDir()
+	for _, layer := range filtered {
+		if err := rootfs.ApplyLayerGz(staging, layer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, want := range []string{"app/handler.js", "app/node_modules/dep/index.js"} {
+		if _, err := os.Stat(filepath.Join(staging, want)); err != nil {
+			t.Fatalf("runtime file %s missing: %v", want, err)
+		}
+	}
+	for _, dropped := range []string{"mise", "root/.cache", "opt/corepack"} {
+		if _, err := os.Stat(filepath.Join(staging, dropped)); !os.IsNotExist(err) {
+			t.Fatalf("build-only path %s retained: %v", dropped, err)
+		}
+	}
+}
+
+func TestFunctionAppEntryNameRejectsTraversal(t *testing.T) {
+	for _, name := range []string{"../app/handler.js", "/app/handler.js", "app/../../etc/passwd", "root/.cache/x"} {
+		if _, ok := functionAppEntryName(name); ok {
+			t.Fatalf("unsafe or non-app path %q retained", name)
+		}
+	}
+	if got, ok := functionAppEntryName("app/node_modules/dep.js"); !ok || got != "app/node_modules/dep.js" {
+		t.Fatalf("valid app path = %q, %v", got, ok)
+	}
+}
+
 // --- Misc helpers that round out local_oci_test ----------------------
 
 func TestLocalOCIIndexStructShape(t *testing.T) {

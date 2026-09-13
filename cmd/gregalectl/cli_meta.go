@@ -659,6 +659,11 @@ var cliCommands = []cliCommand{
 				{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
 				{Name: "yes", Short: "acknowledge enqueueing customer deployment work", Req: true},
 			}},
+			{Name: "repair-stale", Short: "Dry-run or cancel stale nonterminal deployments without active builds", Flags: []cliFlag{
+				{Name: "older-than", Short: "minimum deployment age (default 2h)"},
+				{Name: "limit", Short: "maximum deployments (1..200)"},
+				{Name: "yes", Short: "apply cancellation; omit for dry-run"},
+			}},
 		},
 	},
 	{

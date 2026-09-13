@@ -6106,7 +6106,7 @@ func (m *MemStore) ListDeploymentsForOperator(_ context.Context, filter Operator
 	defer m.mu.Unlock()
 	ownedApps := make(map[string]App)
 	for id, app := range m.apps {
-		if app.Status == AppDeleted {
+		if app.Status == AppDeleted && !filter.IncludeDeleted {
 			continue
 		}
 		if filter.AccountID != "" && app.AccountID != filter.AccountID {
@@ -6125,7 +6125,7 @@ func (m *MemStore) ListDeploymentsForOperator(_ context.Context, filter Operator
 	}
 	all := make([]Deployment, 0)
 	for _, deployment := range m.deployments {
-		if deployment.DeletedAt != nil {
+		if deployment.DeletedAt != nil && !filter.IncludeDeleted {
 			continue
 		}
 		if _, ok := ownedApps[deployment.AppID]; !ok {
@@ -6136,11 +6136,20 @@ func (m *MemStore) ListDeploymentsForOperator(_ context.Context, filter Operator
 				continue
 			}
 		}
+		if !filter.CreatedBefore.IsZero() && !deployment.CreatedAt.Before(filter.CreatedBefore) {
+			continue
+		}
 		all = append(all, deployment)
 	}
 	sort.Slice(all, func(i, j int) bool {
 		if all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			if filter.OldestFirst {
+				return all[i].ID < all[j].ID
+			}
 			return all[i].ID > all[j].ID
+		}
+		if filter.OldestFirst {
+			return all[i].CreatedAt.Before(all[j].CreatedAt)
 		}
 		return all[i].CreatedAt.After(all[j].CreatedAt)
 	})

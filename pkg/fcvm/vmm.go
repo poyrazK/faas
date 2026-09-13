@@ -2453,6 +2453,32 @@ func consoleShowsGuestHalted(path string) bool {
 	return consoleContains(path, "System halted")
 }
 
+// watchBuilderGuestHalt independently reaps a Firecracker process after the
+// builder guest has flushed its result and halted. DestroyWithExport has the
+// same check while an RPC is waiting, but keeping the watcher with the process
+// closes the failure mode where teardown is delayed or never reaches that RPC.
+func watchBuilderGuestHalt(consolePath string, done <-chan struct{}, pollEvery time.Duration, kill func()) {
+	if consolePath == "" || done == nil || kill == nil {
+		return
+	}
+	if pollEvery <= 0 {
+		pollEvery = 250 * time.Millisecond
+	}
+	ticker := time.NewTicker(pollEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if consoleShowsGuestHalted(consolePath) {
+				kill()
+				return
+			}
+		}
+	}
+}
+
 // consoleShowsBuilderReady reads the bounded tail of the serial console for
 // the stable guest-init stage emitted after a successful KeepWarm build. The
 // check belongs in vmmd, which owns the console file even when builderd and
@@ -3408,6 +3434,11 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	rec := &instanceRecord{cmd: cmd, consolePath: consolePath, isBuilder: l.IsBuilder, done: make(chan struct{})}
 	v.recs[l.Instance] = rec
 	v.mu.Unlock()
+	if rec.isBuilder {
+		go watchBuilderGuestHalt(rec.consolePath, rec.done, 250*time.Millisecond, func() {
+			v.killProcess(l.Instance)
+		})
+	}
 	// Watchdog: cmd.Wait must be called exactly once per process (stdlib
 	// contract). Run it here so DestroyWithExport can later read the captured
 	// exit code without racing the actual process termination.

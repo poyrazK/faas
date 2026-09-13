@@ -320,11 +320,12 @@ func TestBuildManifestForRequestCarriesWarmInputs(t *testing.T) {
 		RuntimeBaseRef:     "base-ref",
 		DependencyCacheKey: "cache-key",
 		KeepWarm:           true,
+		Function:           true,
 	}, 900)
 	if err != nil {
 		t.Fatalf("buildManifestForRequest: %v", err)
 	}
-	if !manifest.KeepWarm || !manifest.DependencyCache || manifest.TimeoutSec != 900 {
+	if !manifest.KeepWarm || !manifest.DependencyCache || !manifest.Function || manifest.TimeoutSec != 900 {
 		t.Fatalf("manifest warm/cache/timeout = %v/%v/%d", manifest.KeepWarm, manifest.DependencyCache, manifest.TimeoutSec)
 	}
 	if !strings.HasSuffix(manifest.Workdir, "/services/api") {

@@ -6694,7 +6694,8 @@ func (s *PgStore) ListDeploymentsForAccount(ctx context.Context, accountID strin
 // ListDeploymentsForOperator returns the bounded deployment incident view
 // used by provider operators. Filters are pushed into Postgres so a fleet
 // query never materializes the full deployment history in apid. Deleted apps
-// and soft-deleted deployment rows are intentionally excluded.
+// and soft-deleted deployment rows are excluded unless an explicit operator
+// repair requests them.
 func (s *PgStore) ListDeploymentsForOperator(ctx context.Context, filter OperatorDeploymentFilter) ([]Deployment, error) {
 	if filter.Limit <= 0 {
 		return nil, nil
@@ -6723,15 +6724,25 @@ func (s *PgStore) ListDeploymentsForOperator(ctx context.Context, filter Operato
 			statuses = append(statuses, string(status))
 		}
 	}
+	var createdBefore *time.Time
+	if !filter.CreatedBefore.IsZero() {
+		value := filter.CreatedBefore.UTC()
+		createdBefore = &value
+	}
 	rows, err := s.pool.Query(ctx,
 		`select `+deploymentSelectColumnsQualified+`
 		 from deployments d join apps a on a.id = d.app_id
-		 where a.status <> 'deleted' and d.deleted_at is null
-		   and ($1::uuid is null or a.account_id = $1::uuid)
-		   and ($2::uuid is null or d.app_id = $2::uuid)
-		   and (cardinality($3::text[]) = 0 or d.status = any($3::text[]))
-		 order by d.created_at desc, d.id desc
-		 limit $4 offset $5`, accountID, appID, statuses, filter.Limit, filter.Offset)
+		 where ($1 or (a.status <> 'deleted' and d.deleted_at is null))
+		   and ($2::uuid is null or a.account_id = $2::uuid)
+		   and ($3::uuid is null or d.app_id = $3::uuid)
+		   and (cardinality($4::text[]) = 0 or d.status = any($4::text[]))
+		   and ($5::timestamptz is null or d.created_at < $5::timestamptz)
+		 order by
+		   case when $6 then d.created_at end asc,
+		   case when $6 then d.id end asc,
+		   case when not $6 then d.created_at end desc,
+		   case when not $6 then d.id end desc
+		 limit $7 offset $8`, filter.IncludeDeleted, accountID, appID, statuses, createdBefore, filter.OldestFirst, filter.Limit, filter.Offset)
 	if err != nil {
 		return nil, err
 	}

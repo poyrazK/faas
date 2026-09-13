@@ -1,12 +1,31 @@
+// spec: §4.5 — builder VMs are bounded, disposable work and must release
+// their slot and scratch drive after terminal guest completion.
 package fcvm
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestBuilderGuestHaltWatcherReapsWithoutDestroyRPC(t *testing.T) {
+	console := t.TempDir() + "/builder.console"
+	if err := os.WriteFile(console, []byte("guest-init: build failed\nreboot: System halted\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	killed := make(chan struct{}, 1)
+	go watchBuilderGuestHalt(console, done, time.Millisecond, func() { killed <- struct{}{} })
+	select {
+	case <-killed:
+	case <-time.After(time.Second):
+		t.Fatal("halted builder was not reaped")
+	}
+	close(done)
+}
 
 func runningBuildProcess(t *testing.T) (*JailerVMM, string, *instanceRecord) {
 	t.Helper()

@@ -77,18 +77,27 @@ func (s *server) getOperatorDeployments(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, prob)
 		return
 	}
+	includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+	var createdBefore time.Time
+	if raw := strings.TrimSpace(r.URL.Query().Get("created_before")); raw != "" {
+		parsed, parseErr := time.Parse(time.RFC3339, raw)
+		if parseErr != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"invalid created_before", "created_before must be an RFC3339 timestamp"))
+			return
+		}
+		createdBefore = parsed
+	}
 	rows, err := s.store.ListDeploymentsForOperator(r.Context(), state.OperatorDeploymentFilter{
-		AccountID: accountID,
-		AppID:     appID,
-		Statuses:  statuses,
-		Limit:     limit,
-		Offset:    offset,
+		AccountID: accountID, AppID: appID, Statuses: statuses,
+		IncludeDeleted: includeDeleted, CreatedBefore: createdBefore,
+		Limit: limit, Offset: offset,
 	})
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list operator deployments"))
 		return
 	}
-	items, err := s.projectOperatorDeployments(r.Context(), rows)
+	items, err := s.projectOperatorDeployments(r.Context(), rows, includeDeleted)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve operator deployments"))
 		return
@@ -348,7 +357,7 @@ func (s *server) resolveOperatorDeployment(r *http.Request, id string) (state.De
 	return deployment, app, nil
 }
 
-func (s *server) projectOperatorDeployments(ctx context.Context, rows []state.Deployment) ([]api.OperatorDeployment, error) {
+func (s *server) projectOperatorDeployments(ctx context.Context, rows []state.Deployment, includeDeleted bool) ([]api.OperatorDeployment, error) {
 	items := make([]api.OperatorDeployment, 0, len(rows))
 	apps := make(map[string]state.App)
 	for _, row := range rows {
@@ -361,7 +370,7 @@ func (s *server) projectOperatorDeployments(ctx context.Context, rows []state.De
 			}
 			apps[row.AppID] = app
 		}
-		if app.AccountID == "" || app.Status == state.AppDeleted {
+		if app.AccountID == "" || (app.Status == state.AppDeleted && !includeDeleted) {
 			return nil, errors.New("operator deployment ownership mismatch")
 		}
 		items = append(items, projectOperatorDeployment(row, app))
@@ -374,6 +383,7 @@ func projectOperatorDeployment(d state.Deployment, app state.App) api.OperatorDe
 		ID:           d.ID,
 		AppID:        d.AppID,
 		AppSlug:      app.Slug,
+		AppStatus:    string(app.Status),
 		AccountID:    app.AccountID,
 		BuildID:      d.BuildID,
 		Kind:         string(d.Kind),

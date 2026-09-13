@@ -8494,6 +8494,7 @@ type OperatorDeployment struct {
 	ID           string `json:"id"`
 	AppID        string `json:"app_id"`
 	AppSlug      string `json:"app_slug"`
+	AppStatus    string `json:"app_status"`
 	AccountID    string `json:"account_id"`
 	BuildID      string `json:"build_id,omitempty"`
 	Kind         string `json:"kind"`

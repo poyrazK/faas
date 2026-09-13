@@ -1229,6 +1229,13 @@ type OpsMetrics struct {
 	imagedOCIBlobCacheHits      prometheus.Counter
 	imagedOCIBlobCacheMisses    prometheus.Counter
 	imagedOCIBlobCacheEvictions prometheus.Counter
+	// staleDeploymentOldestAge exposes the oldest deployment that has
+	// exceeded imaged's reconciliation deadline and remains nonterminal.
+	// staleDeploymentsReconciled counts rows safely moved to cancelled by
+	// the bounded reconciler. Both are unlabelled fleet signals; row detail
+	// stays in structured logs and the operator audit trail.
+	staleDeploymentOldestAge   prometheus.Gauge
+	staleDeploymentsReconciled prometheus.Counter
 	// issue #170 / PR-A: per-{app,node} instance-stats gauges. The
 	// (app, node) label tuple is unbounded because it grows with the
 	// customer count, so it cannot be pre-instantiated at boot.
@@ -2888,6 +2895,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_oci_blob_cache_evictions_total",
 		Help: "Count of OCI registry blob cache entries evicted by the byte budget.",
 	})
+	staleDeploymentOldestAge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_stale_deployment_oldest_age_seconds",
+		Help: "Age in seconds of the oldest deployment beyond imaged's reconciliation deadline that remains nonterminal; zero means no stale backlog.",
+	})
+	staleDeploymentsReconciled := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_stale_deployments_reconciled_total",
+		Help: "Count of stale nonterminal deployments safely cancelled by imaged's bounded reconciler.",
+	})
 	// issue #170 / PR-A: per-{app,node} instance-stats gauges. Sized
 	// for the poller’s 200 ms cadence — the per-tick histogram tops
 	// out at the 200 ms interval so a regression that doubles the
@@ -3294,6 +3309,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		wakeIDV4Fallback,
 		snapshotDiskDrift,
 		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
+		staleDeploymentOldestAge, staleDeploymentsReconciled,
 		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
@@ -4638,6 +4654,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		imagedOCIBlobCacheHits:                                imagedOCIBlobCacheHits,
 		imagedOCIBlobCacheMisses:                              imagedOCIBlobCacheMisses,
 		imagedOCIBlobCacheEvictions:                           imagedOCIBlobCacheEvictions,
+		staleDeploymentOldestAge:                              staleDeploymentOldestAge,
+		staleDeploymentsReconciled:                            staleDeploymentsReconciled,
 		instanceCPUPct:                                        instanceCPUPct,
 		instanceRSSMB:                                         instanceRSSMB,
 		instanceInflightReqs:                                  instanceInflightReqs,
@@ -7063,6 +7081,29 @@ func (m *OpsMetrics) ImagedOCIBlobCacheEviction() {
 		return
 	}
 	m.imagedOCIBlobCacheEvictions.Inc()
+}
+
+// SetStaleDeploymentOldestAge publishes the current stale nonterminal
+// deployment backlog age. A zero value explicitly clears the signal after a
+// successful sweep. Safe on a nil receiver.
+func (m *OpsMetrics) SetStaleDeploymentOldestAge(age time.Duration) {
+	if m == nil {
+		return
+	}
+	seconds := age.Seconds()
+	if seconds < 0 {
+		seconds = 0
+	}
+	m.staleDeploymentOldestAge.Set(seconds)
+}
+
+// IncrementStaleDeploymentsReconciled records one successful CAS-protected
+// stale deployment repair. Safe on a nil receiver.
+func (m *OpsMetrics) IncrementStaleDeploymentsReconciled() {
+	if m == nil {
+		return
+	}
+	m.staleDeploymentsReconciled.Inc()
 }
 
 // SetResidentGBPerCustomer writes one sample to the
