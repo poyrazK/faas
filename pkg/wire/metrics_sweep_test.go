@@ -44,6 +44,7 @@ func TestSweep_MetricsCounters(t *testing.T) {
 	_ = m.SnapshotDiskDrift()
 	_ = m.CapacitySignatureRejected()
 	_ = m.EgressSourceErrors()
+	_ = m.WakeIdentityInvalid("proxy_first_byte", "app_id")
 	_ = m.RegistryCredentialMarkUsedFailures()
 	_ = m.StorageCacheStaleFallback()
 	_ = m.Registry()

@@ -782,6 +782,19 @@ groups:
           description: "The platform-only capacity-admission to first-upstream-byte boundary has breached the public-beta p95 gate with at least 20 recent samples. Check schedd wake phases, VMMD restore breakdown, and the persistent forwarding bridge. CDN and client latency are excluded."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWakeLatencyHigh.md"
 
+      - alert: FaasWakeEventIdentityMissing
+        expr: sum by (phase, field) (increase({__name__=~"(gatewayd|vmmd)_wake_identity_invalid_total"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: observability
+          family: wake_timeline
+          public_status: internal
+        annotations:
+          summary: "Wake {{ $labels.phase }} event is missing {{ $labels.field }}"
+          description: "A wake lifecycle producer attempted to persist an event without required authoritative identity. The row was rejected to prevent silently incomplete customer timelines."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWakeLatencyHigh.md"
+
       # ─────────────────────────────────────────────────────────────────
       # Cold-boot fallback rate (vmmd / vmmd_cold_boot_fallback_total)
       # Spec §12 row: "cold_boot_fallback_pct < 2% target, > 10% warn".

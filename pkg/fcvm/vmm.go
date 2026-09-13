@@ -4246,10 +4246,13 @@ func (v *JailerVMM) emitReadiness200(ctx context.Context, l Lease, healthcheckPa
 	if v.events == nil {
 		return
 	}
-	var wakeID, appID string
+	var wakeID, appID, nodeID string
 	if fields, ok := wire.FromContext(ctx); ok {
 		wakeID = fields.WakeID
 		appID = fields.AppID
+		// The scheduler's canonical wake envelope carries placement identity
+		// through every vmmd route, including restore and recreated instances.
+		nodeID = fields.NodeID
 	}
 	now := time.Now()
 	elapsed := now.Sub(startedAt)
@@ -4258,6 +4261,7 @@ func (v *JailerVMM) emitReadiness200(ctx context.Context, l Lease, healthcheckPa
 		WakeID:          wakeID,
 		AppID:           appID,
 		InstanceID:      l.Instance,
+		NodeID:          nodeID,
 		HealthcheckPath: healthcheckPath,
 		ProbeCount:      probeCount,
 		ElapsedMs:       elapsed.Milliseconds(),

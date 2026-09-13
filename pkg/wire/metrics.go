@@ -1767,7 +1767,8 @@ type OpsMetrics struct {
 	// sit at zero. Closed set is the 15 phases from
 	// pkg/events/wake.go (extended by ADR-098 C11 to surface
 	// the three vmmd-side phase-decomposed wake timings).
-	wakePhaseEmitted *prometheus.CounterVec
+	wakePhaseEmitted    *prometheus.CounterVec
+	wakeIdentityInvalid *prometheus.CounterVec
 	// recoveryEventEmitted: Workstream B / issue #1184. Per-(kind,
 	// result) counter for pkg/events.Platform.EmitRecovery. kind is
 	// the substring after `node.` / `instance.` (e.g. "draining",
@@ -3322,6 +3323,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_wake_phase_emitted_total",
 		Help: "Count of wake-timeline events emitted via pkg/events.Platform, labelled by phase (the substring after `wake.`, e.g. `boot_started`, `readiness_200`, `proxy_first_byte`) and result ∈ {ok, failed} (issue #517 / PR-C, ADR-064). Single-registry: registered on every daemon; only schedd / vmmd / gatewayd-internal / builderd / apid increment via Platform.Emit. The closed 14-phase set is pre-instantiated at boot so the §12 wake-latency panel surfaces zero on an idle daemon.",
 	}, []string{"phase", "result"})
+	wakeIdentityInvalid := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_wake_identity_invalid_total",
+		Help: "Joinable wake lifecycle events rejected before persistence because a required authoritative app or node identity field was empty, labelled by phase and field.",
+	}, []string{"phase", "field"})
 	// vmmd already exports execution timings under wake_phase_duration_seconds.
 	// Event-store latency is a different family (and has different labels).
 	wakeEventDurationName := prefix + "_wake_phase_duration_seconds"
@@ -3414,7 +3419,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		githubdPushSkippedTotal,
 		throttleSecondsTotal, throttleRatio,
 		egressSourceErrors,
-		wakePhaseEmitted, wakePhaseDur, recoveryEventEmitted,
+		wakePhaseEmitted, wakeIdentityInvalid, wakePhaseDur, recoveryEventEmitted,
 		// ADR-124 follow-up #2: plan_gate_rescued_by_exclude counter
 		// (12 pre-instantiated series). See planGateRescuedByExclude
 		// field declaration at line 292.
@@ -4349,6 +4354,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			wakePhaseDur.WithLabelValues(phase, result)
 		}
 	}
+	for _, identity := range [][2]string{{"readiness_200", "node_id"}, {"proxy_first_byte", "app_id"}} {
+		wakeIdentityInvalid.WithLabelValues(identity[0], identity[1])
+	}
 	// Workstream B / issue #1184: pre-instantiate the closed
 	// 7-kind × 2-result label set for recoveryEventEmitted so the
 	// recovery-dashboard panel reads zero on an idle fleet rather
@@ -4778,6 +4786,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		githubdPathFilterTotal:                                githubdPathFilterTotal,
 		githubdPushSkippedTotal:                               githubdPushSkippedTotal,
 		wakePhaseEmitted:                                      wakePhaseEmitted,
+		wakeIdentityInvalid:                                   wakeIdentityInvalid,
 		wakePhaseDur:                                          wakePhaseDur,
 		recoveryEventEmitted:                                  recoveryEventEmitted,
 		esmPollsTotal:                                         esmPollsTotal,
@@ -6866,6 +6875,16 @@ func (m *OpsMetrics) WakePhaseEmitted(phase, result string) prometheus.Counter {
 		return nil
 	}
 	return m.wakePhaseEmitted.WithLabelValues(phase, result)
+}
+
+// WakeIdentityInvalid counts lifecycle events rejected for an empty
+// authoritative identity. It is separate from persistence failures so its
+// alert diagnoses producer contract regressions directly.
+func (m *OpsMetrics) WakeIdentityInvalid(phase, field string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.wakeIdentityInvalid.WithLabelValues(phase, field)
 }
 
 // RecoveryEventEmitted returns the per-(kind, result) counter for

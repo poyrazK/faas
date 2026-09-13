@@ -510,13 +510,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
 				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
-					EmitAt:     time.Now().UTC(),
-					WakeID:     t.WakeID,
-					AppID:      r.Header.Get("x-faas-app"),
-					RequestID:  r.Header.Get("x-faas-request-id"),
-					InstanceID: t.InstanceID,
-					NodeID:     t.NodeID,
-					LatencyMs:  time.Since(started).Milliseconds(),
+					EmitAt:         time.Now().UTC(),
+					WakeID:         t.WakeID,
+					AppID:          t.AppID,
+					RequestID:      requestIDFrom(r),
+					InstanceID:     t.InstanceID,
+					NodeID:         t.NodeID,
+					LatencyMs:      time.Since(wakeTimelineStart(r)).Milliseconds(),
+					ProxyLatencyMs: time.Since(started).Milliseconds(),
 				})
 			}
 			continue
@@ -850,13 +851,14 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
 				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
-					EmitAt:     time.Now().UTC(),
-					WakeID:     t.WakeID,
-					AppID:      r.Header.Get("x-faas-app"),
-					RequestID:  r.Header.Get("x-faas-request-id"),
-					InstanceID: t.InstanceID,
-					NodeID:     t.NodeID,
-					LatencyMs:  time.Since(started).Milliseconds(),
+					EmitAt:         time.Now().UTC(),
+					WakeID:         t.WakeID,
+					AppID:          t.AppID,
+					RequestID:      requestIDFrom(r),
+					InstanceID:     t.InstanceID,
+					NodeID:         t.NodeID,
+					LatencyMs:      time.Since(wakeTimelineStart(r)).Milliseconds(),
+					ProxyLatencyMs: time.Since(started).Milliseconds(),
 				})
 			}
 			// If the init carries an error string (the bridge

@@ -68,6 +68,7 @@ func TestWaitReady_HealthcheckEmitsReadiness200(t *testing.T) {
 	probeCtx := wire.WithContext(context.Background(), wire.CorrelationFields{
 		WakeID: wakeID,
 		AppID:  appID,
+		NodeID: "node-readiness-001",
 	})
 
 	// Drive the probe loop directly via healthcheckProbe. The
@@ -79,26 +80,22 @@ func TestWaitReady_HealthcheckEmitsReadiness200(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("probe: ok=%v err=%v", ok, err)
 	}
-	// Emit the readiness_200 row the same way the production
-	// waitReady loop does. The unit test pins the emit path
-	// directly so an integration breakage in waitReady itself
-	// surfaces separately.
-	now := time.Now()
-	platform.Emit(probeCtx, events.Readiness200{
-		EmitAt:          now.UTC(),
-		WakeID:          wakeID,
-		AppID:           appID,
-		InstanceID:      "inst-readiness-001",
-		HealthcheckPath: "/healthz",
-		ProbeCount:      1,
-		ElapsedMs:       42,
-	})
+	// Exercise the production constructor, including the wire-carried node.
+	v := &JailerVMM{events: platform}
+	v.emitReadiness200(probeCtx, Lease{Instance: "inst-readiness-001"}, "/healthz", 1, time.Now().Add(-42*time.Millisecond))
 
 	// Read the events table back. The wake_id should appear
 	// exactly once.
-	rows, err := store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0)
-	if err != nil {
-		t.Fatalf("ListEventsByWakeID: %v", err)
+	var rows []state.Event
+	deadline := time.Now().Add(2 * time.Second)
+	for len(rows) == 0 && time.Now().Before(deadline) {
+		rows, err = store.ListEventsByWakeID(context.Background(), wakeID, time.Time{}, 0)
+		if err != nil {
+			t.Fatalf("ListEventsByWakeID: %v", err)
+		}
+		if len(rows) == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
@@ -113,6 +110,9 @@ func TestWaitReady_HealthcheckEmitsReadiness200(t *testing.T) {
 	}
 	if payload["wake_id"] != wakeID {
 		t.Errorf("payload.wake_id = %v, want %s", payload["wake_id"], wakeID)
+	}
+	if payload["node_id"] != "node-readiness-001" {
+		t.Errorf("payload.node_id = %v, want node-readiness-001", payload["node_id"])
 	}
 	if payload["app_id"] != appID {
 		t.Errorf("payload.app_id = %v, want %s", payload["app_id"], appID)

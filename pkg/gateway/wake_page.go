@@ -24,8 +24,10 @@ type wakePageVisit struct {
 }
 
 type wakePageCycle struct {
-	wakeID  string
-	pending []wakePageVisit
+	wakeID           string
+	acceptedAt       time.Time
+	firstByteClaimed bool
+	pending          []wakePageVisit
 }
 
 // acceptsWakePage limits the retry document to browser-like navigations.
@@ -121,7 +123,7 @@ func writeWakePage(w http.ResponseWriter, wakeID string) {
 `, pageID)
 }
 
-func (h *Handler) beginWakePageCycle(appID string) {
+func (h *Handler) beginWakePageCycle(appID string, acceptedAt time.Time) {
 	if h == nil || appID == "" {
 		return
 	}
@@ -135,7 +137,25 @@ func (h *Handler) beginWakePageCycle(appID string) {
 		// result). Concurrent followers must not clear its pending visits.
 		return
 	}
-	h.wakePageCycles[appID] = &wakePageCycle{}
+	h.wakePageCycles[appID] = &wakePageCycle{acceptedAt: acceptedAt}
+}
+
+// claimWakeFirstByteStart returns the request-acceptance boundary once for a
+// completed wake generation. The original browser request may have returned a
+// wake page before the VM became ready; its retry still needs the original
+// queue/request boundary rather than the retry's final proxy-hop start.
+func (h *Handler) claimWakeFirstByteStart(appID, wakeID string) (time.Time, bool) {
+	if h == nil || appID == "" || wakeID == "" {
+		return time.Time{}, false
+	}
+	h.wakePageMu.Lock()
+	defer h.wakePageMu.Unlock()
+	cycle := h.wakePageCycles[appID]
+	if cycle == nil || cycle.wakeID != wakeID || cycle.firstByteClaimed || cycle.acceptedAt.IsZero() {
+		return time.Time{}, false
+	}
+	cycle.firstByteClaimed = true
+	return cycle.acceptedAt, true
 }
 
 func (h *Handler) noteWakePageServed(ctx context.Context, appID, accountID, requestID string, servedAt time.Time) {

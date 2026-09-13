@@ -74,6 +74,10 @@ type Ops interface {
 	RecoveryEventEmitted(kind, result string) prometheus.Counter
 }
 
+type wakeIdentityOps interface {
+	WakeIdentityInvalid(phase, field string) prometheus.Counter
+}
+
 // BroadcasterIf is the in-process pub/sub surface Platform
 // publishes to. Production wires *Broadcaster (broadcaster.go);
 // tests stub it. nil is allowed — Platform skips the publish.
@@ -204,6 +208,14 @@ func (p *Platform) emitWake(ctx context.Context, ev WakeEvent, preserveAt bool) 
 		payload = map[string]any{}
 	}
 	phase := wakePhaseFromKind(kind)
+	if field := invalidWakeIdentity(kind, payload); field != "" {
+		if identityMetrics, ok := p.ops.(wakeIdentityOps); ok {
+			identityMetrics.WakeIdentityInvalid(phase, field).Inc()
+		}
+		p.log.Error("events: reject wake event with missing identity",
+			"actor", p.actor, "kind", kind, "field", field)
+		return
+	}
 	// Marshal happens BEFORE the counter increment so a marshal
 	// failure (programmer bug on a payload struct) surfaces in the
 	// log without bumping the counter. Same shape as pkg/audit.
@@ -261,6 +273,26 @@ func (p *Platform) emitWake(ctx context.Context, ev WakeEvent, preserveAt bool) 
 	// automatically without re-stamping.
 	p.log.Info("events: emit",
 		"actor", p.actor, "kind", kind, "subject", subject)
+}
+
+func invalidWakeIdentity(kind string, payload map[string]any) string {
+	wakeID, _ := payload["wake_id"].(string)
+	if wakeID == "" { // legacy/direct test emissions are not joinable lifecycles
+		return ""
+	}
+	// Every joinable wake row must retain its authoritative app identity. This
+	// catches regressions beyond proxy_first_byte (cron and meterd exposed that
+	// producer first) without affecting build/deploy rows that have no wake ID.
+	if appID, _ := payload["app_id"].(string); appID == "" {
+		return "app_id"
+	}
+	switch kind {
+	case WakeReadiness200:
+		if nodeID, _ := payload["node_id"].(string); nodeID == "" {
+			return "node_id"
+		}
+	}
+	return ""
 }
 
 // EmitRecovery writes one recovery-timeline row. Mirrors Emit's

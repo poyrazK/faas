@@ -45,6 +45,7 @@ const (
 	mdKeyAppID        = "x-faas-app-id"
 	mdKeyDeploymentID = "x-faas-deployment-id"
 	mdKeyInstanceID   = "x-faas-instance-id"
+	mdKeyNodeID       = "x-faas-node-id"
 	mdKeyInvocationID = "x-faas-invocation-id"
 	mdKeyTraceID      = "x-faas-trace-id"
 	mdKeySpanID       = "x-faas-span-id"
@@ -93,6 +94,9 @@ func WithCorrelationOutgoing(ctx context.Context, fields CorrelationFields) cont
 	}
 	if fields.InstanceID != "" {
 		pairs = append(pairs, mdKeyInstanceID, fields.InstanceID)
+	}
+	if fields.NodeID != "" {
+		pairs = append(pairs, mdKeyNodeID, fields.NodeID)
 	}
 	if fields.InvocationID != "" {
 		pairs = append(pairs, mdKeyInvocationID, fields.InvocationID)
@@ -176,6 +180,10 @@ func CorrelationFromIncoming(ctx context.Context) (CorrelationFields, bool) {
 	}
 	if v := md.Get(mdKeyInstanceID); len(v) > 0 && v[0] != "" {
 		out.InstanceID = v[0]
+		any = true
+	}
+	if v := md.Get(mdKeyNodeID); len(v) > 0 && v[0] != "" {
+		out.NodeID = v[0]
 		any = true
 	}
 	if v := md.Get(mdKeyInvocationID); len(v) > 0 && v[0] != "" {

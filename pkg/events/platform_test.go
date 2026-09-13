@@ -164,6 +164,34 @@ func TestPlatform_Emit_NilEvent(t *testing.T) {
 	}
 }
 
+func TestPlatformRejectsKnownWakeWithMissingAuthoritativeIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		event WakeEvent
+		want  string
+	}{
+		{"readiness node", Readiness200{EmitAt: time.Now(), WakeID: "wake-1", AppID: "app-1"}, "readiness_200:node_id"},
+		{"first byte app", ProxyFirstByte{EmitAt: time.Now(), WakeID: "wake-1", NodeID: "node-1"}, "proxy_first_byte:app_id"},
+		{"other lifecycle app", QueueAccepted{EmitAt: time.Now(), WakeID: "wake-1"}, "queue_accepted:app_id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newStubStore()
+			ops := newStubOps()
+			NewPlatform("producer", store, silentLog(), ops, nil).Emit(context.Background(), tc.event)
+			rows, err := store.ListEvents(context.Background(), "", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 0 {
+				t.Fatalf("invalid event was persisted: %+v", rows)
+			}
+			if len(ops.identityCalls) != 1 || ops.identityCalls[0] != tc.want {
+				t.Fatalf("identity calls = %v, want [%s]", ops.identityCalls, tc.want)
+			}
+		})
+	}
+}
+
 type blockingAtStore struct {
 	state.Store
 	mem     *state.MemStore

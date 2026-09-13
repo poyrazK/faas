@@ -2035,6 +2035,12 @@ export class AppsService {
    * `wake.boot_failed`) are joined in alongside the success
    * path so a single GET shows the whole lifecycle.
    *
+   * For `wake.proxy_first_byte`, `data.latency_ms` is measured from
+   * request/queue acceptance through the first upstream byte. New rows
+   * also include `data.proxy_latency_ms` for the final bridge hop. Rows
+   * written before this contract correction contain the former
+   * proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+   *
    * The endpoint is a sub-resource of `/v1/apps/{slug}`;
    * auth and rate-limit share the §12 per-app budget with
    * logs/metrics/wake. Cross-account access 404s the

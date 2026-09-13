@@ -40,6 +40,7 @@ func TestCorrelationRoundTrip(t *testing.T) {
 	// lifted fields and forwards to vmmd.
 	lifted.WakeID = "wake-minted"
 	lifted.AppID = "app-1"
+	lifted.NodeID = "node-1"
 	lifted.TriggerClass = "monitor"
 	clientCtx := wire.WithCorrelationOutgoing(context.Background(), lifted)
 
@@ -55,6 +56,7 @@ func TestCorrelationRoundTrip(t *testing.T) {
 		RequestID:    "req-from-gatewayd-internal",
 		WakeID:       "wake-minted",
 		AppID:        "app-1",
+		NodeID:       "node-1",
 		TriggerClass: "monitor",
 	}
 	if got != want {
@@ -91,6 +93,7 @@ func TestWithCorrelationOutgoing_SkipsEmptyFields(t *testing.T) {
 		"x-faas-app-id",
 		"x-faas-deployment-id",
 		"x-faas-instance-id",
+		"x-faas-node-id",
 		"x-faas-invocation-id",
 		"x-faas-trace-id",
 		"x-faas-span-id",

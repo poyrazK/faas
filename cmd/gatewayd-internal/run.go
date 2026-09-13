@@ -1191,6 +1191,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 					continue
 				}
 				targets = append(targets, gateway.Target{
+					AppID:        appID,
 					InstanceID:   instance.ID,
 					NodeID:       instance.NodeID,
 					WakeID:       instance.WakeID,
@@ -1335,6 +1336,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// schedd can StampInstanceInvocation; without it the meter's
 		// per-instance count lands on 0.
 		invoke: func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+			acceptedAt := time.Now()
+			ctx = gateway.WithStartTime(ctx, acceptedAt)
+			ctx = gateway.WithWakeTimelineStart(ctx, acceptedAt)
 			app, err := pgStore.AppByID(ctx, appID)
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
@@ -1348,6 +1352,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
 			target := gateway.Target{
+				AppID:        appID,
 				InstanceID:   instanceID,
 				NodeID:       nodeID,
 				DeploymentID: deploymentID,
@@ -1359,6 +1364,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return synth.forwardInvocation(ctx, target, inv)
 		},
 		invokeWithStatus: func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+			acceptedAt := time.Now()
+			ctx = gateway.WithStartTime(ctx, acceptedAt)
+			ctx = gateway.WithWakeTimelineStart(ctx, acceptedAt)
 			app, err := pgStore.AppByID(ctx, appID)
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
@@ -1371,7 +1379,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
-			target := gateway.Target{InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}
+			target := gateway.Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			return synth.forwardInvocationWithStatus(ctx, target, inv)

@@ -158,3 +158,18 @@ func TestAcceptsWakePageRequiresNavigationWhenFetchMetadataPresent(t *testing.T)
 		})
 	}
 }
+
+func TestClaimWakeFirstByteStartPreservesOriginalBrowserBoundary(t *testing.T) {
+	h := &Handler{wakePageCycles: make(map[string]*wakePageCycle)}
+	acceptedAt := time.Now().Add(-2 * time.Second).UTC()
+	h.beginWakePageCycle("app-browser", acceptedAt)
+	h.finishWakePageCycle(context.Background(), "app-browser", "wake-browser")
+
+	got, ok := h.claimWakeFirstByteStart("app-browser", "wake-browser")
+	if !ok || !got.Equal(acceptedAt) {
+		t.Fatalf("claim = (%v, %v), want (%v, true)", got, ok, acceptedAt)
+	}
+	if _, ok := h.claimWakeFirstByteStart("app-browser", "wake-browser"); ok {
+		t.Fatal("wake first-byte boundary was claimable more than once")
+	}
+}

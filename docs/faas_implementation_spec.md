@@ -1039,6 +1039,12 @@ of the application response, Cloudflare, the public Internet, client location,
 and physical distance. `gateway_platform_wake_latency_seconds` is the canonical
 fleet series; public probes remain separate end-to-end diagnostics.
 
+`wake.proxy_first_byte.data.latency_ms` records request/queue acceptance to
+the first upstream byte. `data.proxy_latency_ms` separately records the final
+gateway-to-instance bridge hop. Rows created before September 2026 used the
+proxy-only interval in `latency_ms` and do not contain `proxy_latency_ms`;
+historical rows are not rewritten.
+
 The schedd-side wake path is decomposed into three `schedd_wake_rpc_duration_seconds{app, phase}` histograms (ADR-097, P1B) so operators can attribute a p95 regression to a specific phase without re-running the wake under a profiler:
 
 | schedd-side phase | Bucket range | What it covers |

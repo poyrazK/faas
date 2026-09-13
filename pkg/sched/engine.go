@@ -2970,6 +2970,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		AppID:              appID,
 		DeploymentID:       bootInput.depID,
 		InstanceID:         bootInput.insID,
+		NodeID:             bootInput.nodeID,
 		WakeID:             wakeID,
 		Trigger:            bootInput.trigger,
 		TriggerClass:       inboundCorr.TriggerClass,

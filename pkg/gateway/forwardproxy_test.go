@@ -1101,12 +1101,15 @@ func TestForwardingReverseProxyWithEvents_EmitsProxyFirstByte(t *testing.T) {
 	// (x-faas-app, x-faas-request-id) before dispatch.
 	proxy := gateway.ForwardingReverseProxyWithEvents(lookup, nil, platform)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/items", nil)
-	req.Header.Set("x-faas-app", "app-proxy-1")
 	req.Header.Set("x-faas-request-id", "req-proxy-1")
 	req.Header.Set("x-faas-instance", "inst-proxy-1")
+	acceptedAt := time.Now().Add(-50 * time.Millisecond)
+	req = req.WithContext(gateway.WithStartTime(req.Context(), acceptedAt))
+	req = req.WithContext(gateway.WithWakeTimelineStart(req.Context(), acceptedAt))
 
 	rec := httptest.NewRecorder()
 	proxy(gateway.Target{
+		AppID:      "app-proxy-1",
 		NodeID:     "node-1",
 		InstanceID: "inst-proxy-1",
 		WakeID:     "wake-proxy-1",
@@ -1159,6 +1162,15 @@ func TestForwardingReverseProxyWithEvents_EmitsProxyFirstByte(t *testing.T) {
 	// runner would flake).
 	if _, ok := payload["latency_ms"]; !ok {
 		t.Errorf("payload.latency_ms missing; got keys %v", keys(payload))
+	}
+	if _, ok := payload["proxy_latency_ms"]; !ok {
+		t.Errorf("payload.proxy_latency_ms missing; got keys %v", keys(payload))
+	}
+	if payload["latency_ms"].(float64) < 40 {
+		t.Errorf("payload.latency_ms = %v, want request-acceptance interval", payload["latency_ms"])
+	}
+	if payload["proxy_latency_ms"].(float64) > payload["latency_ms"].(float64) {
+		t.Errorf("proxy hop %v exceeds total latency %v", payload["proxy_latency_ms"], payload["latency_ms"])
 	}
 }
 

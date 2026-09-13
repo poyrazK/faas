@@ -75,7 +75,8 @@ type fakeBackend struct {
 	// 30 MiB CL would still trip, but the buffer would already
 	// have been allocated). Atomic so it can be read without the
 	// mu lock held by an asserting test goroutine.
-	pickCalls atomic.Int32
+	pickCalls            atomic.Int32
+	lastAdmitCorrelation wire.CorrelationFields
 }
 
 type declaredRouteMatcherStub struct {
@@ -188,7 +189,7 @@ func (b *fakeBackend) HealthyCount(_ string) int {
 	return 0
 }
 
-func (b *fakeBackend) Admit(_ context.Context, _, _, _, _ string, maxConcurrency int) (string, WakeMethod, bool, error) {
+func (b *fakeBackend) Admit(ctx context.Context, _, _, _, _ string, maxConcurrency int) (string, WakeMethod, bool, error) {
 	// Issue #168 fan-out invariant: the HealthyCount + addTarget pair
 	// must be serialized. The fakeBackend takes b.mu for the whole
 	// call so concurrent Admit callers cannot collectively exceed
@@ -196,6 +197,7 @@ func (b *fakeBackend) Admit(_ context.Context, _, _, _, _ string, maxConcurrency
 	// under tgtMu (see pkg/gateway/pgbackend.go).
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.lastAdmitCorrelation, _ = wire.FromContext(ctx)
 	if len(b.targets) >= maxConcurrency {
 		// Already at the cap — the production semantics here are
 		// "schedule atomically refused", surfaced as atCapacity.
@@ -549,7 +551,7 @@ func TestAppsSuffixFilter(t *testing.T) {
 // response and an inbound header overrides it (lets clients thread their own
 // trace id).
 func TestRequestIDRoundTrip(t *testing.T) {
-	h, _, _ := newTestHandler(t)
+	h, backend, _ := newTestHandler(t)
 
 	// 1) No inbound header → response carries a generated 32-char hex.
 	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
@@ -559,14 +561,27 @@ func TestRequestIDRoundTrip(t *testing.T) {
 	if len(got) != 32 {
 		t.Errorf("generated rid len = %d, want 32 hex chars (got %q)", len(got), got)
 	}
+	backend.mu.Lock()
+	admittedID := backend.lastAdmitCorrelation.RequestID
+	backend.mu.Unlock()
+	if admittedID != got {
+		t.Errorf("admission request id = %q, response id = %q", admittedID, got)
+	}
 
 	// 2) Inbound header → response echoes it.
+	h, backend, _ = newTestHandler(t)
 	req = httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 	req.Header.Set("x-faas-request-id", "my-trace-id")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if got := rec.Header().Get("x-faas-request-id"); got != "my-trace-id" {
 		t.Errorf("inbound rid not echoed: got %q", got)
+	}
+	backend.mu.Lock()
+	admittedID = backend.lastAdmitCorrelation.RequestID
+	backend.mu.Unlock()
+	if admittedID != "my-trace-id" {
+		t.Errorf("caller request id changed before admission: %q", admittedID)
 	}
 }
 

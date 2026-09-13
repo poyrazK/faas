@@ -905,6 +905,9 @@ func (b *PGBackend) RecordTarget(appID string, target Target) {
 	if b == nil || appID == "" || target.InstanceID == "" || target.NodeID == "" {
 		return
 	}
+	if target.AppID == "" {
+		target.AppID = appID
+	}
 	if target.AddedAt.IsZero() {
 		target.AddedAt = time.Now()
 	}
@@ -1146,6 +1149,7 @@ func (b *PGBackend) recordAdmission(ctx context.Context, appID, deploymentID, in
 		picker.cum = []int{100}
 	}
 	set.add(Target{
+		AppID:        appID,
 		NodeID:       nodeID,
 		InstanceID:   instanceID,
 		WakeID:       wakeID,
@@ -1503,7 +1507,7 @@ func (b *PGBackend) ScheduleMirrorTarget(ctx context.Context, appID, mirrorDeplo
 		if deploymentID == "" {
 			deploymentID = mirrorDeploymentID
 		}
-		return Target{InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}, nil
+		return Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}, nil
 	}
 	instanceID, wakeID, err := sched.AdmitMirrorInstance(ctx, appID, mirrorDeploymentID, mirrorRuleID)
 	if err != nil {

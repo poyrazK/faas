@@ -656,6 +656,10 @@ type ProxyFirstByte struct {
 	InstanceID string
 	NodeID     string
 	LatencyMs  int64
+	// ProxyLatencyMs preserves the useful post-wake bridge-hop timing under a
+	// separate name; LatencyMs remains the documented acceptance-to-first-byte
+	// contract.
+	ProxyLatencyMs int64
 }
 
 // PageServed records that a browser received the short-lived wake page before
@@ -687,12 +691,13 @@ func (e ProxyFirstByte) At() time.Time    { return e.EmitAt }
 func (e ProxyFirstByte) Subject() *string { return nil }
 func (e ProxyFirstByte) Payload() map[string]any {
 	return map[string]any{
-		"wake_id":     e.WakeID,
-		"app_id":      e.AppID,
-		"request_id":  e.RequestID,
-		"instance_id": e.InstanceID,
-		"node_id":     e.NodeID,
-		"latency_ms":  e.LatencyMs,
+		"wake_id":          e.WakeID,
+		"app_id":           e.AppID,
+		"request_id":       e.RequestID,
+		"instance_id":      e.InstanceID,
+		"node_id":          e.NodeID,
+		"latency_ms":       e.LatencyMs,
+		"proxy_latency_ms": e.ProxyLatencyMs,
 	}
 }
 

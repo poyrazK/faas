@@ -75,6 +75,7 @@ type CorrelationFields struct {
 	AppID        string
 	DeploymentID string
 	InstanceID   string
+	NodeID       string
 	InvocationID string
 	TraceID      string
 	SpanID       string
@@ -205,6 +206,9 @@ func appendCorrelationAttrs(attrs []any, fields CorrelationFields) []any {
 	}
 	if fields.InstanceID != "" {
 		attrs = append(attrs, FieldInstanceID, logsanitize.Field(fields.InstanceID))
+	}
+	if fields.NodeID != "" {
+		attrs = append(attrs, "node_id", logsanitize.Field(fields.NodeID))
 	}
 	if fields.InvocationID != "" {
 		attrs = append(attrs, FieldInvocationID, logsanitize.Field(fields.InvocationID))
