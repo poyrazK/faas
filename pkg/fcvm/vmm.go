@@ -3400,6 +3400,7 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	// Jailer/firecracker must remain alive until the explicit Destroy/Kill path
 	// tears it down, otherwise a successful builder boot is killed immediately.
 	cmd := exec.Command(argv[0], argv[1:]...)
+	isolateLifecycleChild(cmd)
 	ring := v.ringFor(l.Instance)
 	consolePath := filepath.Join("/var/log/faas", "vm-"+l.Instance+".console")
 	var consoleFile *os.File
@@ -3471,6 +3472,25 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 		}
 	}()
 	return nil
+}
+
+// isolateLifecycleChild prevents jailer/firecracker from inheriting vmmd's
+// private systemd notification channel. Firecracker stays alive after the
+// boot RPC and is part of the vmmd cgroup, but it is not allowed to publish
+// READY/STOPPING/WATCHDOG state for the daemon's main process.
+func isolateLifecycleChild(cmd *exec.Cmd) {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, value := range env {
+		key, _, _ := strings.Cut(value, "=")
+		switch key {
+		case "NOTIFY_SOCKET", "WATCHDOG_PID", "WATCHDOG_USEC":
+			continue
+		default:
+			out = append(out, value)
+		}
+	}
+	cmd.Env = out
 }
 
 // provision stages the kernel and rootfs images into the chroot for the jailer

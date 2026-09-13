@@ -1,0 +1,34 @@
+---
+faas_optional_credentials:
+  - service: faas-apid
+    name: faas_host_age_identity_previous
+    source: /etc/faas/secrets/host.age.previous
+    roles: [control-plane, single-box]
+  - service: faas-apid
+    name: faas_archive_creds
+    source: /etc/faas/secrets/storage-box/archive-creds.json
+    roles: [control-plane, single-box]
+  - service: faas-meterd
+    name: faas_host_age_identity_previous
+    source: /etc/faas/secrets/host.age.previous
+    roles: [control-plane, single-box]
+  - service: faas-schedd
+    name: host.age.previous
+    source: /etc/faas/secrets/host.age.previous
+    roles: [control-plane, compute-only, single-box]
+  - service: faas-gatewayd-internal
+    name: host.age.previous
+    source: /etc/faas/secrets/host.age.previous
+    roles: [compute-only, single-box]
+  - service: faas-gatewayd-internal
+    name: faas_archive_creds
+    source: /etc/faas/secrets/storage-box/archive-creds.json
+    roles: [compute-only, single-box]
+  - service: faas-vmmd
+    name: faas_archive_creds
+    source: /etc/faas/secrets/storage-box/archive-creds.json
+    roles: [compute-only, single-box]
+  - service: faas-s3-gatewayd
+    name: faas_host_age_identity_previous
+    source: /etc/faas/secrets/host.age.previous
+    roles: [control-plane, single-box]

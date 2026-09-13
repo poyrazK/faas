@@ -25,7 +25,6 @@ Environment=FAAS_S3_GATEWAY_LISTEN_ADDR=127.0.0.1:8084
 Environment=FAAS_S3_GATEWAY_CONTROL_ADDR=127.0.0.1:9096
 Environment=FAAS_S3_GATEWAY_SPOOL_DIR=/var/spool/faas/s3-gatewayd
 LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
-LoadCredential=faas_host_age_identity_previous:-/etc/faas/secrets/host.age.previous
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

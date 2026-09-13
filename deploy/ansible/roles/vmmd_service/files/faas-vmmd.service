@@ -28,7 +28,6 @@ EnvironmentFile=-/etc/faas/otel.env
 Environment=TMPDIR=/srv/fc/base
 Environment=FAAS_HOST_AGE_RECIPIENT_PATH=/etc/faas/secrets/host.age.pub
 Environment=FAAS_LOG_ARCHIVE_CREDS_PATH=%d/faas_archive_creds
-LoadCredential=faas_archive_creds:-/etc/faas/secrets/storage-box/archive-creds.json
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

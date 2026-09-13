@@ -24,7 +24,6 @@ Environment=FAAS_BILLING_MODE=live
 Environment=FAAS_PROMETHEUS_URL=http://127.0.0.1:9095
 Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_host_age_identity
 LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
-LoadCredential=faas_host_age_identity_previous:-/etc/faas/secrets/host.age.previous
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

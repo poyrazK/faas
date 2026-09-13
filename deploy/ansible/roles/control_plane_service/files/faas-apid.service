@@ -34,9 +34,7 @@ Environment=FAAS_EXECUTION_API_ENABLED=0
 Environment=FAAS_WORKFLOWS_ENABLED=1
 LoadCredential=faas_session_key:/etc/faas/secrets/session.key
 LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
-LoadCredential=faas_host_age_identity_previous:-/etc/faas/secrets/host.age.previous
 LoadCredential=faas_host_hmac_key:/etc/faas/secrets/host.hmac.key
-LoadCredential=faas_archive_creds:-/etc/faas/secrets/storage-box/archive-creds.json
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

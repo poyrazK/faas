@@ -1,0 +1,8 @@
+---
+- name: optional_credentials — converge supported credential drop-ins
+  ansible.builtin.include_tasks: credential.yml
+  loop: "{{ faas_optional_credentials }}"
+  loop_control:
+    loop_var: faas_optional_credential
+    label: "{{ faas_optional_credential.service }}:{{ faas_optional_credential.name }}"
+  when: (faas_box_role | default('single-box')) in faas_optional_credential.roles

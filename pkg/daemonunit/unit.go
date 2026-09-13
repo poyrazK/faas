@@ -27,10 +27,10 @@ type KV struct {
 	Value string
 }
 
-// LoadCred encodes LoadCredential= (or LoadCredential= with the `:-(`
-// optional-flag for missing-toleration on rotation overlap; see
-// pkg/secretbox). When Optional is true, the rendered directive is
-// `LoadCredential=<name>:-<path>`; otherwise `LoadCredential=<name>:<path>`.
+// LoadCred encodes a systemd credential source. Optional credentials are
+// deployment metadata: Unit.Render omits them from the base unit and the
+// provisioner installs a normal name:path directive in a drop-in only while
+// the source exists. systemd has no name:-path optional-source syntax.
 type LoadCred struct {
 	Name     string
 	Path     string
@@ -230,13 +230,12 @@ func (u Unit) Render() []byte {
 		buf.WriteByte('\n')
 	}
 	for _, cred := range u.LoadCredential {
+		if cred.Optional {
+			continue
+		}
 		buf.WriteString("LoadCredential=")
 		buf.WriteString(cred.Name)
-		if cred.Optional {
-			buf.WriteString(":-")
-		} else {
-			buf.WriteByte(':')
-		}
+		buf.WriteByte(':')
 		buf.WriteString(cred.Path)
 		buf.WriteByte('\n')
 	}
@@ -589,23 +588,17 @@ func splitOrEmpty(s string) []string {
 	return strings.Fields(s)
 }
 
-// parseLoadCred parses the value side of a LoadCredential= directive:
-// `<name>:<path>` or `<name>:-<path>`. Returns an error on missing colon.
+// parseLoadCred parses the value side of a LoadCredential= directive.
 func parseLoadCred(s string) (LoadCred, error) {
-	// Optional-flag form is `name:-path`; the colon-IN-path character
-	// is rare on our credential paths (all are /etc/faas/secrets/*
-	// today), so a single split on the first `:` is correct.
 	i := strings.IndexByte(s, ':')
 	if i < 0 {
 		return LoadCred{}, fmt.Errorf("missing ':' in LoadCredential value")
 	}
 	name, rest := s[:i], s[i+1:]
-	optional := false
 	if strings.HasPrefix(rest, "-") {
-		optional = true
-		rest = rest[1:]
+		return LoadCred{}, fmt.Errorf("unsupported optional credential source %q", rest)
 	}
-	return LoadCred{Name: name, Path: rest, Optional: optional}, nil
+	return LoadCred{Name: name, Path: rest}, nil
 }
 
 // parseYes normalises a "yes" / "no" / "true" / "false" / "on" / "off"
@@ -762,13 +755,10 @@ func envFmt(b []KV) string {
 func loadFmt(b []LoadCred) string {
 	parts := make([]string, 0, len(b))
 	for _, c := range b {
-		opt := ""
 		if c.Optional {
-			opt = ":-"
-		} else {
-			opt = ":"
+			continue
 		}
-		parts = append(parts, c.Name+opt+c.Path)
+		parts = append(parts, c.Name+":"+c.Path)
 	}
 	slices.Sort(parts)
 	return strings.Join(parts, ",")

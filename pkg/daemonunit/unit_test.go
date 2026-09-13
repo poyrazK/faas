@@ -2,6 +2,10 @@ package daemonunit
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -31,10 +35,7 @@ func TestRender_BasicSectionOrder(t *testing.T) {
 	}
 }
 
-// TestRender_LoadCredentialOptionalFlag is the load-bearing pattern for
-// apid's rotation overlap (issue #316 / ADR-057). The OutputOptional
-// LoadCred renders `name:-path` (the missing-file-tolerant form).
-func TestRender_LoadCredentialOptionalFlag(t *testing.T) {
+func TestRender_OmitsOptionalCredentialFromBaseUnit(t *testing.T) {
 	u := Unit{
 		Type:      "simple",
 		ExecStart: "/bin/true",
@@ -47,8 +48,52 @@ func TestRender_LoadCredentialOptionalFlag(t *testing.T) {
 	if !strings.Contains(got, "LoadCredential=faas_session_key:/etc/faas/secrets/session.key\n") {
 		t.Errorf("LoadCredential colon form missing\n%s", got)
 	}
-	if !strings.Contains(got, "LoadCredential=faas_host_age_identity_previous:-/etc/faas/secrets/host.age.previous\n") {
-		t.Errorf("LoadCredential optional-flag (:-) form missing\n%s", got)
+	if strings.Contains(got, "faas_host_age_identity_previous") || strings.Contains(got, ":-") {
+		t.Errorf("optional credential leaked into base unit\n%s", got)
+	}
+}
+
+func TestDecodeRejectsUnsupportedOptionalCredentialSyntax(t *testing.T) {
+	_, err := Decode([]byte("[Service]\nLoadCredential=previous:-/etc/secret\n"))
+	if err == nil || !strings.Contains(err.Error(), "unsupported optional credential") {
+		t.Fatalf("Decode error = %v, want unsupported optional credential", err)
+	}
+}
+
+func TestOptionalCredentialUnitsVerifyOnProductionSystemd(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd-analyze is exercised by Linux CI")
+	}
+	systemdAnalyze, err := exec.LookPath("systemd-analyze")
+	if err != nil {
+		t.Skip("systemd-analyze not installed")
+	}
+	for _, present := range []bool{false, true} {
+		t.Run(map[bool]string{false: "absent", true: "present"}[present], func(t *testing.T) {
+			dir := t.TempDir()
+			unitPath := filepath.Join(dir, "faas-credential-probe.service")
+			unit := Unit{Description: "credential syntax probe", Type: "oneshot", ExecStart: "/bin/true", LoadCredential: []LoadCred{{Name: "optional", Path: filepath.Join(dir, "source"), Optional: true}}}
+			if err := os.WriteFile(unitPath, unit.Render(), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if present {
+				source := filepath.Join(dir, "source")
+				if err := os.WriteFile(source, []byte("secret"), 0o400); err != nil {
+					t.Fatal(err)
+				}
+				dropInDir := unitPath + ".d"
+				if err := os.Mkdir(dropInDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				body := "[Service]\nLoadCredential=optional:" + source + "\n"
+				if err := os.WriteFile(filepath.Join(dropInDir, "40-credential.conf"), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if output, err := exec.Command(systemdAnalyze, "verify", unitPath).CombinedOutput(); err != nil {
+				t.Fatalf("systemd-analyze verify: %v\n%s", err, output)
+			}
+		})
 	}
 }
 
@@ -255,7 +300,6 @@ func TestDecode_RoundTripBasic(t *testing.T) {
 		LoadCredential: []LoadCred{
 			{Name: "faas_session_key", Path: "/etc/faas/secrets/session.key"},
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
-			{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 		},
 		NoNewPrivileges:       true,
 		ProtectSystem:         "strict",

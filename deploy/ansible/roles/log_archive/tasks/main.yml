@@ -15,10 +15,8 @@
 #   2. Creates the local spool roots /var/log/faas/archive and
 #      /var/log/faas/vmmd-archive (faas:faas, 0750) so both
 #      shippers have somewhere to retain files before upload. Spec §11.
-#   3. Removes the legacy gatewayd-internal archive drop-in. The
-#      gatewayd-internal base unit now owns the optional credential
-#      declaration, keeping the source of truth independent of whether
-#      the operator has provisioned the envelope yet.
+#   3. Removes the legacy gatewayd-internal archive drop-in. The shared
+#      optional_credentials role owns conditional projection for every daemon.
 #
 # What this role does NOT do (and why):
 #   * No cron purge unit — the apid shipper's PurgeInterval
@@ -145,9 +143,9 @@
     fail_msg: "/var/log/faas/vmmd-archive must be 0750 or tighter, faas:faas"
   when: log_archive_vmmd_spool_stat.stat.exists
 
-# The gatewayd-internal base unit owns the optional LoadCredential= line.
-# Remove the old role-owned drop-in from previously provisioned hosts so
-# there is one source of truth and no duplicate credential declarations.
+# Remove the old role-owned drop-in from previously provisioned hosts. The
+# optional_credentials role installs a supported directive only when the
+# source exists.
 - name: log_archive — remove legacy gateway archive drop-in
   ansible.builtin.file:
     path: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-log-archive.conf
