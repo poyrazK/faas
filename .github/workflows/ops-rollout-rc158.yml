@@ -1,0 +1,30 @@
+name: ops-rollout-rc158
+
+on:
+  push:
+    branches: [ops/rollout-v0.1.18-rc.158]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  control:
+    name: Control-plane stage
+    uses: ./.github/workflows/cd-controlplane.yml
+    with:
+      release_tag: v0.1.18-rc.158
+    secrets: inherit
+
+  compute:
+    name: SSD compute stage
+    needs: control
+    uses: ./.github/workflows/cd-compute.yml
+    with:
+      release_tag: v0.1.18-rc.158
+      node: fsn-2
+      ssh_host: fsn-2.gregale.dev
+      ssh_user: poyrazk
+      ssh_port: "22"
+      ssh_host_key_sha256: SHA256:MNB2EVedu2irkA49+qL6f1VmtP5H2rDub29d56yGE8M
+    secrets: inherit
