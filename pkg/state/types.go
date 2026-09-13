@@ -2213,7 +2213,7 @@ type StageStateItem struct {
 	StartedAt  *time.Time `json:"started_at"`
 	EndedAt    *time.Time `json:"ended_at"`
 	DurationMs int64      `json:"duration_ms"`
-	Status     string     `json:"status"` // "completed" | "failed"
+	Status     string     `json:"status"` // "completed" | "failed" | "cancelled"
 	Reason     string     `json:"reason,omitempty"`
 }
 

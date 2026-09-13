@@ -14,6 +14,7 @@ package state_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -82,6 +83,20 @@ func TestPg_CancelDeploymentTx_Pending_Happy(t *testing.T) {
 	}
 	if got.CancelReason != string(state.CancelReasonUser) {
 		t.Errorf("CancelReason = %q, want %q", got.CancelReason, string(state.CancelReasonUser))
+	}
+	if got.TrafficPercent != 0 || got.RolloutState != "aborted" || got.RolloutAbortedAt == nil || got.RolloutCompletedAt != nil {
+		t.Errorf("cancelled release state = traffic %d rollout %q aborted_at %v completed_at %v",
+			got.TrafficPercent, got.RolloutState, got.RolloutAbortedAt, got.RolloutCompletedAt)
+	}
+	var stages state.StageState
+	if err := json.Unmarshal(got.StageState, &stages); err != nil {
+		t.Fatalf("decode stage state: %v", err)
+	}
+	if stages.Current != "" || stages.CurrentStartedAt != nil {
+		t.Errorf("cancelled stage still active: %+v", stages)
+	}
+	if len(stages.History) != 1 || stages.History[0].Status != "cancelled" {
+		t.Errorf("cancelled stage history = %+v, want one cancelled entry", stages.History)
 	}
 	// pending deployments with no in-flight builds cascade to nothing.
 	if len(cascaded) != 0 {

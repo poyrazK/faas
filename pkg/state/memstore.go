@@ -6525,6 +6525,9 @@ func (m *MemStore) MarkDeploymentCancelled(_ context.Context, id, principal stri
 	d.CancelledAt = &when
 	d.CancelledByPrincipal = principal
 	d.CancelReason = string(reason)
+	if err := finalizeCancelledDeploymentState(&d, when, reason); err != nil {
+		return err
+	}
 	m.deployments[id] = d
 	return nil
 }
@@ -6558,6 +6561,9 @@ func (m *MemStore) CancelDeploymentTx(ctx context.Context, id, principal string,
 	d.CancelledAt = &now
 	d.CancelledByPrincipal = principal
 	d.CancelReason = string(reason)
+	if err := finalizeCancelledDeploymentState(&d, now, reason); err != nil {
+		return Deployment{}, nil, fmt.Errorf("CancelDeploymentTx: %w", err)
+	}
 	m.deployments[id] = d
 	// Cascade-cancel any non-terminal build rows attached to
 	// this deployment. Mirrors pgstore.CancelDeploymentTx.
