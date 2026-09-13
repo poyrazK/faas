@@ -1803,7 +1803,7 @@ paths:
                 throttled_total: 23
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/account/export:
@@ -4231,7 +4231,7 @@ paths:
                 throttled_total: 0
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -12235,7 +12235,7 @@ paths:
                     wake_p95_ms: 380.2
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/invocations/{id}:
@@ -13074,12 +13074,12 @@ paths:
                   - at: "2026-07-25T13:25:01.220Z"
                     kind: wake.proxy_first_byte
                     actor: egress
-                    data: { wake_id: "abcdef01-2345-6789-abcd-ef0123456789", app_id: "0123456789abcdef0123456789abcdef", request_id: "r-1", instance_id: "inst-1", node_id: "node-1", latency_ms: 40 }
+                    data: { wake_id: "abcdef01-2345-6789-abcd-ef0123456789", app_id: "0123456789abcdef0123456789abcdef", request_id: "r-1", instance_id: "inst-1", node_id: "node-1", latency_ms: 1097, proxy_latency_ms: 40 }
         '400':
           description: Malformed query parameter on the wake-timeline read — `since` not RFC 3339 or `limit` out of range.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
         '404':
           description: No such app (slug) or wake_id is unknown.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
@@ -28086,6 +28086,12 @@ components:
 
     PaymentRequired:
       description: 'code: billing_past_due — account is suspended; pay invoice to resume.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanPerAppMetricsNotAllowed:
+      description: 'code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
