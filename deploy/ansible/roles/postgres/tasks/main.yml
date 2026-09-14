@@ -285,7 +285,7 @@
   ansible.builtin.lineinfile:
     path: "{{ postgres_config_dir }}/postgresql.conf"
     regexp: "^#?archive_command\\s*="
-    line: "archive_command = 'if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx ''[{{ off_host_backup_remote | default('offhostbox', true) }}]'' /var/lib/pgsql/backup-rclone.conf; then rclone copyto /var/lib/pgsql/archive/%f \"{{ off_host_backup_remote | default('offhostbox', true) }}:{{ off_host_backup_wal_path | default('faas-pg-wal', true) }}/%f\" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet || echo \"off-host WAL push failed for %f\" >&2; fi; exit 0'"
+    line: "archive_command = 'if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx ''[{{ off_host_backup_remote | default('offhostbox', true) }}]'' /var/lib/pgsql/backup-rclone.conf; then /usr/local/lib/faas/faas-rclone-backup-identity.py copyto /var/lib/pgsql/archive/%f \"{{ off_host_backup_remote | default('offhostbox', true) }}:{{ off_host_backup_wal_path | default('faas-pg-wal', true) }}/%f\" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet || echo \"off-host WAL push failed for %f\" >&2; fi; exit 0'"
     create: false
   register: pg_archive_cmd
   failed_when: false

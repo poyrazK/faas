@@ -121,12 +121,37 @@ ensure_project_role() {
   fi
 }
 
-bucket_has_role() {
-  local member="$1" role="$2"
-  gcloud storage buckets get-iam-policy "gs://$backup_bucket" \
+service_account_has_role() {
+  local resource="$1" member="$2" role="$3"
+  gcloud iam service-accounts get-iam-policy "$resource" --project="$project" \
     --flatten='bindings[].members' \
     --filter="bindings.role=$role AND bindings.members=$member" \
     --format='value(bindings.role)' | grep -Fqx "$role"
+}
+
+ensure_service_account_role() {
+  local resource="$1" member="$2" role="$3"
+  service_account_has_role "$resource" "$member" "$role" \
+    || run gcloud iam service-accounts add-iam-policy-binding "$resource" --project="$project" \
+      --member="$member" --role="$role" --quiet
+}
+
+remove_service_account_role() {
+  local resource="$1" member="$2" role="$3"
+  service_account_has_role "$resource" "$member" "$role" \
+    && run gcloud iam service-accounts remove-iam-policy-binding "$resource" --project="$project" \
+      --member="$member" --role="$role" --quiet
+  return 0
+}
+
+bucket_has_role() {
+  local member="$1" role="$2"
+  gcloud storage buckets get-iam-policy "gs://$backup_bucket" --format=json \
+    | python3 -c 'import json,sys
+member, role = sys.argv[1:]
+policy = json.load(sys.stdin)
+raise SystemExit(0 if any(row.get("role") == role and member in row.get("members", []) for row in policy.get("bindings", [])) else 1)' \
+      "$member" "$role"
 }
 
 ensure_bucket_role() {
@@ -315,10 +340,11 @@ access_phase() {
 }
 
 identity_phase() {
-  [[ "$apply" == 0 || "${GCLOUD_IDENTITY_CUTOVER_VERIFIED:-}" == 1 ]] || {
-    echo "refusing identity cutover: set GCLOUD_IDENTITY_CUTOVER_VERIFIED=1 after draining one node at a time" >&2
+  [[ "$apply" == 0 || ("${GCLOUD_IDENTITY_CUTOVER_VERIFIED:-}" == 1 && "${GCLOUD_BACKUP_IMPERSONATION_VERIFIED:-}" == 1) ]] || {
+    echo "refusing identity cutover: set GCLOUD_IDENTITY_CUTOVER_VERIFIED=1 and GCLOUD_BACKUP_IMPERSONATION_VERIFIED=1 after the runbook checks" >&2
     return 1
   }
+  enable_api iamcredentials.googleapis.com
   ensure_service_account gregale-compute 'Gregale compute node'
   ensure_service_account gregale-control 'Gregale control plane'
   ensure_service_account gregale-backup 'Gregale append-only backup writer'
@@ -337,10 +363,7 @@ identity_phase() {
   fi
   ensure_bucket_role "serviceAccount:$backup_sa" "$backup_role"
   ensure_bucket_role "serviceAccount:$restore_sa" roles/storage.objectViewer
-  for account in "811654175645-compute@developer.gserviceaccount.com" "$compute_sa"; do
-    remove_bucket_role "serviceAccount:$account" roles/storage.objectAdmin
-  done
-  remove_bucket_role "serviceAccount:$backup_sa" roles/storage.objectAdmin
+  ensure_service_account_role "$backup_sa" "serviceAccount:$control_sa" roles/iam.serviceAccountTokenCreator
 
   local name zone desired original_status
   while read -r name zone; do
@@ -357,6 +380,16 @@ identity_phase() {
       run gcloud compute instances start "$name" --project="$project" --zone="$zone" --quiet
     fi
   done < <(fleet_instances)
+
+  # Remove destructive storage access only after the release-current control
+  # identity is attached.  The backup helper then mints one-hour tokens for
+  # the append-only writer; compute identities never receive bucket access.
+  local default_compute_sa='811654175645-compute@developer.gserviceaccount.com'
+  for account in "$default_compute_sa" "$compute_sa"; do
+    remove_bucket_role "serviceAccount:$account" roles/storage.objectAdmin
+  done
+  remove_bucket_role "serviceAccount:$backup_sa" roles/storage.objectAdmin
+  remove_service_account_role "$backup_sa" "serviceAccount:$default_compute_sa" roles/iam.serviceAccountTokenCreator
 }
 
 budget_phase() {

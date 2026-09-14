@@ -45,6 +45,7 @@
   "backup": {
     "bucket": "gregale-pg-backups-5ae37259",
     "writer_service_account": "gregale-backup@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com",
+    "impersonator_service_account": "gregale-control@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com",
     "writer_role": "projects/project-5ae37259-04cf-4070-bef/roles/gregaleBackupWriter",
     "forbidden_service_accounts": [
       "811654175645-compute@developer.gserviceaccount.com",

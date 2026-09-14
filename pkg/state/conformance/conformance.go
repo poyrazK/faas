@@ -71,6 +71,7 @@ func Run(t *testing.T, open Open) {
 		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
 		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
+		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 	}
@@ -78,6 +79,35 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testSnapshotDeleteIntent(t *testing.T, fx *Fixture) {
+	snapshot, err := fx.Store.CreateSnapshot(fx.Ctx, state.Snapshot{
+		DeploymentID: fx.Deployment.ID,
+		FCVersion:    "1.10.0",
+		MemBytes:     64 << 20,
+		DiskBytes:    8 << 20,
+		StorageKey:   state.SnapMemKey(fx.Deployment.ID) + "/delete-conformance",
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	if pending, err := fx.Store.ListSnapshotsPendingDelete(fx.Ctx); err != nil || len(pending) != 0 {
+		t.Fatalf("ListSnapshotsPendingDelete(initial) = (%+v, %v), want empty", pending, err)
+	}
+	if changed, err := fx.Store.MarkOldSnapshotsStale(fx.Ctx, []string{snapshot.ID}); err != nil || changed != 1 {
+		t.Fatalf("MarkOldSnapshotsStale = (%d, %v), want (1, nil)", changed, err)
+	}
+	pending, err := fx.Store.ListSnapshotsPendingDelete(fx.Ctx)
+	if err != nil || len(pending) != 1 || pending[0].ID != snapshot.ID || !pending[0].Stale || !pending[0].DeletePending {
+		t.Fatalf("ListSnapshotsPendingDelete(marked) = (%+v, %v), want one durable tombstone", pending, err)
+	}
+	if deleted, err := fx.Store.DeleteSnapshotsByID(fx.Ctx, []string{snapshot.ID}); err != nil || deleted != 1 {
+		t.Fatalf("DeleteSnapshotsByID = (%d, %v), want (1, nil)", deleted, err)
+	}
+	if pending, err := fx.Store.ListSnapshotsPendingDelete(fx.Ctx); err != nil || len(pending) != 0 {
+		t.Fatalf("ListSnapshotsPendingDelete(deleted) = (%+v, %v), want empty", pending, err)
 	}
 }
 

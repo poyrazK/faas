@@ -126,20 +126,31 @@ account. Keep one release-current compute node admitted while changing the
 other, drain it, and verify a snapshot restore on the changed node before
 moving on. The control-plane change requires a maintenance window.
 
-The custom backup writer role contains only object create/get/list. It supports
-`rclone copy` plus byte verification while preventing deletion and IAM changes.
-`gregale-backup-restore` receives read-only object access. Retention remains a
-bucket lifecycle responsibility.
+The custom backup writer role contains only object create/get/list. The control
+plane uses its attached `gregale-control` identity to mint one-hour tokens for
+`gregale-backup`; no service-account key is stored on the host. The installed
+`faas-rclone-backup-identity.py` helper injects that token only into rclone
+processes using an env-auth GCS remote. `gregale-backup-restore` receives
+read-only object access. Retention remains a bucket lifecycle responsibility.
 
 ```sh
 bash scripts/ops/gcp_public_beta_converge.sh --phase identity
-GCLOUD_IDENTITY_CUTOVER_VERIFIED=1 \
+GCLOUD_IDENTITY_CUTOVER_VERIFIED=1 GCLOUD_BACKUP_IMPERSONATION_VERIFIED=1 \
   bash scripts/ops/gcp_public_beta_converge.sh --phase identity --apply
 
 systemctl start faas-pg-basebackup.service
 systemctl start faas-pg-basebackup-push.service
 deploy/scripts/pg-restore-verify.sh
 ```
+
+Before setting `GCLOUD_BACKUP_IMPERSONATION_VERIFIED=1`, deploy the release
+that installs `/usr/local/lib/faas/faas-rclone-backup-identity.py`, temporarily
+grant the currently attached control-plane identity Token Creator on
+`gregale-backup`, and run both an rclone list and a disposable object
+copy/check through the helper as `postgres`. Remove the temporary binding after
+the check. The identity phase grants the permanent binding only to
+`gregale-control`, changes the VM identities, and removes the legacy bucket
+administrator and temporary impersonation grants last.
 
 Do not change both compute identities in one outage window. The script prints
 the exact rolling operations in dry-run mode; execute the phase per node if the

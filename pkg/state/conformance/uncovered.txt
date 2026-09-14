@@ -205,7 +205,6 @@ DeleteOIDCExchangedToken
 DeleteOldEvents
 DeleteOldLoginTokens
 DeleteProject
-DeleteSnapshotsByID
 DeleteSnapshotsStaleOlderThan
 DeleteTenantHostname
 DeleteTenantSurface
@@ -488,7 +487,6 @@ MarkDunningStep
 MarkFireNowRequestFailed
 MarkFireNowRequestSucceeded
 MarkMFAEnrolled
-MarkOldSnapshotsStale
 MarkOperatorIntentFailed
 MarkOperatorIntentSucceeded
 MarkRuntimeConfigApplied

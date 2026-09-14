@@ -624,7 +624,10 @@ func (o *OCIRegistryStorageBackend) Delete(ctx context.Context, key string) erro
 		if errors.Is(err, ErrDeleteUnsupported) {
 			o.deleteUnsupported.Store(true)
 			if fallbackErr := o.deleteGitHubPackageVersion(ctx, repo, tag); fallbackErr != nil {
-				return fmt.Errorf("storage: oci delete %q: registry delete unsupported: %v; github packages fallback: %w", key, err, fallbackErr)
+				return fmt.Errorf("storage: oci delete %q: %w", key, errors.Join(
+					fmt.Errorf("registry delete unsupported: %w", err),
+					fmt.Errorf("github packages fallback: %w", fallbackErr),
+				))
 			}
 			return nil
 		}
@@ -725,7 +728,7 @@ func (o *OCIRegistryStorageBackend) deleteGitHubPackageVersion(ctx context.Conte
 	if err != nil {
 		return fmt.Errorf("delete package version: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		return fmt.Errorf("delete package version returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))

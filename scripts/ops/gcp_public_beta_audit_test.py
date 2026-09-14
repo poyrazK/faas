@@ -116,6 +116,14 @@ def healthy_snapshot() -> dict:
                 }
             ]
         },
+        "backup_service_account_iam": {
+            "bindings": [
+                {
+                    "role": "roles/iam.serviceAccountTokenCreator",
+                    "members": [f"serviceAccount:{POLICY['backup']['impersonator_service_account']}"],
+                }
+            ]
+        },
         "default_log_bucket": {"retentionDays": POLICY["audit_logs"]["minimum_retention_days"]},
         "alert_policies": [
             {
@@ -173,6 +181,7 @@ class AuditTest(unittest.TestCase):
                 ],
             }
         )
+        snap["backup_service_account_iam"]["bindings"] = []
         snap["alert_policies"] = []
         snap["budgets"] = {"_error": "permission denied"}
 
@@ -188,6 +197,7 @@ class AuditTest(unittest.TestCase):
             "roles/logging.logWriter missing",
             "backup bucket grants access to compute identity",
             "backup writer retains destructive roles/storage.objectAdmin",
+            "control-plane identity cannot mint short-lived backup writer tokens",
             "storage.googleapis.com: audit logs missing",
             "enabled alert policy is missing",
             "billing budgets cannot be audited",

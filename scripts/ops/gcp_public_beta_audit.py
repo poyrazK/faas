@@ -85,6 +85,10 @@ def collect(policy: dict[str, Any]) -> dict[str, Any]:
         "firewalls": gcloud("compute", "firewall-rules", "list", "--project", project),
         "project_iam": gcloud("projects", "get-iam-policy", project),
         "backup_iam": gcloud("storage", "buckets", "get-iam-policy", f"gs://{bucket}", allow_error=True),
+        "backup_service_account_iam": gcloud(
+            "iam", "service-accounts", "get-iam-policy", policy["backup"]["writer_service_account"],
+            "--project", project, allow_error=True,
+        ),
         "default_log_bucket": gcloud(
             "logging", "buckets", "describe", "_Default", "--location", "global", "--project", project,
             allow_error=True,
@@ -312,6 +316,21 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
         for role in ("roles/storage.objectAdmin", "roles/storage.admin"):
             if writer in role_members(backup_iam, role):
                 failures.append(f"backup writer retains destructive {role}")
+
+    backup_sa_iam = snap.get("backup_service_account_iam", {})
+    if backup_sa_iam.get("_error"):
+        failures.append(f"backup service-account IAM cannot be audited: {backup_sa_iam['_error']}")
+    else:
+        impersonator = f"serviceAccount:{policy['backup']['impersonator_service_account']}"
+        token_creators = role_members(backup_sa_iam, "roles/iam.serviceAccountTokenCreator")
+        if impersonator not in token_creators:
+            failures.append("control-plane identity cannot mint short-lived backup writer tokens")
+        forbidden_impersonators = {
+            f"serviceAccount:{account}" for account in policy["backup"]["forbidden_service_accounts"]
+        }
+        unexpected = token_creators & forbidden_impersonators
+        if unexpected:
+            failures.append(f"compute identity can impersonate backup writer: {', '.join(sorted(unexpected))}")
 
     audit_configs = {entry.get("service"): entry for entry in project_iam.get("auditConfigs", [])}
     all_services = audit_configs.get("allServices", {})

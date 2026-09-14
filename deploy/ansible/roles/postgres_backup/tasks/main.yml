@@ -159,6 +159,14 @@
     group: root
     mode: "0755"
 
+- name: postgres_backup — install keyless GCS backup identity helper
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../scripts/faas-rclone-backup-identity.py"
+    dest: /usr/local/lib/faas/faas-rclone-backup-identity.py
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: postgres_backup — drop WAL prune service
   ansible.builtin.copy:
     src: "{{ role_path }}/../../../systemd/faas-pg-wal-prune.service"
@@ -195,6 +203,7 @@
       [Service]
       Environment=OFF_HOST_BACKUP_REMOTE={{ off_host_backup_remote }}
       Environment=OFF_HOST_BACKUP_WAL_PATH={{ off_host_backup_wal_path }}
+      Environment=FAAS_RCLONE_BIN=/usr/local/lib/faas/faas-rclone-backup-identity.py
   notify: daemon-reload postgres_backup
 
 # Issue #250 (review F3): rclone copyto / rclone sync do NOT
