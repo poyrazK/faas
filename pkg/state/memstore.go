@@ -8790,7 +8790,7 @@ func (m *MemStore) ListCustomDomainsForDoctorBatch(_ context.Context, limit int)
 	type candidate struct {
 		domain, account string
 		observed        time.Time
-		accountRank    int
+		accountRank     int
 	}
 	seen := make(map[string]struct{})
 	items := make([]candidate, 0, len(m.domains)+len(m.tenantHostnames))

@@ -7,4 +7,3 @@ faas_gcp_ops_agent_enabled: >-
 faas_gcp_ops_agent_key_url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
 faas_gcp_ops_agent_key_sha256: 3ecc63922b7795eb23fdc449ff9396f9114cb3cf186d6f5b53ad4cc3ebfbb11f
 faas_gcp_ops_agent_keyring: /usr/share/keyrings/google-cloud-ops-agent.gpg
-
