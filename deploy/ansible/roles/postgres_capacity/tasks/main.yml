@@ -25,21 +25,12 @@
 - name: postgres capacity — preserve a larger existing postmaster ceiling
   ansible.builtin.set_fact:
     postgres_capacity_max_connections: >-
-      {{ [
-      (postgres_capacity_computed_max_connections | int),
-      (postgres_capacity_current_max.stdout | trim | int)
-      ] | max }}
+      {{ [(postgres_capacity_computed_max_connections | int), (postgres_capacity_current_max.stdout | trim | int)] | max }}
 
 - name: postgres capacity — derive the control-plane RAM floor
   ansible.builtin.set_fact:
     postgres_capacity_min_memory_mb: >-
-      {{ [
-      (faas_postgres_small_fleet_min_memory_mb | int),
-      ((faas_postgres_small_fleet_min_memory_mb | int)
-      + ([0, ((postgres_capacity_max_connections | int)
-      - (faas_postgres_small_fleet_connections | int))] | max)
-      * (faas_postgres_incremental_connection_memory_mb | int))
-      ] | max }}
+      {{ [(faas_postgres_small_fleet_min_memory_mb | int), ((faas_postgres_small_fleet_min_memory_mb | int) + ([0, ((postgres_capacity_max_connections | int) - (faas_postgres_small_fleet_connections | int))] | max) * (faas_postgres_incremental_connection_memory_mb | int))] | max }}
 
 - name: postgres capacity — validate the fleet budget and host memory
   ansible.builtin.assert:

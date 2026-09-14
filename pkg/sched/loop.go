@@ -1687,6 +1687,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	case db.NotifyDeploymentChanged:
 		var p struct {
 			DeploymentID string `json:"deployment_id"`
+			AppID        string `json:"app_id"`
 			To           string `json:"to"`
 			Status       string `json:"status"`
 		}
@@ -1700,6 +1701,17 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			deploymentID = p.To
 		}
 		if deploymentID != "" && p.Status != "" {
+			if p.Status == string(state.DeploySuperseded) {
+				// Stable cutovers and rollbacks retire the old deployment
+				// atomically in Postgres, but its already-hot request/function
+				// instances are still owned by schedd. Drain them before the
+				// next request sees the new live revision; otherwise a Free
+				// one-instance plan can return plan_limit_concurrency.
+				go func(id string) {
+					reconcileCtx := context.WithoutCancel(ctx)
+					l.engine.drainDeploymentInstances(reconcileCtx, id, true)
+				}(deploymentID)
+			}
 			// Live activates the new mode. Failed/superseded/cancelled signals
 			// drain a worker that may have proved readiness immediately before
 			// activation failed, while preserving the prior live generation.

@@ -2,6 +2,7 @@ package sched
 
 import (
 	goruntime "runtime"
+	"sync/atomic"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -23,13 +24,17 @@ import (
 // snapDir is the snapshot blob directory root (spec §8). Held as a var so
 // tests in pkg/imaged can override it via SetSnapDirForTesting; production
 // never mutates it.
-var snapDir = "/srv/fc/snap"
+var snapDir atomic.Value // stores string; kept as a seam for legacy tests
+
+func init() {
+	snapDir.Store("/srv/fc/snap")
+}
 
 // SnapDir returns the per-deployment snapshot blob directory root. imaged
 // uses this for F5 filesystem cleanup (delete the snap dir when a deployment
 // falls out of the bounded rollback retention window or when its app is
 // soft-deleted).
-func SnapDir() string { return snapDir }
+func SnapDir() string { return snapDir.Load().(string) }
 
 // baseKey returns the StorageBackend key for the drive0 shared base
 // rootfs for an app's runtime. Function apps (runtime set) boot the

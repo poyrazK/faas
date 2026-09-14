@@ -116,4 +116,9 @@ func TestComputeOnlyScheddUsesRemoteDatabaseUnit(t *testing.T) {
 	if !strings.Contains(string(tasks), "src: faas-schedd.service") {
 		t.Fatalf("compute-only role must install its local remote-DB schedd unit")
 	}
+	if !strings.Contains(string(tasks), "stop inherited local PostgreSQL services") ||
+		!strings.Contains(string(tasks), "mask inherited PostgreSQL units") ||
+		!strings.Contains(string(tasks), "/var/lib/postgresql.disabled") {
+		t.Fatalf("compute-only role must stop, mask, and archive inherited local PostgreSQL before daemon activation")
+	}
 }

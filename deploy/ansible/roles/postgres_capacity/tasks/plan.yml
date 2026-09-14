@@ -35,11 +35,7 @@
 - name: postgres capacity plan — derive the ordinary-client ceiling
   ansible.builtin.set_fact:
     postgres_capacity_ordinary_connections: >-
-      {{ [
-      ((((postgres_capacity_steady_pool_budget | int) * 4) + 2) // 3),
-      ((postgres_capacity_rollout_pool_budget | int)
-      + (faas_postgres_min_operator_headroom | int))
-      ] | max }}
+      {{ [((((postgres_capacity_steady_pool_budget | int) * 4) + 2) // 3), ((postgres_capacity_rollout_pool_budget | int) + (faas_postgres_min_operator_headroom | int))] | max }}
 
 - name: postgres capacity plan — round the postmaster ceiling up to ten
   ansible.builtin.set_fact:

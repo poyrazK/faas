@@ -85,8 +85,12 @@ type snapshotLister interface {
 // Constructor injection pattern mirrors Retention and Heartbeat in
 // this package.
 type DiskDrift struct {
-	store   snapshotLister
-	log     *slog.Logger
+	store snapshotLister
+	log   *slog.Logger
+	// snapDir is injected for hermetic sweeps. Production leaves it empty and
+	// resolves the process default through SnapDir(); tests must not mutate a
+	// package-global path while other scheduler tests run in parallel.
+	snapDir string
 	now     func() time.Time
 	timeout time.Duration
 	// metrics may be nil; SnapshotDiskDrift() is itself nil-safe so
@@ -100,6 +104,21 @@ type DiskDrift struct {
 	// snapshotIndexer upgrades OCI repositories created before the durable
 	// registry-side index existed. It is nil for ordinary local storage.
 	snapshotIndexer storage.SnapshotRepositoryIndexer
+}
+
+// WithSnapDir sets the on-disk snapshot root used by this sweep. It is
+// intended for tests and local diagnostics; production normally relies on the
+// canonical /srv/fc/snap default returned by SnapDir().
+func (d *DiskDrift) WithSnapDir(root string) *DiskDrift {
+	d.snapDir = strings.TrimSpace(root)
+	return d
+}
+
+func (d *DiskDrift) snapshotRoot() string {
+	if d.snapDir != "" {
+		return d.snapDir
+	}
+	return SnapDir()
 }
 
 // DefaultDiskDriftTickTimeout bounds the per-tick wall-clock cost of
@@ -255,7 +274,7 @@ func (d *DiskDrift) Tick(ctx context.Context) (int, error) {
 		return d.tickWithStorage(ctx, expected, rows)
 	}
 
-	root := SnapDir()
+	root := d.snapshotRoot()
 	diskDirs, err := os.ReadDir(root)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -350,7 +369,7 @@ func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]sta
 		}
 		if err := d.snapshotIndexer.ReconcileSnapshotRepositoryIndex(ctx, deploymentIDs); err != nil {
 			d.log.Warn("disk-drift: snapshot repository index reconciliation failed; falling back to disk read",
-				"err", err, "snap_dir", SnapDir())
+				"err", err, "snap_dir", d.snapshotRoot())
 			return d.tickOnDiskFallback(ctx, expected, rows)
 		}
 	}
@@ -372,7 +391,7 @@ func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]sta
 	}
 	if err != nil {
 		d.log.Warn("disk-drift: storage.List failed; falling back to disk read",
-			"err", err, "snap_dir", SnapDir())
+			"err", err, "snap_dir", d.snapshotRoot())
 		// Fall through to the on-disk path so a transient registry
 		// outage doesn't silence the sweep.
 		return d.tickOnDiskFallback(ctx, expected, rows)
@@ -441,7 +460,7 @@ func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]sta
 // is the per-row os.ReadDir error path (and the "(fallback)"
 // log suffix in the discrepancies emission).
 func (d *DiskDrift) tickOnDiskFallback(ctx context.Context, expected map[string]state.SnapshotForGC, rows []state.SnapshotForGC) (int, error) {
-	root := SnapDir()
+	root := d.snapshotRoot()
 	diskDirs, err := os.ReadDir(root)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -488,7 +507,7 @@ func parseSnapKey(key string) (depID, file string, ok bool) {
 // Directories are ignored. Errors reading the dep dir are logged and
 // counted as one drift (so the next tick catches the new state).
 func (d *DiskDrift) checkDepDir(depID string, row state.SnapshotForGC) int {
-	dir := filepath.Join(SnapDir(), depID)
+	dir := filepath.Join(d.snapshotRoot(), depID)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		// Per-depID failure: race with imaged's GC deleting the dir,

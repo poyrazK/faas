@@ -6,9 +6,12 @@ package sched
 // to drive deleteSnapshotsAndFiles against a hermetic t.TempDir() rather
 // than /srv/fc/snap (which is not writable on dev macOS hosts).
 //
-// Production callers never touch this — it is unsafe for concurrent use
-// (the value lives in a package-level var) but the loop_test.go fixture
-// is sequential within a single test. Restore with defer SetSnapDirForTesting("").
+// Production callers never touch this. The value is published atomically so
+// legacy tests that still need the process-wide seam cannot race readers;
+// new fixtures should prefer dependency injection such as DiskDrift.WithSnapDir.
 func SetSnapDirForTesting(path string) {
-	snapDir = path
+	if path == "" {
+		path = "/srv/fc/snap"
+	}
+	snapDir.Store(path)
 }

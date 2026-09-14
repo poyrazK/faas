@@ -28,6 +28,59 @@
           {{ faas_join_inventory_name }}, got {{ inventory_hostname }} with
           role {{ faas_box_role | default('unset') }}.
 
+    # Managed-host joins skip the full bootstrap roles, so converge the
+    # control-plane image's inherited PostgreSQL residue here as well. The
+    # compute daemons use the remote DSN from compute-db.env and must not pay
+    # the local cluster's boot and memory cost.
+    - name: Stop inherited local PostgreSQL services before compute adoption
+      ansible.builtin.shell: |
+        set -euo pipefail
+        units="$(systemctl list-unit-files --type=service --no-legend 'postgresql*' 2>/dev/null | awk '{print $1}')"
+        for unit in $units; do
+          systemctl disable --now "$unit" >/dev/null 2>&1 || true
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Mask inherited PostgreSQL units on adopted compute node
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - mask
+          - postgresql.service
+          - postgresql@.service
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect inherited PostgreSQL data directory
+      ansible.builtin.stat:
+        path: /var/lib/postgresql
+      register: faas_join_local_postgresql_dir
+
+    - name: Inspect PostgreSQL data archive destination
+      ansible.builtin.stat:
+        path: /var/lib/postgresql.disabled
+      register: faas_join_local_postgresql_archive_dir
+
+    - name: Archive inherited PostgreSQL data directory
+      ansible.builtin.command:
+        argv:
+          - mv
+          - /var/lib/postgresql
+          - /var/lib/postgresql.disabled
+      args:
+        creates: /var/lib/postgresql.disabled
+      when:
+        - faas_join_local_postgresql_dir.stat.exists
+        - faas_join_local_postgresql_dir.stat.isdir
+        - not faas_join_local_postgresql_archive_dir.stat.exists
+      register: faas_join_local_postgresql_archive
+
+    - name: Reload systemd after PostgreSQL cleanup
+      ansible.builtin.systemd:
+        daemon_reload: true
+
     - name: Probe the managed-host bootstrap contract
       ansible.builtin.shell:
         cmd: |

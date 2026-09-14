@@ -161,6 +161,43 @@ func TestAllocateServiceReplicaTargets(t *testing.T) {
 	}
 }
 
+// TestDrainDeploymentInstances_ReleasesHotSupersededRevision covers the
+// request-mode cutover path. A hot old revision must be parked before a new
+// request can consume a one-instance plan's only slot.
+func TestDrainDeploymentInstances_ReleasesHotSupersededRevision(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, oldDep := seedApp(t, store, api.PlanFree, 128, 1)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	res, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake old revision: %v", err)
+	}
+	newDep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:new", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if err := store.MarkDeploymentLive(context.Background(), newDep.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
+	e.drainDeploymentInstances(context.Background(), oldDep.ID, true)
+	old, err := store.InstanceByID(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if old.State != string(state.StateParked) {
+		t.Fatalf("old instance state = %q, want parked", old.State)
+	}
+	if vmm.snapshots != 1 {
+		t.Fatalf("old revision snapshots = %d, want 1", vmm.snapshots)
+	}
+	if _, err := e.Wake(context.Background(), app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake new revision after drain: %v", err)
+	}
+}
+
 func TestReconcileServiceApp_AllocatesAcrossLiveGenerations(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, stable := seedApp(t, store, api.PlanPro, 128, 5)
