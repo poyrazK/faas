@@ -110,6 +110,12 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 	cleanDst := filepath.Clean(dst)
 	extractionPrefix := cleanDst + string(filepath.Separator)
 	for {
+		// codeql[go/zipslip] — hdr.Name is rejected by
+		// cleanDeployArchiveName, filepath.IsLocal, and the post-Join
+		// extractionPrefix containment check before any filesystem sink.
+		// Link entries are rejected by the type allow-list below. CodeQL's
+		// taint engine does not recognize the shared sanitizer return value,
+		// so pin this false-positive suppression at the archive source.
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
