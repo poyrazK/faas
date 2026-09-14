@@ -567,14 +567,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	basePath := envOr("FAAS_BUILDER_BASE_PATH", "/srv/fc/base/builder-base.ext4")
+	arch := imaged.BuilderArch()
+	basePath := builderBasePathFromEnv(arch)
 	// #96 / ADR-025 axis 2: EnsureBaseExt4 publishes via the StorageBackend
 	// under sched.BaseKeyForArch / sched.BaseDigestKeyForArch, partitioned
-	// by the imaged binary's host arch (issue #197 B3.3). basePath is kept
-	// as a resolution target (LocalStorageBackend joins it under
-	// FAAS_STORAGE_ROOT) for one release — the migration slice flips to
-	// key-only.
-	arch := imaged.BuilderArch()
+	// by the imaged binary's host arch (issue #197 B3.3). basePath is the
+	// canonical local resolution target for Grype and builderd identity checks;
+	// explicit FAAS_BUILDER_BASE_PATH remains a development harness override.
 	baseKey := sched.BaseKeyForArch("builder", arch)
 	digestKey := sched.BaseDigestKeyForArch("builder", arch)
 	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, baseKey, digestKey, basePath, "", "")
@@ -752,6 +751,20 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// builderBasePathFromEnv returns the host-local compatibility path for the
+// canonical builder storage key. Production storage is partitioned by host
+// architecture, so the path must agree with sched.BaseKeyForArch and
+// builderd's default. Keep an explicit override for native/e2e harnesses,
+// but never make a fresh production node silently stage the legacy
+// builder-base.ext4 spelling again.
+func builderBasePathFromEnv(arch string) string {
+	if v := strings.TrimSpace(os.Getenv("FAAS_BUILDER_BASE_PATH")); v != "" {
+		return v
+	}
+	root := envOr("FAAS_STORAGE_ROOT", "/srv/fc")
+	return filepath.Join(root, "base", "runner-builder-"+arch+".ext4")
 }
 
 func parseBoolEnv(name, raw string) (bool, error) {

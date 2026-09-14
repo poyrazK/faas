@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	builderdpkg "github.com/onebox-faas/faas/pkg/builderd"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -105,6 +106,55 @@ func buildReadinessProbeForDirs(ctx context.Context, pool pgPool, writableDirs [
 		p.RegisterSignal(sig, stop)
 	}
 	return p
+}
+
+// builderBaseReadySignal keeps builderd out of service until its local
+// builder drive and digest sidecar describe a usable, current toolchain. The
+// build worker already uses this same validation before cache lookup; wiring
+// it into /readyz prevents a fresh node with a cold/mismatched base from
+// receiving builds and silently taking the slow uncached path.
+func builderBaseReadySignal(ctx context.Context, path, platform string, cacheFor time.Duration) (*wire.ReadySignal, func()) {
+	s := &wire.ReadySignal{}
+	s.Set(false, "builder base not yet checked")
+	if cacheFor <= 0 {
+		cacheFor = 5 * time.Second
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	var stopOnce sync.Once
+	stopper := func() {
+		stopOnce.Do(func() {
+			close(stop)
+			<-done
+			s.Set(false, "builderd stopping")
+		})
+	}
+	go func() {
+		defer close(done)
+		check := func() {
+			if path == "" {
+				s.Set(false, "builder base path empty")
+				return
+			}
+			if _, err := builderdpkg.ReadBuildEnvironment(path, platform); err != nil {
+				s.Set(false, "builder base unavailable: "+err.Error())
+				return
+			}
+			s.Set(true, "")
+		}
+		check()
+		ticker := time.NewTicker(cacheFor)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				check()
+			}
+		}
+	}()
+	return s, stopper
 }
 
 // defaultDial is the production dial path: grpc.DialContext.

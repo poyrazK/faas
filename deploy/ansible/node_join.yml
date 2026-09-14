@@ -206,6 +206,21 @@
         path: /etc/faas/oci-e2e.env
         state: absent
 
+    # The builder artifact is content-addressed by architecture. A previous
+    # release could leave /srv/fc/base/builder-base.ext4 behind while the
+    # canonical runner-builder key (and its digest sidecar) was absent. Do
+    # not let builderd consume that unscanned legacy file: remove both
+    # spellings before the release-bound imaged pre-stage repopulates the
+    # canonical artifact, and let the readiness gate keep the node drained if
+    # pre-staging fails.
+    - name: Remove legacy builder base artifacts before canonical pre-stage
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /srv/fc/base/builder-base.ext4
+        - /srv/fc/base/builder-base.ext4.digest
+
     - name: Stage the compute trust bundle (the source never includes the CA private key)
       ansible.builtin.copy:
         src: "{{ faas_join_pki_source }}/"

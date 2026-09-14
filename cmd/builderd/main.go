@@ -21,6 +21,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -196,9 +199,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: load vmmd TLS: %w", err)
 	}
+	builderBasePath, err := resolveBuilderBasePath(cfg.BuilderBase, sourceStorage)
+	if err != nil {
+		return err
+	}
 	builderdProbe := buildReadinessProbeForDirs(ctx, pool, []string{cfg.BuildDriveDir, cfg.BuildExportDir}, vmmTarget, tlsReadinessDialer(vmmTLS))
+	baseSig, baseStop := builderBaseReadySignal(ctx, builderBasePath, runtime.GOOS+"/"+runtime.GOARCH, 5*time.Second)
+	builderdProbe.RegisterSignal(baseSig, baseStop)
 
-	driver, err := deps.newDriver(ctx, vmmTarget, vmmTLS, cfg.BuilderBase, cfg.BuildDriveDir, cfg.BuildExportDir)
+	driver, err := deps.newDriver(ctx, vmmTarget, vmmTLS, builderBasePath, cfg.BuildDriveDir, cfg.BuildExportDir)
 	if err != nil {
 		return fmt.Errorf("builderd: vmmd driver: %w", err)
 	}
@@ -294,6 +303,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	log.Info("builderd ready",
 		"vmmd_target", vmmTarget,
+		"builder_base_path", builderBasePath,
 		"cache_dir", cfg.CacheDir,
 		"poll_interval", cfg.PollInterval)
 
@@ -465,6 +475,40 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}
 	}
+}
+
+// resolveBuilderBasePath selects the local file used only for builder-toolchain
+// identity checks. vmmd still receives the canonical storage key and resolves
+// the actual drive through the shared StorageBackend. On split-box nodes the
+// OCI backend's cache exposes a node-local path once imaged pre-staging has
+// completed; using that path avoids rebuilding the cache identity from a
+// legacy compatibility filename. A missing cache deliberately falls back to
+// the canonical path so readiness remains false with an actionable error.
+func resolveBuilderBasePath(configured string, sourceStorage storage.StorageBackend) (string, error) {
+	configured = strings.TrimSpace(configured)
+	if configured == "" {
+		configured = filepath.Join(envOr("FAAS_STORAGE_ROOT", "/srv/fc"), "base", "runner-builder-"+runtime.GOARCH+".ext4")
+	}
+	if sourceStorage == nil {
+		return configured, nil
+	}
+	key := sched.BaseKey("builder")
+	if resolver, ok := sourceStorage.(storage.LocalPathResolver); ok {
+		path, local, err := resolver.LocalPath(key)
+		if err != nil {
+			return "", fmt.Errorf("builderd: resolve builder base %q: %w", key, err)
+		}
+		if local && strings.TrimSpace(path) != "" {
+			return path, nil
+		}
+	}
+	// A split-box service must never use the pre-ADR legacy spelling. If the
+	// cache is cold, the canonical path gives readiness a stable target while
+	// imaged pre-stage (or a later cache fill) makes it available.
+	if filepath.Base(configured) == "builder-base.ext4" {
+		return filepath.Join(envOr("FAAS_STORAGE_ROOT", "/srv/fc"), "base", "runner-builder-"+runtime.GOARCH+".ext4"), nil
+	}
+	return configured, nil
 }
 
 // cancelBuild is the bounded ADR-124 build-cancel worker. The deployment row

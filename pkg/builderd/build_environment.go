@@ -44,6 +44,14 @@ func currentBuildEnvironment(vm VM) (BuildEnvironment, error) {
 	return environment, nil
 }
 
+// ReadBuildEnvironment validates and reads the staged builder-base identity
+// from a host path. It is exported for daemon readiness checks so builderd
+// does not advertise capacity while its drive0 or digest sidecar is missing.
+// The validation is the same one used by the build-cache lookup path.
+func ReadBuildEnvironment(builderBase, platform string) (BuildEnvironment, error) {
+	return readBuildEnvironment(builderBase, platform)
+}
+
 // readBuildEnvironment reads the small sidecar rather than hashing the full
 // builder ext4 for every build. imaged publishes the base first and the
 // sidecar second; an older sidecar mtime therefore means staging is in flight

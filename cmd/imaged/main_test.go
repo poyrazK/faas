@@ -206,6 +206,25 @@ func TestBuilderBaseRef_SingleBoxKeepsDevelopmentDefault(t *testing.T) {
 	}
 }
 
+func TestBuilderBasePath_DefaultIsCanonicalPerArchitecture(t *testing.T) {
+	t.Setenv("FAAS_STORAGE_ROOT", "/var/lib/faas/fc")
+	t.Setenv("FAAS_BUILDER_BASE_PATH", "")
+	if got := builderBasePathFromEnv("amd64"); got != "/var/lib/faas/fc/base/runner-builder-amd64.ext4" {
+		t.Fatalf("builderBasePathFromEnv(amd64) = %q, want canonical path", got)
+	}
+	if got := builderBasePathFromEnv("arm64"); got != "/var/lib/faas/fc/base/runner-builder-arm64.ext4" {
+		t.Fatalf("builderBasePathFromEnv(arm64) = %q, want canonical path", got)
+	}
+}
+
+func TestBuilderBasePath_PreservesExplicitHarnessOverride(t *testing.T) {
+	t.Setenv("FAAS_STORAGE_ROOT", "/var/lib/faas/fc")
+	t.Setenv("FAAS_BUILDER_BASE_PATH", "/tmp/native/runner-builder.ext4")
+	if got := builderBasePathFromEnv("amd64"); got != "/tmp/native/runner-builder.ext4" {
+		t.Fatalf("builderBasePathFromEnv override = %q, want explicit path", got)
+	}
+}
+
 func TestResolveGuestInitPath_RejectsLegacyOverrideWhenReleaseBinaryExists(t *testing.T) {
 	exists := func(path string) bool { return path == canonicalGuestInitPath }
 	got := resolveGuestInitPath(legacyGuestInitPath, []string{

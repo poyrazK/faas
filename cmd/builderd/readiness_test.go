@@ -305,3 +305,42 @@ func TestBuildReadinessProbe_EmptyWritablePathIsNotReady(t *testing.T) {
 	ready, reason := p.All()
 	t.Fatalf("readiness with empty writable path = (%v, %q), want not-ready empty-path reason", ready, reason)
 }
+
+func TestBuilderBaseReadySignal_RejectsMissingArtifact(t *testing.T) {
+	sig, stop := builderBaseReadySignal(context.Background(), filepath.Join(t.TempDir(), "missing.ext4"), "linux/amd64", 10*time.Millisecond)
+	defer stop()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		ready, reason := sig.Report()
+		if !ready && strings.Contains(reason, "builder base unavailable") {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	ready, reason := sig.Report()
+	t.Fatalf("missing builder base signal = (%v, %q), want actionable not-ready reason", ready, reason)
+}
+
+func TestBuilderBaseReadySignalAcceptsCurrentArtifact(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "runner-builder-amd64.ext4")
+	if err := os.WriteFile(base, []byte("ext4"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64) + "\nfaas-base-layout-v3\nguest-init-sha256=" + strings.Repeat("b", 64)
+	if err := os.WriteFile(base+".digest", []byte(digest+"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	sig, stop := builderBaseReadySignal(context.Background(), base, "linux/amd64", 10*time.Millisecond)
+	defer stop()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if ready, reason := sig.Report(); ready {
+			return
+		} else if reason != "" {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	ready, reason := sig.Report()
+	t.Fatalf("current builder base signal = (%v, %q), want ready", ready, reason)
+}
