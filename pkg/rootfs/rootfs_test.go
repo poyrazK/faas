@@ -81,6 +81,36 @@ func TestApplyLayerBasic(t *testing.T) {
 	}
 }
 
+func TestApplyLayerGzForAppDropsGuestRuntimeMountpoints(t *testing.T) {
+	dst := t.TempDir()
+	layer := gzLayer(t, []entry{
+		{name: "proc/", typeflag: tar.TypeDir},
+		{name: "proc/status", body: "builder view"},
+		{name: "sys/", typeflag: tar.TypeDir},
+		{name: "sys/kernel/value", body: "builder view"},
+		{name: "dev/", typeflag: tar.TypeDir},
+		{name: "dev/null", body: "not a device"},
+		{name: "tmp/", typeflag: tar.TypeDir},
+		{name: "tmp/cache", body: "not persistent"},
+		{name: "app/server", body: "customer binary"},
+		{name: "etc/mtab", typeflag: tar.TypeSymlink, linkname: "../proc/mounts"},
+	})
+	if err := applyLayerGzForApp(dst, layer); err != nil {
+		t.Fatalf("applyLayerGzForApp: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "app", "server")); err != nil || string(got) != "customer binary" {
+		t.Fatalf("customer file = %q, err=%v", got, err)
+	}
+	for _, name := range []string{"proc", "sys", "dev", "tmp"} {
+		if _, err := os.Lstat(filepath.Join(dst, name)); !os.IsNotExist(err) {
+			t.Errorf("runtime mountpoint %q was materialized: err=%v", name, err)
+		}
+	}
+	if info, err := os.Lstat(filepath.Join(dst, "etc", "mtab")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("non-runtime symlink was not preserved: info=%v err=%v", info, err)
+	}
+}
+
 func TestApplyLayerStacking(t *testing.T) {
 	dst := t.TempDir()
 	if err := ApplyLayerGz(dst, gzLayer(t, []entry{{name: "f", body: "v1"}})); err != nil {
