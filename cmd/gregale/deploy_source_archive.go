@@ -110,12 +110,6 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 	cleanDst := filepath.Clean(dst)
 	extractionPrefix := cleanDst + string(filepath.Separator)
 	for {
-		// codeql[go/zipslip] — hdr.Name is rejected by
-		// cleanDeployArchiveName, filepath.IsLocal, and the post-Join
-		// extractionPrefix containment check before any filesystem sink.
-		// Link entries are rejected by the type allow-list below. CodeQL's
-		// taint engine does not recognize the shared sanitizer return value,
-		// so pin this false-positive suppression at the archive source.
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
@@ -134,6 +128,13 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 		}
 		if hdr.Name == "" {
 			continue
+		}
+		// Keep the archive-source guard inline. Besides the segment-aware
+		// sanitizer and post-Join containment checks below, rejecting every
+		// double-dot sequence gives CodeQL's Zip Slip analysis a direct taint
+		// barrier before hdr.Name can reach any filesystem operation.
+		if strings.Contains(hdr.Name, "..") {
+			return "", fmt.Errorf("archive entry %q contains a disallowed double-dot sequence", hdr.Name)
 		}
 		name, err := cleanDeployArchiveName(hdr.Name)
 		if err != nil {
