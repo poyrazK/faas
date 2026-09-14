@@ -34,7 +34,7 @@ Single source of truth: [`docs/compliance/subprocessors.json`](subprocessors.jso
 When adding a new sub-processor:
 
 1. **Update `subprocessors.json`** — append a new object with all required fields (`id`, `category`, `vendor`, `service`, `data_categories`, `data_region`, `encryption`, `retention_days`, `dpa_signed`, `dpa_reference`, `operator_switch_env`, `rationale`, `notice_published_at`, `effective_date`). The `id` must be a stable kebab-case slug; never reuse a removed entry's id (use `subprocessor-archive.json`).
-2. **Set `notice_published_at`** — the date the operator first publishes the 30-day notice at `https://docs.gregale.dev/dpa/subprocessors`. This timestamp must be **≥ 30 days older** than the planned `effective_date`. The `subprocessor-check` CI gate fails the build if this invariant is violated.
+2. **Set `notice_published_at`** — the date the operator first publishes the 30-day notice at `https://gregale.dev/docs/dpa/subprocessors`. This timestamp must be **≥ 30 days older** than the planned `effective_date`. The `subprocessor-check` CI gate fails the build if this invariant is violated.
 3. **Regenerate `subprocessors.md`** — run `make subprocessor-md`. Hand-edits to the markdown file are caught at `git diff --exit-code docs/compliance/subprocessors.md` time (same pattern as `spec-check`).
 4. **Update DPA §7** — add a bullet to `docs/DPA.md` §7 listing the new sub-processor. The DPA is the executed contract; the JSON is the rendering source for the public notice.
 5. **Update vendor assessment** — if the new sub-processor is critical-tier (database, billing, identity-provider), write a one-file assessment under `docs/compliance/vendor-assessments/` (PR-10).
