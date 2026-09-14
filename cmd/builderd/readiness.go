@@ -113,7 +113,10 @@ func buildReadinessProbeForDirs(ctx context.Context, pool pgPool, writableDirs [
 // build worker already uses this same validation before cache lookup; wiring
 // it into /readyz prevents a fresh node with a cold/mismatched base from
 // receiving builds and silently taking the slow uncached path.
-func builderBaseReadySignal(ctx context.Context, path, platform string, cacheFor time.Duration) (*wire.ReadySignal, func()) {
+// digestPath locates the digest sidecar when it is not a sibling of the base
+// (the OCI backend resolves the base into a content-addressed cache); empty
+// keeps the sibling derivation used by the local backend.
+func builderBaseReadySignal(ctx context.Context, path, digestPath, platform string, cacheFor time.Duration) (*wire.ReadySignal, func()) {
 	s := &wire.ReadySignal{}
 	s.Set(false, "builder base not yet checked")
 	if cacheFor <= 0 {
@@ -136,7 +139,7 @@ func builderBaseReadySignal(ctx context.Context, path, platform string, cacheFor
 				s.Set(false, "builder base path empty")
 				return
 			}
-			if _, err := builderdpkg.ReadBuildEnvironment(path, platform); err != nil {
+			if _, err := builderdpkg.ReadBuildEnvironmentAt(path, digestPath, platform); err != nil {
 				s.Set(false, "builder base unavailable: "+err.Error())
 				return
 			}

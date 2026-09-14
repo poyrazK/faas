@@ -1041,11 +1041,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		case "FailureTimeout":
 			fc = state.FailureTimeout
 		case "":
-			switch out.ExitCode {
-			case 137:
+			switch {
+			case out.ExitCode == 137:
 				fc = state.FailureOOM
-			case 124:
+			case out.ExitCode == 124:
 				fc = state.FailureTimeout
+			case out.ExitCode < 0:
+				// No exit status: the VM never ran, so the customer's source
+				// was never evaluated. Mirrors classifyBuildFailure; see the
+				// note there (#2577).
+				fc = state.FailureInfra
 			}
 		}
 		// Error-explanations cluster (spec §6.4 amendment 1): when

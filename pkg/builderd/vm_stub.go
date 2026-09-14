@@ -27,6 +27,10 @@ func NewVMMDriverContext(_ context.Context, _ string, _ *tls.Config, _, _, _ str
 // Close is a no-op on the stub.
 func (s *VMMDriver) Close() error { return nil }
 
+// WithBuilderBaseDigest mirrors the metal setter so cmd/builderd compiles and
+// wires identically under both tags. The stub never reads a sidecar.
+func (s *VMMDriver) WithBuilderBaseDigest(_ string) *VMMDriver { return s }
+
 // BuildEnvironment keeps non-metal binaries from reading or writing cache
 // entries they cannot prove were produced by the active builder toolchain.
 func (s *VMMDriver) BuildEnvironment() (BuildEnvironment, error) {

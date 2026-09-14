@@ -307,7 +307,7 @@ func TestBuildReadinessProbe_EmptyWritablePathIsNotReady(t *testing.T) {
 }
 
 func TestBuilderBaseReadySignal_RejectsMissingArtifact(t *testing.T) {
-	sig, stop := builderBaseReadySignal(context.Background(), filepath.Join(t.TempDir(), "missing.ext4"), "linux/amd64", 10*time.Millisecond)
+	sig, stop := builderBaseReadySignal(context.Background(), filepath.Join(t.TempDir(), "missing.ext4"), "", "linux/amd64", 10*time.Millisecond)
 	defer stop()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -331,7 +331,7 @@ func TestBuilderBaseReadySignalAcceptsCurrentArtifact(t *testing.T) {
 	if err := os.WriteFile(base+".digest", []byte(digest+"\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	sig, stop := builderBaseReadySignal(context.Background(), base, "linux/amd64", 10*time.Millisecond)
+	sig, stop := builderBaseReadySignal(context.Background(), base, "", "linux/amd64", 10*time.Millisecond)
 	defer stop()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {

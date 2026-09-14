@@ -56,6 +56,12 @@ type VMMDriver struct {
 	// runner-builder path.
 	builderBase string
 
+	// builderBaseDigest is where the base's digest sidecar actually lives.
+	// Empty means "sibling of builderBase", which is right for the local
+	// backend and wrong for the OCI one, whose read-through cache is
+	// content-addressed. See WithBuilderBaseDigest.
+	builderBaseDigest string
+
 	// driveDir hosts the temporary per-VM drive1 images we create at
 	// CreateBuildDrive1 time. Cleanup happens via WaitForCompletion's
 	// defer + the startup janitor.
@@ -119,10 +125,27 @@ func (d *VMMDriver) Close() error {
 	return d.conn.Close()
 }
 
+// WithBuilderBaseDigest points the driver at the base's digest sidecar when it
+// is not a sibling of the base image. Returns the driver so it can be chained
+// onto a constructor.
+//
+// The sibling derivation holds for the local backend but not for OCI, where
+// the base resolves into a content-addressed read-through cache
+// (/var/lib/faas/cache/<aa>/<hash>) that has no sibling ".digest" — the
+// sidecar is its own storage key. cmd/builderd resolves both through the same
+// backend and wires the result here. An empty path keeps the derivation.
+func (d *VMMDriver) WithBuilderBaseDigest(path string) *VMMDriver {
+	if d == nil {
+		return nil
+	}
+	d.builderBaseDigest = strings.TrimSpace(path)
+	return d
+}
+
 // BuildEnvironment binds deployment-cache reuse to the staged builder image,
 // its injected boot contract, and the architecture selected by this binary.
 func (d *VMMDriver) BuildEnvironment() (BuildEnvironment, error) {
-	return readBuildEnvironment(d.builderBase, runtime.GOOS+"/"+runtime.GOARCH)
+	return readBuildEnvironment(d.builderBase, d.builderBaseDigest, runtime.GOOS+"/"+runtime.GOARCH)
 }
 
 // FirecrackerVersion asks vmmd for the version of the running Firecracker
@@ -824,40 +847,6 @@ func (d *VMMDriver) runJanitor() {
 	d.dependencyCacheMu.Lock()
 	_ = sweepDependencyCaches(d.driveDir, time.Now())
 	d.dependencyCacheMu.Unlock()
-}
-
-// classifyBuildFailure resolves the failure class for a non-zero build exit.
-// It prefers BuildDone.FailureClass (guest-init's classification) when
-// /build-done.json exists in the export, then falls back to the canonical
-// exit-code table (137→OOM, 124→Timeout, else UserError). The vocabulary
-// here matches the canonical names used by pkg/state.FailureClass:
-// "FailureUserError" / "FailureInfra" / "FailureOOM" / "FailureTimeout".
-// builderd.go's ProcessOne translates these to the column-friendly
-// strings ("oom" etc) at the state.Store boundary.
-//
-// Error-explanations cluster (spec §6.4 amendment 1): the second
-// return value is the RFC 7807 stable code guest-init stamped on
-// BuildDone.FailureCode (app_arch_mismatch / dep_install_failed),
-// plus the package manager discriminator for dep_install_failed
-// (npm / pip / go / cargo). Empty strings when guest-init fell back
-// to the coarse FailureClass only — the caller stamps the legacy
-// CodeDeployFailed path.
-func classifyBuildFailure(exitCode int, exportDir string) (string, string, string) {
-	done := filepath.Join(exportDir, "build-done.json")
-	if data, err := os.ReadFile(done); err == nil {
-		var bd api.BuildDone
-		if json.Unmarshal(data, &bd) == nil && bd.FailureClass != "" {
-			return bd.FailureClass, bd.FailureCode, bd.FailurePkg
-		}
-	}
-	switch exitCode {
-	case 137:
-		return "FailureOOM", "", ""
-	case 124:
-		return "FailureTimeout", "", ""
-	default:
-		return "FailureUserError", "", ""
-	}
 }
 
 // unused import guard.

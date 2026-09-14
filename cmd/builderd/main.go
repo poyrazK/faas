@@ -203,13 +203,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	// Resolve the sidecar through the same backend as the base; deriving it
+	// from builderBasePath is wrong whenever that path came from the OCI
+	// read-through cache. Empty keeps the sibling derivation.
+	builderBaseDigestPath, err := resolveBuilderBaseDigestPath(sourceStorage)
+	if err != nil {
+		return err
+	}
 	builderdProbe := buildReadinessProbeForDirs(ctx, pool, []string{cfg.BuildDriveDir, cfg.BuildExportDir}, vmmTarget, tlsReadinessDialer(vmmTLS))
-	baseSig, baseStop := builderBaseReadySignal(ctx, builderBasePath, runtime.GOOS+"/"+runtime.GOARCH, 5*time.Second)
+	baseSig, baseStop := builderBaseReadySignal(ctx, builderBasePath, builderBaseDigestPath, runtime.GOOS+"/"+runtime.GOARCH, 5*time.Second)
 	builderdProbe.RegisterSignal(baseSig, baseStop)
 
 	driver, err := deps.newDriver(ctx, vmmTarget, vmmTLS, builderBasePath, cfg.BuildDriveDir, cfg.BuildExportDir)
 	if err != nil {
 		return fmt.Errorf("builderd: vmmd driver: %w", err)
+	}
+	if d, ok := driver.(*builderdpkg.VMMDriver); ok {
+		d.WithBuilderBaseDigest(builderBaseDigestPath)
 	}
 	if c, ok := driver.(*builderdpkg.VMMDriver); ok {
 		defer func() { _ = c.Close() }()
@@ -509,6 +519,40 @@ func resolveBuilderBasePath(configured string, sourceStorage storage.StorageBack
 		return filepath.Join(envOr("FAAS_STORAGE_ROOT", "/srv/fc"), "base", "runner-builder-"+runtime.GOARCH+".ext4"), nil
 	}
 	return configured, nil
+}
+
+// resolveBuilderBaseDigestPath resolves the base's digest sidecar through the
+// SAME backend that produced the base path, rather than appending ".digest" to
+// it.
+//
+// Appending only works when the base is a plain file in the storage root. When
+// resolveBuilderBasePath returns a read-through cache path the base lives at a
+// content-addressed location (/var/lib/faas/cache/<aa>/<hash>) with no sibling
+// sidecar, so the derived path can never exist and every build fails with
+// "stat builder base digest sidecar: no such file or directory". The sidecar is
+// its own storage key, so ask storage for it the same way.
+//
+// Returns "" when the sidecar is not locally resolvable, which tells
+// pkg/builderd to keep the sibling derivation — correct for the local backend
+// and the right fallback for a cold cache, where readiness stays false with an
+// actionable error until imaged pre-stage fills it.
+func resolveBuilderBaseDigestPath(sourceStorage storage.StorageBackend) (string, error) {
+	if sourceStorage == nil {
+		return "", nil
+	}
+	resolver, ok := sourceStorage.(storage.LocalPathResolver)
+	if !ok {
+		return "", nil
+	}
+	key := sched.BaseDigestKey("builder")
+	path, local, err := resolver.LocalPath(key)
+	if err != nil {
+		return "", fmt.Errorf("builderd: resolve builder base digest sidecar %q: %w", key, err)
+	}
+	if local && strings.TrimSpace(path) != "" {
+		return path, nil
+	}
+	return "", nil
 }
 
 // cancelBuild is the bounded ADR-124 build-cancel worker. The deployment row
