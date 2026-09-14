@@ -409,6 +409,7 @@ var cliCommands = []cliCommand{
 					{Name: "node", Short: "manifest compute-only host name (required)"},
 					{Name: "ssh-host", Short: "SSH address of the already-created machine (required)"},
 					{Name: "ssh-host-key-sha256", Short: "expected OpenSSH SHA256 host-key fingerprint"},
+					{Name: "ssh-known-hosts-file", Short: "verified complete-fleet known_hosts file"},
 					{Name: "ssh-user", Short: "SSH user (default root)"},
 					{Name: "ssh-port", Short: "SSH port (default 22)"},
 					{Name: "ssh-key", Short: "optional SSH private key"},

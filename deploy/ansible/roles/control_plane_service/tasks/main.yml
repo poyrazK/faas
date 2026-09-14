@@ -423,6 +423,26 @@
       or faas_session_key_stat.stat.pw_name != "root"
       or faas_session_key_stat.stat.gr_name != "root"
 
+- name: control_plane_service — validate dedicated session credential before legacy scrub
+  ansible.builtin.shell: |
+    set -euo pipefail
+    key="$(tr -d '\n' </etc/faas/secrets/session.key)"
+    test "$(printf '%s' "$key" | wc -c)" -eq 64
+    printf '%s' "$key" | grep -Eq '^[0-9a-fA-F]{64}$'
+    grep -q '^Environment=FAAS_SESSION_KEY=%d/faas_session_key$' /etc/systemd/system/faas-apid.service
+    grep -q '^LoadCredential=faas_session_key:/etc/faas/secrets/session.key$' /etc/systemd/system/faas-apid.service
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: control_plane_service — remove legacy shared session key after credential validation
+  ansible.builtin.lineinfile:
+    path: /etc/faas/sealed.env
+    regexp: '^FAAS_SESSION_KEY='
+    state: absent
+  no_log: true
+  notify: restart faas-apid
+
 # ADR-117 PR-C: scope the per-host value-hash HMAC key to apid through
 # systemd LoadCredential. The source file remains root:root 0400 on disk;
 # systemd copies it into apid's private credential directory, where the

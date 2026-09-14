@@ -762,6 +762,8 @@ type OpsMetrics struct {
 	// sum. Backs the FaasDomainDoctorStalled / FaasDomainDoctorStretched
 	// alerts (docs/runbooks/FaasDomainDoctorStalled.md).
 	domainDoctorOldestObservationSeconds prometheus.Gauge
+	domainDoctorCyclesTotal              *prometheus.CounterVec
+	domainDoctorBatchSize                prometheus.Gauge
 	// domainDoctorSkippedFlagDisabled (ADR-120 Tier A1): counter of
 	// doctor passes skipped because the operator set
 	// FAAS_DOMAIN_DOCTOR_ENABLED=false. Labelled by daemon=apid
@@ -2476,6 +2478,17 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_domain_doctor_oldest_observation_seconds",
 		Help: "Seconds elapsed since the oldest row in domain_doctor_observations was refreshed (cmd/apid/dns_poller.go::runDoctorOnce, ADR-120 Tier A1). Zero means the loop just ran against an empty table. Large values mean the poller is stalled. Backs FaasDomainDoctorStalled / FaasDomainDoctorStretched.",
 	})
+	domainDoctorCyclesTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_domain_doctor_cycles_total",
+		Help: "Bounded domain-doctor batch outcomes. outcome is one of success, error, or timeout; only apid increments this single-registry metric.",
+	}, []string{"outcome"})
+	domainDoctorBatchSize := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_domain_doctor_batch_size",
+		Help: "Number of domains selected by the latest bounded doctor cycle.",
+	})
+	for _, outcome := range []string{"success", "error", "timeout"} {
+		domainDoctorCyclesTotal.WithLabelValues(outcome)
+	}
 	// domainDoctorSkippedFlagDisabled (ADR-120 Tier A1):
 	// counter of doctor passes the poller skipped because the
 	// operator set FAAS_DOMAIN_DOCTOR_ENABLED=false. Unlabelled —
@@ -3409,6 +3422,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		failedLoginAuditWriteFailures,
 		auditEventsDeletedTotal,
 		auditEventsRetentionLagSeconds,
+		domainDoctorOldestObservationSeconds,
+		domainDoctorCyclesTotal,
+		domainDoctorBatchSize,
+		domainDoctorSkippedFlagDisabled,
 		auditEventsVolumeTotal,
 		deploymentAuditGCRowsDeletedTotal,
 		canaryProgressionAdvancedTotal,
@@ -4682,6 +4699,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditEventsDeletedTotal:                    auditEventsDeletedTotal,
 		auditEventsRetentionLagSeconds:             auditEventsRetentionLagSeconds,
 		domainDoctorOldestObservationSeconds:       domainDoctorOldestObservationSeconds,
+		domainDoctorCyclesTotal:                    domainDoctorCyclesTotal,
+		domainDoctorBatchSize:                      domainDoctorBatchSize,
 		domainDoctorSkippedFlagDisabled:            domainDoctorSkippedFlagDisabled,
 		certIssuanceFailedTotal:                    certIssuanceFailedTotal,
 		auditEventsVolumeTotal:                     auditEventsVolumeTotal,
@@ -6107,6 +6126,20 @@ func (m *OpsMetrics) DomainDoctorOldestObservationSeconds() prometheus.Gauge {
 		return nil
 	}
 	return m.domainDoctorOldestObservationSeconds
+}
+
+func (m *OpsMetrics) DomainDoctorCycles() *prometheus.CounterVec {
+	if m == nil {
+		return nil
+	}
+	return m.domainDoctorCyclesTotal
+}
+
+func (m *OpsMetrics) DomainDoctorBatchSize() prometheus.Gauge {
+	if m == nil {
+		return nil
+	}
+	return m.domainDoctorBatchSize
 }
 
 // DomainDoctorSkippedFlagDisabled (ADR-120 Tier A1) returns the

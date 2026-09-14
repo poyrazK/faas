@@ -1,0 +1,108 @@
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'node_systemd_unit_state{job="node",instance="control",name="faas-schedd.service",state="active"}'
+        values: '1x20'
+      - series: 'node_systemd_unit_state{job="node-compute",instance="compute-1",name="faas-schedd.service",state="active"}'
+        values: '1x20'
+      - series: 'node_systemd_unit_state{job="node-compute",instance="compute-2",name="faas-schedd.service",state="active"}'
+        values: '1x20'
+      - series: 'faas_fleet_seal_domain_ready{instance="compute-1"}'
+        values: '1x20'
+      - series: 'faas_fleet_seal_domain_ready{instance="compute-2"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasFleetSealDomainUnverified
+        exp_alerts: []
+
+  - interval: 30s
+    input_series:
+      - series: 'node_systemd_unit_state{job="node-compute",instance="compute-2",name="faas-schedd.service",state="active"}'
+        values: '1x20'
+      - series: 'faas_fleet_seal_domain_ready{instance="compute-2"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasFleetSealDomainUnverified
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: schedd
+              family: fleet_seal_domain
+              job: node-compute
+              instance: compute-2
+              name: faas-schedd.service
+              state: active
+            exp_annotations:
+              summary: "Compute node has not proved fleet sealed-secret access"
+              description: "schedd is active on compute-2, but the node-join fleet-seal gate did not prove the customer-secret fixture and cluster signing key. Drain the node and repeat the verification before returning it to capacity."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFleetSealDomain.md"
+
+  - interval: 30s
+    input_series:
+      - series: 'faas_internal_mtls_renewal_last_success_timestamp_seconds{instance="fresh"}'
+        values: '0x40'
+      - series: 'node_boot_time_seconds{job="node-compute",instance="fresh"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasInternalMTLSRenewalNeverCompleted
+        exp_alerts: []
+
+  - interval: 30s
+    input_series:
+      - series: 'faas_internal_mtls_renewal_last_success_timestamp_seconds{instance="overdue"}'
+        values: '0x40'
+      - series: 'node_boot_time_seconds{job="node-compute",instance="overdue"}'
+        values: '-100000x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: FaasInternalMTLSRenewalNeverCompleted
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: gregalectl
+              family: internal_mtls_lifecycle
+              public_status: internal
+              instance: overdue
+            exp_annotations:
+              summary: "Scheduled internal mTLS renewal is stale"
+              description: "The host has not recorded a successful renewal check within one daily renewal interval. Verify the self-hosted runner and complete fleet inventory."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+  - interval: 30s
+    input_series:
+      - series: 'up{job="node-compute",instance="compute-1"}'
+        values: '1x20'
+      - series: 'node_systemd_unit_state{job="node-compute",instance="compute-1",name="google-cloud-ops-agent.service",state="active"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasGCPOpsAgentMissing
+        exp_alerts: []
+
+  - interval: 30s
+    input_series:
+      - series: 'up{job="node-compute",instance="compute-2"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasGCPOpsAgentMissing
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: gcp-ops-agent
+              family: off_host_telemetry
+              public_status: internal
+              job: node-compute
+              instance: compute-2
+            exp_annotations:
+              summary: "A compute node is missing its GCP telemetry collector"
+              description: "The compute node is reachable, but google-cloud-ops-agent.service is missing or inactive. Local journal rotation can now remove the only detailed runtime evidence from that host."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGCPOpsAgentMissing.md"

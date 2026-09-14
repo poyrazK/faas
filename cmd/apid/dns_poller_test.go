@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -132,4 +134,67 @@ func TestEmitDoctorSkipNilSafe(t *testing.T) {
 	srv := &server{}
 	log := slog.Default()
 	srv.emitDoctorSkip(log) // must not panic on nil s.ops
+}
+
+func TestRunDoctorOnceBoundsLargeSlowInventory(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	account, err := store.CreateAccount(ctx, "doctor-load@example.test", "scale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "doctor-load"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const domainCount = doctorBatchLimit + 12
+	for i := range domainCount {
+		domain := fmt.Sprintf("doctor-%03d.example.test", i)
+		if _, err := store.CreateCustomDomain(ctx, domain, app.ID, "token"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDomainVerified(ctx, domain); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	previousA, previousAAAA, previousCAA := aLookupFunc, aaaaLookupFunc, caaLookupFunc
+	previousCNAME, previousApps, previousDial := cnameLookupFunc, appsDomainFunc, dialCertFunc
+	t.Cleanup(func() {
+		aLookupFunc, aaaaLookupFunc, caaLookupFunc = previousA, previousAAAA, previousCAA
+		cnameLookupFunc, appsDomainFunc, dialCertFunc = previousCNAME, previousApps, previousDial
+	})
+	aLookupFunc = func(context.Context, string) ([]string, error) { return []string{"203.0.113.10"}, nil }
+	aaaaLookupFunc = func(context.Context, string) ([]string, error) { return nil, nil }
+	caaLookupFunc = func(context.Context, string) ([]string, error) { return nil, nil }
+	cnameLookupFunc = func(context.Context, string) (string, error) { return "edge.gregale.dev.", nil }
+	appsDomainFunc = func() string { return "edge.gregale.dev" }
+	dialCertFunc = func(ctx context.Context, domain string) (*x509.Certificate, error) {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			return &x509.Certificate{DNSNames: []string{domain}, NotAfter: time.Now().Add(24 * time.Hour)}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	srv := &server{store: store, ops: wire.NewOpsMetrics("apid_doctor_load")}
+	started := time.Now()
+	srv.runDoctorOnce(ctx, slog.Default())
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("bounded doctor cycle took %v; workers did not run concurrently", elapsed)
+	}
+	observed := 0
+	for i := range domainCount {
+		domain := fmt.Sprintf("doctor-%03d.example.test", i)
+		if _, err := store.GetDoctorObservation(ctx, domain); err == nil {
+			observed++
+		}
+	}
+	if observed != doctorBatchLimit {
+		t.Fatalf("observations written = %d, want one bounded batch of %d", observed, doctorBatchLimit)
+	}
+	if got := testutil.ToFloat64(srv.ops.DomainDoctorCycles().WithLabelValues("success")); got != 1 {
+		t.Fatalf("successful cycle metric = %v, want 1", got)
+	}
 }

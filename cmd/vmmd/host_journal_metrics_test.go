@@ -170,6 +170,22 @@ func TestHostJournalMetricsTreatsNoGrepMatchesAsZero(t *testing.T) {
 	}
 }
 
+func TestExecHostJournalCommandDoesNotInheritSystemdNotifyEnvironment(t *testing.T) {
+	t.Setenv("NOTIFY_SOCKET", "/run/systemd/notify")
+	t.Setenv("WATCHDOG_PID", "123")
+	t.Setenv("WATCHDOG_USEC", "1000000")
+	t.Setenv("FAAS_NOTIFY_ISOLATION_SENTINEL", "preserved")
+
+	out, err := execHostJournalCommand(t.Context(), "sh", "-c",
+		`test -z "${NOTIFY_SOCKET+x}" && test -z "${WATCHDOG_PID+x}" && test -z "${WATCHDOG_USEC+x}" && printf %s "$FAAS_NOTIFY_ISOLATION_SENTINEL"`)
+	if err != nil {
+		t.Fatalf("isolated host-journal command inherited systemd notification environment: %v: %s", err, out)
+	}
+	if got := string(out); got != "preserved" {
+		t.Fatalf("ordinary environment was not preserved: got %q", got)
+	}
+}
+
 func TestJournalNoMatchesRejectsRealFailures(t *testing.T) {
 	for name, tc := range map[string]struct {
 		out  []byte
@@ -247,7 +263,7 @@ func TestJournalPolicyHasFiniteBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, directive := range []string{"size {{ faas_hardening_rsyslog_max_file_size }}", "rotate {{ faas_hardening_rsyslog_rotate }}", "/usr/lib/rsyslog/rsyslog-rotate"} {
+	for _, directive := range []string{"su syslog adm", "size {{ faas_hardening_rsyslog_max_file_size }}", "rotate {{ faas_hardening_rsyslog_rotate }}", "/usr/lib/rsyslog/rsyslog-rotate"} {
 		if !strings.Contains(string(rsyslogPolicy), directive) {
 			t.Errorf("rsyslog rotation policy missing %q", directive)
 		}

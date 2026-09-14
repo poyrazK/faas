@@ -151,9 +151,10 @@ create_monitoring_policy() {
       --policy-from-file="$policy_file" --notification-channels="$channel"
     return
   fi
-  # A log-based metric can take several minutes to become queryable by Cloud
-  # Monitoring after Logging accepted it. Retry the dependent policy create so
-  # a fresh guard run converges without requiring a manual second invocation.
+  # Metric-based policies can take several minutes to become queryable after
+  # Logging accepts a new descriptor. Direct log-match policies converge on
+  # the first attempt; keeping the bounded retry here also covers the older
+  # metric-based backup and Ops Agent policies.
   for attempt in $(seq 1 30); do
     if run gcloud monitoring policies create --project="$project" \
         --policy-from-file="$policy_file" --notification-channels="$channel"; then

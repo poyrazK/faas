@@ -82,6 +82,27 @@ func TestOpsMetrics_IndependentRegistries(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_DomainDoctorCollectorsRegistered(t *testing.T) {
+	m := wire.NewOpsMetrics("apid")
+	m.DomainDoctorCycles().WithLabelValues("success").Inc()
+	m.DomainDoctorBatchSize().Set(128)
+	m.DomainDoctorOldestObservationSeconds().Set(42)
+	m.DomainDoctorSkippedFlagDisabled().Inc()
+	body := render(t, m)
+	for _, want := range []string{
+		`apid_domain_doctor_cycles_total{outcome="success"} 1`,
+		`apid_domain_doctor_cycles_total{outcome="error"} 0`,
+		`apid_domain_doctor_cycles_total{outcome="timeout"} 0`,
+		`apid_domain_doctor_batch_size 128`,
+		`apid_domain_doctor_oldest_observation_seconds 42`,
+		`apid_domain_doctor_skipped_flag_disabled_total 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q in metrics output", want)
+		}
+	}
+}
+
 func TestOpsMetrics_EvictionFired(t *testing.T) {
 	m := wire.NewOpsMetrics("schedd")
 	m.EvictionFired("pro", "ram_pressure").Inc()

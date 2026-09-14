@@ -172,6 +172,7 @@ jobs:
       format_storage: ${{ steps.resolve_bundle.outputs.format_storage || steps.resolve_claim.outputs.format_storage || steps.resolve_legacy.outputs.format_storage }}
     env:
       COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+      COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
       COMPUTE_DATABASE_URL: ${{ secrets.COMPUTE_DATABASE_URL }}
       COMPUTE_STORAGE_ENV: ${{ secrets.COMPUTE_STORAGE_ENV }}
       COMPUTE_PKI_TARBALL_B64: ${{ secrets.COMPUTE_PKI_TARBALL_B64 }}
@@ -401,7 +402,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in COMPUTE_SSH_KEY COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV \
+          for name in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV \
             COMPUTE_PKI_TARBALL_B64 COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::production secret $name is not configured" >&2
@@ -487,6 +488,7 @@ jobs:
       # These are environment secrets, not repository files. The runner
       # must be trusted and should be ephemeral or dedicated to deployments.
       COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+      COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
       COMPUTE_DATABASE_URL: ${{ secrets.COMPUTE_DATABASE_URL }}
       # The operator CLI registers the release and activates the node from
       # the runner, so it also needs the same DSN in its process environment.
@@ -624,7 +626,7 @@ jobs:
       - name: Assemble the standard join artifact directory
         run: |
           set -euo pipefail
-          for required in COMPUTE_SSH_KEY COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV \
+          for required in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV \
             COMPUTE_PKI_TARBALL_B64 COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY \
             FLEET_AGE_KEY FLEET_AGE_RECIPIENT; do
             [[ -n "${!required:-}" ]] || {
@@ -652,6 +654,11 @@ jobs:
 
           umask 077
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$ARTIFACT_DIR/compute-ssh-key"
+          # Pin every stable fleet endpoint from one operator-owned trust set.
+          # join-node adds the selected provider endpoint only after checking
+          # its separately authorized fingerprint.
+          printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$ARTIFACT_DIR/compute-known-hosts"
+          chmod 0600 "$ARTIFACT_DIR/compute-known-hosts"
           printf '%s\n' "DATABASE_URL=$COMPUTE_DATABASE_URL" > "$ARTIFACT_DIR/compute-db.env"
           # vmmd intentionally reads its explicit split-box override while
           # the operator CLI and the other compute daemons use DATABASE_URL.
@@ -777,6 +784,7 @@ jobs:
             --manifest-file "$ARTIFACT_DIR/production-manifest.yaml"
             --node "$NODE"
             --ssh-key "$ARTIFACT_DIR/compute-ssh-key"
+            --ssh-known-hosts-file "$ARTIFACT_DIR/compute-known-hosts"
             --release-tarball "$ARTIFACT_DIR/release.tar.gz"
             --artifact-dir "$ARTIFACT_DIR"
             --repo-root "$GITHUB_WORKSPACE"
@@ -858,6 +866,24 @@ jobs:
             --connect-timeout 2 --max-time 3 \
             --header 'Host: gatewayd-internal.faas' \
             "http://${gateway_host}:8080/healthz" >/dev/null
+
+          metrics_body="$RUNNER_TEMP/compute-gateway-metrics.prom"
+          curl --fail --silent --show-error \
+            --retry 10 --retry-delay 1 --retry-all-errors \
+            --connect-timeout 2 --max-time 3 \
+            --header 'Host: gatewayd-internal.faas' \
+            "http://${gateway_host}:8080/v1/internal/metrics" >"$metrics_body"
+          grep -q '^# HELP gatewayd_ops_total ' "$metrics_body" || {
+            echo "::error::compute gateway metrics endpoint returned no gatewayd metric family" >&2
+            exit 1
+          }
+
+          # Meterd dials schedd telemetry directly on the private network.
+          # Prove the newly allowed listener before declaring the node ready.
+          if ! timeout 3 bash -c "</dev/tcp/${gateway_host}/9091"; then
+            echo "::error::compute schedd telemetry port 9091 is unreachable from the fleet runner" >&2
+            exit 1
+          fi
 
       - name: Show post-join identity without exposing secrets
         if: always()

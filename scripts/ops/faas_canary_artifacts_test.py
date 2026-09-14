@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -181,6 +182,22 @@ fi'''
         manager.register(str(path), "run", "canary")
         manager.finish(str(path), "failure")
         self.assertTrue(path.exists())
+
+    def test_process_that_vanishes_during_procfs_read_does_not_block_cleanup(self):
+        path = self.artifact()
+        os.utime(path, (self.clock - 101, self.clock - 101))
+        process = self.proc / "2"
+        process.mkdir()
+        original = MODULE.pathlib.Path.read_bytes
+
+        def read_bytes(candidate):
+            if candidate == process / "environ":
+                raise ProcessLookupError("process vanished")
+            return original(candidate)
+
+        with mock.patch.object(MODULE.pathlib.Path, "read_bytes", read_bytes):
+            self.manager().sweep()
+        self.assertFalse(path.exists())
 
     def test_failed_reference_proof_keeps_artifact_and_increments_failure(self):
         path = self.artifact()

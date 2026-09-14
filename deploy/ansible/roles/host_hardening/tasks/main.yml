@@ -231,6 +231,28 @@
   register: faas_hardening_rsyslog_units
   when: faas_hardening_rsyslog | bool
 
+- name: host_hardening — prove the rsyslog policy can inspect its targets  # noqa: command-instead-of-module (logrotate owns policy validation)
+  ansible.builtin.command:
+    argv:
+      - logrotate
+      - --debug
+      - /etc/logrotate.d/rsyslog
+  register: faas_hardening_rsyslog_debug
+  changed_when: false
+  failed_when: >-
+    faas_hardening_rsyslog_debug.rc != 0 or
+    'insecure permissions' in
+    ((faas_hardening_rsyslog_debug.stdout | default('')) ~
+     (faas_hardening_rsyslog_debug.stderr | default('')))
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — run one bounded rsyslog rotation check
+  ansible.builtin.systemd_service:
+    name: faas-rsyslog-rotate.service
+    state: started
+    daemon_reload: "{{ faas_hardening_rsyslog_units is changed }}"
+  when: faas_hardening_rsyslog | bool
+
 - name: host_hardening — enable bounded rsyslog rotation
   ansible.builtin.systemd_service:
     name: faas-rsyslog-rotate.timer

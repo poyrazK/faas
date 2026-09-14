@@ -463,6 +463,11 @@ const (
 	// generic error. Maps to HTTP 501.
 	CodeBillingNotImplemented = "billing_not_implemented"
 	CodeCapacity              = "capacity_unavailable"
+	// CodeWakeInProgress is a successful asynchronous admission response from
+	// the public gateway. It is returned with HTTP 202 when a cold fallback
+	// outlives the function request budget but the coalesced wake is still
+	// progressing. Clients should honor Retry-After and retry the invocation.
+	CodeWakeInProgress = "wake_in_progress"
 	// CodeDebugRegressionUnavailable is returned when the debugger's
 	// regression-observation relation or query is unavailable. It is kept
 	// distinct from CodeCapacity because this is a database/schema dependency

@@ -4649,6 +4649,24 @@ func (m *MemStore) UpdateApp(_ context.Context, id string, p UpdateAppParams) (A
 	return a, nil
 }
 
+// CompareAndSetAppStatus is the in-memory equivalent of PgStore's atomic
+// lifecycle claim. Holding m.mu across the predicate and write makes parallel
+// restart requests deterministic in tests and local development.
+func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to AppStatus) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok {
+		return false, ErrNotFound
+	}
+	if a.Status != from {
+		return false, nil
+	}
+	a.Status = to
+	m.apps[id] = a
+	return true, nil
+}
+
 // RenameApp atomically swaps an app's slug (issue #63). Scans the
 // in-memory map under lock for the (accountID, oldSlug) pair; rejects
 // newSlug collisions with ErrConflict so tests can exercise the same
@@ -8759,6 +8777,76 @@ func (m *MemStore) ListAllCustomDomainsForDoctor(_ context.Context) ([]string, e
 			seen[h.Hostname] = struct{}{}
 			out = append(out, h.Hostname)
 		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) ListCustomDomainsForDoctorBatch(_ context.Context, limit int) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		return []string{}, nil
+	}
+	type candidate struct {
+		domain, account string
+		observed        time.Time
+		accountRank    int
+	}
+	seen := make(map[string]struct{})
+	items := make([]candidate, 0, len(m.domains)+len(m.tenantHostnames))
+	for domain, row := range m.domains {
+		if !row.Verified() {
+			continue
+		}
+		account := ""
+		if app, ok := m.apps[row.AppID]; ok {
+			account = app.AccountID
+		}
+		items = append(items, candidate{domain: domain, account: account, observed: m.doctorObs[domain].ObservedAt})
+		seen[domain] = struct{}{}
+	}
+	for domain, hostname := range m.tenantHostnames {
+		if _, ok := seen[domain]; ok {
+			continue
+		}
+		account := ""
+		if surface, ok := m.tenantSurfaces[hostname.SurfaceID]; ok {
+			account = surface.AccountID
+		}
+		items = append(items, candidate{domain: domain, account: account, observed: m.doctorObs[domain].ObservedAt})
+	}
+	// Rank oldest work within each account, then interleave equal ranks. This
+	// mirrors PgStore's row_number partition and prevents one tenant's large
+	// inventory from occupying every bounded cycle.
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].account != items[j].account {
+			return items[i].account < items[j].account
+		}
+		if !items[i].observed.Equal(items[j].observed) {
+			return items[i].observed.Before(items[j].observed)
+		}
+		return items[i].domain < items[j].domain
+	})
+	ranks := make(map[string]int)
+	for i := range items {
+		ranks[items[i].account]++
+		items[i].accountRank = ranks[items[i].account]
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].accountRank != items[j].accountRank {
+			return items[i].accountRank < items[j].accountRank
+		}
+		if !items[i].observed.Equal(items[j].observed) {
+			return items[i].observed.Before(items[j].observed)
+		}
+		return items[i].domain < items[j].domain
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	out := make([]string, len(items))
+	for i := range items {
+		out[i] = items[i].domain
 	}
 	return out, nil
 }

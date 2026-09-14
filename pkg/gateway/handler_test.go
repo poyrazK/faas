@@ -990,6 +990,20 @@ func TestWriteWakeError_QueueFull(t *testing.T) {
 	}
 }
 
+func TestWriteWakeInProgressIsRetryableAsyncResponse(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeWakeInProgress(rec, "req-123")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") != "1" || rec.Header().Get(api.RequestIDHeader) != "req-123" {
+		t.Fatalf("headers = %v", rec.Header())
+	}
+	if !strings.Contains(rec.Body.String(), api.CodeWakeInProgress) {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+}
+
 func TestWriteWakeError_ProblemPassthrough(t *testing.T) {
 	rec := httptest.NewRecorder()
 	prob := api.NewProblem(http.StatusBadRequest, api.CodePlanLimitRAM, "plan", "hobby")

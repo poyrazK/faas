@@ -83,6 +83,7 @@
     - role: nftables
     - role: overlay
     - role: node_exporter
+    - role: gcp_ops_agent
     - role: internal_pki_renewal
     - role: canary_artifact_retention
     - role: alertmanager
@@ -138,6 +139,7 @@
     - role: nftables
     - role: overlay
     - role: node_exporter
+    - role: gcp_ops_agent
     - role: internal_pki_renewal
     - role: canary_artifact_retention
     # Compute-only:

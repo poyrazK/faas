@@ -69,7 +69,7 @@ func TestAppMkfsRealGoLayer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(run.sizes) != 1 || run.sizes[0] != 34 || result.SizeMB != 34 {
+	if len(run.sizes) != 1 || run.sizes[0] != 41 || result.SizeMB != 41 {
 		t.Fatalf("attempts=%v result=%+v", run.sizes, result)
 	}
 	info, err := os.Stat(output)

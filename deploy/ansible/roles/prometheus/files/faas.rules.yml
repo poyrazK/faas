@@ -65,7 +65,7 @@ groups:
     rules:
       - alert: FaasFleetSealDomainUnverified
         expr: |
-          node_systemd_unit_state{name="faas-schedd.service",state="active"} == 1
+          node_systemd_unit_state{job="node-compute",name="faas-schedd.service",state="active"} == 1
           unless on(instance)
           faas_fleet_seal_domain_ready == 1
         for: 5m
@@ -89,6 +89,25 @@ groups:
           summary: "Compute nodes report different cluster signing kids"
           description: "More than one cluster signing kid is reported by verified fleet nodes. Internal-service JWTs can fail across nodes until every node verifies the current singleton key."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFleetSealDomain.md"
+
+  - name: gcp_ops_agent
+    interval: 30s
+    rules:
+      - alert: FaasGCPOpsAgentMissing
+        expr: |
+          up{job="node-compute"} == 1
+          unless on(instance)
+          node_systemd_unit_state{job="node-compute",name="google-cloud-ops-agent.service",state="active"} == 1
+        for: 5m
+        labels:
+          severity: page
+          component: gcp-ops-agent
+          family: off_host_telemetry
+          public_status: internal
+        annotations:
+          summary: "A compute node is missing its GCP telemetry collector"
+          description: "The compute node is reachable, but google-cloud-ops-agent.service is missing or inactive. Local journal rotation can now remove the only detailed runtime evidence from that host."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGCPOpsAgentMissing.md"
 
   # Production validation artifacts are bounded to 5 GiB per host. The
   # node-exporter textfile collector provides one series per host, so the
@@ -1938,15 +1957,10 @@ groups:
       # ─────────────────────────────────────────────────────────────────
       # ADR-120 Tier A1: domain doctor staleness alerts.
       #
-      # The dns_poller in cmd/apid/dns_poller.go emits
-      # apid_domain_doctor_oldest_observation_seconds after each
-      # 30 s pass. When the loop is healthy, the gauge reads 0
-      # (cold start) or the wall-clock age of the most recent
-      # observation row (typically 30 s after a pass). When the
-      # loop stalls (db outage, dns_poller goroutine crash,
-      # FAAS_DOMAIN_DOCTOR_ENABLED=false), the gauge freezes
-      # and Prometheus's `time() − timestamp(<gauge>) > X`
-      # expression pages on-call.
+      # The dns_poller increments domain_doctor_cycles_total after each
+      # bounded 30 s cycle. The counter is the heartbeat: unlike a gauge's
+      # Prometheus scrape timestamp, it cannot look fresh while the producer
+      # is stalled. oldest_observation_seconds measures customer-data age.
       #
       # Three threshold rules — stalled (page), stretched (warn),
       # disabled-by-operator (info, no page) — mirror the
@@ -1956,23 +1970,15 @@ groups:
       # because eventretention has no dark-launch flag.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasDomainDoctorStalled
-        # The dns_poller hasn't completed a doctor pass in >26m.
-        # Loop cadence is 30 s (cmd/apid/dns_poller.go:22, 24);
-        # the 25.5 min slack covers a Postgres hiccup that
-        # delays the next good pass by ~50 passes. `for: 30m`
-        # debounces a single missed pass. A stuck doctor means
-        # customers see "Last check Xm ago" indefinitely on
-        # the dashboard and the `gregale domains doctor`
-        # command returns stale rows — page.
-        expr: absent(apid_domain_doctor_oldest_observation_seconds) or time() - timestamp(apid_domain_doctor_oldest_observation_seconds) > 1560
-        for: 30m
+        expr: absent(apid_domain_doctor_cycles_total{outcome="success"}) or sum(increase(apid_domain_doctor_cycles_total{outcome="success"}[5m])) < 1
+        for: 10m
         labels:
           severity: page
           component: apid
           family: domain_doctor
         annotations:
-          summary: "apid domain doctor stalled >26m"
-          description: "The dns_poller doctor pass (cmd/apid/dns_poller.go::runDoctorOnce, ADR-120) has not completed in >26m. The gauge apid_domain_doctor_oldest_observation_seconds stops updating when the loop stalls; Prometheus scrapes see a stale value. Customers' `gregale domains doctor <domain>` and the dashboard /apps/{slug}/domains/{domain}/doctor page will return stale observations. Drill down per the runbook: check apid logs for `dns_poller: list domains for doctor failed`, then query Postgres for the MIN(observed_at) row, then escalate."
+          summary: "apid domain doctor has no successful cycles"
+          description: "The dns_poller has not completed a successful bounded doctor cycle for at least 10m. Check the error and timeout outcome counters, apid logs, and Postgres connectivity; customer domain observations are no longer being refreshed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDomainDoctorStalled.md"
 
       - alert: FaasDomainVerificationStalled
@@ -1988,27 +1994,18 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDomainDoctorStalled.md"
 
       - alert: FaasDomainDoctorStretched
-        # The doctor loop ran but the cadence has stretched past
-        # 3x the 30s interval (>1.5m stale). Either the dns_poller
-        # goroutine died mid-batch, the MIN(observed_at) query
-        # is contending with the per-domain UpsertDoctorObservation
-        # writes, or a tenant with thousands of domains is
-        # dominating the 50/batch budget. The gauge IS updating
-        # (so loop is alive per the stalled rule's semantics)
-        # but the cadence is broken — warn-tier operational
-        # signal, not page. Threshold (90s) was tightened to 3x
-        # the 30s cadence (was: 2x in the comment) so a single
-        # dropped pass doesn't trip the warn tier — review-fix
-        # #5 in PR #1003 caught the comment-vs-threshold drift.
-        expr: time() - timestamp(apid_domain_doctor_oldest_observation_seconds) > 90
-        for: 30m
+        # Ten successful cycles are expected in five minutes. Warn only after
+        # a sustained drop below eight, which tolerates two slow or missed
+        # cycles while still detecting a worker that cannot keep its cadence.
+        expr: sum(increase(apid_domain_doctor_cycles_total{outcome="success"}[5m])) < 8
+        for: 10m
         labels:
           severity: warn
           component: apid
           family: domain_doctor
         annotations:
-          summary: "apid domain doctor cadence stretched >1.5m"
-          description: "The dns_poller doctor pass is alive (gauge IS updating) but the cadence has stretched past 3x the 30 s interval (90 s). Either the dns_poller goroutine is contending with a slow MIN(observed_at) query, a tenant's batch is starving the loop, or the goroutine crashed mid-pass and the watchdog hasn't restarted it yet. Customers will see 'last check 1-2m ago' instead of the usual 30 s."
+          summary: "apid domain doctor cadence is below target"
+          description: "The dns_poller completed fewer than eight successful cycles in five minutes for 10m. Check timeout/error outcomes, batch size, DNS resolver latency, and Postgres pool pressure."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDomainDoctorStalled.md"
 
       - alert: FaasDomainDoctorDisabledByOperator
@@ -3038,7 +3035,17 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
 
       - alert: FaasInternalMTLSRenewalNeverCompleted
-        expr: faas_internal_mtls_renewal_last_success_timestamp_seconds == 0 or time() - faas_internal_mtls_renewal_last_success_timestamp_seconds > 90000
+        expr: |
+          (
+            faas_internal_mtls_renewal_last_success_timestamp_seconds == 0
+            and on(instance)
+            time() - node_boot_time_seconds{job="node-compute"} > 90000
+          )
+          or
+          (
+            faas_internal_mtls_renewal_last_success_timestamp_seconds > 0
+            and time() - faas_internal_mtls_renewal_last_success_timestamp_seconds > 90000
+          )
         for: 15m
         labels:
           severity: page

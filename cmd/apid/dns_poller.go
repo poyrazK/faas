@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -23,6 +24,12 @@ import (
 // names use pkg/db constants to stay aligned with the apid NotifyChannels
 // table.
 const verifyInterval = 30 * time.Second
+
+const (
+	doctorBatchLimit  = 128
+	doctorWorkerLimit = 16
+	doctorPassTimeout = 25 * time.Second
+)
 
 // startDNSPoller runs the DNS poll loop until ctx is cancelled. Caller is
 // responsible for surfacing errors via the slog logger.
@@ -300,15 +307,64 @@ var txtLookupFunc = func(ctx context.Context, target string) ([]string, error) {
 // goroutine itself uses the parent ctx so a daemon shutdown
 // cancels the entire pass cleanly.
 func (s *server) runDoctorOnce(ctx context.Context, log *slog.Logger) {
-	domains, err := s.store.ListAllCustomDomainsForDoctor(ctx)
+	passCtx, cancelPass := context.WithTimeout(ctx, doctorPassTimeout)
+	defer cancelPass()
+	type doctorBatcher interface {
+		ListCustomDomainsForDoctorBatch(context.Context, int) ([]string, error)
+	}
+	var domains []string
+	var err error
+	if batcher, ok := s.store.(doctorBatcher); ok {
+		domains, err = batcher.ListCustomDomainsForDoctorBatch(passCtx, doctorBatchLimit)
+	} else {
+		domains, err = s.store.ListAllCustomDomainsForDoctor(passCtx)
+		if len(domains) > doctorBatchLimit {
+			domains = domains[:doctorBatchLimit]
+		}
+	}
 	if err != nil {
+		if s.ops != nil {
+			s.ops.DomainDoctorCycles().WithLabelValues("error").Inc()
+		}
 		log.Warn("dns_poller: list domains for doctor failed", "err", err)
 		return
 	}
+	if s.ops != nil {
+		s.ops.DomainDoctorBatchSize().Set(float64(len(domains)))
+	}
+	jobs := make(chan string)
+	workerCount := min(doctorWorkerLimit, len(domains))
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for domain := range jobs {
+				domainCtx, cancel := context.WithTimeout(passCtx, probeTimeout+2*time.Second)
+				_ = s.runDoctorForDomain(domainCtx, log, domain)
+				cancel()
+			}
+		}()
+	}
+	timedOut := false
 	for _, domain := range domains {
-		domainCtx, cancel := context.WithTimeout(ctx, probeTimeout+2*time.Second)
-		_ = s.runDoctorForDomain(domainCtx, log, domain)
-		cancel()
+		select {
+		case jobs <- domain:
+		case <-passCtx.Done():
+			timedOut = true
+		}
+		if timedOut {
+			break
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	outcome := "success"
+	if passCtx.Err() != nil {
+		outcome = "timeout"
+	}
+	if s.ops != nil {
+		s.ops.DomainDoctorCycles().WithLabelValues(outcome).Inc()
 	}
 	// ADR-120 Tier A1: refresh the apid_domain_doctor_oldest_
 	// observation_seconds gauge after the pass completes. The

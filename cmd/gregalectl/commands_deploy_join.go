@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"gopkg.in/yaml.v3"
 )
 
 type deployJoinOptions struct {
@@ -40,6 +41,7 @@ type deployJoinOptions struct {
 	SSHPort                 int
 	SSHHostKeySHA256        string
 	SSHKey                  string
+	SSHKnownHostsSource     string
 	FleetBundleFile         string
 	FleetBundleSignature    string
 	FleetReplayState        string
@@ -135,6 +137,7 @@ func cmdDeployJoinNode(args []string) int {
 	sshPort := fs.Int("ssh-port", 0, "SSH port for the adopted machine (default: 22 without --fleet-bundle-file)")
 	sshHostKey := fs.String("ssh-host-key-sha256", "", "expected OpenSSH SHA256 host-key fingerprint")
 	sshKey := fs.String("ssh-key", "", "optional SSH private key used by Ansible")
+	sshKnownHosts := fs.String("ssh-known-hosts-file", "", "operator-verified known_hosts file covering the complete manifest fleet")
 	fleetBundleFile := fs.String("fleet-bundle-file", "", "signed FleetEnrollmentBundle YAML/JSON authorization")
 	fleetBundleSignature := fs.String("fleet-bundle-signature", "", "detached cosign signature for --fleet-bundle-file")
 	fleetReplayState := fs.String("fleet-replay-state", "", "durable single-use enrollment state directory (required with --fleet-bundle-file for apply)")
@@ -181,6 +184,7 @@ func cmdDeployJoinNode(args []string) int {
 		SSHPort:                 *sshPort,
 		SSHHostKeySHA256:        *sshHostKey,
 		SSHKey:                  *sshKey,
+		SSHKnownHostsSource:     *sshKnownHosts,
 		FleetBundleFile:         *fleetBundleFile,
 		FleetBundleSignature:    *fleetBundleSignature,
 		FleetReplayState:        *fleetReplayState,
@@ -567,6 +571,11 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 			return report, fmt.Errorf("--ansible-vars-file: %w", err)
 		}
 	}
+	if opts.SSHKnownHostsSource != "" {
+		if _, err := os.Stat(opts.SSHKnownHostsSource); err != nil {
+			return report, fmt.Errorf("--ssh-known-hosts-file: %w", err)
+		}
+	}
 	if _, err := releaseAssetPath(opts.ReleaseTarball, releaseSigName); err != nil {
 		return report, err
 	}
@@ -622,6 +631,18 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	defer func() { _ = os.RemoveAll(tempRoot) }()
 	if opts.SSHHostKeySHA256 != "" {
 		knownHostsPath := filepath.Join(tempRoot, "known_hosts")
+		if opts.SSHKnownHostsSource != "" {
+			body, readErr := os.ReadFile(opts.SSHKnownHostsSource)
+			if readErr != nil {
+				return 3, fmt.Errorf("read fleet known_hosts: %w", readErr)
+			}
+			if len(body) > 0 && body[len(body)-1] != '\n' {
+				body = append(body, '\n')
+			}
+			if writeErr := os.WriteFile(knownHostsPath, body, 0o600); writeErr != nil {
+				return 3, fmt.Errorf("seed fleet known_hosts: %w", writeErr)
+			}
+		}
 		if err := verifySSHHostKey(ctx, *opts, knownHostsPath); err != nil {
 			return 3, fmt.Errorf("verify SSH host key: %w", err)
 		}
@@ -631,6 +652,11 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	m, err := manifest.Load(opts.ManifestFile)
 	if err != nil {
 		return 1, err
+	}
+	if opts.SSHKnownHostsSource != "" {
+		if err := requireFleetKnownHosts(opts.SSHKnownHostsFile, m); err != nil {
+			return 3, err
+		}
 	}
 	expectedManifestHash, err := joinManifestHash(opts.ManifestFile)
 	if err != nil {
@@ -747,6 +773,9 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	report.Timings = append(report.Timings, joinTiming{Phase: "prepare_local", DurationMS: localPrepareDuration.Milliseconds()})
 
 	common := []string{"-i", filepath.Join(tempRoot, "inventory", "hosts.ini")}
+	if opts.SSHKnownHostsSource != "" {
+		common = append(common, "--ssh-common-args", "-o UserKnownHostsFile="+opts.SSHKnownHostsFile+" -o StrictHostKeyChecking=yes")
+	}
 	if opts.AnsibleVarsFile != "" {
 		common = append(common, "-e", "@"+opts.AnsibleVarsFile)
 	}
@@ -803,12 +832,17 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 }
 
 func joinBootstrapContractHash(ansibleDir string) (string, error) {
-	roots := []string{
-		"bootstrap.yml",
-		"group_vars",
-		"node_join.yml",
-		"requirements.yml",
-		"roles",
+	bootstrapBody, err := os.ReadFile(filepath.Join(ansibleDir, "bootstrap.yml"))
+	if err != nil {
+		return "", fmt.Errorf("read compute bootstrap playbook: %w", err)
+	}
+	computePlaybook, roleNames, err := computeBootstrapContract(bootstrapBody)
+	if err != nil {
+		return "", fmt.Errorf("select compute bootstrap contract: %w", err)
+	}
+	roots := []string{"node_join.yml", "requirements.yml", "roles/_shared"}
+	for _, roleName := range roleNames {
+		roots = append(roots, filepath.Join("roles", roleName))
 	}
 	var paths []string
 	for _, root := range roots {
@@ -828,6 +862,15 @@ func joinBootstrapContractHash(ansibleDir string) (string, error) {
 	}
 	sort.Strings(paths)
 	hash := sha256.New()
+	if _, err := io.WriteString(hash, "bootstrap.compute.yml\x00"); err != nil {
+		return "", fmt.Errorf("hash compute bootstrap path: %w", err)
+	}
+	if _, err := hash.Write(computePlaybook); err != nil {
+		return "", fmt.Errorf("hash compute bootstrap body: %w", err)
+	}
+	if _, err := hash.Write([]byte{0}); err != nil {
+		return "", fmt.Errorf("hash compute bootstrap separator: %w", err)
+	}
 	for _, path := range paths {
 		rel, err := filepath.Rel(ansibleDir, path)
 		if err != nil {
@@ -851,6 +894,75 @@ func joinBootstrapContractHash(ansibleDir string) (string, error) {
 		}
 	}
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// computeBootstrapContract extracts only plays that target compute_nodes and
+// the role names those plays reference. Control-plane-only role changes must
+// not invalidate every managed compute host and turn a release rollout into a
+// full OS bootstrap. The selected play bodies are part of the hash, so adding,
+// removing, reordering, or changing a compute pre-task still invalidates the
+// contract without maintaining a second handwritten role list.
+func computeBootstrapContract(body []byte) ([]byte, []string, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal(body, &document); err != nil {
+		return nil, nil, err
+	}
+	if len(document.Content) != 1 || document.Content[0].Kind != yaml.SequenceNode {
+		return nil, nil, errors.New("bootstrap.yml must contain a sequence of plays")
+	}
+	selected := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	roles := make(map[string]struct{})
+	for _, play := range document.Content[0].Content {
+		if play.Kind != yaml.MappingNode {
+			continue
+		}
+		hosts := mappingValue(play, "hosts")
+		if hosts == nil || !strings.Contains(hosts.Value, "compute_nodes") {
+			continue
+		}
+		selected.Content = append(selected.Content, play)
+		roleList := mappingValue(play, "roles")
+		if roleList == nil || roleList.Kind != yaml.SequenceNode {
+			continue
+		}
+		for _, item := range roleList.Content {
+			var name string
+			switch item.Kind {
+			case yaml.ScalarNode:
+				name = item.Value
+			case yaml.MappingNode:
+				if role := mappingValue(item, "role"); role != nil {
+					name = role.Value
+				}
+			}
+			name = strings.TrimSpace(name)
+			if name != "" {
+				roles[name] = struct{}{}
+			}
+		}
+	}
+	if len(selected.Content) == 0 {
+		return nil, nil, errors.New("bootstrap.yml has no compute_nodes play")
+	}
+	roleNames := make([]string, 0, len(roles))
+	for name := range roles {
+		roleNames = append(roleNames, name)
+	}
+	sort.Strings(roleNames)
+	selectedBody, err := yaml.Marshal(selected)
+	if err != nil {
+		return nil, nil, err
+	}
+	return selectedBody, roleNames, nil
+}
+
+func mappingValue(node *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
 }
 
 func registerJoinReleaseBundle(ctx context.Context, tarballPath, expectedGitSHA, expectedManifestHash string) error {
@@ -1010,18 +1122,50 @@ func verifySSHHostKey(ctx context.Context, opts deployJoinOptions, knownHostsPat
 	if len(keys) == 0 {
 		return fmt.Errorf("ssh-keyscan %s:%d returned no host keys", opts.SSHHost, opts.SSHPort)
 	}
-	if err := os.WriteFile(knownHostsPath, keys, 0o600); err != nil {
-		return fmt.Errorf("write temporary known_hosts: %w", err)
+	observedPath := knownHostsPath + ".observed"
+	if err := os.WriteFile(observedPath, keys, 0o600); err != nil {
+		return fmt.Errorf("write observed SSH host keys: %w", err)
 	}
-	fingerprint := exec.CommandContext(ctx, "ssh-keygen", "-lf", knownHostsPath, "-E", "sha256")
+	defer func() { _ = os.Remove(observedPath) }()
+	fingerprint := exec.CommandContext(ctx, "ssh-keygen", "-lf", observedPath, "-E", "sha256")
 	fingerprints, err := fingerprint.Output()
 	if err != nil {
 		return fmt.Errorf("ssh-keygen fingerprint: %w", err)
 	}
-	if fingerprintMatches(string(fingerprints), opts.SSHHostKeySHA256) {
-		return nil
+	if !fingerprintMatches(string(fingerprints), opts.SSHHostKeySHA256) {
+		return fmt.Errorf("observed host key fingerprint does not match signed %s", opts.SSHHostKeySHA256)
 	}
-	return fmt.Errorf("observed host key fingerprint does not match signed %s", opts.SSHHostKeySHA256)
+	knownHosts, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open temporary known_hosts: %w", err)
+	}
+	if _, err := knownHosts.Write(keys); err != nil {
+		_ = knownHosts.Close()
+		return fmt.Errorf("append temporary known_hosts: %w", err)
+	}
+	if err := knownHosts.Close(); err != nil {
+		return fmt.Errorf("close temporary known_hosts: %w", err)
+	}
+	return nil
+}
+
+// requireFleetKnownHosts prevents a per-node rollout from silently falling
+// back to a long-lived runner's ambient SSH trust while the fleet preflight
+// contacts peers. Every stable manifest address must appear in the
+// operator-verified file. The selected provider address is appended only
+// after its observed key matches the separately authorized fingerprint.
+func requireFleetKnownHosts(path string, m *manifest.Manifest) error {
+	for _, host := range m.Fleet.Hosts {
+		address := strings.TrimSpace(host.Address)
+		if address == "" {
+			address = strings.TrimSpace(host.Name)
+		}
+		lookup := exec.Command("ssh-keygen", "-F", address, "-f", path)
+		if err := lookup.Run(); err != nil {
+			return fmt.Errorf("fleet known_hosts has no verified key for manifest host %s (%s)", host.Name, address)
+		}
+	}
+	return nil
 }
 
 func fingerprintMatches(output, expected string) bool {

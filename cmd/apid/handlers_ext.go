@@ -1996,9 +1996,14 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 			"App is not active", "only an active app can be restarted"))
 		return
 	}
-	parked := state.AppEvictedCold
-	if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+	claimed, err := claimAppRestart(r.Context(), s.store, app.ID)
+	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not restart app"))
+		return
+	}
+	if !claimed {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Restart already in progress", "wait for the accepted restart to finish before retrying"))
 		return
 	}
 	wakeUUID, err := uuid.NewV7()
@@ -2022,6 +2027,23 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 	})
 	s.log.Info("app restart requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID)
 	writeJSON(w, http.StatusAccepted, api.AppRestartResponse{WakeID: wakeID})
+}
+
+type appStatusCompareAndSetter interface {
+	CompareAndSetAppStatus(context.Context, string, state.AppStatus, state.AppStatus) (bool, error)
+}
+
+func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool, error) {
+	if atomicStore, ok := store.(appStatusCompareAndSetter); ok {
+		return atomicStore.CompareAndSetAppStatus(ctx, appID, state.AppActive, state.AppEvictedCold)
+	}
+	// Compatibility for focused handler test doubles. Production PgStore and
+	// the integration MemStore always take the atomic branch above.
+	parked := state.AppEvictedCold
+	if _, err := store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &parked}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // renameApp swaps an app's slug atomically (issue #63). Body is

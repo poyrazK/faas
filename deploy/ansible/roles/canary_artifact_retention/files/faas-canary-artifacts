@@ -4,6 +4,7 @@
 import argparse
 import contextlib
 import dataclasses
+import errno
 import fcntl
 import fnmatch
 import glob
@@ -341,25 +342,25 @@ class Manager:
             for name in ("cwd", "root", "exe"):
                 try:
                     references.append(os.readlink(proc / name))
-                except FileNotFoundError:
-                    pass
-                except PermissionError as error:
+                except OSError as error:
+                    if error.errno in (errno.ENOENT, errno.ESRCH):
+                        continue
                     raise ReferenceProofError(f"cannot inspect {proc / name}: {error}") from error
             try:
                 for fd in (proc / "fd").iterdir():
                     with contextlib.suppress(FileNotFoundError):
                         references.append(os.readlink(fd))
-            except FileNotFoundError:
-                pass
-            except PermissionError as error:
+            except OSError as error:
+                if error.errno in (errno.ENOENT, errno.ESRCH):
+                    continue
                 raise ReferenceProofError(f"cannot inspect {proc / 'fd'}: {error}") from error
             for name in ("cmdline", "environ", "maps"):
                 try:
                     value = (proc / name).read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
                     references.append(value)
-                except FileNotFoundError:
-                    pass
-                except PermissionError as error:
+                except OSError as error:
+                    if error.errno in (errno.ENOENT, errno.ESRCH):
+                        continue
                     raise ReferenceProofError(f"cannot inspect {proc / name}: {error}") from error
         return references
 

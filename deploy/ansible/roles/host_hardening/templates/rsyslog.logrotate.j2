@@ -12,6 +12,7 @@
 /var/log/debug
 /var/log/messages
 {
+    su syslog adm
     size {{ faas_hardening_rsyslog_max_file_size }}
     rotate {{ faas_hardening_rsyslog_rotate }}
     missingok

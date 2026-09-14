@@ -3397,7 +3397,15 @@ func installComputeMetricsRoute(mux *http.ServeMux, boxRole role.Role, control h
 	if mux == nil || control == nil || boxRole != role.RoleComputeOnly {
 		return
 	}
-	mux.Handle(computeMetricsPath, control)
+	mux.Handle(computeMetricsPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The private data-plane path is deliberately different from the
+		// control listener's /metrics path. Rewrite it before dispatching into
+		// ControlMux; handing the original path to that mux returns its 404.
+		cloned := r.Clone(r.Context())
+		cloned.URL.Path = "/metrics"
+		cloned.URL.RawPath = ""
+		control.ServeHTTP(w, cloned)
+	}))
 }
 
 // weightsStoreAdapter (issue #556 / PR-B) adapts pkg/state.PgStore to

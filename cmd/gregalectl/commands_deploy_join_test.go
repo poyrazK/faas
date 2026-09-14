@@ -100,17 +100,18 @@ func TestNodeJoinLeaseRefreshInterval(t *testing.T) {
 
 func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 	ansibleDir := t.TempDir()
-	for _, dir := range []string{"group_vars", "roles/example/tasks"} {
+	for _, dir := range []string{"roles/_shared", "roles/compute/tasks", "roles/control/tasks"} {
 		if err := os.MkdirAll(filepath.Join(ansibleDir, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for path, body := range map[string]string{
-		"bootstrap.yml":                "---\n",
+		"bootstrap.yml":                "---\n- hosts: control_plane\n  roles:\n    - role: control\n- hosts: control_plane:compute_nodes\n  tasks:\n    - debug: {msg: shared}\n- hosts: compute_nodes\n  roles:\n    - role: compute\n",
 		"node_join.yml":                "---\n",
 		"requirements.yml":             "collections: []\n",
-		"group_vars/all.yml":           "faas_box_role: compute-only\n",
-		"roles/example/tasks/main.yml": "---\n",
+		"roles/_shared/common.yml":     "---\n",
+		"roles/compute/tasks/main.yml": "---\n",
+		"roles/control/tasks/main.yml": "---\n",
 	} {
 		if err := os.WriteFile(filepath.Join(ansibleDir, path), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -124,7 +125,7 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 	if len(before) != len("sha256:")+sha256.Size*2 || !strings.HasPrefix(before, "sha256:") {
 		t.Fatalf("bootstrap contract hash = %q", before)
 	}
-	if err := os.WriteFile(filepath.Join(ansibleDir, "roles/example/tasks/main.yml"), []byte("---\n- debug: msg=changed\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ansibleDir, "roles/compute/tasks/main.yml"), []byte("---\n- debug: msg=changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	after, err := joinBootstrapContractHash(ansibleDir)
@@ -132,7 +133,17 @@ func TestJoinBootstrapContractHashTracksBootstrapSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	if after == before {
-		t.Fatalf("bootstrap contract hash did not change after a role change: %s", after)
+		t.Fatalf("bootstrap contract hash did not change after a compute role change: %s", after)
+	}
+	if err := os.WriteFile(filepath.Join(ansibleDir, "roles/control/tasks/main.yml"), []byte("---\n- debug: msg=control-only\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	controlOnly, err := joinBootstrapContractHash(ansibleDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if controlOnly != after {
+		t.Fatalf("control-only role invalidated compute contract: before=%s after=%s", after, controlOnly)
 	}
 }
 
@@ -553,6 +564,25 @@ func TestFingerprintMatches(t *testing.T) {
 	}
 }
 
+func TestRequireFleetKnownHostsCoversEveryManifestAddress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBJcCV3B7r6Ey6qjXgmPLQxZQ6Ho9dJv0h5vPXLqyYV3"
+	if err := os.WriteFile(path, []byte("fsn-1.gregale.dev "+key+"\nfsn-2.gregale.dev "+key+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := &manifest.Manifest{Fleet: manifest.Fleet{Hosts: []manifest.Host{
+		{Name: "control", Address: "fsn-1.gregale.dev"},
+		{Name: "compute-a", Address: "fsn-2.gregale.dev"},
+	}}}
+	if err := requireFleetKnownHosts(path, m); err != nil {
+		t.Fatal(err)
+	}
+	m.Fleet.Hosts = append(m.Fleet.Hosts, manifest.Host{Name: "compute-b", Address: "fsn-3.gregale.dev"})
+	if err := requireFleetKnownHosts(path, m); err == nil || !strings.Contains(err.Error(), "compute-b") {
+		t.Fatalf("missing peer error = %v", err)
+	}
+}
+
 func TestOverrideJoinHostVars_PreservesStorageContract(t *testing.T) {
 	got := string(overrideJoinHostVars([]byte("faas_box_role: compute-only\n"), &deployJoinOptions{
 		SSHHost:       "203.0.113.8",
@@ -773,13 +803,13 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ansibleDir, "node_join.yml"), []byte("---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(ansibleDir, "bootstrap.yml"), []byte("---\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ansibleDir, "bootstrap.yml"), []byte("---\n- hosts: compute_nodes\n  roles:\n    - role: compute\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(ansibleDir, "requirements.yml"), []byte("---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{"group_vars", "roles"} {
+	for _, dir := range []string{"group_vars", "roles/_shared", "roles/compute"} {
 		if err := os.MkdirAll(filepath.Join(ansibleDir, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}

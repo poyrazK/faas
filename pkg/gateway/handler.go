@@ -5703,6 +5703,16 @@ haveApp:
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
+			if !showWakePage && requestBudgetExpired(r.Context()) && h.gate.WakeInProgress(app.ID) {
+				// Function requests have a three-second default budget. A
+				// snapshot miss can legitimately fall back to a longer cold boot;
+				// keep the one detached boot alive and return an explicit async
+				// result instead of misclassifying every attached caller as fleet
+				// capacity failure.
+				writeWakeInProgress(w, requestIDFrom(r))
+				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+				return
+			}
 			// The per-app gate rejects excess cold-wake followers before the
 			// gateway-wide admission queue is reached. Count that outcome on
 			// the same bounded admission surface so operators can distinguish
@@ -7459,6 +7469,18 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		}
 		api.WriteProblem(w, api.ErrCapacity("wake failed"))
 	}
+}
+
+func writeWakeInProgress(w http.ResponseWriter, requestID string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Retry-After", "1")
+	w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
+	if requestID != "" {
+		w.Header().Set(api.RequestIDHeader, requestID)
+	}
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = fmt.Fprintf(w, `{"status":202,"code":%q,"title":"App is waking","detail":"retry the request after the Retry-After interval"}`+"\n", api.CodeWakeInProgress)
 }
 
 func wakeRetryAfterSeconds(err error, fallback int) int {

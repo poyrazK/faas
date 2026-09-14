@@ -551,10 +551,15 @@ jobs:
             exit 1
           fi
 
+          # A platform rollout deliberately updates the control plane before
+          # compute. During that mixed-version window, compute-only scrape
+          # jobs can be down because their endpoint or firewall change has not
+          # landed yet. Gate every control-plane target here; cd-platform runs
+          # the complete target and metering gate after cd-compute succeeds.
           targets_healthy=0
           for _ in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:9095/api/v1/targets |
-              python3 -c 'import json,sys; targets=json.load(sys.stdin)["data"]["activeTargets"]; raise SystemExit(0 if targets and all(t.get("health") == "up" for t in targets) else 1)'; then
+              python3 -c 'import json,sys; compute={"gatewayd-internal","vmmd","imaged","builderd","node-compute","promtail-compute"}; targets=json.load(sys.stdin)["data"]["activeTargets"]; control=[t for t in targets if t.get("labels",{}).get("job") not in compute]; raise SystemExit(0 if control and all(t.get("health") == "up" for t in control) else 1)'; then
               targets_healthy=1
               break
             fi

@@ -3278,7 +3278,10 @@ const (
 	// not grow separate copies of customer limits. Priority is intentionally
 	// equal across plans; plan-aware priority would let sustained paid
 	// traffic starve other customers.
-	GatewayWakeAdmissionFreeMaxWaiters  = 4
+	// A waiter costs no additional VM admission because WakeGate coalesces the
+	// whole app generation. Keep enough room for an ordinary first burst after
+	// snapshot invalidation instead of rejecting siblings behind the one boot.
+	GatewayWakeAdmissionFreeMaxWaiters  = 16
 	GatewayWakeAdmissionHobbyMaxWaiters = 16
 	GatewayWakeAdmissionProMaxWaiters   = 64
 	GatewayWakeAdmissionScaleMaxWaiters = 128

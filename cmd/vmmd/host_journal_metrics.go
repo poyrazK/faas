@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -69,7 +70,28 @@ func newHostJournalMetrics(reg prometheus.Registerer, run hostJournalCommand, no
 }
 
 func execHostJournalCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = withoutSystemdNotifyEnvironment(os.Environ())
+	return cmd.CombinedOutput()
+}
+
+// withoutSystemdNotifyEnvironment prevents diagnostic subprocesses from
+// publishing status on vmmd's private Type=notify socket. In particular,
+// journalctl sends ERRNO and EXIT_STATUS datagrams on a no-match exit; when it
+// inherits NOTIFY_SOCKET, systemd attributes those datagrams to faas-vmmd and
+// logs two rejected notifications on every metrics sample.
+func withoutSystemdNotifyEnvironment(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, value := range env {
+		key, _, _ := strings.Cut(value, "=")
+		switch key {
+		case "NOTIFY_SOCKET", "WATCHDOG_PID", "WATCHDOG_USEC":
+			continue
+		default:
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // sample leaves the last good values in place on a partial failure and marks

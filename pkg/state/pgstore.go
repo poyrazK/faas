@@ -3668,6 +3668,22 @@ func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (
 	return scanApp(row)
 }
 
+// CompareAndSetAppStatus atomically claims an app lifecycle transition. It is
+// intentionally an optional store extension rather than part of Store: the
+// restart handler uses it when available, while small test doubles can retain
+// UpdateApp. PgStore and MemStore both implement it, which covers every real
+// server and integration test path.
+func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, to AppStatus) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`update apps set status = $3 where id = $1 and status = $2`,
+		id, string(from), string(to),
+	)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // nilOrBytes returns p.PublicAuth.Sealed when SetPublicAuth is
 // true (the apid seal step produced a non-nil blob for
 // mode='basic'; apid passes nil Sealed for mode='open'/'bearer'
@@ -10221,6 +10237,57 @@ func (s *PgStore) ListAllCustomDomainsForDoctor(ctx context.Context) ([]string, 
 			return nil, err
 		}
 		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ListCustomDomainsForDoctorBatch returns a bounded, durable, account-fair
+// doctor work set. The observation timestamp is the cursor: a successful
+// upsert moves that domain behind older or never-observed rows, so restarts do
+// not reset progress and no separate cursor row can drift from the work.
+func (s *PgStore) ListCustomDomainsForDoctorBatch(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 {
+		return []string{}, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		WITH raw AS (
+			SELECT cd.domain::text AS domain, a.account_id,
+			       COALESCE(o.observed_at, 'epoch'::timestamptz) AS observed_at
+			FROM custom_domains cd
+			JOIN apps a ON a.id = cd.app_id
+			LEFT JOIN domain_doctor_observations o ON o.domain = cd.domain
+			WHERE cd.verified_at IS NOT NULL
+			UNION ALL
+			SELECT th.hostname::text AS domain, ts.account_id,
+			       COALESCE(o.observed_at, 'epoch'::timestamptz) AS observed_at
+			FROM tenant_hostnames th
+			JOIN tenant_surfaces ts ON ts.id = th.surface_id
+			LEFT JOIN domain_doctor_observations o ON o.domain = th.hostname
+		), candidates AS (
+			SELECT DISTINCT ON (domain) domain, account_id, observed_at
+			FROM raw
+			ORDER BY domain, observed_at
+		), ranked AS (
+			SELECT domain, observed_at,
+			       row_number() OVER (PARTITION BY account_id ORDER BY observed_at, domain) AS account_rank
+			FROM candidates
+		)
+		SELECT domain
+		FROM ranked
+		ORDER BY account_rank, observed_at, domain
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]string, 0, limit)
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			return nil, err
+		}
+		out = append(out, domain)
 	}
 	return out, rows.Err()
 }

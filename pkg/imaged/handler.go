@@ -2810,12 +2810,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			h.ops.ObserveAPIHostingPhase(hostingFlowForApp(hostingApp), "verified_url", wire.APIHostingOutcomeComplete, time.Since(verificationStarted))
 		}
 	}
-	// ADR-117: close the readiness stage. The existing stage vocabulary is
-	// retained for wire compatibility: snapshot_prepare means activation
-	// preparation for worker/job even though those modes do not write a
-	// snapshot. The customer-visible terminal line is not a stage row.
-	if appended, serr := h.store.AppendDeploymentStage(ctx, dep.ID,
-		state.StageSnapshotPrepare, state.StageReadiness, time.Now(), ""); serr != nil {
+	// ADR-117: close the readiness stage. A later snapshot notification for an
+	// already-live deployment records or deduplicates the snapshot above, but
+	// must not replay the completed deployment stage machine. That replay was
+	// the source of the misleading "state: not found" warnings seen during a
+	// config-triggered snapshot refresh.
+	if appended, serr := func() (state.Deployment, error) {
+		if dep.Status == state.DeployLive {
+			return dep, nil
+		}
+		return h.store.AppendDeploymentStage(ctx, dep.ID,
+			state.StageSnapshotPrepare, state.StageReadiness, time.Now(), "")
+	}(); serr != nil {
 		h.log.Warn("mark live: stage append failed",
 			"deployment_id", dep.ID, "from", "snapshot_prepare", "to", "readiness", "err", serr)
 	} else if ready == nil && h.ops != nil && len(appended.StageState) > 0 {
@@ -2833,7 +2839,12 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// PR-A review fix: now close the readiness stage so the
 	// customer's ticker carries a duration_ms on the wire rather
 	// than showing "Readiness passed" stuck on in_progress.
-	if closed, serr := h.store.CloseDeploymentStage(ctx, dep.ID, state.StageReadiness, time.Now()); serr != nil {
+	if closed, serr := func() (state.Deployment, error) {
+		if dep.Status == state.DeployLive {
+			return dep, nil
+		}
+		return h.store.CloseDeploymentStage(ctx, dep.ID, state.StageReadiness, time.Now())
+	}(); serr != nil {
 		h.log.Warn("mark live: stage close failed",
 			"deployment_id", dep.ID, "stage", "readiness", "err", serr)
 	} else if ready == nil && h.ops != nil {

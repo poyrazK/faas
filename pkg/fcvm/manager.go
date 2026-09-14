@@ -3966,11 +3966,18 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if !req.ExecutionOnly {
 		m.rebuildHostSMTPAllowlistRules(ctx)
 	}
-	m.log.Info("wake ok", "wake_id", wakeID, "instance", req.Instance, "method", method.String(),
+	wakeAttrs := []any{
+		"wake_id", wakeID, "instance", req.Instance, "method", method.String(),
 		"uid", lease.UID, "host_ip", lease.HostIP.String(),
 		"setup_network_ms", timings.netnsTapMs, "scan_check_ms", timings.scanCheckMs,
 		"restore_ms", timings.restoreMs, "cold_boot_ms", timings.coldBootMs,
-		"total_ms", time.Since(phases.start).Milliseconds())
+	}
+	// Include every outer phase measurement on successes too. A
+	// fallback can spend most of its wall time before Firecracker Boot (for
+	// example materializing runtime files); reporting only cold_boot_ms hid
+	// that gap behind a much larger total_ms in production.
+	wakeAttrs = append(wakeAttrs, phases.attrs()...)
+	m.log.Info("wake ok", wakeAttrs...)
 	// Issue #554 / ADR-078 / PR review fix: start the per-instance
 	// liveness probe loop after the live map insert so the cmd/vmmd
 	// helper can read Lease.Slot via the same instance id. No-op

@@ -61,10 +61,10 @@ func TestAppMkfsRetriesBeforePublicationAndReportsFinalSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(run.sizes) != 2 || run.sizes[0] != 16 || run.sizes[1] != 20 {
+	if len(run.sizes) != 2 || run.sizes[0] != 17 || run.sizes[1] != 21 {
 		t.Fatalf("mkfs attempts=%v", run.sizes)
 	}
-	if result.SizeMB != 20 || signer.calls != 1 {
+	if result.SizeMB != 21 || signer.calls != 1 {
 		t.Fatalf("result size=%d signatures=%d", result.SizeMB, signer.calls)
 	}
 	info, err := os.Stat(filepath.Join(storeRoot, "app/layer.ext4"))

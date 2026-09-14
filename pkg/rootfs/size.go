@@ -40,10 +40,11 @@ const (
 	slackFloorMB = 4
 	// appSlackFloorMB also leaves writable space for guest-init to create the
 	// overlay work directory and for the running workload to use its upper
-	// layer. Four MiB was enough for mkfs.ext4 to populate a Go function but
-	// left only 52 free blocks; the resulting image then failed every cold
-	// boot with ENOSPC before the handler started.
-	appSlackFloorMB = 9
+	// layer. Nine MiB prevented boot-time ENOSPC but left the representative Go
+	// layer 83.7% full immediately after restore, above the 80% pressure
+	// threshold. Sixteen MiB keeps that layer below the alert boundary while
+	// remaining small relative to the plan cap.
+	appSlackFloorMB = 16
 	// baseSlackPct is the baseline fractional overhead for
 	// BasePaddedSizeMB, floored at slackFloorMB. Calibrated to match
 	// the legacy 10 % for trees where most files sit at or above

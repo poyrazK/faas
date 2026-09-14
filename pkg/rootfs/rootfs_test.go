@@ -181,7 +181,7 @@ func TestBasePaddedSizeMB(t *testing.T) {
 	// Tree with NO small files: once percentage slack dominates both absolute
 	// floors, BasePaddedSizeMB matches PaddedSizeMB (smallFileSlackPct
 	// contributes 0 when smallRatio=0).
-	for c := int64(100 * mib); c <= 500*mib; c += 50 * mib {
+	for c := int64(200 * mib); c <= 500*mib; c += 50 * mib {
 		legacy := PaddedSizeMB(c)
 		new := BasePaddedSizeMB(c, 0)
 		if legacy != new {
@@ -205,7 +205,7 @@ func TestBasePaddedSizeMB(t *testing.T) {
 			got, empiricalMinMB)
 	}
 	// Edge cases on smallRatio: clamped to [0, 1].
-	if got := BasePaddedSizeMB(100*mib, -0.5); got != PaddedSizeMB(100*mib) {
+	if got := BasePaddedSizeMB(100*mib, -0.5); got != BasePaddedSizeMB(100*mib, 0) {
 		t.Errorf("negative smallRatio should clamp to 0; got %d", got)
 	}
 	if got := BasePaddedSizeMB(100*mib, 2); got != BasePaddedSizeMB(100*mib, 1) {
@@ -250,8 +250,8 @@ func TestCheckCapForStagingKeepsWritableAppHeadroom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sizeMB != 34 {
-		t.Fatalf("Go function app image = %d MiB, want 34 MiB with runtime headroom", sizeMB)
+	if sizeMB != 41 {
+		t.Fatalf("Go function app image = %d MiB, want 41 MiB with runtime headroom", sizeMB)
 	}
 }
 

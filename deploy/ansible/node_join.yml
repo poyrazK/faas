@@ -876,6 +876,36 @@
         - faas-builderd.service
         - faas-imaged.service
 
+    - name: Require the GCP off-host telemetry collector on Google Compute Engine  # noqa: command-instead-of-module (read-only readiness gate)
+      ansible.builtin.command: systemctl is-active google-cloud-ops-agent.service
+      changed_when: false
+      when: >-
+        (ansible_system_vendor | default('')) == 'Google' or
+        (ansible_product_name | default('')) == 'Google Compute Engine'
+
+    - name: Prove the effective rsyslog rotation policy remains usable  # noqa: command-instead-of-module (logrotate owns policy validation)
+      ansible.builtin.command:
+        argv:
+          - logrotate
+          - --debug
+          - /etc/logrotate.d/rsyslog
+      register: faas_join_rsyslog_debug
+      changed_when: false
+      failed_when: >-
+        faas_join_rsyslog_debug.rc != 0 or
+        'insecure permissions' in
+        ((faas_join_rsyslog_debug.stdout | default('')) ~
+         (faas_join_rsyslog_debug.stderr | default('')))
+
+    - name: Reject a failed rsyslog rotation unit  # noqa: command-instead-of-shell (compound systemd assertion)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        systemctl cat faas-rsyslog-rotate.service >/dev/null
+        ! systemctl is-failed --quiet faas-rsyslog-rotate.service
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     # `systemctl is-active` only proves that a process is alive. A restart
     # failure or an out-of-band service override could leave an older daemon
     # running after /opt/faas/current moved. Check the process executable
