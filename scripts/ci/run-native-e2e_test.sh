@@ -268,4 +268,30 @@ grep -Fq '/var/lock/faas-builder-acceptance.lock' "${runner}" ||
 grep -Fq '/etc/faas/builder-acceptance-host' "${runner}" ||
   fail "the wrapper does not require the acceptance-host designation marker"
 
+# Artifact storage. The harness boots daemons with an explicit environment, so
+# a storage configuration the wrapper does not export is simply absent and
+# pkg/storage falls back to its local backend at /srv/fc. On an OCI-backed node
+# that points the suite at a store imaged never wrote to: vmmd's issue #299
+# gate then refuses every cold boot with "scan sidecar missing" for a sidecar
+# that exists, in the registry, CRITICAL-clean (observed 2026-09-14).
+grep -Fq '/etc/faas/storage.env' "${runner}" ||
+  fail "the wrapper does not read the host storage configuration; harness daemons would use the local default"
+# `set -a` is what actually makes the sourced values reach the daemons.
+grep -Fq 'set -a' "${runner}" ||
+  fail "the wrapper sources the storage env without exporting it, so daemons never see it"
+# Same '&'-in-an-unquoted-value trap as the DSN: fail loudly rather than
+# silently reverting to the local backend.
+grep -Fq 'FAAS_STORAGE_BACKEND is empty after sourcing it' "${runner}" ||
+  fail "the wrapper silently falls back to the local backend when the host storage env yields an empty one"
+# Secrets: the storage env carries registry credentials. Only key NAMES may be
+# echoed. A bare `cat` of that file would print the password into the CI log.
+if grep -vE '^[[:space:]]*#' "${runner}" | grep -E '(cat|printf .*)[[:space:]]+"?\$\{storage_env_file\}' | grep -vq 'cut -d='; then
+  fail "the wrapper prints the storage env file; it contains registry credentials"
+fi
+# The builder base is a local file only under the local backend; requiring one
+# under OCI fails a correctly pre-staged node, where builderd resolves the base
+# through the read-through cache instead.
+grep -Fq 'FAAS_STORAGE_BACKEND:-local' "${runner}" ||
+  fail "the wrapper requires a local builder-base file unconditionally; that is wrong under an OCI backend"
+
 echo "native e2e wrapper contracts OK"

@@ -99,6 +99,40 @@ if [[ -f "${e2e_env_file}" ]]; then
 fi
 database_url="${FAAS_E2E_DATABASE_URL:-${DATABASE_URL:-postgres:///faas_e2e?host=/run/postgresql&user=faas}}"
 
+# Artifact storage: the harness daemons MUST resolve runtime bases the way the
+# node's own daemons do. Without this the harness falls back to pkg/storage's
+# default local backend rooted at /srv/fc — and on an OCI-backed node that
+# directory holds no scan sidecars at all, so vmmd's issue #299 admission gate
+# refuses every cold boot with "scan sidecar missing". Observed on 2026-09-14:
+# /srv/fc/scans was empty while the builder base's sidecar sat in the node's
+# OCI store, correctly staged and CRITICAL-clean. The base was never missing;
+# the harness was simply looking in a different store than the one imaged
+# staged into.
+#
+# Export rather than re-derive: these are the same values the production units
+# load via EnvironmentFile, so the harness exercises the real storage route
+# (OCI + read-through cache) instead of a test-only one. Secrets stay in the
+# process environment exactly as systemd delivers them — never on a command
+# line, never logged. Only key NAMES are printed below.
+storage_env_file=/etc/faas/storage.env
+if [[ -f "${storage_env_file}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${storage_env_file}"
+  set +a
+  # Same failure shape as the DSN above: a value containing '&' written
+  # unquoted makes the shell background the assignment, and the variable
+  # arrives here empty. Fail loudly rather than silently falling back to the
+  # local backend, which is precisely the bug this block exists to prevent.
+  [[ -n "${FAAS_STORAGE_BACKEND:-}" ]] ||
+    die "${storage_env_file} exists but FAAS_STORAGE_BACKEND is empty after sourcing it;
+  quote any value containing '&' or '#'"
+  echo "native e2e: storage backend for harness daemons: ${FAAS_STORAGE_BACKEND}"
+  echo "native e2e: storage keys exported: $(cut -d= -f1 "${storage_env_file}" | grep -E '^FAAS_' | paste -sd, -)"
+else
+  echo "native e2e: no ${storage_env_file}; harness daemons use the default local backend at /srv/fc"
+fi
+
 mkdir -p /var/lock
 # Same lock as the builder and metal gates: all three stop services on this
 # node, so they must never overlap.
@@ -169,8 +203,18 @@ bash "${repo_root}/deploy/scripts/leakcheck.sh"
 # a green check. A missing fixture is a broken gate, not a smaller gate.
 # ---------------------------------------------------------------------------
 [[ -r "${kernel}" ]] || die "kernel is unreadable: ${kernel} (stage it, or set FAAS_TEST_KERNEL)"
-[[ -r "${builder_base}" ]] ||
-  die "builder base is unreadable: ${builder_base}; start faas-imaged once so EnsureBaseExt4 stages it, or set FAAS_BUILDER_BASE_PATH"
+# The builder base is only a local FILE on a local-backend node. With an OCI
+# backend, builderd resolves it through storage.LocalPathResolver into the
+# read-through cache (see resolveBuilderBasePath in cmd/builderd/main.go) and
+# nothing is required to exist under /srv/fc/base at all — demanding a file
+# there would fail a correctly pre-staged node. Note also that the legacy
+# builder-base.ext4 spelling below is deliberately NOT the canonical key:
+# builderd rewrites it to runner-builder-<arch>.ext4, so this path is an
+# identity hint, never the drive vmmd attaches.
+if [[ "${FAAS_STORAGE_BACKEND:-local}" == "local" ]]; then
+  [[ -r "${builder_base}" ]] ||
+    die "builder base is unreadable: ${builder_base}; start faas-imaged once so EnsureBaseExt4 stages it, or set FAAS_BUILDER_BASE_PATH"
+fi
 ip link show br-tenants >/dev/null 2>&1 || die "tenant bridge br-tenants is unavailable"
 [[ "$(cat /proc/sys/net/ipv4/ip_forward)" == "1" ]] || die "IPv4 forwarding is disabled"
 

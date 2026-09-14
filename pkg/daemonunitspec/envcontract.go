@@ -1,5 +1,7 @@
 package daemonunitspec
 
+import "strings"
+
 // EnvContract is the single registry of every FAAS_* environment variable
 // a platform daemon (or a deploy-side script) reads, together with HOW a
 // production host is expected to deliver it. It exists because three
@@ -493,6 +495,56 @@ func EnvContractForDaemon(daemon string) []EnvVar {
 				out = append(out, v)
 				break
 			}
+		}
+	}
+	return out
+}
+
+// artifactStorageOwners are the daemons that resolve runtime bases, layers,
+// snapshots and scan sidecars through pkg/storage. A storage row owned by
+// none of them configures something else that merely shares the prefix
+// (FAAS_STORAGE_ROLLUP_INTERVAL is meterd's billing rollup cadence).
+var artifactStorageOwners = []string{"builderd", "imaged", "vmmd", "shared"}
+
+// ArtifactStorageEnvNames returns the contract rows that select and configure
+// the artifact storage backend: which backend to use, where its cache lives,
+// and the registry credentials an OCI backend needs.
+//
+// It exists so callers can forward a host's storage configuration without
+// restating the variable names. A test harness that boots daemons as
+// subprocesses must hand them the SAME storage route the node's own units
+// use; a harness that silently keeps pkg/storage's local default while the
+// node runs OCI looks up artifacts in a directory imaged never wrote to. On
+// an OCI-backed node that surfaces as vmmd's issue #299 gate refusing every
+// cold boot with "scan sidecar missing" — the sidecar exists, just not in the
+// store the harness asked.
+//
+// Dev-only rows are never returned: forwarding FAAS_OCI_INSECURE would let a
+// harness quietly downgrade registry transport security.
+func ArtifactStorageEnvNames() []string {
+	var out []string
+	for _, v := range EnvContract {
+		if v.Source == EnvSourceDevOnly {
+			continue
+		}
+		if !strings.HasPrefix(v.Name, "FAAS_STORAGE_") &&
+			!strings.HasPrefix(v.Name, "FAAS_OCI_") {
+			continue
+		}
+		owned := false
+		for _, owner := range v.Owners {
+			for _, want := range artifactStorageOwners {
+				if owner == want {
+					owned = true
+					break
+				}
+			}
+			if owned {
+				break
+			}
+		}
+		if owned {
+			out = append(out, v.Name)
 		}
 	}
 	return out

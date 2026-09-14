@@ -1007,6 +1007,7 @@ func testEnvCommon(dbURL string) []string {
 		"FAAS_PADDLE_API_KEY=pdl_test_e2e_placeholder",
 		"FAAS_PADDLE_WEBHOOK_SECRET=whk_test_e2e_placeholder",
 	}
+	env = append(env, forwardedStorageEnv()...)
 	if currentHarness != nil && currentHarness.RecoveryHMACKeyHex != "" {
 		env = append(env, "FAAS_MFA_RECOVERY_HMAC_KEY="+currentHarness.RecoveryHMACKeyHex)
 	}
@@ -1014,6 +1015,36 @@ func testEnvCommon(dbURL string) []string {
 		env = append(env, "FAAS_HOST_HMAC_KEY_PATH="+currentHarness.HostHMACKeyPath)
 	}
 	return env
+}
+
+// forwardedStorageEnv passes the host's artifact-storage configuration
+// through to the daemon subprocesses.
+//
+// startProc hands each daemon an explicit environment rather than
+// os.Environ(), so anything the harness does not name is simply absent. For
+// storage that default is not neutral: with no backend selected pkg/storage
+// falls back to the local backend rooted at /srv/fc. On a CI box that is
+// right — nothing else is there. On a real node backed by an OCI registry it
+// is wrong in a way that only shows up deep in a cold boot, because imaged
+// staged the runtime bases and their Grype scan sidecars into the registry
+// while the harness's vmmd reads an empty /srv/fc/scans and refuses to boot
+// with "scan sidecar missing" (issue #299). Measured on compute node 2,
+// 2026-09-14: the builder base's sidecar was present and CRITICAL-clean in
+// the node's OCI store the whole time.
+//
+// Only variables actually set in the harness process are forwarded, so a CI
+// run — where the runner exports none of them — keeps the local default and
+// behaves exactly as before. The names come from the env contract rather
+// than string literals here: pkg/daemonunitspec is the single registry, and
+// duplicating the names is how they drift.
+func forwardedStorageEnv() []string {
+	var out []string
+	for _, name := range daemonunitspec.ArtifactStorageEnvNames() {
+		if v, ok := os.LookupEnv(name); ok && v != "" {
+			out = append(out, name+"="+v)
+		}
+	}
+	return out
 }
 
 // newRecoveryHMACKeyHex returns a fresh 64-char hex string (32 bytes
