@@ -296,27 +296,82 @@ var composeSourceFilenames = []string{
 }
 
 func DeriveScanSource(workloads []reposcan.Workload) state.ProjectScanSource {
-	// Priority order matches the detector fan-out in
-	// pkg/reposcan/scan.go:145-156. The first match wins.
-	//
-	// The compose detector emits source strings starting with the
-	// actual manifest filename (e.g. "docker-compose.yml: api"),
-	// not a literal "compose:" prefix. We probe both the
-	// detector-class name and the filename set per entry so the
-	// priority list reads as detector classes, not filenames.
-	priority := []string{
-		"compose", "procfile", "k8s", "render", "fly",
-		"serverless", "app.yaml", "workspaces", "convention",
+	structured := false
+	for _, workload := range workloads {
+		if workload.DetectedBy.Detector != "" {
+			structured = true
+			break
+		}
 	}
-	for _, want := range priority {
-		for _, w := range workloads {
-			if matchDetectorSource(want, w.Source) {
-				return state.ProjectScanSource(want)
+	if !structured {
+		// Compatibility for callers constructing the pre-Detection workload
+		// shape. Real scanner output always takes the structured path below.
+		priority := []string{
+			"compose", "procfile", "k8s", "render", "fly",
+			"serverless", "app.yaml", "workspaces", "convention",
+		}
+		for _, want := range priority {
+			for _, workload := range workloads {
+				if matchDetectorSource(want, workload.Source) {
+					if want == "app.yaml" {
+						return state.ProjectScanSourceSingle
+					}
+					if want == "workspaces" {
+						return state.ProjectScanSourceWorkspace
+					}
+					return state.ProjectScanSource(want)
+				}
+			}
+		}
+		if len(workloads) == 1 {
+			return state.ProjectScanSourceSingle
+		}
+		return state.ProjectScanSourceUnknown
+	}
+
+	// Use the scanner's structured provenance. Source is display text and
+	// legitimately varies by filename (Procfile, go.work, k8s/foo.yaml); parsing
+	// it made scan_source depend on workload count and filename spelling.
+	priority := []struct {
+		detector string
+		source   state.ProjectScanSource
+	}{
+		{"compose", state.ProjectScanSourceCompose},
+		{"procfile", state.ProjectScanSourceProcfile},
+		{"k8s", state.ProjectScanSourceK8s},
+		{"render", state.ProjectScanSourceRender},
+		{"fly", state.ProjectScanSourceFly},
+		{"serverless", state.ProjectScanSourceServerless},
+	}
+	for _, candidate := range priority {
+		for _, workload := range workloads {
+			if workload.DetectedBy.Detector == candidate.detector {
+				return candidate.source
 			}
 		}
 	}
-	if len(workloads) == 1 {
+
+	// Workspace, convention, and root-floor seeds intentionally share the
+	// "other" detector. Their confidence tier is the structured discriminator.
+	bestTier := reposcan.Tier(0)
+	for _, workload := range workloads {
+		if workload.Tier > bestTier {
+			bestTier = workload.Tier
+		}
+	}
+	switch bestTier {
+	case reposcan.TierWorkspace:
+		return state.ProjectScanSourceWorkspace
+	case reposcan.TierConvention:
+		return state.ProjectScanSourceConvention
+	case reposcan.TierSingle:
 		return state.ProjectScanSourceSingle
+	case reposcan.TierCompose:
+		// app.yaml has no separate persisted scan-source enum. It is a
+		// single-app declaration, so retain the established single label.
+		if len(workloads) > 0 {
+			return state.ProjectScanSourceSingle
+		}
 	}
 	return state.ProjectScanSourceUnknown
 }

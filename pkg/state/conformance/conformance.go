@@ -59,6 +59,7 @@ func Run(t *testing.T, open Open) {
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
+		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
@@ -79,6 +80,58 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testProjectReconcileMultipleCrons(t *testing.T, fx *Fixture) {
+	reconciler, ok := fx.Store.(state.ProjectReconcileStore)
+	if !ok {
+		t.Fatal("store does not implement ProjectReconcileStore")
+	}
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "cron-project-" + uuid.NewString()[:8],
+		ScanSource: state.ProjectScanSourceCompose,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, ProjectID: project.ID,
+		Slug: "cron-app-" + uuid.NewString()[:8], WorkloadName: "api",
+		Type: state.AppTypeFunction, Status: state.AppActive,
+		RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired := []state.ProjectReconcileCron{
+		{WorkloadName: "api", Schedule: "*/5 * * * *", Path: "/", Enabled: true},
+		{WorkloadName: "api", Schedule: "0 12 * * *", Path: "/", Enabled: false},
+	}
+	limits := api.MustLimitsFor(api.PlanScale)
+	if _, err := reconciler.ApplyProjectReconcile(fx.Ctx, project, nil, desired, state.ProjectScanSourceCompose, limits); err != nil {
+		t.Fatal(err)
+	}
+	first, err := fx.Store.ListCronsForApp(fx.Ctx, app.ID)
+	if err != nil || len(first) != 2 {
+		t.Fatalf("first apply crons=%#v err=%v", first, err)
+	}
+	ids := make(map[string]string, len(first))
+	for _, cron := range first {
+		ids[cron.Schedule] = cron.ID
+	}
+	desired[0].Enabled = false
+	if _, err := reconciler.ApplyProjectReconcile(fx.Ctx, project, nil, desired, state.ProjectScanSourceCompose, limits); err != nil {
+		t.Fatal(err)
+	}
+	second, err := fx.Store.ListCronsForApp(fx.Ctx, app.ID)
+	if err != nil || len(second) != 2 {
+		t.Fatalf("second apply crons=%#v err=%v", second, err)
+	}
+	for _, cron := range second {
+		if cron.ID != ids[cron.Schedule] || cron.Enabled {
+			t.Errorf("reapplied cron=%#v, want stable ID and disabled state", cron)
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"fmt"
 	"io/fs"
 	"sort"
 
@@ -46,10 +47,7 @@ func detectAppYaml(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	}
 	var d appYamlDoc
 	if err := yaml.Unmarshal(body, &d); err != nil {
-		// Warn-and-skip: a malformed app.yaml is recoverable
-		// (operator fixes the YAML and re-runs); the rest of
-		// the scan continues. The error is in the warnings list.
-		return nil, nil, []string{"reposcan: parse " + src + ": " + err.Error()}, nil //nolint:nilerr
+		return nil, nil, nil, fmt.Errorf("reposcan: parse %s: %w", src, err)
 	}
 	var seeds []workloadSeed
 	for n, s := range d.Services {

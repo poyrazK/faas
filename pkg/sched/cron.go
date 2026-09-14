@@ -1,30 +1,20 @@
 package sched
 
 import (
-	"errors"
-	"fmt"
-	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/robfig/cron/v3"
 )
 
 // ErrInvalidSchedule is returned by ParseSchedule for malformed cron
 // expressions. The stringified error carries the parser message so
 // apid's API layer can surface it in the 400 response.
-var ErrInvalidSchedule = errors.New("sched: invalid cron schedule")
+var ErrInvalidSchedule = cronexpr.ErrInvalidSchedule
 
 // DefaultCronTimezone is used for legacy rows and requests that omit a
 // timezone. UTC keeps behavior deterministic across schedd hosts.
-const DefaultCronTimezone = "UTC"
-
-// cronParser is the package-private parser used by ParseSchedule. The
-// 5-field syntax (minute hour day-of-month month day-of-week) is what
-// the apid create-cron endpoint documents; we keep the descriptor in
-// one place so a future 6-field cron (with seconds) is a one-line edit.
-var cronParser = cron.NewParser(
-	cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
-)
+const DefaultCronTimezone = cronexpr.DefaultTimezone
 
 // Schedule wraps a parsed cron schedule. Holds a sentinel "next fire"
 // cache so we can answer "when does this next fire?" cheaply on every
@@ -47,35 +37,16 @@ func ParseSchedule(raw string) (*Schedule, error) {
 // default used by legacy cron rows. The returned name is the location's
 // canonical String value, suitable for CRON_TZ= parsing and persistence.
 func NormalizeTimezone(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return DefaultCronTimezone, nil
-	}
-	loc, err := time.LoadLocation(raw)
-	if err != nil {
-		return "", fmt.Errorf("sched: invalid timezone %q: %w", raw, err)
-	}
-	return loc.String(), nil
+	return cronexpr.NormalizeTimezone(raw)
 }
 
 // ParseScheduleWithTimezone validates a 5-field expression in the supplied
 // IANA timezone. robfig/cron's CRON_TZ prefix gives each schedule its own DST
 // rules while preserving the raw expression on the API object.
 func ParseScheduleWithTimezone(raw, timezone string) (*Schedule, error) {
-	if raw == "" {
-		return nil, fmt.Errorf("%w: empty", ErrInvalidSchedule)
-	}
-	normalized, err := NormalizeTimezone(timezone)
+	parsed, err := cronexpr.Parse(raw, timezone)
 	if err != nil {
-		return nil, errors.Join(ErrInvalidSchedule, err)
-	}
-	spec := "CRON_TZ=" + normalized + " " + raw
-	parsed, err := cronParser.Parse(spec)
-	if err != nil {
-		// errorlint: errors.Join keeps ErrInvalidSchedule in the chain
-		// (so `errors.Is` matches) and surfaces the parser message
-		// without dropping the wrap.
-		return nil, errors.Join(ErrInvalidSchedule, err)
+		return nil, err
 	}
 	return &Schedule{raw: raw, next: parsed}, nil
 }

@@ -92,6 +92,7 @@ type Workload struct {
 	Name       string   // service name; deterministic sort key
 	RootDir    string   // build context relative to repo root; "" = root
 	Dockerfile string   // explicit path if declared (relative to RootDir)
+	Image      string   // prebuilt OCI image when the source declares one
 	Command    []string // start-command override (compose `command:`, Procfile rhs)
 	// DependsOn contains service names declared by Compose's depends_on.
 	// Conditions are intentionally normalized to a name-only edge here; the
@@ -99,7 +100,11 @@ type Workload struct {
 	// readiness is provided by the private service proxy.
 	DependsOn []string
 	Class     Class  // http|graphql|grpc|job|worker|server|unknown
-	Schedule  string // cron expression when declared (CronJob, render, serverless)
+	Schedule  string // primary cron expression retained for the existing plan wire
+	// Schedules is the complete desired cron set. Schedule remains the first
+	// expression for compatibility with clients that predate multi-schedule
+	// workloads; callers that reconcile crons must use CronSchedules.
+	Schedules []CronSchedule
 	Ports     []int
 	EnvKeys   []string // KEYS only — never values; spec §11 forbids logging secrets
 	Source    string   // "compose.yaml: api" (provenance; shown in confirm)
@@ -109,6 +114,25 @@ type Workload struct {
 	// this is the STRUCTURED form a client can branch on without
 	// parsing that string. Populated by mergeByKey.
 	DetectedBy Detection
+}
+
+// CronSchedule is one schedule discovered for a workload. Enabled preserves
+// source activation state such as Kubernetes CronJob spec.suspend.
+type CronSchedule struct {
+	Expression string
+	Enabled    bool
+}
+
+// CronSchedules returns the complete schedule set and adapts legacy detector
+// output that populated only Workload.Schedule.
+func (w Workload) CronSchedules() []CronSchedule {
+	if len(w.Schedules) > 0 {
+		return append([]CronSchedule(nil), w.Schedules...)
+	}
+	if w.Schedule == "" {
+		return nil
+	}
+	return []CronSchedule{{Expression: w.Schedule, Enabled: true}}
 }
 
 // Detection is the structured answer to "why does this workload

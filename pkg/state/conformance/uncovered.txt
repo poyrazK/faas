@@ -129,7 +129,6 @@ CreateAPIKeyWithExpiryAndProvenance
 CreateAccountWithPersonalOrg
 CreateAlertRule
 CreateAlertRuleIfUnderQuota
-CreateApp
 CreateAppLogDrain
 CreateAppLogDrainIfUnderQuota
 CreateAppWebhook
@@ -155,7 +154,6 @@ CreateOrg
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
 CreateOrgInvitation
-CreateProject
 CreateRuntimeConfigOperation
 CreateSession
 CreateSessionWithBinding
@@ -378,7 +376,6 @@ ListCorsPresetsForAccount
 ListCorsPresetsForApp
 ListCronRunsForCron
 ListCronsForAccount
-ListCronsForApp
 ListDataUpstreamProbeHistory
 ListDataUpstreamProbesByHostRegion
 ListDataUpstreamsByApp

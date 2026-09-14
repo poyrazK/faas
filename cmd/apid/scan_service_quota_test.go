@@ -114,6 +114,76 @@ func TestEvaluateQuotaGate_CronsNotAllowed(t *testing.T) {
 	}
 }
 
+func TestEvaluateQuotaGate_CountsEveryDiscoveredSchedule(t *testing.T) {
+	t.Parallel()
+	workloads := []reposcan.Workload{{
+		Name: "api",
+		Schedules: []reposcan.CronSchedule{
+			{Expression: "*/5 * * * *", Enabled: true},
+			{Expression: "0 12 * * *", Enabled: false},
+		},
+	}}
+	_, _, _, cronCount := evaluateQuotaGate(workloads, hobbyLimits(), 0, 0)
+	if cronCount != 2 {
+		t.Fatalf("cronCount = %d, want 2", cronCount)
+	}
+}
+
+func TestEvaluateQuotaGate_RejectsPerAppScheduleOverflow(t *testing.T) {
+	t.Parallel()
+	limits := hobbyLimits()
+	limits.CronLimitPerApp = 1
+	limits.CronLimitPerAccount = 10
+	workloads := []reposcan.Workload{{Name: "api", Schedules: []reposcan.CronSchedule{
+		{Expression: "*/5 * * * *", Enabled: true},
+		{Expression: "0 12 * * *", Enabled: true},
+	}}}
+	canApply, _, reasons, _ := evaluateQuotaGate(workloads, limits, 0, 0)
+	if canApply || len(reasons) != 1 || !strings.Contains(reasons[0], "per-app") {
+		t.Fatalf("canApply=%v reasons=%v", canApply, reasons)
+	}
+}
+
+func TestValidateScannedSchedules_UsesSchedulerGrammar(t *testing.T) {
+	t.Parallel()
+	valid := []reposcan.Workload{{Name: "job", Schedule: "*/5 * * * *"}}
+	if err := validateScannedSchedules(valid); err != nil {
+		t.Fatalf("valid schedule: %v", err)
+	}
+	invalid := []reposcan.Workload{{Name: "job", Schedule: "definitely-not-a-cron"}}
+	if err := validateScannedSchedules(invalid); err == nil || !strings.Contains(err.Error(), "job") {
+		t.Fatalf("invalid schedule err = %v, want workload-specific failure", err)
+	}
+
+	duplicate := []reposcan.Workload{{
+		Name: "duplicate-job",
+		Schedules: []reposcan.CronSchedule{
+			{Expression: "0 * * * *", Enabled: true},
+			{Expression: "0 * * * *", Enabled: false},
+		},
+	}}
+	if err := validateScannedSchedules(duplicate); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate schedule err = %v, want duplicate identity failure", err)
+	}
+}
+
+func TestProjectWorkloadCrons_PreservesMultiplicityAndEnabledState(t *testing.T) {
+	t.Parallel()
+	got := projectWorkloadCrons([]reposcan.Workload{{
+		Name: "cleanup",
+		Schedules: []reposcan.CronSchedule{
+			{Expression: "*/5 * * * *", Enabled: true},
+			{Expression: "0 12 * * *", Enabled: false},
+		},
+	}})
+	if len(got) != 2 {
+		t.Fatalf("crons = %#v, want 2", got)
+	}
+	if !got[0].Enabled || got[1].Enabled || got[1].Schedule != "0 12 * * *" {
+		t.Fatalf("crons = %#v, enabled state or schedules changed", got)
+	}
+}
+
 // TestEvaluateQuotaGate_CronsOver pins the crons-over failure mode.
 // Hobby plan (CronLimitPerAccount=10) + 10 existing crons + 1
 // cron workload = 11 > 10 → gate blocked. notAllowed is FALSE

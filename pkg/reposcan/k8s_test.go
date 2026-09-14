@@ -96,6 +96,76 @@ spec:
 	}
 }
 
+func TestDetectK8s_CronJobPreservesExecutionAndSuspend(t *testing.T) {
+	t.Parallel()
+	body := `apiVersion: batch/v1
+kind: CronJob
+metadata: {name: cleanup}
+spec:
+  schedule: "0 * * * *"
+  suspend: true
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: cleanup
+              image: ghcr.io/example/cleanup:v1
+              command: ["node"]
+              args: ["cleanup.js"]
+              env: [{name: CLEANUP_MODE, value: hourly}]
+`
+	seeds, _, _, err := detectK8s(fstest.MapFS{
+		"k8s":              &fstest.MapFile{Mode: 0o755 | fs.ModeDir},
+		"k8s/cleanup.yaml": &fstest.MapFile{Data: []byte(body)},
+	})
+	if err != nil || len(seeds) != 1 {
+		t.Fatalf("detectK8s: seeds=%#v err=%v", seeds, err)
+	}
+	seed := seeds[0]
+	if strings.Join(seed.command, " ") != "node cleanup.js" || seed.image != "ghcr.io/example/cleanup:v1" {
+		t.Errorf("execution = command=%v image=%q", seed.command, seed.image)
+	}
+	if len(seed.envKeys) != 1 || seed.envKeys[0] != "CLEANUP_MODE" {
+		t.Errorf("envKeys = %v", seed.envKeys)
+	}
+	if len(seed.schedules) != 1 || seed.schedules[0].Enabled {
+		t.Errorf("schedules = %#v, want one disabled schedule", seed.schedules)
+	}
+}
+
+func TestDetectK8s_DeploymentDatastoresAreManaged(t *testing.T) {
+	t.Parallel()
+	body := `apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api}
+spec: {template: {spec: {containers: [{name: api, image: ghcr.io/example/api:v1}]}}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: cache}
+spec: {template: {spec: {containers: [{name: cache, image: redis:7}]}}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: database}
+spec: {template: {spec: {containers: [{name: database, image: postgres:16}]}}}
+`
+	seeds, managed, _, err := detectK8s(fstest.MapFS{
+		"k8s":             &fstest.MapFile{Mode: 0o755 | fs.ModeDir},
+		"k8s/images.yaml": &fstest.MapFile{Data: []byte(body)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seeds) != 1 || seeds[0].name != "api" || seeds[0].image != "ghcr.io/example/api:v1" {
+		t.Fatalf("workloads = %#v, want only image-backed api", seeds)
+	}
+	if len(managed) != 2 || managed[0].Name != "cache" || managed[1].Name != "database" {
+		t.Fatalf("managed = %#v, want cache and database", managed)
+	}
+}
+
 // TestDetectK8s_StatefulSetRefused — StatefulSet must surface a
 // warning (and NOT a workload). The stateless contract is the
 // same one compose enforces via the datastore denylist — a
@@ -204,10 +274,9 @@ spec: {template: {spec: {containers: [{name: c, image: img-c}]}}}
 	}
 }
 
-// TestDetectK8s_MalformedDocumentDoesNotHideSiblings — a malformed document
-// is reported with its stream index while later valid documents remain
-// visible to the scanner.
-func TestDetectK8s_MalformedDocumentDoesNotHideSiblings(t *testing.T) {
+// TestDetectK8s_MalformedDocumentFailsClosed — a partially decoded manifest
+// cannot produce an applicable topology.
+func TestDetectK8s_MalformedDocumentFailsClosed(t *testing.T) {
 	t.Parallel()
 	body := `apiVersion: apps/v1
 kind: Deployment
@@ -226,16 +295,44 @@ spec: {template: {spec: {containers: [{name: after, image: img}]}}}
 		"k8s/malformed.yaml": &fstest.MapFile{Data: []byte(body)},
 	}
 	seeds, _, warnings, err := detectK8s(fsys)
-	if err != nil {
-		t.Fatalf("detectK8s: %v", err)
+	if err == nil || !contains(err.Error(), "document 2") {
+		t.Fatalf("err = %v, want parse error identifying document 2", err)
 	}
-	got := names(seeds)
-	sort.Strings(got)
-	if !equalSet(got, []string{"after", "before"}) {
-		t.Fatalf("seeds = %v, want {after,before}", got)
+	if len(seeds) != 0 || len(warnings) != 0 {
+		t.Fatalf("partial result escaped: seeds=%v warnings=%v", names(seeds), warnings)
 	}
-	if len(warnings) != 1 || !contains(warnings[0], "document 2") {
-		t.Fatalf("warnings = %v, want one warning identifying document 2", warnings)
+}
+
+func TestDetectK8s_MissingContainerImageFailsClosed(t *testing.T) {
+	t.Parallel()
+	for name, body := range map[string]string{
+		"deployment": `apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api}
+spec: {template: {spec: {containers: [{name: api}]}}}
+`,
+		"cronjob": `apiVersion: batch/v1
+kind: CronJob
+metadata: {name: cleanup}
+spec:
+  schedule: "0 * * * *"
+  jobTemplate: {spec: {template: {spec: {containers: []}}}}
+`,
+	} {
+		name, body := name, body
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			seeds, managed, warnings, err := detectK8s(fstest.MapFS{
+				"k8s":                 &fstest.MapFile{Mode: 0o755 | fs.ModeDir},
+				"k8s/incomplete.yaml": &fstest.MapFile{Data: []byte(body)},
+			})
+			if err == nil || !contains(err.Error(), "first container image") {
+				t.Fatalf("err = %v, want missing first container image error", err)
+			}
+			if len(seeds) != 0 || len(managed) != 0 || len(warnings) != 0 {
+				t.Fatalf("partial result escaped: seeds=%v managed=%v warnings=%v", names(seeds), managed, warnings)
+			}
+		})
 	}
 }
 

@@ -47,10 +47,11 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		tier       Tier   // highest tier seen (=first arrival under the sort)
 		source     string // highest-tier seed's source
 		dockerfile string // highest-tier seed's dockerfile
+		image      string // highest-tier seed's prebuilt image
 		class      Class
 		command    []string
 		dependsOn  []string
-		schedule   string
+		schedules  []CronSchedule
 		ports      []int
 		envKeys    []string
 		// Whether each per-field slot is filled. We never overwrite
@@ -61,6 +62,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		portsSet  bool
 		envSet    bool
 		dfSet     bool
+		imageSet  bool
 		sourceSet bool
 		// det is the detector that won identity — the same first
 		// arrival that wins source/tier, so it is set under the
@@ -104,6 +106,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.dockerfile = s.dockerfile
 			b.dfSet = true
 		}
+		if !b.imageSet && s.image != "" {
+			b.image = s.image
+			b.imageSet = true
+		}
 		// Per-field: first non-empty wins (and never overwrites).
 		if !b.classSet && s.class != "" {
 			b.class = s.class
@@ -121,8 +127,12 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 				b.dependsOn = append(b.dependsOn, dep)
 			}
 		}
-		if !b.schedSet && s.schedule != "" {
-			b.schedule = s.schedule
+		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
+			if len(s.schedules) > 0 {
+				b.schedules = append([]CronSchedule(nil), s.schedules...)
+			} else {
+				b.schedules = []CronSchedule{{Expression: s.schedule, Enabled: true}}
+			}
 			b.schedSet = true
 		}
 		if !b.portsSet && len(s.ports) > 0 {
@@ -142,14 +152,20 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		if cls == "" {
 			cls = ClassUnknown
 		}
+		primarySchedule := ""
+		if len(b.schedules) > 0 {
+			primarySchedule = b.schedules[0].Expression
+		}
 		out = append(out, Workload{
 			Name:       b.name,
 			RootDir:    b.rootDir,
 			Dockerfile: b.dockerfile,
+			Image:      b.image,
 			Command:    b.command,
 			DependsOn:  b.dependsOn,
 			Class:      cls,
-			Schedule:   b.schedule,
+			Schedule:   primarySchedule,
+			Schedules:  append([]CronSchedule(nil), b.schedules...),
 			Ports:      b.ports,
 			EnvKeys:    b.envKeys,
 			Source:     b.source,

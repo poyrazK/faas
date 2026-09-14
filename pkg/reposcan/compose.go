@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"fmt"
 	"io/fs"
 	"sort"
 	"strconv"
@@ -99,10 +100,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	// at https://docs.docker.com/compose/compose-file/16-merging/).
 	var c composeDoc
 	if err := yaml.Unmarshal(body, &c); err != nil {
-		// Warn-and-skip: malformed compose is recoverable —
-		// the operator sees the parse error in warnings, the
-		// rest of the scan continues.
-		return nil, nil, []string{"reposcan: parse " + src + ": " + err.Error()}, nil //nolint:nilerr
+		return nil, nil, nil, fmt.Errorf("reposcan: parse %s: %w", src, err)
 	}
 	if len(c.Services) == 0 {
 		// Try the wrapped form.

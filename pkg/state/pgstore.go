@@ -4683,6 +4683,13 @@ func (s *PgStore) ApplyProjectReconcile(
 	}
 
 	if desiredCrons != nil {
+		desiredPerWorkload := make(map[string]int)
+		for _, cron := range desiredCrons {
+			desiredPerWorkload[cron.WorkloadName]++
+			if limits.CronLimitPerApp > 0 && desiredPerWorkload[cron.WorkloadName] > limits.CronLimitPerApp {
+				return ProjectReconcileResult{}, &QuotaError{Kind: QuotaErrorKindCrons, Limit: limits.CronLimitPerApp, Observed: desiredPerWorkload[cron.WorkloadName]}
+			}
+		}
 		projectIDs := make([]string, 0, len(existing))
 		for _, app := range existing {
 			projectIDs = append(projectIDs, app.ID)
@@ -4736,9 +4743,9 @@ func (s *PgStore) ApplyProjectReconcile(
 	}
 
 	if desiredCrons != nil {
-		// Resolve the complete post-mutation workload → app map, then replace
-		// this project's cron rows. Keeping one row per workload makes repeated
-		// applies idempotent and removes legacy duplicate rows.
+		// Resolve the complete post-mutation workload → app map, then reconcile
+		// every desired (schedule,path) identity. Repeated applies retain IDs,
+		// update enabled state, and remove legacy or source-deleted rows.
 		rows, err = tx.Query(ctx, `select id, workload_name from apps where project_id = $1 and status <> 'deleted'`, project.ID)
 		if err != nil {
 			return ProjectReconcileResult{}, err
@@ -4757,42 +4764,62 @@ func (s *PgStore) ApplyProjectReconcile(
 			return ProjectReconcileResult{}, err
 		}
 		rows.Close()
-		desiredByApp := make(map[string]ProjectReconcileCron, len(desiredCrons))
+		desiredByApp := make(map[string]map[string]ProjectReconcileCron, len(desiredCrons))
+		desiredOrder := make(map[string][]string, len(desiredCrons))
 		for _, cron := range desiredCrons {
 			appID := appByWorkload[cron.WorkloadName]
 			if appID == "" {
 				return ProjectReconcileResult{}, fmt.Errorf("state: cron workload %q has no project app", cron.WorkloadName)
 			}
-			desiredByApp[appID] = cron
+			key := cron.Schedule + "\x00" + cron.Path
+			if desiredByApp[appID] == nil {
+				desiredByApp[appID] = make(map[string]ProjectReconcileCron)
+			}
+			if _, duplicate := desiredByApp[appID][key]; duplicate {
+				return ProjectReconcileResult{}, fmt.Errorf("state: duplicate project cron for workload %q schedule %q path %q", cron.WorkloadName, cron.Schedule, cron.Path)
+			}
+			desiredByApp[appID][key] = cron
+			desiredOrder[appID] = append(desiredOrder[appID], key)
 		}
-		for appID := range appByWorkload {
+		for _, appID := range appByWorkload {
 			rows, err = tx.Query(ctx, `select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at from crons where app_id = $1 order by created_at for update`, appID)
 			if err != nil {
 				return ProjectReconcileResult{}, err
 			}
-			var kept bool
+			existingCrons := make([]Cron, 0)
 			for rows.Next() {
 				cron, err := scanCronRow(rows)
 				if err != nil {
 					rows.Close()
 					return ProjectReconcileResult{}, err
 				}
-				desired, wanted := desiredByApp[appID]
-				if !wanted || kept {
+				existingCrons = append(existingCrons, cron)
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return ProjectReconcileResult{}, err
+			}
+			rows.Close()
+			kept := make(map[string]bool)
+			for _, cron := range existingCrons {
+				key := cron.Schedule + "\x00" + cron.Path
+				desired, wanted := desiredByApp[appID][key]
+				if !wanted || kept[key] {
 					if _, err := tx.Exec(ctx, `delete from crons where id = $1`, cron.ID); err != nil {
-						rows.Close()
 						return ProjectReconcileResult{}, err
 					}
 					continue
 				}
-				if _, err := tx.Exec(ctx, `update crons set schedule = $2, path = $3, enabled = $4 where id = $1`, cron.ID, desired.Schedule, desired.Path, desired.Enabled); err != nil {
-					rows.Close()
+				if _, err := tx.Exec(ctx, `update crons set enabled = $2 where id = $1`, cron.ID, desired.Enabled); err != nil {
 					return ProjectReconcileResult{}, err
 				}
-				kept = true
+				kept[key] = true
 			}
-			rows.Close()
-			if desired, wanted := desiredByApp[appID]; wanted && !kept {
+			for _, key := range desiredOrder[appID] {
+				if kept[key] {
+					continue
+				}
+				desired := desiredByApp[appID][key]
 				if _, err := tx.Exec(ctx, `insert into crons (app_id, schedule, path, enabled, timezone, skip_if_running) values ($1, $2, $3, $4, 'UTC', false)`, appID, desired.Schedule, desired.Path, desired.Enabled); err != nil {
 					return ProjectReconcileResult{}, mapErr(err)
 				}

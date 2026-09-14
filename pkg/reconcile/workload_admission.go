@@ -43,6 +43,11 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 				"workload %q is a Serverless function without an execution adapter; create a function app and deploy the handler explicitly",
 				workload.Name))
 		}
+		if workload.Image != "" {
+			reasons = append(reasons, fmt.Sprintf(
+				"workload %q uses prebuilt image %q; project apply currently supports source builds only; add a Dockerfile/build context or deploy the image as a container app",
+				workload.Name, workload.Image))
+		}
 		if !api.ValidAppSlug(workload.Name) {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q has invalid app slug %q; use 3-40 lowercase letters, digits, or hyphens",

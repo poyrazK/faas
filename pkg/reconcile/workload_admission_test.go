@@ -31,6 +31,14 @@ func TestWorkloadAdmissionReasons(t *testing.T) {
 			want: []string{"without an execution adapter"},
 		},
 		{
+			name: "prebuilt image requires explicit container deploy",
+			workloads: []reposcan.Workload{{
+				Name:  "api",
+				Image: "ghcr.io/example/api:v1",
+			}},
+			want: []string{"project apply currently supports source builds only"},
+		},
+		{
 			name:      "intended member update",
 			workloads: []reposcan.Workload{{Name: "member-api", RootDir: "services/api"}},
 			apps:      []state.App{{Slug: "member-api", WorkloadName: "member-api", RootDir: "services/api", ProjectID: "project-1"}},

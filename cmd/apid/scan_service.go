@@ -40,6 +40,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reconcile"
@@ -623,12 +624,20 @@ func evaluateQuotaGate(
 	observedCrons int,
 ) (canApply bool, notAllowed bool, reasons []string, cronCount int) {
 	for _, wl := range workloads {
-		if wl.Schedule != "" {
-			cronCount++
+		workloadCronCount := len(wl.CronSchedules())
+		cronCount += workloadCronCount
+		if limits.CronLimitPerApp > 0 && workloadCronCount > limits.CronLimitPerApp {
+			canApply = false
+			reasons = append(reasons, fmt.Sprintf(
+				"crons over per-app limit for %s: %d > %d",
+				wl.Name, workloadCronCount, limits.CronLimitPerApp,
+			))
 		}
 	}
 
-	canApply = true
+	if len(reasons) == 0 {
+		canApply = true
+	}
 	if observedApps+len(workloads) > limits.DeployedApps {
 		canApply = false
 		reasons = append(reasons, fmt.Sprintf(
@@ -649,6 +658,22 @@ func evaluateQuotaGate(
 		))
 	}
 	return
+}
+
+func validateScannedSchedules(workloads []reposcan.Workload) error {
+	for _, workload := range workloads {
+		seen := make(map[string]struct{})
+		for _, schedule := range workload.CronSchedules() {
+			if err := cronexpr.Validate(schedule.Expression); err != nil {
+				return fmt.Errorf("workload %q schedule %q: %w", workload.Name, schedule.Expression, err)
+			}
+			if _, duplicate := seen[schedule.Expression]; duplicate {
+				return fmt.Errorf("workload %q declares duplicate schedule %q", workload.Name, schedule.Expression)
+			}
+			seen[schedule.Expression] = struct{}{}
+		}
+	}
+	return nil
 }
 
 // gateRescueReason maps the templated reason strings
@@ -672,7 +697,7 @@ func gateRescueReason(reasons []string) string {
 	switch {
 	case strings.HasPrefix(r, "apps over plan limit:"):
 		return "apps_over_limit"
-	case strings.HasPrefix(r, "crons over plan limit:"):
+	case strings.HasPrefix(r, "crons over plan limit:"), strings.HasPrefix(r, "crons over per-app limit"):
 		return "crons_over_limit"
 	case r == "crons not allowed on this plan":
 		return "crons_not_allowed"
@@ -708,6 +733,21 @@ type planCron struct {
 	Schedule     string `json:"schedule"`
 	Path         string `json:"path"`
 	Enabled      bool   `json:"enabled"`
+}
+
+func projectWorkloadCrons(workloads []reposcan.Workload) []planCron {
+	var crons []planCron
+	for _, workload := range workloads {
+		for _, schedule := range workload.CronSchedules() {
+			crons = append(crons, planCron{
+				WorkloadName: workload.Name,
+				Schedule:     schedule.Expression,
+				Path:         "/",
+				Enabled:      schedule.Enabled,
+			})
+		}
+	}
+	return crons
 }
 
 // appliedBuild is an alias for api.AppliedBuild so the local code
@@ -1028,6 +1068,11 @@ func (s *server) scanService(
 			http.StatusBadRequest, api.CodeSourceInvalid,
 			"Scan failed", scanErr.Error())
 	}
+	if scheduleErr := validateScannedSchedules(result.Workloads); scheduleErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
+			http.StatusBadRequest, api.CodeSourceInvalid,
+			"Invalid project schedule", scheduleErr.Error())
+	}
 
 	// Server-side secret-scan (closes v1 gap A). Runs on BOTH
 	// apply=true and apply=false — the preview contract is "we ran
@@ -1183,20 +1228,7 @@ func (s *server) scanService(
 	// Crons: any workload with a Schedule string is also a cron. Map
 	// to planCron with the workload name; resolve AppID in the apply
 	// path from the just-inserted apps.
-	var crons []planCron
-	for _, wl := range filteredW {
-		if wl.Schedule == "" {
-			continue
-		}
-		path := wl.Ports // unused but keeps govet quiet
-		_ = path
-		crons = append(crons, planCron{
-			WorkloadName: wl.Name,
-			Schedule:     wl.Schedule,
-			Path:         "/",
-			Enabled:      true,
-		})
-	}
+	crons := projectWorkloadCrons(filteredW)
 
 	// can_apply computation: apps + crons must fit under the plan
 	// caps AND crons must be allowed. We mirror store.ApplyProjectPlan's

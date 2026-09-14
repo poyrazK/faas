@@ -213,23 +213,19 @@ func TestDetectCompose_AbsentFile(t *testing.T) {
 	}
 }
 
-// TestDetectCompose_InvalidYAMLSoftFails — bad YAML emits a warning
-// instead of an error so a partially-broken compose file does not
-// invalidate the whole scan.
-func TestDetectCompose_InvalidYAMLSoftFails(t *testing.T) {
+// TestDetectCompose_InvalidYAMLFailsClosed — an authoritative manifest must
+// never be replaced by a root-floor workload.
+func TestDetectCompose_InvalidYAMLFailsClosed(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"compose.yaml": &fstest.MapFile{Data: []byte("services:\n  api: {build: .")},
 	}
 	seeds, _, warnings, err := detectCompose(fsys)
-	if err != nil {
-		t.Fatalf("detectCompose: %v", err)
-	}
 	if len(seeds) != 0 {
 		t.Errorf("seeds = %v, want empty (broken compose)", names(seeds))
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "parse compose.yaml") {
-		t.Errorf("warnings = %v, want [parse compose.yaml …]", warnings)
+	if len(warnings) != 0 || err == nil || !strings.Contains(err.Error(), "parse compose.yaml") {
+		t.Errorf("warnings=%v err=%v, want a compose parse error", warnings, err)
 	}
 }
 

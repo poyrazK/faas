@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"fmt"
 	"io/fs"
 	"sort"
 
@@ -11,12 +12,11 @@ import (
 // per-process types. We read:
 //
 //	app                       → workload name (the app's name, "name-of-fly-app")
-//	[processes]               → per-process names + counts (we treat them as workers)
-//	[[services]]              → ports, command (omit for now — Fly doesn't carry these for tier-1)
+//	[processes]               → per-process names + start commands
+//	[http_service]/[[services]] → process groups that serve requests
 //
-// class is class=http for the app and class=worker for any named
-// process. Schedules are not expressible in fly.toml — jobs aren't
-// a Fly tier-1 source.
+// class is class=http for the app and any service-bound process; other
+// process groups are workers. Schedules are not expressible in fly.toml.
 //
 // BurntSushi/toml reads key `app` into a struct field named `App`
 // (case-insensitive match on first letter, exact match on the rest
@@ -25,9 +25,15 @@ import (
 // has used both names historically and the field that wins is the
 // one that wrote the value.
 type flyDoc struct {
-	App       string         `toml:"app"`
-	Name      string         `toml:"name"`
-	Processes map[string]int `toml:"processes"`
+	App         string            `toml:"app"`
+	Name        string            `toml:"name"`
+	Processes   map[string]string `toml:"processes"`
+	HTTPService struct {
+		Processes []string `toml:"processes"`
+	} `toml:"http_service"`
+	Services []struct {
+		Processes []string `toml:"processes"`
+	} `toml:"services"`
 }
 
 func detectFly(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
@@ -37,8 +43,7 @@ func detectFly(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	}
 	var d flyDoc
 	if err := toml.Unmarshal(body, &d); err != nil {
-		// Warn-and-skip: malformed fly.toml is recoverable.
-		return nil, nil, []string{"reposcan: parse " + src + ": " + err.Error()}, nil //nolint:nilerr
+		return nil, nil, nil, fmt.Errorf("reposcan: parse %s: %w", src, err)
 	}
 	appName := d.App
 	if appName == "" {
@@ -52,21 +57,29 @@ func detectFly(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			source: src + ": " + appName,
 		})
 	}
-	// processes section is "name = count" — count > 0 means a
-	// worker slot exists. We don't enumerate "name-1, name-2"; we
-	// emit a single Worker per process name (count is informational).
-	for pname := range d.Processes {
-		if pname == keyWeb {
-			// already covered by the app name; merge later
-			if len(seeds) > 0 && seeds[0].name == appName {
-				seeds[0].class = ClassHTTP
-			}
-			continue
+	requestServing := make(map[string]bool)
+	for _, process := range d.HTTPService.Processes {
+		requestServing[process] = true
+	}
+	for _, service := range d.Services {
+		for _, process := range service.Processes {
+			requestServing[process] = true
+		}
+	}
+	for pname, command := range d.Processes {
+		class := ClassWorker
+		if requestServing[pname] || (len(requestServing) == 0 && pname == keyWeb) {
+			class = ClassHTTP
+		}
+		var commandParts []string
+		if command != "" {
+			commandParts = []string{command}
 		}
 		seeds = append(seeds, workloadSeed{
-			name:   pname,
-			class:  ClassWorker,
-			source: src + ": " + pname,
+			name:    pname,
+			class:   class,
+			command: commandParts,
+			source:  src + ": " + pname,
 		})
 	}
 	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })

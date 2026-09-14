@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
@@ -5686,13 +5687,10 @@ func keyPrefixFromHash(hash []byte) string {
 	return api.APIKeyPrefix + hex.EncodeToString(hash)[:12]
 }
 
-// validCron returns true if s is a 5-field cron expression. The actual
-// scheduler (spec §4.3) reuses robfig/cron's parser in pkg/sched — this is a
-// quick shape check so apid rejects obviously bad input at the API boundary
-// instead of letting it through to schedd.
+// validCron uses the exact parser schedd uses, keeping direct and project
+// cron admission on the same five-field grammar.
 func validCron(s string) bool {
-	fields := strings.Fields(s)
-	return len(fields) == 5
+	return cronexpr.Validate(s) == nil
 }
 
 // streamDeploymentLogs serves the build log for a deployment as a

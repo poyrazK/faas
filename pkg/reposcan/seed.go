@@ -104,10 +104,12 @@ type workloadSeed struct {
 	name       string
 	rootDir    string
 	dockerfile string
+	image      string
 	command    []string
 	dependsOn  []string
 	class      Class
 	schedule   string
+	schedules  []CronSchedule
 	ports      []int
 	envKeys    []string // KEYS only
 }

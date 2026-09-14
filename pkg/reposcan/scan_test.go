@@ -2,9 +2,31 @@ package reposcan
 
 import (
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
+
+func TestScan_MalformedComposeVariantsCannotFallBackToRoot(t *testing.T) {
+	t.Parallel()
+	for _, filename := range composeFileNames {
+		filename := filename
+		t.Run(filename, func(t *testing.T) {
+			t.Parallel()
+			fsys := fstest.MapFS{
+				filename:       &fstest.MapFile{Data: []byte("services:\n  api:\n    build: [\n")},
+				"package.json": &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node index.js"}}`)},
+			}
+			result, err := Scan(fsys)
+			if err == nil || !strings.Contains(err.Error(), filename) {
+				t.Fatalf("Scan err=%v, want parse failure naming %s", err, filename)
+			}
+			if len(result.Workloads) != 0 {
+				t.Fatalf("fallback workloads = %#v, want none", result.Workloads)
+			}
+		})
+	}
+}
 
 // TestScan_ComposeK8sFixture is the §4 Phase 2 acceptance gate
 // fixture. Per docs/repo_decomposition_implementation.md §4.260:

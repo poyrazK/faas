@@ -636,6 +636,72 @@ func TestReconcileWithCrons_ReplacesIdempotently(t *testing.T) {
 	}
 }
 
+func TestReconcileWithCrons_TogglesEnabledWithoutDuplicate(t *testing.T) {
+	store := newFakeStore()
+	aud := newFakeAuditor(store)
+	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
+	app := seedApp(t, store, proj, "", "cleanup", "")
+	if _, err := store.CreateCron(context.Background(), app.ID, "15 2 * * *", "/", true); err != nil {
+		t.Fatal(err)
+	}
+	scan := reposcan.Result{Workloads: []reposcan.Workload{{Name: "cleanup", Tier: reposcan.TierCompose, Source: "k8s/cleanup.yaml: cleanup", DetectedBy: reposcan.Detection{Detector: "k8s"}}}, Tier: reposcan.TierCompose}
+	desired := []CronSpec{{WorkloadName: "cleanup", Schedule: "15 2 * * *", Path: "/", Enabled: false}}
+	if _, err := freshService(store, aud).ReconcileWithCrons(context.Background(), proj, scan, "sha", "main", nil, desired); err != nil {
+		t.Fatal(err)
+	}
+	crons, err := store.ListCronsForApp(context.Background(), app.ID)
+	if err != nil || len(crons) != 1 {
+		t.Fatalf("crons=%#v err=%v", crons, err)
+	}
+	if crons[0].Enabled {
+		t.Fatal("suspended desired cron was activated")
+	}
+}
+
+func TestReconcileWithCrons_PreservesMultipleSchedulesPerWorkload(t *testing.T) {
+	store := newFakeStore()
+	aud := newFakeAuditor(store)
+	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
+	app := seedApp(t, store, proj, "", "api", "")
+	scan := reposcan.Result{Workloads: []reposcan.Workload{{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yaml: api"}}, Tier: reposcan.TierCompose}
+	desired := []CronSpec{
+		{WorkloadName: "api", Schedule: "*/5 * * * *", Path: "/", Enabled: true},
+		{WorkloadName: "api", Schedule: "0 12 * * *", Path: "/", Enabled: false},
+	}
+	svc := freshService(store, aud)
+	if _, err := svc.ReconcileWithCrons(context.Background(), proj, scan, "sha-1", "main", nil, desired); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.ListCronsForApp(context.Background(), app.ID)
+	if err != nil || len(first) != 2 {
+		t.Fatalf("first apply crons=%#v err=%v", first, err)
+	}
+	ids := map[string]string{}
+	for _, cron := range first {
+		ids[cron.Schedule] = cron.ID
+	}
+	desired[0].Enabled = false
+	if _, err := svc.ReconcileWithCrons(context.Background(), proj, scan, "sha-2", "main", nil, desired); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.ListCronsForApp(context.Background(), app.ID)
+	if err != nil || len(second) != 2 {
+		t.Fatalf("second apply crons=%#v err=%v", second, err)
+	}
+	for _, cron := range second {
+		if cron.ID != ids[cron.Schedule] || cron.Enabled {
+			t.Errorf("reapplied cron=%#v, want stable ID and disabled state", cron)
+		}
+	}
+	if _, err := svc.ReconcileWithCrons(context.Background(), proj, scan, "sha-3", "main", nil, desired[:1]); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := store.ListCronsForApp(context.Background(), app.ID)
+	if err != nil || len(remaining) != 1 || remaining[0].Schedule != "*/5 * * * *" {
+		t.Fatalf("removed schedule survived: crons=%#v err=%v", remaining, err)
+	}
+}
+
 func TestReconcile_DeriveScanSource_MirrorsApid(t *testing.T) {
 	// Pin the priority list. If the cmd/apid list ever changes,
 	// this test breaks and the reviewer has to update both
@@ -649,16 +715,16 @@ func TestReconcile_DeriveScanSource_MirrorsApid(t *testing.T) {
 		{
 			name: "compose wins over convention",
 			workloads: []reposcan.Workload{
-				{Name: "web", Source: "convention: apps/web"},
-				{Name: "api", Source: "compose.yaml: api"},
+				{Name: "web", Tier: reposcan.TierConvention, Source: "convention: apps/web", DetectedBy: reposcan.Detection{Detector: "other"}},
+				{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yaml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
 			},
 			want: state.ProjectScanSourceCompose,
 		},
 		{
 			name: "compose wins over k8s when both present (priority list)",
 			workloads: []reposcan.Workload{
-				{Name: "api", Source: "compose.yaml: api"},
-				{Name: "web", Source: "k8s/deployment.yaml: web"},
+				{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yaml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
+				{Name: "web", Tier: reposcan.TierCompose, Source: "k8s/deployment.yaml: web", DetectedBy: reposcan.Detection{Detector: "k8s"}},
 			},
 			want: state.ProjectScanSourceCompose,
 		},
@@ -672,21 +738,45 @@ func TestReconcile_DeriveScanSource_MirrorsApid(t *testing.T) {
 			// monotonic-upgrade guard rejects the re-apply.
 			name: "docker-compose.yml filename is recognised as compose",
 			workloads: []reposcan.Workload{
-				{Name: "api", Source: "docker-compose.yml: api"},
+				{Name: "api", Tier: reposcan.TierCompose, Source: "docker-compose.yml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
 			},
 			want: state.ProjectScanSourceCompose,
 		},
 		{
 			name: "compose.yml filename is recognised as compose",
 			workloads: []reposcan.Workload{
-				{Name: "api", Source: "compose.yml: api"},
+				{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
 			},
 			want: state.ProjectScanSourceCompose,
 		},
 		{
+			name: "k8s is stable for multiple workloads",
+			workloads: []reposcan.Workload{
+				{Name: "api", Tier: reposcan.TierCompose, Source: "k8s/api.yaml: api", DetectedBy: reposcan.Detection{Detector: "k8s"}},
+				{Name: "worker", Tier: reposcan.TierCompose, Source: "k8s/worker.yaml: worker", DetectedBy: reposcan.Detection{Detector: "k8s"}},
+			},
+			want: state.ProjectScanSourceK8s,
+		},
+		{
+			name: "Procfile casing does not affect source",
+			workloads: []reposcan.Workload{
+				{Name: "web", Tier: reposcan.TierCompose, Source: "Procfile: web", DetectedBy: reposcan.Detection{Detector: "procfile"}},
+				{Name: "worker", Tier: reposcan.TierCompose, Source: "Procfile: worker", DetectedBy: reposcan.Detection{Detector: "procfile"}},
+			},
+			want: state.ProjectScanSourceProcfile,
+		},
+		{
+			name: "workspace source comes from tier",
+			workloads: []reposcan.Workload{
+				{Name: "api", Tier: reposcan.TierWorkspace, Source: "go.work: api", DetectedBy: reposcan.Detection{Detector: "other"}},
+				{Name: "worker", Tier: reposcan.TierWorkspace, Source: "go.work: worker", DetectedBy: reposcan.Detection{Detector: "other"}},
+			},
+			want: state.ProjectScanSourceWorkspace,
+		},
+		{
 			name: "single workload with root-floor source",
 			workloads: []reposcan.Workload{
-				{Name: "app", Source: "root-floor"},
+				{Name: "app", Tier: reposcan.TierSingle, Source: "root-floor", DetectedBy: reposcan.Detection{Detector: "other"}},
 			},
 			want: state.ProjectScanSourceSingle,
 		},

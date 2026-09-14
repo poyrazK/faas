@@ -2901,6 +2901,13 @@ func (m *MemStore) ApplyProjectReconcile(
 	}
 
 	if desiredCrons != nil {
+		desiredPerWorkload := make(map[string]int)
+		for _, cron := range desiredCrons {
+			desiredPerWorkload[cron.WorkloadName]++
+			if limits.CronLimitPerApp > 0 && desiredPerWorkload[cron.WorkloadName] > limits.CronLimitPerApp {
+				return rollback(&QuotaError{Kind: QuotaErrorKindCrons, Limit: limits.CronLimitPerApp, Observed: desiredPerWorkload[cron.WorkloadName]})
+			}
+		}
 		projectAppIDs := make(map[string]bool, len(liveProjectApps))
 		for id := range liveProjectApps {
 			projectAppIDs[id] = true
@@ -2979,43 +2986,60 @@ func (m *MemStore) ApplyProjectReconcile(
 	}
 
 	if desiredCrons != nil {
-		// Replace the project's cron set. A single desired cron is retained per
-		// workload; duplicate legacy rows are removed, making re-apply idempotent.
+		// Reconcile the project's complete cron set by (schedule,path). Existing
+		// identities retain their row ID while enabled state is updated; removed
+		// schedules are deleted and new schedules are inserted.
 		appByWorkload := make(map[string]string)
 		for id, app := range m.apps {
 			if app.ProjectID == project.ID && app.AccountID == project.AccountID && app.Status != AppDeleted {
 				appByWorkload[app.WorkloadName] = id
 			}
 		}
-		desiredByApp := make(map[string]ProjectReconcileCron, len(desiredCrons))
+		desiredByApp := make(map[string]map[string]ProjectReconcileCron, len(desiredCrons))
+		desiredOrder := make(map[string][]string, len(desiredCrons))
 		for _, cron := range desiredCrons {
 			appID := appByWorkload[cron.WorkloadName]
 			if appID == "" {
 				return rollback(fmt.Errorf("state: cron workload %q has no project app", cron.WorkloadName))
 			}
-			desiredByApp[appID] = cron
+			key := cron.Schedule + "\x00" + cron.Path
+			if desiredByApp[appID] == nil {
+				desiredByApp[appID] = make(map[string]ProjectReconcileCron)
+			}
+			if _, duplicate := desiredByApp[appID][key]; duplicate {
+				return rollback(fmt.Errorf("state: duplicate project cron for workload %q schedule %q path %q", cron.WorkloadName, cron.Schedule, cron.Path))
+			}
+			desiredByApp[appID][key] = cron
+			desiredOrder[appID] = append(desiredOrder[appID], key)
 		}
-		firstCron := make(map[string]string)
+		kept := make(map[string]map[string]bool)
 		for id, cron := range m.crons {
 			app := m.apps[cron.AppID]
 			if app.ProjectID != project.ID || app.AccountID != project.AccountID {
 				continue
 			}
-			desired, keep := desiredByApp[cron.AppID]
-			if !keep || firstCron[cron.AppID] != "" {
+			key := cron.Schedule + "\x00" + cron.Path
+			desired, keep := desiredByApp[cron.AppID][key]
+			if !keep || kept[cron.AppID][key] {
 				delete(m.crons, id)
 				continue
 			}
-			cron.Schedule, cron.Path, cron.Enabled = desired.Schedule, desired.Path, desired.Enabled
-			firstCron[cron.AppID] = id
+			cron.Enabled = desired.Enabled
+			if kept[cron.AppID] == nil {
+				kept[cron.AppID] = make(map[string]bool)
+			}
+			kept[cron.AppID][key] = true
 			m.crons[id] = cron
 		}
-		for appID, desired := range desiredByApp {
-			if firstCron[appID] != "" {
-				continue
+		for appID, keys := range desiredOrder {
+			for _, key := range keys {
+				if kept[appID][key] {
+					continue
+				}
+				desired := desiredByApp[appID][key]
+				id := newID()
+				m.crons[id] = Cron{ID: id, AppID: appID, Schedule: desired.Schedule, Path: desired.Path, Enabled: desired.Enabled, Timezone: "UTC", CreatedAt: time.Now()}
 			}
-			id := newID()
-			m.crons[id] = Cron{ID: id, AppID: appID, Schedule: desired.Schedule, Path: desired.Path, Enabled: desired.Enabled, Timezone: "UTC", CreatedAt: time.Now()}
 		}
 	}
 
