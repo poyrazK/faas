@@ -11,23 +11,22 @@
 // fires.
 //
 // The plan's three scenarios:
-//   - Happy path (422 / 404 split) — happy body passes through the
-//     rule → reaches Backend.Pick → 404 (no real impl); invalid body
-//     rejected by the rule → 422 + Problem.errors[].
+//   - Happy path — happy body passes through the rule and reaches the
+//     backend (404 router miss or capacity 503); invalid body is rejected
+//     by the rule with 422 + Problem.errors[].
 //   - Streaming-skipped — apply_while_streaming=false + an Upgrade
 //     request with a body that would otherwise reject; assert the
 //     rule is skipped and the request reaches Backend.Pick.
 //   - External-`$ref` rejected — seed a rule with a schema whose
 //     digest was bypassed (seedEdgeRuleDirect skips apid-Validate);
-//     the gateway-side `pkg/edgevalidate.Compile` re-strips at
-//     compile time so the runtime never sees an external ref → 502.
+//     the gateway-side `pkg/edgevalidate.Compile` rejects and drops it,
+//     incrementing the compile-error metric before backend fallthrough.
 //
 // Why no `TestEdgeRulesValidate_Forwarded` happy-200 test: the test
 // harness doesn't run schedd/vmmd/imaged (the 6 prior e2e files
 // don't either). The wake path is out of scope for D18 — see PR-D's
 // DeployWake-bitmask follow-on. We assert the validate rule ran by
-// observing the 404 from Backend.Pick rather than a 200 from a
-// proxied wake.
+// observing backend fallthrough rather than a 200 from a proxied wake.
 
 package e2e_test
 
@@ -35,6 +34,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 
@@ -79,7 +79,7 @@ func TestEdgeRulesValidate_E2E_HappyAndReject(t *testing.T) {
 
 	slug := "validate-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	var app api.AppResponse
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
@@ -98,7 +98,7 @@ func TestEdgeRulesValidate_E2E_HappyAndReject(t *testing.T) {
 		map[string]any{
 			"kind": "validate",
 			"validate": map[string]any{
-				"schema":                userSchema,
+				"schema":                json.RawMessage(userSchema),
 				"content_types":         []string{"application/json"},
 				"apply_while_streaming": false,
 			},
@@ -121,11 +121,7 @@ func TestEdgeRulesValidate_E2E_HappyAndReject(t *testing.T) {
 	if status == http.StatusUnprocessableEntity {
 		t.Fatalf("happy path rejected: status=%d body=%s", status, body)
 	}
-	if status != http.StatusNotFound {
-		// 404 = Backend.Pick miss (no real impl); other 2xx/4xx
-		// codes mean the validate rule misfired.
-		t.Errorf("happy path: status=%d, want 404 (Backend.Pick miss after rule ran) or non-422; body=%s", status, body)
-	}
+	assertBackendFallthrough(t, status, body)
 
 	// Reject path: body violates the schema (name is not a string).
 	badBody := map[string]any{
@@ -174,7 +170,7 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 
 	slug := "validate-stream-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	var app api.AppResponse
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
@@ -191,7 +187,7 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 		map[string]any{
 			"kind": "validate",
 			"validate": map[string]any{
-				"schema":        userSchema,
+				"schema":        json.RawMessage(userSchema),
 				"content_types": []string{"application/json"},
 				// Default false — opt-out posture per ADR-047.
 				"apply_while_streaming": false,
@@ -221,27 +217,29 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upgrade req: %v", err)
 	}
+	respBody, readErr := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read upgrade response: %v", readErr)
+	}
 
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		t.Errorf("streaming-skipped: rule fired on upgrade request; status=%d (want non-422)", resp.StatusCode)
 	}
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("streaming-skipped: status=%d, want 404 (rule skipped → Backend.Pick miss) or non-422", resp.StatusCode)
-	}
+	assertBackendFallthrough(t, resp.StatusCode, respBody)
 }
 
 // TestEdgeRulesValidate_ExternalRefRejected pins the gateway-side
 // defence-in-depth at compile time. seedEdgeRuleDirect bypasses
 // apid-Validate (the apid-side regex strips external refs), so we
 // can land a rule with a `$ref: "https://..."` body in the row.
-// pkg/edgevalidate.Compile re-strips at compile time on the gateway
-// side, so the runtime never sees an external reference — the rule
-// emits 502 + CodeBadGateway per handler.go:1649.
+// pkg/edgevalidate.Compile rejects it while the gateway loads the host,
+// so the runtime never sees the external reference and the malformed rule
+// is dropped with an operator-visible compile-error metric.
 //
 // We send a body that the inline schema would otherwise accept; the
-// 502 fires from the compile-time strip on the gateway side rather
-// than a runtime validation. To reach the compile path we simply
+// request reaches the backend only if compile-time rejection worked. To
+// reach the compile path we simply
 // POST anything that matches the inline shape (`name`, `email`,
 // `age`) so the rule doesn't 422 on the runtime branch first.
 func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
@@ -259,7 +257,7 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 
 	slug := "validate-xref-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	var app api.AppResponse
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
@@ -292,7 +290,7 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 		map[string]any{
 			"kind": "validate",
 			"validate": map[string]any{
-				"schema":        xrefSchema,
+				"schema":        json.RawMessage(xrefSchema),
 				"content_types": []string{"application/json"},
 			},
 		},
@@ -304,23 +302,25 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	_, respBody, status := doReqHeaders(t, h, synthHost, http.MethodPost,
 		"/users", body)
 
-	// Two acceptable outcomes:
-	//   - 502 BadGateway: gateway-side pkg/edgevalidate.Compile
-	//     re-stripped the external ref → runtime ErrSchemaExternalRef.
-	//   - 422 Validation: very defensive fallback if the strip
-	//     runs differently than expected — a passing request here
-	//     would mean the strip failed AND the runtime accepted
-	//     the schema, which would be the bug we want to trip.
-	switch status {
-	case http.StatusBadGateway, http.StatusUnprocessableEntity:
-		// expected alarm-worthy outcome
-	default:
-		t.Errorf("external-$ref: status=%d, want 502 (gateway compile strip) or 422; body=%s", status, respBody)
+	// Compile rejects and drops a malformed stored rule before the hot
+	// path, so the request continues through the valid route rule. Pin both
+	// the fallthrough and the operator-visible compile-error signal.
+	assertBackendFallthrough(t, status, respBody)
+	metricsReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+		h.GatewayControlURL+"/metrics", nil)
+	if err != nil {
+		t.Fatalf("new metrics request: %v", err)
 	}
-	// Any 502 response from the gateway MUST NOT be a successful
-	// passthrough — if status is 200 the rule silently accepted
-	// the external ref and the test missed the regression.
-	if status == http.StatusOK {
-		t.Fatalf("external-$ref: rule accepted external $ref; body=%s", respBody)
+	metricsResp, err := h.HTTPClient().Do(metricsReq)
+	if err != nil {
+		t.Fatalf("get gateway metrics: %v", err)
+	}
+	defer metricsResp.Body.Close()
+	metricsBody, err := io.ReadAll(metricsResp.Body)
+	if err != nil {
+		t.Fatalf("read gateway metrics: %v", err)
+	}
+	if !bytes.Contains(metricsBody, []byte(`gateway_edge_rule_compile_error_total{kind="validate"} 1`)) {
+		t.Fatalf("external-$ref compile rejection metric missing; metrics=%s", metricsBody)
 	}
 }

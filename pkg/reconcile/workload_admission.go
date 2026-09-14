@@ -60,8 +60,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		}
 		seen[workload.Name] = struct{}{}
 		if app, exists := bySlug[workload.Name]; exists &&
-			(projectID == "" || app.ProjectID != projectID ||
-				app.RootDir != workload.RootDir || app.WorkloadName != workload.Name) {
+			(projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name) {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q conflicts with existing app slug %q outside this project member",
 				workload.Name, app.Slug))

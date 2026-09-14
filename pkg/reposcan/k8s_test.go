@@ -51,6 +51,9 @@ spec:
 	if len(seeds[0].command) != 4 || seeds[0].command[0] != "bundle" {
 		t.Errorf("command = %v", seeds[0].command)
 	}
+	if seeds[0].commandShell {
+		t.Error("Kubernetes command/args must retain exec-form argument boundaries")
+	}
 	wantPorts := []int{8080}
 	if !equalSet(intToStr(wantPorts), intToStr(seeds[0].ports)) {
 		t.Errorf("ports = %v, want %v", seeds[0].ports, wantPorts)

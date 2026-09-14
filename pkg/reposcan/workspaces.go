@@ -2,8 +2,10 @@ package reposcan
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -32,68 +34,39 @@ import (
 //
 // Pure (no fsys-error propagates to Scan): a missing manifest
 // file is a quiet skip.
-func detectWorkspacesImpl(fsys fs.FS) ([]workloadSeed, []string, error) {
+func detectWorkspacesImpl(fsys fs.FS, includeLibraryMarkers bool) ([]workloadSeed, []string, error) {
 	var (
 		seeds    []workloadSeed
 		warnings []string
 		seen     = map[string]bool{}
 	)
-	var add func(member string, src string)
-	add = func(member string, src string) {
-		if member == "" || strings.HasPrefix(member, "..") {
-			return
-		}
-		// Strip trailing slash.
-		member = strings.TrimRight(member, "/")
-		// fs.ValidPath is the load-bearing rejection — a path like
-		// "packages/../escape" passes the leading ".." check above,
-		// but path.Join normalises it to "escape" before fs.ReadDir
-		// or fs.Stat ever sees it. fs.ValidPath rejects *after*
-		// normalisation, so the guard runs on the final value.
-		if !fs.ValidPath(member) {
-			return
-		}
-		// Skip the literal "*" form (un-expandable glob).
-		if strings.HasSuffix(member, "/*") {
-			dir := strings.TrimSuffix(member, "/*")
-			entries, err := fs.ReadDir(fsys, dir)
-			if err != nil {
-				return // directory doesn't exist; quiet skip
-			}
-			for _, e := range entries {
-				if !e.IsDir() {
-					continue
-				}
-				// path.Join normalises, so a directory entry named
-				// ".." would produce a parent-escape; re-validate
-				// before the recursive call.
-				joined := path.Join(dir, e.Name())
-				if !fs.ValidPath(joined) {
-					continue
-				}
-				add(joined, src)
-			}
+	add := func(member string, src string) {
+		member = strings.TrimRight(strings.TrimPrefix(strings.TrimSpace(member), "./"), "/")
+		if member == "" || strings.HasPrefix(member, "..") || !fs.ValidPath(member) {
 			return
 		}
 		if seen[member] {
 			return
 		}
 		seen[member] = true
-		// Eligibility: directory carries Dockerfile or language marker.
-		if !hasMarker(fsys, member) {
+		seed, runnable, reason := runnableWorkspaceSeed(fsys, member, src, includeLibraryMarkers)
+		if !runnable {
+			if reason != "" {
+				warnings = append(warnings, reason)
+			}
 			return
 		}
-		// Name = last path segment.
-		name := path.Base(member)
-		// If name is a glob literal "*" — skip silently (no member to name).
-		if name == "" || name == "*" {
-			return
+		seeds = append(seeds, seed)
+	}
+	addPatterns := func(patterns []string, src string) error {
+		members, err := expandWorkspacePatterns(fsys, patterns)
+		if err != nil {
+			return fmt.Errorf("reposcan: %s: %w", src, err)
 		}
-		seeds = append(seeds, workloadSeed{
-			name:    name,
-			rootDir: member,
-			source:  src + ": " + member,
-		})
+		for _, member := range members {
+			add(member, src)
+		}
+		return nil
 	}
 
 	// package.json — workspaces.
@@ -105,8 +78,8 @@ func detectWorkspacesImpl(fsys fs.FS) ([]workloadSeed, []string, error) {
 		}
 		if err := json.Unmarshal(body, &pj); err == nil && len(pj.Workspaces) > 0 {
 			wsEntries := parseWorkspacesField(pj.Workspaces)
-			for _, w := range wsEntries {
-				add(w, src)
+			if err := addPatterns(wsEntries, src); err != nil {
+				return nil, nil, err
 			}
 		}
 	}
@@ -119,8 +92,8 @@ func detectWorkspacesImpl(fsys fs.FS) ([]workloadSeed, []string, error) {
 			Packages []string `yaml:"packages"`
 		}
 		if err := yaml.Unmarshal(body, &p); err == nil {
-			for _, w := range p.Packages {
-				add(w, src)
+			if err := addPatterns(p.Packages, src); err != nil {
+				return nil, nil, err
 			}
 		}
 	}
@@ -172,12 +145,14 @@ func detectWorkspacesImpl(fsys fs.FS) ([]workloadSeed, []string, error) {
 				// name with RootDir="" so a later Tier-3
 				// convention reader can pair or the user can
 				// resolve via a faas.yaml override (Phase 3+).
-				if hasMarker(fsys, k) {
-					seeds = append(seeds, workloadSeed{
-						name:    k,
-						rootDir: k,
-						source:  src + ": " + k,
-					})
+				seed, runnable, reason := runnableWorkspaceSeed(fsys, k, src, includeLibraryMarkers)
+				if runnable {
+					// Nx project keys are the existing workload identity; the
+					// filesystem helper derives runnability but must not rename it.
+					seed.name = k
+					seeds = append(seeds, seed)
+				} else if reason != "" {
+					warnings = append(warnings, reason)
 				}
 			}
 		}
@@ -196,9 +171,9 @@ func detectWorkspacesImpl(fsys fs.FS) ([]workloadSeed, []string, error) {
 		}
 	}
 
-	_ = warnings // reserved for future use (e.g. un-readable YAML)
 	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })
-	return seeds, nil, nil
+	sort.Strings(warnings)
+	return seeds, warnings, nil
 }
 
 // parseWorkspacesField turns package.json's "workspaces" field
@@ -247,31 +222,140 @@ func parseGoWorkUses(body string) []string {
 	return out
 }
 
+func expandWorkspacePatterns(fsys fs.FS, patterns []string) ([]string, error) {
+	var directories []string
+	if err := fs.WalkDir(fsys, ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() && name != "." {
+			directories = append(directories, name)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	sort.Strings(directories)
+	selected := make(map[string]bool)
+	for _, raw := range patterns {
+		pattern := strings.TrimSpace(raw)
+		exclude := strings.HasPrefix(pattern, "!")
+		if exclude {
+			pattern = strings.TrimSpace(strings.TrimPrefix(pattern, "!"))
+		}
+		pattern = strings.TrimPrefix(pattern, "./")
+		pattern = strings.TrimRight(pattern, "/")
+		if pattern == "" || strings.HasPrefix(pattern, "/") || strings.Contains(pattern, "\\") {
+			return nil, fmt.Errorf("invalid workspace pattern %q", raw)
+		}
+		invalidPath := false
+		for _, segment := range strings.Split(pattern, "/") {
+			if segment == ".." || segment == "." || segment == "" {
+				invalidPath = true
+				break
+			}
+		}
+		if invalidPath {
+			continue
+		}
+		matcher, err := compileWorkspacePattern(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid workspace pattern %q: %w", raw, err)
+		}
+		for _, directory := range directories {
+			if !matcher.MatchString(directory) {
+				continue
+			}
+			if exclude {
+				delete(selected, directory)
+			} else {
+				selected[directory] = true
+			}
+		}
+	}
+	members := make([]string, 0, len(selected))
+	for member := range selected {
+		members = append(members, member)
+	}
+	sort.Strings(members)
+	return members, nil
+}
+
+func compileWorkspacePattern(pattern string) (*regexp.Regexp, error) {
+	if strings.ContainsAny(pattern, "[]{}()") {
+		return nil, fmt.Errorf("unsupported glob operator")
+	}
+	var expression strings.Builder
+	expression.WriteByte('^')
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				if i+2 < len(pattern) && pattern[i+2] == '/' {
+					expression.WriteString("(?:[^/]+/)*")
+					i += 2
+					continue
+				}
+				expression.WriteString(".*")
+				i++
+			} else {
+				expression.WriteString("[^/]*")
+			}
+		case '?':
+			expression.WriteString("[^/]")
+		default:
+			expression.WriteString(regexp.QuoteMeta(string(pattern[i])))
+		}
+	}
+	expression.WriteByte('$')
+	return regexp.Compile(expression.String())
+}
+
+func runnableWorkspaceSeed(fsys fs.FS, member, src string, includeLibraryMarkers bool) (workloadSeed, bool, string) {
+	name := path.Base(member)
+	if name == "" || name == "." {
+		return workloadSeed{}, false, ""
+	}
+	base := workloadSeed{name: name, rootDir: member, source: src + ": " + member}
+	for _, dockerfile := range []string{nameDockerfile, nameDockerfileLower} {
+		if info, err := fs.Stat(fsys, path.Join(member, dockerfile)); err == nil && !info.IsDir() {
+			return base, true, ""
+		}
+	}
+	packagePath := path.Join(member, namePackageJSON)
+	if body, err := fs.ReadFile(fsys, packagePath); err == nil {
+		var manifest struct {
+			Scripts map[string]string `json:"scripts"`
+		}
+		if json.Unmarshal(body, &manifest) == nil {
+			for _, candidate := range []struct {
+				name  string
+				class Class
+			}{{"start", ClassHTTP}, {"serve", ClassHTTP}, {"worker", ClassWorker}} {
+				if command := strings.TrimSpace(manifest.Scripts[candidate.name]); command != "" {
+					base.command = []string{command}
+					base.commandShell = true
+					base.class = candidate.class
+					return base, true, ""
+				}
+			}
+		}
+		if includeLibraryMarkers {
+			return base, true, ""
+		}
+		return workloadSeed{}, false, "reposcan: " + src + ": " + member + " is a package library with no runnable start target — skipping"
+	}
+	for _, marker := range []string{"pyproject.toml", "go.mod", "Cargo.toml", "pom.xml"} {
+		if info, err := fs.Stat(fsys, path.Join(member, marker)); err == nil && !info.IsDir() {
+			return base, true, ""
+		}
+	}
+	return workloadSeed{}, false, ""
+}
+
 func rangeLines(s string) []string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	return strings.Split(s, "\n")
-}
-
-// hasMarker returns true if directory carries a Dockerfile or any
-// of the §3 language markers.
-func hasMarker(fsys fs.FS, dir string) bool {
-	for _, marker := range []string{
-		nameDockerfile,
-		nameDockerfileLower,
-		namePackageJSON,
-		"pyproject.toml",
-		"go.mod",
-		"Cargo.toml",
-		"pom.xml",
-	} {
-		if !fs.ValidPath(path.Join(dir, marker)) {
-			continue
-		}
-		if _, err := fs.Stat(fsys, path.Join(dir, marker)); err == nil {
-			return true
-		}
-	}
-	return false
 }
 
 // isQuiet classifies readFirstValidFile errors as expected

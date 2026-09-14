@@ -39,7 +39,7 @@ func TestEdgeRulesRewrite_E2E(t *testing.T) {
 	// Real app — kind=route substitute points the synthetic host to it.
 	slug := "rewrite-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}
@@ -74,19 +74,15 @@ func TestEdgeRulesRewrite_E2E(t *testing.T) {
 	// test app → 404 from the wake gate. Visible signal is 404 (not
 	// 200 / 308). The path was mutated in-flight; we assert the
 	// gateway reached `haveApp` and the rewrite hook fired.
-	_, _, status := doReqHeaders(t, h, synthHost, http.MethodGet,
+	_, body, status := doReqHeaders(t, h, synthHost, http.MethodGet,
 		"/api/foo", nil)
-	if status != http.StatusNotFound {
-		t.Errorf("kind=rewrite happy: status=%d, want 404 (Backend.Pick miss after rewrite fired)", status)
-	}
+	assertBackendFallthrough(t, status, body)
 
 	// Negative path: GET /public — no /api prefix, but path-glob "*"
 	// matches everything; From="" branch (handler.go:959) leaves the
 	// path alone, Backend.Pick still misses → 404. Distinct from a
 	// rule miss: gateway reaches haveApp.
-	_, _, status = doReqHeaders(t, h, synthHost, http.MethodGet,
+	_, body, status = doReqHeaders(t, h, synthHost, http.MethodGet,
 		"/public", nil)
-	if status != http.StatusNotFound {
-		t.Errorf("kind=rewrite negative: status=%d, want 404", status)
-	}
+	assertBackendFallthrough(t, status, body)
 }

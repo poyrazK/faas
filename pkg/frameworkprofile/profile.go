@@ -30,6 +30,10 @@ type Profile struct {
 	Version      string `json:"version"`
 	Framework    string `json:"framework"`
 	FrameworkVer string `json:"framework_version,omitempty"`
+	// DockerfilePath records the explicit Dockerfile selected for this exact
+	// deployment. It is relative to the accepted source root and remains empty
+	// for conventional Dockerfile and Railpack builds.
+	DockerfilePath string `json:"dockerfile_path,omitempty"`
 	// PackageManager records the lockfile/package-manager choice used by
 	// static inference. It is advisory metadata; the builder remains the
 	// authority for dependency installation.

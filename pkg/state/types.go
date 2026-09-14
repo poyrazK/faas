@@ -1411,8 +1411,14 @@ type ServiceReplicas struct {
 type AppManifest struct {
 	Entrypoint []string          `json:"entrypoint,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
-	WorkingDir string            `json:"working_dir,omitempty"`
-	Port       int               `json:"port,omitempty"`
+	// ProjectSourceSHA256 and BuildDockerfile are project-reconcile build
+	// metadata. They persist the exact source subtree and Dockerfile choice
+	// that produced the approved plan so a reapply can detect source-only
+	// edits and retries select the same build strategy.
+	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
+	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
+	WorkingDir          string `json:"working_dir,omitempty"`
+	Port                int    `json:"port,omitempty"`
 	// Ports is the app-owned listener declaration. It is merged into every
 	// deployment manifest so the gateway can expose named TCP listeners while
 	// UDP listeners remain available to workloads through guest discovery.
@@ -1447,13 +1453,30 @@ func (m AppManifest) EffectiveCrawlerPolicy() string {
 // It keeps the legacy empty-manifest JSON shape while allowing lifecycle-only
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
-	return m.Entrypoint == nil && m.Env == nil && m.WorkingDir == "" &&
+	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
+		m.BuildDockerfile == "" && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
 		m.HealthPath == "" && !m.HealthPathWakes
+}
+
+func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
+	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
+	existing.BuildDockerfile = desired.BuildDockerfile
+	if len(desired.Env) > 0 {
+		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
+		for key, value := range existing.Env {
+			merged[key] = value
+		}
+		for key, value := range desired.Env {
+			merged[key] = value
+		}
+		existing.Env = merged
+	}
+	return existing
 }
 
 // ScalingPolicy is the per-app autoscaling configuration (issue #462 /

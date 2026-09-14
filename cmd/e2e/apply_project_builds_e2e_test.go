@@ -37,6 +37,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -159,6 +160,61 @@ func TestApplyProject_Builds_KindTarball(t *testing.T) {
 	}
 }
 
+func TestApplyProject_Builds_CustomDockerfileSelection(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		return
+	}
+	if err := dbMigrateUp(t, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	h := e2etest.Start(t, pool, e2etest.APID)
+	key := h.SeedAccount(context.Background(), api.PlanPro)
+
+	entries := []struct{ name, body string }{
+		{"custom-dockerfile/compose.yaml", "services:\n  api:\n    build:\n      context: services/api\n      dockerfile: deploy/Dockerfile.production\n"},
+		{"custom-dockerfile/services/api/deploy/Dockerfile.production", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"custom-dockerfile/services/api/api", "#!/bin/sh\necho api\n"},
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, entry := range entries {
+		header := &tar.Header{Name: entry.name, Mode: 0o644, Size: int64(len(entry.body)), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(entry.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	result := applyProjectMultipart(t, h, key, "custom-dockerfile", "", buf.Bytes())
+	if len(result.Apps) != 1 || len(result.Builds) != 1 || result.Builds[0].Error != "" {
+		t.Fatalf("apply result = %#v", result)
+	}
+	var deploymentKind, buildKind, sourceRoot, appDockerfilePath, deploymentDockerfilePath string
+	err := pool.QueryRow(context.Background(), `
+		select d.kind, b.kind, d.source_root, a.manifest->>'build_dockerfile', d.inferred_profile->>'dockerfile_path'
+		from deployments d
+		join builds b on b.deployment_id = d.id
+		join apps a on a.id = d.app_id
+		where d.id = $1`, result.Builds[0].DeploymentID).Scan(&deploymentKind, &buildKind, &sourceRoot, &appDockerfilePath, &deploymentDockerfilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deploymentKind != "dockerfile" || buildKind != "dockerfile" || sourceRoot != "services/api" ||
+		appDockerfilePath != "deploy/Dockerfile.production" || deploymentDockerfilePath != appDockerfilePath {
+		t.Fatalf("custom Dockerfile round trip = kind %q/%q root %q app path %q deployment path %q", deploymentKind, buildKind, sourceRoot, appDockerfilePath, deploymentDockerfilePath)
+	}
+}
+
 // collectAppIDs is a tiny adapter that turns the ApplyResponse apps
 // slice into a pgx-friendly []string.
 func collectAppIDs(apps []api.ApplyResponseApp) []string {
@@ -226,7 +282,7 @@ func TestApplyProject_Builds_StagedTarballPreservesRepository(t *testing.T) {
 	// sentinels make it possible to assert that the archive preserves
 	// the workspace rather than rebasing one workload to archive root.
 	entries := []struct{ name, body string }{
-		{"root-marker.txt", "this-is-the-repo-root"},
+		{"faas-root/root-marker.txt", "this-is-the-repo-root"},
 		{"faas-root/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n"},
 		{"faas-root/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
 		{"faas-root/services/api/API_ONLY.txt", "api-only-sentinel"},
@@ -494,14 +550,12 @@ func TestApplyProject_Builds_BuildIDIsUUIDv7(t *testing.T) {
 
 	ar := applyProjectMultipart(t, h, key, "uuid", "", buildProjectFixture(t))
 	for _, b := range ar.Builds {
-		if len(b.BuildID) != 32 {
-			t.Fatalf("build id %q is not 32 hex chars (UUID without dashes)", b.BuildID)
+		id, err := uuid.Parse(b.BuildID)
+		if err != nil {
+			t.Fatalf("build id %q is not a UUID: %v", b.BuildID, err)
 		}
-		// Every char must be hex.
-		for _, c := range b.BuildID {
-			if c < '0' || c > '9' && c < 'a' || c > 'f' {
-				t.Fatalf("build id %q contains non-hex char %q", b.BuildID, c)
-			}
+		if id.Version() != uuid.Version(7) {
+			t.Fatalf("build id %q version=%d want UUIDv7", b.BuildID, id.Version())
 		}
 	}
 }

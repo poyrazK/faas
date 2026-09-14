@@ -52,7 +52,7 @@ func cmdScan(args []string) int {
 	repo := fs.String("repo", "", "github owner/name to fetch tarball for")
 	bindingRepo := fs.String("repository", "", "GitHub owner/name to bind to the project (defaults to --repo)")
 	ref := fs.String("ref", "main", "git ref for --repo")
-	only := fs.String("only", "", "comma-separated workload names")
+	only := fs.String("only", "", "comma-separated workloads to apply; retain unselected project workloads")
 	// ADR-124 inverse-allowlist. Mutex with --only (overlap rejected
 	// server-side with code='exclude_only_overlap').
 	exclude := fs.String("exclude", "", "comma-separated workload names to omit (ADR-124)")

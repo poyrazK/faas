@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -57,7 +58,7 @@ func TestE2E_Workflows_Lifecycle(t *testing.T) {
 		t.Fatalf("dbMigrateUp: %v", err)
 	}
 
-	h := e2etest.StartWithEnv(t, pool, e2etest.APID, nil)
+	h := e2etest.StartWithEnv(t, pool, e2etest.APID, []string{"FAAS_WORKFLOWS_ENABLED=1"})
 	key := h.SeedAccount(ctx, api.PlanHobby, "wf-hobby-test")
 
 	slug := "wfhobbyapp"
@@ -66,6 +67,29 @@ func TestE2E_Workflows_Lifecycle(t *testing.T) {
 	})
 	if status != http.StatusCreated {
 		t.Fatalf("create app: status=%d body=%s", status, body)
+	}
+	var app api.AppResponse
+	if err := json.Unmarshal(body, &app); err != nil {
+		t.Fatalf("decode app: %v body=%s", err, body)
+	}
+	definitions, err := json.Marshal([]api.WorkflowSpec{{
+		Name:  "order_pipeline",
+		Steps: []api.WorkflowStepSpec{{Name: "main", Path: "/order_pipeline"}},
+	}})
+	if err != nil {
+		t.Fatalf("marshal workflow definition: %v", err)
+	}
+	store := state.NewPgStore(pool)
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "registry.example.com/workflow@sha256:" + strings.Repeat("a", 64),
+		Status:      state.DeployLive, Workflows: definitions,
+	})
+	if err != nil {
+		t.Fatalf("seed workflow deployment: %v", err)
+	}
+	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatalf("promote workflow deployment: %v", err)
 	}
 
 	// 1. Trigger workflow run

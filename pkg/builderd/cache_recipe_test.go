@@ -116,14 +116,15 @@ func TestBuildRecipeCachePartitionsInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	changes := map[string]func(*BuildCacheRecipe){
-		"workspace": func(r *BuildCacheRecipe) { r.SourceRoot = "apps/web" },
-		"source":    func(r *BuildCacheRecipe) { r.SourceSHA256 = "source-b" },
-		"base":      func(r *BuildCacheRecipe) { r.RuntimeBaseRef = "base-b" },
-		"framework": func(r *BuildCacheRecipe) { r.Framework = FrameworkPython },
-		"plan":      func(r *BuildCacheRecipe) { r.Plan = api.PlanHobby },
-		"builder":   func(r *BuildCacheRecipe) { r.BuilderBaseIdentity = "builder-b" },
-		"platform":  func(r *BuildCacheRecipe) { r.TargetPlatform = "linux/arm64" },
-		"function":  func(r *BuildCacheRecipe) { r.Function = !r.Function },
+		"workspace":  func(r *BuildCacheRecipe) { r.SourceRoot = "apps/web" },
+		"dockerfile": func(r *BuildCacheRecipe) { r.DockerfilePath = "deploy/Dockerfile.production" },
+		"source":     func(r *BuildCacheRecipe) { r.SourceSHA256 = "source-b" },
+		"base":       func(r *BuildCacheRecipe) { r.RuntimeBaseRef = "base-b" },
+		"framework":  func(r *BuildCacheRecipe) { r.Framework = FrameworkPython },
+		"plan":       func(r *BuildCacheRecipe) { r.Plan = api.PlanHobby },
+		"builder":    func(r *BuildCacheRecipe) { r.BuilderBaseIdentity = "builder-b" },
+		"platform":   func(r *BuildCacheRecipe) { r.TargetPlatform = "linux/arm64" },
+		"function":   func(r *BuildCacheRecipe) { r.Function = !r.Function },
 	}
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {
@@ -178,6 +179,20 @@ func TestBuildRecipeRootNormalization(t *testing.T) {
 		}
 		if err := c.StoreBuild(recipe, path, 8); err == nil {
 			t.Fatalf("invalid root %q accepted", root)
+		}
+	}
+}
+
+func TestBuildRecipeDockerfileNormalization(t *testing.T) {
+	recipe := testBuildCacheRecipe("source", FrameworkDocker, api.PlanPro, "base")
+	recipe.DockerfilePath = "deploy/Dockerfile.production"
+	if _, err := recipe.key(); err != nil {
+		t.Fatalf("valid Dockerfile path: %v", err)
+	}
+	for _, dockerfile := range []string{"../Dockerfile", "/Dockerfile", "deploy/./Dockerfile", `deploy\Dockerfile`} {
+		recipe.DockerfilePath = dockerfile
+		if _, err := recipe.key(); err == nil {
+			t.Fatalf("invalid Dockerfile path %q accepted", dockerfile)
 		}
 	}
 }

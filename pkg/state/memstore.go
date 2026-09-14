@@ -2844,14 +2844,14 @@ func (m *MemStore) ApplyProjectReconcile(
 	}
 	workloadKeys := make(map[string]string, len(liveProjectApps))
 	for id, app := range liveProjectApps {
-		workloadKeys[app.RootDir+"\x00"+app.WorkloadName] = id
+		workloadKeys[app.WorkloadName] = id
 	}
 	newSlugs := make(map[string]bool)
 	for _, mutation := range mutations {
 		switch mutation.Op {
 		case "create":
 			creates++
-			key := mutation.App.RootDir + "\x00" + mutation.App.WorkloadName
+			key := mutation.App.WorkloadName
 			if _, exists := workloadKeys[key]; exists {
 				return rollback(ErrConflict)
 			}
@@ -2876,13 +2876,13 @@ func (m *MemStore) ApplyProjectReconcile(
 				}
 				seenRemoves[mutation.App.ID] = true
 				removes++
-				delete(workloadKeys, existing.RootDir+"\x00"+existing.WorkloadName)
+				delete(workloadKeys, existing.WorkloadName)
 			} else {
-				key := mutation.App.RootDir + "\x00" + mutation.App.WorkloadName
+				key := mutation.App.WorkloadName
 				if prior, exists := workloadKeys[key]; exists && prior != mutation.App.ID {
 					return rollback(ErrConflict)
 				}
-				delete(workloadKeys, existing.RootDir+"\x00"+existing.WorkloadName)
+				delete(workloadKeys, existing.WorkloadName)
 				workloadKeys[key] = mutation.App.ID
 			}
 		default:
@@ -2938,6 +2938,27 @@ func (m *MemStore) ApplyProjectReconcile(
 		switch mutation.Op {
 		case "create":
 			app := mutation.App
+			var tombstone App
+			for _, existing := range m.apps {
+				if existing.AccountID == project.AccountID && existing.ProjectID == project.ID &&
+					existing.WorkloadName == app.WorkloadName && existing.Status == AppDeleted {
+					tombstone = existing
+					break
+				}
+			}
+			if tombstone.ID != "" {
+				tombstone.RootDir = app.RootDir
+				tombstone.WorkloadName = app.WorkloadName
+				tombstone.WorkloadClass = app.WorkloadClass
+				tombstone.StartCommand = app.StartCommand
+				tombstone.Manifest = mergeProjectManagedManifest(tombstone.Manifest, app.Manifest)
+				tombstone.Status = AppActive
+				tombstone.DeletedAt = nil
+				tombstone.DeleteGraceUntil = nil
+				m.apps[tombstone.ID] = tombstone
+				out.Added = append(out.Added, tombstone)
+				continue
+			}
 			if app.ID == "" {
 				app.ID = newID()
 			}
@@ -2967,6 +2988,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			app.WorkloadName = mutation.App.WorkloadName
 			app.WorkloadClass = mutation.App.WorkloadClass
 			app.StartCommand = mutation.App.StartCommand
+			app.Manifest = mutation.App.Manifest
 			m.apps[app.ID] = app
 			out.Changed = append(out.Changed, app)
 		case "remove":

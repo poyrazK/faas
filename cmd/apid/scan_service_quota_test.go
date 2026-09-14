@@ -18,11 +18,13 @@ package main
 // cmd/e2e/quota_rescue_test.go (separate file).
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // freeLimits mirrors api.MustLimitsFor(api.PlanFree) for the two
@@ -302,6 +304,21 @@ func TestEvaluateQuotaGate_RescueViaExclude(t *testing.T) {
 	}
 }
 
+func TestPlanCanApplyReasons(t *testing.T) {
+	pre := []string{"apps over plan limit", "duplicate workload slug"}
+	post := []string{"post-exclude blocker"}
+
+	if got := planCanApplyReasons(true, pre, nil); !reflect.DeepEqual(got, pre) {
+		t.Fatalf("rescued reasons = %#v, want pre-exclude reasons %#v", got, pre)
+	}
+	if got := planCanApplyReasons(false, pre, post); !reflect.DeepEqual(got, post) {
+		t.Fatalf("blocked reasons = %#v, want post-exclude reasons %#v", got, post)
+	}
+	if got := planCanApplyReasons(false, pre, nil); len(got) != 0 {
+		t.Fatalf("applicable reasons = %#v, want empty", got)
+	}
+}
+
 // TestEvaluateQuotaGate_NoRescueOnStillBlocked pins the negative
 // rescue invariant. A blocked gate that stays blocked after
 // --exclude must NOT fire gateRescuedByExclude (the rescue signal
@@ -346,5 +363,45 @@ func TestEvaluateQuotaGate_CronCountDerivation(t *testing.T) {
 	_, _, _, cronCount := evaluateQuotaGate(workloads, hobbyLimits(), 0, 0)
 	if cronCount != 2 {
 		t.Errorf("cronCount: got %d, want 2 (workloads with Schedule != \"\" only)", cronCount)
+	}
+}
+
+func TestProjectedQuotaGateAllowsExactLimitReapplyAndReplacement(t *testing.T) {
+	limits := api.Limits{DeployedApps: 2, CronLimitPerAccount: 2, CronLimitPerApp: 2}
+	crons := []planCron{{WorkloadName: "api", Schedule: "0 * * * *", Path: "/", Enabled: true}}
+	canApply, notAllowed, reasons, cronCount := evaluateProjectedQuotaGate(crons, limits, 2, 2)
+	if !canApply || notAllowed || len(reasons) != 0 || cronCount != 1 {
+		t.Fatalf("exact-limit reapply = canApply %v notAllowed %v reasons %v crons %d", canApply, notAllowed, reasons, cronCount)
+	}
+	partition := affectedPartition{
+		Removed: []string{"old-worker"},
+		WillDeploy: []api.PlanAffectedApp{
+			{Slug: "api", Action: "update"},
+			{Slug: "new-worker", Action: "create"},
+		},
+	}
+	if got := projectedAppCount(2, partition); got != 2 {
+		t.Fatalf("one-for-one projected apps = %d, want 2", got)
+	}
+	canApply, _, reasons, _ = evaluateProjectedQuotaGate(crons, limits, 3, 2)
+	if canApply || len(reasons) == 0 {
+		t.Fatalf("real net addition should be blocked: %v %v", canApply, reasons)
+	}
+}
+
+func TestProjectCronsWithPreservedRetainsOnlyUnselectedSiblings(t *testing.T) {
+	projectApps := []state.App{
+		{ID: "api-id", WorkloadName: "api"},
+		{ID: "worker-id", WorkloadName: "worker"},
+	}
+	inventory := map[string][]state.Cron{
+		"api-id":    {{AppID: "api-id", Schedule: "0 * * * *", Path: "/old", Enabled: true}},
+		"worker-id": {{AppID: "worker-id", Schedule: "*/5 * * * *", Path: "/work", Enabled: true}},
+	}
+	desired := []planCron{{WorkloadName: "api", Schedule: "30 * * * *", Path: "/new", Enabled: true}}
+	got := projectCronsWithPreserved(desired, projectApps, inventory, func(name string) bool { return name == "worker" })
+	if len(got) != 2 || got[0].WorkloadName != "api" || got[0].Schedule != "30 * * * *" ||
+		got[1].WorkloadName != "worker" || got[1].Schedule != "*/5 * * * *" {
+		t.Fatalf("preserved cron model = %#v", got)
 	}
 }

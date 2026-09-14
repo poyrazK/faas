@@ -53,7 +53,7 @@ func TestEdgeRulesBudget_E2E(t *testing.T) {
 
 	slug := "budget-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}
@@ -93,9 +93,7 @@ func TestEdgeRulesBudget_E2E(t *testing.T) {
 	// resolution is non-fatal: no panic, no 5xx, just the
 	// expected 404.
 	_, body, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil, nil)
-	if status != http.StatusNotFound {
-		t.Errorf("kind=budget resolution: status=%d, want 404 (Backend.Pick miss after budget pass); body=%s", status, body)
-	}
+	assertBackendFallthrough(t, status, body)
 }
 
 // TestEdgeRulesBudget_OverrideHeader exercises the
@@ -118,7 +116,7 @@ func TestEdgeRulesBudget_OverrideHeader(t *testing.T) {
 
 	slug := "budget-override-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}
@@ -152,15 +150,11 @@ func TestEdgeRulesBudget_OverrideHeader(t *testing.T) {
 	resetEdgeRuleCache(t, h)
 
 	// With override header → budget resolves to 10s.
-	_, _, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil,
+	_, body, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil,
 		map[string]string{"X-Faas-Budget-Ms": "10000"})
-	if status != http.StatusNotFound {
-		t.Errorf("kind=budget override-header: status=%d, want 404 (Backend.Pick miss after budget pass)", status)
-	}
+	assertBackendFallthrough(t, status, body)
 
 	// Without override header → budget resolves to 500ms.
-	_, _, status = doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil, nil)
-	if status != http.StatusNotFound {
-		t.Errorf("kind=budget no-override: status=%d, want 404", status)
-	}
+	_, body, status = doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil, nil)
+	assertBackendFallthrough(t, status, body)
 }

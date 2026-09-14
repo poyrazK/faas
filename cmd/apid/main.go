@@ -2089,6 +2089,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var appErrSrv *grpc.Server
 	var appErrLis net.Listener
 	appErrRotator := wire.NewTLSRotator(nil)
+	// Preview teardown is independent of the optional app-error writer. Keep
+	// the janitor outside that feature gate so disabling the gRPC listener in
+	// development or CI cannot strand expired preview applications.
+	go newPreviewJanitor(srv.store, srv.notif, srv.ops, log, true).Run(ctx)
 	if deps.getenv("FAAS_APP_ERRORS_ENABLED") != "false" { //nolint:goconst // kill-switch sentinel; the canonical "true" env literal.
 		appErrTarget := cfg.GetAppErrorsTarget(deps.getenv)
 		appErrTLS, tlsErr := cfg.LoadAppErrorsTLSWithPrefixAndVerifierAndReload(nodeVerifier, appErrRotator.Reload(nil))
@@ -2201,15 +2205,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}()
 		}
-
-		// ADR-095 PR-C: preview teardown janitor. Lives in apid
-		// (the sole writer to customer-intent tables per CLAUDE.md
-		// line 71) and drives preview rows through the
-		// closed → stale → torn_down state machine. Emits
-		// db.NotifyAppDelete so schedd reaps in-flight instances
-		// for tombstoned apps via its existing app_delete
-		// subscriber (pkg/sched/app_delete_subscriber.go).
-		go newPreviewJanitor(srv.store, srv.notif, srv.ops, log, true).Run(ctx)
 
 		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed

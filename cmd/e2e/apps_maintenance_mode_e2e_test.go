@@ -55,7 +55,7 @@ func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
 
 	slug := "maintenance-mode-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	var app api.AppResponse
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
@@ -69,15 +69,13 @@ func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
 	resetEdgeRuleCache(t, h)
-	_, _, beforeStatus := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil)
-	if beforeStatus == http.StatusServiceUnavailable {
-		t.Fatalf("pre-PATCH request should NOT be 503 (got %d)", beforeStatus)
-	}
+	_, beforeBody, beforeStatus := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil)
+	assertBackendFallthrough(t, beforeStatus, beforeBody)
 
 	// PATCH maintenance_mode=true. The trigger emits app_changed
 	// and the gateway drops only this app from the apps LRU.
-	patchBody, _ := json.Marshal(api.UpdateAppRequest{MaintenanceMode: boolPtr(true)})
-	patchRec := doReqBytes(t, h, key, http.MethodPatch, "/v1/apps/"+slug, patchBody)
+	patchRec := doReqBytes(t, h, key, http.MethodPatch, "/v1/apps/"+slug,
+		api.UpdateAppRequest{MaintenanceMode: boolPtr(true)})
 	var patched api.AppResponse
 	if err := json.Unmarshal(patchRec, &patched); err != nil {
 		t.Fatalf("decode patch: %v body=%s", err, patchRec)
@@ -122,8 +120,8 @@ func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
 
 	// PATCH maintenance_mode=false → cache flush → 200 path (Backend.Pick
 	// miss since no real impl; status NOT 503).
-	patchBody, _ = json.Marshal(api.UpdateAppRequest{MaintenanceMode: boolPtr(false)})
-	patchRec = doReqBytes(t, h, key, http.MethodPatch, "/v1/apps/"+slug, patchBody)
+	patchRec = doReqBytes(t, h, key, http.MethodPatch, "/v1/apps/"+slug,
+		api.UpdateAppRequest{MaintenanceMode: boolPtr(false)})
 	if err := json.Unmarshal(patchRec, &patched); err != nil {
 		t.Fatalf("decode patch: %v body=%s", err, patchRec)
 	}
@@ -132,14 +130,12 @@ func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
 	}
 
 	for i := 0; i < 20; i++ {
-		_, _, status = doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil)
-		if status != http.StatusServiceUnavailable {
+		_, body, status = doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil)
+		if problemCode(body) != api.CodeAppMaintenance {
 			break
 		}
 	}
-	if status == http.StatusServiceUnavailable {
-		t.Errorf("after PATCH maintenance_mode=false: status still 503; cache flush did not propagate")
-	}
+	assertBackendFallthrough(t, status, body)
 }
 
 // TestAppsMaintenanceMode_E2E_CoarseGateBeatsEdgeRule pins the
@@ -163,7 +159,7 @@ func TestAppsMaintenanceMode_E2E_CoarseGateBeatsEdgeRule(t *testing.T) {
 
 	slug := "coarse-beats-fine"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	var app api.AppResponse
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
@@ -189,8 +185,8 @@ func TestAppsMaintenanceMode_E2E_CoarseGateBeatsEdgeRule(t *testing.T) {
 	resetEdgeRuleCache(t, h)
 
 	// Coarse gate: PATCH maintenance_mode=true.
-	patchBody, _ := json.Marshal(api.UpdateAppRequest{MaintenanceMode: boolPtr(true)})
-	if rec := doReqBytes(t, h, key, http.MethodPatch, "/v1/apps/"+slug, patchBody); len(rec) == 0 {
+	if rec := doReqBytes(t, h, key, http.MethodPatch, "/v1/apps/"+slug,
+		api.UpdateAppRequest{MaintenanceMode: boolPtr(true)}); len(rec) == 0 {
 		t.Fatalf("PATCH returned empty body")
 	}
 

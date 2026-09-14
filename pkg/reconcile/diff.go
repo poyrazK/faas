@@ -86,16 +86,18 @@ func workloadDiff(
 		}
 		existing = filtered
 	}
-	// Build the (RootDir, Name) index of existing apps.
-	existingByKey := make(map[workloadKey]state.App, len(existing))
+	// workload_name is the durable project identity. RootDir is mutable build
+	// metadata, so moving a service directory must produce one update instead
+	// of a destructive remove/create pair.
+	existingByName := make(map[string]state.App, len(existing))
 	for _, a := range existing {
-		existingByKey[workloadKey{RootDir: a.RootDir, Name: a.WorkloadName}] = a
+		existingByName[a.WorkloadName] = a
 	}
 
-	// Build the (RootDir, Name) index of scan workloads.
-	scanByKey := make(map[workloadKey]reposcan.Workload, len(scan.Workloads))
+	// Build the workload-name index of scan workloads.
+	scanByName := make(map[string]reposcan.Workload, len(scan.Workloads))
 	for _, w := range scan.Workloads {
-		scanByKey[workloadKey{RootDir: w.RootDir, Name: w.Name}] = w
+		scanByName[w.Name] = w
 	}
 
 	var creates []Action
@@ -103,8 +105,7 @@ func workloadDiff(
 	var removes []Action
 
 	for _, w := range scan.Workloads {
-		key := workloadKey{RootDir: w.RootDir, Name: w.Name}
-		a, ok := existingByKey[key]
+		a, ok := existingByName[w.Name]
 		if !ok {
 			creates = append(creates, Action{
 				Op:           "create",
@@ -129,8 +130,7 @@ func workloadDiff(
 	}
 
 	for _, a := range existing {
-		key := workloadKey{RootDir: a.RootDir, Name: a.WorkloadName}
-		if _, ok := scanByKey[key]; ok {
+		if _, ok := scanByName[a.WorkloadName]; ok {
 			continue
 		}
 		removes = append(removes, Action{
@@ -218,11 +218,28 @@ func resolveStartCommand(w reposcan.Workload) string {
 	// practice: never; start_command is a process-spec, not a
 	// value) must NEVER be logged. We log the length, not the
 	// content, in the audit row.
-	return strings.Join(w.Command, " ")
+	if w.CommandShell {
+		return w.Command[0]
+	}
+	quoted := make([]string, len(w.Command))
+	for i, arg := range w.Command {
+		quoted[i] = quoteShellArg(arg)
+	}
+	return strings.Join(quoted, " ")
+}
+
+func quoteShellArg(arg string) string {
+	if arg != "" && strings.IndexFunc(arg, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') &&
+			(r < '0' || r > '9') && !strings.ContainsRune("_@%+=:,./-", r)
+	}) == -1 {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 }
 
 // diffFieldsChanged returns the subset of {"root_dir", "workload_name",
-// "workload_class", "start_command", "service_env"} that actually changed
+// "workload_class", "start_command", "source", "dockerfile", "service_env"} that actually changed
 // between the existing state.App and the new scan-derived workload. The columns
 // RootDir and WorkloadName are NOT NULL DEFAULT ” in the schema
 // so equality is on the empty-string vs populated distinction —
@@ -244,6 +261,12 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	// value.
 	if a.StartCommand != startCmd {
 		changed = append(changed, "start_command")
+	}
+	if a.Manifest.ProjectSourceSHA256 != w.SourceSHA256 {
+		changed = append(changed, "source")
+	}
+	if a.Manifest.BuildDockerfile != w.Dockerfile {
+		changed = append(changed, "dockerfile")
 	}
 	var serviceNames map[string]struct{}
 	if len(available) > 0 {

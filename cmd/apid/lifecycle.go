@@ -194,6 +194,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.StartupDeadlineS = manifest.StartupDeadlineS
 	updated.MaxRetries = manifest.MaxRetries
 	updated.ServiceReplicas = stateManifestFromAPI(manifest).ServiceReplicas
+	updated.Ports = cloneWorkloadPorts(manifest.Ports)
 	updated.Favicon = append([]byte(nil), manifest.Favicon...)
 	updated.RobotsTxt = manifest.RobotsTxt
 	updated.HeadWakes = manifest.HeadWakes

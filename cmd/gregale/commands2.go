@@ -1486,7 +1486,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// json_flag.go layer and live alongside the others so a single
 	// `gregale deploy --tarball X --yes --json --project-slug S` works.
 	yes := fs.Bool("yes", false, "skip the apply confirmation prompt")
-	deployOnly := fs.String("only", "", "comma-separated workload names to apply (triggers one-key provision)")
+	deployOnly := fs.String("only", "", "comma-separated workloads to apply; retain unselected project workloads")
 	// ADR-124 inverse-allowlist. Mutex with --only (server rejects
 	// overlap with code='exclude_only_overlap' but the CLI short-
 	// circuits so the operator gets the error pre-flight).

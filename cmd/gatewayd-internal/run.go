@@ -1652,6 +1652,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// outside unit tests).
 	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
 	deps.requireAuthnAudit = newGatewaydAuditor(deps.pgStore, log)
+	// Build the validate adapter before the edge-rule matcher captures it.
+	// Assigning a nil *edgeValidateAdapter to the validateCompiler interface
+	// produces a non-nil interface whose first CompileSchema call panics.
+	deps.edgeValidateAdapter = newEdgeValidateAdapter(log)
 	// ADR-089 / issue #561 PR 3 — build the edge-rule matcher
 	// next to the requireAuthn chain so the per-host cache +
 	// audit thin wrapper share the same auditor. The matcher
@@ -1710,13 +1714,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// with a 5s fetch timeout so an IdP outage can't block the
 	// gateway hot path.
 	deps.edgeJWKSAdapter = newEdgeJWKSAdapter(log)
-	// PR-B — build the kind=validate adapter backed by
-	// pkg/edgevalidate.NewManager (sha256-keyed LRU + Draft
-	// 2020-12 compile + JSON-Schema validate). The loader
-	// (loadHost) calls CompileSchema through this adapter for
-	// every kind=validate rule; the applier (handler.go) calls
-	// Validate through it on every matched rule.
-	deps.edgeValidateAdapter = newEdgeValidateAdapter(log)
 	// Issue #477 / ADR-079: build the unsealed basic-auth
 	// credential cache + the secretbox unsealer closure.
 	// The cache is shared between the Handler (read path)
@@ -2038,15 +2035,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the target's own routing resolves its own sidecars on the
 	// next request to its own hostname.
 	//
-	// Plan: state.App does not carry Plan (the apps table
-	// doesn't denormalize it; Plan lives on accounts). The
-	// routed App returned here has Plan="", which surfaces as
-	// an empty `plan` label on gateway_requests_total for
-	// routed requests — bounded cardinality, distinguishable
-	// from non-routed (plan=Free|Hobby|Pro|Scale). Populating
-	// Plan properly is PR 8 (denormalize on apps row OR
-	// back-to-back AccountByID join — both deferred; the
-	// metrics label gap is acceptable for a v1 surface).
+	// state.App does not carry Plan because it lives on accounts. Route
+	// substitution therefore uses pgRouter.toApp below, including its account
+	// lookup, so the account and app limiters receive the same plan as the
+	// ordinary hostname path. An empty plan fails both limiters closed.
 	//
 	// Error classification (review fix R2): state.ErrNotFound
 	// is a clean miss (the target app row was deleted) — silent
@@ -2071,38 +2063,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return gateway.App{}, false
 		}
-		favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
-		return gateway.App{
-			ID:                 app.ID,
-			AccountID:          app.AccountID,
-			Type:               gateway.AppType(app.Type),
-			MaxConcurrency:     app.MaxConcurrency,
-			AutoscaleTargetRPS: app.AutoscaleTargetRPS,
-			Slug:               app.Slug,
-			RequireAuthn:       app.RequireAuthn,
-			ConsumerAuthMode:   string(app.ConsumerAuthMode),
-			PublicAuth:         gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist},
-			StreamingEnabled:   app.StreamingEnabled,
-			WebSocketEnabled:   app.WebSocketEnabled,
-			// ADR-093: per-route observability opt-in. Mirrors
-			// the WebSocketEnabled plumbing above — the same
-			// routeSetFor gate in Handler.ServeHTTP reads this
-			// alongside the operator kill-switch.
-			RouteMetricsEnabled:     app.RouteMetricsEnabled,
-			OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
-			DeclaredRoutes:          gatewayDeclaredRoutes(app.DeclaredRoutes),
-			// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
-			// maintenance flag (apps.maintenance_mode).
-			MaintenanceMode: app.MaintenanceMode,
-			NodeID:          app.NodeID,
-			Ports:           gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
-			Favicon:         favicon,
-			RobotsTxt:       robotsTxt,
-			HeadWakes:       headWakes,
-			CrawlerPolicy:   crawlerPolicy,
-			HealthPath:      healthPath,
-			HealthPathWakes: healthPathWakes,
-		}, true
+		resolved, ok, err := (pgRouter{store: deps.pgStore}).toApp(ctx, app)
+		if err != nil {
+			if log != nil {
+				log.Warn("edge rule target account lookup failed", "slug", slug, "err", err)
+			}
+			if deps.edgeRulesAudit != nil {
+				subject := slug
+				deps.edgeRulesAudit.Emit(ctx, "edge_rule.route_loader_error", &subject, map[string]any{
+					"slug": slug,
+					"err":  err.Error(),
+				})
+			}
+			return gateway.App{}, false
+		}
+		return resolved, ok
 	}, deps.edgeRulesAudit)
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
@@ -2816,6 +2791,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		controlMux = gateway.ControlMux(handler.Metrics(), readyProbe.ReadyFunc(), deps.drain)
 	}
+	// Test and operator cache reset for direct database repairs. The control
+	// listener is loopback-only; ordinary mutations still invalidate through
+	// the edge_rule_changed notification.
+	controlMux.HandleFunc("/admin/edge-rules/reset", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if deps.edgeRulesMatcher != nil {
+			deps.edgeRulesMatcher.Reset()
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	// Finding 6 (issue #314): mount the dashboard quota endpoint on the
 	// control mux so an in-box caller (operator's curl today, future
 	// apid-side dial) can read per-app bucket state without going through

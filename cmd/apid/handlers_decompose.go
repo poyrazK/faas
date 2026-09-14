@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -267,13 +268,16 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 		AppIDs    []appSummary   `json:"apps"`
 		Builds    []appliedBuild `json:"builds,omitempty"`
 	}
-	appIDs := make([]appSummary, 0, len(added)+len(changed))
-	for _, a := range added {
+	currentApps, err := s.store.AppsForProject(r.Context(), acct.ID, insertedProject.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal(fmt.Sprintf("load applied project apps: %v", err)))
+		return
+	}
+	appIDs := make([]appSummary, 0, len(currentApps))
+	for _, a := range currentApps {
 		appIDs = append(appIDs, appSummary{Slug: a.Slug, ID: a.ID})
 	}
-	for _, a := range changed {
-		appIDs = append(appIDs, appSummary{Slug: a.Slug, ID: a.ID})
-	}
+	sort.Slice(appIDs, func(i, j int) bool { return appIDs[i].Slug < appIDs[j].Slug })
 	out := applyResp{
 		scanPlanResponse: *resp,
 		ProjectID:        insertedProject.ID,

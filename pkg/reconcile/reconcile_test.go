@@ -355,11 +355,9 @@ func TestReconcile_ThreeWorkloads_ChangeRootDir(t *testing.T) {
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	// Existing app has rootDir="apps/api" and the scan also has
-	// rootDir="apps/api" but start_command differs. The diff key
-	// (rootDir, name) collides, so the diff produces an update
-	// (not a remove+create).
-	seedApp(t, store, proj, "apps/api", "api", "")
+	// Workload name is durable identity. A directory move and command
+	// change update the same app rather than removing and recreating it.
+	existing := seedApp(t, store, proj, "services/api", "api", "")
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
 			{Name: "api", RootDir: "apps/api", Command: []string{"python", "app.py"}, Source: "compose.yaml: api", Tier: reposcan.TierCompose},
@@ -373,6 +371,9 @@ func TestReconcile_ThreeWorkloads_ChangeRootDir(t *testing.T) {
 	}
 	if len(out.Changed) != 1 {
 		t.Fatalf("expected 1 update, got %d", len(out.Changed))
+	}
+	if out.Changed[0].ID != existing.ID || out.Changed[0].RootDir != "apps/api" || len(out.Added) != 0 || len(out.Removed) != 0 {
+		t.Fatalf("move result = changed %#v added %v removed %v", out.Changed[0], out.Added, out.Removed)
 	}
 	if out.Changed[0].StartCommand != "python app.py" {
 		t.Errorf("expected start_command=python app.py, got %q", out.Changed[0].StartCommand)
@@ -390,8 +391,8 @@ func TestReconcile_ThreeWorkloads_ChangeRootDir(t *testing.T) {
 	if !ok {
 		t.Fatalf("fields_changed missing or wrong type: %v", data["fields_changed"])
 	}
-	if len(fields) != 1 || fields[0] != "start_command" {
-		t.Errorf("expected fields_changed=[start_command], got %v", fields)
+	if len(fields) != 2 || fields[0] != "root_dir" || fields[1] != "start_command" {
+		t.Errorf("expected fields_changed=[root_dir start_command], got %v", fields)
 	}
 }
 
@@ -796,15 +797,14 @@ func TestReconcile_DeriveScanSource_MirrorsApid(t *testing.T) {
 	}
 }
 
-func TestReconcile_StartCommand_Flattened(t *testing.T) {
-	// resolveStartCommand joins []string with " " — pinned by the
-	// unit test so a future refactor doesn't change the wire
-	// shape.
+func TestReconcile_StartCommandPreservesArgumentBoundaries(t *testing.T) {
 	cases := []struct {
 		w    reposcan.Workload
 		want string
 	}{
 		{reposcan.Workload{Command: []string{"python", "app.py"}}, "python app.py"},
+		{reposcan.Workload{Command: []string{"printf", "hello world", "", "$HOME", "*", ";", `C:\temp`, "it's"}}, `printf 'hello world' '' '$HOME' '*' ';' 'C:\temp' 'it'"'"'s'`},
+		{reposcan.Workload{Command: []string{"printf '%s\\n' \"hello world\""}, CommandShell: true}, `printf '%s\n' "hello world"`},
 		{reposcan.Workload{Command: nil}, ""},
 		{reposcan.Workload{Command: []string{}}, ""},
 	}
@@ -813,6 +813,47 @@ func TestReconcile_StartCommand_Flattened(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("resolveStartCommand(%v) = %q, want %q", tc.w, got, tc.want)
 		}
+	}
+}
+
+func TestReconcile_SourceDigestIsRetryableUntilBuildAcceptance(t *testing.T) {
+	store := newFakeStore()
+	aud := newFakeAuditor(store)
+	_, project := seedProject(t, store, state.ProjectScanSourceCompose, "main")
+	app := seedApp(t, store, project, "services/api", "api", "node server.js")
+	manifest := app.Manifest
+	manifest.ProjectSourceSHA256 = "source-old"
+	app, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scan := reposcan.Result{Tier: reposcan.TierCompose, Workloads: []reposcan.Workload{{
+		Name: "api", RootDir: "services/api", Command: []string{"node", "server.js"},
+		Source: "compose.yaml: api", Tier: reposcan.TierCompose, SourceSHA256: "source-new",
+	}}}
+	result, err := freshService(store, aud).Reconcile(context.Background(), project, scan, "commit", "main", nil)
+	if err != nil || len(result.Changed) != 1 {
+		t.Fatalf("source-only reconcile = %#v, %v", result, err)
+	}
+	stored, err := store.AppByID(context.Background(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Manifest.ProjectSourceSHA256 != "source-old" {
+		t.Fatalf("digest advanced before build acceptance: %q", stored.Manifest.ProjectSourceSHA256)
+	}
+
+	// The API checkpoints only after enqueue succeeds. Once that checkpoint is
+	// present, an identical reapply is a no-op.
+	manifest = stored.Manifest
+	manifest.ProjectSourceSHA256 = "source-new"
+	if _, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = freshService(store, aud).Reconcile(context.Background(), project, scan, "commit", "main", nil)
+	if err != nil || len(result.Added)+len(result.Changed)+len(result.Removed) != 0 {
+		t.Fatalf("accepted identical reapply = %#v, %v", result, err)
 	}
 }
 

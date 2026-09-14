@@ -111,6 +111,31 @@ func twoWorkloadChangedFixture(t *testing.T, prefix string) []byte {
 	return buf.Bytes()
 }
 
+// twoWorkloadMovedFixture keeps the durable Compose service names while
+// moving api to a different build context. A re-apply must update the
+// existing app instead of deleting it and creating a replacement.
+func twoWorkloadMovedFixture(t *testing.T, prefix string) []byte {
+	t.Helper()
+	entries := []struct{ name, body string }{
+		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: apps/api }\n  worker:\n    build: { context: services/worker }\n"},
+		{prefix + "/apps/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/apps/api/index.js", "exports.handler = () => 99;\n"},
+		{prefix + "/services/worker/Dockerfile", "FROM alpine:3.19\nCMD [\"./worker\"]\n"},
+		{prefix + "/services/worker/index.js", "exports.handler = () => 2;\n"},
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, e := range entries {
+		hdr := &tar.Header{Name: e.name, Mode: 0o644, Size: int64(len(e.body)), Typeflag: tar.TypeReg}
+		_ = tw.WriteHeader(hdr)
+		_, _ = tw.Write([]byte(e.body))
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+	return buf.Bytes()
+}
+
 // TestApplyProject_Diff_Unchanged pins the no-op diff: a 2nd apply
 // with identical workloads creates zero new build rows. The
 // apps + deployments counts stay the same. This is the regression
@@ -134,13 +159,12 @@ func TestApplyProject_Diff_Unchanged(t *testing.T) {
 	}
 	buildsBefore := len(ar1.Builds)
 	ar2 := applyProjectMultipart(t, h, key, "diff-unchanged", "", body)
-	// Wire response `Apps` carries added∪changed only
-	// (handlers_decompose.go:222) — a no-op re-apply returns 0. The
-	// diff semantic we care about is "no NEW apps" + "no NEW
-	// builds"; project membership stays at 2 because the existing
-	// rows are reused (ADR-068 amendment). Verify both.
-	if len(ar2.Apps) != 0 {
-		t.Fatalf("no-op re-apply apps=%d want 0 (added∪changed is empty on a diff-noop)", len(ar2.Apps))
+	// Wire response `Apps` is the complete active project membership,
+	// including unchanged rows, so clients can replace local state from
+	// every successful response. The diff semantic is carried by Builds:
+	// a no-op must enqueue none while the two existing apps remain.
+	if len(ar2.Apps) != 2 {
+		t.Fatalf("no-op re-apply apps=%d want 2 active project members", len(ar2.Apps))
 	}
 	if len(ar2.Builds) != 0 {
 		t.Fatalf("unchanged re-apply enqueued %d builds, want 0 (regression: every apply churns builds)", len(ar2.Builds))
@@ -274,6 +298,119 @@ func TestApplyProject_Diff_Changed(t *testing.T) {
 		if b.Slug == "worker" {
 			t.Fatalf("worker build enqueued on a change-only re-apply (regression)")
 		}
+	}
+	var firstAPIPath, secondAPIPath string
+	for _, build := range ar1.Builds {
+		if build.Slug == "api" {
+			if err := pool.QueryRow(context.Background(), `select source_path from deployments where id = $1`, build.DeploymentID).Scan(&firstAPIPath); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := pool.QueryRow(context.Background(), `select source_path from deployments where id = $1`, ar2.Builds[0].DeploymentID).Scan(&secondAPIPath); err != nil {
+		t.Fatal(err)
+	}
+	if firstAPIPath == "" || firstAPIPath == secondAPIPath {
+		t.Fatalf("source-only reapply reused mutable source path %q", secondAPIPath)
+	}
+
+	var apiID string
+	for _, app := range ar2.Apps {
+		if app.Slug == "api" {
+			apiID = app.ID
+			break
+		}
+	}
+	if apiID == "" {
+		t.Fatal("second apply did not return api app")
+	}
+	if _, err := pool.Exec(context.Background(), `
+		insert into app_envs (account_id, app_id, scope, key, value)
+		select account_id, id, 'default', 'MOVE_SENTINEL', 'preserved'
+		from apps where id = $1`, apiID); err != nil {
+		t.Fatalf("seed api env before root move: %v", err)
+	}
+
+	// Third apply: the api service keeps its durable name but moves from
+	// services/api to apps/api. It must retain its app identity and attached
+	// configuration while rebuilding only that workload.
+	ar3 := applyProjectMultipart(t, h, key, "diff-chg", "", twoWorkloadMovedFixture(t, "faas-chg1"))
+	if len(ar3.Builds) != 1 || ar3.Builds[0].Slug != "api" {
+		t.Fatalf("root move builds=%v want exactly api", ar3.Builds)
+	}
+	if len(ar3.Removed) != 0 {
+		t.Fatalf("root move removed=%v want none", ar3.Removed)
+	}
+	var movedAPIID string
+	for _, app := range ar3.Apps {
+		if app.Slug == "api" {
+			movedAPIID = app.ID
+			break
+		}
+	}
+	if movedAPIID != apiID {
+		t.Fatalf("root move replaced api app id: got %q want %q", movedAPIID, apiID)
+	}
+	var rootDir string
+	if err := pool.QueryRow(context.Background(), `select root_dir from apps where id = $1`, apiID).Scan(&rootDir); err != nil {
+		t.Fatalf("read moved api root: %v", err)
+	}
+	if rootDir != "apps/api" {
+		t.Fatalf("moved api root_dir=%q want apps/api", rootDir)
+	}
+	var envValue string
+	if err := pool.QueryRow(context.Background(), `
+		select value from app_envs
+		where app_id = $1 and scope = 'default' and key = 'MOVE_SENTINEL'`, apiID).Scan(&envValue); err != nil {
+		t.Fatalf("read api env after root move: %v", err)
+	}
+	if envValue != "preserved" {
+		t.Fatalf("api env after root move=%q want preserved", envValue)
+	}
+}
+
+func TestApplyProject_OnlyRetainsSiblingAndCron(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		return
+	}
+	if err := dbMigrateUp(t, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	h := e2etest.Start(t, pool, e2etest.APID)
+	key := h.SeedAccount(context.Background(), api.PlanPro)
+	body := twoWorkloadFixture(t, "faas-only-retain")
+	first := applyProjectMultipart(t, h, key, "only-retain", "", body)
+	if len(first.Apps) != 2 {
+		t.Fatalf("initial apps = %#v", first.Apps)
+	}
+	var workerID string
+	if err := pool.QueryRow(context.Background(), `select id from apps where project_id = $1 and workload_name = 'worker'`, first.ProjectID).Scan(&workerID); err != nil {
+		t.Fatal(err)
+	}
+	var cronID string
+	if err := pool.QueryRow(context.Background(), `insert into crons (app_id, schedule, path, enabled, timezone, skip_if_running) values ($1, '*/5 * * * *', '/work', true, 'Europe/Istanbul', true) returning id`, workerID).Scan(&cronID); err != nil {
+		t.Fatal(err)
+	}
+
+	second := applyProjectMultipartWithOnly(t, h, key, "only-retain", "", "api", body)
+	if len(second.Removed) != 0 || len(second.Builds) != 0 {
+		t.Fatalf("--only response removed/builds = %v/%v", second.Removed, second.Builds)
+	}
+	var status string
+	if err := pool.QueryRow(context.Background(), `select status from apps where id = $1`, workerID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status == "deleted" {
+		t.Fatal("--only deleted the unselected worker")
+	}
+	var keptCronID, timezone string
+	var skipIfRunning bool
+	if err := pool.QueryRow(context.Background(), `select id, timezone, skip_if_running from crons where app_id = $1 and schedule = '*/5 * * * *' and path = '/work'`, workerID).Scan(&keptCronID, &timezone, &skipIfRunning); err != nil {
+		t.Fatal(err)
+	}
+	if keptCronID != cronID || timezone != "Europe/Istanbul" || !skipIfRunning {
+		t.Fatalf("worker cron changed: id %q -> %q timezone %q skip_if_running %t", cronID, keptCronID, timezone, skipIfRunning)
 	}
 }
 

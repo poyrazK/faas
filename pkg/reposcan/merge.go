@@ -42,18 +42,19 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 
 	// Group seeds by (RootDir, Name) keeping first-arrival order.
 	type bucket struct {
-		name       string
-		rootDir    string
-		tier       Tier   // highest tier seen (=first arrival under the sort)
-		source     string // highest-tier seed's source
-		dockerfile string // highest-tier seed's dockerfile
-		image      string // highest-tier seed's prebuilt image
-		class      Class
-		command    []string
-		dependsOn  []string
-		schedules  []CronSchedule
-		ports      []int
-		envKeys    []string
+		name         string
+		rootDir      string
+		tier         Tier   // highest tier seen (=first arrival under the sort)
+		source       string // highest-tier seed's source
+		dockerfile   string // highest-tier seed's dockerfile
+		image        string // highest-tier seed's prebuilt image
+		class        Class
+		command      []string
+		commandShell bool
+		dependsOn    []string
+		schedules    []CronSchedule
+		ports        []int
+		envKeys      []string
 		// Whether each per-field slot is filled. We never overwrite
 		// an already-filled field — first non-empty per tier order wins.
 		classSet  bool
@@ -117,6 +118,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		}
 		if !b.cmdSet && len(s.command) > 0 {
 			b.command = append([]string(nil), s.command...)
+			b.commandShell = s.commandShell
 			b.cmdSet = true
 		}
 		// Dependency edges are additive across detectors. A Compose seed
@@ -157,19 +159,20 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			primarySchedule = b.schedules[0].Expression
 		}
 		out = append(out, Workload{
-			Name:       b.name,
-			RootDir:    b.rootDir,
-			Dockerfile: b.dockerfile,
-			Image:      b.image,
-			Command:    b.command,
-			DependsOn:  b.dependsOn,
-			Class:      cls,
-			Schedule:   primarySchedule,
-			Schedules:  append([]CronSchedule(nil), b.schedules...),
-			Ports:      b.ports,
-			EnvKeys:    b.envKeys,
-			Source:     b.source,
-			Tier:       b.tier,
+			Name:         b.name,
+			RootDir:      b.rootDir,
+			Dockerfile:   b.dockerfile,
+			Image:        b.image,
+			Command:      b.command,
+			CommandShell: b.commandShell,
+			DependsOn:    b.dependsOn,
+			Class:        cls,
+			Schedule:     primarySchedule,
+			Schedules:    append([]CronSchedule(nil), b.schedules...),
+			Ports:        b.ports,
+			EnvKeys:      b.envKeys,
+			Source:       b.source,
+			Tier:         b.tier,
 			DetectedBy: Detection{
 				Detector:   b.det.String(),
 				Priority:   b.det.priority(),

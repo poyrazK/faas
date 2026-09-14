@@ -15,7 +15,7 @@ import (
 
 // buildCacheRecipeVersion separates these entries from the old archive-only
 // identity. Bump it whenever the meaning or encoding of recipe inputs changes.
-const buildCacheRecipeVersion = 3
+const buildCacheRecipeVersion = 4
 
 // BuildCacheRecipe identifies a selected application within a source archive.
 // The archive digest still covers the full context, including sibling packages.
@@ -24,6 +24,7 @@ const buildCacheRecipeVersion = 3
 type BuildCacheRecipe struct {
 	SourceSHA256        string    `json:"source_sha256"`
 	SourceRoot          string    `json:"source_root"`
+	DockerfilePath      string    `json:"dockerfile_path,omitempty"`
 	Framework           Framework `json:"framework"`
 	Plan                api.Plan  `json:"plan"`
 	RuntimeBaseRef      string    `json:"runtime_base_ref"`
@@ -52,6 +53,11 @@ func (r BuildCacheRecipe) key() (string, error) {
 		return "", fmt.Errorf("cache: source root: %w", err)
 	}
 	r.SourceRoot = root
+	dockerfilePath, err := buildDockerfilePath(r.DockerfilePath)
+	if err != nil {
+		return "", fmt.Errorf("cache: Dockerfile path: %w", err)
+	}
+	r.DockerfilePath = dockerfilePath
 	// Structured encoding separates fields even when values contain punctuation.
 	// A struct keeps the serialized field order stable.
 	data, err := json.Marshal(struct {

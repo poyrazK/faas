@@ -48,11 +48,12 @@ func detectProcfile(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		// rule can pair it with a compose `web` service (same key
 		// = same (RootDir="", Name="web")).
 		seeds = append(seeds, workloadSeed{
-			name:    procName,
-			rootDir: "",
-			command: []string{command},
-			class:   class,
-			source:  src + ": " + procName,
+			name:         procName,
+			rootDir:      "",
+			command:      []string{command},
+			commandShell: true,
+			class:        class,
+			source:       src + ": " + procName,
 		})
 	}
 	// Deterministic order to keep merge input stable.

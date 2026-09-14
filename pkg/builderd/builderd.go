@@ -753,6 +753,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if ver != "" {
 		b.emitBuildLog(ctx, build.ID, "inferred source-declared version: "+ver+"\n")
 	}
+	dockerfilePath := app.Manifest.BuildDockerfile
+	if persistedPath, ok := persistedDockerfilePath(dep); ok {
+		dockerfilePath = persistedPath
+	}
 
 	// Railpack must build FROM the same immutable runtime base that imaged
 	// will use when it materialises the deployment layer. Without this handoff
@@ -773,7 +777,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	recipe := BuildCacheRecipe{
 		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
-		Framework: fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
+		DockerfilePath: dockerfilePath,
+		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
 		Function: app.Type == state.AppTypeFunction,
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
@@ -867,6 +872,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DeploymentID:       dep.ID,
 		SourcePath:         dep.SourcePath,
 		SourceRoot:         dep.SourceRoot,
+		DockerfilePath:     dockerfilePath,
 		Framework:          fw,
 		Runtime:            runtimeName,
 		RuntimeBaseRef:     runtimeBaseRef,

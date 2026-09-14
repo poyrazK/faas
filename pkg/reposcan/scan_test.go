@@ -279,6 +279,45 @@ func TestScan_SortedByNameCaseInsensitive(t *testing.T) {
 	_ = 0 // placeholder; reserved
 }
 
+func TestHashWorkloadSourceScopesContentAndBuildMetadata(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"services/api/server.js": &fstest.MapFile{Data: []byte("v1")},
+		"README.md":              &fstest.MapFile{Data: []byte("outside-v1")},
+	}
+	workload := Workload{RootDir: "services/api", Dockerfile: "Dockerfile", Command: []string{"node", "server.js"}}
+	base, err := hashWorkloadSource(fsys, workload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys["README.md"] = &fstest.MapFile{Data: []byte("outside-v2")}
+	outside, err := hashWorkloadSource(fsys, workload)
+	if err != nil || outside != base {
+		t.Fatalf("outside-root edit changed digest: %q -> %q, %v", base, outside, err)
+	}
+	fsys["services/api/server.js"] = &fstest.MapFile{Data: []byte("v2")}
+	inside, err := hashWorkloadSource(fsys, workload)
+	if err != nil || inside == base {
+		t.Fatalf("inside-root edit did not change digest: %q -> %q, %v", base, inside, err)
+	}
+	workload.Dockerfile = "Dockerfile.production"
+	metadata, err := hashWorkloadSource(fsys, workload)
+	if err != nil || metadata == inside {
+		t.Fatalf("Dockerfile selection did not change digest: %q -> %q, %v", inside, metadata, err)
+	}
+
+	root := Workload{Name: "app"}
+	rootBefore, err := hashWorkloadSource(fsys, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys["README.md"] = &fstest.MapFile{Data: []byte("outside-v3")}
+	rootAfter, err := hashWorkloadSource(fsys, root)
+	if err != nil || rootAfter == rootBefore {
+		t.Fatalf("root workload omitted repository edit: %q -> %q, %v", rootBefore, rootAfter, err)
+	}
+}
+
 // composeK8sFixture is the canonical §4 fixture. Centralized so
 // the reproduce test and the gate test share the same input.
 func composeK8sFixture(t *testing.T) fstest.MapFS {
@@ -310,7 +349,9 @@ func composeK8sFixture(t *testing.T) fstest.MapFS {
   cache:
     image: redis:7-alpine
 `)},
-		"k8s": &fstest.MapFile{Mode: 0o755 | fs.ModeDir},
+		"api/Dockerfile.api":  &fstest.MapFile{Data: []byte("FROM scratch\n")},
+		"worker/package.json": &fstest.MapFile{Data: []byte(`{"scripts":{"start":"bundle exec sidekiq"}}`)},
+		"k8s":                 &fstest.MapFile{Mode: 0o755 | fs.ModeDir},
 		"k8s/nightly.cronjob.yaml": &fstest.MapFile{Data: []byte(`apiVersion: batch/v1
 kind: CronJob
 metadata:

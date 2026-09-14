@@ -404,14 +404,16 @@ func TestBuildArgv_WorkspaceContextUsesSelectedWorkdir(t *testing.T) {
 	}
 
 	docker := buildArgv(api.BuildManifest{
-		Framework:    api.FrameworkDockerfile,
-		BuildContext: "/build/src",
-		Workdir:      "/build/src/apps/api",
-		OutDir:       "/build/out",
+		Framework:      api.FrameworkDockerfile,
+		BuildContext:   "/build/src",
+		Workdir:        "/build/src/apps/api",
+		DockerfilePath: "deploy/Dockerfile.production",
+		OutDir:         "/build/out",
 	})
 	dockerJoined := strings.Join(docker, " ")
 	if !strings.Contains(dockerJoined, "--local context=/build/src") ||
-		!strings.Contains(dockerJoined, "--local dockerfile=/build/src/apps/api") {
+		!strings.Contains(dockerJoined, "--local dockerfile=/build/src/apps/api") ||
+		!strings.Contains(dockerJoined, "--opt filename=deploy/Dockerfile.production") {
 		t.Fatalf("workspace docker argv has wrong context/workdir: %s", dockerJoined)
 	}
 }

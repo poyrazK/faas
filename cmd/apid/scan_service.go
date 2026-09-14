@@ -38,6 +38,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -238,17 +240,6 @@ func toPlanDetectedBy(d reposcan.Detection) *api.PlanDetectedBy {
 	}
 }
 
-// workloadKey is the (RootDir, Name) tuple used to match scan
-// workloads against existing state.App rows. mirrors
-// pkg/reposcan.Workload.Key() — server-side match is authoritative.
-// Two scans producing the same workload name but different
-// root_dir are NOT the same existing app (monorepo service-api vs
-// apps/api).
-type workloadKey struct {
-	RootDir string
-	Name    string
-}
-
 // affectedPartition is the ADR-124 blast-radius projection over the
 // scan workload set vs the account's existing app rows. PlanWorkload
 // already carries (RootDir, Name) in the carrier, but the partition
@@ -310,27 +301,29 @@ func computeAffectedPartition(
 	exclude map[string]bool,
 	projectID string,
 ) affectedPartition {
-	idx := make(map[workloadKey]state.App, len(existingApps))
+	idx := make(map[string]state.App, len(existingApps))
 	for _, a := range existingApps {
-		idx[workloadKey{RootDir: a.RootDir, Name: a.WorkloadName}] = a
+		if projectID != "" && a.ProjectID == projectID {
+			idx[a.WorkloadName] = a
+		}
 	}
-	// scanKeys is keyed on (RootDir, Name) of every scan workload.
+	// scanNames is keyed on durable workload identity. RootDir can change
+	// between applies without turning the workload into a remove/create pair.
 	// Built early (before Skipped + Unaffected + Removed loops) so
 	// the dual-view Skipped branch below can skip apps that ARE in
 	// the scan set; the Skipped row from the workload branch already
 	// covers those (avoids a duplicate Skipped entry for the same
 	// slug).
-	scanKeys := make(map[workloadKey]struct{}, len(allScanWl))
+	scanNames := make(map[string]struct{}, len(allScanWl))
 	for _, w := range allScanWl {
-		scanKeys[workloadKey{RootDir: w.RootDir, Name: w.Name}] = struct{}{}
+		scanNames[w.Name] = struct{}{}
 	}
 	// WillDeploy: filteredW (no excluded) → create or update. Order
 	// preserved so the i-alignment with respWorkloads stays intact.
 	will := make([]api.PlanAffectedApp, 0, len(filteredW))
 	for _, w := range filteredW {
-		k := workloadKey{RootDir: w.RootDir, Name: w.Name}
 		row := api.PlanAffectedApp{Slug: w.Name, Action: "create"}
-		if a, ok := idx[k]; ok {
+		if a, ok := idx[w.Name]; ok {
 			row.Action = "update"
 			row.ID = a.ID
 			if a.RootDir != w.RootDir {
@@ -353,9 +346,8 @@ func computeAffectedPartition(
 			if !exclude[strings.ToLower(w.Name)] {
 				continue
 			}
-			k := workloadKey{RootDir: w.RootDir, Name: w.Name}
 			row := api.PlanAffectedApp{Slug: w.Name, Action: "noop"}
-			if a, ok := idx[k]; ok {
+			if a, ok := idx[w.Name]; ok {
 				row.ID = a.ID
 				if a.RootDir != w.RootDir {
 					row.ExistingRootDir = a.RootDir
@@ -380,8 +372,7 @@ func computeAffectedPartition(
 			if seen[a.Slug] {
 				continue
 			}
-			k := workloadKey{RootDir: a.RootDir, Name: a.WorkloadName}
-			if _, hit := scanKeys[k]; hit {
+			if _, hit := scanNames[a.WorkloadName]; hit {
 				continue
 			}
 			skip = append(skip, api.PlanAffectedApp{
@@ -396,13 +387,14 @@ func computeAffectedPartition(
 	// Unaffected: existing apps whose (RootDir, Name) is not in any
 	// scan workload. The "no scan workload" check is across allScanWl
 	// (post-`--only`) so an excluded update doesn't shift an app from
-	// Unaffected to Skipped — it stays in Skipped only. scanKeys was
+	// Unaffected to Skipped — it stays in Skipped only. scanNames was
 	// built above the Skipped loop (shared with the dual-view branch).
 	unaff := make([]api.PlanAffectedApp, 0, len(existingApps))
 	for _, a := range existingApps {
-		k := workloadKey{RootDir: a.RootDir, Name: a.WorkloadName}
-		if _, hit := scanKeys[k]; hit {
-			continue
+		if a.ProjectID == projectID {
+			if _, hit := scanNames[a.WorkloadName]; hit {
+				continue
+			}
 		}
 		unaff = append(unaff, api.PlanAffectedApp{
 			Slug:            a.Slug,
@@ -421,8 +413,8 @@ func computeAffectedPartition(
 	//     Empty projectID (no project_slug on the request, brand-
 	//     new project not yet inserted) makes the loop a no-op
 	//     because no existing app can have a matching ProjectID.
-	//  2. (RootDir, WorkloadName) NOT in scanKeys — same-key apps
-	//     are matched (WillDeploy), not removed. Mirrors
+	//  2. WorkloadName is absent from scanNames — matching apps are
+	//     updated even when RootDir moved. Mirrors
 	//     pkg/reconcile.diff.workloadDiff:106-115 (the `removes`
 	//     loop).
 	//  3. WorkloadName NOT in exclude — operator wants this app
@@ -454,8 +446,7 @@ func computeAffectedPartition(
 				exclude[strings.ToLower(a.WorkloadName)] {
 				continue
 			}
-			k := workloadKey{RootDir: a.RootDir, Name: a.WorkloadName}
-			if _, hit := scanKeys[k]; hit {
+			if _, hit := scanNames[a.WorkloadName]; hit {
 				continue
 			}
 			removed = append(removed, a.Slug)
@@ -660,6 +651,60 @@ func evaluateQuotaGate(
 	return
 }
 
+func evaluateProjectedQuotaGate(
+	desiredCrons []planCron,
+	limits api.Limits,
+	projectedApps int,
+	projectedCrons int,
+) (canApply bool, notAllowed bool, reasons []string, cronCount int) {
+	cronCount = len(desiredCrons)
+	perWorkload := make(map[string]int)
+	for _, cron := range desiredCrons {
+		perWorkload[cron.WorkloadName]++
+	}
+	workloadNames := make([]string, 0, len(perWorkload))
+	for workloadName := range perWorkload {
+		workloadNames = append(workloadNames, workloadName)
+	}
+	sort.Strings(workloadNames)
+	for _, workloadName := range workloadNames {
+		workloadCronCount := perWorkload[workloadName]
+		if limits.CronLimitPerApp > 0 && workloadCronCount > limits.CronLimitPerApp {
+			reasons = append(reasons, fmt.Sprintf(
+				"crons over per-app limit for %s: %d > %d",
+				workloadName, workloadCronCount, limits.CronLimitPerApp,
+			))
+		}
+	}
+	canApply = len(reasons) == 0
+	if projectedApps > limits.DeployedApps {
+		canApply = false
+		reasons = append(reasons, fmt.Sprintf(
+			"apps over plan limit: %d > %d", projectedApps, limits.DeployedApps))
+	}
+	if projectedCrons > 0 && limits.CronLimitPerAccount == 0 {
+		canApply = false
+		notAllowed = true
+		reasons = append(reasons, "crons not allowed on this plan")
+	}
+	if projectedCrons > limits.CronLimitPerAccount {
+		canApply = false
+		reasons = append(reasons, fmt.Sprintf(
+			"crons over plan limit: %d > %d", projectedCrons, limits.CronLimitPerAccount))
+	}
+	return
+}
+
+func projectedAppCount(observed int, partition affectedPartition) int {
+	projected := observed - len(partition.Removed)
+	for _, app := range partition.WillDeploy {
+		if app.Action == "create" {
+			projected++
+		}
+	}
+	return projected
+}
+
 func validateScannedSchedules(workloads []reposcan.Workload) error {
 	for _, workload := range workloads {
 		seen := make(map[string]struct{})
@@ -760,6 +805,10 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
 	scanDir string, workloads []reposcan.Workload, managed []reposcan.Managed, added, changed []state.App,
 ) []appliedBuild {
+	workloadByName := make(map[string]reposcan.Workload, len(workloads))
+	for _, workload := range workloads {
+		workloadByName[strings.ToLower(workload.Name)] = workload
+	}
 	touched := make([]state.App, 0, len(added)+len(changed))
 	touched = append(touched, added...)
 	touched = append(touched, changed...)
@@ -769,6 +818,10 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	out := make([]appliedBuild, 0, len(touched))
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
+		kind := state.DeploymentKindTarball
+		if app.Manifest.BuildDockerfile != "" {
+			kind = state.DeploymentKindDockerfile
+		}
 		// Stage the per-workload tarball. Failure here (e.g. the
 		// RootDir doesn't exist in the extracted tree — a reposcan
 		// bug) is logged and recorded; the apply continues for the
@@ -807,10 +860,11 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// payload's kind field aligned with the deployment's kind.
 		enqRes, enqErr := apidsource.Enqueue(ctx, s.store, s.notif, apidsource.EnqueueParams{
 			AppID:           app.ID,
-			Kind:            state.DeploymentKindTarball,
+			Kind:            kind,
 			SourcePath:      staged,
 			SourceBytes:     bytes,
 			SourceRoot:      app.RootDir,
+			DockerfilePath:  app.Manifest.BuildDockerfile,
 			FunctionRuntime: functionRuntimeForApp(app),
 			LogSpool:        spoolRoot(),
 			Log:             s.log,
@@ -843,6 +897,17 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		}
 		res.DeploymentID = enqRes.DeploymentID
 		res.BuildID = enqRes.BuildID
+		// Enqueue is the acceptance boundary for the source. Checkpoint the
+		// per-workload digest only after the deployment and build rows exist;
+		// failed staging/admission/enqueue attempts therefore remain retryable.
+		if workload, ok := workloadByName[strings.ToLower(app.WorkloadName)]; ok {
+			manifest := app.Manifest
+			manifest.ProjectSourceSHA256 = workload.SourceSHA256
+			if _, checkpointErr := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); checkpointErr != nil {
+				s.log.Warn("apid: checkpoint accepted project source failed", "app_id", app.ID, "project_id", project.ID, "err", checkpointErr)
+				res.Error = "build accepted but source checkpoint failed; a reapply is safe"
+			}
+		}
 		out = append(out, res)
 	}
 	return out
@@ -874,12 +939,12 @@ func orderAppsByWorkload(apps []state.App, order []string) []state.App {
 }
 
 // stageApplyTarball writes a repository-preserving tarball under
-// <FAAS_SPOOL_ROOT>/projects/<accountID>/<projectID>/<appID>.tar.gz
+// <FAAS_SPOOL_ROOT>/projects/<accountID>/<projectID>/<appID>-<attempt>.tar.gz
 // and returns (path, bytes, error). The deployment's SourceRoot selects
 // app.RootDir inside that archive, so workspace manifests, lockfiles, and
 // sibling packages remain available to the builder. The dir layout keys on
-// (account, project, app) so a re-apply of the same project overwrites
-// the per-workload tarballs in place.
+// (account, project, app, attempt) so a later apply cannot overwrite source
+// while an earlier build is still queued or copying its drive.
 //
 // The walk is delegated to githubd.RepackageRepositoryTree — the same
 // gzip-tar encoder githubd uses for push-triggered builds. The full
@@ -892,11 +957,12 @@ func (s *server) stageApplyTarball(
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", 0, fmt.Errorf("create spool dir: %w", err)
 	}
-	dst := filepath.Join(dir, app.ID+".tar.gz")
+	dst := filepath.Join(dir, app.ID+"-"+uuid.NewString()+".tar.gz")
 	if err := githubd.ValidateRootDir(os.DirFS(scanDir), app.RootDir); err != nil {
 		return "", 0, fmt.Errorf("validate source root: %w", err)
 	}
 	if err := githubd.RepackageRepositoryTree(ctx, os.DirFS(scanDir), dst); err != nil {
+		_ = os.Remove(dst)
 		return "", 0, fmt.Errorf("repackage: %w", err)
 	}
 	fi, err := os.Stat(dst)
@@ -1103,14 +1169,16 @@ func (s *server) scanService(
 	// after parseScanMultipart returns; the unknown-slug validation
 	// runs here, post-scan, against the resolved scan workload set.
 	var (
-		filteredW  []reposcan.Workload
-		filteredMc []reposcan.Managed
+		onlyFilteredW []reposcan.Workload
+		filteredW     []reposcan.Workload
+		filteredMc    []reposcan.Managed
 	)
 	for _, wl := range result.Workloads {
 		lname := strings.ToLower(wl.Name)
 		if len(req.Only) > 0 && !req.Only[lname] {
 			continue
 		}
+		onlyFilteredW = append(onlyFilteredW, wl)
 		// ADR-124: --exclude drops the workload from filteredW (and
 		// therefore from reconcile + builds). The visibility row
 		// still surfaces in resp.Skipped via computeAffectedPartition
@@ -1238,18 +1306,53 @@ func (s *server) scanService(
 		return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
 			fmt.Sprintf("count apps: %v", appCountErr))
 	}
-	observedCrons := countAccountCrons(r.Context(), s, acct.ID)
-
 	// Resolve the project before admission so an existing slug is treated as
 	// an update only when it belongs to this exact project member. Matching
 	// root/name metadata on an app in another project is still a collision.
 	var projectID string
 	if proj, projErr := s.store.ProjectBySlug(r.Context(), acct.ID, req.ProjectSlug); projErr == nil {
 		projectID = proj.ID
+		if apply && req.ProdBranch != "" && proj.ProductionBranch != "" && req.ProdBranch != proj.ProductionBranch {
+			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
+				http.StatusConflict, "prod_branch_mismatch",
+				"Production branch does not match the existing project",
+				fmt.Sprintf("project uses %q; request supplied %q", proj.ProductionBranch, req.ProdBranch))
+		}
 	} else if !errors.Is(projErr, state.ErrNotFound) {
 		return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
 			fmt.Sprintf("load project for workload admission: %v", projErr))
 	}
+
+	cronInventory, observedCrons, cronInventoryErr := loadCronInventory(r.Context(), s, acctApps)
+	if cronInventoryErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
+			fmt.Sprintf("load account crons: %v", cronInventoryErr))
+	}
+	projectApps := make([]state.App, 0)
+	existingProjectCrons := 0
+	for _, app := range acctApps {
+		if app.ProjectID == projectID && projectID != "" {
+			projectApps = append(projectApps, app)
+			existingProjectCrons += len(cronInventory[app.ID])
+		}
+	}
+	prePartition := computeAffectedPartition(onlyFilteredW, result.Workloads, acctApps, nil, projectID)
+	partition := computeAffectedPartition(filteredW, result.Workloads, acctApps, req.Exclude, projectID)
+	preDesiredCrons := projectCronsWithPreserved(
+		projectWorkloadCrons(onlyFilteredW), projectApps, cronInventory,
+		func(name string) bool { return len(req.Only) > 0 && !req.Only[strings.ToLower(name)] },
+	)
+	desiredCrons := projectCronsWithPreserved(
+		crons, projectApps, cronInventory,
+		func(name string) bool {
+			lname := strings.ToLower(name)
+			return (len(req.Only) > 0 && !req.Only[lname]) || req.Exclude[lname]
+		},
+	)
+	preProjectedApps := projectedAppCount(observedApps, prePartition)
+	projectedApps := projectedAppCount(observedApps, partition)
+	preProjectedCrons := observedCrons - existingProjectCrons + len(preDesiredCrons)
+	projectedCrons := observedCrons - existingProjectCrons + len(desiredCrons)
 
 	var (
 		canApply   bool
@@ -1265,8 +1368,8 @@ func (s *server) scanService(
 	// shrunk the workload set below the plan cap. evaluateQuotaGate
 	// derives the cron count from workloads internally so both
 	// calls are self-contained (no shared scan state).
-	preCanApply, preNotAllowed, preReasons, _ := evaluateQuotaGate(result.Workloads, limits, observedApps, observedCrons)
-	canApply, notAllowed, reasons, _ = evaluateQuotaGate(filteredW, limits, observedApps, observedCrons)
+	preCanApply, preNotAllowed, preReasons, _ := evaluateProjectedQuotaGate(preDesiredCrons, limits, preProjectedApps, preProjectedCrons)
+	canApply, notAllowed, reasons, _ = evaluateProjectedQuotaGate(desiredCrons, limits, projectedApps, projectedCrons)
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
@@ -1296,7 +1399,8 @@ func (s *server) scanService(
 	// in unit tests; the nil-safe accessor returns a nil
 	// counter and we skip the Inc(). This matches the
 	// GuestTailFailedTotal caller pattern in cmd/schedd/main.go.
-	gateRescuedByExclude := !preCanApply && canApply
+	gateRescuedByExclude := len(req.Exclude) > 0 && !preCanApply && canApply
+	responseReasons := planCanApplyReasons(gateRescuedByExclude, preReasons, reasons)
 	if gateRescuedByExclude {
 		// Code-review fix #4: preReasons (the gate-failure
 		// reasons that fired BEFORE --exclude shrank the
@@ -1323,8 +1427,6 @@ func (s *server) scanService(
 	// apps include rows in other projects (intentional — Unaffected
 	// is the blast-radius view, project-agnostic).
 
-	partition := computeAffectedPartition(filteredW, result.Workloads, acctApps, req.Exclude, projectID)
-
 	// Convert the reposcan carrier slice into the wire-shape DTO so
 	// the JSON marshal sees string Tier (matching OpenAPI enum +
 	// pkg/api.PlanWorkload.Tier) instead of the raw int the
@@ -1349,8 +1451,8 @@ func (s *server) scanService(
 		Managed:       respManaged,
 		Crons:         crons,
 		Warnings:      result.Warnings,
-		ObservedApps:  observedApps + len(filteredW),
-		ObservedCrons: observedCrons + len(crons),
+		ObservedApps:  projectedApps,
+		ObservedCrons: projectedCrons,
 		LimitApps:     limits.DeployedApps,
 		LimitCrons:    limits.CronLimitPerAccount,
 		CanApply:      canApply,
@@ -1358,11 +1460,11 @@ func (s *server) scanService(
 		// ADR-124 can_apply rescue signal. PreExclude + Rescued
 		// are the operator-facing knobs the dashboard renders in
 		// the gate card; CanApplyReasons is the human-readable
-		// post-exclude failure list (empty on success — omitempty
-		// drops the wire shape).
+		// post-exclude failure list, except on a rescued plan where
+		// the pre-exclude blockers explain what --exclude repaired.
 		CanApplyPreExclude:   preCanApply,
 		GateRescuedByExclude: gateRescuedByExclude,
-		CanApplyReasons:      reasons,
+		CanApplyReasons:      responseReasons,
 		// ADR-124 follow-up #3 (PR-B commit 5): pass the operator's
 		// persist intent through to the apply handler so it can
 		// write the deployment_scope_exclusions rows on a
@@ -1447,16 +1549,19 @@ func (s *server) scanService(
 		// can branch on canApply=false without parsing.
 		var prob *api.Problem
 		switch {
+		case len(result.Workloads) == 0:
+			prob = api.NewProblem(http.StatusUnprocessableEntity, "plan_empty",
+				"Project plan is empty", reconcile.EmptyWorkloadPlanReason)
 		case len(admissionReasons) > 0:
 			prob = api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 				"Project plan is not applicable", strings.Join(admissionReasons, "; "))
 		case notAllowed:
 			prob = api.ErrPlanCronsNotAllowed(acct.Plan)
-		case observedApps+len(filteredW) > limits.DeployedApps:
-			prob = api.ErrPlanLimitApps(limits, observedApps+len(filteredW))
+		case projectedApps > limits.DeployedApps:
+			prob = api.ErrPlanLimitApps(limits, projectedApps)
 		default:
 			prob = api.ErrPlanCronQuota(acct.Plan, "account",
-				limits.CronLimitPerAccount, observedCrons+len(crons))
+				limits.CronLimitPerAccount, projectedCrons)
 		}
 		return resp, state.Project{}, nil, nil, nil, nil, prob
 	}
@@ -1630,12 +1735,24 @@ func (s *server) scanService(
 	// Convert at the call site so the engine signature stays
 	// ordered/dupe-tolerant (the wire side is a set, the engine
 	// is a list — pkg/reconcile dedupes via the map filter).
-	excludeList := make([]string, 0, len(req.Exclude))
+	excludeList := make([]string, 0, len(req.Exclude)+len(result.Workloads))
+	excludeSeen := make(map[string]bool, len(req.Exclude)+len(result.Workloads))
 	for slug := range req.Exclude {
 		excludeList = append(excludeList, slug)
+		excludeSeen[slug] = true
 	}
-	cronSpecs := make([]reconcile.CronSpec, 0, len(crons))
-	for _, cron := range crons {
+	if len(req.Only) > 0 {
+		for _, workload := range result.Workloads {
+			name := strings.ToLower(workload.Name)
+			if req.Only[name] || excludeSeen[name] {
+				continue
+			}
+			excludeList = append(excludeList, name)
+			excludeSeen[name] = true
+		}
+	}
+	cronSpecs := make([]reconcile.CronSpec, 0, len(desiredCrons))
+	for _, cron := range desiredCrons {
 		cronSpecs = append(cronSpecs, reconcile.CronSpec{
 			WorkloadName: cron.WorkloadName,
 			Schedule:     cron.Schedule,
@@ -1722,6 +1839,13 @@ func (s *server) scanService(
 	// audited and idempotent — this is just the wire projection.
 	resp.Removed = removedSlugs
 	return resp, project, rec.Added, rec.Changed, removedSlugs, builds, nil
+}
+
+func planCanApplyReasons(gateRescuedByExclude bool, preExclude, postExclude []string) []string {
+	if gateRescuedByExclude {
+		return preExclude
+	}
+	return postExclude
 }
 
 // parseScanMultipart reads the multipart body, spools, validates, and
@@ -1920,26 +2044,45 @@ func mintPlanToken(accountID, slug, repoFullName, productionBranch string, insta
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
-// countAccountCrons returns the count of crons across the account's
-// non-deleted apps. Mirrors the store-side COUNT in
-// ApplyProjectPlan; the duplication exists because the scan service
-// runs OUTSIDE the apply Tx so it needs its own count to render
-// can_apply accurately. The store's count inside the Tx is the
-// authoritative one — if the two disagree, the store wins on commit.
-func countAccountCrons(ctx context.Context, s *server, accountID string) int {
-	apps, err := s.store.ListApps(ctx, accountID)
-	if err != nil {
-		return 0
-	}
+// loadCronInventory returns every cron on the already-loaded account apps.
+// Preview uses the inventory to replace only the current project's desired
+// rows while retaining --only/--exclude siblings. The store repeats quota
+// checks transactionally and remains authoritative for races.
+func loadCronInventory(ctx context.Context, s *server, apps []state.App) (map[string][]state.Cron, int, error) {
+	inventory := make(map[string][]state.Cron, len(apps))
 	var total int
 	for _, a := range apps {
 		cs, err := s.store.ListCronsForApp(ctx, a.ID)
 		if err != nil {
-			continue
+			return nil, 0, err
 		}
+		inventory[a.ID] = cs
 		total += len(cs)
 	}
-	return total
+	return inventory, total, nil
+}
+
+func projectCronsWithPreserved(
+	desired []planCron,
+	projectApps []state.App,
+	inventory map[string][]state.Cron,
+	preserve func(workloadName string) bool,
+) []planCron {
+	out := append([]planCron(nil), desired...)
+	for _, app := range projectApps {
+		if !preserve(app.WorkloadName) {
+			continue
+		}
+		for _, cron := range inventory[app.ID] {
+			out = append(out, planCron{
+				WorkloadName: app.WorkloadName,
+				Schedule:     cron.Schedule,
+				Path:         cron.Path,
+				Enabled:      cron.Enabled,
+			})
+		}
+	}
+	return out
 }
 
 // --- response side helpers --------------------------------------------------

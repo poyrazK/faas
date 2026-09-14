@@ -34,6 +34,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	urlpkg "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,6 +113,10 @@ func applyProjectFixture(t *testing.T) []byte {
 // URL (`/v1/projects` not `/v1/projects/scan`) and the response
 // shape (ApplyResponse embeds PlanResponse plus project_id + apps).
 func applyProjectMultipart(t *testing.T, h *e2etest.Harness, key, slug, planToken string, body []byte) api.ApplyResponse {
+	return applyProjectMultipartWithOnly(t, h, key, slug, planToken, "", body)
+}
+
+func applyProjectMultipartWithOnly(t *testing.T, h *e2etest.Harness, key, slug, planToken, only string, body []byte) api.ApplyResponse {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -127,15 +132,18 @@ func applyProjectMultipart(t *testing.T, h *e2etest.Harness, key, slug, planToke
 			t.Fatalf("write project_slug: %v", err)
 		}
 	}
-	if planToken != "" {
-		if err := mw.WriteField("plan_token", planToken); err != nil {
-			t.Fatalf("write plan_token: %v", err)
+	if only != "" {
+		if err := mw.WriteField("only", only); err != nil {
+			t.Fatalf("write only: %v", err)
 		}
 	}
 	if err := mw.Close(); err != nil {
 		t.Fatalf("multipart close: %v", err)
 	}
 	url := h.APIDURL + "/v1/projects"
+	if planToken != "" {
+		url += "?plan_token=" + urlpkg.QueryEscape(planToken)
+	}
 	req, err := http.NewRequestWithContext(context.Background(),
 		http.MethodPost, url, &buf)
 	if err != nil {

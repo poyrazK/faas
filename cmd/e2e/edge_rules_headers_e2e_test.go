@@ -32,7 +32,7 @@ func TestEdgeRulesHeaders_E2E(t *testing.T) {
 
 	slug := "headers-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}
@@ -67,10 +67,8 @@ func TestEdgeRulesHeaders_E2E(t *testing.T) {
 
 	// Happy path: GET /. Backend.Pick misses → 404, but the X-Test
 	// header is stamped on the response.
-	header, _, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil)
-	if status != http.StatusNotFound {
-		t.Errorf("kind=headers happy: status=%d, want 404 (Backend.Pick miss; X-Test still stamped)", status)
-	}
+	header, body, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil)
+	assertBackendFallthrough(t, status, body)
 	if got := header.Get("X-Test"); got != "ok" {
 		t.Errorf("kind=headers happy: X-Test=%q, want ok", got)
 	}

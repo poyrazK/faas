@@ -4720,7 +4720,11 @@ func (s *PgStore) ApplyProjectReconcile(
 		case "update":
 			app := mutation.App
 			rootDir, workloadName := app.RootDir, app.WorkloadName
-			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5 where id = $1 and project_id = $6 and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID))
+			manifestBytes, marshalErr := json.Marshal(app.Manifest)
+			if marshalErr != nil {
+				return ProjectReconcileResult{}, fmt.Errorf("state: marshal project app manifest: %w", marshalErr)
+			}
+			updated, err := scanApp(tx.QueryRow(ctx, `update apps set root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $7 where id = $1 and project_id = $6 and status <> 'deleted' returning `+appsSelectColumns, app.ID, rootDir, workloadName, string(app.WorkloadClass), nullString(app.StartCommand), project.ID, manifestBytes))
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)
 			}
@@ -4734,6 +4738,28 @@ func (s *PgStore) ApplyProjectReconcile(
 		case "create":
 			app := mutation.App
 			app.AccountID, app.ProjectID = project.AccountID, project.ID
+			tombstone, tombErr := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where account_id = $1 and project_id = $2 and workload_name = $3 and status = 'deleted' order by deleted_at desc nulls last limit 1 for update`, project.AccountID, project.ID, app.WorkloadName))
+			if tombErr == nil {
+				tombstone.RootDir = app.RootDir
+				tombstone.WorkloadName = app.WorkloadName
+				tombstone.WorkloadClass = app.WorkloadClass
+				tombstone.StartCommand = app.StartCommand
+				tombstone.Manifest = mergeProjectManagedManifest(tombstone.Manifest, app.Manifest)
+				manifestBytes, marshalErr := json.Marshal(tombstone.Manifest)
+				if marshalErr != nil {
+					return ProjectReconcileResult{}, fmt.Errorf("state: marshal restored project app manifest: %w", marshalErr)
+				}
+				restored, restoreErr := scanApp(tx.QueryRow(ctx, `update apps set status = 'active', deleted_at = null, delete_grace_until = null, root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $6 where id = $1 returning `+appsSelectColumns, tombstone.ID, tombstone.RootDir, tombstone.WorkloadName, string(tombstone.WorkloadClass), nullString(tombstone.StartCommand), manifestBytes))
+				if restoreErr != nil {
+					return ProjectReconcileResult{}, mapErr(restoreErr)
+				}
+				out.Added = append(out.Added, restored)
+				continue
+			}
+			tombErr = mapErr(tombErr)
+			if !errors.Is(tombErr, ErrNotFound) {
+				return ProjectReconcileResult{}, tombErr
+			}
 			created, err := insertProjectAppInTx(ctx, tx, app)
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)

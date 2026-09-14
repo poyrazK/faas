@@ -150,6 +150,15 @@ func TestScanPartition_CardinalityComplete(t *testing.T) {
 		"e2e+partition-cardinality@test.example")
 	store := state.NewPgStore(h.Pool)
 	ctx := context.Background()
+	project, err := store.CreateProject(ctx, state.Project{
+		AccountID:        acct.ID,
+		Slug:             "partition-cardinality",
+		ProductionBranch: "main",
+		ScanSource:       state.ProjectScanSourceConvention,
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
 
 	// Seed 3 apps. Only `matching-app` shares (RootDir, Name) with
 	// the scan fixture (services/api + api). The other two have
@@ -167,7 +176,8 @@ func TestScanPartition_CardinalityComplete(t *testing.T) {
 	}
 	matching, err := store.CreateApp(ctx, state.App{
 		AccountID:      acct.ID,
-		Slug:           "matching-app",
+		ProjectID:      project.ID,
+		Slug:           "api",
 		Type:           state.AppTypeApp,
 		RAMMB:          256,
 		MaxConcurrency: 1,

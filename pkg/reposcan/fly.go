@@ -76,10 +76,11 @@ func detectFly(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			commandParts = []string{command}
 		}
 		seeds = append(seeds, workloadSeed{
-			name:    pname,
-			class:   class,
-			command: commandParts,
-			source:  src + ": " + pname,
+			name:         pname,
+			class:        class,
+			command:      commandParts,
+			commandShell: len(commandParts) > 0,
+			source:       src + ": " + pname,
 		})
 	}
 	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })

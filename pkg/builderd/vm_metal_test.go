@@ -315,6 +315,7 @@ func TestBuildManifestForRequestCarriesWarmInputs(t *testing.T) {
 		TenantID:           "acct-1",
 		DeploymentID:       "dep-1",
 		SourceRoot:         "services/api",
+		DockerfilePath:     "deploy/Dockerfile.production",
 		Framework:          FrameworkNode,
 		Runtime:            "node22",
 		RuntimeBaseRef:     "base-ref",
@@ -330,5 +331,8 @@ func TestBuildManifestForRequestCarriesWarmInputs(t *testing.T) {
 	}
 	if !strings.HasSuffix(manifest.Workdir, "/services/api") {
 		t.Fatalf("manifest workdir = %q, want services/api suffix", manifest.Workdir)
+	}
+	if manifest.DockerfilePath != "deploy/Dockerfile.production" {
+		t.Fatalf("manifest dockerfile = %q", manifest.DockerfilePath)
 	}
 }

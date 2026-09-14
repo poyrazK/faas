@@ -650,7 +650,7 @@ var cliCommands = []cliCommand{
 			{Name: "function", Short: "deploy as a function; skip shape auto-detection"},
 			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
-			{Name: "only", Short: "workloads to apply (comma-separated; project apply path)", Value: "SLUGS"},
+			{Name: "only", Short: "workloads to apply; retain unselected project workloads (comma-separated)", Value: "SLUGS"},
 			{Name: "project", Short: "deploy all detected workloads as one project (slug defaults from --name or source)"},
 			// Issue #977 / ADR-116: deployment annotations surface.
 			// --reason is free text (≤280 chars); --tag is closed-set

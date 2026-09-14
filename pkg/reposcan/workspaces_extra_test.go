@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -142,7 +143,7 @@ func TestDetectWorkspaces_PackageJSONObjectForm(t *testing.T) {
   }
 }`)},
 		"apps/web/Dockerfile":    &fstest.MapFile{Data: []byte("FROM scratch")},
-		"apps/api/package.json":  &fstest.MapFile{Data: []byte(`{}`)},
+		"apps/api/package.json":  &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node server.js"}}`)},
 		"packages/lib/README.md": &fstest.MapFile{Data: []byte("# lib\n")},
 	}
 	seeds, _, err := detectWorkspaces(fsys)
@@ -198,7 +199,7 @@ func TestDetectWorkspaces_NxProjectsMap(t *testing.T) {
     "backend": {}
   }
 }`)},
-		"frontend/package.json": &fstest.MapFile{Data: []byte(`{}`)},
+		"frontend/package.json": &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node server.js"}}`)},
 	}
 	seeds, _, err := detectWorkspaces(fsys)
 	if err != nil {
@@ -233,6 +234,44 @@ func TestDetectWorkspaces_PnpmMonorepo_AlreadyCovered(t *testing.T) {
 	}
 	if !equalSet(names, []string{"api", "web"}) {
 		t.Errorf("pnpm members = %v, want {api, web}", names)
+	}
+}
+
+func TestDetectWorkspaces_PnpmRecursivePrefixAndExclusion(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"pnpm-workspace.yaml": &fstest.MapFile{Data: []byte(`packages:
+  - "./modules/**"
+  - "!modules/internal"
+`)},
+		"modules/group/api/package.json": &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node server.js"}}`)},
+		"modules/internal/package.json":  &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node private.js"}}`)},
+		"modules/shared/package.json":    &fstest.MapFile{Data: []byte(`{"main":"index.js"}`)},
+	}
+	seeds, warnings, err := detectWorkspaces(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := names(seeds); !equalSet(got, []string{"api"}) {
+		t.Fatalf("workloads = %v, want only recursive api", got)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "modules/shared") {
+		t.Fatalf("warnings = %v, want shared library explanation", warnings)
+	}
+}
+
+func TestExpandWorkspacePatterns_GlobstarMatchesZeroOrMoreDirectories(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"api/package.json":                &fstest.MapFile{Data: []byte(`{}`)},
+		"groups/backend/api/package.json": &fstest.MapFile{Data: []byte(`{}`)},
+	}
+	members, err := expandWorkspacePatterns(fsys, []string{"**/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalSet(members, []string{"api", "groups/backend/api"}) {
+		t.Fatalf("members = %v", members)
 	}
 }
 

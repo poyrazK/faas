@@ -45,7 +45,7 @@ func TestEdgeRulesThrottle_E2E_429Contract(t *testing.T) {
 
 	slug := "throttle-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}
@@ -82,10 +82,8 @@ func TestEdgeRulesThrottle_E2E_429Contract(t *testing.T) {
 	// downstream Backend.Pick has no real impl so the gateway
 	// returns 404 — but the throttle itself did NOT fire.
 	for i := 0; i < 2; i++ {
-		headers, _, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil)
-		if status != http.StatusNotFound {
-			t.Errorf("req %d: status=%d, want 404 (Backend.Pick miss after throttle pass)", i, status)
-		}
+		headers, body, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil)
+		assertBackendFallthrough(t, status, body)
 		// The throttle writes X-RouteRateLimit-* even on the
 		// pass path (mirror of the per-app rate-limit headers).
 		// The 429 contract is what the test pins; the pass-path

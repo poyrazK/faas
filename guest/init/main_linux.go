@@ -1532,13 +1532,16 @@ func buildArgv(m api.BuildManifest) []string {
 	contextDir := manifestBuildContext(m)
 	switch m.Framework {
 	case api.FrameworkDockerfile:
-		return []string{
+		argv := []string{
 			"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
 			"--frontend", "dockerfile.v0",
 			"--local", "context=" + contextDir,
 			"--local", "dockerfile=" + m.Workdir,
-			"--output", "type=oci,dest=" + m.OutDir + "/image.tar",
 		}
+		if m.DockerfilePath != "" {
+			argv = append(argv, "--opt", "filename="+m.DockerfilePath)
+		}
+		return append(argv, "--output", "type=oci,dest="+m.OutDir+"/image.tar")
 	}
 	// Railpack plans local COPY paths relative to the directory passed to
 	// prepare. A repository-wide context would copy a different package.json

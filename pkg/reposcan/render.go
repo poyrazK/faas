@@ -81,14 +81,16 @@ func detectRender(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if command == nil {
 			command = s.Command
 		}
+		commandParts, commandShell := commandSpec(command)
 		seeds = append(seeds, workloadSeed{
-			name:     s.Name,
-			class:    cls,
-			command:  commandSlice(command),
-			envKeys:  renderEnvKeys(s.EnvVars),
-			image:    renderImageRef(s.Image),
-			schedule: s.Schedule,
-			source:   src + ": " + s.Name,
+			name:         s.Name,
+			class:        cls,
+			command:      commandParts,
+			commandShell: commandShell,
+			envKeys:      renderEnvKeys(s.EnvVars),
+			image:        renderImageRef(s.Image),
+			schedule:     s.Schedule,
+			source:       src + ": " + s.Name,
 		})
 	}
 	for _, c := range d.CronJobs {

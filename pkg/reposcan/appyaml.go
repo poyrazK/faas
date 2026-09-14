@@ -54,25 +54,29 @@ func detectAppYaml(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if n == "" {
 			continue
 		}
+		command, commandShell := commandSpec(s.Command)
 		seeds = append(seeds, workloadSeed{
-			name:    n,
-			class:   ClassHTTP,
-			command: commandSlice(s.Command),
-			envKeys: envKeys(s.Env),
-			ports:   parsePorts(s.Ports),
-			source:  src + ": services." + n,
+			name:         n,
+			class:        ClassHTTP,
+			command:      command,
+			commandShell: commandShell,
+			envKeys:      envKeys(s.Env),
+			ports:        parsePorts(s.Ports),
+			source:       src + ": services." + n,
 		})
 	}
 	for n, w := range d.Workers {
 		if n == "" {
 			continue
 		}
+		command, commandShell := commandSpec(w.Command)
 		seeds = append(seeds, workloadSeed{
-			name:    n,
-			class:   ClassWorker,
-			command: commandSlice(w.Command),
-			envKeys: envKeys(w.Env),
-			source:  src + ": workers." + n,
+			name:         n,
+			class:        ClassWorker,
+			command:      command,
+			commandShell: commandShell,
+			envKeys:      envKeys(w.Env),
+			source:       src + ": workers." + n,
 		})
 	}
 	all := append([]appYamlJob{}, d.Jobs...)
@@ -81,12 +85,14 @@ func detectAppYaml(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if j.Name == "" {
 			continue
 		}
+		command, commandShell := commandSpec(j.Command)
 		seeds = append(seeds, workloadSeed{
-			name:     j.Name,
-			class:    ClassJob,
-			schedule: j.Schedule,
-			command:  commandSlice(j.Command),
-			source:   src + ": jobs." + j.Name,
+			name:         j.Name,
+			class:        ClassJob,
+			schedule:     j.Schedule,
+			command:      command,
+			commandShell: commandShell,
+			source:       src + ": jobs." + j.Name,
 		})
 	}
 	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })

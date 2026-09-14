@@ -98,20 +98,21 @@ const (
 // []Workload. Keeping it lighter than Workload makes per-tier
 // code shorter (the merge rule fills the empty fields).
 type workloadSeed struct {
-	tier       Tier
-	det        detector
-	source     string // provenance string; carried into Workload.Source
-	name       string
-	rootDir    string
-	dockerfile string
-	image      string
-	command    []string
-	dependsOn  []string
-	class      Class
-	schedule   string
-	schedules  []CronSchedule
-	ports      []int
-	envKeys    []string // KEYS only
+	tier         Tier
+	det          detector
+	source       string // provenance string; carried into Workload.Source
+	name         string
+	rootDir      string
+	dockerfile   string
+	image        string
+	command      []string
+	commandShell bool
+	dependsOn    []string
+	class        Class
+	schedule     string
+	schedules    []CronSchedule
+	ports        []int
+	envKeys      []string // KEYS only
 }
 
 // workloadKey is the merge-by-(RootDir, Name) key. Two seeds with

@@ -877,6 +877,8 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
+      - name: complete E2E shard inventory
+        run: go run ./scripts/ci/e2eshard -check -shards=4
       - name: actionlint
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
         with:
@@ -1687,7 +1689,7 @@ jobs:
             go test -race -count=1 -timeout=15m -run '^TestBootContract_' ./cmd/e2e/...
 
   e2e-shard1:
-    name: e2e (shard 1 — 18 tests)
+    name: e2e (shard 1)
     runs-on: ubuntu-latest
     # The test command has a 15m package timeout; leave runner cleanup
     # headroom so slow shared runners fail with the test result instead of
@@ -1761,8 +1763,10 @@ jobs:
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
-      - name: e2e tests (shard 1 — 18 tests)
-        run: go test -race -count=1 -timeout=15m -run '^Test(C|D|Docs|Domain|E2E_[A-E])' ./cmd/e2e/...
+      - name: e2e tests (shard 1)
+        run: |
+          E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=1 -shards=4)
+          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
@@ -1775,7 +1779,7 @@ jobs:
           key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   e2e-shard2:
-    name: e2e (shard 2 — 15 tests)
+    name: e2e (shard 2)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -1846,11 +1850,13 @@ jobs:
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
-      - name: e2e tests (shard 2 — 15 tests)
-        run: go test -race -count=1 -timeout=15m -run '^Test(E2E_[F-P]|Egress|IAM)' ./cmd/e2e/...
+      - name: e2e tests (shard 2)
+        run: |
+          E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=2 -shards=4)
+          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard3:
-    name: e2e (shard 3 — 24 tests)
+    name: e2e (shard 3)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -1921,11 +1927,13 @@ jobs:
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
-      - name: e2e tests (shard 3 — 24 tests)
-        run: go test -race -count=1 -timeout=15m -run '^Test(E2E_Q|Invoice|MTLS|Main|Meter|Paddle|Quota|R|Signed|Status)' ./cmd/e2e/...
+      - name: e2e tests (shard 3)
+        run: |
+          E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=3 -shards=4)
+          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard4:
-    name: e2e (shard 4 — 22 tests)
+    name: e2e (shard 4)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -1996,5 +2004,7 @@ jobs:
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
-      - name: e2e tests (shard 4 — 22 tests)
-        run: go test -race -count=1 -timeout=15m -run '^Test(Scan|Sec|Secrets)' ./cmd/e2e/...
+      - name: e2e tests (shard 4)
+        run: |
+          E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=4 -shards=4)
+          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...

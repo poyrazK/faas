@@ -40,6 +40,7 @@ type VMRequest struct {
 	DeploymentID   string
 	SourcePath     string // tarball or dockerfile source on disk
 	SourceRoot     string // repository-relative build root inside the archive; empty = archive root
+	DockerfilePath string // relative to SourceRoot; empty selects Dockerfile
 	Framework      Framework
 	Runtime        string // app runtime id (node22, python312, go124-alpine, ...)
 	RuntimeBaseRef string // resolved OCI ref used by Railpack for this build

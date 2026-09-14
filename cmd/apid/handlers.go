@@ -801,6 +801,11 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// reasons as EgressAllowlist above.
 		CORSDefaultEnabled: a.CORSDefaultEnabled,
 		CORSDefaultOrigins: cORSOriginsList(a.CORSDefaultOrigins),
+		// ADR-091 amendment: surface the persisted coarse maintenance
+		// gate on create, get, list, and PATCH responses. The store already
+		// writes and reads this column; omitting it here made a successful
+		// PATCH appear to remain false to API clients.
+		MaintenanceMode: a.MaintenanceMode,
 	}
 }
 
