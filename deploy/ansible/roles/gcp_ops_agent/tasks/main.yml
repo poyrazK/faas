@@ -9,6 +9,27 @@
     mode: "0644"
   when: faas_gcp_ops_agent_enabled | bool
 
+- name: gcp_ops_agent — inspect Google repository signing key
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --batch
+      - --show-keys
+      - --with-colons
+      - "{{ faas_gcp_ops_agent_keyring }}"
+  register: faas_gcp_ops_agent_key_info
+  changed_when: false
+  when: faas_gcp_ops_agent_enabled | bool
+
+- name: gcp_ops_agent — require the pinned Google signing identity
+  ansible.builtin.assert:
+    that:
+      - faas_gcp_ops_agent_key_fingerprint in faas_gcp_ops_agent_key_info.stdout
+    fail_msg: >-
+      The downloaded Google Ops Agent key does not contain the pinned
+      repository signing fingerprint.
+  when: faas_gcp_ops_agent_enabled | bool
+
 - name: gcp_ops_agent — configure the distribution repository
   ansible.builtin.apt_repository:
     repo: >-
