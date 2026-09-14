@@ -106,4 +106,33 @@ make_event_at "$passing" 'test: add regression pin' "$(git -C "$passing" rev-par
 run_check "$passing" > "$passing/output"
 grep -q 'unexpected-pass.*TestUnpinned' "$passing/output"
 
+# Multiple changed tests in one package are classified from one JSON test
+# run, including a mix of passing and failing base behavior.
+mixed="$test_root/mixed"
+git_init "$mixed"
+cat > "$mixed/pin_test.go" <<'EOF'
+package pin
+
+import "testing"
+
+func TestStillBroken(t *testing.T) { t.Fatal("old bug") }
+func TestAlreadyPassing(t *testing.T) {}
+EOF
+git -C "$mixed" add pin_test.go
+git -C "$mixed" commit -q -m 'test: add mixed baseline tests'
+cat > "$mixed/pin_test.go" <<'EOF'
+package pin
+
+import "testing"
+
+func TestStillBroken(t *testing.T) {}
+func TestAlreadyPassing(t *testing.T) { t.Log("changed") }
+EOF
+git -C "$mixed" add pin_test.go
+git -C "$mixed" commit -q -m 'test: change both mixed tests'
+make_event_at "$mixed" 'test: change mixed tests' "$(git -C "$mixed" rev-parse HEAD^)"
+run_check "$mixed" > "$mixed/output"
+grep -q 'expected-failure.*TestStillBroken' "$mixed/output"
+grep -q 'unexpected-pass.*TestAlreadyPassing' "$mixed/output"
+
 echo "check_regression_pin: OK"
