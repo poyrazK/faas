@@ -127,3 +127,21 @@ func TestCDControlPlaneAcceptsIdleWakeWindow(t *testing.T) {
 		t.Fatal("control-plane rollout gate must accept wake_p95_ms=null during an idle window")
 	}
 }
+
+func TestCDControlPlaneVerifiesPostgresBackupContractAfterActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	bundle := strings.Index(workflow, "host-config/faas-pg-backup-contract-preflight.sh")
+	deploy := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	verify := strings.Index(workflow, "Verify PostgreSQL backup namespace contract")
+	run := strings.Index(workflow, "/opt/faas/current/host-config/faas-pg-backup-contract-preflight.sh")
+	if bundle < 0 || deploy < 0 || verify < 0 || run < 0 {
+		t.Fatalf("control-plane workflow is missing PostgreSQL backup contract verification: bundle=%d deploy=%d verify=%d run=%d", bundle, deploy, verify, run)
+	}
+	if !(bundle < deploy && deploy < verify && verify < run) {
+		t.Fatalf("PostgreSQL backup contract must be bundled and checked after activation: bundle=%d deploy=%d verify=%d run=%d", bundle, deploy, verify, run)
+	}
+}

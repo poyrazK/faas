@@ -291,6 +291,45 @@
   failed_when: false
   notify: reload postgresql
 
+# `ALTER SYSTEM` writes postgresql.auto.conf, which PostgreSQL reads after
+# postgresql.conf. A stale value there silently shadows the role-managed
+# archive_command and can send live WAL to a different namespace than the
+# restore and prune paths. Once the cluster is reachable, clear that override
+# when the effective command does not contain the canonical remote/path. The
+# lineinfile above remains the single source of truth for the replacement.
+- name: postgres — read effective archive_command for namespace guard
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - -c
+      - SHOW archive_command
+  become: true
+  become_user: postgres
+  register: pg_effective_archive_command
+  changed_when: false
+  failed_when: false
+
+- name: postgres — clear stale ALTER SYSTEM archive_command override
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -c
+      - ALTER SYSTEM RESET archive_command
+  become: true
+  become_user: postgres
+  register: pg_archive_override_reset
+  changed_when: pg_archive_override_reset.rc == 0
+  failed_when: false
+  when:
+    - pg_effective_archive_command.rc == 0
+    - (pg_effective_archive_command.stdout | trim) != ''
+    - (off_host_backup_remote | default('offhostbox', true)) ~ ':' ~ (off_host_backup_wal_path | default('faas-pg-wal', true)) ~ '/%f' not in pg_effective_archive_command.stdout
+  notify: reload postgresql
+
 - name: postgres — bound WAL senders (reload-only, 3 = basebackup + 2 drill slack)
   ansible.builtin.lineinfile:
     path: "{{ postgres_config_dir }}/postgresql.conf"

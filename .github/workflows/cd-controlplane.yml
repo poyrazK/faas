@@ -274,6 +274,8 @@ jobs:
           test ! -e "${BUNDLE_ROOT}/systemd/faas-gatewayd.service"
           install -m 0644 deploy/ansible/roles/control_plane_service/files/faas.conf \
             "${BUNDLE_ROOT}/tmpfiles.d/faas.conf"
+          install -m 0755 deploy/scripts/faas-pg-backup-contract-preflight.sh \
+            "${BUNDLE_ROOT}/host-config/faas-pg-backup-contract-preflight.sh"
           install -m 0644 deploy/statuspage/index.html \
             "${BUNDLE_ROOT}/statuspage/index.html"
           "${BUNDLE_ROOT}/bin/deployctl" bundle-create "${BUNDLE_ROOT}" "${RELEASE_ID}" "${RELEASE_ID}" "linux/amd64"
@@ -484,6 +486,13 @@ jobs:
              mv -Tf /etc/faas/statuspage/.index.html-${RELEASE_ID} /etc/faas/statuspage/index.html &&
              ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
              mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
+
+      - name: Verify PostgreSQL backup namespace contract
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" \
+            "/opt/faas/current/host-config/faas-pg-backup-contract-preflight.sh"
 
       - name: Converge Prometheus config and rules
         run: |

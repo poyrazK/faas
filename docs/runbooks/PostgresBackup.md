@@ -40,6 +40,20 @@ off-host recovery source.
 - The configured object-store identity has read+write to `faas-pg-wal/` and
   `faas-pg-basebackup/`.
 
+Before a control-plane rollout, run the namespace contract preflight. It is
+read-only and fails if the effective PostgreSQL archive command or either
+systemd backup unit points at a different remote or logical path:
+
+```bash
+sudo /usr/local/lib/faas/faas-pg-backup-contract-preflight.sh
+```
+
+The checked-in sources can be audited without a host or credentials:
+
+```bash
+bash deploy/scripts/faas-pg-backup-contract-preflight.sh --static
+```
+
 ## Procedure
 
 ### Immediate push (one-shot)

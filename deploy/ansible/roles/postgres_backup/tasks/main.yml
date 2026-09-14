@@ -159,6 +159,14 @@
     group: root
     mode: "0755"
 
+- name: postgres_backup — install backup namespace contract preflight
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../scripts/faas-pg-backup-contract-preflight.sh"
+    dest: /usr/local/lib/faas/faas-pg-backup-contract-preflight.sh
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: postgres_backup — install keyless GCS backup identity helper
   ansible.builtin.copy:
     src: "{{ role_path }}/../../../scripts/faas-rclone-backup-identity.py"

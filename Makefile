@@ -456,6 +456,7 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/pg-restore-verify_test.sh
 	bash deploy/scripts/faas-pg-basebackup-push_test.sh
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
+	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
 
 .PHONY: m8-evidence-check
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
