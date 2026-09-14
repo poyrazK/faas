@@ -128,3 +128,40 @@ func TestRunDispatchesPostgresJSON(t *testing.T) {
 		t.Fatalf("unexpected binding: %+v", got)
 	}
 }
+
+func TestCmdPostgresAttachResolvesSlugAndDatabaseName(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
+			_, _ = w.Write([]byte(`{"id":"app-1","slug":"api"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
+			_, _ = w.Write([]byte(`{"items":[{"id":"db-1","name":"orders","state":"ready"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/postgres/databases/db-1/bindings":
+			var req api.CreateManagedPostgresBindingRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode binding request: %v", err)
+			}
+			if req.AppID != "app-1" || req.Scope != "production" || req.EnvironmentKey != "DATABASE_URL" || req.Access != "read_write" {
+				t.Fatalf("binding request = %+v", req)
+			}
+			_, _ = w.Write([]byte(`{"id":"binding-1","database_id":"db-1","app_id":"app-1","scope":"production","environment_key":"DATABASE_URL","access":"read_write","state":"ready"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := osStdout, jsonOutput
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+
+	if code := cmdPostgresAttach([]string{"orders", "api", "--scope", "production"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "Attached orders to app api as DATABASE_URL") {
+		t.Fatalf("output = %s", out.String())
+	}
+}

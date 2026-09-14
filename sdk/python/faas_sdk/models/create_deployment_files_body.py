@@ -31,6 +31,8 @@ class CreateDeploymentFilesBody:
     source_root: str | Unset = UNSET
     """Optional repository-relative directory to build from when source contains a workspace context. Empty or
     omitted means the archive root."""
+    scope: str | Unset = UNSET
+    """Named environment scope read by the developer deployment; omitted uses default."""
     source_url: str | Unset = UNSET
     """Optional informational repository provenance URL. The server never fetches this value; the uploaded archive
     remains the source of truth."""
@@ -57,6 +59,8 @@ class CreateDeploymentFilesBody:
 
         source_root = self.source_root
 
+        scope = self.scope
+
         source_url = self.source_url
 
         commit_sha = self.commit_sha
@@ -76,6 +80,8 @@ class CreateDeploymentFilesBody:
             field_dict["runtime"] = runtime
         if source_root is not UNSET:
             field_dict["source_root"] = source_root
+        if scope is not UNSET:
+            field_dict["scope"] = scope
         if source_url is not UNSET:
             field_dict["source_url"] = source_url
         if commit_sha is not UNSET:
@@ -102,6 +108,9 @@ class CreateDeploymentFilesBody:
 
         if not isinstance(self.source_root, Unset):
             files.append(("source_root", (None, str(self.source_root).encode(), "text/plain")))
+
+        if not isinstance(self.scope, Unset):
+            files.append(("scope", (None, str(self.scope).encode(), "text/plain")))
 
         if not isinstance(self.source_url, Unset):
             files.append(("source_url", (None, str(self.source_url).encode(), "text/plain")))
@@ -145,6 +154,8 @@ class CreateDeploymentFilesBody:
 
         source_root = d.pop("source_root", UNSET)
 
+        scope = d.pop("scope", UNSET)
+
         source_url = d.pop("source_url", UNSET)
 
         commit_sha = d.pop("commit_sha", UNSET)
@@ -157,6 +168,7 @@ class CreateDeploymentFilesBody:
             kind=kind,
             runtime=runtime,
             source_root=source_root,
+            scope=scope,
             source_url=source_url,
             commit_sha=commit_sha,
             workflows=workflows,

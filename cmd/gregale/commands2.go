@@ -2411,6 +2411,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Workflow manifest validation failed", err)
 		}
 	}
+	databaseDeploymentScope, err := manifestPostgresDeploymentScope(slug, sourceDir)
+	if err != nil {
+		return printErr("Manifest database scope resolution failed", err)
+	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr, *profile)
 		if *vcpu != 0 {
@@ -2420,6 +2424,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not create or fetch app", err)
 		}
 		if *createOnly {
+			if err := deployManifestPostgresBindings(ctx, client, slug, sourceDir); err != nil {
+				return printErr("Manifest database bindings failed", err)
+			}
 			if jsonOutput {
 				return jsonOut(writeJSON(map[string]any{
 					"slug":   slug,
@@ -2436,6 +2443,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if _, err := client.UpdateApp(ctx, slug, api.UpdateAppRequest{ResourceProfile: profile}); err != nil {
 			return printErr("Could not update app resource profile", err)
 		}
+	}
+	if err := deployManifestPostgresBindings(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest database bindings failed", err)
 	}
 	if len(deploySecrets) > 0 {
 		if err := setDeploySecrets(ctx, client, slug, deploySecrets); err != nil {
@@ -2480,6 +2490,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *tarball != "" {
 		sourceURL, commitSHA := zeroConfigSourceProvenance(prov)
 		ann := api.DeployAnnotations{
+			Scope:          databaseDeploymentScope,
 			SourceURL:      sourceURL,
 			CommitSHA:      commitSHA,
 			Reason:         *reason,
@@ -2514,7 +2525,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		} else if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: *runtime, Handler: *handler, Dockerfile: *dockerfile,
-				SourceRoot: sourceRoot, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
+				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs,
 			}
@@ -2625,6 +2636,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "json"))
 	dep, err := client.Deploy(deployCtx, slug, api.CreateDeploymentRequest{
 		Image:          *image,
+		Scope:          databaseDeploymentScope,
 		Workflows:      workflowDefs,
 		TrafficPercent: optTrafficPercent(*trafficPercent),
 		Reason:         annPtr(*reason),

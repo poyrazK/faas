@@ -376,8 +376,51 @@ type QueueConfig struct {
 	Mode string `json:"mode"`
 }
 
+// DatabaseDependency declares a provider-neutral managed database dependency
+// for an app. `database` accepts the logical database name or ID returned by
+// `gregale postgres list`; the deploy client resolves it before creating the
+// app binding. Credentials never appear in the manifest.
+//
+// `app` is optional because the common single-app project does not need to
+// repeat its slug. It is useful for a project manifest that is deployed one
+// app at a time and contains dependencies for more than one app.
+type DatabaseDependency struct {
+	Database       string `yaml:"database"`
+	App            string `yaml:"app,omitempty"`
+	Scope          string `yaml:"scope,omitempty"`
+	EnvironmentKey string `yaml:"env,omitempty"`
+	Access         string `yaml:"access,omitempty"`
+}
+
+// EffectiveScope returns the scope used by the binding API when the manifest
+// leaves it out.
+func (d DatabaseDependency) EffectiveScope() string {
+	if d.Scope == "" {
+		return api.DefaultEnvScope
+	}
+	return d.Scope
+}
+
+// EffectiveEnvironmentKey returns the conventional Postgres connection
+// variable when the manifest leaves the target key out.
+func (d DatabaseDependency) EffectiveEnvironmentKey() string {
+	if d.EnvironmentKey == "" {
+		return "DATABASE_URL"
+	}
+	return d.EnvironmentKey
+}
+
+// EffectiveAccess returns the least-surprising default for a normal
+// application binding. Read-only credentials remain an explicit opt-in.
+func (d DatabaseDependency) EffectiveAccess() string {
+	if d.Access == "" {
+		return "read_write"
+	}
+	return d.Access
+}
+
 // Manifest is the parsed `gregale.yaml` root. The supported top-level
-// declarations are `hosting`, `triggers`, and `workflows`; other keys are
+// declarations are `hosting`, `triggers`, `workflows`, and `databases`; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true)) so a typo like
 // `trigger:` (singular) surfaces as a load-time error rather than silently
 // shipping a no-op deploy.
@@ -386,6 +429,7 @@ type Manifest struct {
 	Function  *FunctionConfig       `yaml:"function,omitempty"`
 	Triggers  []Trigger             `yaml:"triggers"`
 	Workflows []api.WorkflowSpec    `yaml:"workflows,omitempty"`
+	Databases []DatabaseDependency  `yaml:"databases,omitempty"`
 }
 
 // FunctionConfig records the deploy shape selected by a function scaffold.
@@ -592,6 +636,31 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 				i, t.App, t.Kind, t.Slug)
 		}
 		seen[k] = struct{}{}
+	}
+
+	seenDatabases := make(map[string]struct{}, len(m.Databases))
+	for i, dependency := range m.Databases {
+		if strings.TrimSpace(dependency.Database) == "" {
+			return fmt.Errorf("database[%d]: database is required", i)
+		}
+		if dependency.App != "" && !isDNSSafeSlug(dependency.App) {
+			return fmt.Errorf("database[%d]: app %q must match [a-z0-9-]+", i, dependency.App)
+		}
+		if problem := api.ValidateScope(dependency.EffectiveScope()); problem != nil {
+			return fmt.Errorf("database[%d]: scope: %w", i, problem)
+		}
+		if problem := api.ValidateEnvKey(dependency.EffectiveEnvironmentKey()); problem != nil {
+			return fmt.Errorf("database[%d]: env: %w", i, problem)
+		}
+		access := dependency.EffectiveAccess()
+		if access != "read_write" && access != "read_only" {
+			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only}", i, access)
+		}
+		key := strings.Join([]string{dependency.App, dependency.Database, dependency.EffectiveScope(), dependency.EffectiveEnvironmentKey()}, "\x00")
+		if _, duplicate := seenDatabases[key]; duplicate {
+			return fmt.Errorf("database[%d]: duplicate (app, database, scope, env) dependency", i)
+		}
+		seenDatabases[key] = struct{}{}
 	}
 
 	if len(m.Workflows) == 0 {
