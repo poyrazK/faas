@@ -145,3 +145,20 @@ func TestCDControlPlaneVerifiesPostgresBackupContractAfterActivation(t *testing.
 		t.Fatalf("PostgreSQL backup contract must be bundled and checked after activation: bundle=%d deploy=%d verify=%d run=%d", bundle, deploy, verify, run)
 	}
 }
+
+func TestCDControlPlanePromotesDPAArtifactWithRelease(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	bundle := strings.Index(workflow, `install -m 0644 docs/DPA.md "${BUNDLE_ROOT}/host-config/dpa.md"`)
+	deploy := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	install := strings.Index(workflow, "${release_dir}/host-config/dpa.md /etc/faas/.dpa.md-${RELEASE_ID}")
+	if bundle < 0 || deploy < 0 || install < 0 {
+		t.Fatalf("control-plane workflow is missing versioned DPA handling: bundle=%d deploy=%d install=%d", bundle, deploy, install)
+	}
+	if !(bundle < deploy && deploy < install) {
+		t.Fatalf("DPA must be bundled before activation and installed after it: bundle=%d deploy=%d install=%d", bundle, deploy, install)
+	}
+}

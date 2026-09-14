@@ -276,6 +276,7 @@ jobs:
             "${BUNDLE_ROOT}/tmpfiles.d/faas.conf"
           install -m 0755 deploy/scripts/faas-pg-backup-contract-preflight.sh \
             "${BUNDLE_ROOT}/host-config/faas-pg-backup-contract-preflight.sh"
+          install -m 0644 docs/DPA.md "${BUNDLE_ROOT}/host-config/dpa.md"
           install -m 0644 deploy/statuspage/index.html \
             "${BUNDLE_ROOT}/statuspage/index.html"
           "${BUNDLE_ROOT}/bin/deployctl" bundle-create "${BUNDLE_ROOT}" "${RELEASE_ID}" "${RELEASE_ID}" "linux/amd64"
@@ -484,6 +485,8 @@ jobs:
              install -d -o faas-apid -g faas -m 0770 /etc/faas/statuspage &&
              install -o root -g faas -m 0644 ${release_dir}/statuspage/index.html /etc/faas/statuspage/.index.html-${RELEASE_ID} &&
              mv -Tf /etc/faas/statuspage/.index.html-${RELEASE_ID} /etc/faas/statuspage/index.html &&
+             install -o root -g faas -m 0644 ${release_dir}/host-config/dpa.md /etc/faas/.dpa.md-${RELEASE_ID} &&
+             mv -Tf /etc/faas/.dpa.md-${RELEASE_ID} /etc/faas/dpa.md &&
              ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
              mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
 

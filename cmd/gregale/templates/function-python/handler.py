@@ -12,6 +12,8 @@ import json
 
 
 async def handler(event, ctx):
+    # Do not log or echo event: it can contain cookies, API keys,
+    # authorization headers, and customer payloads.
     ctx.log.info("function invoked", extra={"invocation_id": ctx.invocation_id})
     return {
         "statusCode": 200,
@@ -20,7 +22,6 @@ async def handler(event, ctx):
             {
                 "ok": True,
                 "invocation_id": ctx.invocation_id,
-                "received": event,
             }
         ),
     }

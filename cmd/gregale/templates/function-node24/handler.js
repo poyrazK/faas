@@ -10,11 +10,9 @@
 // underlying filename per runtime).
 
 export async function handler(event, ctx) {
-  // event.body is the parsed JSON request body (string for non-JSON).
-  // ctx.log is the structured logger guest-init wires up. Surface
-  // both so a smoke test sees something useful. The runtime id is
-  // also reachable via env if a customer needs to branch on version.
-  ctx.log.info("function invoked", { event, invocation_id: ctx.invocation_id, runtime: process.env.FAAS_RUNTIME });
+  // Request events can contain cookies, API keys, authorization headers, and
+  // customer payloads. Keep logs and the default response metadata-only.
+  ctx.log.info("function invoked", { invocation_id: ctx.invocation_id, runtime: process.env.FAAS_RUNTIME });
   return {
     statusCode: 200,
     headers: { "content-type": "application/json" },
@@ -22,7 +20,6 @@ export async function handler(event, ctx) {
       ok: true,
       invocation_id: ctx.invocation_id,
       runtime: process.env.FAAS_RUNTIME,
-      received: event,
     }),
   };
 }
