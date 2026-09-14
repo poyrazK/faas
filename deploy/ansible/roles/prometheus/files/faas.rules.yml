@@ -122,6 +122,7 @@ groups:
           severity: warn
           component: host
           family: canary_artifacts
+          public_status: internal
         annotations:
           summary: "Validation artifacts exceed the 5 GiB host cap on {{ $labels.instance }}"
           description: "The bounded canary and diagnostic roots have remained above their host cap across multiple hourly-sweeper opportunities. A protected active lease, a live process or unit reference, or repeated deletion error may be preventing cleanup."
@@ -134,6 +135,7 @@ groups:
           severity: warn
           component: host
           family: canary_artifacts
+          public_status: internal
         annotations:
           summary: "Validation artifact cleanup failed on {{ $labels.instance }}"
           description: "The lifecycle finalizer or periodic sweep could not prove an artifact safe to remove or could not delete it. The artifact was retained. Inspect the sweep journal and its active process/systemd references before retrying."
@@ -146,6 +148,7 @@ groups:
           severity: warn
           component: host
           family: canary_artifacts
+          public_status: internal
         annotations:
           summary: "A validation artifact is older than 30 hours on {{ $labels.instance }}"
           description: "The oldest declared validation artifact has outlived the 24-hour orphan retention plus multiple sweep windows. Check whether it is intentionally referenced, has a stale active owner record, or is failing cleanup."
@@ -158,6 +161,7 @@ groups:
           severity: warn
           component: host
           family: canary_artifacts
+          public_status: internal
         annotations:
           summary: "The periodic validation artifact sweep is stale on {{ $labels.instance }}"
           description: "No cleanup sweep has completed for more than two hours. Check the systemd timer and service before relying on the byte cap or orphan retention. An alert without an instance means no scraped host has published the collector metric."
@@ -176,6 +180,7 @@ groups:
           severity: warn
           component: vmmd
           family: host_journal
+          public_status: internal
         annotations:
           summary: "networkd-dispatcher is reporting errors on {{ $labels.node }}"
           description: "networkd-dispatcher has emitted warning-or-higher journal entries for at least two minutes. Expected disappearing Gregale vh<slot> interfaces are filtered before journald, so remaining entries indicate a persistent interface, hook, or networkctl failure."
@@ -188,6 +193,7 @@ groups:
           severity: warn
           component: vmmd
           family: host_journal
+          public_status: internal
         annotations:
           summary: "Local journal exceeds 400 MiB on {{ $labels.node }}"
           description: "The persistent and runtime journals have remained above 400 MiB for ten minutes, approaching Gregale's 512 MiB persistent-journal bound. Check noisy units and off-host shipping before rotation removes incident evidence."
@@ -200,6 +206,7 @@ groups:
           severity: warn
           component: vmmd
           family: host_journal
+          public_status: internal
         annotations:
           summary: "Local journal is growing rapidly on {{ $labels.node }}"
           description: "Local journal usage has grown faster than 120 MiB/hour for five minutes. Identify the emitting unit before the bounded journal rotates useful history or creates avoidable off-host ingestion volume."
@@ -212,6 +219,7 @@ groups:
           severity: warn
           component: vmmd
           family: host_journal
+          public_status: internal
         annotations:
           summary: "Host journal metrics are unavailable on {{ $labels.node }}"
           description: "vmmd has failed to read networkd-dispatcher errors or local journal disk usage for ten minutes. Check journalctl/du availability and vmmd's privileges before trusting the journal pressure signals."
