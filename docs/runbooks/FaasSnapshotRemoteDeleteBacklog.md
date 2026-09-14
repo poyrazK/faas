@@ -1,5 +1,7 @@
 # FaasSnapshotRemoteDeleteBacklog
 
+## Symptom
+
 These alerts mean snapshot GC could not verify deletion of memory or VM-state
 artifacts in the remote OCI registry. Imaged marks the snapshot unusable first,
 keeps a `delete_pending` database tombstone, and retries cleanup on each normal
