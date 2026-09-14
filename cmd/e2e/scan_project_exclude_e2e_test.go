@@ -339,7 +339,7 @@ func TestScanExclude_MultiSlug(t *testing.T) {
 	key := h.SeedAccount(context.Background(), api.PlanPro, "exclude-multi-slug")
 
 	plan, status, body := scanProjectMultipartWithExclude(t, h, key,
-		"exclude-multi-slug", "", "api,web,worker", scanProjectFixture(t))
+		"exclude-multi-slug", "", "services/api,web,services/worker", scanProjectFixture(t))
 	if status != http.StatusOK {
 		t.Fatalf("scan status = %d, want 200 (body=%s)", status, body)
 	}

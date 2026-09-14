@@ -444,7 +444,8 @@ func TestScanProject_FreePlan_CronNotAllowed(t *testing.T) {
 // managed list (spec §4: stateful services the platform will not
 // provision must always surface so the customer sees the warning
 // signal). The filter accepts a comma-separated workload name
-// list; entries not matching are dropped.
+// list; entries not matching are dropped. A duplicated workload name must use
+// its repository-relative root selector.
 func TestScanProject_OnlyFilter_ManagedUnaffected(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -460,9 +461,10 @@ func TestScanProject_OnlyFilter_ManagedUnaffected(t *testing.T) {
 		})
 	key := h.SeedAccount(context.Background(), api.PlanPro, "scan-only-filter")
 
-	// only=web,api narrows to two workloads; the others (cron,
-	// faas-fixture, services/api, services/worker, worker) drop.
-	plan := scanProjectMultipart(t, h, key, "only-test", "web,api", scanProjectFixture(t))
+	// only=web,services/api narrows to two workloads; the others (cron,
+	// faas-fixture, the root compose api, services/worker, and both worker
+	// entries) drop. Bare "api" is intentionally ambiguous in this fixture.
+	plan := scanProjectMultipart(t, h, key, "only-test", "web,services/api", scanProjectFixture(t))
 
 	wantNames := []string{"api", "web"}
 	if got := workloadNames(plan); !equalStrings(got, wantNames) {
