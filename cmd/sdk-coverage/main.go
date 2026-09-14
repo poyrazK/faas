@@ -641,9 +641,9 @@ var methodRouteMap = map[string]string{
 	// indistinguishable in the SDK. Apply must hit POST /v1/projects
 	// (not /v1/projects/scan) — the SDK enforces this in
 	// ApplyProjectPlan via url.QueryEscape(plan_token).
-	"POST /v1/projects/scan": "ScanProject",
+	"POST /v1/projects/scan":            "ScanProject",
 	"POST /v1/projects/scan/source-ref": "ScanProjectSourceRef",
-	"POST /v1/projects":      "ApplyProjectPlan",
+	"POST /v1/projects":                 "ApplyProjectPlan",
 
 	// ADR-124 follow-up #3 — persistent --exclude history. The
 	// auto-derivation would produce "DeleteProjectsSlugExclusionsSlug2"
