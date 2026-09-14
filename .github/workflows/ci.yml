@@ -1690,7 +1690,7 @@ jobs:
             go test -race -count=1 -timeout=15m -run '^TestBootContract_' ./cmd/e2e/...
 
   e2e-shard1:
-    name: e2e (shard 1)
+    name: e2e (shard 1 — 18 tests)
     runs-on: ubuntu-latest
     # The test command has a 15m package timeout; leave runner cleanup
     # headroom so slow shared runners fail with the test result instead of
@@ -1780,7 +1780,7 @@ jobs:
           key: go-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
 
   e2e-shard2:
-    name: e2e (shard 2)
+    name: e2e (shard 2 — 15 tests)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -1857,7 +1857,7 @@ jobs:
           go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard3:
-    name: e2e (shard 3)
+    name: e2e (shard 3 — 24 tests)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -1934,7 +1934,7 @@ jobs:
           go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard4:
-    name: e2e (shard 4)
+    name: e2e (shard 4 — 22 tests)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
