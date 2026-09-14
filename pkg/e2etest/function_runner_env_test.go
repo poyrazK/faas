@@ -65,23 +65,30 @@ func TestFunctionRunnerEnvSatisfiesImagedContract(t *testing.T) {
 	}
 }
 
-// TestFunctionRunnerEnvHonoursExplicitOverride — a test that stages a real shim
-// must win over the placeholder, since the placeholder is not executable as a
-// runtime.
-func TestFunctionRunnerEnvHonoursExplicitOverride(t *testing.T) {
-	real := t.TempDir() + "/real-runner"
-	if err := os.WriteFile(real, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("FAAS_FUNCTION_RUNNER_NODE22", real)
-
+// TestFunctionRunnerEnvStagesExecutablePlaceholders — the contract validates
+// path-exists, so every value must name a file that is really on disk.
+//
+// spec: §4.6
+// adr: 003
+//
+// This replaced an override test. The harness used to read
+// os.Getenv for these names so a test could substitute a real shim; that read
+// made pkg/e2etest an owner in the env contract, and declaring it turned
+// imaged-only Required rows into rows apid had to satisfy too, which stopped
+// apid booting. Placeholders are staged unconditionally instead.
+func TestFunctionRunnerEnvStagesExecutablePlaceholders(t *testing.T) {
 	for _, kv := range functionRunnerEnv(t, t.TempDir()) {
-		if name, value, _ := strings.Cut(kv, "="); name == "FAAS_FUNCTION_RUNNER_NODE22" {
-			if value != real {
-				t.Fatalf("override ignored: got %q, want %q", value, real)
-			}
-			return
+		_, value, ok := strings.Cut(kv, "=")
+		if !ok {
+			t.Fatalf("malformed assignment %q", kv)
+		}
+		info, err := os.Stat(value)
+		if err != nil {
+			t.Errorf("%s: %v", kv, err)
+			continue
+		}
+		if info.Mode().Perm()&0o111 == 0 {
+			t.Errorf("%s is not executable (mode %v)", value, info.Mode().Perm())
 		}
 	}
-	t.Fatal("FAAS_FUNCTION_RUNNER_NODE22 missing from the environment")
 }

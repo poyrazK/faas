@@ -61,6 +61,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -71,6 +72,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cosign"
+	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -1693,37 +1695,51 @@ var _ = io.Discard
 // <root>/runners/<runtime>/faas-runner, with GO124_ALPINE spelled go124-alpine.
 func functionRunnerEnv(t *testing.T, tmp string) []string {
 	t.Helper()
-	// Full names as literals, never assembled from a shared prefix. The env
-	// contract gate (pkg/daemonunitspec TestEnvContract_EveryReadIsDeclared)
-	// scans source for quoted variable names and matches them against the
-	// declared contract, so concatenating a prefix with a per-runtime suffix
-	// reads to it as one undeclared variable named by the bare prefix.
-	// Dynamic construction defeats a static contract check — and note the
-	// scanner sees quoted strings in COMMENTS too, so do not spell the bare
-	// prefix as a literal anywhere in this file.
-	runners := []struct{ env, dir string }{
-		{"FAAS_FUNCTION_RUNNER_GO124", "go124"},
-		{"FAAS_FUNCTION_RUNNER_GO124_ALPINE", "go124-alpine"},
-		{"FAAS_FUNCTION_RUNNER_NODE22", "node22"},
-		{"FAAS_FUNCTION_RUNNER_NODE24", "node24"},
-		{"FAAS_FUNCTION_RUNNER_PYTHON312", "python312"},
-		{"FAAS_FUNCTION_RUNNER_PYTHON313", "python313"},
-	}
-
-	out := make([]string, 0, len(runners))
-	for _, r := range runners {
-		if v := os.Getenv(r.env); v != "" {
-			out = append(out, r.env+"="+v)
+	// The names are DERIVED FROM THE CONTRACT, never written here as literals.
+	//
+	// Two constraints force this, and they pull in opposite directions:
+	//
+	//   - TestEnvContract_EveryReadIsDeclared scans every non-_test.go file
+	//     under pkg/ for FAAS_* string literals and calls each one a "read",
+	//     requiring the reading package to appear in that row's Owners. Spelling
+	//     the names here would demand adding "shared" as an owner.
+	//   - Owners is not "who reads this": it is the set of daemons the Required
+	//     rule is ENFORCED for. Adding "shared" made imaged's runner paths
+	//     mandatory for apid, which then refused to boot:
+	//       LoadFrom: apid: missing required environment variables: ...
+	//
+	// Reading the contract satisfies both, and a seventh runtime is picked up
+	// with no edit here. "RUNNER_" carries no FAAS_ prefix, so it is not itself
+	// a scanned literal.
+	var runners []string
+	for _, row := range daemonunitspec.EnvContractForDaemon("imaged") {
+		if !row.Required || row.Validate != daemonunitspec.EnvValidationPathExists {
 			continue
 		}
-		path := filepath.Join(tmp, "runners", r.dir, "faas-runner")
+		if !strings.Contains(row.Name, "RUNNER_") {
+			continue
+		}
+		runners = append(runners, row.Name)
+	}
+	if len(runners) == 0 {
+		t.Fatal("e2etest: no function-runner rows found in the env contract; imaged will not boot")
+	}
+	sort.Strings(runners)
+
+	out := make([]string, 0, len(runners))
+	for _, name := range runners {
+		// FAAS_FUNCTION_RUNNER_GO124_ALPINE -> runners/go124-alpine/faas-runner,
+		// matching production and cmd/e2e/boot_contract_test.go.
+		suffix := name[strings.Index(name, "RUNNER_")+len("RUNNER_"):]
+		dir := strings.ReplaceAll(strings.ToLower(suffix), "_", "-")
+		path := filepath.Join(tmp, "runners", dir, "faas-runner")
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("e2etest: mkdir runner dir for %s: %v", r.env, err)
+			t.Fatalf("e2etest: mkdir runner dir for %s: %v", name, err)
 		}
 		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-			t.Fatalf("e2etest: write placeholder runner for %s: %v", r.env, err)
+			t.Fatalf("e2etest: write placeholder runner for %s: %v", name, err)
 		}
-		out = append(out, r.env+"="+path)
+		out = append(out, name+"="+path)
 	}
 	return out
 }

@@ -118,12 +118,12 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FLEET_AGE_IDENTITY_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_FLEET_AGE_RECIPIENT_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_FLOOR_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
-| `FAAS_FUNCTION_RUNNER_GO124` | imaged, shared | `unit` | yes |  | `path-exists` |  |
-| `FAAS_FUNCTION_RUNNER_GO124_ALPINE` | imaged, shared | `unit` | yes |  | `path-exists` |  |
-| `FAAS_FUNCTION_RUNNER_NODE22` | imaged, shared | `unit` | yes |  | `path-exists` |  |
-| `FAAS_FUNCTION_RUNNER_NODE24` | imaged, shared | `unit` | yes |  | `path-exists` |  |
-| `FAAS_FUNCTION_RUNNER_PYTHON312` | imaged, shared | `unit` | yes |  | `path-exists` |  |
-| `FAAS_FUNCTION_RUNNER_PYTHON313` | imaged, shared | `unit` | yes |  | `path-exists` |  |
+| `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
+| `FAAS_FUNCTION_RUNNER_GO124_ALPINE` | imaged | `unit` | yes |  | `path-exists` |  |
+| `FAAS_FUNCTION_RUNNER_NODE22` | imaged | `unit` | yes |  | `path-exists` |  |
+| `FAAS_FUNCTION_RUNNER_NODE24` | imaged | `unit` | yes |  | `path-exists` |  |
+| `FAAS_FUNCTION_RUNNER_PYTHON312` | imaged | `unit` | yes |  | `path-exists` |  |
+| `FAAS_FUNCTION_RUNNER_PYTHON313` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_GATEWAYD_CONFIG` | gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_GATEWAYD_CONTROL_URL` | apid | `default` |  |  | `` |  |
 | `FAAS_GATEWAYD_PUBLIC_ROLE` | gatewayd-public, shared | `dropin` |  |  | `` |  |
@@ -333,7 +333,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_CACHE_SERVE_STALE` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_LOCAL_PREFIXES` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
-| `FAAS_STORAGE_ROOT` | imaged, vmmd, shared | `default` |  |  | `` |  |
+| `FAAS_STORAGE_ROOT` | builderd, imaged, vmmd, shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_SNAPSHOT_COMPRESSION` | shared | `envfile` |  |  | `` | remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165) |
 | `FAAS_STREAM_BRIDGE_PERSISTENT` | shared | `default` |  |  | `` |  |
 | `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
