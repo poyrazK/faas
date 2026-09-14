@@ -1,7 +1,9 @@
 package deploydiff
 
 import (
+	"reflect"
 	"sort"
+	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -46,6 +48,8 @@ func Compute(slug string, plan Plan, baseline Baseline, pending Pending) Diff {
 	// omitted from deploy requests, so a fresh preview must carry an
 	// explicit app/deployment shape or it can look like a no-op.
 	diffBuildPlan(&out, baseline, pending)
+	diffRollout(&out, baseline.LatestDeployment, pending)
+	diffWorkflows(&out, baseline.LatestDeployment, pending.Workflows)
 
 	// 2. Per-scope env vars.
 	diffEnvByScope(&out, baseline.EnvByScope, pending.EnvByScope)
@@ -143,6 +147,18 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending Pending) {
 		if pending.ImageRef != "" {
 			deploymentAfter["image"] = pending.ImageRef
 		}
+		if plan.Entrypoint != "" {
+			deploymentAfter["entrypoint"] = plan.Entrypoint
+		}
+		if plan.Port != 0 {
+			deploymentAfter["port"] = strconv.Itoa(plan.Port)
+		}
+		if plan.HealthPath != "" {
+			deploymentAfter["health_path"] = plan.HealthPath
+		}
+		if plan.ConfigFile != "" {
+			deploymentAfter["config_file"] = plan.ConfigFile
+		}
 		if len(deploymentAfter) > 0 {
 			out.Changes = append(out.Changes, Change{
 				Field: "deployment", Kind: ChangeAdd,
@@ -155,16 +171,11 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending Pending) {
 	// Existing-app previews stay field-oriented. App fields come from the
 	// durable app row; framework/handler/source identity come from the latest
 	// deployment's BuildPlan when that provenance is available.
-	if plan.Class != "" && plan.Class != baseline.App.Type {
-		out.Changes = append(out.Changes, Change{
-			Field: "app.class", Kind: ChangeModify,
-			Before: AsAny(baseline.App.Type), After: AsAny(plan.Class),
-		})
-	}
-	if plan.Runtime != "" && plan.Runtime != baseline.App.Runtime {
-		out.Changes = append(out.Changes, Change{
-			Field: "app.runtime", Kind: ChangeModify,
-			Before: AsAny(baseline.App.Runtime), After: AsAny(plan.Runtime),
+	if field, problem := api.ValidateExistingAppShape(baseline.App.Type, baseline.App.Runtime, plan.Class, plan.Runtime); problem != nil {
+		out.Breaks = append(out.Breaks, Break{
+			Code: problem.Code, Severity: SeverityError, Reason: problem.Detail,
+			Field: field, Observed: AsAny(map[string]string{"class": plan.Class, "runtime": plan.Runtime}),
+			Limit: AsAny(map[string]string{"class": baseline.App.Type, "runtime": baseline.App.Runtime}),
 		})
 	}
 
@@ -183,6 +194,18 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending Pending) {
 		}
 		if pending.ImageRef != "" {
 			deploymentAfter["image"] = pending.ImageRef
+		}
+		if plan.Entrypoint != "" {
+			deploymentAfter["entrypoint"] = plan.Entrypoint
+		}
+		if plan.Port != 0 {
+			deploymentAfter["port"] = strconv.Itoa(plan.Port)
+		}
+		if plan.HealthPath != "" {
+			deploymentAfter["health_path"] = plan.HealthPath
+		}
+		if plan.ConfigFile != "" {
+			deploymentAfter["config_file"] = plan.ConfigFile
 		}
 		if len(deploymentAfter) > 0 {
 			out.Changes = append(out.Changes, Change{
@@ -204,6 +227,20 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending Pending) {
 				Before: AsAny(basePlan.Handler), After: AsAny(plan.Handler),
 			})
 		}
+		for _, field := range []struct {
+			name, before, after string
+		}{
+			{"deployment.entrypoint", basePlan.Entrypoint, plan.Entrypoint},
+			{"deployment.health_path", basePlan.HealthPath, plan.HealthPath},
+			{"deployment.config_file", basePlan.ConfigFile, plan.ConfigFile},
+		} {
+			if field.before != field.after {
+				out.Changes = append(out.Changes, Change{Field: field.name, Kind: ChangeModify, Before: AsAny(field.before), After: AsAny(field.after)})
+			}
+		}
+		if basePlan.Port != plan.Port {
+			out.Changes = append(out.Changes, Change{Field: "deployment.port", Kind: ChangeModify, Before: AsAny(basePlan.Port), After: AsAny(plan.Port)})
+		}
 	}
 	if basePlan != nil && plan.SourceSHA256 != "" {
 		baseSource := ""
@@ -215,6 +252,64 @@ func diffBuildPlan(out *Diff, baseline Baseline, pending Pending) {
 			})
 		}
 	}
+}
+
+func diffRollout(out *Diff, baseline *api.DeploymentResponse, pending Pending) {
+	if pending.TrafficPercent != nil {
+		change := Change{Field: "deployment.traffic_percent", After: AsAny(*pending.TrafficPercent)}
+		if baseline == nil {
+			change.Kind = ChangeAdd
+		} else if baseline.TrafficPercent != *pending.TrafficPercent {
+			change.Kind = ChangeModify
+			change.Before = AsAny(baseline.TrafficPercent)
+		} else {
+			change.Kind = ""
+		}
+		if change.Kind != "" {
+			out.Changes = append(out.Changes, change)
+		}
+	}
+	if pending.Canary != nil {
+		after := map[string]any{"preset": pending.Canary.Preset}
+		if len(pending.Canary.Stages) > 0 {
+			after["stages"] = pending.Canary.Stages
+		}
+		change := Change{Field: "deployment.canary", After: AsAny(after)}
+		if baseline == nil {
+			change.Kind = ChangeAdd
+		} else if baseline.CanaryPreset != pending.Canary.Preset || pending.Canary.Preset == "custom" {
+			change.Kind = ChangeModify
+			change.Before = AsAny(map[string]any{"preset": baseline.CanaryPreset})
+		}
+		if change.Kind != "" {
+			out.Changes = append(out.Changes, change)
+		}
+	}
+}
+
+func diffWorkflows(out *Diff, baseline *api.DeploymentResponse, workflows []api.WorkflowSpec) {
+	if workflows == nil {
+		return
+	}
+	before := []api.WorkflowSpec(nil)
+	if baseline != nil {
+		before = baseline.Workflows
+	}
+	if reflect.DeepEqual(before, workflows) {
+		return
+	}
+	change := Change{Field: "deployment.workflows", Before: AsAny(before), After: AsAny(workflows)}
+	switch {
+	case len(before) == 0 && len(workflows) > 0:
+		change.Kind = ChangeAdd
+		change.Before = anyJSON{}
+	case len(before) > 0 && len(workflows) == 0:
+		change.Kind = ChangeRemove
+		change.After = anyJSON{}
+	default:
+		change.Kind = ChangeModify
+	}
+	out.Changes = append(out.Changes, change)
 }
 
 // diffScopeMismatch emits a SeverityWarn `scope_mismatch` Break
@@ -259,6 +354,11 @@ func diffAppConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 			out.Changes = append(out.Changes, Change{
 				Field: "memory", Kind: ChangeAdd,
 				After: AsAny(*p.RAMMB),
+			})
+		}
+		if p.VCPU != nil {
+			out.Changes = append(out.Changes, Change{
+				Field: "vcpu", Kind: ChangeAdd, After: AsAny(*p.VCPU),
 			})
 		}
 		if p.CPUMillicores != nil {
@@ -355,6 +455,12 @@ func diffAppConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 		out.Changes = append(out.Changes, Change{
 			Field: "memory", Kind: ChangeModify,
 			Before: AsAny(base.RAMMB), After: AsAny(*p.RAMMB),
+		})
+	}
+	if p.VCPU != nil && *p.VCPU != base.VCPU {
+		out.Changes = append(out.Changes, Change{
+			Field: "vcpu", Kind: ChangeModify,
+			Before: AsAny(base.VCPU), After: AsAny(*p.VCPU),
 		})
 	}
 	if p.CPUMillicores != nil && *p.CPUMillicores != base.CPUMillicores {

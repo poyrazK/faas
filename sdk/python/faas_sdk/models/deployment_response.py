@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from ..models.log_excerpt import LogExcerpt
     from ..models.scan_result import ScanResult
     from ..models.secret_scan_result import SecretScanResult
+    from ..models.workflow_spec import WorkflowSpec
 
 
 T = TypeVar("T", bound="DeploymentResponse")
@@ -179,6 +180,8 @@ class DeploymentResponse:
     build_plan: BuildPlan | None | Unset = UNSET
     """Auto-detected build plan (issue #961 / Mega-A PR-2). One-line summary the CLI prints after `gregale deploy`.
     nil for image deploys."""
+    workflows: list[WorkflowSpec] | Unset = UNSET
+    """Validated workflow definitions persisted with this immutable deployment revision."""
     hosting_receipt: DeploymentResponseHostingReceiptType0 | None | Unset = UNSET
     """Durable non-secret deployment evidence captured after readiness, including the resolved API profile,
     artifact identity, and post-readiness smoke result."""
@@ -420,6 +423,13 @@ class DeploymentResponse:
         else:
             build_plan = self.build_plan
 
+        workflows: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.workflows, Unset):
+            workflows = []
+            for workflows_item_data in self.workflows:
+                workflows_item = workflows_item_data.to_dict()
+                workflows.append(workflows_item)
+
         hosting_receipt: dict[str, Any] | None | Unset
         if isinstance(self.hosting_receipt, Unset):
             hosting_receipt = UNSET
@@ -590,6 +600,8 @@ class DeploymentResponse:
             field_dict["secret_scan"] = secret_scan
         if build_plan is not UNSET:
             field_dict["build_plan"] = build_plan
+        if workflows is not UNSET:
+            field_dict["workflows"] = workflows
         if hosting_receipt is not UNSET:
             field_dict["hosting_receipt"] = hosting_receipt
         if deployed_by_user_id is not UNSET:
@@ -640,6 +652,7 @@ class DeploymentResponse:
         from ..models.log_excerpt import LogExcerpt
         from ..models.scan_result import ScanResult
         from ..models.secret_scan_result import SecretScanResult
+        from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -937,6 +950,15 @@ class DeploymentResponse:
 
         build_plan = _parse_build_plan(d.pop("build_plan", UNSET))
 
+        _workflows = d.pop("workflows", UNSET)
+        workflows: list[WorkflowSpec] | Unset = UNSET
+        if _workflows is not UNSET:
+            workflows = []
+            for workflows_item_data in _workflows:
+                workflows_item = WorkflowSpec.from_dict(workflows_item_data)
+
+                workflows.append(workflows_item)
+
         def _parse_hosting_receipt(data: object) -> DeploymentResponseHostingReceiptType0 | None | Unset:
             if data is None:
                 return data
@@ -1176,6 +1198,7 @@ class DeploymentResponse:
             scope=scope,
             secret_scan=secret_scan,
             build_plan=build_plan,
+            workflows=workflows,
             hosting_receipt=hosting_receipt,
             deployed_by_user_id=deployed_by_user_id,
             deployed_via=deployed_via,

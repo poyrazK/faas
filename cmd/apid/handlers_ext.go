@@ -4720,6 +4720,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 			bp.Entrypoint = profile.StartCommand
 			bp.Port = profile.Port
 			bp.HealthPath = profile.HealthPath
+			bp.ConfigFile = profile.ConfigFile
 		}
 		if !profileLoaded && d.SourcePath != "" {
 			// Pre-profile deployments may still have a spool available. Keep
@@ -4738,6 +4739,9 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 			bp.Port = d.OverridePort
 		}
 		resp.BuildPlan = bp
+	}
+	if len(d.Workflows) > 0 && string(d.Workflows) != "null" {
+		_ = json.Unmarshal(d.Workflows, &resp.Workflows)
 	}
 	return resp
 }

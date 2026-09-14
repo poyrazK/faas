@@ -8,6 +8,7 @@ import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { ScanResult } from './ScanResult.js';
 import type { SecretScanResult } from './SecretScanResult.js';
+import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
  * One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design.
  */
@@ -147,6 +148,10 @@ export type DeploymentResponse = {
    * Auto-detected build plan (issue #961 / Mega-A PR-2). One-line summary the CLI prints after `gregale deploy`. nil for image deploys.
    */
   build_plan?: (BuildPlan | null);
+  /**
+   * Validated workflow definitions persisted with this immutable deployment revision.
+   */
+  workflows?: Array<WorkflowSpec>;
   /**
    * Durable non-secret deployment evidence captured after readiness, including the resolved API profile, artifact identity, and post-readiness smoke result.
    */

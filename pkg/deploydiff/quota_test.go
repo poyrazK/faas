@@ -40,6 +40,24 @@ func TestQuota_FreshAppAtCapBlocksButExistingAppDoesNot(t *testing.T) {
 	}
 }
 
+// adr: 122
+func TestQuotaValidatesVCPUAndRolloutParity(t *testing.T) {
+	limits := api.MustLimitsFor(api.PlanHobby)
+	badVCPU := limits.VCPU + 1
+	traffic := 25
+	canary := &api.CanaryPresetSpec{Preset: "balanced"}
+	got := Quota(api.PlanHobby, Baseline{}, Pending{
+		AppConfig:      AppConfigPatch{VCPU: &badVCPU},
+		TrafficPercent: &traffic,
+		Canary:         canary,
+	}, QuotaConfig{Limits: limits})
+	for _, code := range []string{api.CodeValidation, api.CodePlanTrafficSplitNotAllowed} {
+		if !hasCode(got, code) {
+			t.Errorf("missing %s break: %+v", code, got)
+		}
+	}
+}
+
 // TestQuota_StreamingGate_Free — Free plan cannot enable streaming.
 func TestQuota_StreamingGate_Free(t *testing.T) {
 	limits := api.MustLimitsFor(api.PlanFree)

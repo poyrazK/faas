@@ -77,7 +77,8 @@ func TestDeployPreviewRequested(t *testing.T) {
 	}
 }
 
-func TestValidateDeployDiffManifest_RejectsWorkflows(t *testing.T) {
+// adr: 081
+func TestValidateDeployDiffManifestAcceptsWorkflows(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir, `workflows:
   - name: process_order
@@ -86,9 +87,8 @@ func TestValidateDeployDiffManifest_RejectsWorkflows(t *testing.T) {
         run: charge_stripe
 `)
 
-	err := validateDeployDiffManifest(dir)
-	if err == nil || !strings.Contains(err.Error(), "not supported by deploy --diff") {
-		t.Fatalf("error = %v, want explicit workflow diff error", err)
+	if err := validateDeployDiffManifest(dir); err != nil {
+		t.Fatalf("valid workflow preview was rejected: %v", err)
 	}
 }
 

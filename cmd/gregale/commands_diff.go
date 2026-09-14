@@ -35,6 +35,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/deploydiff"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
@@ -57,7 +58,11 @@ type diffCLIOptions struct {
 	Manifest *api.AppManifest
 	// BuildPlan is the resolved source/workload intent. It keeps a fresh
 	// preview meaningful when resource flags use server defaults.
-	BuildPlan *api.BuildPlan
+	BuildPlan      *api.BuildPlan
+	TrafficPercent *int
+	Canary         *api.CanaryPresetSpec
+	Workflows      []api.WorkflowSpec
+	NoTriggers     bool
 	// Crons is the post-deploy cron list (full-replacement).
 	// Populated from the gregale.yaml triggers fan-out so the diff
 	// shows "would create cron X" rows.
@@ -100,7 +105,7 @@ func deployPreviewRequested(dryRun, diff, serverDiff bool) (bool, error) {
 // into the diff CLI options. Called from cmdDeployTarball's
 // --diff short-circuit path so the diff sees the same flags a real
 // deploy would.
-func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string, requireAuthnPtr *bool, appProtocolPtr *string, resourceProfile string) diffCLIOptions {
+func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string, requireAuthnPtr *bool, appProtocolPtr *string, resourceProfile string, vcpu int) diffCLIOptions {
 	opts := diffCLIOptions{
 		Slug:     slug,
 		AppShape: sh,
@@ -108,6 +113,10 @@ func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string
 		Handler:  handler,
 		Image:    image,
 		Cwd:      cwd,
+	}
+	if vcpu != 0 {
+		value := vcpu
+		opts.AppConfig.VCPU = &value
 	}
 	if requireAuthnPtr != nil {
 		v := *requireAuthnPtr
@@ -150,9 +159,14 @@ func buildPreviewBuildPlan(srcDir string, sh shape, runtime, handler, sourceSHA2
 		// framework explicit as unknown rather than accidentally sniffing
 		// the operator's current working directory.
 		if !imageDeploy && srcDir != "" {
-			fw := detectFramework(srcDir)
-			plan.Framework = string(fw)
-			plan.Version = detectFrameworkVersion(srcDir, fw)
+			if profile, err := frameworkprofile.AnalyzeDir(srcDir); err == nil {
+				plan.Framework = profile.Framework
+				plan.Version = profile.FrameworkVer
+				plan.Entrypoint = profile.StartCommand
+				plan.Port = profile.Port
+				plan.HealthPath = profile.HealthPath
+				plan.ConfigFile = profile.ConfigFile
+			}
 		}
 	}
 	return plan
@@ -261,10 +275,9 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	return 0
 }
 
-// validateDeployDiffManifest rejects manifest declarations that the diff
-// projection cannot represent. In particular, workflow definitions must not
-// disappear from either the local or server diff request while the runtime
-// deployment persistence surface is still staged.
+// validateDeployDiffManifest applies the same intrinsic manifest validation as
+// deployment. Plan-specific workflow validation runs through
+// loadWorkflowManifestForDeploy before the preview request is built.
 func validateDeployDiffManifest(cwd string) error {
 	if cwd == "" {
 		return nil
@@ -275,9 +288,6 @@ func validateDeployDiffManifest(cwd string) error {
 	}
 	if !ok || m == nil {
 		return nil
-	}
-	if len(m.Workflows) > 0 {
-		return errors.New("workflow declarations are not supported by deploy --diff until workflow runtime deployment persistence is enabled")
 	}
 	return m.Validate()
 }
@@ -347,7 +357,11 @@ func buildBaseline(ctx context.Context, client *api.Client, slug string) (deploy
 // a [deploydiff.Pending]. The cron fan-out mirrors
 // [deployManifestTriggers] but reads rather than writes.
 func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, baseline deploydiff.Baseline) deploydiff.Pending {
-	p := deploydiff.Pending{AppConfig: opts.AppConfig, BuildPlan: opts.BuildPlan}
+	p := deploydiff.Pending{
+		AppConfig: opts.AppConfig, BuildPlan: opts.BuildPlan,
+		TrafficPercent: opts.TrafficPercent, Canary: opts.Canary,
+		Workflows: opts.Workflows,
+	}
 	// Manifest: PR-0 synthesises a placeholder from the CLI flags
 	// (image / handler). Real manifest extraction from the tarball
 	// is the imaged contract — PR-0 keeps the diff text-only so
@@ -357,7 +371,9 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 	}
 	// gregale.yaml triggers → crons. Keep this projection shared with
 	// --server-diff so both preview modes send the same pending list.
-	p.Crons = previewCronsFromManifest(opts.Cwd, opts.Slug)
+	if !opts.NoTriggers {
+		p.Crons = previewCronsFromManifest(opts.Cwd, opts.Slug)
+	}
 	return p
 }
 
@@ -471,7 +487,7 @@ func isNotFound(err error) bool {
 //     GetApp 404 → isNotFound branch. The wire is the source of
 //     truth here too.
 func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
-	if opts.Crons == nil {
+	if opts.Crons == nil && !opts.NoTriggers {
 		opts.Crons = previewCronsFromManifest(opts.Cwd, opts.Slug)
 	}
 	req := diffRequestFromCLI(opts)
@@ -506,7 +522,13 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 // profiles, so the local and server preview adapters cannot silently drift
 // as new deploy flags are added.
 func diffRequestFromCLI(opts diffCLIOptions) api.DiffRequest {
-	req := api.DiffRequest{ImageRef: opts.Image, BuildPlan: opts.BuildPlan}
+	req := api.DiffRequest{
+		ImageRef: opts.Image, BuildPlan: opts.BuildPlan,
+		TrafficPercent: opts.TrafficPercent, Canary: opts.Canary,
+	}
+	if opts.Workflows != nil {
+		req.Workflows = append([]api.WorkflowSpec{}, opts.Workflows...)
+	}
 	// Preserve every pointer in the local patch. In particular, resource
 	// profiles populate RAMMB/CPUMillicores; dropping those fields here made
 	// --server-diff disagree with the local preview for the same command.
@@ -522,6 +544,7 @@ func diffRequestFromCLI(opts diffCLIOptions) api.DiffRequest {
 func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPatch {
 	patch := &api.DiffAppConfigPatch{
 		RAMMB:               p.RAMMB,
+		VCPU:                p.VCPU,
 		CPUMillicores:       p.CPUMillicores,
 		IdleTimeoutS:        p.IdleTimeoutS,
 		MaxConcurrency:      p.MaxConcurrency,
@@ -537,7 +560,7 @@ func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPa
 		EvictionPriority:    p.EvictionPriority,
 		AppProtocol:         p.AppProtocol,
 	}
-	if patch.RAMMB == nil && patch.CPUMillicores == nil &&
+	if patch.RAMMB == nil && patch.VCPU == nil && patch.CPUMillicores == nil &&
 		patch.IdleTimeoutS == nil && patch.MaxConcurrency == nil &&
 		patch.MinInstances == nil && patch.EgressAllowlist == nil &&
 		patch.AutoscaleTargetRPS == nil && patch.AutoscaleTargetCP == nil &&

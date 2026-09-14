@@ -2072,6 +2072,10 @@ type DeploymentResponse struct {
 	// String fields only because pkg/api cannot import pkg/state
 	// (the App.Type enum lives in pkg/state/types.go).
 	BuildPlan *BuildPlan `json:"build_plan,omitempty"`
+	// Workflows is the validated declarative workflow set persisted with this
+	// deployment. It lets deploy preview compare the next immutable revision
+	// with the currently deployed workflow contract.
+	Workflows []WorkflowSpec `json:"workflows,omitempty"`
 	// APIHostingReceipt is the non-secret evidence captured when imaged
 	// promoted this deployment to live. It is intentionally free-form on the
 	// API surface so future receipt schema versions remain additive.
@@ -2178,6 +2182,7 @@ type BuildPlan struct {
 	Handler    string `json:"handler,omitempty"`
 	Port       int    `json:"port,omitempty"`
 	HealthPath string `json:"health_path,omitempty"`
+	ConfigFile string `json:"config_file,omitempty"`
 	Class      string `json:"class,omitempty"` // app|function
 	// SourceSHA256 identifies the exact source archive being previewed.
 	// It is a non-secret content identity, not source contents.

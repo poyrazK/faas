@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -179,7 +178,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if typ != state.AppTypeApp && typ != state.AppTypeFunction {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid type", "type must be app or function")
 	}
-	if typ == state.AppTypeFunction && req.Runtime != "node22" && req.Runtime != "python312" && req.Runtime != "go124" && req.Runtime != "go124-alpine" && req.Runtime != "node24" && req.Runtime != "python313" {
+	if typ == state.AppTypeFunction && !api.ValidFunctionRuntime(req.Runtime) {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid runtime", "functions require runtime node22, python312, go124, go124-alpine, node24, or python313")
 	}
@@ -997,15 +996,10 @@ func validSlug(s string) bool { return api.ValidAppSlug(s) }
 // let any non-OCI prefix through (including control chars / whitespace /
 // extra @-separators). The host charset forbids control chars and
 // whitespace explicitly, so the entire accepted string is printable OCI.
-var digestPinnedRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
-
 // parseImageDigest requires a digest-pinned reference (spec gap G1: public
 // registries, digest-pinned) and returns the digest portion (sha256:...).
 func parseImageDigest(ref string) (string, bool) {
-	if !digestPinnedRE.MatchString(ref) {
-		return "", false
-	}
-	return ref[strings.Index(ref, "@"):], true
+	return api.DeploymentImageDigest(ref)
 }
 
 // isDigestPinned reports whether ref is a digest-pinned reference (the form
@@ -1013,7 +1007,7 @@ func parseImageDigest(ref string) (string, bool) {
 // parse the full ref via oci.ParseReference so they can dial the right
 // registry host.
 func isDigestPinned(ref string) bool {
-	return digestPinnedRE.MatchString(ref)
+	return api.ValidDeploymentImage(ref)
 }
 
 func orDefault(v, def string) string {

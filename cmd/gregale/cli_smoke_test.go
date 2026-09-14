@@ -49,7 +49,7 @@ func TestGregaleCLI_Deploy_NoAuthExitsTwo(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	code := cmdDeployTarball([]string{"--image", "registry.example/foo@sha256:abc", "--name", "no-auth-app"})
+	code := cmdDeployTarball([]string{"--image", "registry.example/foo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--name", "no-auth-app"})
 	if code != 2 {
 		t.Errorf("cmdDeployTarball exit code = %d, want 2 (errAuth contract)", code)
 	}
@@ -118,7 +118,7 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdDeployTarball([]string{"--image", "registry.example/foo@sha256:abc", "--name", "smoke-app"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.example/foo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--name", "smoke-app"}); code != 0 {
 		t.Errorf("cmdDeployTarball exit code = %d, want 0", code)
 	}
 	if hits[0] != "/v1/apps" {

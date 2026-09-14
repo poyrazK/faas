@@ -46,7 +46,7 @@ func TestRunSubcommandHelpIsLocalAndValidationStillFails(t *testing.T) {
 }
 
 func TestBuildDiffOptionsResolvesResourceProfile(t *testing.T) {
-	opts := buildDiffOptions("demo", shapeApp, "", "", "", t.TempDir(), nil, nil, "micro")
+	opts := buildDiffOptions("demo", shapeApp, "", "", "", t.TempDir(), nil, nil, "micro", 0)
 	if opts.AppConfig.RAMMB == nil || *opts.AppConfig.RAMMB != 128 {
 		t.Fatalf("micro RAM projection = %v, want 128", opts.AppConfig.RAMMB)
 	}

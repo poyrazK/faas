@@ -34,6 +34,7 @@ class DiffAppConfigPatch:
     """
 
     ram_mb: int | Unset = UNSET
+    vcpu: int | Unset = UNSET
     cpu_millicores: DiffAppConfigPatchCpuMillicores | Unset = UNSET
     idle_timeout_s: int | Unset = UNSET
     max_concurrency: int | Unset = UNSET
@@ -54,6 +55,8 @@ class DiffAppConfigPatch:
 
     def to_dict(self) -> dict[str, Any]:
         ram_mb = self.ram_mb
+
+        vcpu = self.vcpu
 
         cpu_millicores: int | Unset = UNSET
         if not isinstance(self.cpu_millicores, Unset):
@@ -96,6 +99,8 @@ class DiffAppConfigPatch:
         field_dict.update({})
         if ram_mb is not UNSET:
             field_dict["ram_mb"] = ram_mb
+        if vcpu is not UNSET:
+            field_dict["vcpu"] = vcpu
         if cpu_millicores is not UNSET:
             field_dict["cpu_millicores"] = cpu_millicores
         if idle_timeout_s is not UNSET:
@@ -131,6 +136,8 @@ class DiffAppConfigPatch:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         ram_mb = d.pop("ram_mb", UNSET)
+
+        vcpu = d.pop("vcpu", UNSET)
 
         _cpu_millicores = d.pop("cpu_millicores", UNSET)
         cpu_millicores: DiffAppConfigPatchCpuMillicores | Unset
@@ -177,6 +184,7 @@ class DiffAppConfigPatch:
 
         diff_app_config_patch = cls(
             ram_mb=ram_mb,
+            vcpu=vcpu,
             cpu_millicores=cpu_millicores,
             idle_timeout_s=idle_timeout_s,
             max_concurrency=max_concurrency,

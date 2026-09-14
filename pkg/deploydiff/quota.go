@@ -92,6 +92,39 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 			Field:  "cpu_millicores", Observed: AsAny(*pending.AppConfig.CPUMillicores),
 		})
 	}
+	if pending.AppConfig.VCPU != nil {
+		ramMB := limits.RAMMB
+		if pending.AppConfig.RAMMB != nil {
+			ramMB = *pending.AppConfig.RAMMB
+		}
+		if prob := api.ValidateAppCPURAMPair(limits, ramMB, *pending.AppConfig.VCPU); prob != nil {
+			out = append(out, Break{
+				Code: prob.Code, Severity: SeverityError, Reason: prob.Detail,
+				Field: "vcpu", Observed: AsAny(*pending.AppConfig.VCPU), Limit: AsAny(limits.VCPU),
+			})
+		}
+	}
+	if pending.TrafficPercent != nil && (*pending.TrafficPercent < 0 || *pending.TrafficPercent > 100) {
+		out = append(out, Break{
+			Code: api.CodeInvalidTrafficPercent, Severity: SeverityError,
+			Reason: "traffic_percent must be between 0 and 100", Field: "deployment.traffic_percent",
+			Observed: AsAny(*pending.TrafficPercent), Limit: AsAny(100),
+		})
+	}
+	if pending.TrafficPercent != nil && pending.Canary != nil {
+		out = append(out, Break{
+			Code: api.CodeValidation, Severity: SeverityError,
+			Reason: "traffic_percent and canary are mutually exclusive rollout policies", Field: "deployment.rollout",
+		})
+	}
+	usesSplit := pending.TrafficPercent != nil && *pending.TrafficPercent != 100
+	usesCanary := pending.Canary != nil && pending.Canary.Preset != "" && pending.Canary.Preset != "none"
+	if (usesSplit || usesCanary) && !p.TrafficSplitAllowed() {
+		out = append(out, Break{
+			Code: api.CodePlanTrafficSplitNotAllowed, Severity: SeverityError,
+			Reason: "traffic splitting is not enabled on this plan", Field: "deployment.rollout",
+		})
+	}
 	// MaxConcurrency cap.
 	if pending.AppConfig.MaxConcurrency != nil && *pending.AppConfig.MaxConcurrency > limits.MaxConcurrency {
 		out = append(out, Break{

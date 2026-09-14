@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -894,6 +895,26 @@ func validateExplicitDockerfile(sourceDir string) error {
 	return nil
 }
 
+// incompatibleCreateOnlyFlags enforces an explicit allowlist for the mode
+// that reserves app metadata without creating a deployment. Any option whose
+// only destination is a deployment must fail instead of being silently lost.
+func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
+	allowed := map[string]struct{}{
+		"create-only": {}, "name": {}, "template": {}, "path": {}, "worktree": {},
+		"function": {}, "app": {}, "runtime": {}, "handler": {}, "profile": {},
+		"vcpu": {}, "require-authn": {}, "no-require-authn": {}, "app-protocol": {},
+		"json": {},
+	}
+	var incompatible []string
+	for name := range explicit {
+		if _, ok := allowed[name]; !ok {
+			incompatible = append(incompatible, "--"+name)
+		}
+	}
+	sort.Strings(incompatible)
+	return incompatible
+}
+
 // createOrFetchApp issues CreateApp and, on a 409 (the slug is taken),
 // probes the server with GetApp to disambiguate "owned by this account"
 // from "owned by another account". Returns nil on success (either a fresh
@@ -939,8 +960,17 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 		// enforces IDOR via silent 404, so a 200 means "ours" and a 404
 		// means "either race-with-peer or other-account — we cannot tell,
 		// so refuse to deploy and tell the operator".
-		if _, gerr := client.GetApp(ctx, req.Slug); gerr != nil {
+		existing, gerr := client.GetApp(ctx, req.Slug)
+		if gerr != nil {
 			return fmt.Errorf("slug %q is already in use; pick a different --name", req.Slug)
+		}
+		requestedType := req.Type
+		if requestedType == "" {
+			requestedType = "app"
+		}
+		if _, problem := api.ValidateExistingAppShape(existing.Type, existing.Runtime, requestedType, req.Runtime); problem != nil {
+			problem.Detail = fmt.Sprintf("app %q: %s", req.Slug, problem.Detail)
+			return &api.APIError{Problem: *problem}
 		}
 		// Same account: mirror --require-authn / --no-require-authn (and
 		// --app-protocol, when set) onto the existing app via PATCH. The
@@ -1037,7 +1067,10 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 		return nil, err
 	}
 	if len(m.Workflows) == 0 {
-		return nil, nil
+		// A present manifest with no workflows is an explicit desired empty
+		// set. Preserve non-nil so preview can report removal from the latest
+		// deployment rather than treating it as omitted intent.
+		return []api.WorkflowSpec{}, nil
 	}
 	acct, err := client.Whoami(ctx)
 	if err != nil {
@@ -1046,7 +1079,36 @@ func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClien
 	if err := m.ValidateForPlan(api.Plan(acct.Plan)); err != nil {
 		return nil, err
 	}
-	return append([]api.WorkflowSpec(nil), m.Workflows...), nil
+	return append([]api.WorkflowSpec{}, m.Workflows...), nil
+}
+
+// validateSingleAppManifestTargets prevents the single-app deploy path from
+// silently dropping declarations it cannot apply. Project deploy owns
+// cross-workload and unified broker-trigger reconciliation; the direct path
+// currently supports only cron triggers for its selected slug.
+func validateSingleAppManifestTargets(cwd, slug string) error {
+	if cwd == "" {
+		return nil
+	}
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return err
+	}
+	if !ok || m == nil {
+		return nil
+	}
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	for i, trigger := range m.Triggers {
+		if trigger.App != slug {
+			return fmt.Errorf("trigger %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, trigger.App, slug)
+		}
+		if trigger.Kind != gregalemanifest.TriggerKindCron {
+			return fmt.Errorf("trigger %d uses kind %q; single-app deploy currently supports manifest cron triggers only, use --project for unified triggers", i+1, trigger.Kind)
+		}
+	}
+	return nil
 }
 
 // deployManifestTriggers fans the manifest's `triggers:` block out to
@@ -1477,6 +1539,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			"gregale deploy accepts flags only; unexpected positional arguments: %s",
 			strings.Join(fs.Args(), " ")))
 	}
+	// Capture explicit presence once. Several deploy flags use sentinel values,
+	// and create-only/preflight validation must distinguish an omitted default
+	// from a customer-supplied value before authentication or source I/O.
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	// Project scope controls are all planner inputs. Treat each one as a
 	// project deploy request even when the operator omitted the discoverable
 	// --project spelling; otherwise --exclude/--show-affected silently fell
@@ -1496,6 +1563,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// deploy-local --json spelling equivalent for the diff path,
 	// whose renderer uses a separate option field.
 	*diffJSON = *diffJSON || jsonOutput
+	if (*diffStrict || *diffLenient) && !*dryRun && !*diff && !*serverDiff {
+		return printErr("Invalid flags", fmt.Errorf("--strict and --lenient require --dry-run, --diff, or --server-diff"))
+	}
 	preview, previewErr := deployPreviewRequested(*dryRun, *diff, *serverDiff)
 	if previewErr != nil {
 		return printErr("Invalid flags", previewErr)
@@ -1518,6 +1588,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *createOnly && existingApp {
 		return printErr("Invalid flags", fmt.Errorf("--create-only cannot be used from an existing developer app"))
+	}
+	if *createOnly {
+		if incompatible := incompatibleCreateOnlyFlags(explicit); len(incompatible) > 0 {
+			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with deployment-only options: %s", strings.Join(incompatible, ", ")))
+		}
 	}
 	// Issue #560: flag-pair mutex check (mirrors cmdApp /
 	// cmdAppScale --warm-snapshot/--no-warm-snapshot). Setting
@@ -1553,6 +1628,21 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *vcpu < 0 {
 		return printErr("Invalid --vcpu", fmt.Errorf("must be zero (plan default) or greater; got %d", *vcpu))
 	}
+	if explicit["app-protocol"] && !api.IsValidAppProtocol(*appProtocol) {
+		problem := api.NewProblem(http.StatusBadRequest, api.CodeAppProtocolInvalid,
+			"Invalid app protocol", "app_protocol must be one of: http1, http2, grpc")
+		return printErr("Invalid --app-protocol", &api.APIError{Problem: *problem})
+	}
+	if *trafficPercent < -1 || *trafficPercent > 100 {
+		return printErr("Invalid --traffic-percent", &api.APIError{Problem: *api.ErrInvalidTrafficPercent(*trafficPercent)})
+	}
+	canarySpec, canaryErr := buildCanarySpec(*canaryPreset, *canaryStages)
+	if canaryErr != nil {
+		return printErr("Invalid canary rollout", &api.APIError{Problem: *api.ErrInvalidCanaryPreset(canaryErr.Error())})
+	}
+	if explicit["traffic-percent"] && canarySpec != nil {
+		return printErr("Invalid rollout policy", &api.APIError{Problem: *api.ErrValidation("traffic_percent and canary are mutually exclusive rollout policies")})
+	}
 	// Issue #737 / ADR-083: --function and --app are mutually exclusive.
 	// Setting both is ambiguous noise; reject before any side effects so
 	// the customer's first response from the CLI is not a silent shape
@@ -1562,6 +1652,36 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if err := validateDeploySourceSelection(*sourcePath, *worktree, *image, *tarball, *repo, *templateName, *githubSnippet, *ref); err != nil {
 		return printErr("Invalid flags", err)
+	}
+	if *image != "" && !api.ValidDeploymentImage(*image) {
+		problem := api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
+			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:...")
+		return printErr("Invalid --image", &api.APIError{Problem: *problem})
+	}
+	// Resolve template shape into immutable command intent before any source
+	// materialization. The parsed flag pointers remain an exact record of what
+	// the customer supplied, while every preview/apply adapter uses these
+	// effective values.
+	deployFunction, deployApp := *function, *app
+	deployRuntime, deployHandler := *runtime, *handler
+	if *templateName != "" {
+		if !templates.Exists(*templateName) {
+			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.Names, ", ")))
+		}
+		if rt, hnd, functionTemplate := templateFunctionConfig(*templateName); functionTemplate {
+			if deployApp {
+				return printErr("Invalid template shape", fmt.Errorf("function template %q cannot be deployed with --app", *templateName))
+			}
+			if deployRuntime != "" && deployRuntime != rt {
+				return printErr("Invalid template runtime", fmt.Errorf("template %q requires runtime %q; got %q", *templateName, rt, deployRuntime))
+			}
+			if deployHandler != "" && deployHandler != hnd {
+				return printErr("Invalid template handler", fmt.Errorf("template %q requires handler %q; got %q", *templateName, hnd, deployHandler))
+			}
+			deployFunction, deployRuntime, deployHandler = true, rt, hnd
+		} else if deployFunction {
+			return printErr("Invalid template shape", fmt.Errorf("app template %q cannot be deployed with --function", *templateName))
+		}
 	}
 	// --secret-scan=off is the documented escape hatch for customers who
 	// genuinely need to ship a Stripe test key at boot (local dev
@@ -1586,30 +1706,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if len(*reason) > 280 {
 		return printErr("Invalid --reason", fmt.Errorf("must be ≤280 characters (got %d)", len(*reason)))
 	}
-	// --app clears any --runtime/--handler the customer also set. The
-	// customer intended an app deploy; passing function fields is
-	// either a typo or a leftover from a copy-paste, and silently
-	// mixing is exactly the bug this ADR fixes. We still surface the
-	// result so a confused customer can diagnose.
-	if *app && (*runtime != "" || *handler != "") {
-		PrintProgress(os.Stderr, "WARN: --app clears --runtime=%q and --handler=%q (function fields are ignored on app deploys)", *runtime, *handler)
-		*runtime = ""
-		*handler = ""
+	// Function-only fields on an explicit app are contradictory. Reject them
+	// instead of clearing values that preview would otherwise display but apply
+	// could never persist.
+	if deployApp && (deployRuntime != "" || deployHandler != "") {
+		return printErr("Invalid flags", fmt.Errorf("--runtime and --handler require a function-shaped deploy and cannot be combined with --app"))
 	}
-	// --function without --runtime is allowed: the wire defaults to
-	// "handler.handler" (matches the function-* template convention at
-	// defaultTemplateHandler, line 48). What --function REQUIRES is
-	// for the customer's source to actually be a function — handled
-	// below when detectShape runs (or, for the --tarball path, when
-	// apid's function-runtime whitelist rejects it).
 	// fs.Visit distinguishes "unset" from "explicit zero": if the
 	// customer passed either --require-authn or --no-require-authn
 	// (but not both — checked above), we propagate the bool to the
 	// CreateApp call so a fresh deploy can opt in/out at create
 	// time. nil = unset → apid server default (false), so existing
 	// customers see no behaviour change.
-	explicit := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	if projectRequested {
 		if explicit["no-triggers"] {
 			return printErr("Unsupported project deploy flags", errors.New(
@@ -1695,6 +1803,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if slug == "" {
 		slug = deriveName()
 	}
+	if !api.ValidAppSlug(slug) {
+		problem := api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
+		return printErr("Invalid --name", &api.APIError{Problem: *problem})
+	}
 
 	// Issue #1182 §P1 follow-up: receipt emission needs the
 	// zero-config provenance (commit_sha + dirty) at the --json
@@ -1772,7 +1885,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			DeployedBy:     resolveDeployedBy(*deployedBy),
 			PRNumber:       *prNumber,
 			TrafficPercent: optTrafficPercent(*trafficPercent),
-			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
+			Canary:         canarySpec,
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers)
 		return code
 	}
@@ -1788,16 +1901,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// need to know the convention; for app templates we leave them
 	// unset so imaged auto-detects.
 	if *templateName != "" {
-		if !templates.Exists(*templateName) {
-			PrintFail(os.Stderr, "unknown --template %q (known: %s)",
-				*templateName, strings.Join(templates.Names, ", "))
-			return 1
-		}
-		if rt, hnd, ok := templateFunctionConfig(*templateName); ok {
-			*function = true
-			*runtime = rt
-			*handler = hnd
-		}
 		f, err := os.CreateTemp("", "gregale-template-*.tar.gz")
 		if err != nil {
 			return printErr("Could not create temp file", err)
@@ -1817,6 +1920,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PrintFail(os.Stderr, "--template and --image are mutually exclusive")
 			return 1
 		}
+	}
+	if deployFunction && deployRuntime == "" {
+		return printErr("Invalid --runtime", fmt.Errorf("--function requires one of: %s", strings.Join(api.FunctionRuntimes, ", ")))
+	}
+	if deployRuntime != "" && !api.ValidFunctionRuntime(deployRuntime) {
+		return printErr("Invalid --runtime", fmt.Errorf("functions require runtime %s; got %q", strings.Join(api.FunctionRuntimes, ", "), deployRuntime))
 	}
 
 	// Read and validate the optional secret bundle before any app mutation.
@@ -1865,7 +1974,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// sends Type="function" when the customer asked for it. Without
 	// this branch, `gregale deploy --tarball my.tgz --function` would
 	// still create an app-type app row.
-	if *function {
+	if deployFunction {
 		resolvedShape = shapeFunction
 		// Default the wire --handler to the function-template
 		// convention so a customer who runs `gregale deploy
@@ -1874,10 +1983,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// `gregale --template function-node --tarball my.tgz`.
 		// Without this, apid's function validator rejects the
 		// empty handler form field with a 400.
-		if *handler == "" {
-			*handler = defaultTemplateHandler
+		if deployHandler == "" {
+			deployHandler = defaultTemplateHandler
 		}
-	} else if *app {
+	} else if deployApp {
 		resolvedShape = shapeApp
 	}
 	cwd, cwdErr := os.Getwd()
@@ -1919,6 +2028,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				workspaceContextRoot = contextRoot
 				sourceRoot = selectedRoot
 			}
+		}
+	}
+	if !api.ValidAppSlug(slug) {
+		problem := api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
+		return printErr("Invalid --name", &api.APIError{Problem: *problem})
+	}
+	if (deployRuntime != "" || deployHandler != "") && !deployFunction {
+		functionSource := *image == "" && *tarball == "" && detectShape(sourceDir) == shapeFunction
+		if !functionSource {
+			return printErr("Invalid function flags", fmt.Errorf("--runtime and --handler require an explicit or detected function-shaped deploy"))
 		}
 	}
 	// --project is an explicit, safe opt-in to project apply. Keep the
@@ -1988,7 +2108,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	doctorEnabled := *doctorStrict || (!*noDoctor && localZeroConfig)
 	if doctorEnabled && sourceDir != "" {
 		doctorShape := resolvedShape
-		if !*function && !*app {
+		if !deployFunction && !deployApp {
 			doctorShape = detectShape(sourceDir)
 		}
 		rep := runDoctorChecksForShape(sourceDir, doctorShape)
@@ -2155,7 +2275,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			cancel()
 		}
 		if gitArchivePath != "" {
-			if !*function && !*app {
+			if !deployFunction && !deployApp {
 				detected, rt, hnd, detectErr := detectGitArchiveShape(gitArchivePath, sourceRoot)
 				if detectErr != nil {
 					return printErr("Could not detect committed deploy source", detectErr)
@@ -2163,15 +2283,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				if detected == shapeFunction {
 					resolvedShape = shapeFunction
 					displayRuntime, displayHandler := rt, hnd
-					if *runtime != "" {
-						displayRuntime = *runtime
+					if deployRuntime != "" {
+						displayRuntime = deployRuntime
 					} else {
-						*runtime = rt
+						deployRuntime = rt
 					}
-					if *handler != "" {
-						displayHandler = *handler
+					if deployHandler != "" {
+						displayHandler = deployHandler
 					} else {
-						*handler = hnd
+						deployHandler = hnd
 					}
 					if !jsonOutput {
 						PrintOK(osStdout, "Detected: function, runtime=%s, handler=%s, class=function", displayRuntime, displayHandler)
@@ -2179,7 +2299,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			buildOnlyFiles, buildOnlyErr := gitArchiveGoBuildOnlyFiles(
-				gitArchivePath, sourceRoot, resolvedShape, *runtime,
+				gitArchivePath, sourceRoot, resolvedShape, deployRuntime,
 			)
 			if buildOnlyErr != nil {
 				return printErr("Could not prepare committed deploy source", buildOnlyErr)
@@ -2202,7 +2322,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// no Git archive was selected. This covers the existing
 		// non-git/non-origin fallback and the explicit --worktree mode.
 		if *tarball == "" {
-			detected, rt, hnd, err := resolveDeployShape(sourceDir, *function, *app, jsonOutput, *runtime, *handler)
+			detected, rt, hnd, err := resolveDeployShape(sourceDir, deployFunction, deployApp, jsonOutput, deployRuntime, deployHandler)
 			if err != nil {
 				return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 			}
@@ -2213,12 +2333,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				// default-extension→runtime map). The helper already
 				// printed "Detected: function, runtime=<rt>, handler=<h>"
 				// using the inferred values; the wire uses whatever is
-				// in *runtime / *handler here.
-				if *runtime == "" {
-					*runtime = rt
+				// in deployRuntime / deployHandler here.
+				if deployRuntime == "" {
+					deployRuntime = rt
 				}
-				if *handler == "" {
-					*handler = hnd
+				if deployHandler == "" {
+					deployHandler = hnd
 				}
 				// Pack the cwd so the multipart upload has a tarball —
 				// the function convention needs the file on the wire for
@@ -2279,6 +2399,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Not logged in", authErr)
 		}
 	}
+	if !projectRequested && !*noTriggers {
+		if manifestErr := validateSingleAppManifestTargets(sourceDir, slug); manifestErr != nil {
+			return printErr("Invalid deploy manifest", manifestErr)
+		}
+	}
 	// Fingerprint local source bytes before the first deployment mutation so
 	// the default logical retry key follows the exact archive being shipped.
 	// Normal deploys with an explicit key skip this extra read; previews still
@@ -2301,7 +2426,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		appProtocolIntent = *appProtocolPtr
 	}
 	deployIntent := deployIdempotencyIntent{
-		Slug: slug, Shape: resolvedShape, Runtime: *runtime, Handler: *handler,
+		Slug: slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler,
 		Image: *image, SourceSHA256: sourceSHA256, SourceRoot: sourceRoot,
 		Profile: *profile, Dockerfile: *dockerfile, RequireAuthn: requireAuthnPtr,
 		AppProtocol: appProtocolIntent, Reason: *reason, Tag: *tag,
@@ -2324,6 +2449,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return printErr("Dockerfile build unavailable", err)
 			}
 		}
+		previewWorkflows, workflowErr := loadWorkflowManifestForDeploy(ctx, client, sourceDir)
+		if workflowErr != nil {
+			return printErr("Workflow manifest validation failed", workflowErr)
+		}
 		// Project deploys have a different preview contract from a
 		// single-app diff: the apply path is driven by ScanProject, so
 		// preview must use that same planner and render the complete
@@ -2339,8 +2468,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				*deployShowAffected, *diffJSON,
 				*diffStrict || !*diffLenient)
 		}
-		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
-		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, *runtime, *handler, sourceSHA256, *image != "", *dockerfile)
+		opts := buildDiffOptions(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu)
+		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
+		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
+		opts.Canary = canarySpec
+		opts.Workflows = previewWorkflows
+		opts.NoTriggers = *noTriggers
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
 		opts.Strict = !*diffLenient
@@ -2494,7 +2627,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 	if !existingApp {
-		createReq := buildCreateRequest(slug, resolvedShape, *runtime, requireAuthnPtr, appProtocolPtr, *profile)
+		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
 		}
@@ -2570,7 +2703,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			PRNumber:       *prNumber,
 			Workflows:      workflowDefs,
 			TrafficPercent: optTrafficPercent(*trafficPercent),
-			Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
+			Canary:         canarySpec,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -2579,7 +2712,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if developerSync != nil {
 			var deployErr error
 			sourceSyncStarted := time.Now()
-			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann, developerSync)
+			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann, developerSync)
 			if execution.onSourceSync != nil {
 				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
 			}
@@ -2593,9 +2726,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 				return code
 			}
-		} else if canUseResumableUpload(resolvedShape, *runtime, *handler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
+		} else if canUseResumableUpload(resolvedShape, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann, *trafficPercent, *canaryPreset, *canaryStages) {
 			uploadOptions := api.UploadDeployOptions{
-				Runtime: *runtime, Handler: *handler, Dockerfile: *dockerfile,
+				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
 				SourceRoot: sourceRoot, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs,
@@ -2617,7 +2750,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, uploadCtx, slug, *tarball, progress, uploadOptions)
 			if uploadErr == nil && !usedResumable {
 				multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
-				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
+				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
 			}
 			if uploadErr != nil {
 				if errors.Is(uploadErr, context.Canceled) || ctx.Err() != nil {
@@ -2632,7 +2765,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		} else {
 			var deployErr error
 			multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
-			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, *runtime, *handler, *dockerfile, sourceRoot, ann)
+			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
 			if deployErr != nil {
 				if errors.Is(deployErr, context.Canceled) || ctx.Err() != nil {
 					return 130
@@ -2713,7 +2846,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Tag:            annPtr(*tag),
 		DeployedBy:     annPtr(resolveDeployedBy(*deployedBy)),
 		PRNumber:       annIntPtr(*prNumber),
-		Canary:         buildCanarySpec(*canaryPreset, *canaryStages),
+		Canary:         canarySpec,
 	})
 	if err != nil {
 		code := printErr("Deploy failed", err)

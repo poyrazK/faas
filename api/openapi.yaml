@@ -18797,6 +18797,10 @@ components:
             - $ref: '#/components/schemas/BuildPlan'
             - type: 'null'
           description: "Auto-detected build plan (issue #961 / Mega-A PR-2). One-line summary the CLI prints after `gregale deploy`. nil for image deploys."
+        workflows:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowSpec' }
+          description: "Validated workflow definitions persisted with this immutable deployment revision."
         hosting_receipt:
           type: [object, "null"]
           additionalProperties: true
@@ -18920,6 +18924,9 @@ components:
         health_path:
           type: [string, "null"]
           description: "Effective readiness path selected by the source profile or deployment override."
+        config_file:
+          type: [string, "null"]
+          description: "Framework configuration file that supplied the resolved build settings, when present."
         class:
           type: [string, "null"]
           enum: [null, app, function]
@@ -21499,6 +21506,20 @@ components:
         build_plan:
           $ref: '#/components/schemas/BuildPlan'
           description: "Resolved source/workload intent for a deploy preview. Supplying this makes fresh app creation explicit even when resource values use server defaults."
+        traffic_percent:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: "Proposed initial deployment traffic weight. Mutually exclusive with canary."
+        canary:
+          oneOf:
+            - $ref: '#/components/schemas/CanaryPresetSpec'
+            - type: 'null'
+          description: "Proposed canary rollout policy. Mutually exclusive with traffic_percent."
+        workflows:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowSpec' }
+          description: "Workflow declarations that the deployment would persist."
 
     DiffAppConfigPatch:
       description: |
@@ -21510,6 +21531,7 @@ components:
       type: object
       properties:
         ram_mb: { type: integer, minimum: 128, maximum: 10240 }
+        vcpu: { type: integer, minimum: 1, maximum: 4 }
         cpu_millicores: { type: integer, enum: [250, 500, 1000] }
         idle_timeout_s: { type: integer, minimum: 30, maximum: 600 }
         max_concurrency: { type: integer, minimum: 1, maximum: 200 }

@@ -12,6 +12,7 @@
  */
 export type DiffAppConfigPatch = {
   ram_mb?: number;
+  vcpu?: number;
   cpu_millicores?: 250 | 500 | 1000;
   idle_timeout_s?: number;
   max_concurrency?: number;

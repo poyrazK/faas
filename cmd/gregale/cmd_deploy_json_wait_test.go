@@ -41,7 +41,7 @@ func TestCmdDeploy_JSONDefaultWaitPropagatesTerminalFailure(t *testing.T) {
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 1 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 1 {
 		t.Fatalf("cmdDeploy --json exit = %d, want terminal failure exit 1", code)
 	}
 	if deploymentReads.Load() == 0 {
@@ -85,7 +85,7 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	defer func() { osStdout, osStderr = oldOut, oldErr }()
 
 	started := time.Now()
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app", "--timeout", "1"}); code != 3 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app", "--timeout", "1"}); code != 3 {
 		t.Fatalf("cmdDeploy --json --timeout 1 exit = %d, want timeout exit 3", code)
 	}
 	elapsed := time.Since(started)
