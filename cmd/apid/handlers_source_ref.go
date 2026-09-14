@@ -278,30 +278,65 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
 }
 
-// resolveInstallToken reads the durable install row from
-// state.Store (state.ErrNotFound → 404 code=github_install_not_found).
-// githubd repeats the account/install binding check and owns token
-// minting inside StreamSourceRef, so the raw token never crosses
-// the apid process boundary.
+// resolveInstallToken prefers an exact app/repository binding. For an unbound
+// repository it checks every account-owned installation's repository catalog
+// and accepts exactly one match. This avoids the old recency fallback, which
+// could send an organization repository through an unrelated installation.
 func (s *server) resolveInstallToken(ctx context.Context, acct state.Account, app state.App, repoFullName string) (int64, *api.Problem) {
-	installationID := int64(0)
-	if binding, err := s.store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID); err == nil && binding.RepoFullName == repoFullName {
-		installationID = binding.InstallID
+	binding, err := s.store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID)
+	if err == nil && canonicalGitHubRepo(binding.RepoFullName) == canonicalGitHubRepo(repoFullName) {
+		return s.requireOwnedGitHubInstallation(ctx, acct.ID, binding.InstallID)
 	}
-	var inst state.GitHubInstall
-	var err error
-	if installationID > 0 {
-		inst, err = s.store.GitHubInstallForAccountInstallation(ctx, acct.ID, installationID)
-	} else {
-		inst, err = s.store.GitHubInstallForAccount(ctx, acct.ID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return 0, api.ErrCapacity("could not load repository binding")
+	}
+
+	installs, err := s.store.ListGitHubInstallationsForAccount(ctx, acct.ID)
+	if err != nil {
+		return 0, api.ErrCapacity("could not list GitHub installations")
+	}
+	if len(installs) == 0 {
+		return 0, api.ErrGitHubInstallNotFound()
+	}
+
+	wanted := canonicalGitHubRepo(repoFullName)
+	matches := make([]int64, 0, 1)
+	for _, inst := range installs {
+		repos, listErr := s.githubd.ListInstallableRepos(ctx, acct.ID, inst.InstallationID)
+		if listErr != nil {
+			if problem := api.AsProblem(listErr); problem != nil {
+				return 0, problem
+			}
+			return 0, api.ErrSourceRefUnavailable("could not resolve the repository's GitHub installation")
+		}
+		for _, repo := range repos {
+			if canonicalGitHubRepo(repo.FullName) == wanted {
+				matches = append(matches, inst.InstallationID)
+				break
+			}
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return 0, api.NewProblem(http.StatusForbidden, api.CodeGitHubRepoNotAccessible,
+			"Repository is not accessible", "none of this account's GitHub App installations can access the repository")
+	case 1:
+		return matches[0], nil
+	default:
+		return 0, api.NewProblem(http.StatusConflict, api.CodeGitHubInstallAmbiguous,
+			"GitHub installation is ambiguous", "more than one connected installation can access the repository; bind the app to select one")
+	}
+}
+
+func (s *server) requireOwnedGitHubInstallation(ctx context.Context, accountID string, installationID int64) (int64, *api.Problem) {
+	inst, err := s.store.GitHubInstallForAccountInstallation(ctx, accountID, installationID)
+	if errors.Is(err, state.ErrNotFound) {
+		return 0, api.ErrGitHubInstallNotFound()
 	}
 	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			return 0, api.ErrGitHubInstallNotFound()
-		}
-		return 0, api.ErrCapacity("could not load install")
+		return 0, api.ErrCapacity("could not load GitHub installation")
 	}
-	if inst.InstallationID == 0 {
+	if inst.InstallationID <= 0 {
 		return 0, api.ErrGitHubInstallNotFound()
 	}
 	return inst.InstallationID, nil

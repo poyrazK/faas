@@ -2757,6 +2757,34 @@ func TestPg_UpsertGitHubInstall_InsertsRow(t *testing.T) {
 	}
 }
 
+func TestPg_ListGitHubInstallationsForAccountIsScopedAndStable(t *testing.T) {
+	s, ctx := pgStore(t)
+	firstAccount := createAccount(t, s, ctx, "install-list-a@example.com")
+	secondAccount := createAccount(t, s, ctx, "install-list-b@example.com")
+	for _, inst := range []state.GitHubInstall{
+		{AccountID: firstAccount, InstallationID: 20, AuditGithubLogin: "a"},
+		{AccountID: secondAccount, InstallationID: 10, AuditGithubLogin: "b"},
+		{AccountID: firstAccount, InstallationID: 5, AuditGithubLogin: "a"},
+	} {
+		if err := s.UpsertGitHubInstall(ctx, inst); err != nil {
+			t.Fatalf("UpsertGitHubInstall(%d): %v", inst.InstallationID, err)
+		}
+	}
+
+	got, err := s.ListGitHubInstallationsForAccount(ctx, firstAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].InstallationID != 5 || got[1].InstallationID != 20 {
+		t.Fatalf("first account installs = %#v, want IDs [5 20]", got)
+	}
+	for _, inst := range got {
+		if inst.AccountID != firstAccount {
+			t.Fatalf("cross-account installation leaked: %#v", inst)
+		}
+	}
+}
+
 // TestPg_UpsertGitHubInstall_OnConflictUpdates pins the ON CONFLICT
 // DO UPDATE path: a second upsert with a different installation_id
 // overwrites the first row instead of crashing on the PK.

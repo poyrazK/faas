@@ -73,12 +73,15 @@ type sourceRefFake struct {
 	mintExpiresAt time.Time
 	mintErr       error
 
-	streamBody     io.ReadCloser // closed by caller; bytes flow to validateAndSpool
-	streamTruncate bool
-	streamBytes    int64
-	streamSHA      string
-	streamStatsErr error
-	streamErr      error
+	streamBody       io.ReadCloser // closed by caller; bytes flow to validateAndSpool
+	streamTruncate   bool
+	streamBytes      int64
+	streamSHA        string
+	streamStatsErr   error
+	streamErr        error
+	reposByInstall   map[int64][]Repo
+	repoErrByInstall map[int64]error
+	listRepoCalls    []int64
 }
 
 func (f *sourceRefFake) MintInstallationToken(_ context.Context, acctID string, instID int64) (string, time.Time, error) {
@@ -127,8 +130,14 @@ func (f *sourceRefFake) GetInstallState(context.Context, string) (InstallState, 
 func (f *sourceRefFake) ExchangeOAuthCode(context.Context, string, string, string) (string, string, error) {
 	return "", "", nil
 }
-func (f *sourceRefFake) ListInstallableRepos(context.Context, string, int64) ([]Repo, error) {
-	return nil, nil
+func (f *sourceRefFake) ListInstallableRepos(_ context.Context, _ string, installationID int64) ([]Repo, error) {
+	f.mux.Lock()
+	defer f.mux.Unlock()
+	f.listRepoCalls = append(f.listRepoCalls, installationID)
+	if err := f.repoErrByInstall[installationID]; err != nil {
+		return nil, err
+	}
+	return f.reposByInstall[installationID], nil
 }
 func (f *sourceRefFake) BindAppRepo(context.Context, string, string, int64, string, string) (string, error) {
 	return "", nil
@@ -247,6 +256,9 @@ func newSourceRefTestServer(t *testing.T, plan api.Plan, slug string, installID 
 	gh := &sourceRefFake{
 		mintToken:     "gh_tok_test",
 		mintExpiresAt: time.Now().Add(time.Hour),
+		reposByInstall: map[int64][]Repo{
+			installID: {{FullName: "onebox-faas/hello", DefaultBranch: "main"}},
+		},
 	}
 	acct, err := store.CreateAccount(context.Background(), "src-ref@example.com", plan)
 	if err != nil {
@@ -434,6 +446,91 @@ func TestSourceRef_NoInstall(t *testing.T) {
 	if got := bodyCode(t, rec); got != api.CodeGitHubInstallNotFound {
 		t.Errorf("code = %q, want %q", got, api.CodeGitHubInstallNotFound)
 	}
+}
+
+func TestSourceRef_UnboundRepoResolvesOlderMatchingInstallation(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 101)
+	if err := e.store.UpsertGitHubInstall(context.Background(), state.GitHubInstall{
+		AccountID: e.acctID, InstallationID: 202, AuditGithubLogin: "newer-install",
+		SealedAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed second install: %v", err)
+	}
+	e.gh.reposByInstall[202] = []Repo{{FullName: "other-org/service"}}
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello",
+		Ref:  "0123456789abcdef0123456789abcdef01234567",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	if e.gh.streamInstID != 101 {
+		t.Fatalf("stream installation = %d, want older matching installation 101", e.gh.streamInstID)
+	}
+	if got := e.gh.listRepoCalls; len(got) != 2 || got[0] != 101 || got[1] != 202 {
+		t.Fatalf("repository lookup order = %v, want [101 202]", got)
+	}
+}
+
+func TestSourceRef_ExactBindingSkipsRepositoryCatalogResolution(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 101)
+	if err := e.store.UpsertGitHubInstall(context.Background(), state.GitHubInstall{
+		AccountID: e.acctID, InstallationID: 202, AuditGithubLogin: "newer-install",
+	}); err != nil {
+		t.Fatalf("seed second install: %v", err)
+	}
+	if err := e.store.UpsertGithubInstallBinding(context.Background(), state.GitHubBinding{
+		AppID: e.appID, AccountID: e.acctID, BindingID: "source-ref-binding",
+		InstallID: 101, RepoFullName: "OneBox-FaaS/Hello", ProductionBranch: "main",
+	}); err != nil {
+		t.Fatalf("seed exact binding: %v", err)
+	}
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(e.tarball)}
+
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello",
+		Ref:  "0123456789abcdef0123456789abcdef01234567",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
+	}
+	if e.gh.streamInstID != 101 || len(e.gh.listRepoCalls) != 0 {
+		t.Fatalf("exact binding used install=%d catalog calls=%v, want 101 and no catalog calls",
+			e.gh.streamInstID, e.gh.listRepoCalls)
+	}
+}
+
+func TestSourceRef_UnboundRepoRejectsZeroAndMultipleInstallMatches(t *testing.T) {
+	const sha40 = "0123456789abcdef0123456789abcdef01234567"
+	t.Run("not accessible", func(t *testing.T) {
+		e := newSourceRefTestServer(t, api.PlanPro, "x", 101)
+		e.gh.reposByInstall[101] = nil
+		rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+			Repo: "onebox-faas/hello", Ref: sha40,
+		})
+		if rec.Code != http.StatusForbidden || bodyCode(t, rec) != api.CodeGitHubRepoNotAccessible {
+			t.Fatalf("status/code = %d/%q, want 403/%q; body=%s",
+				rec.Code, bodyCode(t, rec), api.CodeGitHubRepoNotAccessible, rec.Body)
+		}
+	})
+	t.Run("ambiguous", func(t *testing.T) {
+		e := newSourceRefTestServer(t, api.PlanPro, "x", 101)
+		if err := e.store.UpsertGitHubInstall(context.Background(), state.GitHubInstall{
+			AccountID: e.acctID, InstallationID: 202, AuditGithubLogin: "second",
+		}); err != nil {
+			t.Fatalf("seed second install: %v", err)
+		}
+		e.gh.reposByInstall[202] = []Repo{{FullName: "ONEBOX-FAAS/HELLO"}}
+		rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+			Repo: "onebox-faas/hello", Ref: sha40,
+		})
+		if rec.Code != http.StatusConflict || bodyCode(t, rec) != api.CodeGitHubInstallAmbiguous {
+			t.Fatalf("status/code = %d/%q, want 409/%q; body=%s",
+				rec.Code, bodyCode(t, rec), api.CodeGitHubInstallAmbiguous, rec.Body)
+		}
+	})
 }
 
 // TestSourceRef_HappyPath is the central coverage pin: a JSON POST

@@ -5185,6 +5185,46 @@ func (s *PgStore) GitHubInstallForAccount(ctx context.Context, accountID string)
 	return inst, nil
 }
 
+// ListGitHubInstallationsForAccount returns all durable installations owned
+// by one account. The stable installation-ID order makes repository
+// resolution deterministic and keeps cross-account rows out of the caller.
+func (s *PgStore) ListGitHubInstallationsForAccount(ctx context.Context, accountID string) ([]GitHubInstall, error) {
+	if accountID == "" {
+		return nil, ErrNotFound
+	}
+	rows, err := s.pool.Query(ctx,
+		`select installation_id, default_branch,
+		        sealed_install_token, token_expires_at, sealed_at,
+		        audit_github_login, last_reconciled_at,
+		        last_reconcile_error, last_reconcile_repository_count,
+		        last_reconcile_detached_count
+		   from github_installations
+		  where account_id = $1::uuid
+		  order by installation_id`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	installs := make([]GitHubInstall, 0)
+	for rows.Next() {
+		inst := GitHubInstall{AccountID: accountID}
+		if err := rows.Scan(
+			&inst.InstallationID, &inst.DefaultBranch,
+			&inst.SealedToken, &inst.TokenExpiresAt, &inst.SealedAt,
+			&inst.AuditGithubLogin, &inst.LastReconciledAt,
+			&inst.LastReconcileError, &inst.LastReconcileRepositoryCount,
+			&inst.LastReconcileDetachedCount,
+		); err != nil {
+			return nil, err
+		}
+		installs = append(installs, inst)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return installs, nil
+}
+
 // GitHubInstallForAccountInstallation returns the exact account/install row.
 // It is the authorization lookup for multi-install list, bind, source-fetch,
 // and webhook paths; a mismatch fails closed as ErrNotFound.

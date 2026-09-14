@@ -5307,6 +5307,24 @@ func (m *MemStore) GitHubInstallForAccount(_ context.Context, accountID string) 
 	return inst, nil
 }
 
+func (m *MemStore) ListGitHubInstallationsForAccount(_ context.Context, accountID string) ([]GitHubInstall, error) {
+	if accountID == "" {
+		return nil, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	installs := make([]GitHubInstall, 0)
+	for _, inst := range m.githubInstalls {
+		if inst.AccountID == accountID {
+			installs = append(installs, inst)
+		}
+	}
+	sort.Slice(installs, func(i, j int) bool {
+		return installs[i].InstallationID < installs[j].InstallationID
+	})
+	return installs, nil
+}
+
 func (m *MemStore) GitHubInstallForAccountInstallation(_ context.Context, accountID string, installationID int64) (GitHubInstall, error) {
 	if accountID == "" || installationID <= 0 {
 		return GitHubInstall{}, ErrNotFound

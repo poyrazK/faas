@@ -272,6 +272,16 @@ func TestMemStoreCoverageGitHubBindings(t *testing.T) {
 	if _, err := m.GitHubInstallForAccount(ctx, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("install empty = %v", err)
 	}
+	if err := m.UpsertGitHubInstall(ctx, GitHubInstall{
+		AccountID: account.ID, InstallationID: 3, DefaultBranch: "trunk",
+		AuditGithubLogin: "alice@example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	installs, err := m.ListGitHubInstallationsForAccount(ctx, account.ID)
+	if err != nil || len(installs) != 2 || installs[0].InstallationID != 3 || installs[1].InstallationID != 9 {
+		t.Fatalf("account installations = %#v, %v; want IDs [3 9]", installs, err)
+	}
 
 	// RecordGitHubInstallationSync — invalid IDs are harmless, counters are
 	// clamped, and an unknown installation is a no-op.

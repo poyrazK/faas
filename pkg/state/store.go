@@ -2238,6 +2238,10 @@ type Store interface {
 	// dashboard's bind picker hydrates off this signal to decide
 	// whether to render the "Connect GitHub" button vs the bind list.
 	GitHubInstallForAccount(ctx context.Context, accountID string) (GitHubInstall, error)
+	// ListGitHubInstallationsForAccount returns every installation owned by
+	// one account in installation-ID order. Repository resolution must use
+	// this account-scoped list instead of choosing a row by recency.
+	ListGitHubInstallationsForAccount(ctx context.Context, accountID string) ([]GitHubInstall, error)
 	// GitHubInstallForAccountInstallation resolves the exact installation a
 	// bind or webhook named. This is the multi-install-safe path; callers must
 	// not silently substitute another installation owned by the account.

@@ -419,6 +419,7 @@ const (
 	// clients can give a precise remediation.
 	CodeGitHubInstallNotOwned   = "github_install_not_owned"
 	CodeGitHubRepoNotAccessible = "github_repo_not_accessible"
+	CodeGitHubInstallAmbiguous  = "github_install_ambiguous"
 	// CodeSourceRefUnavailable is the DEPLOY-PROV-4 / ADR-092 (issue
 	// #739) 503 sentinel for POST /v1/apps/{slug}/deployments/source-ref
 	// when the githubd bridge is down (StreamSourceRef returns
