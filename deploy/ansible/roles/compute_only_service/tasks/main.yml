@@ -41,7 +41,7 @@
 - name: compute_only_service — install node-local schedd unit (M9)
   notify: restart faas-schedd
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/roles/control_plane_service/files/faas-schedd.service"
+    src: faas-schedd.service
     dest: /etc/systemd/system/faas-schedd.service
     owner: root
     group: root

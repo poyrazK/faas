@@ -228,6 +228,29 @@ for rel in "${shared_schedd_units[@]}"; do
   fi
 done
 
+# The compute-only role deliberately installs its own schedd unit. It shares
+# the binary and hardening contract with the control-plane unit but must not
+# inherit the control-plane PostgreSQL ordering from a copied image.
+compute_schedd_unit="${root}/deploy/ansible/roles/compute_only_service/files/faas-schedd.service"
+compute_schedd_tasks="${root}/deploy/ansible/roles/compute_only_service/tasks/main.yml"
+if [[ ! -f "$compute_schedd_unit" ]]; then
+  echo "systemd-hardening-check: missing ${compute_schedd_unit}" >&2
+  errors=$((errors + 1))
+else
+  if has_directive_value "$compute_schedd_unit" After postgresql.service; then
+    echo "systemd-hardening-check: compute-only schedd must not order after postgresql.service" >&2
+    errors=$((errors + 1))
+  fi
+  if grep -Eq '^Requires=.*postgresql\.service' "$compute_schedd_unit"; then
+    echo "systemd-hardening-check: compute-only schedd must not require postgresql.service" >&2
+    errors=$((errors + 1))
+  fi
+fi
+if [[ ! -f "$compute_schedd_tasks" ]] || ! grep -Fqx '    src: faas-schedd.service' <(sed -n '/install node-local schedd unit/,/dest: \/etc\/systemd\/system\/faas-schedd.service/p' "$compute_schedd_tasks"); then
+  echo "systemd-hardening-check: compute-only role must install its remote-DB schedd unit" >&2
+  errors=$((errors + 1))
+fi
+
 # The compute-only role is deliberately remote-DB capable. This tripwire
 # prevents a future copy/paste of the control-plane dependency from making a
 # split-box node depend on a PostgreSQL service that is not installed there.
