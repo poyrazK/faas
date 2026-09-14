@@ -30,8 +30,9 @@ class AccountLimits:
     included_gb_hours: int
     app_layer_max_mb: int
     ephemeral_disk_max_mb: int
-    """Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap
-    historically named app_layer_max_mb."""
+    """Total logical capacity of the writable ephemeral app filesystem per app, in MB, including application
+    content and filesystem metadata. Free scratch space is this value minus deployed content and overhead. This is
+    the same physical drive1 cap historically named app_layer_max_mb."""
     triggers_allowed: bool
     """Whether the plan permits external event triggers."""
     trigger_kinds: list[TriggerKind]

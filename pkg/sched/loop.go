@@ -3367,6 +3367,26 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		wakeBootTrigger = TriggerCronManual
 	}
 	if _, err := l.engine.EnsureWake(ctx, c.AppID, wakeBootTrigger); err != nil {
+		// A cron for an app with no live deployment cannot recover by retrying
+		// on every scheduler cadence. Suspend it with a machine-readable reason;
+		// MarkDeploymentLive clears the reason after a successful redeploy.
+		// Parked apps still have a live deployment, so they remain schedulable.
+		if errors.Is(err, ErrPermanentWake) {
+			_, liveErr := l.engine.Store().LiveDeployment(ctx, c.AppID)
+			switch {
+			case errors.Is(liveErr, state.ErrNotFound):
+				if suspender, ok := l.engine.Store().(state.CronSuspensionStore); ok {
+					count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+					if suspendErr != nil {
+						l.log.Warn("cron: suspend after missing live deployment", "cron_id", c.ID, "app_id", c.AppID, "err", suspendErr)
+					} else if count > 0 {
+						l.log.Info("cron: suspended until app redeploy", "app_id", c.AppID, "reason", state.CronSuspendedNoLiveDeployment, "count", count)
+					}
+				}
+			case liveErr != nil:
+				l.log.Warn("cron: verify live deployment after permanent wake failure", "cron_id", c.ID, "app_id", c.AppID, "err", liveErr)
+			}
+		}
 		l.log.Warn("cron: wake", "cron_id", c.ID, "err", err)
 		return CronRun{}, true
 	}

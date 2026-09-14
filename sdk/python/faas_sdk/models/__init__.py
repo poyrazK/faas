@@ -315,6 +315,7 @@ from .create_trigger_request_broker_poison_strategy_type_3_type_1 import (
 )
 from .create_trigger_request_config import CreateTriggerRequestConfig
 from .cron_response import CronResponse
+from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
@@ -1372,6 +1373,7 @@ __all__ = (
     "CreateTriggerRequestBrokerPoisonStrategyType3Type1",
     "CreateTriggerRequestConfig",
     "CronResponse",
+    "CronResponseSuspendedReason",
     "CronRun",
     "CronRunOutcome",
     "CSRFTokenResponse",

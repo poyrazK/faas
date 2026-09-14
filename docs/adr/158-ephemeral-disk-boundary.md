@@ -22,6 +22,14 @@ Keep `app_layer_max_mb` and the `app_layer_too_large` problem code for wire
 compatibility. The API reports the plan ceiling; it does not claim to provide a
 live in-guest free-space meter.
 
+The advertised value is the **total logical capacity** of the app's writable
+filesystem, including the immutable application files copied into the ext4
+upper layer and filesystem metadata. It is not a guarantee of that many free
+scratch bytes. Available scratch is the plan capacity minus application content
+and filesystem overhead. Builders provision the image at the full plan capacity
+after checking that the staged application fits. The unused region remains
+sparse on compute-node storage and is compressed for registry transport.
+
 No new quota column or migration is introduced. `EphemeralDiskMaxMB` and
 `EphemeralDiskMaxBytes` alias the existing `AppLayerMaxMB` value so image-build
 enforcement and API reporting cannot drift. Persistent customer volumes remain
@@ -30,7 +38,8 @@ out of scope; durable state belongs in object storage or an external database.
 ## Consequences
 
 Customers can size ephemeral scratch and extracted assets against a named
-storage limit, while existing clients continue to decode the legacy field.
+storage limit by subtracting their deployed content, while existing clients
+continue to decode the legacy field.
 Build failures identify both the app-layer build cap and its runtime-disk
 meaning. Future live usage telemetry can add observations without changing the
 quota contract or introducing a second source of truth.

@@ -4925,6 +4925,7 @@ func cronResponse(c state.Cron) api.CronResponse {
 		Schedule:      c.Schedule,
 		Path:          c.Path,
 		Enabled:       c.Enabled,
+		SuspendedReason: c.SuspendedReason,
 		Timezone:      c.Timezone,
 		SkipIfRunning: c.SkipIfRunning,
 		CreatedAt:     c.CreatedAt.UTC().Format(time.RFC3339),

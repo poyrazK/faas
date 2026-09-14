@@ -26,9 +26,13 @@ Each app's main `drive1` is a writable ext4 upper layer. Its capacity is
 bounded by the plan's ephemeral disk ceiling, exposed as
 `ephemeral_disk_max_mb` in account and app effective-limit responses. The
 legacy `app_layer_max_mb` field remains for compatibility; both names refer to
-the same physical cap. Image builds enforce the ceiling before a snapshot is
-created, so a deployment cannot boot with a larger writable app layer than the
-plan allows.
+the same physical cap. The value is total filesystem capacity, including the
+application files and ext4 metadata; free scratch space is therefore the plan
+capacity minus deployed content and filesystem overhead. Image builds enforce
+the ceiling and provision that full logical capacity before a snapshot is
+created. Unused blocks remain sparse on local SSDs and compressed in the remote
+registry, so logical capacity does not consume an equal amount of physical
+storage or network transfer.
 
 `/tmp` is a separate tmpfs and is also lost when the instance parks. Sidecar
 drives are read-only. Gregale does not attach durable customer volumes, and

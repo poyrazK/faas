@@ -16493,7 +16493,7 @@ components:
         developer_apps: { type: integer, description: "Maximum live `gregale dev` environments for this plan." }
         included_gb_hours: { type: integer, format: int64 }
         app_layer_max_mb: { type: integer }
-        ephemeral_disk_max_mb: { type: integer, description: "Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb." }
+        ephemeral_disk_max_mb: { type: integer, description: "Total logical capacity of the writable ephemeral app filesystem per app, in MB, including application content and filesystem metadata. Free scratch space is this value minus deployed content and overhead. This is the same physical drive1 cap historically named app_layer_max_mb." }
         triggers_allowed: { type: boolean, description: "Whether the plan permits external event triggers." }
         trigger_kinds:
           type: array
@@ -17194,7 +17194,7 @@ components:
       properties:
         memory_limit_mb: { type: integer, description: "Memory limit configured for this app instance, in MB." }
         plan_memory_max_mb: { type: integer, description: "Largest memory limit the current plan permits for an app instance, in MB." }
-        ephemeral_disk_max_mb: { type: integer, description: "Maximum writable ephemeral app-disk capacity for this app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb." }
+        ephemeral_disk_max_mb: { type: integer, description: "Total logical capacity of this app's writable ephemeral filesystem, in MB, including application content and filesystem metadata. Free scratch space is this value minus deployed content and overhead. This is the same physical drive1 cap historically named app_layer_max_mb." }
         guest_vcpus: { type: integer, description: "Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit." }
         cpu_limit_millicores: { type: integer, description: "Sustained per-instance CPU allowance derived from cpu.max, expressed in millicores." }
         plan_cpu_max_millicores: { type: integer, description: "Largest sustained CPU allowance the current plan permits, in millicores." }
@@ -20610,6 +20610,10 @@ components:
         schedule: { type: string , example: "*/5 * * * *"}
         path: { type: string }
         enabled: { type: boolean }
+        suspended_reason:
+          type: string
+          enum: [no_live_deployment]
+          description: "Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment."
         timezone: { type: string, description: "IANA timezone used to evaluate the schedule; defaults to UTC.", example: "America/New_York" }
         skip_if_running: { type: boolean, description: "When true, consume a scheduled occurrence while a prior cron invocation is pending or dispatching." }
         created_at: { type: string, format: date-time }

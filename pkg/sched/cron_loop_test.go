@@ -410,6 +410,79 @@ func TestCronDispatch_DisabledSkipped(t *testing.T) {
 	}
 }
 
+func TestCronDispatch_NoLiveDeploymentSuspendsUntilRedeploy(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "no-live-cron@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "no-live", Type: state.AppTypeApp, RAMMB: 256,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	cron, err := store.CreateCron(ctx, app.ID, "* * * * *", "/ping", true)
+	if err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
+
+	eng, _ := makeEngine(t, store, &fakeWakeVMM{})
+	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(&recordingSynth{})
+	if _, admitted := loop.dispatchCronLocked(ctx, cron, time.Now().UTC(), TriggerSchedule); !admitted {
+		t.Fatal("permanent wake failure should still emit the cron failure audit")
+	}
+
+	got, err := store.CronByID(ctx, cron.ID)
+	if err != nil {
+		t.Fatalf("CronByID: %v", err)
+	}
+	if got.SuspendedReason != state.CronSuspendedNoLiveDeployment {
+		t.Fatalf("suspended reason = %q, want %q", got.SuspendedReason, state.CronSuspendedNoLiveDeployment)
+	}
+	enabled, err := store.ListEnabledCrons(ctx)
+	if err != nil {
+		t.Fatalf("ListEnabledCrons: %v", err)
+	}
+	if len(enabled) != 0 {
+		t.Fatalf("enabled crons after suspension = %d, want 0", len(enabled))
+	}
+
+	// A successful redeploy reactivates the schedule. A separate cron that
+	// the customer disabled stays disabled because suspension never changes
+	// the customer-owned Enabled field.
+	disabled, err := store.CreateCron(ctx, app.ID, "*/5 * * * *", "/disabled", false)
+	if err != nil {
+		t.Fatalf("CreateCron(disabled): %v", err)
+	}
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Status: state.DeployPending, Kind: state.DeploymentKindImage,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
+
+	got, err = store.CronByID(ctx, cron.ID)
+	if err != nil {
+		t.Fatalf("CronByID(reactivated): %v", err)
+	}
+	if got.SuspendedReason != "" || !got.Enabled {
+		t.Fatalf("reactivated cron = %+v, want enabled with no suspension", got)
+	}
+	disabled, err = store.CronByID(ctx, disabled.ID)
+	if err != nil {
+		t.Fatalf("CronByID(disabled): %v", err)
+	}
+	if disabled.Enabled {
+		t.Fatal("successful redeploy re-enabled a customer-disabled cron")
+	}
+}
+
 func TestCronDispatch_ClaimLostHandsOffWithoutDuplicateInvoke(t *testing.T) {
 	t.Parallel()
 	base := state.NewMemStore()

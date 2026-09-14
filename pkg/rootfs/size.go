@@ -11,8 +11,10 @@ import (
 // App-layer sizing (spec §4.6). The per-app drive1 ext4 must fit the
 // content (deps + code + guest-init + app.json) plus filesystem overhead,
 // and the final image must fit the plan's app-layer cap. Getting this
-// wrong either wastes disk (hurts the 130 MB fleet target) or produces an
-// unbootable too-small fs.
+// wrong either rejects a valid app or produces an unbootable too-small fs.
+// CheckCapForStaging computes the minimum required size for admission; the
+// builder then provisions the sparse artifact at the plan's full advertised
+// logical capacity.
 //
 // Slack calibration note (run 30656504195, 2026-07-31,
 // base-debian-parent staging — mkfs.ext4 -d failed mid-populate on
@@ -38,12 +40,9 @@ const (
 	// slackFloorMB is the minimum absolute metadata overhead added when
 	// sizing shared base filesystems.
 	slackFloorMB = 4
-	// appSlackFloorMB also leaves writable space for guest-init to create the
-	// overlay work directory and for the running workload to use its upper
-	// layer. Nine MiB prevented boot-time ENOSPC but left the representative Go
-	// layer 83.7% full immediately after restore, above the 80% pressure
-	// threshold. Sixteen MiB keeps that layer below the alert boundary while
-	// remaining small relative to the plan cap.
+	// appSlackFloorMB leaves enough metadata and work-directory room for a
+	// reliable minimum-size admission estimate. Publication uses the plan's
+	// full logical capacity after this estimate passes.
 	appSlackFloorMB = 16
 	// baseSlackPct is the baseline fractional overhead for
 	// BasePaddedSizeMB, floored at slackFloorMB. Calibrated to match

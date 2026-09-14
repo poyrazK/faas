@@ -69,7 +69,8 @@ func TestAppMkfsRealGoLayer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(run.sizes) != 1 || run.sizes[0] != 41 || result.SizeMB != 41 {
+	wantSize := api.MustLimitsFor(api.PlanFree).EphemeralDiskMaxMB()
+	if len(run.sizes) != 1 || run.sizes[0] != wantSize || result.SizeMB != wantSize {
 		t.Fatalf("attempts=%v result=%+v", run.sizes, result)
 	}
 	info, err := os.Stat(output)
@@ -99,8 +100,12 @@ func TestAppMkfsRealGoLayer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if freeBytes < 2*mib {
-		t.Fatalf("app image has only %d writable bytes after population, want at least %d", freeBytes, 2*mib)
+	if freeBytes < 200*mib {
+		t.Fatalf("app image has only %d writable bytes after population, want at least %d", freeBytes, 200*mib)
+	}
+	usedPercent := 100 * (int64(result.SizeMB)*mib - freeBytes) / (int64(result.SizeMB) * mib)
+	if usedPercent >= 80 {
+		t.Fatalf("fresh app image is %d%% used, want below disk-pressure threshold", usedPercent)
 	}
 	mkdirOutput, err := exec.CommandContext(t.Context(), "debugfs", "-w", "-R", "mkdir /work", output).CombinedOutput()
 	if err != nil || strings.Contains(strings.ToLower(string(mkdirOutput)), "no space left") {

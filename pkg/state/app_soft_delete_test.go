@@ -34,6 +34,10 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
+	cron, err := m.CreateCron(ctx, app.ID, "*/5 * * * *", "/cleanup", true)
+	if err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
 
 	graceUntil := time.Now().UTC().Add(24 * time.Hour)
 	deleted, err := m.ScheduleAppDeletion(ctx, app.ID, graceUntil)
@@ -68,6 +72,9 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	}
 	if _, err := m.RestoreApp(ctx, app.ID); err != nil {
 		t.Fatalf("RestoreApp: %v", err)
+	}
+	if _, err := m.CronByID(ctx, cron.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CronByID after app restore = %v, want ErrNotFound; deleted app schedules must stay removed", err)
 	}
 	if restored, err := m.AppBySlug(ctx, app.Slug); err != nil || restored.Status != AppActive || restored.DeletedAt != nil || restored.DeleteGraceUntil != nil {
 		t.Fatalf("restored app = %+v, %v", restored, err)

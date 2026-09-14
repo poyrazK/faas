@@ -668,6 +668,16 @@ type fakeStorageLister struct {
 	err  error
 }
 
+type indexedStorageLister struct {
+	fakeStorageLister
+	reconciledDeploymentIDs []string
+}
+
+func (f *indexedStorageLister) ReconcileSnapshotRepositoryIndex(_ context.Context, deploymentIDs []string) error {
+	f.reconciledDeploymentIDs = append([]string(nil), deploymentIDs...)
+	return nil
+}
+
 type recoveringSnapshotLister struct {
 	globalCalls int
 	keys        []string
@@ -872,7 +882,7 @@ func TestDiskDriftSnapshotCaptureDirectory(t *testing.T) {
 			if err := f.store.MarkSnapshotStale(context.Background(), old.ID); err != nil {
 				t.Fatal(err)
 			}
-			key := state.SnapshotCaptureMemKey("generation-dep", "init", "first")
+			key := state.SnapshotCaptureMemKey("generation-dep", state.SnapshotTierInit, "660e8400-e29b-41d4-a716-446655440001")
 			old.ID = ""
 			old.StorageKey = key
 			if _, err := f.store.CreateSnapshot(context.Background(), old); err != nil {
@@ -885,5 +895,81 @@ func TestDiskDriftSnapshotCaptureDirectory(t *testing.T) {
 				t.Fatalf("capture drift=%d err=%v", drift, err)
 			}
 		})
+	}
+}
+
+func TestDiskDriftCaptureRepositoryIndexUsesCanonicalDeploymentID(t *testing.T) {
+	const (
+		deploymentID = "550e8400-e29b-41d4-a716-446655440000"
+		captureID    = "660e8400-e29b-41d4-a716-446655440001"
+	)
+	ctx := context.Background()
+	store := state.NewMemStore()
+	seedDriftRow(ctx, t, store, deploymentID)
+	old, err := store.LatestSnapshot(ctx, deploymentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkSnapshotStale(ctx, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	old.ID = ""
+	old.StorageKey = state.SnapshotCaptureMemKey(deploymentID, state.SnapshotTierWarm, captureID)
+	old.Tier = state.SnapshotTierWarm
+	if _, err := store.CreateSnapshot(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	lister := &indexedStorageLister{fakeStorageLister: fakeStorageLister{keys: []string{
+		old.StorageKey,
+		state.SnapshotVMStateKey(old),
+	}}}
+	drift, err := NewDiskDrift(store, nil).WithStorage(lister).Tick(ctx)
+	if err != nil || drift != 0 {
+		t.Fatalf("capture drift=%d err=%v", drift, err)
+	}
+	if len(lister.reconciledDeploymentIDs) != 1 || lister.reconciledDeploymentIDs[0] != deploymentID {
+		t.Fatalf("repository index IDs = %v, want [%s]", lister.reconciledDeploymentIDs, deploymentID)
+	}
+}
+
+func TestDiskDriftCaptureAnomaliesRemainVisible(t *testing.T) {
+	const captureID = "660e8400-e29b-41d4-a716-446655440001"
+	t.Run("orphan capture", func(t *testing.T) {
+		f := newDriftFixture(t)
+		directory := "orphan/captures/" + captureID
+		f.writeFile(t, directory, "mem", []byte("mem"))
+		f.writeFile(t, directory, "vmstate", []byte("state"))
+		drift, err := f.dd.Tick(context.Background())
+		if err != nil || drift != 1 {
+			t.Fatalf("orphan capture drift=%d err=%v, want 1", drift, err)
+		}
+	})
+	t.Run("malformed capture ID", func(t *testing.T) {
+		f := newDriftFixture(t)
+		f.writeFile(t, "deployment/captures/not-a-uuid", "mem", []byte("mem"))
+		drift, err := f.dd.Tick(context.Background())
+		if err != nil || drift != 1 {
+			t.Fatalf("malformed capture drift=%d err=%v, want 1", drift, err)
+		}
+	})
+}
+
+func TestParseSnapKeySupportsAllPublishedLayouts(t *testing.T) {
+	const captureID = "660e8400-e29b-41d4-a716-446655440001"
+	for _, tc := range []struct {
+		key, objectID, part string
+		valid               bool
+	}{
+		{"snap/dep/mem", "dep", "mem", true},
+		{"snap/dep/warm/vmstate", "dep/warm", "vmstate", true},
+		{"snap/dep/captures/" + captureID + "/mem", "dep/captures/" + captureID, "mem", true},
+		{"snap/dep/warm/captures/" + captureID + "/vmstate", "dep/warm/captures/" + captureID, "vmstate", true},
+		{"snap/dep/captures/not-a-uuid/mem", "", "", false},
+		{"snap/dep/captures/" + captureID + "/other", "", "", false},
+	} {
+		objectID, part, valid := parseSnapKey(tc.key)
+		if objectID != tc.objectID || part != tc.part || valid != tc.valid {
+			t.Errorf("parseSnapKey(%q) = (%q, %q, %t), want (%q, %q, %t)", tc.key, objectID, part, valid, tc.objectID, tc.part, tc.valid)
+		}
 	}
 }

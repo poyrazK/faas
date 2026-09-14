@@ -1589,11 +1589,12 @@ type Limits struct {
 	WorkflowMaxWaitDays int
 }
 
-// EphemeralDiskMaxMB returns the maximum writable runtime disk capacity
-// represented by the per-app drive1 ext4 image. The storage contract has
-// historically exposed this boundary as AppLayerMaxMB because the same cap
-// is checked while building the image. Keep one source of truth while giving
-// runtime and API callers the storage-specific name.
+// EphemeralDiskMaxMB returns the total logical capacity of the per-app
+// writable ext4 filesystem, including application content and filesystem
+// metadata. The storage contract historically exposed this boundary as
+// AppLayerMaxMB because the same cap is checked while building the image.
+// Keep one source of truth while giving runtime and API callers the
+// storage-specific name.
 func (l Limits) EphemeralDiskMaxMB() int {
 	return l.AppLayerMaxMB
 }

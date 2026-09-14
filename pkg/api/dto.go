@@ -2897,6 +2897,7 @@ type CronResponse struct {
 	Schedule      string `json:"schedule"`
 	Path          string `json:"path"`
 	Enabled       bool   `json:"enabled"`
+	SuspendedReason string `json:"suspended_reason,omitempty"`
 	Timezone      string `json:"timezone"`
 	SkipIfRunning bool   `json:"skip_if_running"`
 	CreatedAt     string `json:"created_at"`

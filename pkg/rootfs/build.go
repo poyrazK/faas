@@ -335,6 +335,12 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	if err != nil {
 		return BuildResult{}, err // *api.Problem naming cap + observed size
 	}
+	// The public ephemeral_disk_max_mb contract is the logical capacity of
+	// drive1, including immutable app content and ext4 metadata. Build the
+	// filesystem at that stable plan capacity so a fresh guest has useful
+	// writable headroom. Keeping the size in the deployment artifact also
+	// avoids resize2fs work on every cold or snapshot wake.
+	sizeMB = limits.EphemeralDiskMaxMB()
 
 	// Issue #299 / ADR-038 Phase 3: SBOM emission runs on the staging
 	// dir BEFORE the drive1 wrapper is added and the cleanup defer fires (the staging dir is the only

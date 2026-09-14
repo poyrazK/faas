@@ -4816,6 +4816,11 @@ func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil 
 	if !wasDeleted {
 		delete(m.appDeletionClaims, id)
 	}
+	for cronID, cron := range m.crons {
+		if cron.AppID == id {
+			delete(m.crons, cronID)
+		}
+	}
 	// Retire replica placements immediately while preserving snapshot rows for
 	// GC and a possible restore during the grace window.
 	for i := range m.snapshots {
@@ -5063,9 +5068,8 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	}
 	m.apps[id] = a
 	for cronID, cron := range m.crons {
-		if cron.AppID == id && cron.Enabled {
-			cron.Enabled = false
-			m.crons[cronID] = cron
+		if cron.AppID == id {
+			delete(m.crons, cronID)
 		}
 	}
 	for deploymentID, d := range m.deployments {
@@ -6565,6 +6569,7 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
 			return err
 		}
+		m.reactivateCronsForAppLocked(d.AppID)
 		m.deployments[id] = d
 		return nil
 	}
@@ -6604,6 +6609,7 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		for siblingID, other := range updatedSiblings {
 			m.deployments[siblingID] = other
 		}
+		m.reactivateCronsForAppLocked(d.AppID)
 		m.deployments[id] = d
 		return nil
 	}
@@ -6634,6 +6640,7 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 			other.TrafficPercent = 0
 			m.deployments[otherID] = other
 		}
+		m.reactivateCronsForAppLocked(d.AppID)
 		m.deployments[id] = d
 		return nil
 	}
@@ -6667,6 +6674,7 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 		if err := m.storeOpenAPISnapshotLocked(snap); err != nil {
 			return err
 		}
+		m.reactivateCronsForAppLocked(d.AppID)
 		m.deployments[id] = d
 		return nil
 	}
@@ -6694,6 +6702,7 @@ func (m *MemStore) MarkDeploymentLive(ctx context.Context, id string) error {
 	for siblingID, other := range updatedSiblings {
 		m.deployments[siblingID] = other
 	}
+	m.reactivateCronsForAppLocked(d.AppID)
 	m.deployments[id] = d
 	return nil
 }
@@ -9616,11 +9625,48 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 	defer m.mu.Unlock()
 	var out []Cron
 	for _, c := range m.crons {
-		if c.Enabled {
+		if c.Enabled && c.SuspendedReason == "" {
 			out = append(out, c)
 		}
 	}
 	return out, nil
+}
+
+func (m *MemStore) SuspendCronsForApp(_ context.Context, appID, reason string) (int, error) {
+	if reason != CronSuspendedNoLiveDeployment {
+		return 0, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	updated := 0
+	for id, cron := range m.crons {
+		if cron.AppID != appID || !cron.Enabled || cron.SuspendedReason != "" {
+			continue
+		}
+		cron.SuspendedReason = reason
+		m.crons[id] = cron
+		updated++
+	}
+	return updated, nil
+}
+
+func (m *MemStore) ReactivateCronsForApp(_ context.Context, appID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reactivateCronsForAppLocked(appID), nil
+}
+
+func (m *MemStore) reactivateCronsForAppLocked(appID string) int {
+	updated := 0
+	for id, cron := range m.crons {
+		if cron.AppID != appID || cron.SuspendedReason == "" {
+			continue
+		}
+		cron.SuspendedReason = ""
+		m.crons[id] = cron
+		updated++
+	}
+	return updated
 }
 
 // --- Triggers (issue #757 / ADR-0NN; commit #6) -------------------------

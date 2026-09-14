@@ -1997,7 +1997,9 @@ CREATE TABLE public.crons (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid,
     timezone text DEFAULT 'UTC'::text NOT NULL,
-    skip_if_running boolean DEFAULT false NOT NULL
+    skip_if_running boolean DEFAULT false NOT NULL,
+    suspended_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT crons_suspended_reason_chk CHECK ((suspended_reason = ANY (ARRAY[''::text, 'no_live_deployment'::text])))
 );
 
 

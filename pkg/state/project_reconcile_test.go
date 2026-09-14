@@ -73,7 +73,7 @@ func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	cron, err := store.CreateCron(ctx, original.ID, "*/5 * * * *", "/job", true)
+	_, err = store.CreateCron(ctx, original.ID, "*/5 * * * *", "/job", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.
 		t.Fatalf("restored attached configuration = %#v", restored.Manifest)
 	}
 	crons, err := store.ListCronsForApp(ctx, restored.ID)
-	if err != nil || len(crons) != 1 || crons[0].ID != cron.ID {
-		t.Fatalf("restored crons = %#v, %v", crons, err)
+	if err != nil || len(crons) != 0 {
+		t.Fatalf("restored crons = %#v, %v; deleted workload schedules must be declared again", crons, err)
 	}
 }

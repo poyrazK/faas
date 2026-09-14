@@ -62,9 +62,10 @@ type OCIRegistryStorageBackend struct {
 	// exposes version deletion through api.github.com.
 	githubPackagesAPI string
 	// snapshotCompression controls the encoding used for snapshot memory
-	// blobs in the remote registry. LocalCacheBackend wraps this backend in
-	// production, so its origin-node file remains an uncompressed sparse
-	// snapshot that Firecracker can restore directly.
+	// blobs in the remote registry. App filesystem artifacts are always
+	// compressed because their plan-sized logical capacity is intentionally
+	// sparse. LocalCacheBackend keeps local artifacts uncompressed and sparse
+	// so Firecracker can use them directly.
 	snapshotCompression string
 
 	// tokenCache maps "realm|service|scope" → cachedToken. Entries are
@@ -467,9 +468,9 @@ func (o *OCIRegistryStorageBackend) Put(ctx context.Context, key string, r io.Re
 	var layerAnnotations map[string]string
 	var tmpPath, digestHex string
 	var ownsTmp bool
-	if o.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key) {
+	if (o.snapshotCompression == snapshotCompressionZstd && isSnapshotMemoryKey(key)) || isAppFilesystemKey(key) {
 		var uncompressedSize int64
-		tmpPath, digestHex, uncompressedSize, err = o.compressSnapshot(ctx, key, r)
+		tmpPath, digestHex, uncompressedSize, err = o.compressArtifact(ctx, key, r)
 		ownsTmp = true
 		if err == nil {
 			layerAnnotations = map[string]string{
@@ -1189,17 +1190,22 @@ func isSnapshotMemoryKey(key string) bool {
 	return strings.HasPrefix(key, "snap/") && strings.HasSuffix(key, "/mem")
 }
 
-// compressSnapshot writes one fast Zstandard frame to a temporary file while
+func isAppFilesystemKey(key string) bool {
+	return strings.HasPrefix(key, "apps/") && strings.HasSuffix(key, ".ext4")
+}
+
+// compressArtifact writes one fast Zstandard frame to a temporary file while
 // hashing the compressed representation that the registry stores. Compression
-// concurrency is deliberately one per capture: concurrent parks must not each
-// consume every host CPU. Snapshot memory is mostly zero pages, so the fastest
-// level still removes nearly all upload bytes.
-func (o *OCIRegistryStorageBackend) compressSnapshot(
+// concurrency is deliberately one per artifact: concurrent parks and builds
+// must not each consume every host CPU. Snapshot memory and provisioned app
+// filesystems are mostly zero pages, so the fastest level removes nearly all
+// upload bytes.
+func (o *OCIRegistryStorageBackend) compressArtifact(
 	ctx context.Context,
 	key string,
 	r io.Reader,
 ) (path, hexDigest string, uncompressedSize int64, err error) {
-	f, err := osCreateTemp("", "faas-oci-snapshot-*.zst")
+	f, err := osCreateTemp("", "faas-oci-artifact-*.zst")
 	if err != nil {
 		return "", "", 0, fmt.Errorf("storage: oci put %q: create zstd tmp: %w", key, err)
 	}

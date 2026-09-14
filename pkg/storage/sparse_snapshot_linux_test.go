@@ -106,3 +106,18 @@ func TestSparseSnapshotLocalAndCachePublication(t *testing.T) {
 		})
 	}
 }
+
+func TestSparseAppFilesystemLocalPublication(t *testing.T) {
+	data := make([]byte, 32<<20)
+	copy(data[1<<20:], bytes.Repeat([]byte{0x5a}, 4096))
+	const key = "apps/example/550e8400-e29b-41d4-a716-446655440000.ext4"
+	root := t.TempDir()
+	backend, err := storage.NewLocalStorageBackend(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Put(t.Context(), key, bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	assertSparseSnapshot(t, filepath.Join(root, key), data)
+}

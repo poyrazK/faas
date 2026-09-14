@@ -655,17 +655,18 @@ func TestOCISnapshotCompressionPreservesLocalCacheRepresentation(t *testing.T) {
 	}
 }
 
-func TestOCISnapshotCompressionScope(t *testing.T) {
+func TestOCIArtifactCompressionScope(t *testing.T) {
 	f := newFakeRegistry(t)
 	defer f.srv.Close()
 	const depID = "550e8400-e29b-41d4-a716-446655440000"
 
 	tests := []struct {
-		name    string
-		backend *OCIRegistryStorageBackend
-		key     string
-		repo    string
-		tag     string
+		name        string
+		backend     *OCIRegistryStorageBackend
+		key         string
+		repo        string
+		tag         string
+		wantEncoded bool
 	}{
 		{
 			name:    "disabled snapshot memory",
@@ -682,26 +683,54 @@ func TestOCISnapshotCompressionScope(t *testing.T) {
 			tag:     "vmstate",
 		},
 		{
-			name:    "enabled app layer",
-			backend: f.clientWithOptions(t, WithSnapshotCompression(snapshotCompressionZstd)),
-			key:     "apps/example/" + depID + ".ext4",
-			repo:    "faas/apps",
-			tag:     "example__" + depID,
+			name:        "app layer independent of snapshot setting",
+			backend:     f.client(t),
+			key:         "apps/example/" + depID + ".ext4",
+			repo:        "faas/apps",
+			tag:         "example__" + depID,
+			wantEncoded: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body := []byte("opaque artifact bytes")
+			if tt.wantEncoded {
+				body = make([]byte, 8<<20)
+				copy(body, []byte("ext4-superblock"))
+				copy(body[4<<20:], []byte("allocated-app-data"))
+			}
 			if err := tt.backend.Put(t.Context(), tt.key, bytes.NewReader(body)); err != nil {
 				t.Fatalf("Put: %v", err)
 			}
 			manifest, remoteBlob := f.storedLayer(t, tt.repo, tt.tag)
-			if got := manifest.Layers[0].Annotations[layerEncodingAnnotation]; got != "" {
-				t.Fatalf("layer encoding = %q, want legacy unencoded representation", got)
+			gotEncoding := manifest.Layers[0].Annotations[layerEncodingAnnotation]
+			if tt.wantEncoded {
+				if gotEncoding != snapshotCompressionZstd {
+					t.Fatalf("layer encoding = %q, want %q", gotEncoding, snapshotCompressionZstd)
+				}
+				if got := manifest.Layers[0].Annotations[layerUncompressedSizeAnnotation]; got != fmt.Sprint(len(body)) {
+					t.Fatalf("uncompressed size = %q, want %d", got, len(body))
+				}
+				if len(remoteBlob) >= len(body)/100 {
+					t.Fatalf("compressed app filesystem = %d bytes, want less than 1%% of %d", len(remoteBlob), len(body))
+				}
+				rc, err := tt.backend.Get(t.Context(), tt.key)
+				if err != nil {
+					t.Fatalf("Get: %v", err)
+				}
+				decoded, readErr := io.ReadAll(rc)
+				_ = rc.Close()
+				if readErr != nil || !bytes.Equal(decoded, body) {
+					t.Fatalf("compressed app filesystem round trip changed bytes: %v", readErr)
+				}
+				return
+			}
+			if gotEncoding != "" {
+				t.Fatalf("layer encoding = %q, want legacy unencoded representation", gotEncoding)
 			}
 			if !bytes.Equal(remoteBlob, body) {
-				t.Fatal("artifact outside enabled snapshot-memory scope changed in registry")
+				t.Fatal("artifact outside compression scope changed in registry")
 			}
 		})
 	}

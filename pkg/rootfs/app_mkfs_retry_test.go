@@ -45,7 +45,7 @@ type appMkfsSigner struct{ calls int }
 func (s *appMkfsSigner) Sign(context.Context, string, string) error { s.calls++; return nil }
 
 func TestAppMkfsRetriesBeforePublicationAndReportsFinalSize(t *testing.T) {
-	run := &appMkfsRetryRunner{failures: 1, failure: errors.New("mkfs.ext4: Could not allocate block in ext2 filesystem while populating file system")}
+	run := &appMkfsRetryRunner{}
 	storeRoot := t.TempDir()
 	store, err := storage.NewLocalStorageBackend(storeRoot)
 	if err != nil {
@@ -61,10 +61,11 @@ func TestAppMkfsRetriesBeforePublicationAndReportsFinalSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(run.sizes) != 2 || run.sizes[0] != 17 || run.sizes[1] != 21 {
+	wantSize := api.MustLimitsFor(api.PlanFree).EphemeralDiskMaxMB()
+	if len(run.sizes) != 1 || run.sizes[0] != wantSize {
 		t.Fatalf("mkfs attempts=%v", run.sizes)
 	}
-	if result.SizeMB != 21 || signer.calls != 1 {
+	if result.SizeMB != wantSize || signer.calls != 1 {
 		t.Fatalf("result size=%d signatures=%d", result.SizeMB, signer.calls)
 	}
 	info, err := os.Stat(filepath.Join(storeRoot, "app/layer.ext4"))

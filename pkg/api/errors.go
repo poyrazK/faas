@@ -2182,14 +2182,14 @@ func ErrInvalidCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
 }
 
 // ErrAppLayerTooLarge is returned when the built app layer (deps + code) would
-// exceed the plan's writable ephemeral drive1 capacity (spec §4.6). The
+// exceed the plan's total writable-filesystem capacity (spec §4.6). The
 // legacy problem code remains stable for clients; the message names both the
 // app-layer build boundary and its runtime-disk meaning.
 func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 	capBytes := l.EphemeralDiskMaxBytes()
 	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
 		"App too large",
-		fmt.Sprintf("%s plan caps the writable ephemeral app disk at %d MB (app-layer build cap); built layer is %.1f MB.",
+		fmt.Sprintf("%s plan caps total ephemeral app-filesystem capacity at %d MB (including app content and filesystem overhead); the built layer requires %.1f MB.",
 			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
 		WithDocs(docsBase + "/build/limits#app-layer")

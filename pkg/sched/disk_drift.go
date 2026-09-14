@@ -54,6 +54,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -258,8 +259,8 @@ func (d *DiskDrift) Tick(ctx context.Context) (int, error) {
 			continue
 		}
 		directory := r.DeploymentID
-		if strings.HasPrefix(r.StorageKey, "snap/") && strings.HasSuffix(r.StorageKey, "/mem") {
-			directory = strings.TrimSuffix(strings.TrimPrefix(r.StorageKey, "snap/"), "/mem")
+		if parsedDirectory, part, ok := parseSnapKey(r.StorageKey); ok && part == "mem" {
+			directory = parsedDirectory
 		}
 		expected[directory] = r
 	}
@@ -301,43 +302,128 @@ func (d *DiskDrift) Tick(ctx context.Context) (int, error) {
 // tell which leg of the dispatch produced the count.
 func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs []os.DirEntry, expected map[string]state.SnapshotForGC, rows []state.SnapshotForGC, fallback bool) (int, error) {
 	drift := 0
-	seen := make(map[string]struct{}, len(diskDirs))
-
-	// Pass 1: walk every DB-known dep dir; compare files. Counts
-	// missing files, size mismatches, unexpected regular files, and
-	// non-regular entries under each dep dir. The per-iteration
-	// ctx.Err() check is the per-tick timeout guard — a slow
-	// /srv/fc/snap mount (e.g. network-attached in a future
-	// scale-out world) cannot freeze the loop's 1 Hz tick budget
-	// because the dispatcher wraps ctx with a bounded deadline via
-	// d.timeout. We check between dep dirs (not between syscalls)
-	// because os.ReadDir is synchronous and not interruptible.
-	for depID, row := range expected {
+	type diskPart struct {
+		path string
+		info fs.FileInfo
+	}
+	present := make(map[string]map[string]diskPart, len(expected))
+	terminalDirectories := make(map[string]struct{}, len(expected))
+	unreadableRoots := make(map[string]struct{})
+	invalidRoots := make(map[string]struct{})
+	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, readErr error) error {
 		if err := ctx.Err(); err != nil {
-			d.log.Warn("disk-drift: tick timed out",
-				"err", err, "drift", drift, "rows_processed", len(seen))
-			return drift, nil
+			return err
 		}
-		seen[strings.SplitN(depID, "/", 2)[0]] = struct{}{}
-		drift += d.checkDepDir(depID, row)
+		if readErr != nil {
+			drift += d.recordDrift("snapshot-entry-unreadable", path)
+			if rel, relErr := filepath.Rel(root, path); relErr == nil {
+				unreadableRoots[strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]] = struct{}{}
+			}
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if path == root {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			drift += d.recordDrift("snapshot-path-invalid", path)
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if entry.IsDir() {
+			objectID, terminal, valid := parseSnapshotDirectory(rel)
+			if !valid {
+				invalidRoots[strings.SplitN(rel, "/", 2)[0]] = struct{}{}
+				drift += d.recordDrift("malformed-snapshot-directory", path)
+				return filepath.SkipDir
+			}
+			if terminal {
+				terminalDirectories[objectID] = struct{}{}
+				if present[objectID] == nil {
+					present[objectID] = make(map[string]diskPart, 2)
+				}
+			}
+			return nil
+		}
+		objectID, part, valid := parseSnapKey("snap/" + rel)
+		if !valid {
+			drift += d.recordDrift("malformed-snapshot-key", path)
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			drift += d.recordDrift("snapshot-entry-unreadable", path)
+			return nil
+		}
+		if present[objectID] == nil {
+			present[objectID] = make(map[string]diskPart, 2)
+		}
+		present[objectID][part] = diskPart{path: path, info: info}
+		return nil
+	})
+	if walkErr != nil && !errors.Is(walkErr, context.Canceled) && !errors.Is(walkErr, context.DeadlineExceeded) {
+		d.log.Warn("disk-drift: recursive snapshot read failed", "snap_dir", root, "err", walkErr)
+	}
+	if err := ctx.Err(); err != nil {
+		d.log.Warn("disk-drift: tick timed out", "err", err, "drift", drift, "objects_processed", len(present))
+		return drift, nil
 	}
 
-	// Pass 2: orphan dep dirs on disk with no matching DB row.
-	// The sweep never writes, so an orphan is itself drift — it
-	// means a file system entry exists that no DB row accounts for.
+	for objectID, row := range expected {
+		if _, unreadable := unreadableRoots[strings.SplitN(objectID, "/", 2)[0]]; unreadable {
+			continue
+		}
+		parts, exists := present[objectID]
+		if !exists {
+			drift += d.recordDrift("snapshot-object-missing", filepath.Join(root, objectID))
+			continue
+		}
+		expectedSizes := map[string]int64{"mem": row.MemBytes, "vmstate": row.DiskBytes}
+		for _, part := range expectedFiles {
+			disk, ok := parts[part]
+			if !ok {
+				drift += d.recordDrift("expected-file-missing", filepath.Join(root, objectID, part))
+				continue
+			}
+			if !disk.info.Mode().IsRegular() {
+				drift += d.recordDrift("expected-entry-non-regular", disk.path)
+				continue
+			}
+			if want := expectedSizes[part]; want > 0 && disk.info.Size() != want {
+				drift += d.recordDrift("size-mismatch", fmt.Sprintf("%s disk=%d db=%d", disk.path, disk.info.Size(), want))
+			}
+		}
+	}
+	for objectID := range present {
+		if _, ok := expected[objectID]; ok {
+			continue
+		}
+		reason := "orphan-snapshot-object"
+		if _, capture := terminalDirectories[objectID]; capture {
+			reason = "orphan-snapshot-capture"
+		}
+		drift += d.recordDrift(reason, filepath.Join(root, objectID))
+	}
 	for _, entry := range diskDirs {
 		if !entry.IsDir() {
-			// Files directly under <SnapDir>/ (not in a dep dir) are
-			// unexpected — every snapshot lives one level deep.
-			drift += d.recordDrift("orphan-file-under-snap-dir",
-				filepath.Join(root, entry.Name()))
 			continue
 		}
-		if _, ok := seen[entry.Name()]; ok {
-			continue
+		_, hasObject := unreadableRoots[entry.Name()]
+		if _, invalid := invalidRoots[entry.Name()]; invalid {
+			hasObject = true
 		}
-		drift += d.recordDrift("orphan-dep-dir",
-			filepath.Join(root, entry.Name()))
+		for objectID := range present {
+			if objectID == entry.Name() || strings.HasPrefix(objectID, entry.Name()+"/") {
+				hasObject = true
+				break
+			}
+		}
+		if !hasObject {
+			drift += d.recordDrift("orphan-dep-dir", filepath.Join(root, entry.Name()))
+		}
 	}
 
 	if drift > 0 {
@@ -349,6 +435,31 @@ func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs 
 			"drift", drift, "rows", len(rows), "snap_dir", root)
 	}
 	return drift, nil
+}
+
+// parseSnapshotDirectory validates each directory prefix without following
+// links. The boolean terminal result identifies immutable capture roots;
+// legacy deployment and warm directories become concrete objects when their
+// mem/vmstate files are encountered.
+func parseSnapshotDirectory(directory string) (objectID string, terminal, valid bool) {
+	parts := strings.Split(directory, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return "", false, false
+	}
+	switch {
+	case len(parts) == 1:
+		return parts[0], false, true
+	case len(parts) == 2 && (parts[1] == "warm" || parts[1] == "captures"):
+		return directory, false, true
+	case len(parts) == 3 && parts[1] == "captures" && canonicalSnapshotCaptureID(parts[2]):
+		return directory, true, true
+	case len(parts) == 3 && parts[1] == "warm" && parts[2] == "captures":
+		return directory, false, true
+	case len(parts) == 4 && parts[1] == "warm" && parts[2] == "captures" && canonicalSnapshotCaptureID(parts[3]):
+		return directory, true, true
+	default:
+		return "", false, false
+	}
 }
 
 // tickWithStorage is the storage-backend-aware sweep path. It
@@ -363,9 +474,16 @@ func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs 
 // of where it lives.
 func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]state.SnapshotForGC, rows []state.SnapshotForGC) (int, error) {
 	if d.snapshotIndexer != nil {
-		deploymentIDs := make([]string, 0, len(expected))
-		for depID := range expected {
-			deploymentIDs = append(deploymentIDs, depID)
+		deploymentSet := make(map[string]struct{}, len(rows))
+		for _, row := range rows {
+			if row.AppStatus == state.AppDeleted || row.DeploymentStatus == state.DeployFailed || row.DeploymentStatus == state.DeployCancelled {
+				continue
+			}
+			deploymentSet[row.DeploymentID] = struct{}{}
+		}
+		deploymentIDs := make([]string, 0, len(deploymentSet))
+		for deploymentID := range deploymentSet {
+			deploymentIDs = append(deploymentIDs, deploymentID)
 		}
 		if err := d.snapshotIndexer.ReconcileSnapshotRepositoryIndex(ctx, deploymentIDs); err != nil {
 			d.log.Warn("disk-drift: snapshot repository index reconciliation failed; falling back to disk read",
@@ -399,19 +517,20 @@ func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]sta
 
 	// Bucket keys by deploymentID. Each depID has up to 2 keys:
 	// snap/<depID>/mem and snap/<depID>/vmstate.
+	drift := 0
 	present := make(map[string]map[string]struct{}, len(keys))
 	for _, k := range keys {
-		depID, file, ok := parseSnapKey(k)
+		objectID, file, ok := parseSnapKey(k)
 		if !ok {
+			drift += d.recordDrift("malformed-snapshot-key", k)
 			continue
 		}
-		if present[depID] == nil {
-			present[depID] = make(map[string]struct{}, 2)
+		if present[objectID] == nil {
+			present[objectID] = make(map[string]struct{}, 2)
 		}
-		present[depID][file] = struct{}{}
+		present[objectID][file] = struct{}{}
 	}
 
-	drift := 0
 	// Pass 1: every DB-known dep must have its expected files.
 	// The storage-aware path only checks presence (registry
 	// manifests don't expose byte sizes); the per-row data is
@@ -475,20 +594,36 @@ func (d *DiskDrift) tickOnDiskFallback(ctx context.Context, expected map[string]
 	return d.scanDiskForDrift(ctx, root, diskDirs, expected, rows, true)
 }
 
-// parseSnapKey splits a snap/<depID>/<file> key into its parts.
-// Returns ok=false for any key that doesn't match the canonical
-// shape — those are drift but not surfaced through this helper.
-func parseSnapKey(key string) (depID, file string, ok bool) {
-	const prefix = "snap/"
-	if !strings.HasPrefix(key, prefix) {
+// parseSnapKey returns the canonical on-disk object directory and part for
+// legacy, warm-tier, and immutable capture keys. Capture IDs are deliberately
+// strict UUIDs so a malformed directory is surfaced as drift instead of being
+// mistaken for a deployment namespace.
+func parseSnapKey(key string) (objectID, part string, ok bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) < 3 || parts[0] != "snap" || parts[1] == "" {
 		return "", "", false
 	}
-	rest := strings.TrimPrefix(key, prefix)
-	idx := strings.LastIndex(rest, "/")
-	if idx <= 0 || idx == len(rest)-1 {
+	part = parts[len(parts)-1]
+	if part != "mem" && part != "vmstate" {
 		return "", "", false
 	}
-	return rest[:idx], rest[idx+1:], true
+	switch {
+	case len(parts) == 3:
+		return parts[1], part, true
+	case len(parts) == 4 && parts[2] == "warm":
+		return strings.Join(parts[1:3], "/"), part, true
+	case len(parts) == 5 && parts[2] == "captures" && canonicalSnapshotCaptureID(parts[3]):
+		return strings.Join(parts[1:4], "/"), part, true
+	case len(parts) == 6 && parts[2] == "warm" && parts[3] == "captures" && canonicalSnapshotCaptureID(parts[4]):
+		return strings.Join(parts[1:5], "/"), part, true
+	default:
+		return "", "", false
+	}
+}
+
+func canonicalSnapshotCaptureID(value string) bool {
+	parsed, err := uuid.Parse(value)
+	return err == nil && parsed.String() == value
 }
 
 // checkDepDir inspects one deployment's snapshot directory and

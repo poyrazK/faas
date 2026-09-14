@@ -770,6 +770,14 @@ type BuildProvenanceRunnerDigestStore interface {
 	UpdateBuildProvenanceRunnerDigest(ctx context.Context, buildID, runnerDigest string) error
 }
 
+// CronSuspensionStore separates scheduler-owned suspension from the
+// customer's enabled flag. A successful deployment clears the reason while a
+// customer-disabled cron remains disabled.
+type CronSuspensionStore interface {
+	SuspendCronsForApp(ctx context.Context, appID, reason string) (int, error)
+	ReactivateCronsForApp(ctx context.Context, appID string) (int, error)
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface

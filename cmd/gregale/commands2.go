@@ -3305,6 +3305,8 @@ func cmdCrons(args []string) int {
 			state := "enabled"
 			if !c.Enabled {
 				state = "disabled"
+			} else if c.SuspendedReason != "" {
+				state = "suspended: " + c.SuspendedReason
 			}
 			fmt.Printf("%-30s %-15s %s\n", c.Schedule, state, c.Path)
 		}
@@ -3402,6 +3404,9 @@ func renderCronState(w io.Writer, c api.CronResponse) {
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "schedule:", c.Schedule)
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "path:", c.Path)
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "enabled:", strconv.FormatBool(c.Enabled))
+	if c.SuspendedReason != "" {
+		_, _ = fmt.Fprintf(w, "  %-10s %s\n", "suspended:", c.SuspendedReason)
+	}
 }
 
 // cmdCronsUpdate implements `gregale crons update <id> [--schedule EXPR]
