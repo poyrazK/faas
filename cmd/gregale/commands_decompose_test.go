@@ -48,10 +48,12 @@ type decomposeSink struct {
 
 	// capture lets tests assert the multipart body shape, including
 	// the parsed Content-Type and the field set the SDK Client writes.
-	capturedMultipart []byte
-	projectSlug       string
-	scanCalls         int
-	applyCalls        int
+	capturedMultipart      []byte
+	capturedScanMultipart  []byte
+	capturedApplyMultipart []byte
+	projectSlug            string
+	scanCalls              int
+	applyCalls             int
 }
 
 func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -60,12 +62,14 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.scanCalls++
 		body, _ := io.ReadAll(r.Body)
 		s.capturedMultipart = body
+		s.capturedScanMultipart = append([]byte(nil), body...)
 		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.URL.Path == "/v1/projects" && r.Method == http.MethodPost:
 		s.applyCalls++
 		body, _ := io.ReadAll(r.Body)
 		s.capturedMultipart = body
+		s.capturedApplyMultipart = append([]byte(nil), body...)
 		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.applyStatus, s.applyBody)
 	case strings.HasPrefix(r.URL.Path, "/v1/deployments/") && r.Method == http.MethodGet:
@@ -679,6 +683,39 @@ func TestCmdDeployTarball_JSONFlag(t *testing.T) {
 	}
 	if len(out.Apps) != 3 {
 		t.Errorf("apps: got %d, want 3", len(out.Apps))
+	}
+}
+
+func TestCmdDeployTarball_ProjectNoTriggersReachesScanAndApply(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   goldenApply,
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_no_triggers")
+
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t),
+		"--project-slug", "fixture",
+		"--no-triggers",
+		"--no-wait",
+		"--yes",
+	}); code != 0 {
+		t.Fatalf("project --no-triggers exit=%d", code)
+	}
+	if sink.scanCalls != 1 || sink.applyCalls != 1 {
+		t.Fatalf("scan/apply calls=%d/%d want 1/1", sink.scanCalls, sink.applyCalls)
+	}
+	for phase, body := range map[string][]byte{
+		"scan": sink.capturedScanMultipart, "apply": sink.capturedApplyMultipart,
+	} {
+		if !bytes.Contains(body, []byte("name=\"no_triggers\"\r\n\r\ntrue")) {
+			t.Errorf("%s multipart omitted no_triggers=true", phase)
+		}
 	}
 }
 

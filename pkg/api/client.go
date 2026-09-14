@@ -1242,10 +1242,10 @@ func (c *Client) DestroyPreview(ctx context.Context, slug string) error {
 func (c *Client) ScanProject(
 	ctx context.Context,
 	source io.Reader, sourceName, projectSlug, productionBranch string,
-	installID int64, only, exclude []string, persistExclude bool,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 ) (PlanResponse, error) {
 	return c.ScanProjectWithBinding(ctx, source, sourceName, projectSlug, "", productionBranch,
-		installID, only, exclude, persistExclude)
+		installID, only, exclude, persistExclude, noTriggers)
 }
 
 // ScanProjectWithBinding is ScanProject with the repository identity needed
@@ -1253,11 +1253,11 @@ func (c *Client) ScanProject(
 func (c *Client) ScanProjectWithBinding(
 	ctx context.Context,
 	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
-	installID int64, only, exclude []string, persistExclude bool,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 ) (PlanResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers); err != nil {
 		return PlanResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -1282,10 +1282,10 @@ func (c *Client) ApplyProjectPlan(
 	ctx context.Context,
 	planToken string,
 	source io.Reader, sourceName, projectSlug, productionBranch string,
-	installID int64, only, exclude []string, persistExclude bool,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 ) (ApplyResponse, error) {
 	return c.ApplyProjectPlanWithBinding(ctx, planToken, source, sourceName, projectSlug, "", productionBranch,
-		installID, only, exclude, persistExclude)
+		installID, only, exclude, persistExclude, noTriggers)
 }
 
 // ApplyProjectPlanWithBinding applies a project plan while carrying the
@@ -1294,11 +1294,11 @@ func (c *Client) ApplyProjectPlanWithBinding(
 	ctx context.Context,
 	planToken string,
 	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
-	installID int64, only, exclude []string, persistExclude bool,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 ) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -1350,7 +1350,7 @@ func (c *Client) DeleteDeploymentScopeExclusion(ctx context.Context, projectSlug
 func writeProjectMultipartFields(
 	w *multipart.Writer, source io.Reader, sourceName, projectSlug,
 	repoFullName, productionBranch string, installID int64, only, exclude []string,
-	persistExclude bool,
+	persistExclude, noTriggers bool,
 ) error {
 	fw, err := w.CreateFormFile("source", sourceName)
 	if err != nil {
@@ -1400,6 +1400,11 @@ func writeProjectMultipartFields(
 	// existing wire captures stable.
 	if persistExclude {
 		if err := w.WriteField("persist_exclude", "true"); err != nil {
+			return err
+		}
+	}
+	if noTriggers {
+		if err := w.WriteField("no_triggers", "true"); err != nil {
 			return err
 		}
 	}

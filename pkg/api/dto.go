@@ -4961,6 +4961,7 @@ type ProjectScanRequest struct {
 	ProductionBranch string `json:"production_branch"` // default "main"
 	InstallID        int64  `json:"install_id"`        // GitHub install id (--repo); 0 for unbound
 	Only             string `json:"only"`              // CSV of workload names
+	NoTriggers       bool   `json:"no_triggers"`       // leave declared and existing triggers unchanged
 }
 
 // ProjectApplyRequest is the multipart body for POST /v1/projects.
@@ -4973,6 +4974,7 @@ type ProjectApplyRequest struct {
 	ProductionBranch string `json:"production_branch"`
 	InstallID        int64  `json:"install_id"`
 	Only             string `json:"only"`
+	NoTriggers       bool   `json:"no_triggers"`
 }
 
 // SourceRefDeployRequest is the JSON body for

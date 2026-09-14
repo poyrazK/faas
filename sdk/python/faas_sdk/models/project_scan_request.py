@@ -28,6 +28,8 @@ class ProjectScanRequest:
     """GitHub installation id (with --repository or --repo); 0 for unbound repos"""
     only: str | Unset = UNSET
     """CSV of workload names to include (others skipped)"""
+    no_triggers: bool | Unset = False
+    """Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +44,8 @@ class ProjectScanRequest:
         install_id = self.install_id
 
         only = self.only
+
+        no_triggers = self.no_triggers
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -60,6 +64,8 @@ class ProjectScanRequest:
             field_dict["install_id"] = install_id
         if only is not UNSET:
             field_dict["only"] = only
+        if no_triggers is not UNSET:
+            field_dict["no_triggers"] = no_triggers
 
         return field_dict
 
@@ -83,6 +89,9 @@ class ProjectScanRequest:
         if not isinstance(self.only, Unset):
             files.append(("only", (None, str(self.only).encode(), "text/plain")))
 
+        if not isinstance(self.no_triggers, Unset):
+            files.append(("no_triggers", (None, str(self.no_triggers).encode(), "text/plain")))
+
         for prop_name, prop in self.additional_properties.items():
             files.append((prop_name, (None, str(prop).encode(), "text/plain")))
 
@@ -103,6 +112,8 @@ class ProjectScanRequest:
 
         only = d.pop("only", UNSET)
 
+        no_triggers = d.pop("no_triggers", UNSET)
+
         project_scan_request = cls(
             source=source,
             project_slug=project_slug,
@@ -110,6 +121,7 @@ class ProjectScanRequest:
             production_branch=production_branch,
             install_id=install_id,
             only=only,
+            no_triggers=no_triggers,
         )
 
         project_scan_request.additional_properties = d

@@ -63,6 +63,7 @@ type planTokenWire struct {
 	RepoFullName     string `json:"repo_full_name,omitempty"`
 	ProductionBranch string `json:"production_branch,omitempty"`
 	InstallID        int64  `json:"install_id,omitempty"`
+	NoTriggers       bool   `json:"no_triggers,omitempty"`
 	TSUnix           int64  `json:"ts_unix"`
 }
 
@@ -95,6 +96,10 @@ type scanPlanRequest struct {
 	// the operator's "I excluded this for the long haul" intent.
 	// Default false. The scan path accepts and ignores.
 	PersistExclude bool
+	// NoTriggers makes trigger declarations observational only for this
+	// scan/apply pair. It is bound into the plan token so apply cannot change
+	// the suppression decision made during preview.
+	NoTriggers bool
 }
 
 func validProjectRepoFullName(repo string) bool {
@@ -1121,7 +1126,8 @@ func (s *server) scanService(
 				"re-run scan and apply in one flow")
 		}
 		if pt.Slug != req.ProjectSlug || pt.RepoFullName != req.RepoFullName ||
-			pt.ProductionBranch != req.ProdBranch || pt.InstallID != req.InstallID {
+			pt.ProductionBranch != req.ProdBranch || pt.InstallID != req.InstallID ||
+			pt.NoTriggers != req.NoTriggers {
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 				"plan_token_stale", "plan_token does not match project binding",
 				"re-run scan and apply with the same repository, installation, and production branch")
@@ -1297,6 +1303,13 @@ func (s *server) scanService(
 	// to planCron with the workload name; resolve AppID in the apply
 	// path from the just-inserted apps.
 	crons := projectWorkloadCrons(filteredW)
+	warnings := append([]string(nil), result.Warnings...)
+	if req.NoTriggers {
+		if len(crons) > 0 {
+			warnings = append(warnings, "triggers skipped by request (--no-triggers); existing trigger state left unchanged")
+		}
+		crons = nil
+	}
 
 	// can_apply computation: apps + crons must fit under the plan
 	// caps AND crons must be allowed. We mirror store.ApplyProjectPlan's
@@ -1338,21 +1351,33 @@ func (s *server) scanService(
 	}
 	prePartition := computeAffectedPartition(onlyFilteredW, result.Workloads, acctApps, nil, projectID)
 	partition := computeAffectedPartition(filteredW, result.Workloads, acctApps, req.Exclude, projectID)
-	preDesiredCrons := projectCronsWithPreserved(
-		projectWorkloadCrons(onlyFilteredW), projectApps, cronInventory,
-		func(name string) bool { return len(req.Only) > 0 && !req.Only[strings.ToLower(name)] },
-	)
-	desiredCrons := projectCronsWithPreserved(
-		crons, projectApps, cronInventory,
-		func(name string) bool {
-			lname := strings.ToLower(name)
-			return (len(req.Only) > 0 && !req.Only[lname]) || req.Exclude[lname]
-		},
-	)
+	var preDesiredCrons, desiredCrons []planCron
+	if !req.NoTriggers {
+		preDesiredCrons = projectCronsWithPreserved(
+			projectWorkloadCrons(onlyFilteredW), projectApps, cronInventory,
+			func(name string) bool { return len(req.Only) > 0 && !req.Only[strings.ToLower(name)] },
+		)
+		desiredCrons = projectCronsWithPreserved(
+			crons, projectApps, cronInventory,
+			func(name string) bool {
+				lname := strings.ToLower(name)
+				return (len(req.Only) > 0 && !req.Only[lname]) || req.Exclude[lname]
+			},
+		)
+	}
 	preProjectedApps := projectedAppCount(observedApps, prePartition)
 	projectedApps := projectedAppCount(observedApps, partition)
 	preProjectedCrons := observedCrons - existingProjectCrons + len(preDesiredCrons)
 	projectedCrons := observedCrons - existingProjectCrons + len(desiredCrons)
+	preCronGate, cronGate := preProjectedCrons, projectedCrons
+	if req.NoTriggers {
+		// Suppression leaves trigger state untouched. Existing rows must not
+		// block a workload-only deploy after a plan downgrade.
+		preProjectedCrons = observedCrons
+		projectedCrons = observedCrons
+		preCronGate = 0
+		cronGate = 0
+	}
 
 	var (
 		canApply   bool
@@ -1368,8 +1393,8 @@ func (s *server) scanService(
 	// shrunk the workload set below the plan cap. evaluateQuotaGate
 	// derives the cron count from workloads internally so both
 	// calls are self-contained (no shared scan state).
-	preCanApply, preNotAllowed, preReasons, _ := evaluateProjectedQuotaGate(preDesiredCrons, limits, preProjectedApps, preProjectedCrons)
-	canApply, notAllowed, reasons, _ = evaluateProjectedQuotaGate(desiredCrons, limits, projectedApps, projectedCrons)
+	preCanApply, preNotAllowed, preReasons, _ := evaluateProjectedQuotaGate(preDesiredCrons, limits, preProjectedApps, preCronGate)
+	canApply, notAllowed, reasons, _ = evaluateProjectedQuotaGate(desiredCrons, limits, projectedApps, cronGate)
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
@@ -1450,7 +1475,7 @@ func (s *server) scanService(
 		Workloads:     respWorkloads,
 		Managed:       respManaged,
 		Crons:         crons,
-		Warnings:      result.Warnings,
+		Warnings:      warnings,
 		ObservedApps:  projectedApps,
 		ObservedCrons: projectedCrons,
 		LimitApps:     limits.DeployedApps,
@@ -1503,7 +1528,7 @@ func (s *server) scanService(
 	// Mint a fresh plan_token unless one was supplied (apply path
 	// keeps the caller's; minting a new one would be confusing).
 	if planToken == "" {
-		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.SourceSHA256)
+		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.SourceSHA256)
 		if mintErr != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
 				fmt.Sprintf("mint plan_token: %v", mintErr))
@@ -1704,7 +1729,7 @@ func (s *server) scanService(
 		Workloads: filteredW,
 		Managed:   filteredMc,
 		Tier:      result.Tier,
-		Warnings:  result.Warnings,
+		Warnings:  warnings,
 	}
 
 	// preRemoveIdToSlug maps each app's ID to its pre-remove slug.
@@ -1751,14 +1776,17 @@ func (s *server) scanService(
 			excludeSeen[name] = true
 		}
 	}
-	cronSpecs := make([]reconcile.CronSpec, 0, len(desiredCrons))
-	for _, cron := range desiredCrons {
-		cronSpecs = append(cronSpecs, reconcile.CronSpec{
-			WorkloadName: cron.WorkloadName,
-			Schedule:     cron.Schedule,
-			Path:         cron.Path,
-			Enabled:      cron.Enabled,
-		})
+	var cronSpecs []reconcile.CronSpec
+	if !req.NoTriggers {
+		cronSpecs = make([]reconcile.CronSpec, 0, len(desiredCrons))
+		for _, cron := range desiredCrons {
+			cronSpecs = append(cronSpecs, reconcile.CronSpec{
+				WorkloadName: cron.WorkloadName,
+				Schedule:     cron.Schedule,
+				Path:         cron.Path,
+				Enabled:      cron.Enabled,
+			})
+		}
 	}
 	rec, recErr := s.reconcileSvc.ReconcileWithCrons(
 		r.Context(), project, filteredScan,
@@ -1871,6 +1899,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		prodBranch     = "main"
 		installID      int64
 		persistExclude bool
+		noTriggers     bool
 	)
 	for {
 		part, perr := mr.NextPart()
@@ -1947,6 +1976,14 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 					persistExclude = parsed
 				}
 			}
+		case "no_triggers":
+			b, _ := io.ReadAll(io.LimitReader(part, 32))
+			parsed, parseErr := strconv.ParseBool(strings.TrimSpace(string(b)))
+			if parseErr != nil {
+				return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid no_triggers", "no_triggers must be true or false")
+			}
+			noTriggers = parsed
 		default:
 			_, _ = io.Copy(io.Discard, part)
 		}
@@ -2002,6 +2039,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		Only:           onlySet,
 		Exclude:        excludeSet,
 		PersistExclude: persistExclude,
+		NoTriggers:     noTriggers,
 	}, nil
 }
 
@@ -2027,7 +2065,7 @@ func hashFileSHA256(path string) (string, error) {
 // mintPlanToken produces the base64-JSON blob. The hash is the
 // SHA-256 of the source bytes (the apply handler re-hashes and
 // compares). AccountID prevents token-reuse across accounts.
-func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, hashHex string) (string, error) {
+func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, hashHex string) (string, error) {
 	pt := planTokenWire{
 		Hash:             hashHex,
 		AccountID:        accountID,
@@ -2035,6 +2073,7 @@ func mintPlanToken(accountID, slug, repoFullName, productionBranch string, insta
 		RepoFullName:     repoFullName,
 		ProductionBranch: productionBranch,
 		InstallID:        installID,
+		NoTriggers:       noTriggers,
 		TSUnix:           nowUnix(),
 	}
 	b, err := json.Marshal(pt)

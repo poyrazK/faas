@@ -117,6 +117,10 @@ func applyProjectMultipart(t *testing.T, h *e2etest.Harness, key, slug, planToke
 }
 
 func applyProjectMultipartWithOnly(t *testing.T, h *e2etest.Harness, key, slug, planToken, only string, body []byte) api.ApplyResponse {
+	return applyProjectMultipartWithOptions(t, h, key, slug, planToken, only, false, body)
+}
+
+func applyProjectMultipartWithOptions(t *testing.T, h *e2etest.Harness, key, slug, planToken, only string, noTriggers bool, body []byte) api.ApplyResponse {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -135,6 +139,11 @@ func applyProjectMultipartWithOnly(t *testing.T, h *e2etest.Harness, key, slug, 
 	if only != "" {
 		if err := mw.WriteField("only", only); err != nil {
 			t.Fatalf("write only: %v", err)
+		}
+	}
+	if noTriggers {
+		if err := mw.WriteField("no_triggers", "true"); err != nil {
+			t.Fatalf("write no_triggers: %v", err)
 		}
 	}
 	if err := mw.Close(); err != nil {

@@ -788,7 +788,7 @@ func TestProjectMultipartRequestsTerminateAtCleanEOF(t *testing.T) {
 			name: "scan",
 			path: "/v1/projects/scan",
 			call: func(ctx context.Context, c *Client) error {
-				_, err := c.ScanProject(ctx, bytes.NewReader([]byte("tarball bytes")), "src.tar.gz", "demo", "main", 0, nil, nil, false)
+				_, err := c.ScanProject(ctx, bytes.NewReader([]byte("tarball bytes")), "src.tar.gz", "demo", "main", 0, nil, nil, false, false)
 				return err
 			},
 		},
@@ -796,7 +796,7 @@ func TestProjectMultipartRequestsTerminateAtCleanEOF(t *testing.T) {
 			name: "apply",
 			path: "/v1/projects",
 			call: func(ctx context.Context, c *Client) error {
-				_, err := c.ApplyProjectPlan(ctx, "", bytes.NewReader([]byte("tarball bytes")), "src.tar.gz", "demo", "main", 0, nil, nil, false)
+				_, err := c.ApplyProjectPlan(ctx, "", bytes.NewReader([]byte("tarball bytes")), "src.tar.gz", "demo", "main", 0, nil, nil, false, false)
 				return err
 			},
 		},

@@ -1828,10 +1828,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// time. nil = unset → apid server default (false), so existing
 	// customers see no behaviour change.
 	if projectRequested {
-		if explicit["no-triggers"] {
-			return printErr("Unsupported project deploy flags", errors.New(
-				"--no-triggers cannot be combined with project scope controls; project deploy trigger suppression is not yet supported"))
-		}
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "canary-preset", "canary-stages",
@@ -2545,7 +2541,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
 				*bindingRepo, *productionBranch, *deployOnly, *deployExclude, *installID,
 				*deployShowAffected, *diffJSON,
-				*diffStrict || !*diffLenient)
+				*diffStrict || !*diffLenient, *noTriggers)
 		}
 		opts := buildDiffOptions(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
@@ -2606,7 +2602,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				strings.Join(clash, ", ")))
 		}
 		plan, err := client.ScanProjectWithBinding(ctx, openTarball, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude)
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers)
 		if err != nil {
 			return printErr("Scan failed", err)
 		}
@@ -2654,7 +2650,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		defer func() { _ = openTarball2.Close() }()
 		applyCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply"))
 		apply, err := client.ApplyProjectPlanWithBinding(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude)
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers)
 		if err != nil {
 			return printErr("Apply failed", err)
 		}

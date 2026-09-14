@@ -21381,6 +21381,10 @@ components:
         only:
           type: string
           description: "CSV of workload names to include (others skipped)"
+        no_triggers:
+          type: boolean
+          default: false
+          description: "Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair."
 
     SourceRefDeployRequest:
       description: |
@@ -21651,6 +21655,10 @@ components:
         production_branch: { type: string }
         install_id: { type: integer, format: int64 }
         only: { type: string }
+        no_triggers:
+          type: boolean
+          default: false
+          description: "Leave trigger declarations and existing project trigger state unchanged for this apply."
 
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."

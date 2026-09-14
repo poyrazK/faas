@@ -57,7 +57,7 @@ func TestApplyProjectPlan_UsesContextIdempotencyKey(t *testing.T) {
 
 	c := NewClient(srv.URL, "token")
 	ctx := ContextWithIdempotencyKey(context.Background(), want)
-	if _, err := c.ApplyProjectPlan(ctx, "plan-token", bytes.NewBufferString("source"), "source.tar.gz", "project", "main", 0, nil, nil, false); err != nil {
+	if _, err := c.ApplyProjectPlan(ctx, "plan-token", bytes.NewBufferString("source"), "source.tar.gz", "project", "main", 0, nil, nil, false, false); err != nil {
 		t.Fatalf("ApplyProjectPlan: %v", err)
 	}
 	if got != want {

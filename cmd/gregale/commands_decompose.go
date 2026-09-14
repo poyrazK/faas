@@ -121,7 +121,7 @@ func cmdScan(args []string) int {
 		return printErr("Could not open source", err)
 	}
 	defer func() { _ = src.Close() }()
-	plan, err := client.ScanProjectWithBinding(ctx, src, sourceName, *projectSlug, *bindingRepo, *prodBranch, *installID, onlyList, excludeList, *persistExclude)
+	plan, err := client.ScanProjectWithBinding(ctx, src, sourceName, *projectSlug, *bindingRepo, *prodBranch, *installID, onlyList, excludeList, *persistExclude, false)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
@@ -150,7 +150,7 @@ func runProjectDeployPreviewWithMode(
 	client *api.Client,
 	tarball, projectSlug, bindingRepo, productionBranch, only, exclude string,
 	installID int64,
-	showAffected, emitJSON, strict bool,
+	showAffected, emitJSON, strict, noTriggers bool,
 ) int {
 	if tarball == "" {
 		return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
@@ -172,7 +172,7 @@ func runProjectDeployPreviewWithMode(
 	defer func() { _ = src.Close() }()
 
 	plan, err := client.ScanProjectWithBinding(ctx, src, filepath.Base(tarball), projectSlug,
-		bindingRepo, productionBranch, installID, onlyList, excludeList, false)
+		bindingRepo, productionBranch, installID, onlyList, excludeList, false, noTriggers)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}

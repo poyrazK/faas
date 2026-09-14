@@ -145,6 +145,7 @@ func TestDecodePlanToken_RoundTrip(t *testing.T) {
 		RepoFullName:     "acme/widgets",
 		ProductionBranch: "release",
 		InstallID:        42,
+		NoTriggers:       true,
 		TSUnix:           1700000000,
 	}
 	b, _ := json.Marshal(pt)
@@ -155,7 +156,7 @@ func TestDecodePlanToken_RoundTrip(t *testing.T) {
 	}
 	if got.AccountID != pt.AccountID || got.Hash != pt.Hash || got.Slug != pt.Slug ||
 		got.RepoFullName != pt.RepoFullName || got.ProductionBranch != pt.ProductionBranch ||
-		got.InstallID != pt.InstallID {
+		got.InstallID != pt.InstallID || got.NoTriggers != pt.NoTriggers {
 		t.Fatalf("round-trip mismatch: %+v vs %+v", got, pt)
 	}
 }

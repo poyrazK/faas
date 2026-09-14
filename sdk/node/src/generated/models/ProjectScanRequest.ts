@@ -27,5 +27,9 @@ export type ProjectScanRequest = {
    * CSV of workload names to include (others skipped)
    */
   only?: string;
+  /**
+   * Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair.
+   */
+  no_triggers?: boolean;
 };
 

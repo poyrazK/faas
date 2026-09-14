@@ -26,6 +26,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,6 +131,46 @@ func twoWorkloadMovedFixture(t *testing.T, prefix string) []byte {
 		hdr := &tar.Header{Name: e.name, Mode: 0o644, Size: int64(len(e.body)), Typeflag: tar.TypeReg}
 		_ = tw.WriteHeader(hdr)
 		_, _ = tw.Write([]byte(e.body))
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+	return buf.Bytes()
+}
+
+func scheduledProjectFixture(t *testing.T, prefix, schedule string) []byte {
+	t.Helper()
+	render := "cronJobs:\n  - name: nightly\n    schedule: \"" + schedule + "\"\n    command: echo nightly\n"
+	entries := []struct{ name, body string }{
+		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n"},
+		{prefix + "/render.yaml", render},
+		{prefix + "/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, entry := range entries {
+		hdr := &tar.Header{Name: entry.name, Mode: 0o644, Size: int64(len(entry.body)), Typeflag: tar.TypeReg}
+		_ = tw.WriteHeader(hdr)
+		_, _ = tw.Write([]byte(entry.body))
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+	return buf.Bytes()
+}
+
+func unscheduledProjectFixture(t *testing.T, prefix string) []byte {
+	t.Helper()
+	entries := []struct{ name, body string }{
+		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n  nightly:\n    build: { context: . }\n"},
+		{prefix + "/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, entry := range entries {
+		hdr := &tar.Header{Name: entry.name, Mode: 0o644, Size: int64(len(entry.body)), Typeflag: tar.TypeReg}
+		_ = tw.WriteHeader(hdr)
+		_, _ = tw.Write([]byte(entry.body))
 	}
 	_ = tw.Close()
 	_ = gz.Close()
@@ -411,6 +452,94 @@ func TestApplyProject_OnlyRetainsSiblingAndCron(t *testing.T) {
 	}
 	if keptCronID != cronID || timezone != "Europe/Istanbul" || !skipIfRunning {
 		t.Fatalf("worker cron changed: id %q -> %q timezone %q skip_if_running %t", cronID, keptCronID, timezone, skipIfRunning)
+	}
+}
+
+func TestApplyProject_NoTriggersPreservesExistingCron(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		return
+	}
+	if err := dbMigrateUp(t, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	h := e2etest.Start(t, pool, e2etest.APID)
+	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	first := applyProjectMultipart(t, h, key, "no-triggers", "",
+		scheduledProjectFixture(t, "faas-no-triggers", "0 3 * * *"))
+	if len(first.Crons) != 1 {
+		t.Fatalf("initial crons=%v want one", first.Crons)
+	}
+	var originalID, originalSchedule string
+	if err := pool.QueryRow(context.Background(), `
+		select c.id, c.schedule from crons c
+		join apps a on a.id = c.app_id
+		where a.project_id = $1`, first.ProjectID).Scan(&originalID, &originalSchedule); err != nil {
+		t.Fatal(err)
+	}
+
+	second := applyProjectMultipartWithOptions(t, h, key, "no-triggers", "", "", true,
+		scheduledProjectFixture(t, "faas-no-triggers", "30 4 * * *"))
+	if len(second.Crons) != 0 {
+		t.Fatalf("suppressed apply exposed desired crons=%v", second.Crons)
+	}
+	if !strings.Contains(strings.Join(second.Warnings, "\n"), "triggers skipped") {
+		t.Fatalf("suppressed apply warnings=%v", second.Warnings)
+	}
+	var count int
+	var keptID, keptSchedule string
+	if err := pool.QueryRow(context.Background(), `
+		select count(*), min(c.id::text), min(c.schedule) from crons c
+		join apps a on a.id = c.app_id
+		where a.project_id = $1`, first.ProjectID).Scan(&count, &keptID, &keptSchedule); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || keptID != originalID || keptSchedule != originalSchedule {
+		t.Fatalf("--no-triggers mutated cron: count=%d id %q -> %q schedule %q -> %q",
+			count, originalID, keptID, originalSchedule, keptSchedule)
+	}
+
+	// Removing the declaration must also leave the durable trigger untouched.
+	applyProjectMultipartWithOptions(t, h, key, "no-triggers", "", "", true,
+		unscheduledProjectFixture(t, "faas-no-triggers"))
+	// Selecting only the sibling API workload must not remove nightly's trigger.
+	applyProjectMultipartWithOptions(t, h, key, "no-triggers", "", "api", true,
+		unscheduledProjectFixture(t, "faas-no-triggers"))
+	if err := pool.QueryRow(context.Background(), `
+		select count(*), min(c.id::text), min(c.schedule) from crons c
+		join apps a on a.id = c.app_id
+		where a.project_id = $1`, first.ProjectID).Scan(&count, &keptID, &keptSchedule); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || keptID != originalID || keptSchedule != originalSchedule {
+		t.Fatalf("--no-triggers removal/--only mutated cron: count=%d id %q -> %q schedule %q -> %q",
+			count, originalID, keptID, originalSchedule, keptSchedule)
+	}
+}
+
+func TestApplyProject_NoTriggersNeverCreatesCron(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		return
+	}
+	if err := dbMigrateUp(t, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	h := e2etest.Start(t, pool, e2etest.APID)
+	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	result := applyProjectMultipartWithOptions(t, h, key, "no-triggers-new", "", "", true,
+		scheduledProjectFixture(t, "faas-no-triggers-new", "0 3 * * *"))
+	if len(result.Crons) != 0 || !strings.Contains(strings.Join(result.Warnings, "\n"), "triggers skipped") {
+		t.Fatalf("suppressed new project crons=%v warnings=%v", result.Crons, result.Warnings)
+	}
+	var count int
+	if err := pool.QueryRow(context.Background(), `
+		select count(*) from crons c join apps a on a.id = c.app_id
+		where a.project_id = $1`, result.ProjectID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("--no-triggers created %d cron rows for a new project", count)
 	}
 }
 
