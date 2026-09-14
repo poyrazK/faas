@@ -61,6 +61,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -1312,7 +1313,8 @@ func (s *safeBuffer) String() string {
 // trips the race detector.
 func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.Command(filepath.Join(bin, name))
+	argv := append(boundingSetPrefix(t, name), filepath.Join(bin, name))
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = &safeBuffer{}
 	cmd.Stderr = cmd.Stdout // share the same buffer (only one consumer: stop)
@@ -1766,4 +1768,51 @@ func imagedEnv(t *testing.T, dbURL, guestInit, appsRoot, tmp string) []string {
 	// returned 503. First seen on the 2026-09-13 native e2e run; invisible in
 	// CI because only the metal-tagged tests start imaged.
 	return append(env, functionRunnerEnv(t, tmp)...)
+}
+
+// boundingSetPrefix returns an argv prefix that runs a daemon with the same
+// capability bounding set its production systemd unit gives it, or nil when no
+// adjustment is needed.
+//
+// imaged calls capdecl at boot and REFUSES TO START when a capability its
+// declaration denies is still reachable:
+//
+//	capdecl: boot check failed; refusing to start
+//	capdecl: declaration denies caps present in live Bnd set: cap_sys_admin
+//
+// That is the ADR-075 boundary working correctly. faas-imaged.service removes
+// cap_sys_admin from CapabilityBoundingSet, but the native e2e gate runs the
+// suite as root — jailer, netns and KVM require it — so root's bounding set
+// still contains cap_sys_admin and imaged declines. ci.yml already does this
+// for the boot-contract job with the same setpriv invocation.
+//
+// Scoped to imaged deliberately: it is the daemon that enforces this at boot,
+// and vmmd genuinely needs cap_sys_admin for mounts and namespaces, so the
+// suite as a whole cannot drop it. The allowed list is read from the unit spec
+// rather than restated here, so a capability added to the unit is honoured
+// without touching this file.
+func boundingSetPrefix(t *testing.T, name string) []string {
+	t.Helper()
+	if name != "imaged" || runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		return nil
+	}
+	unit, err := daemonunitspec.UnitByName("imaged")
+	if err != nil {
+		t.Fatalf("e2etest: look up imaged unit spec: %v", err)
+	}
+	if len(unit.CapabilityBoundingSet) == 0 {
+		return nil
+	}
+	setpriv, err := exec.LookPath("setpriv")
+	if err != nil {
+		// Failing here beats letting imaged exit with a capdecl error that
+		// reads like a product bug.
+		t.Fatalf("e2etest: setpriv is required to run imaged as root with a "+
+			"restricted bounding set (capdecl refuses cap_sys_admin): %v", err)
+	}
+	set := "-all"
+	for _, c := range unit.CapabilityBoundingSet {
+		set += ",+" + strings.TrimPrefix(strings.ToLower(c), "cap_")
+	}
+	return []string{setpriv, "--bounding-set=" + set, "--"}
 }
