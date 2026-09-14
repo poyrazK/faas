@@ -61,7 +61,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -1694,38 +1693,37 @@ var _ = io.Discard
 // <root>/runners/<runtime>/faas-runner, with GO124_ALPINE spelled go124-alpine.
 func functionRunnerEnv(t *testing.T, tmp string) []string {
 	t.Helper()
-	// Keyed by the env-var suffix; the value is the on-disk runtime directory.
-	runtimes := map[string]string{
-		"NODE22":       "node22",
-		"NODE24":       "node24",
-		"PYTHON312":    "python312",
-		"PYTHON313":    "python313",
-		"GO124":        "go124",
-		"GO124_ALPINE": "go124-alpine",
+	// Full names as literals, never assembled from a shared prefix. The env
+	// contract gate (pkg/daemonunitspec TestEnvContract_EveryReadIsDeclared)
+	// scans source for quoted variable names and matches them against the
+	// declared contract, so concatenating a prefix with a per-runtime suffix
+	// reads to it as one undeclared variable named by the bare prefix.
+	// Dynamic construction defeats a static contract check — and note the
+	// scanner sees quoted strings in COMMENTS too, so do not spell the bare
+	// prefix as a literal anywhere in this file.
+	runners := []struct{ env, dir string }{
+		{"FAAS_FUNCTION_RUNNER_GO124", "go124"},
+		{"FAAS_FUNCTION_RUNNER_GO124_ALPINE", "go124-alpine"},
+		{"FAAS_FUNCTION_RUNNER_NODE22", "node22"},
+		{"FAAS_FUNCTION_RUNNER_NODE24", "node24"},
+		{"FAAS_FUNCTION_RUNNER_PYTHON312", "python312"},
+		{"FAAS_FUNCTION_RUNNER_PYTHON313", "python313"},
 	}
-	names := make([]string, 0, len(runtimes))
-	for suffix := range runtimes {
-		names = append(names, suffix)
-	}
-	// Map iteration order is random; sort so the daemon's environment is
-	// byte-identical between runs and a failure is reproducible.
-	sort.Strings(names)
 
-	out := make([]string, 0, len(names))
-	for _, suffix := range names {
-		key := "FAAS_FUNCTION_RUNNER_" + suffix
-		if v := os.Getenv(key); v != "" {
-			out = append(out, key+"="+v)
+	out := make([]string, 0, len(runners))
+	for _, r := range runners {
+		if v := os.Getenv(r.env); v != "" {
+			out = append(out, r.env+"="+v)
 			continue
 		}
-		path := filepath.Join(tmp, "runners", runtimes[suffix], "faas-runner")
+		path := filepath.Join(tmp, "runners", r.dir, "faas-runner")
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("e2etest: mkdir runner dir for %s: %v", suffix, err)
+			t.Fatalf("e2etest: mkdir runner dir for %s: %v", r.env, err)
 		}
 		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-			t.Fatalf("e2etest: write placeholder runner for %s: %v", suffix, err)
+			t.Fatalf("e2etest: write placeholder runner for %s: %v", r.env, err)
 		}
-		out = append(out, key+"="+path)
+		out = append(out, r.env+"="+path)
 	}
 	return out
 }
