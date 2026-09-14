@@ -30,7 +30,8 @@ gregale deploy --repo onebox-faas/hello --ref $(git rev-parse HEAD)
 
 This is the canonical CI shape: a runner reads `HEAD` from the
 local checkout and posts a one-shot deploy to the control
-plane. The control plane resolves the durable install row,
+plane. The CLI first creates the named app when it does not exist, or
+reuses the same-account app when it does. The control plane then resolves the durable install row,
 mints an installation token, fetches the codeload archive for
 the SHA, spools it, validates the tarball shape, enqueues a
 build, applies the `gregale.yaml` triggers and workflow definitions
@@ -91,6 +92,13 @@ declarations are validated, quota-checked, deduplicated, and applied before
 the build is accepted; `workflows:` is stored on the deployment. Pass
 `--no-triggers` when a release should deploy code and workflows without
 reconciling trigger declarations.
+
+Repository deploys accept deployment annotations, rollout controls,
+`--no-triggers`, wait controls, and an idempotency key. App-shape and local
+source controls such as `--app`, `--function`, `--runtime`, `--handler`,
+`--dockerfile`, `--vcpu`, `--profile`, authentication/protocol overrides, and
+doctor flags are rejected with `--repo`; configure those on the app or use a
+local/tarball deploy whose source can be inspected before mutation.
 
 ## What it is NOT
 

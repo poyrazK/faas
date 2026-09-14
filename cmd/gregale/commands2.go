@@ -822,6 +822,78 @@ func buildCreateRequest(slug string, sh shape, runtime string, requireAuthnPtr *
 	return req
 }
 
+// validateDeploySourceSelection keeps the source transport explicit. Deploy
+// accepts zero selectors for the local zero-config path, or exactly one of the
+// explicit selectors below. A ref is meaningful only for the repository
+// transport. Run this before authentication or source I/O so a malformed CI
+// invocation cannot silently deploy different bytes.
+func validateDeploySourceSelection(sourcePath string, worktree bool, image, archive, repo, templateName string, githubSnippet bool, ref string) error {
+	var selected []string
+	if sourcePath != "" || worktree {
+		if sourcePath != "" {
+			selected = append(selected, "--path")
+		} else {
+			selected = append(selected, "--worktree")
+		}
+	}
+	if image != "" {
+		selected = append(selected, "--image")
+	}
+	if archive != "" {
+		selected = append(selected, "--tarball")
+	}
+	if repo != "" {
+		selected = append(selected, "--repo")
+	}
+	if templateName != "" {
+		selected = append(selected, "--template")
+	}
+	if githubSnippet {
+		selected = append(selected, "--github")
+	}
+	if ref != "" && repo == "" {
+		return errors.New("--ref requires --repo")
+	}
+	if len(selected) > 1 {
+		return fmt.Errorf("source selectors are mutually exclusive: %s", strings.Join(selected, ", "))
+	}
+	return nil
+}
+
+func validateRepoDeployFlags(explicit map[string]bool) error {
+	var unsupported []string
+	for _, name := range []string{
+		"function", "app", "runtime", "handler", "dockerfile", "vcpu",
+		"require-authn", "no-require-authn", "app-protocol",
+		"doctor-strict", "no-doctor", "secret-scan",
+	} {
+		if explicit[name] {
+			unsupported = append(unsupported, "--"+name)
+		}
+	}
+	if len(unsupported) == 0 {
+		return nil
+	}
+	return fmt.Errorf("unsupported with --repo: %s", strings.Join(unsupported, ", "))
+}
+
+func validateExplicitDockerfile(sourceDir string) error {
+	if sourceDir == "" {
+		return errors.New("--dockerfile requires a local, tarball, or template source containing Dockerfile")
+	}
+	info, err := os.Stat(filepath.Join(sourceDir, "Dockerfile"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New("--dockerfile was set but Dockerfile was not found at the selected source root")
+		}
+		return fmt.Errorf("inspect Dockerfile: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("Dockerfile at the selected source root must be a regular file")
+	}
+	return nil
+}
+
 // createOrFetchApp issues CreateApp and, on a 409 (the slug is taken),
 // probes the server with GetApp to disambiguate "owned by this account"
 // from "owned by another account". Returns nil on success (either a fresh
@@ -948,6 +1020,9 @@ func manifestCronKey(schedule, path string) string {
 // the CLI creates or fetches the target app and returns the definitions to
 // include in the deployment request.
 func loadWorkflowManifestForDeploy(ctx context.Context, client manifestCronClient, cwd string) ([]api.WorkflowSpec, error) {
+	if cwd == "" {
+		return nil, nil
+	}
 	m, ok, err := gregalemanifest.Load(cwd)
 	if err != nil {
 		return nil, err
@@ -1003,6 +1078,9 @@ func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug
 // cleanupManifestTriggers when the deployment is rejected. If staging itself
 // fails, already-created rows are compensated before the error is returned.
 func deployManifestTriggersWithRollback(ctx context.Context, client manifestCronClient, slug, cwd string) ([]string, error) {
+	if cwd == "" {
+		return nil, nil
+	}
 	m, ok, err := gregalemanifest.Load(cwd)
 	if err != nil {
 		return nil, err
@@ -1480,12 +1558,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *function && *app {
 		return printErr("Invalid flags", fmt.Errorf("--function and --app are mutually exclusive"))
 	}
-	// --path and --worktree select the local zero-config source. They
-	// cannot be combined with another source shape: silently preferring
-	// an image or an explicit tarball would make the selected directory
-	// appear to have been deployed when it was never uploaded.
-	if (*sourcePath != "" || *worktree) && (*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet) {
-		return printErr("Invalid flags", fmt.Errorf("--path/--worktree can only be used with a local zero-config deploy"))
+	if err := validateDeploySourceSelection(*sourcePath, *worktree, *image, *tarball, *repo, *templateName, *githubSnippet, *ref); err != nil {
+		return printErr("Invalid flags", err)
 	}
 	// --secret-scan=off is the documented escape hatch for customers who
 	// genuinely need to ship a Stripe test key at boot (local dev
@@ -1650,6 +1724,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// in PR-B; the server resolves the install token from
 	// github_installations, so CI runs need only FAAS_TOKEN + --ref.
 	if *repo != "" {
+		if err := validateRepoDeployFlags(explicit); err != nil {
+			return printErr("Invalid flags", err)
+		}
 		if *createOnly {
 			return printErr("Invalid flags", fmt.Errorf("--create-only is not supported with --repo; use --template or --path"))
 		}
@@ -1810,6 +1887,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		cwd = ""
 	}
 	sourceDir := cwd
+	if *image != "" {
+		// An immutable image has no local source view. Keep cwd out of
+		// framework detection, doctor, manifest, workflow, and trigger paths.
+		sourceDir = ""
+	}
 	if *sourcePath != "" {
 		if cwdErr != nil {
 			return printErr("Could not resolve deploy source", cwdErr)
@@ -1880,6 +1962,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		*tarball = archivePath
 		sourceDir = archiveSourceDir
 		defer archiveCleanup()
+	}
+	if *dockerfile {
+		if dockerfileErr := validateExplicitDockerfile(sourceDir); dockerfileErr != nil {
+			return printErr("Invalid --dockerfile", dockerfileErr)
+		}
 	}
 	// Cluster A: local doctor preflight. Zero-config deploys run the
 	// deterministic source checks automatically in warn-only mode; the
@@ -2247,6 +2334,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, *runtime, *handler, sourceSHA256, *image != "")
+		if *dockerfile {
+			opts.BuildPlan.Framework = string(fwDocker)
+		}
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
 		opts.Strict = !*diffLenient

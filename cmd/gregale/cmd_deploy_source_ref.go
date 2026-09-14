@@ -96,6 +96,12 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx context.Con
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	// Source-ref is a first-deploy transport as well as a redeploy transport.
+	// Probe first so an existing app can redeploy even when the account is at
+	// its app cap; create only after the account-scoped lookup returns 404.
+	if err := ensureSourceRefApp(ctx, client, slug); err != nil {
+		return printErr("Could not create or fetch app", err)
+	}
 	req := api.SourceRefDeployRequest{
 		Repo:           repo,
 		Ref:            ref,
@@ -152,4 +158,13 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx context.Con
 		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", slug, waitTimeout)
 	}
 	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout})
+}
+
+func ensureSourceRefApp(ctx context.Context, client *Client, slug string) error {
+	if _, err := client.GetApp(ctx, slug); err == nil {
+		return nil
+	} else if !isNotFound(err) {
+		return err
+	}
+	return createOrFetchApp(ctx, client, buildCreateRequest(slug, shapeApp, "", nil, nil), nil, nil, nil)
 }

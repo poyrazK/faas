@@ -63,6 +63,7 @@ func TestCmdDeploy_RollsBackManifestTriggersWhenDeploymentRejected(t *testing.T)
 	}
 	tarball := writeDeploySourceArchive(t, map[string]string{
 		"archive-root/package.json": `{}`,
+		"archive-root/Dockerfile":   "FROM scratch\n",
 		"archive-root/gregale.yaml": "triggers:\n  - kind: cron\n    app: rollback-app\n    schedule: 0 3 * * *\n    path: /run\n",
 	})
 
@@ -89,6 +90,9 @@ func TestCmdDeploySourceRef_RollsBackManifestTriggersWhenRejected(t *testing.T) 
 	var events []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/apps":
+			events = append(events, "create-app")
+			writeJSONTest(w, api.AppResponse{ID: "app-rollback", Slug: "rollback-app"})
 		case "/v1/crons":
 			switch r.Method {
 			case http.MethodGet:
@@ -143,7 +147,7 @@ func TestCmdDeploySourceRef_RollsBackManifestTriggersWhenRejected(t *testing.T) 
 	if code := cmdDeployTarball([]string{"--repo", "onebox-faas/hello", "--ref", "main", "--name", "rollback-app", "--no-wait"}); code == 0 {
 		t.Fatal("source-ref deploy exit = 0, want rejected deployment failure")
 	}
-	if got, want := events, []string{"source-ref"}; !reflect.DeepEqual(got, want) {
+	if got, want := events, []string{"create-app", "source-ref"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("request sequence = %v, want %v", got, want)
 	}
 	if strings.Contains(stderr.String(), "Manifest trigger rollback complete") {

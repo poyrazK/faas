@@ -260,6 +260,9 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 // disappear from either the local or server diff request while the runtime
 // deployment persistence surface is still staged.
 func validateDeployDiffManifest(cwd string) error {
+	if cwd == "" {
+		return nil
+	}
 	m, ok, err := gregalemanifest.Load(cwd)
 	if err != nil {
 		return err
@@ -357,6 +360,9 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 // helper is reached, so a best-effort empty result keeps the adapter safe for
 // unit callers and preserves the existing read-only behaviour.
 func previewCronsFromManifest(cwd, slug string) []api.CreateCronRequest {
+	if cwd == "" {
+		return nil
+	}
 	m, ok, err := gregalemanifest.Load(cwd)
 	if err != nil || !ok || m == nil {
 		return nil
