@@ -62,6 +62,7 @@ type diffCLIOptions struct {
 	TrafficPercent *int
 	Canary         *api.CanaryPresetSpec
 	Workflows      []api.WorkflowSpec
+	PRNumber       int
 	NoTriggers     bool
 	// Crons is the post-deploy cron list (full-replacement).
 	// Populated from the gregale.yaml triggers fan-out so the diff
@@ -221,6 +222,7 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	// engine itself doesn't read pkg/api/limits.go; the caller
 	// supplies QuotaConfig.
 	d := deploydiff.Compute(opts.Slug, plan, baseline, pending)
+	appendDeployPreviewAnnotationIntent(&d, opts)
 	if baselineErr != nil {
 		// Lenient mode may still show the partial projection, but it must
 		// be explicit that the result is incomplete. Keeping this as a
@@ -501,6 +503,7 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 	// path renders Diff (the engine type). Wrap the inner Diff
 	// through a synthetic Diff so the same renderers work.
 	synthetic := syntheticDiffFromResponse(resp)
+	appendDeployPreviewAnnotationIntent(&synthetic, opts)
 	if opts.JSON {
 		if err := deploydiff.RenderJSON(osStdout, synthetic); err != nil {
 			return printErr("Could not encode diff", err)
@@ -512,6 +515,17 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 		return 1
 	}
 	return 0
+}
+
+func appendDeployPreviewAnnotationIntent(d *deploydiff.Diff, opts diffCLIOptions) {
+	if d == nil || opts.PRNumber <= 0 {
+		return
+	}
+	d.Changes = append(d.Changes, deploydiff.Change{
+		Field: "deployment.pr_number",
+		Kind:  deploydiff.ChangeAdd,
+		After: deploydiff.AsAny(opts.PRNumber),
+	})
 }
 
 // diffRequestFromCLI projects the CLI flag set onto the wire

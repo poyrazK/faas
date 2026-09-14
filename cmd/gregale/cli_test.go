@@ -1725,8 +1725,8 @@ func TestCmdDeploy_RequireAuthn_ExistingAppPATCH(t *testing.T) {
 	}); code != 0 {
 		t.Fatalf("cmdDeploy existing-app exit = %d, want 0", code)
 	}
-	if !sawCreate {
-		t.Errorf("expected POST /v1/apps (got 409), but server never saw it")
+	if sawCreate {
+		t.Errorf("owned app redeploy must not POST /v1/apps")
 	}
 	if !sawPatch {
 		t.Errorf("expected PATCH /v1/apps/existing-app after 409 to mirror --require-authn onto existing app; got nothing")

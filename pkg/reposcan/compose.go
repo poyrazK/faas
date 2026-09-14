@@ -206,11 +206,10 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			}
 			continue
 		}
-		// build: path — emit a workloadSeed. Class is intentionally
-		// empty here so Phase 4 characterization (or another tier's
-		// hint) can fill it without being blocked by an explicit
-		// ClassUnknown. The merge rule defaults to ClassUnknown at
-		// the boundary.
+		// build: path — emit a workloadSeed. Class stays empty so an
+		// explicit hint from another detector can fill it. If no hint
+		// exists, mergeByKey infers HTTP from a published port and worker
+		// otherwise.
 		seeds = append(seeds, workloadSeed{
 			name:         name,
 			rootDir:      ctx,

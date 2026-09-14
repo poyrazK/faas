@@ -95,7 +95,7 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 // waitForDeploymentReceiptUntil is the timeout-aware implementation used by
 // JSON deploys whenever lifecycle waiting is enabled (the default).
 func waitForDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.DeploymentResponse, deadline time.Duration) (api.DeploymentResponse, bool) {
-	if dep.Status == statusLive || dep.Status == deploymentStatusFailed || dep.Status == deploymentStatusCancelled || dep.Status == deploymentStatusSuperseded {
+	if isTerminalDeploymentStatus(dep.Status) {
 		return deploymentWithReceipt(ctx, c, dep), true
 	}
 	if c == nil {

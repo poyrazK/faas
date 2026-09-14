@@ -969,82 +969,54 @@ func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
 	return incompatible
 }
 
-// createOrFetchApp issues CreateApp and, on a 409 (the slug is taken),
-// probes the server with GetApp to disambiguate "owned by this account"
-// from "owned by another account". Returns nil on success (either a fresh
-// create or an in-account match).
-//
-// Issue #1182 / pre-existing soft-#560 behaviour:
-//   - CreateApp → 200/201 → nil
-//   - CreateApp → 409 → GetApp(slug):
-//   - 200 → the slug exists in this account → mirror --require-authn /
-//     --app-protocol via UpdateApp (preserves the existing #560 PATCH
-//     semantics), return nil
-//   - 404 → apid's loadAppAndPreflight returns a silent 404 for IDOR
-//     (the slug is owned by another account), so we cannot tell apart
-//     "different account" from "race against a peer that just
-//     deleted". The hybrid probe HARD-FAILS here rather than silently
-//     falling through to DeployTarball — DeployTarball would otherwise
-//     404 at apid with the less informative "no such app" message, and
-//     the customer would never learn that the slug is taken globally.
-//   - CreateApp → non-409 error → returned unwrapped; the caller's
-//     printErr prefix is the single user-facing message. Wrapping the
-//     APIError here would produce a confusing double-prefix like
-//     "Could not create or fetch app: could not create app: ...".
-//
-// The probe costs one extra round-trip on the slug-conflict path, which
-// is rare in normal use (zero-config deploy on a fresh repo is the only
-// caller that hits it). The happy path is unchanged.
+// createOrFetchApp resolves an owned app before reserving a new slot. This
+// makes redeploy independent of create-admission ordering when the account is
+// already at its app cap. A missing app still falls through to CreateApp; a
+// 409 then retries the lookup once to cover a concurrent same-account create.
 func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock) error {
-	if _, err := client.CreateApp(ctx, req); err == nil {
-		// CreateApp intentionally has no public_auth field: apid stamps the
-		// plan default. Apply an explicit CLI override before deployment so
-		// a paid-plan `--no-require-authn` app is reachable as promised.
+	existing, err := client.GetApp(ctx, req.Slug)
+	if err == nil {
+		return configureExistingApp(ctx, client, existing, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
+		return err
+	}
+	if _, err = client.CreateApp(ctx, req); err == nil {
 		if publicAuthPtr != nil {
 			_, err = client.UpdateApp(ctx, req.Slug, api.UpdateAppRequest{PublicAuth: publicAuthPtr})
 		}
 		return err
-	} else {
-		var ae *APIError
-		if !errors.As(err, &ae) || ae.Problem.Status != 409 {
-			return err
-		}
-		// Conflict: probe with GetApp to disambiguate same-account vs
-		// other-account ownership. The server's loadAppAndPreflight
-		// enforces IDOR via silent 404, so a 200 means "ours" and a 404
-		// means "either race-with-peer or other-account — we cannot tell,
-		// so refuse to deploy and tell the operator".
-		existing, gerr := client.GetApp(ctx, req.Slug)
-		if gerr != nil {
-			return fmt.Errorf("slug %q is already in use; pick a different --name", req.Slug)
-		}
-		requestedType := req.Type
-		if requestedType == "" {
-			requestedType = "app"
-		}
-		if _, problem := api.ValidateExistingAppShape(existing.Type, existing.Runtime, requestedType, req.Runtime); problem != nil {
-			problem.Detail = fmt.Sprintf("app %q: %s", req.Slug, problem.Detail)
-			return &api.APIError{Problem: *problem}
-		}
-		// Same account: mirror --require-authn / --no-require-authn (and
-		// --app-protocol, when set) onto the existing app via PATCH. The
-		// plan gate (Pro/Scale only) still fires at the apid PATCH handler
-		// — the existing #560 contract is preserved verbatim.
-		if requireAuthnPtr != nil || appProtocolPtr != nil || publicAuthPtr != nil || req.ResourceProfile != "" {
-			upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr}
-			if appProtocolPtr != nil {
-				upd.AppProtocol = appProtocolPtr
-			}
-			if req.ResourceProfile != "" {
-				profile := req.ResourceProfile
-				upd.ResourceProfile = &profile
-			}
-			if _, err := client.UpdateApp(ctx, req.Slug, upd); err != nil {
-				return err
-			}
-		}
+	}
+	if !errors.As(err, &ae) || ae.Problem.Status != http.StatusConflict {
+		return err
+	}
+	existing, err = client.GetApp(ctx, req.Slug)
+	if err != nil {
+		return fmt.Errorf("slug %q is already in use; pick a different --name", req.Slug)
+	}
+	return configureExistingApp(ctx, client, existing, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+}
+
+func configureExistingApp(ctx context.Context, client *Client, existing api.AppResponse, req api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock) error {
+	requestedType := req.Type
+	if requestedType == "" {
+		requestedType = "app"
+	}
+	if _, problem := api.ValidateExistingAppShape(existing.Type, existing.Runtime, requestedType, req.Runtime); problem != nil {
+		problem.Detail = fmt.Sprintf("app %q: %s", req.Slug, problem.Detail)
+		return &api.APIError{Problem: *problem}
+	}
+	if requireAuthnPtr == nil && appProtocolPtr == nil && publicAuthPtr == nil && req.ResourceProfile == "" {
 		return nil
 	}
+	upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr}
+	if req.ResourceProfile != "" {
+		profile := req.ResourceProfile
+		upd.ResourceProfile = &profile
+	}
+	_, err := client.UpdateApp(ctx, req.Slug, upd)
+	return err
 }
 
 // manifestCronClient is the narrow surface deployManifestTriggers
@@ -1815,6 +1787,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if len(*reason) > 280 {
 		return printErr("Invalid --reason", fmt.Errorf("must be ≤280 characters (got %d)", len(*reason)))
 	}
+	if *prNumber < 0 {
+		return printErr("Invalid --pr-number", fmt.Errorf("must be a positive integer or 0 for absent"))
+	}
 	// Function-only fields on an explicit app are contradictory. Reject them
 	// instead of clearing values that preview would otherwise display but apply
 	// could never persist.
@@ -2548,6 +2523,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec
 		opts.Workflows = previewWorkflows
+		opts.PRNumber = *prNumber
 		opts.NoTriggers = *noTriggers
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
@@ -4786,8 +4762,7 @@ streamLoop:
 				var status struct {
 					Status string `json:"status"`
 				}
-				if json.Unmarshal([]byte(e.Data), &status) == nil &&
-					(status.Status == statusLive || status.Status == deploymentStatusFailed) {
+				if json.Unmarshal([]byte(e.Data), &status) == nil && isTerminalDeploymentStatus(status.Status) {
 					terminal := dep
 					terminal.Status = status.Status
 					return terminalDeploymentWithFailure(terminal, failedStage, failedReason)
@@ -4878,7 +4853,7 @@ func pollDeploymentFinalContext(ctx context.Context, c *Client, dep api.Deployme
 	if err != nil {
 		return api.DeploymentResponse{}, false
 	}
-	if got.Status == statusLive || got.Status == deploymentStatusFailed || got.Status == deploymentStatusCancelled || got.Status == deploymentStatusSuperseded {
+	if isTerminalDeploymentStatus(got.Status) {
 		return got, true
 	}
 	return api.DeploymentResponse{}, false
@@ -4975,7 +4950,7 @@ func pollBuildStatusContext(ctx context.Context, c *Client, dep api.DeploymentRe
 		callCtx, cancelCall := context.WithTimeout(parent, remaining)
 		b, err := c.GetBuildsId(callCtx, dep.BuildID)
 		cancelCall()
-		if err == nil && (b.Status == buildStatusSucceeded || b.Status == buildStatusFailed || b.Status == buildStatusCancelled) {
+		if err == nil && isTerminalBuildStatus(b.Status) {
 			return b, true
 		}
 		// Jitter ±10% of the current backoff so N concurrent CI

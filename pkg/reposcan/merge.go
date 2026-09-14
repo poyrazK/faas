@@ -151,6 +151,17 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 	for _, k := range ordered {
 		b := buckets[k]
 		cls := b.class
+		if cls == "" && b.det == detCompose {
+			// Compose has no explicit workload-class field. A published
+			// port is an unambiguous HTTP service signal; without one the
+			// service is a background worker. Run this after all detector
+			// fields merge so an explicit Procfile or platform hint wins.
+			if len(b.ports) > 0 {
+				cls = ClassHTTP
+			} else {
+				cls = ClassWorker
+			}
+		}
 		if cls == "" {
 			cls = ClassUnknown
 		}

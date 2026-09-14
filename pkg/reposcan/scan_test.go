@@ -91,8 +91,8 @@ func TestScan_ComposeK8sFixture(t *testing.T) {
 	for _, w := range r.Workloads {
 		switch w.Name {
 		case "api":
-			if w.Class != ClassUnknown {
-				t.Errorf("api Class = %q, want unknown (compose alone doesn't declare class)", w.Class)
+			if w.Class != ClassHTTP {
+				t.Errorf("api Class = %q, want http (compose publishes a port)", w.Class)
 			}
 			if len(w.Ports) != 1 || w.Ports[0] != 8080 {
 				t.Errorf("api Ports = %v, want [8080]", w.Ports)
@@ -115,8 +115,8 @@ func TestScan_ComposeK8sFixture(t *testing.T) {
 				t.Errorf("nightly Source = %q, want k8s/...: nightly", w.Source)
 			}
 		case "worker":
-			if w.Class != ClassUnknown {
-				t.Errorf("worker Class = %q, want unknown (compose alone)", w.Class)
+			if w.Class != ClassWorker {
+				t.Errorf("worker Class = %q, want worker (compose publishes no port)", w.Class)
 			}
 			if len(w.Command) != 1 || w.Command[0] != "bundle exec sidekiq" {
 				t.Errorf("worker Command = %v, want [bundle exec sidekiq]", w.Command)

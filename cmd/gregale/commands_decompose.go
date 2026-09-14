@@ -436,15 +436,11 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	// AND --exclude rescued it (server invariant: gateRescuedByExclude
 	// => canApply=true), surface the rescue BEFORE the can_apply:true
 	// line so the operator sees "your --exclude saved you". The wire
-	// invariant means the early-return below cannot fire on a rescued
-	// plan — CanApply is true whenever GateRescuedByExclude is true.
+	// invariant means CanApply is true whenever GateRescuedByExclude is true.
 	// The CanApplyReasons slice carries the pre-exclude blocker list
 	// (what would have failed without --exclude); we render it as a
 	// bulleted set so a single-problem case and a multi-problem case
-	// look the same. Do NOT remove the !CanApply early-return — that
-	// path is the operator-visible "this plan failed" surface and
-	// planProblem (below) carries the wire code; changing it would
-	// silently break script grep on "can_apply: false".
+	// look the same.
 	if plan.CanApply && plan.GateRescuedByExclude {
 		PrintWarn(w, "Gate rescued by --exclude (pre-exclude gate was blocked):")
 		if len(plan.CanApplyReasons) == 0 {
@@ -457,12 +453,12 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	}
 	if !plan.CanApply {
 		fmt.Fprintln(w, "can_apply: false")
-		if explain {
-			printPlanDetectionTrace(w, plan.Workloads)
+		for _, reason := range plan.CanApplyReasons {
+			fmt.Fprintf(w, "  reason: %s\n", reason)
 		}
-		return 0
+	} else {
+		fmt.Fprintln(w, "can_apply: true")
 	}
-	fmt.Fprintln(w, "can_apply: true")
 	excludeIdx := make(map[string]bool, len(excludeSet))
 	for _, s := range excludeSet {
 		excludeIdx[s] = true
@@ -513,6 +509,9 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		for _, wn := range plan.Warnings {
 			fmt.Fprintln(w, "  - "+wn)
 		}
+	}
+	if explain && len(plan.Workloads) == 0 {
+		printPlanDetectionTrace(w, nil)
 	}
 	return 0
 }

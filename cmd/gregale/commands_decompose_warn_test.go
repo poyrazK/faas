@@ -208,7 +208,7 @@ func TestPrintPlanText_RendersRescueLine(t *testing.T) {
 }
 
 // TestPrintPlanText_NoRescueLineWhenCanApplyFalseButNotRescued is
-// the REGRESSION GUARD for the early-return preservation. The
+// the REGRESSION GUARD for a normal blocked plan. The
 // PR-A followup is constrained to render the rescue line ONLY
 // when GateRescuedByExclude=true; the !CanApply && !Rescued
 // path (still-blocked gate) must NOT emit the rescue header —
@@ -234,6 +234,56 @@ func TestPrintPlanText_NoRescueLineWhenCanApplyFalseButNotRescued(t *testing.T) 
 	}
 	if !strings.Contains(out, "can_apply: false") {
 		t.Fatalf("missing can_apply: false; output:\n%s", out)
+	}
+	if !strings.Contains(out, "reason: plan_apps_over_limit") {
+		t.Fatalf("missing blocked reason; output:\n%s", out)
+	}
+}
+
+func TestPrintPlanText_BlockedPlanRetainsDetails(t *testing.T) {
+	plan := basePlan()
+	plan.CanApply = false
+	plan.CanApplyReasons = []string{"apps over plan limit", "duplicate workload slug"}
+	plan.Workloads = []api.PlanWorkload{{Name: "api", RootDir: "services/api", Class: "http"}}
+	plan.Managed = []api.PlanManaged{{Name: "db", Kind: "postgres", EnvHint: "DATABASE_URL", Image: "postgres:17"}}
+	plan.Warnings = []string{"ignored unsupported field"}
+
+	var buf bytes.Buffer
+	if exit := printPlanTextWithExplain(&buf, plan, nil, false, true); exit != 0 {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"can_apply: false",
+		"reason: apps over plan limit",
+		"reason: duplicate workload slug",
+		"Workloads:", "services/api", "class=http",
+		"Managed (not provisioned):", "DATABASE_URL", "postgres:17",
+		"Warnings:", "ignored unsupported field",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("blocked render missing %q; output:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintPlanText_BlockedShowAffectedAndExplain(t *testing.T) {
+	plan := basePlan()
+	plan.CanApply = false
+	plan.CanApplyReasons = []string{"apps over plan limit"}
+	plan.Workloads = []api.PlanWorkload{{Name: "api", RootDir: "services/api", DetectedBy: &api.PlanDetectedBy{Detector: "procfile"}}}
+	plan.WillDeploy = []api.PlanAffectedApp{{Slug: "api", Action: "create"}}
+	plan.Unaffected = []api.PlanAffectedApp{{Slug: "existing", ID: "app-1", Action: "noop"}}
+
+	var buf bytes.Buffer
+	if exit := printPlanTextWithExplain(&buf, plan, nil, true, true); exit != 0 {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+	out := buf.String()
+	for _, want := range []string{"reason: apps over plan limit", "Will deploy:", "api", "Unaffected", "existing", "Detection trace:", "detected_by: procfile"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("affected blocked render missing %q; output:\n%s", want, out)
+		}
 	}
 }
 

@@ -2162,8 +2162,8 @@ func TestStreamDeployLogs_DrivesStageTicker(t *testing.T) {
 	}
 }
 
-// TestCreateOrFetchApp_HappyPath pins the no-conflict fast-path:
-// CreateApp succeeds, no GetApp round-trip, helper returns nil.
+// TestCreateOrFetchApp_HappyPath pins the new-app path: the ownership probe
+// misses, CreateApp succeeds, and the helper returns nil.
 func TestCreateOrFetchApp_HappyPath(t *testing.T) {
 	var sawGet bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2185,20 +2185,20 @@ func TestCreateOrFetchApp_HappyPath(t *testing.T) {
 	if err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "ok-app"}, nil, nil, nil); err != nil {
 		t.Fatalf("createOrFetchApp happy path = %v, want nil", err)
 	}
-	if sawGet {
-		t.Errorf("GetApp round-trip should not fire on a successful CreateApp")
+	if !sawGet {
+		t.Errorf("GetApp ownership probe should run before CreateApp")
 	}
 }
 
-// TestCreateOrFetchApp_409SameAccount_PATCHes pins the hybrid probe
-// same-account branch: CreateApp 409 → GetApp 200 → helper mirrors
-// --require-authn via PATCH (and --app-protocol, when set), then
-// returns nil. Critical contract for issue #560 / #1182.
+// TestCreateOrFetchApp_409SameAccount_PATCHes pins exact-cap redeploy:
+// GetApp resolves the owned app without attempting a quota-gated create, then
+// the helper mirrors --require-authn and --app-protocol via PATCH.
 func TestCreateOrFetchApp_409SameAccount_PATCHes(t *testing.T) {
-	var sawGet, sawPatch, patchBodyOK bool
+	var sawGet, sawCreate, sawPatch, patchBodyOK bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			sawCreate = true
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(api.Problem{Status: 409, Code: api.CodeConflict, Title: "Conflict", Detail: "app exists"})
 		case r.URL.Path == "/v1/apps/existing" && r.Method == http.MethodGet:
@@ -2228,7 +2228,10 @@ func TestCreateOrFetchApp_409SameAccount_PATCHes(t *testing.T) {
 		t.Fatalf("createOrFetchApp same-account = %v, want nil", err)
 	}
 	if !sawGet {
-		t.Errorf("expected GetApp round-trip after CreateApp 409")
+		t.Errorf("expected GetApp ownership probe")
+	}
+	if sawCreate {
+		t.Errorf("owned app redeploy must not attempt CreateApp")
 	}
 	if !sawPatch {
 		t.Errorf("expected UpdateApp PATCH to mirror --require-authn / --app-protocol on existing app")
@@ -2305,11 +2308,8 @@ func TestCreateOrFetchApp_409OtherAccount_FailsHard(t *testing.T) {
 	}
 }
 
-// TestCreateOrFetchApp_Non409ErrorPropagates pins that non-409 errors
-// (validation, server-side capacity, etc.) bubble up unchanged
-// instead of being misclassified as a slug conflict. The helper
-// returns the APIError unwrapped so the caller's single printErr
-// prefix is the user-facing message — no double-wrap.
+// TestCreateOrFetchApp_Non409ErrorPropagates pins that a create error after
+// the ownership probe misses bubbles up unchanged.
 func TestCreateOrFetchApp_Non409ErrorPropagates(t *testing.T) {
 	var sawGet bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2319,6 +2319,7 @@ func TestCreateOrFetchApp_Non409ErrorPropagates(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.Problem{Status: 400, Code: api.CodeValidation, Title: "Validation", Detail: "bad slug"})
 		case r.URL.Path == "/v1/apps/x" && r.Method == http.MethodGet:
 			sawGet = true
+			http.Error(w, "no such app", http.StatusNotFound)
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -2332,8 +2333,8 @@ func TestCreateOrFetchApp_Non409ErrorPropagates(t *testing.T) {
 	if err == nil {
 		t.Fatalf("non-409 error should propagate, got nil")
 	}
-	if sawGet {
-		t.Errorf("GetApp probe should NOT fire on a non-409 CreateApp error")
+	if !sawGet {
+		t.Errorf("GetApp ownership probe should run before CreateApp")
 	}
 	// The bare APIError renders as "<code>: <detail>" (apierror.go:21);
 	// the caller prefixes it once with "Could not create or fetch app".

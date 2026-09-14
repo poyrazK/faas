@@ -296,7 +296,7 @@ func formatBuildCacheSummary(status, key string) string {
 // the buildkit_version + framework_version columns (DEPLOY-PROV-5,
 // PR #736).
 func durationSecondsForDisplay(b api.BuildResponse) string {
-	if b.Status != buildStatusSucceeded && b.Status != buildStatusFailed && b.Status != buildStatusCancelled {
+	if !isTerminalBuildStatus(b.Status) {
 		return ""
 	}
 	return strconv.Itoa(b.DurationSeconds)

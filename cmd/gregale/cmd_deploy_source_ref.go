@@ -32,6 +32,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -166,5 +167,19 @@ func ensureSourceRefApp(ctx context.Context, client *Client, slug string) error 
 	} else if !isNotFound(err) {
 		return err
 	}
-	return createOrFetchApp(ctx, client, buildCreateRequest(slug, shapeApp, "", nil, nil), nil, nil, nil)
+	if _, err := client.CreateApp(ctx, buildCreateRequest(slug, shapeApp, "", nil, nil)); err == nil {
+		return nil
+	} else {
+		var ae *APIError
+		if !errors.As(err, &ae) || ae.Problem.Status != http.StatusConflict {
+			return err
+		}
+	}
+	// A peer may have reserved the same account-owned slug between the GET
+	// miss and CreateApp. Retry once; an IDOR-shaped 404 means another account
+	// owns it and the caller should choose a different name.
+	if _, err := client.GetApp(ctx, slug); err != nil {
+		return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+	}
+	return nil
 }

@@ -77,6 +77,8 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 	var hits [4]string // [POST /v1/apps, POST /v1/apps/{slug}/deployments, GET /v1/deployments/{id}/logs, GET release summary]
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/apps/smoke-app":
+			w.WriteHeader(http.StatusNotFound)
 		case r.Method == "POST" && r.URL.Path == "/v1/apps":
 			hits[0] = r.URL.Path
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a-smoke", Slug: "smoke-app"})

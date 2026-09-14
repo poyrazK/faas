@@ -67,7 +67,7 @@ func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse
 			if waited.buildOK && waited.build.Status != api.BuildStatusSucceeded {
 				apply.Builds[i].Error = "build " + waited.build.Status
 			}
-			if waited.deployment.Status == deploymentStatusFailed || waited.deployment.Status == deploymentStatusCancelled || waited.deployment.Status == deploymentStatusSuperseded {
+			if isTerminalDeploymentStatus(waited.deployment.Status) && waited.deployment.Status != statusLive {
 				if waited.deployment.Error != "" {
 					apply.Builds[i].Error = "deployment failed: " + waited.deployment.Error
 				} else {

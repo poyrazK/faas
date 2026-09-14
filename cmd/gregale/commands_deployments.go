@@ -390,18 +390,18 @@ func cmdDeploymentWait(args []string) int {
 			}
 			return printErr("Could not fetch deployment", getErr)
 		}
-		switch d.Status {
-		case "live":
+		if isTerminalDeploymentStatus(d.Status) {
+			if d.Status != statusLive {
+				if jsonOutput {
+					_ = writeJSON(d)
+				}
+				return printErr("Deployment did not become live", fmt.Errorf("deployment %s reached terminal status %s: %s", d.ID, d.Status, d.Error))
+			}
 			if jsonOutput {
 				return jsonOut(writeJSON(d))
 			}
 			PrintOK(osStdout, "Deployment %s is live.", d.ID)
 			return 0
-		case "failed", "superseded", "cancelled":
-			if jsonOutput {
-				_ = writeJSON(d)
-			}
-			return printErr("Deployment did not become live", fmt.Errorf("deployment %s reached terminal status %s: %s", d.ID, d.Status, d.Error))
 		}
 
 		timer := time.NewTimer(2 * time.Second)
