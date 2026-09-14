@@ -5295,16 +5295,14 @@ haveApp:
 	// ADR-119: per-app ingress 'internal_only' mode runs AFTER
 	// applyIngressIPAllowlist (so an IP-blocked request short-
 	// circuits first) and BEFORE applyEdgeRuleIP (so a JWT-failed
-	// request never wakes a Firecracker). Trust chain: gatewayd-
-	// public MUST strip inbound Authorization (see
-	// internal_proxy.go:~351 — added in this PR) so external
-	// callers can never reach this gate with an Authorization
-	// header intact. Only daemons that dial gatewayd-internal
-	// directly via /run/faas/gatewayd-internal.sock reach this
-	// gate. The synth-side gate (SynthServer.handleSynthesize,
-	// pkg/gateway/synth.go) is the parallel cron-fired path —
-	// both gates share the same verifier (cmd/gatewayd-internal/
-	// internal_svc_verifier.go).
+	// request never wakes a Firecracker). The public proxy keeps
+	// customer Authorization headers intact for the normal
+	// bearer/basic/consumer-auth gates; internal_only is selected
+	// only on the daemon-authenticated path through
+	// /run/faas/gatewayd-internal.sock. The synth-side gate
+	// (SynthServer.handleSynthesize, pkg/gateway/synth.go) is the
+	// parallel cron-fired path — both gates share the same verifier
+	// (cmd/gatewayd-internal/internal_svc_verifier.go).
 	if h.applyIngressInternalSvc(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
