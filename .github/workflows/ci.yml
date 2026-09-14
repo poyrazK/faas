@@ -850,10 +850,6 @@ jobs:
         run: make spec-cited-tests-check-test
       - name: migration-version gate checker tests
         run: make migration-version-hygiene-check-test
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false  # managed by the restore/save steps below
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
@@ -873,6 +869,14 @@ jobs:
           restore-keys: |
             go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-checks-${{ runner.os }}-
+      # Restore the module cache before setup-go downloads the requested
+      # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
+      # a cache hit untar over the toolchain's existing files and can hang the
+      # runner with "Cannot open: File exists".
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false  # managed by the restore/save steps below
       - name: actionlint
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
         with:
