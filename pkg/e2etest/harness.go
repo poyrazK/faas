@@ -870,6 +870,13 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	}
 	addr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
+	// freeTCPAddr releases its probe listener before returning. The kernel can
+	// immediately hand the same ephemeral port back to the next probe, which
+	// makes the public and control servers race to bind one address. Keep
+	// probing until the two configured listeners are distinct.
+	for controlAddr == addr {
+		controlAddr = freeTCPAddr(t)
+	}
 	if h.ScheddSock == "" {
 		h.ScheddSock = filepath.Join(h.SockDir, "schedd.sock")
 	}
