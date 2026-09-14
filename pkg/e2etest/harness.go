@@ -244,9 +244,7 @@ kernel_path = %q
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
-		env := append(testEnvCommon(dbURL),
-			"FAAS_VMMD_CONFIG="+cfgPath,
-		)
+		env := vmmdEnv(dbURL, cfgPath, h.ScheddSock)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
 		waitUnix(t, sockPath, 10*time.Second)
 	}
@@ -1013,6 +1011,36 @@ func testEnvCommon(dbURL string) []string {
 	}
 	if currentHarness != nil && currentHarness.HostHMACKeyPath != "" {
 		env = append(env, "FAAS_HOST_HMAC_KEY_PATH="+currentHarness.HostHMACKeyPath)
+	}
+	return env
+}
+
+// vmmdEnv builds the environment for the harness's vmmd.
+//
+// scheddSock is the harness's schedd socket, or "" when this configuration
+// runs no schedd. When present it overrides vmmd's schedd target, which
+// cmd/vmmd otherwise defaults to the PRODUCTION socket
+// (unix:///run/faas/schedd.sock). That path is guaranteed absent here: the
+// native gate stops the production daemons for the duration of the run, and
+// every harness daemon listens on a per-test socket. Leaving the default in
+// place made vmmd's liveness loop fail with
+//
+//	liveness_conn_err: dial unix /run/faas/schedd.sock:
+//	  connect: no such file or directory
+//
+// and tear down builder microVMs that had cold-booted correctly
+// (cold_boot_ms=40, total_ms=107) with exit_code=-1. Downstream that reads as
+// "build exited -1" with a zero-byte build log — a broken build rather than a
+// health probe dialling the wrong address.
+//
+// An empty scheddSock deliberately leaves the variable unset rather than
+// injecting an empty target, which would dial nothing at all.
+func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
+	env := append(testEnvCommon(dbURL),
+		"FAAS_VMMD_CONFIG="+cfgPath,
+	)
+	if scheddSock != "" {
+		env = append(env, "FAAS_VMMD_SCHEDD_TARGET=unix://"+scheddSock)
 	}
 	return env
 }
