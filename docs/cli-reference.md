@@ -1575,9 +1575,9 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 |---|---|---|
 | `--tarball <PATH>` | scan a source tarball |  |
 | `--path <DIR>` | scan a local directory |  |
-| `--repo <OWNER/NAME>` | scan a GitHub repo |  |
+| `--repo <OWNER/NAME>` | scan a GitHub repo after gregale connect |  |
 | `--repository <OWNER/NAME>` | GitHub owner/name to bind to the project (defaults to --repo) |  |
-| `--install-id <N>` | GitHub installation id (with --repository or --repo) |  |
+| `--install-id <N>` | optional GitHub installation id; normally resolved from the connected account |  |
 | `--production-branch <BRANCH>` | production branch for the project |  |
 | `--project-slug <SLUG>` | kebab slug; default = repo dir basename |  |
 | `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |

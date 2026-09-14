@@ -1975,7 +1975,9 @@ func planCanApplyReasons(gateRescuedByExclude bool, preExclude, postExclude []st
 // the hex digest of the compressed bytes.
 func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) (*scanPlanRequest, *api.Problem) {
 	// Multipart cap before parsing — mirrors createDeployment.
-	max := int64(limits.SourceTarballMaxMB) * 1024 * 1024
+	// Leave bounded room for multipart headers and the small metadata fields;
+	// validateAndSpool independently enforces the exact source-file limit.
+	max := int64(limits.SourceTarballMaxMB)*1024*1024 + 1*1024*1024
 	r.Body = http.MaxBytesReader(nil, r.Body, max)
 	mr, err := r.MultipartReader()
 	if err != nil {

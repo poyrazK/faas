@@ -1275,6 +1275,14 @@ func (c *Client) ScanProjectWithBinding(
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
 
+// ScanProjectSourceRef resolves a connected GitHub installation on the
+// control plane and scans the fetched commit without exposing an installation
+// token to the CLI.
+func (c *Client) ScanProjectSourceRef(ctx context.Context, request ProjectSourceRefScanRequest) (PlanResponse, error) {
+	var out PlanResponse
+	return out, c.do(ctx, "POST", "/v1/projects/scan/source-ref", request, &out)
+}
+
 // ApplyProjectPlan ships the same multipart body as ScanProject without a
 // GitHub project binding. It preserves the original SDK shape; callers that
 // need push reconciliation should use ApplyProjectPlanWithBinding.

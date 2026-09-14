@@ -290,8 +290,11 @@ func (s *server) resolveInstallToken(ctx context.Context, acct state.Account, ap
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
 		return 0, api.ErrCapacity("could not load repository binding")
 	}
+	return s.resolveRepositoryInstallation(ctx, acct.ID, repoFullName)
+}
 
-	installs, err := s.store.ListGitHubInstallationsForAccount(ctx, acct.ID)
+func (s *server) resolveRepositoryInstallation(ctx context.Context, accountID, repoFullName string) (int64, *api.Problem) {
+	installs, err := s.store.ListGitHubInstallationsForAccount(ctx, accountID)
 	if err != nil {
 		return 0, api.ErrCapacity("could not list GitHub installations")
 	}
@@ -302,7 +305,7 @@ func (s *server) resolveInstallToken(ctx context.Context, acct state.Account, ap
 	wanted := canonicalGitHubRepo(repoFullName)
 	matches := make([]int64, 0, 1)
 	for _, inst := range installs {
-		repos, listErr := s.githubd.ListInstallableRepos(ctx, acct.ID, inst.InstallationID)
+		repos, listErr := s.githubd.ListInstallableRepos(ctx, accountID, inst.InstallationID)
 		if listErr != nil {
 			if problem := api.AsProblem(listErr); problem != nil {
 				return 0, problem

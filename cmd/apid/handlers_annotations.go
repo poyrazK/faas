@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -134,7 +135,7 @@ func annotationFromRequest(req api.SourceRefDeployRequest) annotationForm {
 // annotationForm (no fields set) always validates — callers that
 // don't care about annotations stay on the pre-feature wire.
 func validateAnnotationForm(ann annotationForm) *api.Problem {
-	if len(ann.Reason) > 280 {
+	if utf8.RuneCountInString(ann.Reason) > 280 {
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Invalid reason",
 			"reason must be ≤280 characters")

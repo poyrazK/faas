@@ -1,38 +1,39 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from io import BytesIO
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from .. import types
-from ..types import UNSET, File, Unset
+from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="ProjectApplyRequest")
+T = TypeVar("T", bound="ProjectSourceRefScanRequest")
 
 
 @_attrs_define
-class ProjectApplyRequest:
-    """Multipart body for POST /v1/projects (apply). Same shape as
-    ProjectScanRequest; the apply handler resolves AppIDs and
-    inserts crons in a follow-up pass.
+class ProjectSourceRefScanRequest:
+    """Connected GitHub repository input for POST /v1/projects/scan/source-ref."""
 
-    """
-
-    source: File
-    project_slug: str | Unset = UNSET
+    repo: str
+    """GitHub owner/name to fetch through the connected installation."""
+    ref: str
+    """Branch, tag, or commit ref to scan."""
+    project_slug: str
     repo_full_name: str | Unset = UNSET
-    production_branch: str | Unset = UNSET
+    """Repository binding stored if the plan is later applied; defaults to repo."""
+    production_branch: str | Unset = "main"
     install_id: int | Unset = UNSET
-    only: str | Unset = UNSET
+    """Optional connected installation id. Omit to resolve the single installation that can access repo."""
+    only: list[str] | Unset = UNSET
+    exclude: list[str] | Unset = UNSET
     no_triggers: bool | Unset = False
-    """Leave trigger declarations and existing project trigger state unchanged for this apply."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        source = self.source.to_tuple()
+        repo = self.repo
+
+        ref = self.ref
 
         project_slug = self.project_slug
 
@@ -42,7 +43,13 @@ class ProjectApplyRequest:
 
         install_id = self.install_id
 
-        only = self.only
+        only: list[str] | Unset = UNSET
+        if not isinstance(self.only, Unset):
+            only = self.only
+
+        exclude: list[str] | Unset = UNSET
+        if not isinstance(self.exclude, Unset):
+            exclude = self.exclude
 
         no_triggers = self.no_triggers
 
@@ -50,11 +57,11 @@ class ProjectApplyRequest:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "source": source,
+                "repo": repo,
+                "ref": ref,
+                "project_slug": project_slug,
             }
         )
-        if project_slug is not UNSET:
-            field_dict["project_slug"] = project_slug
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
         if production_branch is not UNSET:
@@ -63,45 +70,21 @@ class ProjectApplyRequest:
             field_dict["install_id"] = install_id
         if only is not UNSET:
             field_dict["only"] = only
+        if exclude is not UNSET:
+            field_dict["exclude"] = exclude
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
 
         return field_dict
 
-    def to_multipart(self) -> types.RequestFiles:
-        files: types.RequestFiles = []
-
-        files.append(("source", self.source.to_tuple()))
-
-        if not isinstance(self.project_slug, Unset):
-            files.append(("project_slug", (None, str(self.project_slug).encode(), "text/plain")))
-
-        if not isinstance(self.repo_full_name, Unset):
-            files.append(("repo_full_name", (None, str(self.repo_full_name).encode(), "text/plain")))
-
-        if not isinstance(self.production_branch, Unset):
-            files.append(("production_branch", (None, str(self.production_branch).encode(), "text/plain")))
-
-        if not isinstance(self.install_id, Unset):
-            files.append(("install_id", (None, str(self.install_id).encode(), "text/plain")))
-
-        if not isinstance(self.only, Unset):
-            files.append(("only", (None, str(self.only).encode(), "text/plain")))
-
-        if not isinstance(self.no_triggers, Unset):
-            files.append(("no_triggers", (None, str(self.no_triggers).encode(), "text/plain")))
-
-        for prop_name, prop in self.additional_properties.items():
-            files.append((prop_name, (None, str(prop).encode(), "text/plain")))
-
-        return files
-
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        source = File(payload=BytesIO(d.pop("source")))
+        repo = d.pop("repo")
 
-        project_slug = d.pop("project_slug", UNSET)
+        ref = d.pop("ref")
+
+        project_slug = d.pop("project_slug")
 
         repo_full_name = d.pop("repo_full_name", UNSET)
 
@@ -109,22 +92,26 @@ class ProjectApplyRequest:
 
         install_id = d.pop("install_id", UNSET)
 
-        only = d.pop("only", UNSET)
+        only = cast(list[str], d.pop("only", UNSET))
+
+        exclude = cast(list[str], d.pop("exclude", UNSET))
 
         no_triggers = d.pop("no_triggers", UNSET)
 
-        project_apply_request = cls(
-            source=source,
+        project_source_ref_scan_request = cls(
+            repo=repo,
+            ref=ref,
             project_slug=project_slug,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
             install_id=install_id,
             only=only,
+            exclude=exclude,
             no_triggers=no_triggers,
         )
 
-        project_apply_request.additional_properties = d
-        return project_apply_request
+        project_source_ref_scan_request.additional_properties = d
+        return project_source_ref_scan_request
 
     @property
     def additional_keys(self) -> list[str]:

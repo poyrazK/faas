@@ -6,6 +6,7 @@ import type { ApplyResponse } from '../models/ApplyResponse.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
+import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -46,6 +47,42 @@ export class ProjectsService {
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+      },
+    });
+  }
+  /**
+   * Scan a connected GitHub repository and return a deploy plan.
+   * Resolves a durable GitHub App installation owned by the authenticated
+   * account, fetches the selected ref through githubd, and runs the same
+   * read-only scanner as the multipart upload endpoint. The installation
+   * token remains inside the control plane. When `install_id` is omitted,
+   * exactly one connected installation must be able to access `repo`.
+   *
+   * @returns PlanResponse The deploy plan generated from the fetched repository.
+   * @throws ApiError
+   */
+  public static scanProjectSourceRef({
+    requestBody,
+  }: {
+    requestBody: ProjectSourceRefScanRequest,
+  }): CancelablePromise<PlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/scan/source-ref',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        413: `code: source_too_large`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
     });
   }

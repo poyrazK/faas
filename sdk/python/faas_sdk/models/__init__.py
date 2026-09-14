@@ -796,6 +796,7 @@ from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagic
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
 from .project_apply_request import ProjectApplyRequest
 from .project_scan_request import ProjectScanRequest
+from .project_source_ref_scan_request import ProjectSourceRefScanRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -1848,6 +1849,7 @@ __all__ = (
     "ProgrammaticSignupMagicLinkResponse200Status",
     "ProjectApplyRequest",
     "ProjectScanRequest",
+    "ProjectSourceRefScanRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",

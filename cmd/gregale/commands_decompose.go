@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -71,7 +70,7 @@ func cmdScan(args []string) int {
 	// scan + apply pair. The handler ignores it on the scan path.
 	persistExclude := fs.Bool("persist-exclude", false, "record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3)")
 	projectSlug := fs.String("project-slug", "", "kebab slug; default = repo dir basename")
-	installID := fs.Int64("install-id", 0, "GitHub installation id (with --repository or --repo)")
+	installID := fs.Int64("install-id", 0, "optional GitHub installation id; normally resolved from the connected account")
 	prodBranch := fs.String("production-branch", "main", "production branch for the project")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--repository OWNER/NAME --install-id N] [--production-branch BRANCH] [--show-affected] [--explain] [--exclude NAME,…]", "scan")
@@ -91,6 +90,14 @@ func cmdScan(args []string) int {
 	// when stdin is a TTY and no flag is set (issue #313 zero-config).
 	if projectSlugExplicit && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
+	}
+	if *repo != "" {
+		return runConnectedRepoScan(connectedRepoScanOptions{
+			tarball: *tarball, path: *pathFlag, repo: *repo, ref: *ref,
+			projectSlug: *projectSlug, bindingRepo: *bindingRepo,
+			productionBranch: *prodBranch, installID: *installID,
+			only: *only, exclude: *exclude, showAffected: *showAffected, explain: *explain,
+		})
 	}
 	srcPath, sourceName, cleanup, err := resolveScanSource(*tarball, *pathFlag, *repo, *ref, *installID)
 	if err != nil {
@@ -141,6 +148,64 @@ func cmdScan(args []string) int {
 		return jsonOut(writeJSON(plan))
 	}
 	return printPlanTextWithExplain(osStdout, plan, excludeList, *showAffected, *explain)
+}
+
+type connectedRepoScanOptions struct {
+	tarball, path, repo, ref, projectSlug, bindingRepo, productionBranch string
+	only, exclude                                                        string
+	installID                                                            int64
+	showAffected, explain                                                bool
+}
+
+func runConnectedRepoScan(opts connectedRepoScanOptions) int {
+	if opts.tarball != "" || opts.path != "" {
+		return printErr("Could not resolve source", errors.New("--tarball, --path, and --repo are mutually exclusive"))
+	}
+	if err := validateRepoSlug(opts.repo); err != nil {
+		return printErr("Could not resolve source", fmt.Errorf("invalid --repo: %w", err))
+	}
+	if err := validateGitHubRef(opts.ref); err != nil {
+		return printErr("Could not resolve source", fmt.Errorf("invalid --ref: %w", err))
+	}
+	if opts.installID < 0 {
+		return printErr("Invalid --install-id", errors.New("must be zero or a positive integer"))
+	}
+	if opts.projectSlug == "" {
+		opts.projectSlug = defaultProjectSlug(filepath.Base(opts.repo) + ".tar.gz")
+	}
+	if !api.ValidProjectSlug(opts.projectSlug) {
+		return printErr("Invalid --project-slug", projectSlugValidationError(opts.projectSlug))
+	}
+	if opts.bindingRepo == "" {
+		opts.bindingRepo = opts.repo
+	}
+	if err := validateRepoSlug(opts.bindingRepo); err != nil {
+		return printErr("Invalid --repository", err)
+	}
+	return executeConnectedRepoScan(opts)
+}
+
+func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
+	onlyList, excludeList := splitCSV(opts.only), splitCSV(opts.exclude)
+	if ok, clash := intersect(onlyList, excludeList); ok {
+		return printErr("Invalid flags", fmt.Errorf("--only and --exclude share workload(s): %s", strings.Join(clash, ", ")))
+	}
+	client, err := authedClientWithDeployTimeout(2 * time.Minute)
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	plan, err := client.ScanProjectSourceRef(context.Background(), api.ProjectSourceRefScanRequest{
+		Repo: opts.repo, Ref: opts.ref, ProjectSlug: opts.projectSlug,
+		RepoFullName: opts.bindingRepo, ProductionBranch: opts.productionBranch,
+		InstallID: opts.installID, Only: onlyList, Exclude: excludeList,
+	})
+	if err != nil {
+		return printErr("Scan failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(plan))
+	}
+	return printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
 }
 
 // runProjectDeployPreviewWithMode is the read-only preview path for
@@ -204,11 +269,9 @@ func runProjectDeployPreviewWithMode(
 	return 0
 }
 
-// resolveScanSource normalises the three input shapes (--tarball /
-// --path / --repo) into a (path, sourceName, cleanup, err). For
-// --repo the tarball is fetched via the install token and dropped
-// into a tmpfile (cleanup removes it). For --path the local directory
-// is auto-packed via the same autoPackCwd the deploy path uses.
+// resolveScanSource normalises local input (--tarball / --path) into a
+// (path, sourceName, cleanup, err). Repository input is handled before this
+// function by runConnectedRepoScan so installation credentials stay server-side.
 func resolveScanSource(
 	tarball, pathFlag, repo, ref string, installID int64,
 ) (string, string, func(), error) {
@@ -248,21 +311,7 @@ func resolveScanSource(
 		return path, filepath.Base(filepath.Clean(pathFlag)) + ".tar.gz", func() { _ = os.Remove(path) }, nil
 	}
 	if repo != "" {
-		if err := validateRepoSlug(repo); err != nil {
-			return "", "", func() {}, fmt.Errorf("invalid --repo: %w", err)
-		}
-		if err := validateGitHubRef(ref); err != nil {
-			return "", "", func() {}, fmt.Errorf("invalid --ref: %w", err)
-		}
-		if installID <= 0 {
-			return "", "", func() {}, errors.New("--repo requires --install-id")
-		}
-		path, err := fetchRepoTarball(repo, ref, installID)
-		if err != nil {
-			return "", "", func() {}, err
-		}
-		return path, filepath.Base(repo) + ".tar.gz",
-			func() { _ = os.Remove(path) }, nil
+		return "", "", func() {}, errors.New("--repo must use the connected repository scan endpoint")
 	}
 	// zero-config: stdin is a TTY → pack $PWD (issue #313)
 	if stdoutIsTTY() && stdinIsTTY() {
@@ -283,51 +332,6 @@ func resolveScanSource(
 		return path, filepath.Base(cwd) + ".tar.gz", func() { _ = os.Remove(path) }, nil
 	}
 	return "", "", func() {}, errors.New("one of --tarball, --path, --repo, or a TTY cwd is required")
-}
-
-// fetchRepoTarball shells out to curl to download the GitHub tarball
-// using the install token from env or keyring. Returns the tmp path.
-// The function lives in the CLI (not pkg/) because the install token
-// lives in the customer's keychain — apid does not see it.
-//
-// Curl+sha256+tar pattern mirrors CI's vacuum binary download
-// (memory note: ci-vacuum-binary-download).
-func fetchRepoTarball(repoFullName, ref string, installID int64) (string, error) {
-	downloadURL, err := githubTarballURL(repoFullName, ref)
-	if err != nil {
-		return "", err
-	}
-	f, err := os.CreateTemp("", "gregale-repo-*.tar.gz")
-	if err != nil {
-		return "", err
-	}
-	_ = f.Close()
-	path := f.Name()
-	token, err := readInstallToken(installID)
-	if err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("read install token: %w", err)
-	}
-	cmd := exec.Command("curl", "-sSL", "--fail-with-body",
-		"-H", "Authorization: Bearer "+token,
-		"-H", "Accept: application/vnd.github+json",
-		"-o", path, downloadURL)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("curl: %w: %s", err, string(out))
-	}
-	return path, nil
-}
-
-// readInstallToken pulls a GitHub install token from env or keyring.
-// Tries GREGALE_INSTALL_TOKEN_<ID> first (env override for CI), then
-// errors cleanly so the caller can surface a "run `gregale connect`
-// first" message.
-func readInstallToken(installID int64) (string, error) {
-	if v := os.Getenv(fmt.Sprintf("GREGALE_INSTALL_TOKEN_%d", installID)); v != "" {
-		return v, nil
-	}
-	return "", fmt.Errorf("no install token for id %d — run `gregale connect` first", installID)
 }
 
 // defaultProjectSlug derives a kebab slug from the source path's

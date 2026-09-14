@@ -4964,6 +4964,22 @@ type ProjectScanRequest struct {
 	NoTriggers       bool   `json:"no_triggers"`       // leave declared and existing triggers unchanged
 }
 
+// ProjectSourceRefScanRequest asks the control plane to fetch a connected
+// GitHub repository and run the same read-only project scanner. Installation
+// credentials stay inside githubd; InstallID may be omitted when exactly one
+// account installation can access Repo.
+type ProjectSourceRefScanRequest struct {
+	Repo             string   `json:"repo"`
+	Ref              string   `json:"ref"`
+	ProjectSlug      string   `json:"project_slug"`
+	RepoFullName     string   `json:"repo_full_name,omitempty"`
+	ProductionBranch string   `json:"production_branch,omitempty"`
+	InstallID        int64    `json:"install_id,omitempty"`
+	Only             []string `json:"only,omitempty"`
+	Exclude          []string `json:"exclude,omitempty"`
+	NoTriggers       bool     `json:"no_triggers,omitempty"`
+}
+
 // ProjectApplyRequest is the multipart body for POST /v1/projects.
 // Shape mirrors ProjectScanRequest — the handler re-runs the scan
 // and re-checks the plan token internally.

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -66,11 +67,42 @@ func TestValidateSingleAppManifestTargets(t *testing.T) {
 		}
 		return dir
 	}
-	if err := validateSingleAppManifestTargets(write(t, "version: v1\ntriggers:\n  - kind: cron\n    app: typo-app\n    schedule: '* * * * *'\n    path: /tick\n"), "real-app"); err == nil {
+	if err := validateSingleAppManifestTargets(write(t, "triggers:\n  - kind: cron\n    app: typo-app\n    schedule: '* * * * *'\n    path: /tick\n"), "real-app"); err == nil {
 		t.Fatal("mismatched trigger target was accepted")
 	}
-	if err := validateSingleAppManifestTargets(write(t, "version: v1\ntriggers:\n  - kind: queue\n    app: real-app\n    queue: jobs\n"), "real-app"); err == nil {
+	if err := validateSingleAppManifestTargets(write(t, "triggers:\n  - kind: queue\n    app: real-app\n    slug: jobs\n    config: {mode: queue}\n"), "real-app"); err == nil {
 		t.Fatal("non-cron trigger was silently accepted on the cron-only path")
+	}
+}
+
+func TestValidateSingleAppManifestTargetsRejectsEveryUnifiedKindExplicitly(t *testing.T) {
+	tests := []struct {
+		kind   string
+		config string
+	}{
+		{"kafka", "slug: orders\n    config: {brokers: ['broker:9092'], topic: orders, group: workers}"},
+		{"nats", "slug: telemetry\n    config: {url: 'nats://nats:4222', stream: events, subject: 'events.>', durable: faas}"},
+		{"redis_streams", "slug: cache\n    config: {addr: 'redis:6379', stream: events, group: workers}"},
+		{"sqs_compat", "slug: external\n    config: {queue_url: 'https://queue.example.test/external'}"},
+		{"queue", "slug: internal\n    config: {mode: queue}"},
+	}
+	for _, test := range tests {
+		t.Run(test.kind, func(t *testing.T) {
+			dir := t.TempDir()
+			body := "triggers:\n  - kind: " + test.kind + "\n    app: real-app\n    " + test.config + "\n"
+			if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := validateSingleAppManifestTargets(dir, "real-app")
+			if err == nil {
+				t.Fatal("non-cron manifest trigger was accepted")
+			}
+			for _, want := range []string{test.kind, "--no-triggers", "gregale triggers add"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not contain %q", err, want)
+				}
+			}
+		})
 	}
 }
 

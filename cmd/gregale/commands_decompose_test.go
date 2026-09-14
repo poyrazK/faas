@@ -53,11 +53,17 @@ type decomposeSink struct {
 	capturedApplyMultipart []byte
 	projectSlug            string
 	scanCalls              int
+	sourceRefScanCalls     int
+	sourceRefScanRequest   api.ProjectSourceRefScanRequest
 	applyCalls             int
 }
 
 func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/v1/projects/scan/source-ref" && r.Method == http.MethodPost:
+		s.sourceRefScanCalls++
+		_ = json.NewDecoder(r.Body).Decode(&s.sourceRefScanRequest)
+		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.URL.Path == "/v1/projects/scan" && r.Method == http.MethodPost:
 		s.scanCalls++
 		body, _ := io.ReadAll(r.Body)
@@ -81,6 +87,36 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	default:
 		http.Error(w, "decomposeSink: not found: "+r.URL.Path, http.StatusNotFound)
+	}
+}
+
+func TestCmdScanRepoUsesConnectedAccountEndpoint(t *testing.T) {
+	sink := &decomposeSink{scanStatus: http.StatusOK, scanBody: goldenPlan}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "GREGALE_INSTALL_TOKEN_") {
+			t.Setenv(name, "")
+		}
+	}
+	if code := cmdScan([]string{
+		"--repo", "onebox-faas/hello", "--ref", "main",
+		"--project-slug", "fixture", "--only", "api,worker",
+	}); code != 0 {
+		t.Fatalf("cmdScan exit = %d, want 0", code)
+	}
+	if sink.sourceRefScanCalls != 1 || sink.scanCalls != 0 {
+		t.Fatalf("source-ref calls = %d, multipart scan calls = %d; want 1, 0", sink.sourceRefScanCalls, sink.scanCalls)
+	}
+	got := sink.sourceRefScanRequest
+	if got.Repo != "onebox-faas/hello" || got.Ref != "main" || got.ProjectSlug != "fixture" || got.InstallID != 0 {
+		t.Fatalf("source-ref request = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Only, []string{"api", "worker"}) {
+		t.Fatalf("only = %#v, want [api worker]", got.Only)
 	}
 }
 

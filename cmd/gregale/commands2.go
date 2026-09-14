@@ -1180,7 +1180,7 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 			return fmt.Errorf("trigger %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, trigger.App, slug)
 		}
 		if trigger.Kind != gregalemanifest.TriggerKindCron {
-			return fmt.Errorf("trigger %d uses kind %q; single-app deploy currently supports manifest cron triggers only, use --project for unified triggers", i+1, trigger.Kind)
+			return fmt.Errorf("trigger %d uses kind %q; deploy does not reconcile non-cron manifest triggers yet; pass --no-triggers and create it with `gregale triggers add` after deployment", i+1, trigger.Kind)
 		}
 	}
 	return nil
@@ -1784,8 +1784,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	// --reason length cap mirrors the DB CHECK (≤280 chars). Operators
 	// get a fast clear error here rather than a 422 after the upload.
-	if len(*reason) > 280 {
-		return printErr("Invalid --reason", fmt.Errorf("must be ≤280 characters (got %d)", len(*reason)))
+	if reasonErr := validateDeploymentReason(*reason); reasonErr != nil {
+		return printErr("Invalid --reason", reasonErr)
 	}
 	if *prNumber < 0 {
 		return printErr("Invalid --pr-number", fmt.Errorf("must be a positive integer or 0 for absent"))
@@ -2953,6 +2953,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		commitManifestTriggers()
 	}
 	return code
+}
+
+func validateDeploymentReason(reason string) error {
+	count := utf8.RuneCountInString(reason)
+	if count > 280 {
+		return fmt.Errorf("must be ≤280 characters (got %d)", count)
+	}
+	return nil
 }
 
 const rollbackUsage = "usage: gregale rollback <slug> [--to <deployment_id>] [--json]"

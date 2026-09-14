@@ -16,9 +16,9 @@ control plane resolves everything from the account's existing
   install row for the account. This is the only step that needs
   a browser — see `gregale connect --help`.
 
-No `GREGALE_INSTALL_TOKEN_*` env vars are required. That env var
-is for the `gregale scan --repo` local-fs decomposition path;
-the source-ref deploy runs server-side.
+No `GREGALE_INSTALL_TOKEN_*` env vars are required. Both
+`gregale deploy --repo` and `gregale scan --repo` resolve the durable
+installation and fetch source through the control plane.
 
 ## Worked example: pin to a SHA in CI
 

@@ -412,6 +412,7 @@ export type { ProgrammaticAPIKey } from './ProgrammaticAPIKey.js';
 export type { ProgrammaticAuthResponse } from './ProgrammaticAuthResponse.js';
 export type { ProjectApplyRequest } from './ProjectApplyRequest.js';
 export type { ProjectScanRequest } from './ProjectScanRequest.js';
+export type { ProjectSourceRefScanRequest } from './ProjectSourceRefScanRequest.js';
 export type { PublicAuthBlock } from './PublicAuthBlock.js';
 export type { PublicAuthStatus } from './PublicAuthStatus.js';
 export type { PublicStatusComponent } from './PublicStatusComponent.js';

@@ -10054,6 +10054,39 @@ paths:
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/scan/source-ref:
+    post:
+      tags: [projects]
+      operationId: scanProjectSourceRef
+      summary: Scan a connected GitHub repository and return a deploy plan.
+      description: |
+        Resolves a durable GitHub App installation owned by the authenticated
+        account, fetches the selected ref through githubd, and runs the same
+        read-only scanner as the multipart upload endpoint. The installation
+        token remains inside the control plane. When `install_id` is omitted,
+        exactly one connected installation must be able to access `repo`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectSourceRefScanRequest'
+      responses:
+        '200':
+          description: The deploy plan generated from the fetched repository.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ValidationFailed' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/projects:
     post:
       tags: [projects]
@@ -21385,6 +21418,45 @@ components:
           type: boolean
           default: false
           description: "Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair."
+
+    ProjectSourceRefScanRequest:
+      description: "Connected GitHub repository input for POST /v1/projects/scan/source-ref."
+      type: object
+      required: [repo, ref, project_slug]
+      properties:
+        repo:
+          type: string
+          pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          description: "GitHub owner/name to fetch through the connected installation."
+        ref:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: "Branch, tag, or commit ref to scan."
+        project_slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+        repo_full_name:
+          type: string
+          pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          description: "Repository binding stored if the plan is later applied; defaults to repo."
+        production_branch:
+          type: string
+          default: main
+        install_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: "Optional connected installation id. Omit to resolve the single installation that can access repo."
+        only:
+          type: array
+          items: { type: string }
+        exclude:
+          type: array
+          items: { type: string }
+        no_triggers:
+          type: boolean
+          default: false
 
     SourceRefDeployRequest:
       description: |

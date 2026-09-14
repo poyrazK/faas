@@ -1166,9 +1166,9 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "tarball", Short: "scan a source tarball", Value: "PATH"},
 			{Name: "path", Short: "scan a local directory", Value: "DIR"},
-			{Name: "repo", Short: "scan a GitHub repo", Value: "OWNER/NAME"},
+			{Name: "repo", Short: "scan a GitHub repo after gregale connect", Value: "OWNER/NAME"},
 			{Name: "repository", Short: "GitHub owner/name to bind to the project (defaults to --repo)", Value: "OWNER/NAME"},
-			{Name: "install-id", Short: "GitHub installation id (with --repository or --repo)", Value: "N"},
+			{Name: "install-id", Short: "optional GitHub installation id; normally resolved from the connected account", Value: "N"},
 			{Name: "production-branch", Short: "production branch for the project", Value: "BRANCH"},
 			{Name: "project-slug", Short: "kebab slug; default = repo dir basename", Value: "SLUG"},
 			// ADR-124 follow-up #1: --exclude + --show-affected
