@@ -1262,3 +1262,45 @@ func TestNftCommandsChainPolicySwitchesWithAllowlist(t *testing.T) {
 // emitted by HostPolicy.Render() (one rule per live VM,
 // placed BEFORE the broad MASQUERADE). The deleted tests
 // lived here.
+
+func TestProductionBridgeUnitAvoidsNetworkPreOrderingCycle(t *testing.T) {
+	bridgePath := filepath.Join("..", "..", "deploy", "ansible", "roles", "nftables", "files", "br-tenants-up.service")
+	bridge, err := os.ReadFile(bridgePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(bridge)
+	var directives []string
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		directives = append(directives, line)
+	}
+	directiveBody := strings.Join(directives, "\n")
+	for _, forbidden := range []string{"network-pre.target", "faas-cp.slice"} {
+		if strings.Contains(directiveBody, forbidden) {
+			t.Fatalf("bridge unit must not reference %q: %s", forbidden, body)
+		}
+	}
+	if !strings.Contains(body, "After=local-fs.target") || !strings.Contains(body, "Before=nftables.service vmmd.service") {
+		t.Fatalf("bridge unit lost the required local ordering:\n%s", body)
+	}
+	if !strings.Contains(directiveBody, "WantedBy=nftables.service") {
+		t.Fatalf("bridge unit must be pulled whenever nftables starts:\n%s", body)
+	}
+
+	vmmdPath := filepath.Join("..", "..", "deploy", "ansible", "roles", "vmmd_service", "files", "faas-vmmd.service")
+	vmmd, err := os.ReadFile(vmmdPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmmdBody := string(vmmd)
+	if !strings.Contains(vmmdBody, "After=") || !strings.Contains(vmmdBody, "nftables.service br-tenants-up.service") {
+		t.Fatalf("vmmd unit must wait for nftables and the tenant bridge:\n%s", vmmdBody)
+	}
+	if !strings.Contains(vmmdBody, "Wants=") || !strings.Contains(vmmdBody, "nftables.service br-tenants-up.service") {
+		t.Fatalf("vmmd unit must pull nftables and the tenant bridge:\n%s", vmmdBody)
+	}
+}

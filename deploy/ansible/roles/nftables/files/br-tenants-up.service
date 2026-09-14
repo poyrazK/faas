@@ -2,14 +2,14 @@
 Description=faas tenant bridge (br-tenants) up — bridge + 10.100.0.1/16
 Documentation=https://docs.gregale.dev/ops/network
 # Order BEFORE nftables.service so the host firewall's forward chain (which
-# uses `iifname "br-tenants"`) loads against an interface that exists.
+# uses `iifname "br-tenants"`) can load against an interface that exists.
 # Order BEFORE vmmd.service so vmmd's per-instance netns creation (which
-# attemps to enslave the host-side veth to br-tenants) doesn't race with
-# the bridge coming up. faas-cp.slice exists on every EX44; the
-# dependency makes the bridge a hard prerequisite of the control plane.
-After=network-pre.target
-Wants=network-pre.target
-Before=nftables.service vmmd.service faas-cp.slice
+# attempts to enslave the host-side veth to br-tenants) doesn't race with
+# the bridge coming up. Do not order this oneshot against network-pre.target
+# or faas-cp.slice: Debian's nftables unit is itself Before=network-pre.target
+# and the slices are pulled from basic.target, which creates a boot cycle.
+After=local-fs.target
+Before=nftables.service vmmd.service
 
 [Service]
 Type=oneshot
@@ -23,4 +23,5 @@ ExecStart=/bin/sh -ec '/usr/sbin/ip link show br-tenants >/dev/null 2>&1 || /usr
 # and should NOT silently retry; the operator must triage.
 
 [Install]
+WantedBy=nftables.service
 WantedBy=multi-user.target
