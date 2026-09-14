@@ -2761,10 +2761,11 @@ func TestPg_ListGitHubInstallationsForAccountIsScopedAndStable(t *testing.T) {
 	s, ctx := pgStore(t)
 	firstAccount := createAccount(t, s, ctx, "install-list-a@example.com")
 	secondAccount := createAccount(t, s, ctx, "install-list-b@example.com")
+	expiresAt := time.Now().Add(time.Hour).UTC()
 	for _, inst := range []state.GitHubInstall{
-		{AccountID: firstAccount, InstallationID: 20, AuditGithubLogin: "a"},
-		{AccountID: secondAccount, InstallationID: 10, AuditGithubLogin: "b"},
-		{AccountID: firstAccount, InstallationID: 5, AuditGithubLogin: "a"},
+		{AccountID: firstAccount, InstallationID: 20, SealedToken: []byte("sealed-20"), TokenExpiresAt: expiresAt, AuditGithubLogin: "a"},
+		{AccountID: secondAccount, InstallationID: 10, SealedToken: []byte("sealed-10"), TokenExpiresAt: expiresAt, AuditGithubLogin: "b"},
+		{AccountID: firstAccount, InstallationID: 5, SealedToken: []byte("sealed-5"), TokenExpiresAt: expiresAt, AuditGithubLogin: "a"},
 	} {
 		if err := s.UpsertGitHubInstall(ctx, inst); err != nil {
 			t.Fatalf("UpsertGitHubInstall(%d): %v", inst.InstallationID, err)

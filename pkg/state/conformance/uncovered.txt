@@ -407,6 +407,7 @@ ListExpiredInvocationsForReaper
 ListExpiredMigrations
 ListExpiredTriggerRecordsForReaper
 ListGdprRequestsForAccount
+ListGitHubInstallationsForAccount
 ListGithubInstallBindingsForAccount
 ListInstancesByNodeID
 ListInstancesByStatesOlderThan

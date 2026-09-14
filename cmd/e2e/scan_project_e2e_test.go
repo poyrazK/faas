@@ -349,8 +349,8 @@ func TestScanProject_MultiTierFixture_DuplicateSlugsBlocked(t *testing.T) {
 		byKey[w.RootDir+"\x00"+w.Name] = w
 	}
 	composeAPI := byKey[".\x00api"]
-	if composeAPI.Class != "unknown" || len(composeAPI.Ports) != 1 || composeAPI.Ports[0] != 8080 {
-		t.Errorf("compose api workload = %+v; want class=unknown, ports=[8080]", composeAPI)
+	if composeAPI.Class != "http" || len(composeAPI.Ports) != 1 || composeAPI.Ports[0] != 8080 {
+		t.Errorf("compose api workload = %+v; want class=http, ports=[8080]", composeAPI)
 	}
 	conventionAPI := byKey["services/api\x00api"]
 	if conventionAPI.Class != "unknown" || len(conventionAPI.Ports) != 0 {
