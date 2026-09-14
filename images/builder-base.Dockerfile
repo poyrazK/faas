@@ -147,7 +147,8 @@ COPY images/buildkit-frontend-startup.patch /tmp/buildkit-frontend-startup.patch
 # unnoticed.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git && \
       rm -rf /var/lib/apt/lists/* && \
-      curl -fsSL -o /tmp/buildkit-source.tgz \
+      curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+        -o /tmp/buildkit-source.tgz \
         "https://github.com/moby/buildkit/archive/refs/tags/v${BUILDKIT_VERSION}.tar.gz" && \
       echo "${BUILDKIT_SOURCE_SHA256}  /tmp/buildkit-source.tgz" | sha256sum -c - && \
       tar -xzf /tmp/buildkit-source.tgz --strip-components=1 -C /src/buildkit && \
