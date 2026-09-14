@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/releaseinstall"
 )
 
 // These limits are the largest source envelope accepted by any current plan.
@@ -109,10 +110,6 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 	cleanDst := filepath.Clean(dst)
 	extractionPrefix := cleanDst + string(filepath.Separator)
 	for {
-		// codeql[go/zipslip] — hdr.Name is normalized by
-		// cleanDeployArchiveName and the joined target must retain the
-		// fresh private extractionPrefix before any filesystem operation.
-		// Link entries are rejected outright.
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
@@ -158,7 +155,11 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 			nested = true
 		}
 
-		target := filepath.Join(cleanDst, filepath.FromSlash(name))
+		localName := filepath.FromSlash(name)
+		if !filepath.IsLocal(localName) {
+			return "", fmt.Errorf("archive entry %q escapes extraction root", hdr.Name)
+		}
+		target := filepath.Join(cleanDst, localName)
 		// Keep this direct prefix guard beside the filesystem operations.
 		// It is deliberately redundant with cleanDeployArchiveName: the
 		// archive name is untrusted, while dst is a fresh private directory.
@@ -220,11 +221,6 @@ func cleanDeployArchiveName(name string) (string, error) {
 	if strings.ContainsRune(name, '\x00') {
 		return "", fmt.Errorf("archive entry %q uses an absolute or invalid path", name)
 	}
-	name = strings.ReplaceAll(name, "\\", "/")
-	localName := filepath.FromSlash(name)
-	if filepath.IsAbs(localName) || filepath.VolumeName(localName) != "" {
-		return "", fmt.Errorf("archive entry %q uses an absolute or invalid path", name)
-	}
 	for strings.HasPrefix(name, "./") {
 		name = strings.TrimPrefix(name, "./")
 	}
@@ -232,10 +228,5 @@ func cleanDeployArchiveName(name string) (string, error) {
 	if name == "" {
 		return "", nil
 	}
-	for _, part := range strings.Split(name, "/") {
-		if part == ".." {
-			return "", fmt.Errorf("archive entry %q contains a parent-directory path", name)
-		}
-	}
-	return name, nil
+	return releaseinstall.SafeArchiveRelativeName(name)
 }
