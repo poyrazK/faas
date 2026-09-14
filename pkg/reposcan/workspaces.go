@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"golang.org/x/mod/modfile"
 	"gopkg.in/yaml.v3"
 )
@@ -167,6 +168,28 @@ func detectWorkspacesImpl(fsys fs.FS, includeLibraryMarkers bool) ([]workloadSee
 			mods := parseGoWorkUses(string(body))
 			for _, m := range mods {
 				add(m, src)
+			}
+		}
+	}
+
+	// Cargo.toml — [workspace] members and exclude. Cargo exclusions are
+	// evaluated after members so a broad member glob cannot add them back.
+	if body, src, err := readFirstValidFile(fsys, []string{"Cargo.toml"}); err != nil && !isQuiet(err) {
+		return nil, nil, err
+	} else if body != nil {
+		var manifest struct {
+			Workspace struct {
+				Members []string `toml:"members"`
+				Exclude []string `toml:"exclude"`
+			} `toml:"workspace"`
+		}
+		if _, err := toml.Decode(string(body), &manifest); err == nil && len(manifest.Workspace.Members) > 0 {
+			patterns := append([]string(nil), manifest.Workspace.Members...)
+			for _, excluded := range manifest.Workspace.Exclude {
+				patterns = append(patterns, "!"+excluded)
+			}
+			if err := addPatterns(patterns, src); err != nil {
+				return nil, nil, err
 			}
 		}
 	}

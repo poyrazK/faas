@@ -17,7 +17,7 @@ import (
 //   - turbo.json    (pipeline / $pipeline form)
 //   - nx.json       (projects)
 //   - go.work       (use ( ... ))
-//   - Cargo.toml    ([workspace] members) [out of scope this phase]
+//   - Cargo.toml    ([workspace] members and exclude)
 //
 // Each workspace member has its directory treated as RootDir —
 // the merge rule later pairs on (RootDir, Name) so a workspace

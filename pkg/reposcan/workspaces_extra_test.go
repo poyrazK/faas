@@ -187,6 +187,61 @@ use (
 	}
 }
 
+func TestDetectWorkspaces_CargoMembersAndExcludes(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"Cargo.toml": &fstest.MapFile{Data: []byte(`[workspace]
+members = ["crates/*", "tools/runner"]
+exclude = ["crates/internal"]
+resolver = "2"
+`)},
+		"crates/api/Cargo.toml":      &fstest.MapFile{Data: []byte("[package]\nname = \"api\"\n")},
+		"crates/internal/Cargo.toml": &fstest.MapFile{Data: []byte("[package]\nname = \"internal\"\n")},
+		"crates/readme/README.md":    &fstest.MapFile{Data: []byte("# docs\n")},
+		"tools/runner/Cargo.toml":    &fstest.MapFile{Data: []byte("[package]\nname = \"runner\"\n")},
+	}
+
+	seeds, warnings, err := detectWorkspaces(fsys)
+	if err != nil {
+		t.Fatalf("detectWorkspaces: %v", err)
+	}
+	if got := names(seeds); !equalSet(got, []string{"api", "runner"}) {
+		t.Fatalf("Cargo workspace members = %v, want {api, runner}", got)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	for _, seed := range seeds {
+		if seed.source != "Cargo.toml: "+seed.rootDir {
+			t.Fatalf("seed source = %q for root %q", seed.source, seed.rootDir)
+		}
+	}
+}
+
+func TestScan_CargoWorkspaceDoesNotFallBackToRoot(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"Cargo.toml": &fstest.MapFile{Data: []byte(`[workspace]
+members = ["crates/api"]
+resolver = "2"
+`)},
+		"crates/api/Cargo.toml":  &fstest.MapFile{Data: []byte("[package]\nname = \"workspace-api\"\n")},
+		"crates/api/src/main.rs": &fstest.MapFile{Data: []byte("fn main() {}\n")},
+	}
+
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(result.Workloads) != 1 {
+		t.Fatalf("workloads = %#v, want one Cargo member", result.Workloads)
+	}
+	workload := result.Workloads[0]
+	if workload.Name != "api" || workload.RootDir != "crates/api" || workload.Tier != TierWorkspace {
+		t.Fatalf("workload = %#v, want Cargo workspace member api at crates/api", workload)
+	}
+}
+
 // TestDetectWorkspaces_NxProjectsMap — nx.json with the modern
 // "projects" map form: keys become workload names.
 func TestDetectWorkspaces_NxProjectsMap(t *testing.T) {
