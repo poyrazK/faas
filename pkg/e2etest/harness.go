@@ -313,19 +313,7 @@ kernel_path = %q
 		if vmmdSock == "" {
 			vmmdSock = "/run/faas/vmmd.sock" // matches builderd default
 		}
-		cfg := fmt.Sprintf(
-			`vmmd_socket = %q
-cache_dir = %q
-builder_base = %q
-build_drive_dir = %q
-build_export_dir = %q
-`,
-			vmmdSock,
-			filepath.Join(tmp, "cache"),
-			envBuilderBase(t),
-			filepath.Join(tmp, "drive"),
-			filepath.Join(tmp, "out"),
-		)
+		cfg := builderdConfig(tmp, vmmdSock, envBuilderBase(t))
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write builderd.toml: %v", err)
 		}
@@ -712,7 +700,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		// into the main mux so the dashboard panels stay accurate.
 		// Per-test FAAS_SPOOL_ROOT + FAAS_SCAN_SPOOL_ROOT — see
 		// startAPID in Start for the rationale.
-		spoolRoot := filepath.Join(h.TmpDir, "spool")
+		spoolRoot := spoolRootFor(h.TmpDir)
 		scanRoot := filepath.Join(h.TmpDir, "scan-spool")
 		for _, d := range []string{spoolRoot, scanRoot} {
 			if err := os.MkdirAll(d, 0o755); err != nil {
@@ -785,7 +773,7 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 	// tests in the same package serially unless -parallel is set, but
 	// once any package-level parallelism is introduced, the per-test
 	// temp dirs keep behaviour stable.)
-	spoolRoot := filepath.Join(h.TmpDir, "spool")
+	spoolRoot := spoolRootFor(h.TmpDir)
 	scanRoot := filepath.Join(h.TmpDir, "scan-spool")
 	for _, d := range []string{spoolRoot, scanRoot} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -1815,4 +1803,43 @@ func boundingSetPrefix(t *testing.T, name string) []string {
 		set += ",+" + strings.TrimPrefix(strings.ToLower(c), "cap_")
 	}
 	return []string{setpriv, "--bounding-set=" + set, "--"}
+}
+
+// spoolRootFor is the per-test source spool root.
+//
+// apid writes uploaded source tarballs here (FAAS_SPOOL_ROOT) and builderd
+// validates every source path against its OWN configured root before reading
+// it. The two MUST agree, which is why both now derive it from here instead of
+// each joining "spool" themselves.
+func spoolRootFor(tmpDir string) string { return filepath.Join(tmpDir, "spool") }
+
+// builderdConfig renders the per-test builderd.toml.
+//
+// source_spool_dir is the reason this is a function rather than an inline
+// Sprintf: it was missing, so builderd kept the production default
+// /var/spool/faas/builds while apid spooled into the test's temp dir, and
+// builderd's path-traversal guard rejected every upload:
+//
+//	builderd: source boundary violation: path "/tmp/TestBuildMetal.../spool/x.tar.gz"
+//	  is outside spool root "/var/spool/faas/builds"
+//
+// That failed every build-path test on the native gate (2026-09-14) with
+// failure_class=infra, leaving deployments stuck at status=pending and wakes
+// returning 503. The guard was right; the harness was inconsistent.
+func builderdConfig(tmp, vmmdSock, builderBase string) string {
+	return fmt.Sprintf(
+		`vmmd_socket = %q
+cache_dir = %q
+builder_base = %q
+build_drive_dir = %q
+build_export_dir = %q
+source_spool_dir = %q
+`,
+		vmmdSock,
+		filepath.Join(tmp, "cache"),
+		builderBase,
+		filepath.Join(tmp, "drive"),
+		filepath.Join(tmp, "out"),
+		spoolRootFor(tmp),
+	)
 }
