@@ -873,7 +873,7 @@ jobs:
             --connect-timeout 2 --max-time 3 \
             --header 'Host: gatewayd-internal.faas' \
             "http://${gateway_host}:8080/v1/internal/metrics" >"$metrics_body"
-          grep -q '^# HELP gatewayd_ops_total ' "$metrics_body" || {
+          grep -q '^# HELP gateway_compute_node_changed_subscriber_alive ' "$metrics_body" || {
             echo "::error::compute gateway metrics endpoint returned no gatewayd metric family" >&2
             exit 1
           }

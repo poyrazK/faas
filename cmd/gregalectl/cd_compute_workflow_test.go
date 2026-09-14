@@ -45,4 +45,10 @@ func TestCDComputeWorkflowUsesInfrastructureHealthHost(t *testing.T) {
 	if strings.Contains(workflow, `--header 'Host: health-probe.invalid'`) {
 		t.Fatal("cd-compute private reachability probe must not route health checks through the unknown-app path")
 	}
+	if !strings.Contains(workflow, `grep -q '^# HELP gateway_compute_node_changed_subscriber_alive '`) {
+		t.Fatal("cd-compute metrics probe must require a family registered by gatewayd-internal")
+	}
+	if strings.Contains(workflow, "gatewayd_ops_total") {
+		t.Fatal("cd-compute metrics probe must not require the removed gatewayd_ops_total family")
+	}
 }
