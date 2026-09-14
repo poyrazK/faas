@@ -23,7 +23,7 @@ const (
 )
 
 func cmdRun(args []string) int {
-	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs := newFlagSet("run", flag.ContinueOnError)
 	runtimeName := fs.String("runtime", string(api.ExecutionRuntimeNode22), "isolated runtime (node22|node24|python312|python313)")
 	source := fs.String("source", "", "source code (use --file for a local file)")
 	file := fs.String("file", "", "read source from a local regular file")
@@ -169,7 +169,7 @@ func cmdRuns(args []string) int {
 }
 
 func cmdRunsList(args []string) int {
-	fs := flag.NewFlagSet("runs-list", flag.ContinueOnError)
+	fs := newFlagSet("runs-list", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "maximum number of runs (1..200)")
 	offset := fs.Int("offset", 0, "number of matching runs to skip")
 	status := fs.String("status", "", "filter by lifecycle status")

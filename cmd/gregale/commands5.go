@@ -80,8 +80,8 @@ func validCLISlug(s string) bool {
 // are rendered as "sleeping" because that's how the dashboard badge
 // (§6) talks about them to humans — the wire value stays unchanged.
 func cmdPS(args []string) int {
-	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	fs := newFlagSet("ps", flag.ContinueOnError)
+	setFlagOutput(fs, os.Stderr)
 	history := fs.Bool("all", false, "include the newest 100 retained history rows (parked rows expire after 30d by default)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale ps [--all] <app>", "ps")
@@ -159,7 +159,7 @@ func humanizeInstanceState(state string) string {
 // jq the SLO numbers. JSON tag set lives on the struct in
 // pkg/api/dto.go — renames there propagate here automatically.
 func cmdStatus(args []string) int {
-	fs := flag.NewFlagSet(statusLiteral, flag.ContinueOnError)
+	fs := newFlagSet(statusLiteral, flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit raw api.StatusPage as JSON (issue #63 §2)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -228,7 +228,7 @@ func cmdEnv(args []string) int {
 }
 
 func envPull(args []string) int {
-	fs := flag.NewFlagSet("env pull", flag.ContinueOnError)
+	fs := newFlagSet("env pull", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	out := fs.String("o", ".env", "output file (default .env)")
 	if err := fs.Parse(args); err != nil {
@@ -301,7 +301,7 @@ func envAssignmentKeys(data []byte) map[string]struct{} {
 }
 
 func envPush(args []string) int {
-	fs := flag.NewFlagSet("env push", flag.ContinueOnError)
+	fs := newFlagSet("env push", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	in := fs.String("f", ".env", "input file (default .env)")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
@@ -628,7 +628,7 @@ func cmdAppScale(slug string, args []string) int {
 		PrintUsage(osStdout, appScaleUsage, "apps")
 		return 0
 	}
-	fs := flag.NewFlagSet("app scale", flag.ContinueOnError)
+	fs := newFlagSet("app scale", flag.ContinueOnError)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
 	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
@@ -999,7 +999,7 @@ func cmdPlan(args []string) int {
 // would make CI scripts and `&&`-chained shell commands treat a
 // missing $DISPLAY as a hard failure, which is the wrong signal.
 func cmdDashboard(args []string) int {
-	fs := flag.NewFlagSet("dashboard", flag.ContinueOnError)
+	fs := newFlagSet("dashboard", flag.ContinueOnError)
 	stateless := fs.Bool("stateless", false, "open the stateless-advisory landing page instead of the account page")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -1084,7 +1084,7 @@ func cmdQueueDispatch(args []string) int {
 // cmdQueueSend enqueues one payload. Mirrors cmdInvoke's
 // --payload semantics (inline JSON / @file / stdin).
 func cmdQueueSend(args []string) int {
-	fs := flag.NewFlagSet("queue send", flag.ContinueOnError)
+	fs := newFlagSet("queue send", flag.ContinueOnError)
 	payload := fs.String("payload", "", "JSON payload (inline | @file | -)")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
@@ -1119,7 +1119,7 @@ func cmdQueueSend(args []string) int {
 // `empty`. Mirrors the existing cmdQueueTail long-poll framing —
 // same signal.NotifyContext wiring.
 func cmdQueueReceive(args []string) int {
-	fs := flag.NewFlagSet("queue receive", flag.ContinueOnError)
+	fs := newFlagSet("queue receive", flag.ContinueOnError)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -1177,7 +1177,7 @@ func cmdQueueReceive(args []string) int {
 // cmdQueueState returns the depth + cap without acquiring a lease.
 // Read-only; safe to call on a hot path.
 func cmdQueueState(args []string) int {
-	fs := flag.NewFlagSet("queue state", flag.ContinueOnError)
+	fs := newFlagSet("queue state", flag.ContinueOnError)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -1212,7 +1212,7 @@ func cmdQueueState(args []string) int {
 // cmdQueuePeek inspects up to N rows without acquiring a lease.
 // Cursor pagination via --before mirrors cmdAuditEventsList.
 func cmdQueuePeek(args []string) int {
-	fs := flag.NewFlagSet("queue peek", flag.ContinueOnError)
+	fs := newFlagSet("queue peek", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
 	flags, pos := splitArgsForFlags(args)
@@ -1252,7 +1252,7 @@ func cmdQueuePeek(args []string) int {
 // cmdQueueDeadLetter lists rows that exhausted attempts. Same
 // pagination shape as cmdQueuePeek (cursor via --before).
 func cmdQueueDeadLetter(args []string) int {
-	fs := flag.NewFlagSet("queue dead-letter", flag.ContinueOnError)
+	fs := newFlagSet("queue dead-letter", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor")
 	flags, pos := splitArgsForFlags(args)
@@ -1289,7 +1289,7 @@ func cmdQueueDeadLetter(args []string) int {
 // ids — server returns 200. Use after cmdQueueReceive to free the
 // row before the lease expires.
 func cmdQueueAck(args []string) int {
-	fs := flag.NewFlagSet("queue ack", flag.ContinueOnError)
+	fs := newFlagSet("queue ack", flag.ContinueOnError)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -1434,7 +1434,7 @@ func indexByte(s string, c byte) int {
 // is watching invocations, and advisory frames are noisy (one per
 // debounce window per state-shaped path).
 func cmdTail(args []string) int {
-	fs := flag.NewFlagSet("tail", flag.ContinueOnError)
+	fs := newFlagSet("tail", flag.ContinueOnError)
 	onlySlug := fs.String("app", "", "filter to a single app slug (optional)")
 	includeStateless := fs.Bool("include-stateless", false, "also print stateless.advisory frames (default: hide)")
 	if err := fs.Parse(args); err != nil {

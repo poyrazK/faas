@@ -27,7 +27,7 @@ func cmdOverageCap(args []string) int {
 	// "flag provided but not defined: -clear" and exit 1. A real
 	// `--clear` flag is the idiomatic fix; the positional variant
 	// stays for symmetry with `<cents>`.
-	fs := flag.NewFlagSet("overage-cap", flag.ContinueOnError)
+	fs := newFlagSet("overage-cap", flag.ContinueOnError)
 	clear := fs.Bool("clear", false, "clear the per-account overage cap (no limit)")
 	if err := fs.Parse(args); err != nil {
 		return 1

@@ -1,6 +1,6 @@
 [Unit]
 Description=faas tenant bridge (br-tenants) up — bridge + 10.100.0.1/16
-Documentation=https://docs.gregale.dev/ops/network
+Documentation=https://gregale.dev/docs/ops/network
 # Order BEFORE nftables.service so the host firewall's forward chain (which
 # uses `iifname "br-tenants"`) can load against an interface that exists.
 # Order BEFORE vmmd.service so vmmd's per-instance netns creation (which

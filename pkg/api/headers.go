@@ -6,6 +6,9 @@ package api
 const (
 	// RequestIDHeader carries the platform correlation id for every request.
 	RequestIDHeader = "X-Faas-Request-Id"
+	// InvocationIDHeader carries the durable invocation id for synthetic work
+	// and the public request id for direct HTTP function calls.
+	InvocationIDHeader = "X-Faas-Invocation-Id"
 	// ErrorCodeHeader identifies a platform-owned error independently of the
 	// response body. Edge adapters use it to distinguish a Gregale timeout
 	// from a genuine CDN/origin failure.

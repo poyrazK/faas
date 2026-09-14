@@ -55,7 +55,7 @@ func cmdTenantSurfaces(args []string) int {
 
 // cmdTenantSurfacesList — `tenant-surfaces list --app <slug>`.
 func cmdTenantSurfacesList(args []string) int {
-	fs := flag.NewFlagSet("tenant-surfaces-list", flag.ContinueOnError)
+	fs := newFlagSet("tenant-surfaces-list", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -99,7 +99,7 @@ func cmdTenantSurfacesList(args []string) int {
 // hostnames. The TXT records are printed so the customer can
 // publish them.
 func cmdTenantSurfacesAdd(args []string) int {
-	fs := flag.NewFlagSet("tenant-surfaces-add", flag.ContinueOnError)
+	fs := newFlagSet("tenant-surfaces-add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "surface name (required)")
 	var hostnames stringListFlag
@@ -143,7 +143,7 @@ func cmdTenantSurfacesAdd(args []string) int {
 
 // cmdTenantSurfacesRm — `tenant-surfaces rm --app <slug> <surface-id>`.
 func cmdTenantSurfacesRm(args []string) int {
-	fs := flag.NewFlagSet("tenant-surfaces-rm", flag.ContinueOnError)
+	fs := newFlagSet("tenant-surfaces-rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -184,7 +184,7 @@ func cmdTenantSurfacesHostname(args []string) int {
 // --app <slug> --surface <id> --hostname <h>`. Prints the TXT
 // record so the customer can publish it.
 func cmdTenantSurfacesHostnameAdd(args []string) int {
-	fs := flag.NewFlagSet("tenant-surfaces-hostname-add", flag.ContinueOnError)
+	fs := newFlagSet("tenant-surfaces-hostname-add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	surfaceID := fs.String("surface", "", "surface id (required)")
 	hostname := fs.String("hostname", "", "hostname to attach (required)")
@@ -216,7 +216,7 @@ func cmdTenantSurfacesHostnameAdd(args []string) int {
 // cmdTenantSurfacesHostnameRm — `tenant-surfaces hostname rm
 // --app <slug> --surface <id> <hostname>`.
 func cmdTenantSurfacesHostnameRm(args []string) int {
-	fs := flag.NewFlagSet("tenant-surfaces-hostname-rm", flag.ContinueOnError)
+	fs := newFlagSet("tenant-surfaces-hostname-rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	surfaceID := fs.String("surface", "", "surface id (required)")
 	if err := fs.Parse(args); err != nil {

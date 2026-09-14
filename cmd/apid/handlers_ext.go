@@ -5580,7 +5580,7 @@ func parseInvoiceListParams(r *http.Request) (month *time.Time, before time.Time
 			return nil, time.Time{}, 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Bad limit", "expected 1..100").
 				WithLimit(int64(limitMax), observed).
-				WithDocs("https://" + wire.DocsHost + "/billing#invoices")
+				WithDocs(wire.DocsBaseURL + "/billing#invoices")
 		}
 		limit = n
 	}
@@ -5626,7 +5626,7 @@ func parseCronRunsLimit(r *http.Request) (int, *api.Problem) {
 			return 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Bad limit", "expected 1..100").
 				WithLimit(int64(limitMax), observed).
-				WithDocs("https://" + wire.DocsHost + "/crons#runs")
+				WithDocs(wire.DocsBaseURL + "/crons#runs")
 		}
 		limit = n
 	}

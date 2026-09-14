@@ -38,9 +38,9 @@ class Problem:
     other problem+json site keeps its existing flat shape unchanged.
 
         Example:
-            {'type': 'https://docs.gregale.dev/errors/validation_failed', 'title': 'Validation failed', 'status': 422,
+            {'type': 'https://gregale.dev/docs/errors/validation_failed', 'title': 'Validation failed', 'status': 422,
                 'code': 'validation_failed', 'detail': 'ram_mb must be one of [128, 256, 512, 1024, 2048]', 'limit': None,
-                'observed': None, 'docs_url': 'https://docs.gregale.dev/errors/validation_failed'}
+                'observed': None, 'docs_url': 'https://gregale.dev/docs/errors/validation_failed'}
 
     """
 

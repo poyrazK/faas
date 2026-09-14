@@ -46,7 +46,7 @@ import (
 // PlanResponse bytes verbatim. Never writes; can_apply=false on
 // over-quota surfaces the limit problem from the same response.
 func cmdScan(args []string) int {
-	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
+	fs := newFlagSet("scan", flag.ContinueOnError)
 	tarball := fs.String("tarball", "", "path to source .tar.gz")
 	pathFlag := fs.String("path", "", "path to local repo dir (auto-packed)")
 	repo := fs.String("repo", "", "github owner/name to fetch tarball for")

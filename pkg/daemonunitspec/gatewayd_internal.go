@@ -50,7 +50,7 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitGatewaydInternal() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas gatewayd-internal — routing + wake + proxy (Tier A7 split, ADR-070)",
-		Documentation: "https://docs.gregale.dev/ops/gatewayd-internal",
+		Documentation: "https://gregale.dev/docs/ops/gatewayd-internal",
 		// ADR-143: gatewayd-internal runs on compute-only nodes where
 		// apid + schedd are masked (role_convergence); ordering on them
 		// only produced "Unit is masked" noise at every start. It dials

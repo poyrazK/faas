@@ -39,7 +39,7 @@ func cmdWorkflows(args []string) int {
 }
 
 func cmdWorkflowsList(args []string) int {
-	fs := flag.NewFlagSet("workflows-list", flag.ContinueOnError)
+	fs := newFlagSet("workflows-list", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug")
 	limit := fs.Int("limit", 50, "page size (1..100)")
 	offset := fs.Int("offset", 0, "page offset")
@@ -86,7 +86,7 @@ func cmdWorkflowsRun(args []string) int {
 	}
 	workflowName := args[0]
 
-	fs := flag.NewFlagSet("workflows-run", flag.ContinueOnError)
+	fs := newFlagSet("workflows-run", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug")
 	inputStr := fs.String("input", "{}", "JSON input payload for the workflow")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -233,7 +233,7 @@ func cmdWorkflowsEvents(args []string) int {
 		return 1
 	}
 
-	fs := flag.NewFlagSet("workflows-events-send", flag.ContinueOnError)
+	fs := newFlagSet("workflows-events-send", flag.ContinueOnError)
 	payloadStr := fs.String("payload", "{}", "JSON payload for the event")
 	flags, posArgs := splitArgsForFlags(args[1:])
 	if err := fs.Parse(flags); err != nil {

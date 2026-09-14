@@ -16,7 +16,7 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitS3Gateway() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:           "Gregale S3-compatible object-storage gateway",
-		Documentation:         "https://docs.gregale.dev/object-storage",
+		Documentation:         "https://gregale.dev/docs/object-storage",
 		After:                 []string{"network-online.target", "postgresql.service", "faas-apid.service", "faas-cp.slice"},
 		Wants:                 []string{"faas-cp.slice", "faas-apid.service"},
 		Requires:              []string{"postgresql.service"},

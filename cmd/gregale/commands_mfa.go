@@ -75,7 +75,7 @@ func cmdMfa(args []string) int {
 // can `open` it on macOS or pipe it elsewhere. The PNG is not
 // printed to stdout (binary noise).
 func cmdMfaEnroll(args []string) int {
-	fs := flag.NewFlagSet("mfa enroll", flag.ContinueOnError)
+	fs := newFlagSet("mfa enroll", flag.ContinueOnError)
 	qrOut := fs.String("qr-out", "gregale-mfa-qr.png", "write the QR PNG to this path (binary; not printed to stdout)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -134,7 +134,7 @@ func cmdMfaEnroll(args []string) int {
 // from the customer's authenticator. Server stamps mfa_enrolled_at
 // + clears mfa_pending. Re-running is safe (idempotent).
 func cmdMfaConfirm(args []string) int {
-	fs := flag.NewFlagSet("mfa confirm", flag.ContinueOnError)
+	fs := newFlagSet("mfa confirm", flag.ContinueOnError)
 	code := fs.String("code", "", "6-digit TOTP from the authenticator (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -163,7 +163,7 @@ func cmdMfaConfirm(args []string) int {
 // CI/script case where a script needs an mfa_pending session
 // completed.
 func cmdMfaVerify(args []string) int {
-	fs := flag.NewFlagSet("mfa verify", flag.ContinueOnError)
+	fs := newFlagSet("mfa verify", flag.ContinueOnError)
 	code := fs.String("code", "", "6-digit TOTP from the authenticator (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -191,7 +191,7 @@ func cmdMfaVerify(args []string) int {
 // customer must re-enroll (server-side: /disable + /enroll cycle).
 // UX spec §7.1 promises the recovery-code screen here.
 func cmdMfaRecover(args []string) int {
-	fs := flag.NewFlagSet("mfa recover", flag.ContinueOnError)
+	fs := newFlagSet("mfa recover", flag.ContinueOnError)
 	code := fs.String("code", "", "10-char base32 recovery code (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -223,7 +223,7 @@ func cmdMfaRecover(args []string) int {
 // returns 402 plan_mfa_disable_not_allowed for Free/Hobby. The CLI
 // surfaces that as-is (no special-casing).
 func cmdMfaDisable(args []string) int {
-	fs := flag.NewFlagSet("mfa disable", flag.ContinueOnError)
+	fs := newFlagSet("mfa disable", flag.ContinueOnError)
 	password := fs.String("password", "", "account password (CI use; will prompt interactively if empty)")
 	recovery := fs.String("recovery-code", "", "single-use recovery code (alternative to --password)")
 	if err := fs.Parse(args); err != nil {

@@ -46,7 +46,7 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitApid() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:           "onebox-faas apid — public control-plane API (spec §4.1)",
-		Documentation:         "https://docs.gregale.dev/ops/apid",
+		Documentation:         "https://gregale.dev/docs/ops/apid",
 		After:                 []string{"network.target", "postgresql.service", "faas-cp.slice"},
 		Wants:                 []string{"faas-cp.slice"},
 		Requires:              []string{"postgresql.service"},

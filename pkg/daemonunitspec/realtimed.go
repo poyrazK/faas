@@ -9,7 +9,7 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitRealtimed() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas realtimed — managed realtime connection owner",
-		Documentation: "https://docs.gregale.dev/ops/realtime",
+		Documentation: "https://gregale.dev/docs/ops/realtime",
 		After:         []string{"faas-cp.slice", "faas-vmmd.service"},
 		Wants:         []string{"faas-cp.slice", "faas-vmmd.service"},
 

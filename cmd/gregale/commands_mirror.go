@@ -60,7 +60,7 @@ func renderMirrorRule(w io.Writer, r api.MirrorRuleResponse) {
 // cmdMirrorList implements `gregale mirror list --app <slug>`.
 // Mirrors the GET /v1/apps/{slug}/mirrors surface (cmd/apid/handlers_mirror.go).
 func cmdMirrorList(args []string) int {
-	fs := flag.NewFlagSet("mirror list", flag.ContinueOnError)
+	fs := newFlagSet("mirror list", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -96,7 +96,7 @@ func cmdMirrorList(args []string) int {
 // (mirror every customer request); --redact-header can be passed
 // 0..N times to populate the customer's additive redact list.
 func cmdMirrorCreate(args []string) int {
-	fs := flag.NewFlagSet("mirror create", flag.ContinueOnError)
+	fs := newFlagSet("mirror create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	source := fs.String("source", "", "source deployment id (required)")
 	mirror := fs.String("mirror", "", "mirror deployment id (required)")
@@ -142,7 +142,7 @@ func cmdMirrorCreate(args []string) int {
 // AlwaysStrippedHeaders is rendered so the customer can audit the
 // redaction manifest in their terminal.
 func cmdMirrorInfo(args []string) int {
-	fs := flag.NewFlagSet("mirror info", flag.ContinueOnError)
+	fs := newFlagSet("mirror info", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	id := fs.String("id", "", "mirror rule id (required)")
 	if err := fs.Parse(args); err != nil {
@@ -186,7 +186,7 @@ func cmdMirrorInfo(args []string) int {
 // without removing) is distinguishable from no `--percent` at
 // all (keep existing value).
 func cmdMirrorUpdate(args []string) int {
-	fs := flag.NewFlagSet("mirror update", flag.ContinueOnError)
+	fs := newFlagSet("mirror update", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	id := fs.String("id", "", "mirror rule id (required)")
 	percent := fs.Int("percent", -1, "new percent in [0, 100]; -1 = unset (keep existing)")
@@ -279,7 +279,7 @@ func cmdMirrorUpdate(args []string) int {
 // 204 on success; the second delete returns 404 (silent on the
 // CLI side too — the server enforces the IDOR posture).
 func cmdMirrorRm(args []string) int {
-	fs := flag.NewFlagSet("mirror rm", flag.ContinueOnError)
+	fs := newFlagSet("mirror rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	id := fs.String("id", "", "mirror rule id (required)")
 	if err := fs.Parse(args); err != nil {
@@ -308,7 +308,7 @@ func cmdMirrorRm(args []string) int {
 // windowStr defaults to "1h". The server validates the value and
 // returns 422 invalid_mirror_window on anything else.
 func cmdMirrorSummary(args []string) int {
-	fs := flag.NewFlagSet("mirror summary", flag.ContinueOnError)
+	fs := newFlagSet("mirror summary", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	id := fs.String("id", "", "mirror rule id (required)")
 	window := fs.String("window", "1h", "summary window: 1h | 24h | 7d (default 1h)")

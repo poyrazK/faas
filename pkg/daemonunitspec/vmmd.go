@@ -34,7 +34,7 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitVmmd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas vmmd — microVM supervisor (the only root component, spec §4.4)",
-		Documentation: "https://docs.gregale.dev/ops/vmmd",
+		Documentation: "https://gregale.dev/docs/ops/vmmd",
 		After: []string{
 			"faas-tenant.slice", "faas-cp.slice", "faas-cp-build.slice",
 			"faas-tenant-free.slice", "faas-tenant-hobby.slice",

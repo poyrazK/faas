@@ -19,7 +19,7 @@ var analyticsGroupBys = map[string]struct{}{
 }
 
 func cmdAnalytics(args []string) int {
-	fs := flag.NewFlagSet("analytics", flag.ContinueOnError)
+	fs := newFlagSet("analytics", flag.ContinueOnError)
 	since := fs.String("since", "24h", "lookback window (for example 24h or 7d)")
 	until := fs.String("until", "", "exclusive RFC3339 end timestamp")
 	by := fs.String("by", "route", "grouping dimension")

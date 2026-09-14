@@ -45,8 +45,11 @@ func authedClientWithDeployTimeout(timeout time.Duration) (*Client, error) {
 // 0600 perms (config.go::saveToken) so subsequent commands can use
 // the bearer token without re-authenticating.
 func cmdLogin(args []string) int {
-	fs := flag.NewFlagSet("login", flag.ContinueOnError)
+	fs := newFlagSet("login", flag.ContinueOnError)
 	fs.Usage = func() {
+		if jsonOutput && !jsonUsageHelp {
+			return
+		}
 		PrintUsage(os.Stderr, "usage: gregale login [--token T]", "auth")
 		fs.PrintDefaults()
 	}

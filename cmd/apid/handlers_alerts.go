@@ -79,8 +79,8 @@ const alertRuleMetricFailedInvocations = "failed_invocations"
 
 // docsTypeBase is the canonical docs path prefix for problem
 // `type:` URLs emitted by the apid alert handlers. Sourced from
-// wire.DocsHost so a rotation only edits pkg/wire/docs.go.
-var docsTypeBase = "https://" + wire.DocsHost + "/problems"
+// wire.DocsBaseURL so a rotation only edits pkg/wire/docs.go.
+var docsTypeBase = wire.DocsBaseURL + "/problems"
 
 // --- list -------------------------------------------------------------------
 

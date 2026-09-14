@@ -359,11 +359,11 @@ const (
 
 // docsTypeBase is the canonical docs path prefix for problem
 // `type:` URLs emitted from the gateway (RFC 7807 §3.1). Sourced
-// from wire.DocsHost so a rotation only edits pkg/wire/docs.go,
+// from wire.DocsBaseURL so a rotation only edits pkg/wire/docs.go,
 // not this file. Distinct from pkg/api's `docsBase` because the
 // gateway emits problem types (full URN-shaped slugs) rather
 // than topic-path docs URLs.
-var docsTypeBase = "https://" + wire.DocsHost + "/errors"
+var docsTypeBase = wire.DocsBaseURL + "/errors"
 
 // Authn-failure reason taxonomy (issue #560 + issue #477).
 // The strings land on the `reason` field of the audit row
@@ -5054,16 +5054,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Request ID is generated once per request and set on the response BEFORE
 	// any error path so even 4xx responses are correlatable. Inbound
 	// x-faas-request-id overrides (lets curl/clients supply their own trace).
-	rid := r.Header.Get("x-faas-request-id")
+	rid := r.Header.Get(api.RequestIDHeader)
 	if rid == "" {
 		rid = newRequestID()
 	}
-	w.Header().Set("x-faas-request-id", rid)
+	w.Header().Set(api.RequestIDHeader, rid)
 	// The response, scheduler RPC metadata, and first-byte event all consume
 	// this canonical header/context pair. Generated IDs used to exist only in
 	// the response and gateway-private context, leaving cold-wake timelines
 	// without the customer-visible correlation handle.
-	r.Header.Set("x-faas-request-id", rid)
+	r.Header.Set(api.RequestIDHeader, rid)
+	// Direct HTTP calls do not have a scheduler invocation row. Give function
+	// adapters the same public-safe correlation id returned to the caller,
+	// while preserving the durable id already attached to synthetic work.
+	if !isSyntheticInvocation(r.Context()) {
+		r.Header.Set(api.InvocationIDHeader, rid)
+	}
 	r = r.WithContext(WithRequestID(r.Context(), rid)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
 	correlation, _ := wire.FromContext(r.Context())
 	correlation.RequestID = rid

@@ -215,7 +215,7 @@ func TestDashboardHandler_AppsList(t *testing.T) {
 	if !strings.Contains(body, "faas deploy --template=hello-node") {
 		t.Errorf("body missing deploy quickstart; got:\n%s", body)
 	}
-	if !strings.Contains(body, "https://docs.gregale.dev/storage") {
+	if !strings.Contains(body, "https://gregale.dev/docs/storage") {
 		t.Errorf("body missing storage docs URL; got:\n%s", body)
 	}
 }

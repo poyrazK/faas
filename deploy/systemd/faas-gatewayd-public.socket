@@ -1,6 +1,6 @@
 [Unit]
 Description=Gregale durable public gateway listener
-Documentation=https://docs.gregale.dev/ops/gatewayd-public
+Documentation=https://gregale.dev/docs/ops/gatewayd-public
 Before=faas-gatewayd-public.service
 
 [Socket]

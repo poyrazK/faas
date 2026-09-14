@@ -142,7 +142,7 @@ func cmdDeployments(args []string) int {
 			return cmdDeploymentsExclude(args[1:])
 		}
 	}
-	fs := flag.NewFlagSet("deployments", flag.ContinueOnError)
+	fs := newFlagSet("deployments", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug (use app-scoped deployment history)")
 	limit := fs.Int("limit", 50, "page size (1-200)")
 	before := fs.String("before", "", "pagination cursor (RFC3339Nano)")
@@ -245,7 +245,7 @@ func cmdDeploymentsExclude(args []string) int {
 // optional flag is here for shell scripts that batch-clear across
 // projects without env-mutating each iteration.
 func cmdDeploymentsExcludeClear(args []string) int {
-	fs := flag.NewFlagSet("deployments exclude clear", flag.ContinueOnError)
+	fs := newFlagSet("deployments exclude clear", flag.ContinueOnError)
 	slug := fs.String("slug", "", "lowercase workload slug to clear from deployment_scope_exclusions (required)")
 	projectSlug := fs.String("project-slug", "", "project slug (defaults to FAAS_PROJECT_SLUG env)")
 	if err := fs.Parse(args); err != nil {
@@ -363,7 +363,7 @@ func cmdDeployment(args []string) int {
 // input and CLI contract identical.
 func cmdDeploymentWait(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	fs := flag.NewFlagSet("deployment wait", flag.ContinueOnError)
+	fs := newFlagSet("deployment wait", flag.ContinueOnError)
 	timeoutSeconds := fs.Int("timeout", 600, "maximum seconds to wait")
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -433,7 +433,7 @@ func cmdDeploymentWait(args []string) int {
 // `secret_scan` field, the text rendering prints both blocks
 // in order.
 func cmdDeploymentGet(args []string) int {
-	fs := flag.NewFlagSet("deployment", flag.ContinueOnError)
+	fs := newFlagSet("deployment", flag.ContinueOnError)
 	showScan := fs.Bool("show-scan", false, "fetch + print the per-deploy grype scan payload (GET /v1/deployments/{id}/scan)")
 	showSecretScan := fs.Bool("show-secret-scan", false,
 		"fetch + print the per-deploy image-layer secret-scan payload (GET /v1/deployments/{id}/secret-scan)")
@@ -664,7 +664,7 @@ func cmdDeploymentSetMinInstances(args []string) int {
 	// pulls --min to the front so the parser sees it. Mirrors
 	// cmdDelayedTaskAdd (commands_delayed_task.go:118).
 	flags, pos := splitArgsForFlags(args)
-	fs := flag.NewFlagSet("deployment set-min-instances", flag.ContinueOnError)
+	fs := newFlagSet("deployment set-min-instances", flag.ContinueOnError)
 	min := fs.Int("min", 0, "min_instances floor (>= 0; 0 inherits the parent app floor)")
 	if err := fs.Parse(flags); err != nil {
 		return 1

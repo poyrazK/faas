@@ -249,7 +249,7 @@ func retryAfterSeconds(d time.Duration) string {
 
 func writeProblem(w http.ResponseWriter, status int, code, title, retryAfter string) {
 	p := api.NewProblem(status, code, title, title)
-	p.Type = "https://docs.gregale.dev/errors/" + code
+	p.Type = "https://gregale.dev/docs/errors/" + code
 	if retryAfter != "" {
 		p = p.WithHeader("Retry-After", retryAfter)
 	}

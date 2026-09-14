@@ -36,7 +36,7 @@ type debugIncidentBundleRedaction struct {
 // retained request. The optional deployment pair adds a per-route comparison;
 // without it the bundle still contains request evidence and regressions.
 func cmdDebugBundle(args []string) int {
-	fs := flag.NewFlagSet("debug bundle", flag.ContinueOnError)
+	fs := newFlagSet("debug bundle", flag.ContinueOnError)
 	since := fs.String("since", "", "regression/compare lookback window (e.g. 1h, 24h, 3d)")
 	route := fs.String("route", "", "route filter for an optional deployment comparison")
 	source := fs.String("source", "", "source deployment id for an optional comparison")

@@ -115,7 +115,7 @@ func printBillingUsage(w io.Writer) {
 // that would break `gregale billing portal && gregale plan <new>` flows on
 // headless boxes.
 func cmdBillingPortal(args []string) int {
-	fs := flag.NewFlagSet("billing portal", flag.ContinueOnError)
+	fs := newFlagSet("billing portal", flag.ContinueOnError)
 	printOnly := fs.Bool("print", false, "print URL to stdout only; do not open browser")
 	noOpen := fs.Bool("no-open", false, "alias of --print")
 	if err := fs.Parse(args); err != nil {

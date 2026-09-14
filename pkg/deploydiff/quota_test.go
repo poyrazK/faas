@@ -18,6 +18,28 @@ func TestQuota_RAMCap_Hobby(t *testing.T) {
 	}
 }
 
+func TestQuota_FreshAppAtCapBlocksButExistingAppDoesNot(t *testing.T) {
+	limits := api.MustLimitsFor(api.PlanFree)
+	cfg := QuotaConfig{Limits: limits, AccountAppCount: limits.DeployedApps, AccountAppCountKnown: true}
+	fresh := Quota(api.PlanFree, Baseline{}, Pending{}, cfg)
+	b := findBreak(fresh, api.CodePlanLimitApps)
+	if b == nil {
+		t.Fatalf("fresh app at cap should fire plan_limit_apps; got %+v", fresh)
+	}
+	if b.Observed.Value != limits.DeployedApps || b.Limit.Value != limits.DeployedApps {
+		t.Fatalf("fresh app quota observed/limit = %v/%v, want %d/%d", b.Observed.Value, b.Limit.Value, limits.DeployedApps, limits.DeployedApps)
+	}
+
+	existing := Baseline{App: &api.AppResponse{Slug: "existing"}}
+	if got := Quota(api.PlanFree, existing, Pending{}, cfg); hasCode(got, api.CodePlanLimitApps) {
+		t.Fatalf("existing app preview consumed another slot: %+v", got)
+	}
+	unknown := Quota(api.PlanFree, Baseline{}, Pending{}, QuotaConfig{Limits: limits})
+	if hasCode(unknown, api.CodePlanLimitApps) {
+		t.Fatalf("unknown app count was treated as zero/authoritative: %+v", unknown)
+	}
+}
+
 // TestQuota_StreamingGate_Free — Free plan cannot enable streaming.
 func TestQuota_StreamingGate_Free(t *testing.T) {
 	limits := api.MustLimitsFor(api.PlanFree)

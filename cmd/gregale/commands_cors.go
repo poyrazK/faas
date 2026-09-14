@@ -136,7 +136,7 @@ func cmdCorsAllow(args []string) int {
 	for _, m := range corsDefaultMethods {
 		methodSet[m] = struct{}{}
 	}
-	fs := flag.NewFlagSet("cors allow", flag.ContinueOnError)
+	fs := newFlagSet("cors allow", flag.ContinueOnError)
 	fs.Func("method", "allowed HTTP method (repeatable; extends the default set)", func(s string) error {
 		if _, ok := corsAllowedMethods[s]; !ok {
 			return fmt.Errorf("unsupported HTTP method %q; allowed: %s",

@@ -21,7 +21,7 @@ import (
 )
 
 func cmdInvoke(args []string) int {
-	fs := flag.NewFlagSet("invoke", flag.ContinueOnError)
+	fs := newFlagSet("invoke", flag.ContinueOnError)
 	async := fs.Bool("async", false, "fire-and-forget via /invoke/async; returns the status_url")
 	payload := fs.String("payload", "", "JSON payload (or @file for file body, - for stdin)")
 	method := fs.String("method", "", "HTTP method override (defaults to handler's)")

@@ -33,7 +33,7 @@ func cmdCanary(args []string) int {
 }
 
 func cmdCanarySimulate(args []string) int {
-	fs := flag.NewFlagSet("canary simulate", flag.ContinueOnError)
+	fs := newFlagSet("canary simulate", flag.ContinueOnError)
 	preset := fs.String("canary-preset", "balanced", "canary preset")
 
 	// The documented spelling keeps the slug first, while peeling it off

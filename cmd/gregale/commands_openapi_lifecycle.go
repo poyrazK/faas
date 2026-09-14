@@ -324,8 +324,8 @@ func cmdOpenapiRemove(args []string) int {
 }
 
 func newOpenapiFlagSet(name string) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(osStderr)
+	fs := newFlagSet(name, flag.ContinueOnError)
+	setFlagOutput(fs, osStderr)
 	return fs
 }
 

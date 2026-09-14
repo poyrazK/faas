@@ -340,7 +340,7 @@ func renderBuildListRow(w io.Writer, b api.BuildResponse) {
 // automation can re-issue the cursor — mirrors cmdDeployments'
 // deliberate break from the apps/crons/keys NDJSON convention.
 func cmdBuildList(args []string) int {
-	fs := flag.NewFlagSet("build-list", flag.ContinueOnError)
+	fs := newFlagSet("build-list", flag.ContinueOnError)
 	app := fs.String("app", "", "filter to one app slug")
 	status := fs.String("status", "", "filter to status (queued|running|succeeded|failed|cancelled)")
 	limit := fs.Int("limit", 50, "page size (1-200)")

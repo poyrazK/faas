@@ -30,7 +30,7 @@ func cmdUploadCache(args []string) int {
 }
 
 func uploadCacheFlags(name string, args []string) (uploadCachePolicy, bool, bool) {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs := newFlagSet(name, flag.ContinueOnError)
 	olderThan := fs.Duration("older-than", uploadCacheMaxAge, "remove recovery state older than this duration")
 	maxEntries := fs.Int("max-entries", uploadCacheMaxEntries, "maximum resumable recovery records to retain")
 	dryRun := fs.Bool("dry-run", false, "show cleanup actions without deleting files")

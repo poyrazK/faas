@@ -93,10 +93,16 @@ func init() {
 }
 
 func run(args []string) (status int) {
+	previousJSON, previousUsageHelp := jsonOutput, jsonUsageHelp
+	defer func() {
+		jsonOutput = previousJSON
+		jsonUsageHelp = previousUsageHelp
+	}()
 	// Issue #64 D1: every command accepts --json (top-level). Strip
 	// it before dispatch and set jsonOutput so per-command printers
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
 	args = applyJSONFlag(args)
+	jsonUsageHelp = hasHelpFlag(args)
 	if len(args) == 0 {
 		fmt.Print(topLevelUsage(false))
 		return 0
@@ -507,8 +513,7 @@ func run(args []string) (status int) {
 		// flipping the box to FAAS_MAIL_TRANSPORT=resend.
 		return cmdMail(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale: unknown command %q\nRun 'gregale help' for usage.\n", args[0])
-		return 1
+		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", args[0]))
 	}
 }
 

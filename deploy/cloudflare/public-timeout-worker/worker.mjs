@@ -14,7 +14,7 @@ const REQUEST_ID_HEADER = "X-Faas-Request-Id";
 const ORIGINAL_STATUS_HEADER = "X-Faas-Edge-Original-Status";
 const ORIGIN_504_TRANSPORT_STATUS = 409;
 const PROBLEM_CONTENT_TYPE = "application/problem+json";
-const PROBLEM_TYPE = "https://docs.gregale.dev/errors/request-budget-exceeded";
+const PROBLEM_TYPE = "https://gregale.dev/docs/errors/request-budget-exceeded";
 const DEFAULT_FRONTEND_HOSTNAME = "gregale.dev";
 const FRONTEND_CSP = [
   "default-src 'self'",

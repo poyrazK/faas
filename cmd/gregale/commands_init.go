@@ -66,7 +66,7 @@ const initCmdDocsTopic = "init"
 // materializes, and (when --deploy) chains into cmdDeployTarball.
 // Returns 0 on success, 1 on user error (per UX spec §3.2).
 func cmdInit(args []string) int {
-	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs := newFlagSet("init", flag.ContinueOnError)
 	tpl := fs.String("template", "", "template name (run with a bad value to see available names)")
 	dest := fs.String("path", "", "destination directory (created if missing; refused if non-empty)")
 	deploy := fs.Bool("deploy", false, "after materializing, chain into `gregale deploy --template <name> --name <slug>`")

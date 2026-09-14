@@ -19,7 +19,7 @@ import (
 const deploysClearUsage = "usage: gregale deploys clear <id> [--app <slug>] [--force] [--json]"
 
 func cmdDeploysClear(args []string) int {
-	fs := flag.NewFlagSet("deploys clear", flag.ContinueOnError)
+	fs := newFlagSet("deploys clear", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug (required; used as IDOR-gate path segment)")
 	force := fs.Bool("force", false, "skip the confirmation prompt")
 	if err := fs.Parse(args); err != nil {

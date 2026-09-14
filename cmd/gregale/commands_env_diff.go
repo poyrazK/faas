@@ -37,7 +37,7 @@ import (
 // secret cells) are enforced by the EnvDiffCell DTO shape
 // upstream (omitempty on Value for secret cells).
 func envDiff(args []string) int {
-	fs := flag.NewFlagSet("env diff", flag.ContinueOnError)
+	fs := newFlagSet("env diff", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	if err := fs.Parse(args); err != nil {
 		return 1

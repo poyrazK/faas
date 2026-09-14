@@ -1,6 +1,6 @@
 [Unit]
 Description=onebox-faas apid — public control-plane API (spec §4.1)
-Documentation=https://docs.gregale.dev/ops/apid
+Documentation=https://gregale.dev/docs/ops/apid
 After=network.target postgresql.service faas-cp.slice
 Wants=faas-cp.slice
 Requires=postgresql.service

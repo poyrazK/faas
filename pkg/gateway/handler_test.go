@@ -930,6 +930,37 @@ func TestHandlerStampsTrustedClientIPHeader(t *testing.T) {
 	}
 }
 
+func TestHandlerGivesDirectHTTPAStableInvocationID(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get(api.InvocationIDHeader)))
+	}))
+	t.Cleanup(upstream.Close)
+
+	b := &fakeBackend{
+		app:      App{ID: "app-invocation-id", Plan: api.PlanFree},
+		host:     "invocation-id.apps.dom",
+		upstream: upstream.Listener.Addr().String(),
+	}
+	b.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "i-invocation-id"})
+	h := NewHandlerWith(b, NewMetrics(), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "http://invocation-id.apps.dom/", nil)
+	req.Header.Set(api.RequestIDHeader, "public-request-123")
+	req.Header.Set(api.InvocationIDHeader, "attacker-invocation")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get(api.RequestIDHeader); got != "public-request-123" {
+		t.Fatalf("response request id = %q", got)
+	}
+	if got := rec.Body.String(); got != "public-request-123" {
+		t.Fatalf("runtime invocation id = %q, want public request id", got)
+	}
+}
+
 // TestFanOutAdmitsUpToCapThenReuses (issue #168) — max_concurrency is a
 // ceiling, not a request-per-instance target. A burst to a cold app
 // performs one wake and all followers reuse that target. Reactive scale-up

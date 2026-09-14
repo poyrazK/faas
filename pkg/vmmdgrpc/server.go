@@ -789,7 +789,7 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing paths",
 			"storage_key is required; at least one of vmstate_storage_key or vmstate_path must be set").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#pause")
+			WithDocs(wire.DocsBaseURL + "/vmmd#pause")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -832,7 +832,7 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing instance",
 			"instance is required on WarmSnapshot").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#warm-snapshot")
+			WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -840,7 +840,7 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing storage keys",
 			"storage_key and vmstate_storage_key are required on WarmSnapshot (warm captures are storage-backend-only)").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#warm-snapshot")
+			WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -954,7 +954,7 @@ func (s *Server) FrameworkReady(ctx context.Context, req *vmmdpb.FrameworkReadyR
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing instance",
 			"instance is required on FrameworkReady").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#framework_ready")
+			WithDocs(wire.DocsBaseURL + "/vmmd#framework_ready")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -967,7 +967,7 @@ func (s *Server) FrameworkReady(ctx context.Context, req *vmmdpb.FrameworkReadyR
 		err := api.NewProblem(int(codes.NotFound), api.CodeNotFound,
 			"Instance not live",
 			"framework_ready receipt for an instance that is not live on this vmmd").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#framework_ready")
+			WithDocs(wire.DocsBaseURL + "/vmmd#framework_ready")
 		return nil, grpcerr.ToStatus(err)
 	}
 	// Issue #470 / PR C / ADR-074: observe the wall-clock guest-init
@@ -1309,7 +1309,7 @@ func (s *Server) UpdateEgressAllowlist(ctx context.Context, req *vmmdpb.UpdateEg
 	if req.GetAppId() == "" {
 		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing app_id", "app_id is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#update-egress-allowlist")))
+			WithDocs(wire.DocsBaseURL + "/vmmd#update-egress-allowlist")))
 	}
 	allowlist, err := toEgressAllowlist(req.GetEgressAllowlist())
 	if err != nil {
@@ -1348,13 +1348,13 @@ func (s *Server) SeccompStatus(ctx context.Context, req *vmmdpb.SeccompStatusReq
 	if req.GetInstance() == "" {
 		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#seccomp"))
+			WithDocs(wire.DocsBaseURL + "/vmmd#seccomp"))
 	}
 	pid, ok := s.vmm.InstancePID(req.GetInstance())
 	if !ok {
 		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.NotFound),
 			api.CodeNotFound, "Instance not alive", fmt.Sprintf("instance %q is not alive on this vmmd", req.GetInstance())).
-			WithDocs("https://" + wire.DocsHost + "/vmmd#seccomp"))
+			WithDocs(wire.DocsBaseURL + "/vmmd#seccomp"))
 	}
 
 	mode, filterLen, err := readSeccompStatus(pid)
@@ -1411,7 +1411,7 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 	if req.GetStorageKey() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing storage_key", "storage_key is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#mount-parent-ext4")
+			WithDocs(wire.DocsBaseURL + "/vmmd#mount-parent-ext4")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1423,7 +1423,7 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be mounted").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#mount-parent-ext4")
+			WithDocs(wire.DocsBaseURL + "/vmmd#mount-parent-ext4")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1438,7 +1438,7 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 			p := api.NewProblem(int(codes.NotFound), api.CodeNotFound,
 				"storage_key not found",
 				"no artifact under that key in the configured storage backend").
-				WithDocs("https://" + wire.DocsHost + "/vmmd#mount-parent-ext4")
+				WithDocs(wire.DocsBaseURL + "/vmmd#mount-parent-ext4")
 			s.ops.Observe(op, time.Since(start), p)
 			return nil, grpcerr.ToStatus(p)
 		}
@@ -1456,7 +1456,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 	if req.GetStorageKey() == "" || req.GetTargetDir() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing materialize path", "storage_key and target_dir are required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#materialize-parent-ext4")
+			WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1464,7 +1464,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be materialized").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#materialize-parent-ext4")
+			WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1474,14 +1474,14 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 		if errors.Is(err, vmmdmount.ErrNotFound) {
 			p := api.NewProblem(int(codes.NotFound), api.CodeNotFound,
 				"storage_key not found", "no parent artifact exists under that key").
-				WithDocs("https://" + wire.DocsHost + "/vmmd#materialize-parent-ext4")
+				WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 			return nil, grpcerr.ToStatus(p)
 		}
 		if errors.Is(err, vmmdmount.ErrInvalidOverlayPath) {
 			p := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 				"target_dir outside staging root",
 				"target_dir must be under /dev/shm/faas-base-staging/").
-				WithDocs("https://" + wire.DocsHost + "/vmmd#materialize-parent-ext4")
+				WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 			return nil, grpcerr.ToStatus(p)
 		}
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -1502,7 +1502,7 @@ func (s *Server) UmountParentExt4(ctx context.Context, req *vmmdpb.UmountParentE
 	if req.GetMountpoint() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing mountpoint", "mountpoint is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#umount-parent-ext4")
+			WithDocs(wire.DocsBaseURL + "/vmmd#umount-parent-ext4")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1538,7 +1538,7 @@ func (s *Server) MountOverlayParent(ctx context.Context, req *vmmdpb.MountOverla
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing path",
 			"lowerdir, upperdir, workdir, and merged are all required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#mount-overlay-parent")
+			WithDocs(wire.DocsBaseURL + "/vmmd#mount-overlay-parent")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1551,7 +1551,7 @@ func (s *Server) MountOverlayParent(ctx context.Context, req *vmmdpb.MountOverla
 			p := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 				"overlay path outside allowed prefixes",
 				"lowerdir must be under /srv/fc/parent/; upper/work/merged must be under /dev/shm/faas-base-staging/").
-				WithDocs("https://" + wire.DocsHost + "/vmmd#mount-overlay-parent")
+				WithDocs(wire.DocsBaseURL + "/vmmd#mount-overlay-parent")
 			s.ops.Observe(op, time.Since(start), p)
 			return nil, grpcerr.ToStatus(p)
 		}
@@ -1570,7 +1570,7 @@ func (s *Server) UmountOverlayParent(ctx context.Context, req *vmmdpb.UmountOver
 	if req.GetMerged() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing merged", "merged is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#umount-overlay-parent")
+			WithDocs(wire.DocsBaseURL + "/vmmd#umount-overlay-parent")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}

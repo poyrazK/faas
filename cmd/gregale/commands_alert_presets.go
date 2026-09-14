@@ -57,7 +57,7 @@ func cmdAlertsPreset(args []string) int {
 // | threshold | window_spec | enabled_in_catalog. JSON-mode
 // (`--json`) emits the raw []AlertPresetResponse.
 func cmdAlertPresetList(args []string) int {
-	fs := flag.NewFlagSet("alerts preset list", flag.ContinueOnError)
+	fs := newFlagSet("alerts preset list", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -107,7 +107,7 @@ func cmdAlertPresetList(args []string) int {
 // comparison, threshold, window_spec, default_cooldown_minutes)
 // sextuple comes from the catalog server-side.
 func cmdAlertPresetEnable(args []string) int {
-	fs := flag.NewFlagSet("alerts preset enable", flag.ContinueOnError)
+	fs := newFlagSet("alerts preset enable", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
 	webhookSecret := fs.String("webhook-secret", "", "webhook secret (required, ≤256 bytes)")

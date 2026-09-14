@@ -18,6 +18,11 @@ import (
 // unit-tested in isolation from [Compute].
 type QuotaConfig struct {
 	Limits api.Limits
+	// AccountAppCount is the number of deployed apps that currently consume
+	// an account slot. AccountAppCountKnown prevents a failed best-effort
+	// lookup from being treated as a real zero.
+	AccountAppCount      int
+	AccountAppCountKnown bool
 	// AccountCronCount is the current per-account cron count
 	// (across every app). The wire surface is GET /v1/crons; the
 	// CLI captures it before running the diff. 0 when unknown.
@@ -54,6 +59,20 @@ type QuotaConfig struct {
 func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Break {
 	limits := cfg.Limits
 	out := []Break{}
+
+	// A preview for a missing slug creates one app slot. Existing-app
+	// previews do not consume another slot, even when the account is already
+	// at its cap. The apply transaction remains the race-safe authority.
+	if baseline.App == nil && cfg.AccountAppCountKnown && cfg.AccountAppCount >= limits.DeployedApps {
+		out = append(out, Break{
+			Code:     api.CodePlanLimitApps,
+			Severity: SeverityError,
+			Reason:   "account is already at its deployed-app cap",
+			Field:    "apps",
+			Observed: AsAny(cfg.AccountAppCount),
+			Limit:    AsAny(limits.DeployedApps),
+		})
+	}
 
 	// RAM cap.
 	if pending.AppConfig.RAMMB != nil && *pending.AppConfig.RAMMB > limits.RAMMB {

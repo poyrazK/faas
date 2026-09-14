@@ -190,12 +190,12 @@ func newSecretScanRejectionProblem(findings []secretscan.Finding) *api.Problem {
 			Snippet:  f.Snippet,
 		})
 	}
-	const hint = "move detected secrets to `gregale secrets set` (see https://docs.gregale.dev/cli/secrets)"
+	const hint = "move detected secrets to `gregale secrets set` (see https://gregale.dev/docs/cli/secrets)"
 	return api.NewProblem(
 		http.StatusUnprocessableEntity,
 		api.CodeSecretScanStrict,
 		"Secret-shaped values found in uploaded source",
 		"redact secret values or move them to `gregale secrets set`",
-	).WithDocs("https://docs.gregale.dev/cli/secrets").
+	).WithDocs("https://gregale.dev/docs/cli/secrets").
 		WithSecretScan(wireFindings, hint)
 }

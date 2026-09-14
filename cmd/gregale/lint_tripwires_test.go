@@ -15,6 +15,43 @@ import (
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
+func TestLintTripwire_FlagSetsUseJSONAwareConstructor(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		return strings.HasSuffix(fi.Name(), ".go") && !strings.HasSuffix(fi.Name(), "_test.go")
+	}, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse cmd/gregale: %v", err)
+	}
+	var violations []string
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			fileName := fset.Position(file.Pos()).Filename
+			if strings.HasSuffix(fileName, "json_flag.go") {
+				continue
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "NewFlagSet" {
+					return true
+				}
+				ident, ok := sel.X.(*ast.Ident)
+				if ok && ident.Name == "flag" {
+					violations = append(violations, fset.Position(call.Pos()).String())
+				}
+				return true
+			})
+		}
+	}
+	if len(violations) > 0 {
+		t.Fatalf("flag.NewFlagSet bypasses the JSON error contract; use newFlagSet: %s", strings.Join(violations, ", "))
+	}
+}
+
 // TestLintTripwire_NoBareOsOpenInCLI is the Go-test counterpart to the
 // .golangci.yml forbidigo rule on `os.Open\(`. PR #101 closed the
 // symlink-follow attack surface in `gregale deploy --tarball` by routing

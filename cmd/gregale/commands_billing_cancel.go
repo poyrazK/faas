@@ -40,7 +40,7 @@ Exit codes:
 `
 
 func cmdBillingCancel(args []string) int {
-	fs := flag.NewFlagSet("billing cancel", flag.ContinueOnError)
+	fs := newFlagSet("billing cancel", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "skip the y/N confirmation prompt (non-interactive shells only)")
 	if err := fs.Parse(args); err != nil {
 		return 1

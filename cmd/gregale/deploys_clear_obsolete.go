@@ -19,7 +19,7 @@ import (
 const deploysClearObsoleteUsage = "usage: gregale deploys clear-obsolete --app <slug> [--older-than 168h] [--dry-run] [--force] [--json]"
 
 func cmdDeploysClearObsolete(args []string) int {
-	fs := flag.NewFlagSet("deploys clear-obsolete", flag.ContinueOnError)
+	fs := newFlagSet("deploys clear-obsolete", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug (required)")
 	olderThan := fs.Duration("older-than", 168*time.Hour, "cutoff duration; rows older than this are eligible")
 	dryRun := fs.Bool("dry-run", false, "report the count without modifying rows")

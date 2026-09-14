@@ -91,7 +91,7 @@ func cmdWebhooks(args []string) int {
 }
 
 func cmdWebhooksList(args []string) int {
-	fs := flag.NewFlagSet("webhooks-list", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-list", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -119,7 +119,7 @@ func cmdWebhooksList(args []string) int {
 }
 
 func cmdWebhooksAdd(args []string) int {
-	fs := flag.NewFlagSet("webhooks-add", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	target := fs.String("target-url", "", "HTTPS target URL (required)")
 	secret := fs.String("secret", "", "HMAC-SHA256 secret (optional; auto-minted if empty)")
@@ -169,7 +169,7 @@ func cmdWebhooksAdd(args []string) int {
 }
 
 func cmdWebhooksUpdate(args []string) int {
-	fs := flag.NewFlagSet("webhooks-update", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-update", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	target := fs.String("target-url", "", "new target URL")
 	policy := fs.String("retry-policy", "", "new retry policy (default|aggressive|none)")
@@ -221,7 +221,7 @@ func cmdWebhooksUpdate(args []string) int {
 }
 
 func cmdWebhooksRm(args []string) int {
-	fs := flag.NewFlagSet("webhooks-rm", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -249,7 +249,7 @@ func cmdWebhooksRm(args []string) int {
 }
 
 func cmdWebhookDeliveries(args []string) int {
-	fs := flag.NewFlagSet("webhooks-deliveries", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-deliveries", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	status := fs.String("status", "", "filter by status (pending|in_flight|succeeded|failed|dead)")
 	pageSize := fs.Int("page-size", 50, "page size (1..100)")
@@ -299,7 +299,7 @@ func cmdWebhookDeliveries(args []string) int {
 // server (pkg/api/webhooks.go:230-233) — only the masked
 // WebhookSecretSealedMasked sentinel is shown.
 func cmdWebhookInfo(args []string) int {
-	fs := flag.NewFlagSet("webhooks-info", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-info", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -336,7 +336,7 @@ func cmdWebhookInfo(args []string) int {
 }
 
 func cmdWebhookRetry(args []string) int {
-	fs := flag.NewFlagSet("webhooks-retry", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-retry", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -368,7 +368,7 @@ func cmdWebhookRetry(args []string) int {
 // cmdWebhookRotateSecret installs a caller-supplied replacement. Reading from
 // stdin keeps the value out of shell history; the API response stays masked.
 func cmdWebhookRotateSecret(args []string) int {
-	fs := flag.NewFlagSet("webhooks-rotate-secret", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-rotate-secret", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	secret := fs.String("secret", "", "replacement HMAC-SHA256 secret")
 	fromStdin := fs.Bool("from-stdin", false, "read the replacement secret from stdin (one line)")

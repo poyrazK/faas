@@ -227,6 +227,46 @@ func TestDeployManifestTriggers_ExistingManifestTriggerIsNoopAtQuota(t *testing.
 	}
 }
 
+func TestDeployManifestTriggers_UnknownPlanFallsThroughToServer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		whoami    api.AccountResponse
+		whoamiErr error
+	}{
+		{name: "transport error", whoamiErr: errors.New("account unavailable")},
+		{name: "unknown plan", whoami: api.AccountResponse{Plan: "future-tier"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeManifest(t, dir, `triggers:
+  - {kind: cron, app: my-api, schedule: "0 3 * * *", path: /a}
+`)
+			fc := &fakeCronClient{whoami: tc.whoami, whoamiErr: tc.whoamiErr}
+			if err := deployManifestTriggers(context.Background(), fc, "my-api", dir); err != nil {
+				t.Fatalf("unknown plan should defer to CreateCron: %v", err)
+			}
+			if len(fc.createdCalls) != 1 {
+				t.Fatalf("CreateCron calls = %d, want 1", len(fc.createdCalls))
+			}
+		})
+	}
+}
+
+func TestDeployManifestTriggers_KnownZeroLimitStopsBeforeCreate(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, `triggers:
+  - {kind: cron, app: my-api, schedule: "0 3 * * *", path: /a}
+`)
+	fc := &fakeCronClient{whoami: api.AccountResponse{Plan: "free"}}
+	err := deployManifestTriggers(context.Background(), fc, "my-api", dir)
+	if err == nil || !strings.Contains(err.Error(), "plan allows 0") {
+		t.Fatalf("known zero-limit error = %v", err)
+	}
+	if len(fc.createdCalls) != 0 {
+		t.Fatalf("CreateCron calls = %d, want 0", len(fc.createdCalls))
+	}
+}
+
 func TestDeployManifestTriggers_FailFastAtEntry4(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

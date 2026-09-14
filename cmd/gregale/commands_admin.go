@@ -63,7 +63,7 @@ func cmdAdmin(args []string) int {
 // the operator supplies --idempotency-key, which permits two deliberate
 // same-amount partial refunds to remain distinct operations.
 func cmdAdminRefund(args []string) int {
-	fs := flag.NewFlagSet("admin refund", flag.ContinueOnError)
+	fs := newFlagSet("admin refund", flag.ContinueOnError)
 	reason := fs.String("reason", "", "reason text (required, 3..500 chars)")
 	idem := fs.String("idempotency-key", "", "stable provider idempotency key (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -134,7 +134,7 @@ func cmdAdminRefund(args []string) int {
 // the handler returns 404 with CodeNotFound. We validate the UUID
 // shape client-side for a faster, friendlier 2.
 func cmdAdminCredit(args []string) int {
-	fs := flag.NewFlagSet("admin credit", flag.ContinueOnError)
+	fs := newFlagSet("admin credit", flag.ContinueOnError)
 	reason := fs.String("reason", "", "reason text (required, 3..500 chars)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -210,7 +210,7 @@ func cmdAdminCredit(args []string) int {
 // without a network round-trip; for now the 403 round-trip is the
 // authoritative answer.
 func cmdAdminConsumeCredits(args []string) int {
-	fs := flag.NewFlagSet("admin consume-credits", flag.ContinueOnError)
+	fs := newFlagSet("admin consume-credits", flag.ContinueOnError)
 	idem := fs.String("idempotency-key", "", "Idempotency-Key (optional; SDK mints one if empty)")
 	if err := fs.Parse(args); err != nil {
 		return 1

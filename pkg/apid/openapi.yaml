@@ -22,7 +22,7 @@ info:
     (`/v1/cli-auth/*`) are not part of this public spec.
   contact:
     name: one-box FaaS
-    url: https://docs.gregale.dev
+    url: https://gregale.dev/docs
   license:
     name: Proprietary
     identifier: LicenseRef-onebox-internal
@@ -3669,7 +3669,7 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
-                example: {"type":"https://docs.gregale.dev/errors/preview-not-found","code":"preview_not_found","title":"Preview not found","detail":"the slug does not identify a preview app; use DELETE /v1/apps/{slug} to destroy a production app","status":404}
+                example: {"type":"https://gregale.dev/docs/errors/preview-not-found","code":"preview_not_found","title":"Preview not found","detail":"the slug does not identify a preview app; use DELETE /v1/apps/{slug} to destroy a production app","status":404}
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/dev/sessions/{project}:
@@ -3784,12 +3784,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: "https://docs.gregale.dev/errors/plan_per_app_metrics_not_allowed"
+                type: "https://gregale.dev/docs/errors/plan_per_app_metrics_not_allowed"
                 title: "Per-app metrics unavailable on this plan"
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://docs.gregale.dev/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -3889,12 +3889,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: "https://docs.gregale.dev/errors/plan_per_app_metrics_not_allowed"
+                type: "https://gregale.dev/docs/errors/plan_per_app_metrics_not_allowed"
                 title: "Per-app metrics unavailable on this plan"
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://docs.gregale.dev/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -3982,12 +3982,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: "https://docs.gregale.dev/errors/plan_app_usage_summary_not_allowed"
+                type: "https://gregale.dev/docs/errors/plan_app_usage_summary_not_allowed"
                 title: "Per-app usage summary unavailable on this plan"
                 status: 402
                 code: "plan_app_usage_summary_not_allowed"
                 detail: "the free plan does not include the per-app usage summary; upgrade to Hobby or above."
-                docs_url: "https://docs.gregale.dev/plans#usage-summary"
+                docs_url: "https://gregale.dev/docs/plans#usage-summary"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -4366,12 +4366,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: "https://docs.gregale.dev/errors/plan_app_errors_not_allowed"
+                type: "https://gregale.dev/docs/errors/plan_app_errors_not_allowed"
                 title: "Per-app errors unavailable on this plan"
                 status: 402
                 code: "plan_app_errors_not_allowed"
                 detail: "the free plan does not include per-app errors; upgrade to Hobby or above."
-                docs_url: "https://docs.gregale.dev/plans#app-errors"
+                docs_url: "https://gregale.dev/docs/plans#app-errors"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -26585,16 +26585,16 @@ components:
         iterate without parsing prose. Optional + omitempty so every
         other problem+json site keeps its existing flat shape unchanged.
       example:
-        type: "https://docs.gregale.dev/errors/validation_failed"
+        type: "https://gregale.dev/docs/errors/validation_failed"
         title: Validation failed
         status: 422
         code: validation_failed
         detail: "ram_mb must be one of [128, 256, 512, 1024, 2048]"
         limit: null
         observed: null
-        docs_url: "https://docs.gregale.dev/errors/validation_failed"
+        docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
-        type: { type: string, format: uri , example: "https://docs.gregale.dev/errors/validation_failed"}
+        type: { type: string, format: uri , example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
         status: { type: integer , example: 422}
         code: { type: string, description: 'Stable machine-readable error code. See StatusForCode in pkg/api/errors.go.' }
@@ -26652,7 +26652,7 @@ components:
             the `FieldError` shape's prose pattern so the dashboard
             / SDK can render the hint as a one-line footer without
             parsing prose. Optional + omitempty.
-          example: "move detected secrets to `gregale secrets set` (see https://docs.gregale.dev/cli/secrets)"
+          example: "move detected secrets to `gregale secrets set` (see https://gregale.dev/docs/cli/secrets)"
         hint:
           type: string
           description: |

@@ -255,11 +255,26 @@ func RenderRelevantLogs(w io.Writer, logs []api.LogExcerpt) {
 	}
 }
 
+// jsonUsageHelp distinguishes an explicit help request from an invalid
+// invocation that reaches the same legacy PrintUsage call site.
+var jsonUsageHelp bool
+
 // PrintUsage emits a one-line "usage:" hint followed by a "Docs:" line
 // pointing at a live public docs route. Always plain (no glyphs) — usage
 // lines go to stderr on bad argv and customers grep them; the glyph would
 // just be noise there. Unknown command topics use the consolidated CLI page.
 func PrintUsage(w io.Writer, usage, topic string) {
+	if jsonOutput && !jsonUsageHelp {
+		_ = writeJSONProblemTo(w, api.Problem{
+			Type:    docsSiteURL + "/errors/invalid-request",
+			Title:   "Invalid command usage",
+			Status:  400,
+			Code:    api.CodeValidation,
+			Detail:  usage,
+			DocsURL: docsURLForTopic(topic),
+		})
+		return
+	}
 	_, _ = fmt.Fprintf(w, "%s\n", usage)
 	_, _ = fmt.Fprintf(w, "  Docs: %s\n", docsURLForTopic(topic))
 }

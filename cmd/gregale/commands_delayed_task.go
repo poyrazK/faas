@@ -90,7 +90,7 @@ func cmdDelayedTaskAdd(args []string) int {
 	// parser sees them. Mirrors cmdAppSecurity (commands_app_security.go:42)
 	// + cmdWakeTimeline (commands_wake_timeline.go:54).
 	flags, _ := splitArgsForFlags(args)
-	fs := flag.NewFlagSet("delayed-task add", flag.ContinueOnError)
+	fs := newFlagSet("delayed-task add", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug (required)")
 	scheduledAt := fs.String("scheduled-at", "", "RFC3339 dispatch time (required; must be in the future)")
 	payload := fs.String("payload", "", "JSON payload (inline | @file | - for stdin; empty is valid)")

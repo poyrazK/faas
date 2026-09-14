@@ -80,7 +80,7 @@ func cmdDebug(args []string) int {
 // The human form makes the distinction between aggregate rows and represented
 // requests explicit; --json is the stable automation format.
 func cmdDebugCoverage(args []string) int {
-	fs := flag.NewFlagSet("debug coverage", flag.ContinueOnError)
+	fs := newFlagSet("debug coverage", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true})
 	if err := fs.Parse(flagArgs); err != nil {
@@ -159,7 +159,7 @@ func cmdDebugRequestsEvidence(args []string) int {
 // cmdDebugRequestsList renders the recent request telemetry for
 // a slug. PR-A's ListAppDebugRequests backs this verb.
 func cmdDebugRequestsList(args []string) int {
-	fs := flag.NewFlagSet("debug requests list", flag.ContinueOnError)
+	fs := newFlagSet("debug requests list", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	route := fs.String("route", "", "route filter (exact match)")
 	deploymentID := fs.String("deployment-id", "", "deployment UUID filter")
@@ -278,7 +278,7 @@ func cmdDebugRegressions(args []string) int {
 	if len(args) > 0 && args[0] == "watch" {
 		return cmdDebugRegressionsWatch(args[1:])
 	}
-	fs := flag.NewFlagSet("debug regressions", flag.ContinueOnError)
+	fs := newFlagSet("debug regressions", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true})
 	if err := fs.Parse(flagArgs); err != nil {
@@ -308,7 +308,7 @@ func cmdDebugRegressions(args []string) int {
 // deployments. POSTs the body shape and renders the merged
 // per-route stats.
 func cmdDebugCompare(args []string) int {
-	fs := flag.NewFlagSet("debug compare", flag.ContinueOnError)
+	fs := newFlagSet("debug compare", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	route := fs.String("route", "", "route filter (exact match)")
 	source := fs.String("source", "", "source deployment id")

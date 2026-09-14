@@ -42,7 +42,7 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitImaged() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:           "onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-003, ADR-005)",
-		Documentation:         "https://docs.gregale.dev/ops/imaged",
+		Documentation:         "https://gregale.dev/docs/ops/imaged",
 		After:                 []string{"network.target", "faas-cp.slice", "faas-vmmd.service"},
 		Wants:                 []string{"faas-cp.slice", "faas-vmmd.service"},
 		StartLimitIntervalSec: "60s",

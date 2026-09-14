@@ -29,7 +29,7 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitGatewaydPublic() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas gatewayd-public — plain-HTTP edge (Tier A7 split, ADR-070; TLS terminates at Caddy upstream)",
-		Documentation: "https://docs.gregale.dev/ops/gatewayd-public",
+		Documentation: "https://gregale.dev/docs/ops/gatewayd-public",
 		After:         []string{"faas-cp.slice", "network-online.target", "postgresql.service", "faas-apid.service"},
 		Wants:         []string{"faas-cp.slice", "faas-apid.service"},
 		// The socket remains active while the service drains and restarts. New

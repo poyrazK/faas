@@ -63,7 +63,7 @@ func cmdRegistry(args []string) int {
 // (GET /v1/apps/{slug}/registry-credentials). The envelope includes
 // quota_max + count so the human renderer can show "2/5 hosts".
 func cmdRegistryList(args []string) int {
-	fs := flag.NewFlagSet("registry list", flag.ContinueOnError)
+	fs := newFlagSet("registry list", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -105,7 +105,7 @@ func cmdRegistryList(args []string) int {
 // it via secretbox.SealBytes, and the response carries no password
 // field. Never echoed back.
 func cmdRegistrySet(args []string) int {
-	fs := flag.NewFlagSet("registry set", flag.ContinueOnError)
+	fs := newFlagSet("registry set", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	registry := fs.String("registry", "", "registry host[:port] (required, lowercase DNS[:port])")
 	username := fs.String("user", "", "username (required)")
@@ -144,7 +144,7 @@ func cmdRegistrySet(args []string) int {
 // server-side (lowercase, no scheme); the same regex gate as
 // cmdRegistrySet runs locally so a typo costs zero latency.
 func cmdRegistryRm(args []string) int {
-	fs := flag.NewFlagSet("registry rm", flag.ContinueOnError)
+	fs := newFlagSet("registry rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	registry := fs.String("registry", "", "registry host[:port] (required)")
 	if err := fs.Parse(args); err != nil {

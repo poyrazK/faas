@@ -49,8 +49,8 @@ const inspectErrorsUsage = "usage: gregale inspect <slug> --errors [--json]"
 // failure the renderAPIError path prints the RFC 7807 problem
 // the same way the rest of the package does.
 func cmdInspectErrors(slug string) int {
-	fs := flag.NewFlagSet("inspect-errors", flag.ContinueOnError)
-	fs.SetOutput(osStderr)
+	fs := newFlagSet("inspect-errors", flag.ContinueOnError)
+	setFlagOutput(fs, osStderr)
 	asJSON := fs.Bool("json", false, "machine output (default: human prose)")
 	if err := fs.Parse([]string{}); err != nil {
 		PrintUsage(osStderr, inspectErrorsUsage, "inspect")

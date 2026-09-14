@@ -51,7 +51,7 @@ const metricsCmdDocsTopic = "metrics"
 // block. --account (Tier C) hits the account-wide rollup endpoint
 // instead and renders one labelled block per app.
 func cmdMetrics(args []string) int {
-	fs := flag.NewFlagSet("metrics", flag.ContinueOnError)
+	fs := newFlagSet("metrics", flag.ContinueOnError)
 	rng := fs.String("range", "5m", "time window (5m, 15m, 1h, 6h, 24h)")
 	account := fs.Bool("account", false, "account-wide rollup (GET /v1/apps/metrics) — mutually exclusive with <slug>")
 	flags, pos := splitArgsForFlags(args, "account")
@@ -194,7 +194,7 @@ const throttleSuggestionsCmdDocsTopic = "throttle-suggestions"
 // optional (defaults to 0). The CLI rejects negative values
 // locally so a malformed command doesn't waste an HTTP round-trip.
 func cmdThrottleSuggestions(args []string) int {
-	fs := flag.NewFlagSet("throttle-suggestions", flag.ContinueOnError)
+	fs := newFlagSet("throttle-suggestions", flag.ContinueOnError)
 	rng := fs.String("range", appmetrics.DefaultRange, "time window ("+strings.Join(appmetrics.Ranges(), ", ")+")")
 	dryRun := fs.Bool("dry-run", false, "preview pass: ask the server to count sub-windows where observed rps exceeds --candidate-rps")
 	candidateRPS := fs.Float64("candidate-rps", 0, "candidate rps (required when --dry-run; positive float)")

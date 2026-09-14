@@ -37,7 +37,7 @@ import (
 //	$ gregale crons info 0123...cdef --json
 //	{"id":"0123...cdef","app_id":"4567...89ab","schedule":"*/5 * * * *","path":"/cleanup","enabled":true,"last_fired_at":"2026-08-10T09:00:00Z","created_at":"2026-08-01T12:00:00Z"}
 func cmdCronsInfo(args []string) int {
-	fs := flag.NewFlagSet("crons-info", flag.ContinueOnError)
+	fs := newFlagSet("crons-info", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

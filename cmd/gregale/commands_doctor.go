@@ -163,8 +163,8 @@ func cmdDoctor(args []string) int {
 }
 
 func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) int {
-	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	fs.SetOutput(osStderr)
+	fs := newFlagSet("doctor", flag.ContinueOnError)
+	setFlagOutput(fs, osStderr)
 	strict := fs.Bool("strict", false, "exit 1 on warn (default: exit 0 on warn)")
 	jsonOut := fs.Bool("json", false, "machine output (default: human prose)")
 	imageFlags := registerDoctorImageFlags(fs)

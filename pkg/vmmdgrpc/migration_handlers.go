@@ -259,7 +259,7 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 	if req.GetInstanceId() == "" || req.GetSnapshotStorageKey() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing fields",
-			"instance_id and snapshot_storage_key are required").WithDocs("https://" + wire.DocsHost + "/vmmd#prepare")
+			"instance_id and snapshot_storage_key are required").WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -279,20 +279,20 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 
 	if s.migrations == nil {
 		err := api.NewProblem(int(codes.Unavailable), "unavailable",
-			"Migration unavailable", "migration lease tracking is not wired").WithDocs("https://" + wire.DocsHost + "/vmmd#prepare")
+			"Migration unavailable", "migration lease tracking is not wired").WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
 	snapshotter, ok := s.vmm.(migrationSnapshotter)
 	if !ok {
 		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
-			"Migration unavailable", "vmmd does not support keep-alive snapshots").WithDocs("https://" + wire.DocsHost + "/vmmd#prepare")
+			"Migration unavailable", "vmmd does not support keep-alive snapshots").WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
 	if _, ok := s.vmm.(migrationResumer); !ok {
 		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
-			"Migration unavailable", "vmmd does not support migration resume").WithDocs("https://" + wire.DocsHost + "/vmmd#prepare")
+			"Migration unavailable", "vmmd does not support migration resume").WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -302,7 +302,7 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 	m, err := s.migrations.reserve(req.GetInstanceId(), start)
 	if err != nil {
 		err2 := api.NewProblem(int(codes.AlreadyExists), api.CodeConflict,
-			"Migration already active", err.Error()).WithDocs("https://" + wire.DocsHost + "/vmmd#prepare")
+			"Migration already active", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
 		s.ops.Observe(op, time.Since(start), err2)
 		return nil, grpcerr.ToStatus(err2)
 	}
@@ -381,7 +381,7 @@ func migrationLeaseProblem(err error, phase string) *api.Problem {
 		code, apiCode = int(codes.NotFound), api.CodeNotFound
 	}
 	return api.NewProblem(code, apiCode, "Lease lookup failed", fmt.Sprintf("%s migration: %v", phase, err)).
-		WithDocs("https://" + wire.DocsHost + "/vmmd#" + phase)
+		WithDocs(wire.DocsBaseURL + "/vmmd#" + phase)
 }
 
 func (s *Server) destroyMigrationVM(ctx context.Context, instanceID string) error {
@@ -427,7 +427,7 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing fields",
 			"instance_id, mem_storage_key, vmstate_storage_key, and lease_token are required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#adopt")
+			WithDocs(wire.DocsBaseURL + "/vmmd#adopt")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -490,7 +490,7 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 	if req.GetInstanceId() == "" || req.GetLeaseToken() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing fields",
-			"instance_id and lease_token are required").WithDocs("https://" + wire.DocsHost + "/vmmd#ack")
+			"instance_id and lease_token are required").WithDocs(wire.DocsBaseURL + "/vmmd#ack")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -533,7 +533,7 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 	if req.GetInstanceId() == "" || req.GetLeaseToken() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing fields",
-			"instance_id and lease_token are required").WithDocs("https://" + wire.DocsHost + "/vmmd#cancel")
+			"instance_id and lease_token are required").WithDocs(wire.DocsBaseURL + "/vmmd#cancel")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -560,7 +560,7 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 		// VmmdAPI that cannot do that is miswired; fail closed so expiry
 		// can retry after the process is corrected.
 		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
-			"Migration unavailable", "vmmd does not support migration resume").WithDocs("https://" + wire.DocsHost + "/vmmd#cancel")
+			"Migration unavailable", "vmmd does not support migration resume").WithDocs(wire.DocsBaseURL + "/vmmd#cancel")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}

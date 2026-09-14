@@ -80,7 +80,7 @@ func cmdRolloutsRecover(args []string) int {
 		PrintUsage(osStdout, rolloutsRecoverUsage, "rollouts")
 		return 0
 	}
-	fs := flag.NewFlagSet("rollouts recover", flag.ContinueOnError)
+	fs := newFlagSet("rollouts recover", flag.ContinueOnError)
 	action := fs.String("action", "", "recover action (advance|promote|abort)")
 	reason := fs.String("reason", "", "operator-supplied reason (logged to deployment_audit)")
 	// The public usage is `recover <slug> --action ...`, while the

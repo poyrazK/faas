@@ -88,7 +88,7 @@ func cmdAppSecurity(slug string, args []string) int {
 	// directly. The reorder helper pulls the flag to the front so
 	// the parser sees it. Mirrors cmdDelayedTaskAdd (commands_delayed_task.go:118).
 	flags, _ := splitArgsForFlags(args)
-	fs := flag.NewFlagSet("app security", flag.ContinueOnError)
+	fs := newFlagSet("app security", flag.ContinueOnError)
 	requireSigned := fs.String("require-signed", "", "require signed images on deploy (true|false)")
 	if err := fs.Parse(flags); err != nil {
 		return 1

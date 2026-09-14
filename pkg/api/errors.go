@@ -13,7 +13,7 @@ import (
 // docsBase is the documentation URL prefix every WithDocs() /
 // Type: / example value in this file composes against.
 //
-// Historical note: this used to be "https://docs.gregale.dev".
+// Historical note: this used to use the legacy dedicated docs host.
 // That host resolves (Cloudflare) but serves 404 on every path —
 // it was never deployed, and the `deploy/ansible/roles/docs-tls/`
 // runbook that pkg/wire/docs.go cites does not exist. The
@@ -39,7 +39,7 @@ import (
 // 404 in JavaScript, so neither curl nor a link checker nor CI can
 // detect a missing page. Only a real browser can.
 //
-// Duplication note: pkg/wire.DocsHost and this constant must stay
+// Duplication note: pkg/wire.DocsBaseURL and this constant must stay
 // in lock-step — pkg/api cannot import pkg/wire (pkg/wire imports
 // pkg/api for api.Plans, creating a cycle).
 const docsBase = "https://gregale.dev/docs"
@@ -2392,7 +2392,7 @@ func ErrExportRateLimited(retryAfterS int) *Problem {
 		"Export rate limited",
 		"Only one account export is allowed per 24h window; retry after the indicated back-off.").
 		WithHeader("Retry-After", fmt.Sprintf("%d", retryAfterS)).
-		WithDocs("https://docs.gregale.dev/gdpr#export-rate-limit")
+		WithDocs("https://gregale.dev/docs/gdpr#export-rate-limit")
 }
 
 // ErrDeployRateLimited reports an exhausted account deploy window. The
@@ -2406,7 +2406,7 @@ func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
 		fmt.Sprintf("This account has used all %d deploys in its current one-hour window.", limit)).
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs("https://docs.gregale.dev/deployments#rate-limit")
+		WithDocs("https://gregale.dev/docs/deployments#rate-limit")
 }
 
 // ErrInternal is the catch-all 500 envelope for handler-side failures
@@ -4474,7 +4474,7 @@ func ErrPlanTrafficSplitNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanTrafficSplitNotAllowed,
 		"Plan doesn't allow traffic splitting",
 		fmt.Sprintf("the %s plan routes 100%% to the most recent deployment; upgrade to Pro or Scale to keep N canary deployments warm.", p)).
-		WithDocs("https://docs.gregale.dev/plans#traffic-split")
+		WithDocs("https://gregale.dev/docs/plans#traffic-split")
 }
 
 // ErrInvalidTrafficPercent (issue #556) is returned when the
@@ -4489,7 +4489,7 @@ func ErrInvalidTrafficPercent(got int) *Problem {
 		"Invalid traffic_percent",
 		fmt.Sprintf("traffic_percent must be in [0, %d]; got %d.", cap, got)).
 		WithLimit(int64(cap), int64(got)).
-		WithDocs("https://docs.gregale.dev/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
 // ErrDeploymentNotLive distinguishes lifecycle conflict from percentage
@@ -4502,7 +4502,7 @@ func ErrDeploymentNotLive(status string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDeploymentNotLive,
 		"Deployment is not live",
 		fmt.Sprintf("traffic can only be changed on a live deployment; current state is %s. Select the current live deployment, roll back, or redeploy.", status)).
-		WithDocs("https://docs.gregale.dev/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
 // ErrInvalidCanaryPreset (issue #976 / ADR-122 / SAFE-RELEASES-A)
@@ -4516,7 +4516,7 @@ func ErrInvalidCanaryPreset(got string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidCanaryPreset,
 		"Invalid canary preset",
 		fmt.Sprintf("canary preset %q is not in the closed-set catalog (%v); see --canary-preset in `gregale deploy --help`.", got, canary.AllowedCanaryPresets)).
-		WithDocs("https://docs.gregale.dev/deployments#canary-presets")
+		WithDocs("https://gregale.dev/docs/deployments#canary-presets")
 }
 
 // ErrCanaryStepConflict is the expected concurrency response for the
@@ -4544,7 +4544,7 @@ func ErrTrafficPercentSumInvalid(observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficPercentSumInvalid,
 		"traffic_percent sum invariant violated",
 		fmt.Sprintf("sum of traffic_percent across live deployments must be 100; observed %d.", observed)).
-		WithDocs("https://docs.gregale.dev/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
 // ErrPlanMirrorNotAllowed (issue #72 / ADR-125 traffic mirroring
@@ -4561,7 +4561,7 @@ func ErrPlanMirrorNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanMirrorNotAllowed,
 		"Plan doesn't allow traffic mirroring",
 		fmt.Sprintf("the %s plan wakes a mirror VM on every request (billed per running second); upgrade to Pro or Scale to mirror traffic in the background.", p)).
-		WithDocs("https://docs.gregale.dev/plans#traffic-mirror")
+		WithDocs("https://gregale.dev/docs/plans#traffic-mirror")
 }
 
 // ErrMirrorRuleQuotaExceeded (issue #72 / ADR-125 PR-A2) is
@@ -4576,7 +4576,7 @@ func ErrMirrorRuleQuotaExceeded(l Limits, observed int) *Problem {
 		"mirror rule quota exceeded",
 		fmt.Sprintf("this app already has %d mirror rule(s); the plan cap is %d.", observed, l.MirrorTargetsPerApp)).
 		WithLimit(int64(l.MirrorTargetsPerApp), int64(observed)).
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrInvalidMirrorPercent (issue #72 / ADR-125 PR-A2) is
@@ -4591,7 +4591,7 @@ func ErrInvalidMirrorPercent(got int) *Problem {
 		"Invalid mirror percent",
 		fmt.Sprintf("mirror percent must be in [0, %d]; got %d.", cap, got)).
 		WithLimit(int64(cap), int64(got)).
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrMirrorSourceTargetSame (issue #72 / ADR-125 PR-A2) is
@@ -4603,7 +4603,7 @@ func ErrMirrorSourceTargetSame() *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMirrorSourceTargetSame,
 		"source and mirror deployments must differ",
 		"source_deployment_id and mirror_deployment_id cannot reference the same deployment.").
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrMirrorDeploymentNotLive (issue #72 / ADR-125 PR-A2) is
@@ -4618,7 +4618,7 @@ func ErrMirrorDeploymentNotLive() *Problem {
 	return NewProblem(http.StatusConflict, CodeMirrorDeploymentNotLive,
 		"referenced deployment is not live",
 		"one or both of source_deployment_id / mirror_deployment_id points at a deployment that is not 'live'; mirror targets must both be live.").
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrMirrorCrossAppMismatch (issue #72 / ADR-125 PR-A2) is
@@ -4631,7 +4631,7 @@ func ErrMirrorCrossAppMismatch() *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMirrorCrossAppMismatch,
 		"source and mirror deployments must belong to the same app",
 		"source_deployment_id and mirror_deployment_id must reference deployments of the same app (slug in the URL path).").
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrMirrorRuleNotFound (issue #72 / ADR-125 PR-A2) is the
@@ -4644,7 +4644,7 @@ func ErrMirrorRuleNotFound(id string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeMirrorRuleNotFound,
 		"mirror rule not found",
 		fmt.Sprintf("no mirror rule with id %q on this app.", id)).
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrInvalidMirrorWindow (issue #72 / ADR-125 PR-A2) is the
@@ -4656,7 +4656,7 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidMirrorWindow,
 		"Invalid mirror window",
 		fmt.Sprintf("window must be one of: 1h, 24h, 7d; got %q.", got)).
-		WithDocs("https://docs.gregale.dev/apps#mirror-summary")
+		WithDocs("https://gregale.dev/docs/apps#mirror-summary")
 }
 
 // ErrSidecarCapExceeded is returned when the request carries more
@@ -5139,7 +5139,7 @@ func ErrInvocationNotReplayable(state string) *Problem {
 	return NewProblem(http.StatusConflict, CodeInvocationNotReplayable,
 		"Invocation is not in a replayable state",
 		fmt.Sprintf("only invocations in state 'failed' or 'dead_letter' can be replayed; current state is %q.", state)).
-		WithDocs("https://docs.gregale.dev/event-driven#invocations")
+		WithDocs("https://gregale.dev/docs/event-driven#invocations")
 }
 
 // ErrBuildProvenanceNotFound is the ADR-038 surface for a build

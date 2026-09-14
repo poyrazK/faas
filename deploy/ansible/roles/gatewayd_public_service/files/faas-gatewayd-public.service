@@ -1,6 +1,6 @@
 [Unit]
 Description=onebox-faas gatewayd-public — plain-HTTP edge (Tier A7 split, ADR-070; TLS terminates at Caddy upstream)
-Documentation=https://docs.gregale.dev/ops/gatewayd-public
+Documentation=https://gregale.dev/docs/ops/gatewayd-public
 After=faas-cp.slice network-online.target postgresql.service faas-apid.service
 Wants=faas-cp.slice faas-apid.service
 Requires=postgresql.service faas-gatewayd-public.socket

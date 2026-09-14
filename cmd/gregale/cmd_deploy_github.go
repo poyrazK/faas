@@ -186,7 +186,7 @@ jobs:
 // slug from --name or cwd before the short-circuit fires, so a
 // missing --app is a programmer error — the CLI boundary defence).
 func cmdDeployGithubSnippet(args []string) int {
-	fs := flag.NewFlagSet("deploy --github", flag.ContinueOnError)
+	fs := newFlagSet("deploy --github", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug (required)")
 	repo := fs.String("repo", "", "override snippet repo (default: ${{ github.repository }} or GITHUB_REPOSITORY)")
 	ref := fs.String("ref", "", "override snippet ref (default: ${{ github.sha }} or GITHUB_SHA)")

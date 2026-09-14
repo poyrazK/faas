@@ -34,8 +34,8 @@ import (
 
 // docsURL is the canonical link printed at the bottom of the usage
 // string. Mirrors cmd/gregale/main.go:23 — operator topics land at
-// docs.gregale.dev/cli/<topic> until PR-7 splits /cli/ from /operator/.
-var docsURL = "https://" + wire.DocsHost
+// gregale.dev/docs/cli/<topic> until the site splits /cli/ from /operator/.
+var docsURL = wire.DocsBaseURL
 
 var usage = `gregalectl — operator companion CLI for cluster install + lifecycle.
 

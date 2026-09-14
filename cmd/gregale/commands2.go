@@ -208,7 +208,7 @@ func cmdApp(args []string) int {
 		return 1
 	}
 	slug := args[0]
-	fs := flag.NewFlagSet("app", flag.ContinueOnError)
+	fs := newFlagSet("app", flag.ContinueOnError)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
 	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
@@ -724,7 +724,7 @@ func cmdApp(args []string) int {
 // verbatim (issue #312) so a stray `y` cannot delete the app.
 
 func cmdAppsRm(args []string) int {
-	fs := flag.NewFlagSet("apps-rm", flag.ContinueOnError)
+	fs := newFlagSet("apps-rm", flag.ContinueOnError)
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
 	fs.BoolVar(quiet, "quiet", false, "suppress confirmation prompt")
 	if err := fs.Parse(args); err != nil {
@@ -1038,9 +1038,11 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 		return nil, fmt.Errorf("list existing crons: %w", err)
 	}
 	var plan api.Limits
+	planKnown := false
 	if acct, err := client.Whoami(ctx); err == nil {
 		if l, ok := api.LimitsFor(api.Plan(acct.Plan)); ok {
 			plan = l
+			planKnown = true
 		}
 	}
 	existingKeys := make(map[string]struct{}, len(existing))
@@ -1054,7 +1056,7 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 		}
 	}
 	headroom := plan.CronLimitPerApp - len(existing)
-	if wanted > 0 && headroom < wanted {
+	if planKnown && wanted > 0 && headroom < wanted {
 		return nil, fmt.Errorf("cron quota exceeded: %d triggers in manifest, plan allows %d (currently %d/%d); raise plan or drop triggers",
 			wanted, plan.CronLimitPerApp, len(existing), plan.CronLimitPerApp)
 	}
@@ -1190,7 +1192,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 	developerSync := execution.developerSource
-	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
+	fs := newFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
@@ -2797,7 +2799,7 @@ func cmdWake(args []string) int {
 // absent --deployment or --percent fails loud with usage rather
 // than silently PATCHing the wrong row.
 func cmdTrafficSet(args []string) int {
-	fs := flag.NewFlagSet("traffic set", flag.ContinueOnError)
+	fs := newFlagSet("traffic set", flag.ContinueOnError)
 	deployment := fs.String("deployment", "", "deployment id to set the traffic split on")
 	percent := fs.Int("percent", -1, "traffic weight in [0, 100]; -1 = unset (server default 100)")
 	if err := fs.Parse(args); err != nil {
@@ -2914,7 +2916,7 @@ func cmdDomains(args []string) int {
 		}
 		return 0
 	case subAdd:
-		fs := flag.NewFlagSet("domains-add", flag.ContinueOnError)
+		fs := newFlagSet("domains-add", flag.ContinueOnError)
 		domain := fs.String("domain", "", "domain to attach (required)")
 		slug := fs.String("app", "", "app slug to attach to (required)")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -2974,7 +2976,7 @@ func cmdCrons(args []string) int {
 	}
 	switch args[0] {
 	case subList:
-		fs := flag.NewFlagSet("crons-list", flag.ContinueOnError)
+		fs := newFlagSet("crons-list", flag.ContinueOnError)
 		slug := fs.String("app", "", "app slug (required)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
@@ -3003,7 +3005,7 @@ func cmdCrons(args []string) int {
 		}
 		return 0
 	case subAdd:
-		fs := flag.NewFlagSet("crons-add", flag.ContinueOnError)
+		fs := newFlagSet("crons-add", flag.ContinueOnError)
 		slug := fs.String("app", "", "app slug (required)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
 		path := fs.String("path", "/", "request path")
@@ -3115,7 +3117,7 @@ func cmdCronsUpdate(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale crons update <id>   (id is 32 hex chars)", "crons")
 		return 1
 	}
-	fs := flag.NewFlagSet("crons-update", flag.ContinueOnError)
+	fs := newFlagSet("crons-update", flag.ContinueOnError)
 	schedule := fs.String("schedule", "", "cron expression (5 fields)")
 	path := fs.String("path", "", "request path")
 	timezone := fs.String("timezone", "", "IANA timezone (empty resets to UTC)")
@@ -3273,7 +3275,7 @@ func cmdKeys(args []string) int {
 // 7 days (api.DefaultAPIKeyGraceWindowDays), overridable via
 // `gregale keys grace-window`.
 func cmdKeysRotate(args []string) int {
-	fs := flag.NewFlagSet("keys rotate", flag.ContinueOnError)
+	fs := newFlagSet("keys rotate", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -3305,7 +3307,7 @@ func cmdKeysRotate(args []string) int {
 // the current override + plan default. `--reset` clears the
 // override (falls back to the plan default).
 func cmdKeysGraceWindow(args []string) int {
-	fs := flag.NewFlagSet("keys grace-window", flag.ContinueOnError)
+	fs := newFlagSet("keys grace-window", flag.ContinueOnError)
 	reset := fs.Bool("reset", false, "clear the per-account override (fall back to plan default)")
 	days := fs.Int("days", -1, "new grace window in days (>=0)")
 	if err := fs.Parse(args); err != nil {
@@ -3413,7 +3415,7 @@ func cmdUsage(args []string) int {
 // An empty month is a valid response (no traffic yet) and renders
 // just the header row.
 func cmdUsageList(args []string) int {
-	fs := flag.NewFlagSet("usage-list", flag.ContinueOnError)
+	fs := newFlagSet("usage-list", flag.ContinueOnError)
 	month := fs.String("month", "", "month (YYYY-MM); default: current month")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -3474,7 +3476,7 @@ func cmdUsageList(args []string) int {
 // --month "" because the server treats "" and "unset" the same
 // (issue #64 family: avoid four lines for unobservable behavior).
 func cmdUsageSummary(args []string) int {
-	fs := flag.NewFlagSet("usage-summary", flag.ContinueOnError)
+	fs := newFlagSet("usage-summary", flag.ContinueOnError)
 	month := fs.String("month", "", "month (YYYY-MM); default: current month")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -3502,7 +3504,7 @@ func cmdUsageSummary(args []string) int {
 // error per UX §3.2). Matches cmdUsageSummary's precedent — the CLI
 // does not duplicate the validation that the server already does.
 func cmdInvoices(args []string) int {
-	fs := flag.NewFlagSet("invoices", flag.ContinueOnError)
+	fs := newFlagSet("invoices", flag.ContinueOnError)
 	month := fs.String("month", "", "billing month (YYYY-MM); default: all months")
 	before := fs.String("before", "", "pagination cursor (RFC3339Nano)")
 	limit := fs.Int("limit", 25, "page size (1..100)")
@@ -3693,7 +3695,7 @@ func cmdOpen(args []string) int {
 	if len(args) > 0 && args[0] == "docs" {
 		return cmdOpenDocs(args[1:])
 	}
-	fs := flag.NewFlagSet("open", flag.ContinueOnError)
+	fs := newFlagSet("open", flag.ContinueOnError)
 	dash := fs.Bool("dashboard", false, "open the dashboard page instead of the live URL")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -3773,7 +3775,7 @@ const docsOpenTopic = "open"
 // entry below can pin the docs URL slug for the `open` command's
 // own man page.
 func cmdOpenDocs(args []string) int {
-	fs := flag.NewFlagSet("open docs", flag.ContinueOnError)
+	fs := newFlagSet("open docs", flag.ContinueOnError)
 	slugFlag := fs.String("slug", "", "docs page slug (e.g. apps, queue, deploy); opens the docs root when empty")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale open docs [<slug>] [--slug <slug>]", docsOpenTopic)
@@ -3953,7 +3955,7 @@ func cmdLogs(args []string) int {
 	if len(args) > 0 && args[0] == subLogsTail {
 		return cmdLogsTail(args[1:])
 	}
-	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
+	fs := newFlagSet("logs", flag.ContinueOnError)
 	follow := fs.Bool("follow", false, "follow new lines")
 	deployment := fs.String("deployment", "", "deployment id (default: latest)")
 	grep := fs.String("grep", "", "only show lines matching this substring")
@@ -4009,7 +4011,7 @@ func cmdLogs(args []string) int {
 // it would mask a real customer mistake. All other logs flags pass
 // through verbatim so the alias and the long form stay wire-equivalent.
 func cmdLogsTail(args []string) int {
-	fs := flag.NewFlagSet("logs tail", flag.ContinueOnError)
+	fs := newFlagSet("logs tail", flag.ContinueOnError)
 	follow := fs.Bool("follow", false, "follow new lines (alias always follows; flag is redundant)")
 	deployment := fs.String("deployment", "", "deployment id (default: latest)")
 	grep := fs.String("grep", "", "only show lines matching this substring")
@@ -4855,7 +4857,7 @@ func mapFailureProblem(p *api.Problem) string {
 // ADR-046 — informational, not billed — and are rendered only when
 // non-zero (matches cmdUsageList's trailing-column policy).
 func cmdUsageDaily(args []string) int {
-	fs := flag.NewFlagSet("usage-daily", flag.ContinueOnError)
+	fs := newFlagSet("usage-daily", flag.ContinueOnError)
 	day := fs.String("day", "", "day (YYYY-MM-DD); default: today UTC")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -4897,7 +4899,7 @@ func cmdUsageDaily(args []string) int {
 // only — not billed today. Renders one row per app: <app_id> <day>
 // <snapshot MB> <layer MB> <total MB>.
 func cmdUsageStorage(args []string) int {
-	fs := flag.NewFlagSet("usage-storage", flag.ContinueOnError)
+	fs := newFlagSet("usage-storage", flag.ContinueOnError)
 	day := fs.String("day", "", "day (YYYY-MM-DD); default: today UTC")
 	if err := fs.Parse(args); err != nil {
 		return 1

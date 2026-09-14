@@ -197,7 +197,7 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	// false-fire on every Hobby/Pro/Scale customer's existing config
 	// (see code-review finding #1 / #6). The plan value is passed
 	// into Compute so d.Plan is set in one place.
-	plan, limits, planKnown := inferPlanAndLimits(ctx, client, baseline)
+	plan, limits, accountAppCount, planKnown := inferPlanAndLimits(ctx, client, baseline)
 
 	// 4. Run the engine. The quota gate is a separate pass — the
 	// engine itself doesn't read pkg/api/limits.go; the caller
@@ -219,6 +219,8 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	if planKnown {
 		breaks := deploydiff.Quota(plan, baseline, pending, deploydiff.QuotaConfig{
 			Limits:               limits,
+			AccountAppCount:      accountAppCount,
+			AccountAppCountKnown: true,
 			AccountCronCount:     accountCronCount(ctx, client, opts.Slug),
 			AccountEdgeRuleCount: 0, // per-account edge-rule count not
 			// currently capped; pass 0.
@@ -396,21 +398,21 @@ func previewCronsFromManifest(cwd, slug string) []api.CreateCronRequest {
 // PR-1 will replace this with a server-side `GET /v1/account/limits`
 // endpoint that returns the full quota table directly. Until then,
 // Whoami is the canonical source for the plan tier.
-func inferPlanAndLimits(ctx context.Context, client *api.Client, baseline deploydiff.Baseline) (api.Plan, api.Limits, bool) {
+func inferPlanAndLimits(ctx context.Context, client *api.Client, baseline deploydiff.Baseline) (api.Plan, api.Limits, int, bool) {
 	acct, err := client.Whoami(ctx)
 	if err != nil {
-		return "", api.Limits{}, false
+		return "", api.Limits{}, 0, false
 	}
 	if acct.Plan == "" {
-		return "", api.Limits{}, false
+		return "", api.Limits{}, 0, false
 	}
 	plan := api.Plan(acct.Plan)
 	if !plan.Valid() {
-		return "", api.Limits{}, false
+		return "", api.Limits{}, 0, false
 	}
 	limits := api.MustLimitsFor(plan)
 	_ = baseline // reserved for PR-1's per-app upgrade
-	return plan, limits, true
+	return plan, limits, acct.AppCount, true
 }
 
 // accountCronCount reads the per-account cron count for the quota

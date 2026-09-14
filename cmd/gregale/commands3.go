@@ -83,7 +83,7 @@ func cmdSecrets(args []string) int {
 // --- list ------------------------------------------------------------------
 
 func secretsList(args []string) int {
-	fs := flag.NewFlagSet("secrets list", flag.ContinueOnError)
+	fs := newFlagSet("secrets list", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope filter (omit for default; '__all__' returns nested secrets_by_scope)")
 	if err := fs.Parse(args); err != nil {
@@ -160,7 +160,7 @@ func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse)
 // --- set -------------------------------------------------------------------
 
 func secretsSet(args []string) int {
-	fs := flag.NewFlagSet("secrets set", flag.ContinueOnError)
+	fs := newFlagSet("secrets set", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to write into (omit for default)")
@@ -463,7 +463,7 @@ func setProjectDeploySecrets(ctx context.Context, client *Client, workloads []ap
 // --- unset -----------------------------------------------------------------
 
 func secretsUnset(args []string) int {
-	fs := flag.NewFlagSet("secrets unset", flag.ContinueOnError)
+	fs := newFlagSet("secrets unset", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to delete from (omit for default)")
 	if err := fs.Parse(args); err != nil {
@@ -509,7 +509,7 @@ func scopeOrDefault(scope string) string {
 // so this leaf is safe for log + JSON output. Pagination via the
 // (slug, key) cursor — same convention as /v1/invoices.
 func secretsListAll(args []string) int {
-	fs := flag.NewFlagSet("secrets list-all", flag.ContinueOnError)
+	fs := newFlagSet("secrets list-all", flag.ContinueOnError)
 	before := fs.String("before", "", "pagination cursor from a previous call's next_before (slug|key)")
 	limit := fs.Int("limit", 100, "page size (1..200; server caps at 200)")
 	if err := fs.Parse(args); err != nil {

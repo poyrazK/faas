@@ -280,7 +280,7 @@ func cmdDev(args []string) int {
 		}
 		return cmdDevStatus()
 	}
-	fs := flag.NewFlagSet("dev", flag.ContinueOnError)
+	fs := newFlagSet("dev", flag.ContinueOnError)
 	name := fs.String("name", "", "developer-session project name (default: selected source directory)")
 	sourcePath := fs.String("path", "", "source directory (relative to the current directory)")
 	envFile := fs.String("env-file", "", "sync KEY=VALUE entries as developer secrets (explicit opt-in)")

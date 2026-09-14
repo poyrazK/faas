@@ -145,8 +145,19 @@ func (s *server) diffApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		})
 		accountCrons = nil
 	}
+	accountAppCount, appCountErr := s.store.CountDeployedApps(r.Context(), acct.ID)
+	if appCountErr != nil {
+		d.Breaks = append(d.Breaks, deploydiff.Break{
+			Code:     "account_app_count_unavailable",
+			Severity: deploydiff.SeverityWarn,
+			Reason:   "could not read deployed-app count; app quota gate skipped",
+			Field:    "apps",
+		})
+	}
 	breaks := deploydiff.Quota(acct.Plan, baseline, pending, deploydiff.QuotaConfig{
 		Limits:               limits,
+		AccountAppCount:      accountAppCount,
+		AccountAppCountKnown: appCountErr == nil,
 		AccountCronCount:     len(accountCrons),
 		AccountEdgeRuleCount: 0, // per-account edge-rule count not
 		// currently capped in pkg/api/limits.go; pass 0.

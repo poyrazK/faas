@@ -1,6 +1,6 @@
 [Unit]
 Description=Gregale S3-compatible object-storage gateway
-Documentation=https://docs.gregale.dev/object-storage
+Documentation=https://gregale.dev/docs/object-storage
 After=network-online.target postgresql.service faas-apid.service faas-cp.slice
 Wants=faas-cp.slice faas-apid.service
 Requires=postgresql.service

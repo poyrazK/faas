@@ -71,7 +71,7 @@ func cmdAlerts(args []string) int {
 // cmdAlertList mirrors cmdWebhookList. The SDK returns a flat slice;
 // human-mode renders name | metric | threshold | window | state.
 func cmdAlertList(args []string) int {
-	fs := flag.NewFlagSet("alerts list", flag.ContinueOnError)
+	fs := newFlagSet("alerts list", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -105,7 +105,7 @@ func cmdAlertList(args []string) int {
 // locally, then sends the request. failure-source is required iff
 // metric == failed_invocations (constraint: alert_rules_failure_source_xor_chk).
 func cmdAlertAdd(args []string) int {
-	fs := flag.NewFlagSet("alerts add", flag.ContinueOnError)
+	fs := newFlagSet("alerts add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
 	metric := fs.String("metric", "", "metric (closed set; one of error_rate_pct|latency_p50_ms|latency_p95_ms|latency_p99_ms|cold_start_pct|request_count|failed_invocations)")
@@ -201,7 +201,7 @@ func validateAlertClosedSets(metric, comparison, windowSpec, failureSource *stri
 // cmdAlertInfo mirrors cmdAuditEventsGet — single id, multi-line
 // labelled block, --json output.
 func cmdAlertInfo(args []string) int {
-	fs := flag.NewFlagSet("alerts info", flag.ContinueOnError)
+	fs := newFlagSet("alerts info", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -251,7 +251,7 @@ func cmdAlertInfo(args []string) int {
 // server's alert_rules_failure_source_xor_chk fires if it violates
 // the constraint (alerts.go:118-123).
 func cmdAlertUpdate(args []string) int {
-	fs := flag.NewFlagSet("alerts update", flag.ContinueOnError)
+	fs := newFlagSet("alerts update", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (3..120 chars)")
 	enabled := fs.Bool(flagNameEnabled, true, "enable/disable the rule")
@@ -347,7 +347,7 @@ func validateAlertUpdateFlags(metric, comparison, windowSpec *string, threshold 
 
 // cmdAlertRm mirrors cmdWebhookRm — 204 No Content on success.
 func cmdAlertRm(args []string) int {
-	fs := flag.NewFlagSet("alerts rm", flag.ContinueOnError)
+	fs := newFlagSet("alerts rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -379,7 +379,7 @@ func cmdAlertRm(args []string) int {
 // in the webhook receiver out-of-band (same wording as the Tier B
 // webhook fix).
 func cmdAlertRotateSecret(args []string) int {
-	fs := flag.NewFlagSet("alerts rotate-secret", flag.ContinueOnError)
+	fs := newFlagSet("alerts rotate-secret", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1

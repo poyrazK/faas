@@ -1,6 +1,6 @@
 [Unit]
 Description=onebox-faas builderd — build orchestrator + ephemeral builder microVMs (spec §4.5, ADR-003, ADR-005)
-Documentation=https://docs.gregale.dev/ops/builderd
+Documentation=https://gregale.dev/docs/ops/builderd
 After=network.target faas-cp.slice faas-vmmd.service
 Wants=faas-cp.slice faas-vmmd.service
 StartLimitIntervalSec=60s

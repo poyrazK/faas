@@ -62,7 +62,7 @@ func cmdAccount(args []string) int {
 // --no-secrets drops the ciphertext slice (the bundle still lists the
 // apps + keys + usage without revealing the sealed envelope).
 func cmdAccountExport(args []string) int {
-	fs := flag.NewFlagSet("account export", flag.ContinueOnError)
+	fs := newFlagSet("account export", flag.ContinueOnError)
 	out := fs.String("o", "gregale-account-export.json", "output file")
 	noSecrets := fs.Bool("no-secrets", false, "exclude ciphertext slice")
 	if err := fs.Parse(args); err != nil {
@@ -85,7 +85,7 @@ func cmdAccountExport(args []string) int {
 // stray `y` cannot delete the account. -q skips the prompt for
 // scripted / CI use.
 func cmdAccountDelete(args []string) int {
-	fs := flag.NewFlagSet("account delete", flag.ContinueOnError)
+	fs := newFlagSet("account delete", flag.ContinueOnError)
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -174,7 +174,7 @@ func cmdAccountStatus(args []string) int {
 // edit to the DPA shows up as a PR diff. The body is small (~3 KB)
 // so there's no streaming story here; one buffer write.
 func cmdAccountDPA(args []string) int {
-	fs := flag.NewFlagSet("account dpa", flag.ContinueOnError)
+	fs := newFlagSet("account dpa", flag.ContinueOnError)
 	out := fs.String("o", "", "output file (default: stdout)")
 	if err := fs.Parse(args); err != nil {
 		return 1
