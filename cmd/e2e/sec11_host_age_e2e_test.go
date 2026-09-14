@@ -297,7 +297,11 @@ func TestSec11_HostAgeIdentity_OnDiskInsecurePermsFailsFast(t *testing.T) {
 		"FAAS_HOST_AGE_IDENTITY_PATH="+onDiskPath,
 		"FAAS_HOST_AGE_RECIPIENT_PATH="+recipientPath,
 	)
-	out, werr := startAPIDAndExpectFail(t, env, 5*time.Second)
+	// The process applies the full migration set before loading the host key.
+	// Shared CI PostgreSQL can take slightly over five seconds, which used to
+	// kill apid before it reached the permission check and produce a false
+	// negative containing only migration output.
+	out, werr := startAPIDAndExpectFail(t, env, 15*time.Second)
 	if werr == nil {
 		t.Fatalf("apid should have exited non-zero on 0440 host.age but exited cleanly:\n%s", out)
 	}
