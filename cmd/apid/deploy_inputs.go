@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -548,48 +549,24 @@ func validateSourceProvenance(sourceURL, commitSHA string) *api.Problem {
 //
 //nolint:forbidigo // path is the tmp file apid just wrote via os.Create in validateAndSpool above with a fresh random id; apid OWNS the parent directory AND the inode, customer never touched them — symlink-attack impossible. Tarball-shape validation re-reads the bytes to enforce spec §9.
 func validateTarballShape(path string) *api.Problem {
-	f, err := os.Open(path)
-	if err != nil {
-		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
+	err := tarball.ValidateShape(path, maxSourceFiles)
+	if err == nil {
+		return nil
 	}
-	defer func() { _ = f.Close() }()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Not gzip", "source must be tar.gz")
+	var shapeErr *tarball.ShapeError
+	if !errors.As(err, &shapeErr) {
+		return api.ErrSourceInvalid(err.Error())
 	}
-	defer func() { _ = gz.Close() }()
-	tr := tar.NewReader(gz)
-	count := 0
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad tar", err.Error())
-		}
-		// PR-A: every name-based escape check runs BEFORE count++ so a
-		// tarball mixing 10k valid entries with one escaping symlink
-		// trips the escape check first, not the file-count cap
-		// (review ordering pin).
-		if escapesArchiveRoot(hdr.Name) {
-			return api.ErrSourceInvalid("absolute paths or '..' entries are rejected")
-		}
-		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
-			// Symlink/hardlink target uses the same predicate as the
-			// entry name. tar's tar.Reader doesn't resolve targets —
-			// builderd's unpack does — so we just reject anything that
-			// could escape when resolved relative to the entry's parent.
-			if escapesArchiveRoot(hdr.Linkname) {
-				return api.ErrSourceInvalid("symlink/hardlink with absolute or '..' target rejected")
-			}
-		}
-		count++
-		if count > maxSourceFiles {
-			return api.ErrSourceInvalid(fmt.Sprintf("too many files (>%d)", maxSourceFiles))
-		}
+	switch shapeErr.Kind {
+	case tarball.ShapeOpen:
+		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", shapeErr.Detail)
+	case tarball.ShapeNotGzip:
+		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Not gzip", shapeErr.Detail)
+	case tarball.ShapeBadTar:
+		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad tar", shapeErr.Detail)
+	default:
+		return api.ErrSourceInvalid(shapeErr.Detail)
 	}
-	return nil
 }
 
 // escapesArchiveRoot reports whether p would, when cleaned and joined
@@ -599,20 +576,7 @@ func validateTarballShape(path string) *api.Problem {
 // splitting on the path separator and checking each component is the
 // tightest predicate that still closes the escape.
 func escapesArchiveRoot(p string) bool {
-	if p == "" {
-		return false
-	}
-	if strings.HasPrefix(p, "/") {
-		return true
-	}
-	// filepath.SplitList won't help; split manually so we don't pull in
-	// OS semantics (tar paths are always forward-slash on the wire).
-	for _, part := range strings.Split(p, "/") {
-		if part == ".." {
-			return true
-		}
-	}
-	return false
+	return tarball.EscapesRoot(p)
 }
 
 // statefulTopLevelDirs is the set of top-level directory names that

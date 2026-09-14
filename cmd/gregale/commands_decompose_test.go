@@ -963,12 +963,56 @@ func TestDefaultProjectSlug(t *testing.T) {
 		{"", ""},
 		{"/tmp/fixture.tar.gz", "fixture"},
 		{"/tmp/my-repo", "my-repo"},
+		{"/tmp/My_Service.tar.gz", "my-service"},
 		{"./fixture", "fixture"},
 	}
 	for _, c := range cases {
 		if got := defaultProjectSlug(c.in); got != c.want {
 			t.Errorf("defaultProjectSlug(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestResolveScanPathKeepsStableProjectIdentity(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "My_Service")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"start":"node index.js"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var slugs []string
+	for range 2 {
+		archivePath, sourceName, cleanup, err := resolveScanSource("", root, "", "main", 0)
+		if err != nil {
+			t.Fatalf("resolveScanSource: %v", err)
+		}
+		if archivePath == "" {
+			cleanup()
+			t.Fatal("resolveScanSource returned an empty archive path")
+		}
+		slugs = append(slugs, defaultProjectSlug(sourceName))
+		cleanup()
+	}
+	if slugs[0] != "my-service" || slugs[1] != slugs[0] {
+		t.Fatalf("derived project slugs = %v, want stable my-service", slugs)
+	}
+}
+
+func TestCmdScanRejectsExplicitInvalidProjectSlugsBeforeSourceOrNetwork(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_project_slug_guard")
+
+	for _, slug := range []string{"", "Bad_Slug", "-bad", "bad-", strings.Repeat("a", 64)} {
+		if code := cmdScan([]string{"--tarball", "missing.tar.gz", "--project-slug", slug}); code == 0 {
+			t.Errorf("explicit project slug %q was accepted", slug)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("invalid project slugs made %d API requests, want zero", requests)
 	}
 }
 

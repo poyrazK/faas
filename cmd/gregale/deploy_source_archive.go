@@ -212,6 +212,9 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 		}
 		expanded += written
 	}
+	if entries == 0 {
+		return "", errors.New("source archive is empty")
+	}
 
 	// Embedded templates and git archives carry one synthetic top-level
 	// directory. Return that directory as the authoritative source view while

@@ -68,6 +68,14 @@ func TestWorkloadAdmissionReasons(t *testing.T) {
 			want:      []string{"outside this project member"},
 		},
 		{
+			name: "duplicate identity names both roots",
+			workloads: []reposcan.Workload{
+				{Name: "api", RootDir: "frontend/api"},
+				{Name: "api", RootDir: "backend/api"},
+			},
+			want: []string{`"frontend/api" and "backend/api"`, "ambiguous dependency name"},
+		},
+		{
 			name: "empty plan",
 			want: []string{EmptyWorkloadPlanReason},
 		},

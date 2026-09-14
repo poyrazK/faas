@@ -6,8 +6,19 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestMaterializeDeployArchiveRejectsMalformedBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plain-text.tar.gz")
+	if err := os.WriteFile(path, []byte("this is not a gzip stream"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := materializeDeployArchive(path); err == nil || !strings.Contains(err.Error(), "gzip") {
+		t.Fatalf("plain-text archive error = %v, want gzip rejection", err)
+	}
+}
 
 func writeDeploySourceArchive(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -122,5 +133,12 @@ func TestMaterializeDeployArchive_RejectsUnsafeEntries(t *testing.T) {
 				t.Fatal("materialize succeeded for unsafe archive")
 			}
 		})
+	}
+}
+
+func TestMaterializeDeployArchiveRejectsEmptyArchive(t *testing.T) {
+	archive := writeDeploySourceArchive(t, nil)
+	if _, _, _, err := materializeDeployArchive(archive); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("empty archive error = %v, want empty-source rejection", err)
 	}
 }

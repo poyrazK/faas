@@ -35,7 +35,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 	for _, app := range accountApps {
 		bySlug[app.Slug] = app
 	}
-	seen := make(map[string]struct{}, len(workloads))
+	seen := make(map[string]string, len(workloads))
 	var reasons []string
 	for _, workload := range workloads {
 		if workload.DetectedBy.Detector == "serverless" {
@@ -54,11 +54,13 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 				workload.Name, workload.Name))
 			continue
 		}
-		if _, duplicate := seen[workload.Name]; duplicate {
-			reasons = append(reasons, fmt.Sprintf("workload %q produces a duplicate app slug", workload.Name))
+		if firstRoot, duplicate := seen[workload.Name]; duplicate {
+			reasons = append(reasons, fmt.Sprintf(
+				"workload %q produces a duplicate app slug for roots %q and %q; use distinct declared package names",
+				workload.Name, firstRoot, workload.RootDir))
 			continue
 		}
-		seen[workload.Name] = struct{}{}
+		seen[workload.Name] = workload.RootDir
 		if app, exists := bySlug[workload.Name]; exists &&
 			(projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name) {
 			reasons = append(reasons, fmt.Sprintf(

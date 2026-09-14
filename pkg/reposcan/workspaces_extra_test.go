@@ -218,6 +218,90 @@ resolver = "2"
 	}
 }
 
+func TestDetectWorkspacesUsesDeclaredPackageNamesForRepeatedBasenames(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"pnpm-workspace.yaml":       &fstest.MapFile{Data: []byte("packages:\n  - frontend/api\n  - backend/api\n")},
+		"frontend/api/package.json": &fstest.MapFile{Data: []byte(`{"name":"frontend-api","scripts":{"start":"node server.js"}}`)},
+		"backend/api/package.json":  &fstest.MapFile{Data: []byte(`{"name":"backend-api","scripts":{"start":"node server.js"}}`)},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{result.Workloads[0].Name, result.Workloads[1].Name}; !equalSet(got, []string{"frontend-api", "backend-api"}) {
+		t.Fatalf("workspace names = %v, want declared package identities", got)
+	}
+	if result.Workloads[0].RootDir == result.Workloads[1].RootDir {
+		t.Fatalf("workspace roots collapsed: %#v", result.Workloads)
+	}
+}
+
+func TestDetectWorkspacesNormalizesScopedPackageName(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"package.json":              &fstest.MapFile{Data: []byte(`{"workspaces":["packages/api"]}`)},
+		"packages/api/package.json": &fstest.MapFile{Data: []byte(`{"name":"@acme/api","scripts":{"start":"node index.js"}}`)},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Workloads) != 1 || result.Workloads[0].Name != "acme-api" {
+		t.Fatalf("scoped package workload = %#v, want acme-api", result.Workloads)
+	}
+}
+
+func TestDetectWorkspacesCurrentNxProjectJSON(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"nx.json":      &fstest.MapFile{Data: []byte(`{"defaultBase":"main"}`)},
+		"package.json": &fstest.MapFile{Data: []byte(`{"private":true}`)},
+		"modules/api/project.json": &fstest.MapFile{Data: []byte(`{
+  "name":"api",
+  "root":"modules/api",
+  "projectType":"application",
+  "targets":{"serve":{"command":"node index.js"}}
+}`)},
+		"modules/api/package.json": &fstest.MapFile{Data: []byte(`{"name":"nx-api","private":true}`)},
+		"modules/api/index.js":     &fstest.MapFile{Data: []byte("console.log('ready')\n")},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Workloads) != 1 {
+		t.Fatalf("Nx workloads = %#v, want one", result.Workloads)
+	}
+	workload := result.Workloads[0]
+	if workload.Name != "api" || workload.RootDir != "modules/api" || !workload.CommandShell ||
+		len(workload.Command) != 1 || workload.Command[0] != "node index.js" || workload.Class != ClassHTTP {
+		t.Fatalf("Nx workload = %#v", workload)
+	}
+	if result.Tier != TierWorkspace || workload.Source == "root-floor" {
+		t.Fatalf("Nx detection fell back to root: tier=%v workload=%#v", result.Tier, workload)
+	}
+}
+
+func TestDetectWorkspacesPackageLevelNxTarget(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"nx.json": &fstest.MapFile{Data: []byte(`{"defaultBase":"main"}`)},
+		"services/jobs/package.json": &fstest.MapFile{Data: []byte(`{
+  "name":"jobs-worker",
+  "nx":{"targets":{"worker":{"options":{"command":"node worker.js"}}}}
+}`)},
+		"services/jobs/worker.js": &fstest.MapFile{Data: []byte("console.log('work')\n")},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Workloads) != 1 || result.Workloads[0].Name != "jobs-worker" || result.Workloads[0].Class != ClassWorker {
+		t.Fatalf("package-level Nx workload = %#v", result.Workloads)
+	}
+}
+
 func TestScan_CargoWorkspaceDoesNotFallBackToRoot(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
@@ -237,8 +321,8 @@ resolver = "2"
 		t.Fatalf("workloads = %#v, want one Cargo member", result.Workloads)
 	}
 	workload := result.Workloads[0]
-	if workload.Name != "api" || workload.RootDir != "crates/api" || workload.Tier != TierWorkspace {
-		t.Fatalf("workload = %#v, want Cargo workspace member api at crates/api", workload)
+	if workload.Name != "workspace-api" || workload.RootDir != "crates/api" || workload.Tier != TierWorkspace {
+		t.Fatalf("workload = %#v, want declared Cargo package workspace-api at crates/api", workload)
 	}
 }
 

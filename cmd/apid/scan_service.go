@@ -348,7 +348,7 @@ func computeAffectedPartition(
 	skip := make([]api.PlanAffectedApp, 0)
 	if len(exclude) > 0 {
 		for _, w := range allScanWl {
-			if !exclude[strings.ToLower(w.Name)] {
+			if !workloadMatchesSelectors(exclude, w) {
 				continue
 			}
 			row := api.PlanAffectedApp{Slug: w.Name, Action: "noop"}
@@ -371,7 +371,7 @@ func computeAffectedPartition(
 			seen[s.Slug] = true
 		}
 		for _, a := range existingApps {
-			if !exclude[strings.ToLower(a.Slug)] {
+			if !appMatchesSelectors(exclude, a) {
 				continue
 			}
 			if seen[a.Slug] {
@@ -447,8 +447,7 @@ func computeAffectedPartition(
 			// TestScanPartition_ExcludedExistingAppDualView)
 			// must honour the exclude contract on BOTH fields.
 			// Mirrors the Skipped dual-view filter above.
-			if exclude[strings.ToLower(a.Slug)] ||
-				exclude[strings.ToLower(a.WorkloadName)] {
+			if appMatchesSelectors(exclude, a) {
 				continue
 			}
 			if _, hit := scanNames[a.WorkloadName]; hit {
@@ -463,6 +462,60 @@ func computeAffectedPartition(
 		Unaffected: unaff,
 		Skipped:    skip,
 		Removed:    removed,
+	}
+}
+
+func workloadMatchesSelectors(selectors map[string]bool, workload reposcan.Workload) bool {
+	if len(selectors) == 0 {
+		return false
+	}
+	return selectors[strings.ToLower(workload.Name)] ||
+		(workload.RootDir != "" && selectors[strings.ToLower(workload.RootDir)])
+}
+
+func appMatchesSelectors(selectors map[string]bool, app state.App) bool {
+	if len(selectors) == 0 {
+		return false
+	}
+	return selectors[strings.ToLower(app.Slug)] ||
+		selectors[strings.ToLower(app.WorkloadName)] ||
+		(app.RootDir != "" && selectors[strings.ToLower(app.RootDir)])
+}
+
+func validateWorkloadSelectors(kind string, selectors map[string]bool, workloads []reposcan.Workload, requireKnown bool) *api.Problem {
+	for selector := range selectors {
+		var roots []string
+		for _, workload := range workloads {
+			if strings.EqualFold(selector, workload.Name) || strings.EqualFold(selector, workload.RootDir) {
+				roots = append(roots, workload.RootDir)
+			}
+		}
+		sort.Strings(roots)
+		if len(roots) > 1 {
+			return api.NewProblem(http.StatusBadRequest, "workload_selector_ambiguous",
+				kind+" selector matches more than one workload",
+				fmt.Sprintf("selector %q matches roots: %s; use a repository-relative root", selector, strings.Join(roots, ", ")))
+		}
+		if requireKnown && len(roots) == 0 {
+			return api.NewProblem(http.StatusBadRequest, kind+"_unknown_slug",
+				kind+" selector is not a workload in this commit", fmt.Sprintf("unknown: %s", selector))
+		}
+	}
+	return nil
+}
+
+// scopeGenericRootWorkload prevents unrelated single-workload projects from
+// all claiming the account-wide "app" or Procfile "web" slug. Explicit
+// service identities and every multi-workload topology remain unchanged.
+func scopeGenericRootWorkload(result *reposcan.Result, projectSlug string) {
+	if result == nil || len(result.Workloads) != 1 || result.Workloads[0].RootDir != "" {
+		return
+	}
+	workload := &result.Workloads[0]
+	rootFloor := workload.Source == "root-floor" && workload.Name == "app"
+	genericProcfile := workload.DetectedBy.Detector == "procfile" && workload.Name == "web"
+	if rootFloor || genericProcfile {
+		workload.Name = projectSlug
 	}
 }
 
@@ -1140,10 +1193,26 @@ func (s *server) scanService(
 			http.StatusBadRequest, api.CodeSourceInvalid,
 			"Scan failed", scanErr.Error())
 	}
+	scopeGenericRootWorkload(&result, req.ProjectSlug)
 	if scheduleErr := validateScannedSchedules(result.Workloads); scheduleErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 			http.StatusBadRequest, api.CodeSourceInvalid,
 			"Invalid project schedule", scheduleErr.Error())
+	}
+	if selectorProblem := validateWorkloadSelectors("only", req.Only, result.Workloads, true); selectorProblem != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, selectorProblem
+	}
+	if selectorProblem := validateWorkloadSelectors("exclude", req.Exclude, result.Workloads, false); selectorProblem != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, selectorProblem
+	}
+	if len(req.Only) > 0 && len(req.Exclude) > 0 {
+		for _, workload := range result.Workloads {
+			if workloadMatchesSelectors(req.Only, workload) && workloadMatchesSelectors(req.Exclude, workload) {
+				return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
+					http.StatusConflict, "exclude_only_overlap", "workload is in both --only and --exclude",
+					fmt.Sprintf("workload %q at root %q is selected by both filters", workload.Name, workload.RootDir))
+			}
+		}
 	}
 
 	// Server-side secret-scan (closes v1 gap A). Runs on BOTH
@@ -1180,8 +1249,7 @@ func (s *server) scanService(
 		filteredMc    []reposcan.Managed
 	)
 	for _, wl := range result.Workloads {
-		lname := strings.ToLower(wl.Name)
-		if len(req.Only) > 0 && !req.Only[lname] {
+		if len(req.Only) > 0 && !workloadMatchesSelectors(req.Only, wl) {
 			continue
 		}
 		onlyFilteredW = append(onlyFilteredW, wl)
@@ -1189,7 +1257,7 @@ func (s *server) scanService(
 		// therefore from reconcile + builds). The visibility row
 		// still surfaces in resp.Skipped via computeAffectedPartition
 		// running over result.Workloads.
-		if len(req.Exclude) > 0 && req.Exclude[lname] {
+		if workloadMatchesSelectors(req.Exclude, wl) {
 			continue
 		}
 		filteredW = append(filteredW, wl)
@@ -1233,9 +1301,12 @@ func (s *server) scanService(
 	}
 	var stalePersistedSlugs []string
 	if len(req.Exclude) > 0 {
-		scanNames := make(map[string]bool, len(result.Workloads))
+		scanNames := make(map[string]bool, len(result.Workloads)*2)
 		for _, w := range result.Workloads {
 			scanNames[strings.ToLower(w.Name)] = true
+			if w.RootDir != "" {
+				scanNames[strings.ToLower(w.RootDir)] = true
+			}
 		}
 		existingSlugs := make(map[string]bool, len(acctApps))
 		for _, a := range acctApps {
@@ -1298,6 +1369,21 @@ func (s *server) scanService(
 	// know what we're NOT provisioning. That mirrors the §4 fixture
 	// (1 managed postgres).
 	filteredMc = append(filteredMc, result.Managed...)
+	onlyNames := make(map[string]bool, len(onlyFilteredW))
+	remainingNames := make(map[string]bool, len(filteredW))
+	for _, workload := range onlyFilteredW {
+		onlyNames[strings.ToLower(workload.Name)] = true
+	}
+	for _, workload := range filteredW {
+		remainingNames[strings.ToLower(workload.Name)] = true
+	}
+	excludedNames := make(map[string]bool)
+	for _, workload := range result.Workloads {
+		name := strings.ToLower(workload.Name)
+		if workloadMatchesSelectors(req.Exclude, workload) && !remainingNames[name] {
+			excludedNames[name] = true
+		}
+	}
 
 	// Crons: any workload with a Schedule string is also a cron. Map
 	// to planCron with the workload name; resolve AppID in the apply
@@ -1355,13 +1441,13 @@ func (s *server) scanService(
 	if !req.NoTriggers {
 		preDesiredCrons = projectCronsWithPreserved(
 			projectWorkloadCrons(onlyFilteredW), projectApps, cronInventory,
-			func(name string) bool { return len(req.Only) > 0 && !req.Only[strings.ToLower(name)] },
+			func(name string) bool { return len(req.Only) > 0 && !onlyNames[strings.ToLower(name)] },
 		)
 		desiredCrons = projectCronsWithPreserved(
 			crons, projectApps, cronInventory,
 			func(name string) bool {
 				lname := strings.ToLower(name)
-				return (len(req.Only) > 0 && !req.Only[lname]) || req.Exclude[lname]
+				return (len(req.Only) > 0 && !onlyNames[lname]) || excludedNames[lname]
 			},
 		)
 	}
@@ -1765,10 +1851,17 @@ func (s *server) scanService(
 		excludeList = append(excludeList, slug)
 		excludeSeen[slug] = true
 	}
+	for name := range excludedNames {
+		if excludeSeen[name] {
+			continue
+		}
+		excludeList = append(excludeList, name)
+		excludeSeen[name] = true
+	}
 	if len(req.Only) > 0 {
 		for _, workload := range result.Workloads {
 			name := strings.ToLower(workload.Name)
-			if req.Only[name] || excludeSeen[name] {
+			if onlyNames[name] || excludeSeen[name] {
 				continue
 			}
 			excludeList = append(excludeList, name)
@@ -1899,6 +1992,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		installID      int64
 		persistExclude bool
 		noTriggers     bool
+		projectSlugSet bool
 	)
 	for {
 		part, perr := mr.NextPart()
@@ -1922,8 +2016,17 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 			sourcePath = path
 			_ = n
 		case "project_slug":
-			b, _ := io.ReadAll(io.LimitReader(part, 64))
+			projectSlugSet = true
+			b, readErr := io.ReadAll(io.LimitReader(part, 64))
+			if readErr != nil {
+				return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+					"Invalid project slug", "could not read project_slug")
+			}
 			projectSlug = strings.TrimSpace(string(b))
+			if !api.ValidProjectSlug(projectSlug) {
+				return nil, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Invalid project slug", "project_slug must contain 1-63 lowercase letters, digits, or internal hyphens")
+			}
 		case "repo_full_name":
 			b, _ := io.ReadAll(io.LimitReader(part, 256))
 			repoFullName = strings.TrimSpace(string(b))
@@ -1992,7 +2095,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Source required", "multipart applies require a 'source' file field")
 	}
-	if projectSlug == "" {
+	if !projectSlugSet {
 		// default to repo dir basename — but we don't have it here.
 		// Fall back to a random placeholder; the handler can correct
 		// if it has extra context (--repo on the CLI).

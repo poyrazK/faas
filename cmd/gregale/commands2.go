@@ -1630,7 +1630,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// --project spelling; otherwise --exclude/--show-affected silently fell
 	// through to the single-app upload path and were ignored.
 	projectRequested := *deployOnly != "" || *deployExclude != "" ||
-		*deployPersistExclude || *deployShowAffected || *projectSlug != "" || *projectDeploy
+		*deployPersistExclude || *deployShowAffected || explicit["project-slug"] || *projectDeploy
 	if *waitTimeoutSeconds <= 0 {
 		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
 	}
@@ -2127,7 +2127,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		case *name == "" && *templateName != "":
 			projectName = *templateName
 		}
-		*projectSlug = sanitizeSlug(projectName)
+		*projectSlug = sanitizeProjectSlug(projectName)
+	}
+	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
+		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
 	}
 	// Authenticate before any zero-config source scan or archive extraction. The
 	// zero-config path can inspect the working tree, run doctor checks, and
@@ -2452,6 +2455,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if !projectRequested && !*noTriggers {
 		if manifestErr := validateSingleAppManifestTargets(sourceDir, slug); manifestErr != nil {
 			return printErr("Invalid deploy manifest", manifestErr)
+		}
+	}
+	if explicitTarball && *diff {
+		if archiveErr := validatePreviewArchivePlanLimit(ctx, client, *tarball); archiveErr != nil {
+			return printErr("Bad --tarball", archiveErr)
 		}
 	}
 	// Fingerprint local source bytes before the first deployment mutation so

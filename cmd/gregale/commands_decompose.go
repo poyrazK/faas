@@ -80,9 +80,18 @@ func cmdScan(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	projectSlugExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "project-slug" {
+			projectSlugExplicit = true
+		}
+	})
 
 	// Exactly one of --tarball / --path / --repo. Default --path $PWD
 	// when stdin is a TTY and no flag is set (issue #313 zero-config).
+	if projectSlugExplicit && !api.ValidProjectSlug(*projectSlug) {
+		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
+	}
 	srcPath, sourceName, cleanup, err := resolveScanSource(*tarball, *pathFlag, *repo, *ref, *installID)
 	if err != nil {
 		return printErr("Could not resolve source", err)
@@ -90,7 +99,10 @@ func cmdScan(args []string) int {
 	defer cleanup()
 
 	if *projectSlug == "" {
-		*projectSlug = defaultProjectSlug(srcPath)
+		*projectSlug = defaultProjectSlug(sourceName)
+	}
+	if !api.ValidProjectSlug(*projectSlug) {
+		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
 	}
 	if *bindingRepo == "" {
 		*bindingRepo = *repo
@@ -233,7 +245,7 @@ func resolveScanSource(
 			return "", "", func() {}, err
 		}
 		_ = n
-		return path, filepath.Base(path) + ".tar.gz", func() { _ = os.Remove(path) }, nil
+		return path, filepath.Base(filepath.Clean(pathFlag)) + ".tar.gz", func() { _ = os.Remove(path) }, nil
 	}
 	if repo != "" {
 		if err := validateRepoSlug(repo); err != nil {
@@ -249,7 +261,7 @@ func resolveScanSource(
 		if err != nil {
 			return "", "", func() {}, err
 		}
-		return path, fmt.Sprintf("%s-%s.tar.gz", strings.ReplaceAll(repo, "/", "-"), ref),
+		return path, filepath.Base(repo) + ".tar.gz",
 			func() { _ = os.Remove(path) }, nil
 	}
 	// zero-config: stdin is a TTY → pack $PWD (issue #313)
@@ -268,7 +280,7 @@ func resolveScanSource(
 			return "", "", func() {}, err
 		}
 		_ = n
-		return path, filepath.Base(path) + ".tar.gz", func() { _ = os.Remove(path) }, nil
+		return path, filepath.Base(cwd) + ".tar.gz", func() { _ = os.Remove(path) }, nil
 	}
 	return "", "", func() {}, errors.New("one of --tarball, --path, --repo, or a TTY cwd is required")
 }
@@ -337,7 +349,35 @@ func defaultProjectSlug(p string) string {
 		}
 	}
 	base = strings.TrimSuffix(base, filepath.Ext(base))
-	return base
+	return sanitizeProjectSlug(base)
+}
+
+func sanitizeProjectSlug(value string) string {
+	value = strings.ToLower(value)
+	var out strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			out.WriteRune(r)
+		case r == '-', r == '_', r == ' ', r == '.':
+			out.WriteByte('-')
+		}
+	}
+	slug := strings.Trim(out.String(), "-")
+	if slug == "" {
+		slug = "project"
+	}
+	if len(slug) > 63 {
+		slug = strings.TrimRight(slug[:63], "-")
+	}
+	if slug == "" {
+		return "project"
+	}
+	return slug
+}
+
+func projectSlugValidationError(slug string) error {
+	return fmt.Errorf("%q must contain 1-63 lowercase letters, digits, or internal hyphens", slug)
 }
 
 // splitCSV returns the trimmed lowercase entries of s. Empty input → nil.

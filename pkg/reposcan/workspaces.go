@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -127,7 +128,8 @@ func detectWorkspacesImpl(fsys fs.FS, includeLibraryMarkers bool) ([]workloadSee
 		}
 	}
 
-	// nx.json — projects.
+	// nx.json — legacy root projects plus current per-project project.json and
+	// package-level nx configuration.
 	if body, src, err := readFirstValidFile(fsys, []string{nameNxJSON}); err != nil && !isQuiet(err) {
 		return nil, nil, err
 	} else if body != nil {
@@ -141,21 +143,16 @@ func detectWorkspacesImpl(fsys fs.FS, includeLibraryMarkers bool) ([]workloadSee
 			}
 			sort.Strings(keys)
 			for _, k := range keys {
-				// Nx project keys are arbitrary names, not
-				// directory paths. Treat them as the workload
-				// name with RootDir="" so a later Tier-3
-				// convention reader can pair or the user can
-				// resolve via a faas.yaml override (Phase 3+).
-				seed, runnable, reason := runnableWorkspaceSeed(fsys, k, src, includeLibraryMarkers)
-				if runnable {
-					// Nx project keys are the existing workload identity; the
-					// filesystem helper derives runnability but must not rename it.
-					seed.name = k
-					seeds = append(seeds, seed)
-				} else if reason != "" {
-					warnings = append(warnings, reason)
-				}
+				config := nxProjectConfig{Name: k, Root: nxLegacyProjectRoot(k, pj.Projects[k])}
+				upsertNxWorkspaceSeed(fsys, &seeds, seen, config, src, includeLibraryMarkers, &warnings)
 			}
+		}
+		projects, discoverErr := discoverNxProjectConfigs(fsys)
+		if discoverErr != nil {
+			return nil, nil, fmt.Errorf("reposcan: %s: %w", src, discoverErr)
+		}
+		for _, project := range projects {
+			upsertNxWorkspaceSeed(fsys, &seeds, seen, project, project.Source, includeLibraryMarkers, &warnings)
 		}
 	}
 
@@ -335,7 +332,7 @@ func compileWorkspacePattern(pattern string) (*regexp.Regexp, error) {
 }
 
 func runnableWorkspaceSeed(fsys fs.FS, member, src string, includeLibraryMarkers bool) (workloadSeed, bool, string) {
-	name := path.Base(member)
+	name := workspaceWorkloadName(fsys, member)
 	if name == "" || name == "." {
 		return workloadSeed{}, false, ""
 	}
@@ -374,6 +371,246 @@ func runnableWorkspaceSeed(fsys fs.FS, member, src string, includeLibraryMarkers
 		}
 	}
 	return workloadSeed{}, false, ""
+}
+
+func workspaceWorkloadName(fsys fs.FS, member string) string {
+	declared := ""
+	if body, err := fs.ReadFile(fsys, path.Join(member, namePackageJSON)); err == nil {
+		var manifest struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(body, &manifest) == nil {
+			declared = manifest.Name
+		}
+	}
+	if declared == "" {
+		if body, err := fs.ReadFile(fsys, path.Join(member, "Cargo.toml")); err == nil {
+			var manifest struct {
+				Package struct {
+					Name string `toml:"name"`
+				} `toml:"package"`
+			}
+			if _, err := toml.Decode(string(body), &manifest); err == nil {
+				declared = manifest.Package.Name
+			}
+		}
+	}
+	if declared == "" {
+		declared = path.Base(member)
+	}
+	return canonicalWorkspaceWorkloadName(declared, member)
+}
+
+func canonicalWorkspaceWorkloadName(declared, member string) string {
+	if strings.TrimSpace(declared) == "" {
+		declared = path.Base(member)
+	}
+	raw := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(declared, "@")))
+	var normalized strings.Builder
+	lastHyphen := false
+	for _, r := range raw {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			normalized.WriteRune(r)
+			lastHyphen = false
+			continue
+		}
+		if !lastHyphen && normalized.Len() > 0 {
+			normalized.WriteByte('-')
+			lastHyphen = true
+		}
+	}
+	slug := strings.Trim(normalized.String(), "-")
+	if len(slug) < 3 {
+		parent := path.Base(path.Dir(member))
+		if parent != "." && parent != "/" && parent != "" {
+			slug = canonicalWorkspaceWorkloadName(parent+"-"+slug, "")
+		} else {
+			slug = strings.Trim("app-"+slug, "-")
+		}
+	}
+	if len(slug) > 40 {
+		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(raw+"\x00"+member)))
+		prefix := strings.TrimRight(slug[:31], "-")
+		slug = prefix + "-" + digest[:8]
+	}
+	return slug
+}
+
+type nxTargetConfig struct {
+	Command string `json:"command"`
+	Options struct {
+		Command  string   `json:"command"`
+		Commands []string `json:"commands"`
+	} `json:"options"`
+}
+
+type nxProjectConfig struct {
+	Name        string                    `json:"name"`
+	Root        string                    `json:"root"`
+	ProjectType string                    `json:"projectType"`
+	Targets     map[string]nxTargetConfig `json:"targets"`
+	Source      string                    `json:"-"`
+}
+
+func nxLegacyProjectRoot(name string, raw json.RawMessage) string {
+	var direct string
+	if json.Unmarshal(raw, &direct) == nil && direct != "" {
+		return normalizeWorkspaceMember(direct)
+	}
+	var config nxProjectConfig
+	if json.Unmarshal(raw, &config) == nil && config.Root != "" {
+		return normalizeWorkspaceMember(config.Root)
+	}
+	return normalizeWorkspaceMember(name)
+}
+
+func discoverNxProjectConfigs(fsys fs.FS) ([]nxProjectConfig, error) {
+	var projects []nxProjectConfig
+	err := fs.WalkDir(fsys, ".", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		base := path.Base(name)
+		switch base {
+		case "project.json":
+			body, err := fs.ReadFile(fsys, name)
+			if err != nil {
+				return err
+			}
+			var project nxProjectConfig
+			if json.Unmarshal(body, &project) != nil {
+				return nil
+			}
+			if project.Root == "" {
+				project.Root = path.Dir(name)
+			}
+			project.Root = normalizeWorkspaceMember(project.Root)
+			project.Source = name
+			projects = append(projects, project)
+		case namePackageJSON:
+			body, err := fs.ReadFile(fsys, name)
+			if err != nil {
+				return err
+			}
+			var manifest struct {
+				Name string          `json:"name"`
+				Nx   json.RawMessage `json:"nx"`
+			}
+			if json.Unmarshal(body, &manifest) != nil || len(manifest.Nx) == 0 || string(manifest.Nx) == "null" {
+				return nil
+			}
+			var project nxProjectConfig
+			if json.Unmarshal(manifest.Nx, &project) != nil {
+				return nil
+			}
+			if project.Name == "" {
+				project.Name = manifest.Name
+			}
+			if project.Root == "" {
+				project.Root = path.Dir(name)
+			}
+			project.Root = normalizeWorkspaceMember(project.Root)
+			project.Source = name + "#nx"
+			projects = append(projects, project)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(projects, func(i, j int) bool {
+		if projects[i].Root != projects[j].Root {
+			return projects[i].Root < projects[j].Root
+		}
+		return projects[i].Source < projects[j].Source
+	})
+	return projects, nil
+}
+
+func normalizeWorkspaceMember(member string) string {
+	member = strings.TrimSpace(member)
+	for strings.HasPrefix(member, "./") {
+		member = strings.TrimPrefix(member, "./")
+	}
+	member = strings.TrimRight(member, "/")
+	if member == "." {
+		return ""
+	}
+	return member
+}
+
+func nxTargetCommand(targets map[string]nxTargetConfig) (string, Class) {
+	for _, candidate := range []struct {
+		Name  string
+		Class Class
+	}{{"serve", ClassHTTP}, {"start", ClassHTTP}, {"dev", ClassHTTP}, {"worker", ClassWorker}} {
+		target, ok := targets[candidate.Name]
+		if !ok {
+			continue
+		}
+		command := strings.TrimSpace(target.Command)
+		if command == "" {
+			command = strings.TrimSpace(target.Options.Command)
+		}
+		if command == "" && len(target.Options.Commands) == 1 {
+			command = strings.TrimSpace(target.Options.Commands[0])
+		}
+		if command != "" {
+			return command, candidate.Class
+		}
+	}
+	return "", ""
+}
+
+func upsertNxWorkspaceSeed(
+	fsys fs.FS,
+	seeds *[]workloadSeed,
+	seen map[string]bool,
+	project nxProjectConfig,
+	source string,
+	includeLibraryMarkers bool,
+	warnings *[]string,
+) {
+	root := normalizeWorkspaceMember(project.Root)
+	if root == "" || strings.HasPrefix(root, "..") || !fs.ValidPath(root) {
+		return
+	}
+	name := canonicalWorkspaceWorkloadName(project.Name, root)
+	command, class := nxTargetCommand(project.Targets)
+	seed, runnable, reason := runnableWorkspaceSeed(fsys, root, source, includeLibraryMarkers)
+	if command != "" {
+		if !runnable {
+			seed = workloadSeed{rootDir: root, source: source + ": " + root}
+		}
+		seed.command = []string{command}
+		seed.commandShell = true
+		seed.class = class
+		runnable = true
+	}
+	if !runnable {
+		if reason != "" {
+			*warnings = append(*warnings, reason)
+		}
+		return
+	}
+	seed.name = name
+	for i := range *seeds {
+		if (*seeds)[i].rootDir != root {
+			continue
+		}
+		if command != "" {
+			(*seeds)[i].command = append([]string(nil), seed.command...)
+			(*seeds)[i].commandShell = true
+			(*seeds)[i].class = class
+		}
+		(*seeds)[i].name = name
+		return
+	}
+	seen[root] = true
+	*seeds = append(*seeds, seed)
 }
 
 func rangeLines(s string) []string {
