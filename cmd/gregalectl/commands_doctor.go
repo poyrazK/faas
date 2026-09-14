@@ -720,6 +720,7 @@ func checkBundleOrphans(ctx context.Context, deps *doctorDeps) ([]doctorFinding,
 				Severity: doctorSeverityWarn,
 				Target:   b.GitSHA,
 				Message:  "unapplied release_bundles row; on-disk tree missing",
+				Detail:   "run `gregalectl release reconcile --dry-run` to classify retained failed-rollout rows",
 			})
 		}
 	}

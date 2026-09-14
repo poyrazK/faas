@@ -364,6 +364,17 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 				p.Log.Warn("apidsource.Enqueue: infer source profile", "app", p.AppID, "err", profileErr)
 			}
 		} else {
+			// The explicit deployment kind is authoritative. A source tree can
+			// contain language markers alongside its Dockerfile; persisting a
+			// Railpack profile would make builderd ignore the customer's
+			// Dockerfile selection.
+			if p.Kind == state.DeploymentKindDockerfile {
+				profile.Framework = string(markers.FrameworkDocker)
+				profile.FrameworkVer = ""
+				profile.PackageManager = ""
+				profile.StartCommand = ""
+				profile.Inferred = false
+			}
 			// A dependency-free function is a valid source tree even though
 			// static framework detection has no manifest to inspect. The
 			// explicit app runtime supplies the missing builder pipeline.

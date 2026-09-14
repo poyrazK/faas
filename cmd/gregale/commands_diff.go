@@ -130,7 +130,7 @@ func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string
 // buildPreviewBuildPlan projects the same source signals used by the deploy
 // path into the diff request. The source digest identifies the exact archive
 // already prepared for upload; no source contents cross the preview API.
-func buildPreviewBuildPlan(srcDir string, sh shape, runtime, handler, sourceSHA256 string, imageDeploy bool) *api.BuildPlan {
+func buildPreviewBuildPlan(srcDir string, sh shape, runtime, handler, sourceSHA256 string, imageDeploy, dockerfile bool) *api.BuildPlan {
 	plan := &api.BuildPlan{
 		Framework:    string(fwUnknown),
 		Runtime:      runtime,
@@ -142,6 +142,10 @@ func buildPreviewBuildPlan(srcDir string, sh shape, runtime, handler, sourceSHA2
 		plan.Framework = string(frameworkForRuntime(runtime))
 	} else {
 		plan.Class = "app"
+		if dockerfile {
+			plan.Framework = string(fwDocker)
+			return plan
+		}
 		// Image deploys have no local source tree to inspect. Keep the
 		// framework explicit as unknown rather than accidentally sniffing
 		// the operator's current working directory.

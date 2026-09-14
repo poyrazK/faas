@@ -172,6 +172,32 @@ func (s *fakeStore) ListAllBundles(_ context.Context) ([]BundleRow, error) {
 	return out, nil
 }
 
+func (s *fakeStore) DeleteAbandonedBundle(_ context.Context, gitSHA string, before time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row, ok := s.rows[gitSHA]
+	if !ok || row.AppliedAt != nil || !row.CreatedAt.Before(before) {
+		return false, nil
+	}
+	for _, node := range s.cnRows {
+		if node.ReleaseID == gitSHA {
+			return false, nil
+		}
+	}
+	hasNewerApplied := false
+	for _, candidate := range s.rows {
+		if candidate.AppliedAt != nil && candidate.CreatedAt.After(row.CreatedAt) {
+			hasNewerApplied = true
+			break
+		}
+	}
+	if !hasNewerApplied {
+		return false, nil
+	}
+	delete(s.rows, gitSHA)
+	return true, nil
+}
+
 // UpsertComputeNode implements Store (PR-6). Mirrors the pgStore
 // behaviour: input validation via validGitSHA/validManifestHash,
 // idempotent INSERT...ON CONFLICT keyed by name, returns the row id.
@@ -731,6 +757,43 @@ func TestFakeStore_ListAllBundles_OrdersByCreatedDesc(t *testing.T) {
 	}
 	if got[2].GitSHA != sha1 {
 		t.Errorf("ListAllBundles[2] = %q, want %q (oldest last)", got[2].GitSHA, sha1)
+	}
+}
+
+func TestFakeStore_DeleteAbandonedBundle_GuardsLifecycleAndReferences(t *testing.T) {
+	const (
+		abandoned = "0000000000000000000000000000000000000001"
+		applied   = "0000000000000000000000000000000000000002"
+	)
+	s := newFakeStore()
+	if _, err := s.Insert(context.Background(), sampleBundle(abandoned)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, err := s.Insert(context.Background(), sampleBundle(applied)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MarkApplied(context.Background(), applied); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertComputeNode(context.Background(), "old-node", abandoned, "sha256:"+strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := s.DeleteAbandonedBundle(context.Background(), abandoned, time.Now().Add(time.Hour)); err != nil || deleted {
+		t.Fatalf("referenced bundle delete = (%t, %v), want protected", deleted, err)
+	}
+	delete(s.cnRows, "old-node")
+	if deleted, err := s.DeleteAbandonedBundle(context.Background(), abandoned, time.Now().Add(-time.Hour)); err != nil || deleted {
+		t.Fatalf("fresh bundle delete = (%t, %v), want protected", deleted, err)
+	}
+	if deleted, err := s.DeleteAbandonedBundle(context.Background(), abandoned, time.Now().Add(time.Hour)); err != nil || !deleted {
+		t.Fatalf("abandoned bundle delete = (%t, %v), want deleted", deleted, err)
+	}
+	if deleted, err := s.DeleteAbandonedBundle(context.Background(), abandoned, time.Now().Add(time.Hour)); err != nil || deleted {
+		t.Fatalf("repeated delete = (%t, %v), want idempotent false", deleted, err)
+	}
+	if _, err := s.GetByGitSHA(context.Background(), applied); err != nil {
+		t.Fatalf("newer applied bundle was removed: %v", err)
 	}
 }
 

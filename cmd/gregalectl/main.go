@@ -5,7 +5,7 @@
 // hand or wire into bootstrap/ansible:
 //
 //   - manifest validate|render       — split-box deployment manifest
-//   - release bundle|install         — cluster-shipped release bundle
+//   - release bundle|install|reconcile — cluster-shipped release bundle
 //   - host-age init|rotate|status    — operator host.age rotation
 //   - pki init|status|rotate         — local-dev PKI bootstrap
 //   - sign-keys init|rotate|status   — cosign sign keypair (local fs)
@@ -45,7 +45,7 @@ Usage:
 Commands:
   auth         Authenticated operator session (auth login|step-up|status|logout)
   manifest     Validate/render a split-box deployment manifest (manifest validate|render; issue #911 / ADR-110)
-  release      Materialise / install / rotate a cluster-shipped release bundle (release bundle|install|kgv)
+  release      Materialise, install, rotate, or reconcile a release bundle (release bundle|install|kgv|reconcile)
   doctor       Read-only diagnostic for the cluster-shipped release bundle (doctor [--node NAME] [--release SHA] [--deep]; PR-4 / ADR-110)
   host-age     Operator host.age rotation (host-age init|rotate|status|prune-previous)
   fleet-seal   Fleet-wide unseal identity (fleet-seal init|migrate|verify)
