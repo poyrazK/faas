@@ -1586,10 +1586,12 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
     });
   }
