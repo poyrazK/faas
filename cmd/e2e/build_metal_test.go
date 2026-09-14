@@ -545,21 +545,28 @@ func postMultipartDeploymentWithOverrides(t *testing.T, h *e2etest.Harness, key,
 // in this file).
 func parseQueuedDeployment(t *testing.T, body []byte) (deploymentID, buildID string) {
 	t.Helper()
-	// Minimal decode — CreateDeploymentResponse has more fields but we
-	// only need two. Avoids importing the entire api surface here.
-	var resp struct {
-		ID     string `json:"id"`
-		Build  string `json:"build"`
-		Status string `json:"status"`
-	}
+	// Decode the REAL response type rather than a hand-rolled subset.
+	//
+	// This used to be a local struct with `json:"build"` and a comment saying
+	// it "avoids importing the entire api surface". The field is and was
+	// build_id (pkg/api.DeploymentResponse, pkg/api/build.go, the apid
+	// handlers), so the decode silently produced an empty value and every
+	// build-path test failed with "deployment response missing id/build" —
+	// including on the first native e2e run that got far enough to reach it
+	// (2026-09-14), where the build itself had actually succeeded.
+	//
+	// A hand-rolled shape cannot be caught by the compiler when the API
+	// renames a field. Using api.DeploymentResponse makes the next rename a
+	// build failure here instead of a confusing runtime assertion.
+	var resp api.DeploymentResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		t.Fatalf("decode deployment response: %v body=%s", err, body)
 	}
-	if resp.ID == "" || resp.Build == "" {
-		t.Fatalf("deployment response missing id/build: %s", body)
+	if resp.ID == "" || resp.BuildID == "" {
+		t.Fatalf("deployment response missing id/build_id: %s", body)
 	}
 	if !strings.EqualFold(resp.Status, "queued") {
 		t.Logf("deployment %s status=%q (not 'queued' — apid may have started building already)", resp.ID, resp.Status)
 	}
-	return resp.ID, resp.Build
+	return resp.ID, resp.BuildID
 }
