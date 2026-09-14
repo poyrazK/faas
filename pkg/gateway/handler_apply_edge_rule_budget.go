@@ -173,7 +173,7 @@ func (h *Handler) stampRequestBudget(w http.ResponseWriter, r *http.Request, app
 	}
 	*r = *r.WithContext(ctx)
 	if h.log != nil {
-		h.log.Info("budget_stamped",
+		h.log.Debug("budget_stamped",
 			"app_id", app.ID,
 			"account_id", app.AccountID,
 			"route", route,

@@ -57,7 +57,7 @@ type cliFlag struct {
 //
 // Operator-side surface (PR-6.5):
 //   - manifest        (validate | render | ansible)
-//   - release         (bundle | install | kgv rotate | kgv init [alias])
+//   - release         (bundle | install | kgv rotate | kgv init [alias] | reconcile)
 //   - doctor          (read-only cluster diagnostic)
 //   - host-age        (init | rotate | status | prune-previous)
 //   - pki             (init | status | rotate | list)
@@ -723,7 +723,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "release",
 		DocSlug: "release",
-		Short:   "Cluster-shipped release bundle (release bundle|install|kgv --git-sha SHA; PR-3 / ADR-110, PR-B / ADR-113)",
+		Short:   "Cluster-shipped release bundle (release bundle|install|kgv|reconcile; PR-3 / ADR-110, PR-B / ADR-113)",
 		Subcommands: []cliSub{
 			{
 				Name:  subReleaseBundle,
@@ -759,6 +759,16 @@ var cliCommands = []cliCommand{
 					{Name: "git-sha", Short: "40-char lowercase hex git SHA (required)", Req: true},
 					{Name: "releases-root", Short: "releases root (default /opt/faas/releases)"},
 					{Name: "from-zero", Short: "write KGVZero (zero CRITICAL/HIGH) without parsing the on-disk SBoM"},
+					{Name: "json", Short: "emit structured JSON to stdout"},
+				},
+			},
+			{
+				Name:  subReleaseReconcile,
+				Short: "Remove stale unapplied release rows after a newer release succeeds",
+				Flags: []cliFlag{
+					{Name: "releases-root", Short: "releases root (default /opt/faas/releases)"},
+					{Name: "retention", Short: "minimum abandoned-row age (default 24h)"},
+					{Name: "dry-run", Short: "report eligible rows without deleting"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
 				},
 			},

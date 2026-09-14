@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -512,27 +513,35 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	components := make([]api.PublicStatusComponent, 0, 5)
+	launchAt, launchErr := configuredPublicStatusLaunchAt(os.Getenv)
+	if launchErr != nil {
+		// Invalid launch metadata must not turn pre-launch burn-in into
+		// customer-visible uptime. Fail closed at the current instant and
+		// surface the configuration fault through the data-status contract.
+		s.log.Error("status: invalid public launch boundary", "err", launchErr)
+		launchAt = now
+		evaluation.dataStatus = "unavailable"
+	}
 	for _, component := range publicstatus.AllComponents() {
 		dailyDomain := make([]publicstatus.DailyObservation, 0, 30)
 		dailyAPI := make([]api.PublicStatusDaily, 0, 30)
 		for offset := 0; offset < 30; offset++ {
 			day := startDay.AddDate(0, 0, offset)
-			expected := 288
-			if day.Equal(utcDay(now)) {
-				expected = int(now.Sub(day)/(5*time.Minute)) + 1
-				if expected > 288 {
-					expected = 288
-				}
-			}
+			expected := publicStatusExpectedBuckets(day, now, launchAt)
 			var selected []publicstatus.Bucket
 			for _, bucket := range buckets {
-				if bucket.Component == component && !bucket.BucketAt.Before(day) && bucket.BucketAt.Before(day.Add(24*time.Hour)) {
+				if bucket.Component == component && !bucket.BucketAt.Before(day) && bucket.BucketAt.Before(day.Add(24*time.Hour)) &&
+					(launchAt.IsZero() || !bucket.BucketAt.Before(launchAt)) {
 					selected = append(selected, publicstatus.Bucket{At: bucket.BucketAt, State: bucket.State, HasTelemetry: bucket.HasTelemetry})
 				}
 			}
 			observation := publicstatus.SummarizeDay(day, selected, expected)
 			dailyDomain = append(dailyDomain, observation)
-			dailyAPI = append(dailyAPI, api.PublicStatusDaily{Date: day.Format("2006-01-02"), Status: string(observation.State), UptimePct: observation.UptimePct, CoveragePct: observation.CoveragePct})
+			status := string(observation.State)
+			if !launchAt.IsZero() && expected == 0 && day.Before(launchAt) {
+				status = "pre_release"
+			}
+			dailyAPI = append(dailyAPI, api.PublicStatusDaily{Date: day.Format("2006-01-02"), Status: status, UptimePct: observation.UptimePct, CoveragePct: observation.CoveragePct})
 		}
 		uptime, coverage, available := publicstatus.ThirtyDayUptime(dailyDomain)
 		var uptimePtr *float64
@@ -626,18 +635,75 @@ func publicStatusEvent(event state.StatusIncident) api.PublicStatusEvent {
 	}
 	updates := make([]api.PublicStatusUpdate, len(event.Updates))
 	for i, update := range event.Updates {
-		updates[i] = api.PublicStatusUpdate{ID: update.ID, State: string(update.State), Message: update.Message, PostedAt: update.At}
+		var impact *string
+		if update.Impact != nil {
+			value := string(*update.Impact)
+			impact = &value
+		}
+		components := make([]string, len(update.Components))
+		for j, component := range update.Components {
+			components[j] = string(component)
+		}
+		updates[i] = api.PublicStatusUpdate{
+			ID: update.ID, State: string(update.State), Message: update.Message, PostedAt: update.At,
+			EditedAt: update.EditedAt, Impact: impact, Components: components,
+		}
 	}
 	return api.PublicStatusEvent{
 		ID: event.PublicID, Kind: string(event.Kind), Title: event.Title, Impact: string(event.Impact), Components: components,
 		State: string(event.State), StartsAt: event.StartsAt, ScheduledStartAt: event.ScheduledStartAt,
-		ScheduledEndAt: event.ScheduledEndAt, UpdatedAt: event.UpdatedAt, ResolvedAt: event.ResolvedAt, Updates: updates,
+		ScheduledEndAt: event.ScheduledEndAt, UpdatedAt: event.UpdatedAt, EditedAt: event.EditedAt,
+		ResolvedAt: event.ResolvedAt, Updates: updates,
 	}
 }
 
 func utcDay(value time.Time) time.Time {
 	year, month, day := value.UTC().Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+const publicStatusBucketInterval = 5 * time.Minute
+
+func configuredPublicStatusLaunchAt(getenv func(string) string) (time.Time, error) {
+	raw := strings.TrimSpace(getenv("FAAS_PUBLIC_STATUS_LAUNCH_AT"))
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	launchAt, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("FAAS_PUBLIC_STATUS_LAUNCH_AT must be RFC3339: %w", err)
+	}
+	return launchAt.UTC(), nil
+}
+
+// publicStatusExpectedBuckets counts five-minute UTC bucket boundaries inside
+// one day that are both at/after the public launch and at/before now. This
+// excludes burn-in data and correctly weights a partial first public day.
+func publicStatusExpectedBuckets(day, now, launchAt time.Time) int {
+	day = utcDay(day)
+	now = now.UTC()
+	dayEnd := day.Add(24 * time.Hour)
+	if now.Before(day) || (!launchAt.IsZero() && now.Before(launchAt)) {
+		return 0
+	}
+
+	first := 0
+	if !launchAt.IsZero() && launchAt.After(day) {
+		if !launchAt.Before(dayEnd) {
+			return 0
+		}
+		delta := launchAt.Sub(day)
+		first = int((delta + publicStatusBucketInterval - 1) / publicStatusBucketInterval)
+	}
+
+	last := 287
+	if now.Before(dayEnd) {
+		last = int(now.Sub(day) / publicStatusBucketInterval)
+	}
+	if last < first {
+		return 0
+	}
+	return last - first + 1
 }
 
 func (s *server) runStatusEvaluator(ctx context.Context) {

@@ -93,14 +93,19 @@ func TestValidateDeployDiffManifest_RejectsWorkflows(t *testing.T) {
 }
 
 func TestBuildPreviewBuildPlan_PreservesResolvedSourceIntent(t *testing.T) {
-	got := buildPreviewBuildPlan("", shapeFunction, "python312", "handler.handler", "abc", false)
+	got := buildPreviewBuildPlan("", shapeFunction, "python312", "handler.handler", "abc", false, false)
 	if got.Class != "function" || got.Framework != "python" || got.Runtime != "python312" || got.Handler != "handler.handler" || got.SourceSHA256 != "abc" {
 		t.Fatalf("function preview plan = %+v", got)
 	}
 
-	got = buildPreviewBuildPlan("", shapeApp, "", "", "", true)
+	got = buildPreviewBuildPlan("", shapeApp, "", "", "", true, false)
 	if got.Class != "app" || got.Framework != "unknown" {
 		t.Fatalf("image preview plan = %+v, want app/unknown", got)
+	}
+
+	got = buildPreviewBuildPlan("", shapeApp, "", "", "abc", false, true)
+	if got.Class != "app" || got.Framework != "docker" || got.SourceSHA256 != "abc" {
+		t.Fatalf("explicit Dockerfile preview plan = %+v, want app/docker", got)
 	}
 }
 

@@ -223,17 +223,18 @@ func TestLogs_SinceWrittenAt_AppliesToReplay(t *testing.T) {
 // meaningful diagnostic instead of guessing between the two
 // possible bounds.
 //
-// The test seeds one line BEFORE opening the stream so the ring
-// has a non-zero head_written_at (the producer's gap check is
-// gated on headAt non-zero + headAt.After(bound)). SinceSeq=0
+// The test forces eviction BEFORE opening the stream so the ring
+// has both a non-zero head_written_at and sequence-watermark proof
+// that older lines existed. SinceSeq=0
 // skips the initial-page loop; we don't assert on a survivor
 // because Subscribe only delivers lines committed AFTER attach,
 // and that's a property of the ring, not the gap logic.
 func TestLogs_GapWhenSinceWrittenAtBelowRetained(t *testing.T) {
-	ring := logbuf.New(1 << 20)
-	// One line so head_written_at is non-zero at attach time.
-	if _, err := ring.Write("stdout", []byte("alpha\n")); err != nil {
-		t.Fatalf("Write: %v", err)
+	ring := logbuf.New(1 << 6)
+	for i := 0; i < 20; i++ {
+		if _, err := ring.Write("stdout", []byte("1234567\n")); err != nil {
+			t.Fatalf("Write[%d]: %v", i, err)
+		}
 	}
 	// Anchor a bound strictly older than the ring's head line so
 	// the producer's headAt.After(bound) check fires.
@@ -261,5 +262,39 @@ func TestLogs_GapWhenSinceWrittenAtBelowRetained(t *testing.T) {
 	}
 	if first.GetGapToWrittenAt() == nil {
 		t.Errorf("gap frame missing gap_to_written_at timestamp")
+	}
+}
+
+// TestLogs_NoGapWhenSinceWrittenAtPredatesFreshRing distinguishes a fresh
+// instance from retention loss. A first line written after the requested
+// timestamp is ordinary replay data; without an advanced sequence watermark
+// there is no evidence that vmmd evicted anything.
+func TestLogs_NoGapWhenSinceWrittenAtPredatesFreshRing(t *testing.T) {
+	ring := logbuf.New(1 << 20)
+	if _, err := ring.Write("stdout", []byte("first line\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	bound := time.Now().Add(-1 * time.Hour)
+	follow := false
+	cl := startLogsTestClient(t, &fakeVMM{
+		logRingFn: func(string) *logbuf.Ring { return ring },
+	})
+	stream, err := cl.Logs(context.Background(), &vmmdpb.LogsRequest{
+		Instance:       "inst-1",
+		SinceWrittenAt: timestamppb.New(bound),
+		Follow:         &follow,
+	})
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("stream.Recv[0]: %v", err)
+	}
+	if first.GetIsGap() {
+		t.Fatalf("fresh ring emitted a false retention gap: %+v", first)
+	}
+	if got := first.GetLine(); got != "first line" {
+		t.Errorf("line = %q, want first line", got)
 	}
 }

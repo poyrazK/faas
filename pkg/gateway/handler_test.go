@@ -3940,7 +3940,7 @@ func TestApplyAppsMaintenanceMode_FiresBeforeEdgeRuleMaintenance(t *testing.T) {
 // pkg/gateway/synth.go:223-225.
 func TestStampRequestBudget_LogsEndpointSanitized(t *testing.T) {
 	var logBuf bytes.Buffer
-	log := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	log := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	h := &Handler{
 		metrics: NewMetrics(),

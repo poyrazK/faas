@@ -1847,6 +1847,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		s3c, s3Err := logarchive.NewS3Client(
 			archiveCfg.Endpoint, archiveCfg.Region, archiveCfg.Bucket,
 			archiveCfg.KeyID, archiveCfg.Secret,
+			archiveCfg.AuthMode,
 		)
 		if s3Err != nil {
 			log.Warn("gatewayd-internal: S3 client build failed; archive read-back disabled", "err", s3Err)

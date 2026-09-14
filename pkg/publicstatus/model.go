@@ -152,6 +152,45 @@ func ValidateMessage(message string) *ValidationError {
 	return nil
 }
 
+func ValidateTitle(title string) *ValidationError {
+	if strings.TrimSpace(title) == "" || utf8.RuneCountInString(title) > 160 {
+		return &ValidationError{Code: CodeInvalidTitle, Message: "title must contain 1 to 160 characters"}
+	}
+	return nil
+}
+
+// ValidateAttribution validates the mutable description of what an event
+// affects. It intentionally omits lifecycle and schedule checks, which remain
+// immutable after publication.
+func ValidateAttribution(kind Kind, impact State, components []Component) *ValidationError {
+	if len(components) == 0 {
+		return &ValidationError{Code: CodeInvalidComponent, Message: "at least one affected component is required"}
+	}
+	seen := make(map[Component]struct{}, len(components))
+	for _, component := range components {
+		if !ValidComponent(component) {
+			return &ValidationError{Code: CodeInvalidComponent, Message: fmt.Sprintf("unknown public component %q", component)}
+		}
+		if _, ok := seen[component]; ok {
+			return &ValidationError{Code: CodeInvalidComponent, Message: fmt.Sprintf("duplicate public component %q", component)}
+		}
+		seen[component] = struct{}{}
+	}
+	switch kind {
+	case KindIncident:
+		if impact != StateDegraded && impact != StatePartialOutage && impact != StateMajorOutage {
+			return &ValidationError{Code: CodeInvalidEvent, Message: "incident impact must be degraded, partial_outage, or major_outage"}
+		}
+	case KindMaintenance:
+		if impact != StateMaintenance {
+			return &ValidationError{Code: CodeInvalidEvent, Message: "maintenance impact must remain maintenance"}
+		}
+	default:
+		return &ValidationError{Code: CodeInvalidEvent, Message: "kind must be incident or maintenance"}
+	}
+	return nil
+}
+
 func ValidateTransition(kind Kind, from, to Lifecycle) *ValidationError {
 	if from == to {
 		if terminal(from) {

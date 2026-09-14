@@ -2898,7 +2898,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
 	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
 	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))
+	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusEvent)))
 	mux.HandleFunc("POST /v1/admin/status/incidents/{public_id}/updates", s.authLimited(s.requireAdminMutation(s.updateAdminStatusEvent)))
+	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}/updates/{update_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusUpdate)))
 	mux.HandleFunc("GET /v1/admin/status/incidents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireSessionPrincipal(s.listAdminStatusEvents)))))
 
 	// CLI auth device-code flow (spec §2.2). Code minting and exchange

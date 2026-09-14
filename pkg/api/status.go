@@ -53,3 +53,20 @@ func (c *Client) PostAdminStatusIncidentsPublic_idUpdates(ctx context.Context, p
 	err := c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
 	return out, err
 }
+
+// PatchAdminStatusIncidentsPublic_id corrects a published event title.
+func (c *Client) PatchAdminStatusIncidentsPublic_id(ctx context.Context, publicID string, request AdminStatusEventEditRequest, idempotencyKey string) (PublicStatusEvent, error) {
+	var out PublicStatusEvent
+	path := cookieOnlyAdminStatusPath + "/" + url.PathEscape(publicID)
+	err := c.doWithIdempotencyKey(ctx, http.MethodPatch, path, request, &out, idempotencyKey)
+	return out, err
+}
+
+// PatchAdminStatusIncidentsPublic_idUpdatesUpdate_id corrects one published
+// timeline message while preserving its posted_at ordering timestamp.
+func (c *Client) PatchAdminStatusIncidentsPublic_idUpdatesUpdate_id(ctx context.Context, publicID, updateID string, request AdminStatusUpdateEditRequest, idempotencyKey string) (PublicStatusEvent, error) {
+	var out PublicStatusEvent
+	path := cookieOnlyAdminStatusPath + "/" + url.PathEscape(publicID) + "/updates/" + url.PathEscape(updateID)
+	err := c.doWithIdempotencyKey(ctx, http.MethodPatch, path, request, &out, idempotencyKey)
+	return out, err
+}

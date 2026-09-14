@@ -95,6 +95,37 @@ func TestPublicStatusOverviewCombinesTelemetryHistoryAndPublicEvents(t *testing.
 	}
 }
 
+func TestPublicStatusLaunchBoundaryExcludesBurnInAndWeightsFirstDay(t *testing.T) {
+	day := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	launchAt := day.Add(10*time.Hour + 2*time.Minute)
+	now := day.Add(11 * time.Hour)
+
+	if got := publicStatusExpectedBuckets(day.Add(-24*time.Hour), now, launchAt); got != 0 {
+		t.Fatalf("pre-launch expected buckets = %d, want 0", got)
+	}
+	// First eligible boundary is 10:05 and the last is 11:00.
+	if got := publicStatusExpectedBuckets(day, now, launchAt); got != 12 {
+		t.Fatalf("first public day expected buckets = %d, want 12", got)
+	}
+	if got := publicStatusExpectedBuckets(day, day.Add(24*time.Hour), launchAt); got != 167 {
+		t.Fatalf("completed first public day expected buckets = %d, want 167", got)
+	}
+	if got := publicStatusExpectedBuckets(day.Add(24*time.Hour), day.Add(48*time.Hour), launchAt); got != 288 {
+		t.Fatalf("full post-launch day expected buckets = %d, want 288", got)
+	}
+}
+
+func TestConfiguredPublicStatusLaunchAt(t *testing.T) {
+	want := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	got, err := configuredPublicStatusLaunchAt(func(string) string { return "2026-09-14T03:00:00+03:00" })
+	if err != nil || !got.Equal(want) {
+		t.Fatalf("configured launch = %v, %v; want %v", got, err, want)
+	}
+	if _, err := configuredPublicStatusLaunchAt(func(string) string { return "September 14" }); err == nil {
+		t.Fatal("invalid launch boundary accepted")
+	}
+}
+
 func TestPublicStatusEndpointsKeepNonFinitePrometheusValuesOutOfJSON(t *testing.T) {
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {

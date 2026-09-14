@@ -843,6 +843,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				shipCfg.Bucket,
 				shipCfg.KeyID,
 				shipCfg.Secret,
+				shipCfg.AuthMode,
 			)
 			if err != nil {
 				log.Warn("logarchive.s3client_init_failed", "err", err)

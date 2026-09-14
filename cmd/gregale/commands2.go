@@ -2317,6 +2317,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// BEFORE the Phase 3 / CreateApp / Deploy body so no writes
 	// happen. --diff and --dry-run never ship a deploy.
 	if *diff {
+		if *dockerfile && *tarball != "" {
+			if err := validateExplicitDockerfileArchive(*tarball, sourceRoot); err != nil {
+				return printErr("Dockerfile build unavailable", err)
+			}
+		}
 		// Project deploys have a different preview contract from a
 		// single-app diff: the apply path is driven by ScanProject, so
 		// preview must use that same planner and render the complete
@@ -2333,10 +2338,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				*diffStrict || !*diffLenient)
 		}
 		opts := buildDiffOptions(slug, resolvedShape, *runtime, *handler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile)
-		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, *runtime, *handler, sourceSHA256, *image != "")
-		if *dockerfile {
-			opts.BuildPlan.Framework = string(fwDocker)
-		}
+		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, *runtime, *handler, sourceSHA256, *image != "", *dockerfile)
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
 		opts.Strict = !*diffLenient

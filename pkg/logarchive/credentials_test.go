@@ -69,6 +69,15 @@ func TestConfigWithCredentialsFillsUnsetValues(t *testing.T) {
 	}
 }
 
+func TestConfigWithCredentialsSelectsGCPMetadataAuth(t *testing.T) {
+	got := (Config{}).WithCredentials(Credentials{
+		Endpoint: "https://storage.googleapis.com", Region: "auto", Bucket: "logs", AuthMode: "gcp_metadata",
+	})
+	if got.AuthMode != "gcp_metadata" || got.KeyID != "" || got.Secret != "" {
+		t.Fatalf("config = %#v, want keyless GCP metadata auth", got)
+	}
+}
+
 func TestConfigWithCredentialsPreservesDirectRegion(t *testing.T) {
 	c := Config{Region: "eu-direct"}
 	got := c.WithCredentials(Credentials{Region: "file-region"})

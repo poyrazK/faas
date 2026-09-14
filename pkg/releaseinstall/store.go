@@ -49,6 +49,12 @@ type Store interface {
 	// the bundle-orphans check (an unapplied bundle whose on-disk
 	// directory has been removed is a recoverable warning).
 	ListAllBundles(ctx context.Context) ([]BundleRow, error)
+	// DeleteAbandonedBundle removes one stale unapplied bundle row. The
+	// database rechecks every safety condition at delete time: the row must
+	// predate before, remain unapplied, have no compute-node reference, and
+	// have a newer applied bundle. A false result is an idempotent protected
+	// or already-clean outcome.
+	DeleteAbandonedBundle(ctx context.Context, gitSHA string, before time.Time) (bool, error)
 	// UpsertComputeNode writes the per-node release membership on
 	// the compute_nodes table (PR-6 / issue #911). Stamps
 	// release_id + manifest_hash keyed by name (the host's
@@ -377,6 +383,39 @@ func (s pgStore) ListAllBundles(ctx context.Context) ([]BundleRow, error) {
 		return nil, fmt.Errorf("releaseinstall: iterate: %w", err)
 	}
 	return out, nil
+}
+
+// DeleteAbandonedBundle implements Store. The correlated guards make cleanup
+// safe if a rollout or node membership changes between the CLI's read and this
+// delete: applied and referenced bundles can never be removed.
+func (s pgStore) DeleteAbandonedBundle(ctx context.Context, gitSHA string, before time.Time) (bool, error) {
+	if !ValidGitSHA(gitSHA) {
+		return false, fmt.Errorf("releaseinstall: invalid git_sha")
+	}
+	if before.IsZero() {
+		return false, fmt.Errorf("releaseinstall: abandonment cutoff is required")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		delete from release_bundles abandoned
+		 where abandoned.git_sha = $1
+		   and abandoned.created_at < $2
+		   and abandoned.applied_at is null
+		   and not exists (
+		       select 1
+		         from compute_nodes node
+		        where node.release_id = abandoned.git_sha
+		   )
+		   and exists (
+		       select 1
+		         from release_bundles newer
+		        where newer.applied_at is not null
+		          and newer.created_at > abandoned.created_at
+		   )
+	`, gitSHA, before.UTC())
+	if err != nil {
+		return false, fmt.Errorf("releaseinstall: delete abandoned bundle: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // UpsertComputeNode implements Store.

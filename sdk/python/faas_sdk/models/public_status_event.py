@@ -38,6 +38,7 @@ class PublicStatusEvent:
     starts_at: datetime.datetime | Unset = UNSET
     scheduled_start_at: datetime.datetime | Unset = UNSET
     scheduled_end_at: datetime.datetime | Unset = UNSET
+    edited_at: datetime.datetime | Unset = UNSET
     resolved_at: datetime.datetime | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +76,10 @@ class PublicStatusEvent:
         if not isinstance(self.scheduled_end_at, Unset):
             scheduled_end_at = self.scheduled_end_at.isoformat()
 
+        edited_at: str | Unset = UNSET
+        if not isinstance(self.edited_at, Unset):
+            edited_at = self.edited_at.isoformat()
+
         resolved_at: str | Unset = UNSET
         if not isinstance(self.resolved_at, Unset):
             resolved_at = self.resolved_at.isoformat()
@@ -99,6 +104,8 @@ class PublicStatusEvent:
             field_dict["scheduled_start_at"] = scheduled_start_at
         if scheduled_end_at is not UNSET:
             field_dict["scheduled_end_at"] = scheduled_end_at
+        if edited_at is not UNSET:
+            field_dict["edited_at"] = edited_at
         if resolved_at is not UNSET:
             field_dict["resolved_at"] = resolved_at
 
@@ -156,6 +163,13 @@ class PublicStatusEvent:
         else:
             scheduled_end_at = datetime.datetime.fromisoformat(_scheduled_end_at)
 
+        _edited_at = d.pop("edited_at", UNSET)
+        edited_at: datetime.datetime | Unset
+        if isinstance(_edited_at, Unset):
+            edited_at = UNSET
+        else:
+            edited_at = datetime.datetime.fromisoformat(_edited_at)
+
         _resolved_at = d.pop("resolved_at", UNSET)
         resolved_at: datetime.datetime | Unset
         if isinstance(_resolved_at, Unset):
@@ -175,6 +189,7 @@ class PublicStatusEvent:
             starts_at=starts_at,
             scheduled_start_at=scheduled_start_at,
             scheduled_end_at=scheduled_end_at,
+            edited_at=edited_at,
             resolved_at=resolved_at,
         )
 
