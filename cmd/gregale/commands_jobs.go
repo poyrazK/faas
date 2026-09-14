@@ -103,6 +103,9 @@ func cmdJobsList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	limitProvided := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "limit" {
@@ -158,6 +161,9 @@ func cmdJobsAdd(args []string) int {
 	retries := fs.Int("retries", 0, "per-task max retries (0 = plan default)")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *image == "" {
@@ -244,6 +250,9 @@ func cmdJobsUpdate(args []string) int {
 	resume := fs.Bool("resume", false, "resume dispatches (status=active)")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *pause && *resume {
@@ -363,6 +372,9 @@ func cmdJobsRun(args []string) int {
 	timeout := fs.Int("timeout", 0, "override task timeout (s) for this run")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *tasks <= 0 {

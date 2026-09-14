@@ -251,6 +251,9 @@ func cmdDeploymentsExcludeClear(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" {
 		PrintUsage(os.Stderr, "usage: gregale deployments exclude clear --slug=NAME [--project-slug=SLUG]", "deployments exclude")
 		return 1

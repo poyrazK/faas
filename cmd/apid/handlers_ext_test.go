@@ -2262,12 +2262,12 @@ func TestCreateCron_AtPerAppLimitReturns403(t *testing.T) {
 	// Pro caps at 20 per-app; seed all 20 directly.
 	limits := api.MustLimitsFor(api.PlanPro)
 	for i := 0; i < limits.CronLimitPerApp; i++ {
-		if _, err := e.store.CreateCron(context.Background(), appID, "*/5 * * * *", "/x", true); err != nil {
+		if _, err := e.store.CreateCron(context.Background(), appID, "*/5 * * * *", fmt.Sprintf("/seed-%d", i), true); err != nil {
 			t.Fatalf("seed cron %d: %v", i, err)
 		}
 	}
 	rec := e.do(t, "POST", "/v1/crons",
-		api.CreateCronRequest{AppID: appID, Schedule: "*/5 * * * *", Path: "/x"}, nil)
+		api.CreateCronRequest{AppID: appID, Schedule: "*/5 * * * *", Path: "/beyond-cap"}, nil)
 	assertProblem(t, rec, 403, api.CodePlanCronQuota)
 }
 
@@ -2283,12 +2283,12 @@ func TestCreateCron_AtPerAccountLimitReturns403(t *testing.T) {
 	appA := mustSeedApp(t, e, "cron-acct-a")
 	appB := mustSeedApp(t, e, "cron-acct-b")
 	for i := 0; i < limits.CronLimitPerApp; i++ {
-		if _, err := e.store.CreateCron(context.Background(), appA, "*/5 * * * *", "/x", true); err != nil {
+		if _, err := e.store.CreateCron(context.Background(), appA, "*/5 * * * *", fmt.Sprintf("/a-%d", i), true); err != nil {
 			t.Fatalf("seed A cron %d: %v", i, err)
 		}
 	}
 	for i := 0; i < limits.CronLimitPerApp; i++ {
-		if _, err := e.store.CreateCron(context.Background(), appB, "*/5 * * * *", "/x", true); err != nil {
+		if _, err := e.store.CreateCron(context.Background(), appB, "*/5 * * * *", fmt.Sprintf("/b-%d", i), true); err != nil {
 			t.Fatalf("seed B cron %d: %v", i, err)
 		}
 	}
@@ -2299,13 +2299,13 @@ func TestCreateCron_AtPerAccountLimitReturns403(t *testing.T) {
 	// partially-full app and POST 11 more (to push per-account to 51).
 	appC := mustSeedApp(t, e, "cron-acct-c")
 	for i := 0; i < 10; i++ {
-		if _, err := e.store.CreateCron(context.Background(), appC, "*/5 * * * *", "/x", true); err != nil {
+		if _, err := e.store.CreateCron(context.Background(), appC, "*/5 * * * *", fmt.Sprintf("/c-%d", i), true); err != nil {
 			t.Fatalf("seed C cron %d: %v", i, err)
 		}
 	}
 	// per-account is now 40 + 10 = 50 == cap; one more on appC must 403.
 	rec := e.do(t, "POST", "/v1/crons",
-		api.CreateCronRequest{AppID: appC, Schedule: "*/5 * * * *", Path: "/x"}, nil)
+		api.CreateCronRequest{AppID: appC, Schedule: "*/5 * * * *", Path: "/beyond-account-cap"}, nil)
 	assertProblem(t, rec, 403, api.CodePlanCronQuota)
 }
 

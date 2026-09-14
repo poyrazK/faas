@@ -107,6 +107,9 @@ func cmdEdgeRulesList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *kind != "" && !isEdgeRuleKind(*kind) {
 		return printErr("Invalid --kind", fmt.Errorf("must be one of %s; got %q", strings.Join(edgeRuleKindVocab, ", "), *kind))
 	}
@@ -279,6 +282,9 @@ func cmdEdgeRulesCreate(args []string) int {
 	respondBody := fs.String("respond-body", "", "kind=respond: JSON response body (max 64 KiB)")
 
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *kind == "" || *matchHost == "" {

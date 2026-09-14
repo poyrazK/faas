@@ -96,6 +96,9 @@ func cmdWebhooksList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" {
 		PrintUsage(os.Stderr, "usage: gregale webhooks list --app <slug>", "webhooks")
 		return 1
@@ -127,6 +130,9 @@ func cmdWebhooksAdd(args []string) int {
 	fs.Var(&events, "event", "event name (repeat for multiple); empty = all events")
 	policy := fs.String("retry-policy", "default", "retry policy: default|aggressive|none")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *target == "" {
@@ -178,7 +184,7 @@ func cmdWebhooksUpdate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *slug == "" || len(fs.Args()) == 0 {
+	if *slug == "" || len(fs.Args()) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale webhooks update <id> --app <slug> [--target-url X] [--retry-policy X] [--enable|--disable]", "webhooks")
 		return 1
 	}
@@ -257,7 +263,7 @@ func cmdWebhookDeliveries(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *slug == "" || len(fs.Args()) == 0 {
+	if *slug == "" || len(fs.Args()) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale webhooks deliveries --app <slug> <id> [--status X] [--page-size N] [--page-token T]", "webhooks")
 		return 1
 	}

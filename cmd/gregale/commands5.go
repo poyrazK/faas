@@ -234,6 +234,9 @@ func envPull(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *app == "" {
 		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [-o .env]", "env")
 		return 1
@@ -314,6 +317,9 @@ func envPush(args []string) int {
 	// --secret-scan=off for local-dev sandbox keys (e.g. sk_test_…).
 	secretScan := fs.String("secret-scan", "on", "scan pairs for known credential patterns before pushing (on|off|strict|source-tree; default on)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	secretScanMode, secretScanErr := parseSecretScanFlag(*secretScan)
@@ -662,6 +668,9 @@ func cmdAppScale(slug string, args []string) int {
 	// value = no change. Free + grpc = 403 server-side.
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to leave unchanged)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *warm && *noWarm {

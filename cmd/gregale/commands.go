@@ -57,6 +57,9 @@ func cmdLogin(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 
 	// CI path — unchanged behavior. Keep --token working so build
 	// servers + scripts aren't broken by this change. Routes through

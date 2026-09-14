@@ -88,6 +88,9 @@ func cmdAppStaticEgressIPShow(slug string, args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -154,6 +157,9 @@ func cmdAppStaticEgressIPSet(slug string, args []string) int {
 func cmdAppStaticEgressIPClear(slug string, args []string) int {
 	fs := newFlagSet("app static-egress-ip clear", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	client, err := authedClient()

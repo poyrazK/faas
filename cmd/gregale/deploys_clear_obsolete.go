@@ -27,6 +27,9 @@ func cmdDeploysClearObsolete(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *appSlug == "" {
 		PrintUsage(os.Stderr, deploysClearObsoleteUsage, "deploys")
 		return 1

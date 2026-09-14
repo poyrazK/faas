@@ -132,6 +132,26 @@ func TestCompute_Crons_EnabledFlipModify(t *testing.T) {
 	}
 }
 
+func TestCompute_Crons_SchedulingOptionsModify(t *testing.T) {
+	baseline := Baseline{Crons: []api.CronResponse{{
+		ID: "c1", Schedule: "* * * * *", Path: "/cron", Enabled: true,
+		Timezone: "UTC", SkipIfRunning: false,
+	}}}
+	skip := true
+	pending := Pending{Crons: []api.CreateCronRequest{{
+		Schedule: "* * * * *", Path: "/cron", Timezone: "Europe/Istanbul", SkipIfRunning: &skip,
+	}}}
+	got := Compute("api", "", baseline, pending)
+	for _, field := range []string{
+		"cron[* * * * * /cron].timezone",
+		"cron[* * * * * /cron].skip_if_running",
+	} {
+		if !hasChangeField(got, field, ChangeModify) {
+			t.Fatalf("missing %s change: %+v", field, got.Changes)
+		}
+	}
+}
+
 // --- diffEdgeRules: methodsChanged branch ----------------------------
 
 func TestCompute_EdgeRules_MethodsChanged(t *testing.T) {

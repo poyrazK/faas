@@ -53,6 +53,21 @@ func newFlagSet(name string, handling flag.ErrorHandling) *flag.FlagSet {
 	return fs
 }
 
+// rejectUnexpectedFlagArgs closes the standard flag package's permissive
+// trailing-token behavior for flag-only leaves. Call it immediately after a
+// successful Parse and before authentication or any API request.
+func rejectUnexpectedFlagArgs(fs *flag.FlagSet) bool {
+	if fs.NArg() == 0 {
+		return false
+	}
+	topic := fs.Name()
+	if fields := strings.Fields(topic); len(fields) > 0 {
+		topic = fields[0]
+	}
+	printUsage(osStderr, "usage: gregale "+fs.Name()+" [flags]; unexpected positional argument(s): "+strings.Join(fs.Args(), " "), topic)
+	return true
+}
+
 func setFlagOutput(fs *flag.FlagSet, human io.Writer) {
 	if jsonOutput && !jsonUsageHelp {
 		fs.SetOutput(&jsonFlagErrorWriter{name: fs.Name(), dst: human})

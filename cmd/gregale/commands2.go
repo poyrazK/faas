@@ -317,6 +317,9 @@ func cmdApp(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *warm && *noWarm {
 		return printErr("Invalid flags", fmt.Errorf("--warm-snapshot and --no-warm-snapshot are mutually exclusive"))
 	}
@@ -1053,48 +1056,97 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 type manifestCronClient interface {
 	ListCrons(ctx context.Context, slug string) ([]api.CronResponse, error)
 	CreateCron(ctx context.Context, slug string, req api.CreateCronRequest) (api.CronResponse, error)
-	Whoami(ctx context.Context) (api.AccountResponse, error)
-}
-
-// manifestCronDeleteClient is the optional destructive half of the cron
-// surface used to compensate a deployment that never becomes durable. Keep
-// it separate from manifestCronClient so the helper's small unit-test seam
-// remains source-compatible with fakes that only exercise fan-out.
-type manifestCronDeleteClient interface {
+	UpdateCron(ctx context.Context, id string, req api.UpdateCronRequest) (api.CronResponse, error)
 	DeleteCron(ctx context.Context, id string) error
+	Whoami(ctx context.Context) (api.AccountResponse, error)
 }
 
 const manifestTriggerCleanupTimeout = 10 * time.Second
 
-// cleanupManifestTriggers removes only the rows created by this deploy. A
-// cancellation of the deployment request must not also cancel the cleanup;
-// otherwise a rejected upload can leave schedules firing against an app with
-// no live release. Deleting in reverse order makes the compensation mirror
-// the staging order and keeps partial cleanup deterministic.
-func cleanupManifestTriggers(ctx context.Context, client manifestCronClient, ids []string) error {
-	if len(ids) == 0 {
-		return nil
+type manifestCronRollbackStep struct {
+	description string
+	undo        func(context.Context) error
+}
+
+// manifestCronTransaction records the inverse of each successful desired-state
+// mutation. The deployment caller commits it only after upload succeeds; every
+// earlier failure restores the previous cron set in reverse order.
+type manifestCronTransaction struct {
+	steps []manifestCronRollbackStep
+}
+
+func (t *manifestCronTransaction) commit() {
+	if t != nil {
+		t.steps = nil
 	}
-	deleter, ok := client.(manifestCronDeleteClient)
-	if !ok {
-		return errors.New("client does not support trigger deletion")
+}
+
+func (t *manifestCronTransaction) rollback(ctx context.Context) error {
+	if t == nil || len(t.steps) == 0 {
+		return nil
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), manifestTriggerCleanupTimeout)
 	defer cancel()
 	var cleanupErrs []error
-	for i := len(ids) - 1; i >= 0; i-- {
-		if ids[i] == "" {
-			continue
-		}
-		if err := deleter.DeleteCron(cleanupCtx, ids[i]); err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete trigger %s: %w", ids[i], err))
+	for i := len(t.steps) - 1; i >= 0; i-- {
+		step := t.steps[i]
+		if err := step.undo(cleanupCtx); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("%s: %w", step.description, err))
 		}
 	}
+	t.steps = nil
 	return errors.Join(cleanupErrs...)
 }
 
 func manifestCronKey(schedule, path string) string {
 	return schedule + "\x00" + path
+}
+
+func manifestCronRequest(slug string, trigger gregalemanifest.Trigger) api.CreateCronRequest {
+	enabled := trigger.IsEnabled()
+	timezone := trigger.Timezone
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	skip := false
+	if trigger.SkipIfRunning != nil {
+		skip = *trigger.SkipIfRunning
+	}
+	return api.CreateCronRequest{
+		AppID: slug, Schedule: trigger.Schedule, Path: trigger.Path,
+		Enabled: &enabled, Timezone: timezone, SkipIfRunning: &skip,
+	}
+}
+
+func cronCreateRequestFromResponse(cron api.CronResponse) api.CreateCronRequest {
+	enabled, skip := cron.Enabled, cron.SkipIfRunning
+	return api.CreateCronRequest{
+		AppID: cron.AppID, Schedule: cron.Schedule, Path: cron.Path,
+		Enabled: &enabled, Timezone: cron.Timezone, SkipIfRunning: &skip,
+	}
+}
+
+func cronUpdateRequestFromCreate(req api.CreateCronRequest) api.UpdateCronRequest {
+	schedule, path, timezone := req.Schedule, req.Path, req.Timezone
+	return api.UpdateCronRequest{
+		Schedule: &schedule, Path: &path, Enabled: req.Enabled,
+		Timezone: &timezone, SkipIfRunning: req.SkipIfRunning,
+	}
+}
+
+func cronResponseMatchesRequest(cron api.CronResponse, req api.CreateCronRequest) bool {
+	enabled, skip := true, false
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	if req.SkipIfRunning != nil {
+		skip = *req.SkipIfRunning
+	}
+	timezone := req.Timezone
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	return cron.Enabled == enabled && cron.Timezone == timezone && cron.SkipIfRunning == skip
 }
 
 // loadWorkflowManifestForDeploy performs the workflow-only preflight before
@@ -1162,146 +1214,152 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 	return nil
 }
 
-// deployManifestTriggers fans the manifest's `triggers:` block out to
-// apid via the existing CreateCron wire. Workflow declarations are
-// handled by the deployment request separately. Issue #791 PR-C / ADR-090
-// and ADR-081.
-//
-// No manifest → no-op (returns nil). Bad manifest → wrapped error
-// from gregalemanifest.Validate, surfaced verbatim by printErr. The
-// fan-out itself is fail-fast: stop on the first CreateCron error,
-// compensate rows already created in this invocation, report progress,
-// and exit non-zero. Identical (schedule, path) triples already returned
-// by ListCrons are skipped locally, so re-running a deploy is a no-op for
-// rows that already exist; the server-side UNIQUE remains the final guard.
-//
-// Pre-count: the CLI tallies `existing` + `wanted` against the
-// account's plan limit and aborts with a clean 402 message before
-// any CreateCron. The authoritative check is server-side
-// (CreateCronIfUnderQuota takes FOR UPDATE on the apps row); the
-// pre-count is UX fast-fail only.
+// deployManifestTriggers applies the manifest as desired state and commits the
+// result immediately. The deployment path uses the transaction-returning
+// helper below so a later upload/build-submission failure can restore the
+// complete previous set.
 func deployManifestTriggers(ctx context.Context, client manifestCronClient, slug, cwd string) error {
-	_, err := deployManifestTriggersWithRollback(ctx, client, slug, cwd)
+	txn, err := deployManifestTriggersWithRollback(ctx, client, slug, cwd)
+	if err == nil {
+		txn.commit()
+	}
 	return err
 }
 
-// deployManifestTriggersWithRollback stages manifest triggers and returns
-// the IDs created by this invocation. The caller owns those IDs after a
-// successful return and must either commit them or call
-// cleanupManifestTriggers when the deployment is rejected. If staging itself
-// fails, already-created rows are compensated before the error is returned.
-func deployManifestTriggersWithRollback(ctx context.Context, client manifestCronClient, slug, cwd string) ([]string, error) {
+// deployManifestTriggersWithRollback reconciles creates, mutable scheduling
+// options, and removals. Presence of a cron for slug opts that app into
+// replacement semantics; an explicit `triggers: []` clears the target app.
+// A non-empty manifest containing only other app slugs leaves this app alone.
+// The stable identity is (schedule,path), so changing either is a remove+add.
+func deployManifestTriggersWithRollback(ctx context.Context, client manifestCronClient, slug, cwd string) (*manifestCronTransaction, error) {
+	txn := &manifestCronTransaction{}
 	if cwd == "" {
-		return nil, nil
+		return txn, nil
 	}
 	m, ok, err := gregalemanifest.Load(cwd)
 	if err != nil {
-		return nil, err
+		return txn, err
 	}
 	if !ok {
-		return nil, nil // no manifest — nothing to do
+		return txn, nil
 	}
 	if err := m.Validate(); err != nil {
-		return nil, err
+		return txn, err
 	}
-	// Filter to triggers for THIS app's slug. Triggers targeting
-	// other slugs in a multi-app project are silently ignored on
-	// this deploy — `gregale deploy` is one-app-at-a-time, and the
-	// trigger for app-b should ship when the customer deploys app-b.
+	manage := m.Triggers != nil && len(m.Triggers) == 0
 	var matching []gregalemanifest.Trigger
 	for _, t := range m.Triggers {
-		if t.App == slug {
+		if t.Kind == gregalemanifest.TriggerKindCron && t.App == slug {
+			manage = true
 			matching = append(matching, t)
 		}
 	}
-	if len(matching) == 0 {
-		return nil, nil
+	if !manage {
+		return txn, nil
 	}
 
-	// Pre-count against the server. ListCrons returns the existing
-	// rows; the per-plan CronLimitPerApp gate is the server's
-	// authority, so a clean pre-count is just a UX fast-fail. We
-	// look up the active account's plan via Whoami — silent on
-	// failure (an unknown plan falls through; the server gates with
-	// 402 ErrPlanCronsNotAllowed on the first CreateCron).
 	existing, err := client.ListCrons(ctx, slug)
 	if err != nil {
-		return nil, fmt.Errorf("list existing crons: %w", err)
+		return txn, fmt.Errorf("list existing crons: %w", err)
 	}
-	var plan api.Limits
-	planKnown := false
 	if acct, err := client.Whoami(ctx); err == nil {
 		if l, ok := api.LimitsFor(api.Plan(acct.Plan)); ok {
-			plan = l
-			planKnown = true
+			if len(matching) > l.CronLimitPerApp {
+				return txn, fmt.Errorf("cron quota exceeded: %d triggers in manifest, plan allows %d; raise plan or drop triggers",
+					len(matching), l.CronLimitPerApp)
+			}
 		}
-	}
-	existingKeys := make(map[string]struct{}, len(existing))
-	for _, cron := range existing {
-		existingKeys[manifestCronKey(cron.Schedule, cron.Path)] = struct{}{}
-	}
-	wanted := 0
-	for _, trigger := range matching {
-		if _, alreadyPresent := existingKeys[manifestCronKey(trigger.Schedule, trigger.Path)]; !alreadyPresent {
-			wanted++
-		}
-	}
-	headroom := plan.CronLimitPerApp - len(existing)
-	if planKnown && wanted > 0 && headroom < wanted {
-		return nil, fmt.Errorf("cron quota exceeded: %d triggers in manifest, plan allows %d (currently %d/%d); raise plan or drop triggers",
-			wanted, plan.CronLimitPerApp, len(existing), plan.CronLimitPerApp)
 	}
 
-	created := 0
-	createdIDs := make([]string, 0, len(matching))
-	existingIDs := make(map[string]struct{}, len(existing))
-	for _, cron := range existing {
-		if cron.ID != "" {
-			existingIDs[cron.ID] = struct{}{}
-		}
+	desiredByKey := make(map[string]api.CreateCronRequest, len(matching))
+	desiredOrder := make([]string, 0, len(matching))
+	for _, trigger := range matching {
+		key := manifestCronKey(trigger.Schedule, trigger.Path)
+		desiredByKey[key] = manifestCronRequest(slug, trigger)
+		desiredOrder = append(desiredOrder, key)
 	}
-	for i, t := range matching {
-		if _, alreadyPresent := existingKeys[manifestCronKey(t.Schedule, t.Path)]; alreadyPresent {
+	existingByKey := make(map[string]api.CronResponse, len(existing))
+	for _, cron := range existing {
+		existingByKey[manifestCronKey(cron.Schedule, cron.Path)] = cron
+	}
+
+	fail := func(operation string, err error) (*manifestCronTransaction, error) {
+		rollbackErr := txn.rollback(ctx)
+		if rollbackErr != nil {
+			return txn, fmt.Errorf("%s: %w; trigger rollback incomplete: %w", operation, err, rollbackErr)
+		}
+		return txn, fmt.Errorf("%s: %w; previous trigger state restored", operation, err)
+	}
+
+	applied := 0
+	// Update same-identity rows first. These operations do not consume quota.
+	for _, key := range desiredOrder {
+		current, exists := existingByKey[key]
+		if !exists {
 			continue
 		}
-		enabled := t.IsEnabled()
-		req := api.CreateCronRequest{
-			AppID:    slug,
-			Schedule: t.Schedule,
-			Path:     t.Path,
-			Enabled:  &enabled,
+		desired := desiredByKey[key]
+		if cronResponseMatchesRequest(current, desired) {
+			continue
 		}
-		createdCron, err := client.CreateCron(ctx, slug, req)
+		previous := cronCreateRequestFromResponse(current)
+		if _, err := client.UpdateCron(ctx, current.ID, cronUpdateRequestFromCreate(desired)); err != nil {
+			return fail("update manifest cron "+current.ID, err)
+		}
+		cronID := current.ID
+		txn.steps = append(txn.steps, manifestCronRollbackStep{
+			description: "restore trigger " + cronID,
+			undo: func(rollbackCtx context.Context) error {
+				_, err := client.UpdateCron(rollbackCtx, cronID, cronUpdateRequestFromCreate(previous))
+				return err
+			},
+		})
+		applied++
+	}
+
+	// Remove stale rows before creates so replacement at the exact cap has
+	// headroom. Each delete records enough data to recreate the prior row.
+	for _, cron := range existing {
+		if _, keep := desiredByKey[manifestCronKey(cron.Schedule, cron.Path)]; keep {
+			continue
+		}
+		if err := client.DeleteCron(ctx, cron.ID); err != nil {
+			return fail("remove stale manifest cron "+cron.ID, err)
+		}
+		previous := cronCreateRequestFromResponse(cron)
+		txn.steps = append(txn.steps, manifestCronRollbackStep{
+			description: "recreate trigger " + cron.ID,
+			undo: func(rollbackCtx context.Context) error {
+				_, err := client.CreateCron(rollbackCtx, slug, previous)
+				return err
+			},
+		})
+		applied++
+	}
+
+	for i, key := range desiredOrder {
+		if _, exists := existingByKey[key]; exists {
+			continue
+		}
+		created, err := client.CreateCron(ctx, slug, desiredByKey[key])
 		if err != nil {
-			rollbackErr := cleanupManifestTriggers(ctx, client, createdIDs)
-			// Staticcheck ST1005 — the format string must not end
-			// in a newline+period. The summary block reads as two
-			// sentences; the trailing newline from the original
-			// design flipped the staticcheck rule, so the second
-			// sentence now flows inline. Operators still see the
-			// "N triggers created, M not attempted" progress line.
-			triggerErr := fmt.Errorf("trigger %d/%d (%s %q %s) rejected: %w — %d triggers created, %d not attempted (re-run deploy after fixing; creation is idempotent by (app, schedule, path))",
-				i+1, len(matching), t.App, t.Schedule, t.Path, err, created, len(matching)-i)
-			if rollbackErr != nil {
-				triggerErr = fmt.Errorf("%w; trigger rollback incomplete: %w", triggerErr, rollbackErr)
-			} else if len(createdIDs) > 0 {
-				triggerErr = fmt.Errorf("%w; staged trigger rollback complete (%d trigger(s) removed)", triggerErr, len(createdIDs))
-			}
-			return createdIDs, triggerErr
+			req := desiredByKey[key]
+			return fail(fmt.Sprintf("trigger %d/%d (%s %q %s) rejected after %d trigger change(s)",
+				i+1, len(desiredOrder), slug, req.Schedule, req.Path, applied), err)
 		}
-		if createdCron.ID != "" {
-			if _, alreadyPresent := existingIDs[createdCron.ID]; alreadyPresent {
-				created++
-				continue
-			}
-			createdIDs = append(createdIDs, createdCron.ID)
+		createdID := created.ID
+		if createdID != "" {
+			txn.steps = append(txn.steps, manifestCronRollbackStep{
+				description: "delete staged trigger " + createdID,
+				undo:        func(rollbackCtx context.Context) error { return client.DeleteCron(rollbackCtx, createdID) },
+			})
 		}
-		created++
+		applied++
 	}
-	if !jsonOutput && created > 0 {
-		_, _ = fmt.Fprintf(osStdout, "  ✓ %s: %d trigger(s) applied\n", slug, created)
+	if !jsonOutput && applied > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  ✓ %s: %d trigger(s) applied\n", slug, applied)
 	}
-	return createdIDs, nil
+	return txn, nil
 }
 
 // templateFunctionConfig returns the wire defaults for templates whose
@@ -2685,32 +2743,31 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// Issue #791 PR-C / ADR-090: gregale.yaml triggers are staged after
 	// CreateApp so the slug exists for the FK, and before the deployment
 	// request. If upload/build/submission fails, the deferred compensation
-	// removes only rows created by this invocation, preserving the prior
-	// trigger set. A queued no-wait deployment commits the staged rows;
+	// reverses every create, update, and removal to restore the prior trigger
+	// set. A queued no-wait deployment commits the staged state;
 	// waited deployments commit only once they reach live. --no-triggers
 	// opts out of the entire fan-out.
-	var stagedManifestTriggerIDs []string
+	var stagedManifestTriggerTxn *manifestCronTransaction
 	defer func() {
-		if len(stagedManifestTriggerIDs) == 0 {
+		if stagedManifestTriggerTxn == nil || len(stagedManifestTriggerTxn.steps) == 0 {
 			return
 		}
-		if err := cleanupManifestTriggers(ctx, client, stagedManifestTriggerIDs); err != nil {
+		changes := len(stagedManifestTriggerTxn.steps)
+		if err := stagedManifestTriggerTxn.rollback(ctx); err != nil {
 			PrintWarn(osStderr, "Manifest trigger rollback incomplete: %v", err)
 			return
 		}
-		PrintProgress(osStderr, "Manifest trigger rollback complete (%d trigger(s) removed)", len(stagedManifestTriggerIDs))
+		PrintProgress(osStderr, "Manifest trigger rollback complete (%d change(s) reverted)", changes)
 	}()
 	commitManifestTriggers := func() {
-		stagedManifestTriggerIDs = nil
+		stagedManifestTriggerTxn.commit()
 	}
 	if !*noTriggers {
 		var triggerErr error
-		var triggerIDs []string
-		triggerIDs, triggerErr = deployManifestTriggersWithRollback(ctx, client, slug, sourceDir)
+		stagedManifestTriggerTxn, triggerErr = deployManifestTriggersWithRollback(ctx, client, slug, sourceDir)
 		if triggerErr != nil {
 			return printErr("Manifest triggers fan-out failed", triggerErr)
 		}
-		stagedManifestTriggerIDs = triggerIDs
 	}
 
 	if *tarball != "" {
@@ -3039,6 +3096,9 @@ func cmdTrafficSet(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *deployment == "" || *percent < 0 {
 		PrintUsage(os.Stderr, "usage: gregale traffic set --deployment <id> --percent N", "traffic")
 		return 1
@@ -3156,6 +3216,9 @@ func cmdDomains(args []string) int {
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
+		if rejectUnexpectedFlagArgs(fs) {
+			return 1
+		}
 		if *domain == "" || *slug == "" {
 			PrintUsage(os.Stderr, "usage: gregale domains add --domain <d> --app <slug>", "domains")
 			return 1
@@ -3215,6 +3278,9 @@ func cmdCrons(args []string) int {
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
 		}
+		if rejectUnexpectedFlagArgs(fs) {
+			return 1
+		}
 		if *slug == "" {
 			PrintUsage(os.Stderr, "usage: gregale crons list --app <slug>", "crons")
 			return 1
@@ -3246,6 +3312,9 @@ func cmdCrons(args []string) int {
 		timezone := fs.String("timezone", "", "IANA timezone (defaults to UTC)")
 		skipIfRunning := fs.Bool("skip-if-running", false, "skip a scheduled fire while the previous cron run is active")
 		if err := fs.Parse(args[1:]); err != nil {
+			return 1
+		}
+		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
 		if *slug == "" || *schedule == "" {
@@ -3654,6 +3723,9 @@ func cmdUsageList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *month == "" {
 		*month = time.Now().UTC().Format("2006-01")
 	}
@@ -3715,6 +3787,9 @@ func cmdUsageSummary(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -3744,6 +3819,9 @@ func cmdInvoices(args []string) int {
 	limit := fs.Int("limit", 25, "page size (1..100)")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale invoices [--month YYYY-MM] [--before C] [--limit N]", "invoices")
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	client, err := authedClient()
@@ -5096,6 +5174,9 @@ func cmdUsageDaily(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *day == "" {
 		*day = time.Now().UTC().Format("2006-01-02")
 	}
@@ -5136,6 +5217,9 @@ func cmdUsageStorage(args []string) int {
 	fs := newFlagSet("usage-storage", flag.ContinueOnError)
 	day := fs.String("day", "", "day (YYYY-MM-DD); default: today UTC")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *day == "" {

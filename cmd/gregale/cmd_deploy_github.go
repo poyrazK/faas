@@ -195,6 +195,9 @@ func cmdDeployGithubSnippet(args []string) int {
 		PrintUsage(osStderr, "usage: gregale deploy --github [--app SLUG] [--repo OWNER/NAME] [--ref REF] [--pinned-sha SHA]", "deploy")
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *app == "" {
 		PrintFail(osStderr, "missing --app (the snippet generator needs a slug to embed)")
 		return 1

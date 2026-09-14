@@ -405,9 +405,11 @@ func previewCronsFromManifest(cwd, slug string) []api.CreateCronRequest {
 			enabled = *trigger.Enabled
 		}
 		crons = append(crons, api.CreateCronRequest{
-			Schedule: trigger.Schedule,
-			Path:     trigger.Path,
-			Enabled:  &enabled,
+			Schedule:      trigger.Schedule,
+			Path:          trigger.Path,
+			Enabled:       &enabled,
+			Timezone:      trigger.Timezone,
+			SkipIfRunning: trigger.SkipIfRunning,
 		})
 	}
 	return crons

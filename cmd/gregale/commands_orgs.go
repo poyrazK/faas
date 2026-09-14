@@ -219,6 +219,9 @@ func cmdOrgsCreate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" || *name == "" {
 		PrintUsage(os.Stderr, "usage: gregale orgs create --slug <slug> --name <display>", "orgs")
 		return 1
@@ -339,6 +342,9 @@ func cmdOrgsMembersInvite(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" || *email == "" {
 		PrintUsage(os.Stderr, "usage: gregale orgs members invite --org <slug> --email <addr> [--role admin|developer|viewer|billing]", "orgs")
 		return 1
@@ -374,6 +380,9 @@ func cmdOrgsMembersChangeRole(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" || *userID == "" || *role == "" {
 		PrintUsage(os.Stderr, "usage: gregale orgs members change-role --org <slug> --user <user-id> --role <role>", "orgs")
 		return 1
@@ -399,6 +408,9 @@ func cmdOrgsMembersRm(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" || *userID == "" {
 		PrintUsage(os.Stderr, "usage: gregale orgs members rm --org <slug> --user <user-id>", "orgs")
 		return 1
@@ -421,6 +433,9 @@ func cmdOrgsInvitationsLs(args []string) int {
 	slug := fs.String("org", "", "org slug (required)")
 	limit := fs.Int("limit", 50, "max rows (1..200; server caps at 200)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" {
@@ -451,6 +466,9 @@ func cmdOrgsInvitationsRevoke(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" || *invID == "" {
 		PrintUsage(os.Stderr, "usage: gregale orgs invitations revoke --org <slug> --invitation <id>", "orgs")
 		return 1
@@ -475,6 +493,9 @@ func cmdOrgsTransferOwnership(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" || *to == "" {
 		PrintUsage(os.Stderr, "usage: gregale orgs transfer-ownership --org <slug> --to <user-id>", "orgs")
 		return 1
@@ -494,6 +515,9 @@ func cmdOrgsSeatUsage(args []string) int {
 	fs := newFlagSet("orgs seat-usage", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" {
@@ -656,6 +680,9 @@ func cmdOrgsKeysList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" {
 		PrintUsage(os.Stderr, "usage: gregale orgs keys list --org <slug>", "orgs")
 		return 1
@@ -693,6 +720,9 @@ func cmdOrgsKeysAdd(args []string) int {
 	label := fs.String("label", "", "key label (required)")
 	scopesCSV := fs.String("scopes", "", "comma-separated scopes (default: [admin])")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *label == "" {
@@ -840,6 +870,9 @@ func cmdOrgsInvitationsListAll(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" {
 		PrintUsage(os.Stderr, "usage: gregale orgs invitations list-all --org <slug>", "orgs")
 		return 1
@@ -892,6 +925,9 @@ func cmdOrgsUpdate(args []string) int {
 	name := fs.String("name", "", "new display name (1..120 chars; non-empty)")
 	plan := fs.String("plan", "", "new plan (free|hobby|pro|scale)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if !validateOrgsUpdateFlags(slug, name, plan) {

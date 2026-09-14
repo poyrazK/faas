@@ -76,6 +76,9 @@ func cmdAlertList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" {
 		PrintUsage(os.Stderr, "usage: gregale alerts list --app <slug>", "alerts")
 		return 1
@@ -118,6 +121,9 @@ func cmdAlertAdd(args []string) int {
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown window in minutes (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	enabled := fs.Bool(flagNameEnabled, true, "whether the rule is enabled")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if code, ok := requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhookURL, webhookSecret, threshold, cooldown); !ok {

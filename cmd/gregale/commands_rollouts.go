@@ -97,7 +97,15 @@ func cmdRolloutsRecover(args []string) int {
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if slug == "" && fs.NArg() > 0 {
+	if slug != "" {
+		if rejectUnexpectedFlagArgs(fs) {
+			return 1
+		}
+	} else {
+		if fs.NArg() != 1 {
+			PrintUsage(os.Stderr, rolloutsRecoverUsage, "rollouts")
+			return 1
+		}
 		slug = fs.Arg(0)
 	}
 	if slug == "" {

@@ -58,6 +58,9 @@ func githubWebhookSecretSet(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *installationID == 0 {
 		PrintUsage(os.Stderr,
 			"usage: gregale github-webhook-secret set --installation-id <id> --secret <hex> [--from-stdin]",

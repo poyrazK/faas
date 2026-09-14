@@ -264,6 +264,13 @@ var jsonUsageHelp bool
 // lines go to stderr on bad argv and customers grep them; the glyph would
 // just be noise there. Unknown command topics use the consolidated CLI page.
 func PrintUsage(w io.Writer, usage, topic string) {
+	printUsage(w, usage, topic)
+}
+
+// printUsage is the dynamic-topic form used by shared argument validators.
+// PrintUsage remains the public call site so the doc-slug audit can continue
+// checking literal command topics.
+func printUsage(w io.Writer, usage, topic string) {
 	if jsonOutput && !jsonUsageHelp {
 		_ = writeJSONProblemTo(w, api.Problem{
 			Type:    docsSiteURL + "/errors/invalid-request",

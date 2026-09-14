@@ -47,6 +47,9 @@ func cmdWorkflowsList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 
 	if *appSlug == "" {
 		PrintUsage(os.Stderr, "usage: gregale workflows list --app <slug> [--limit N] [--offset N] [--status S]", "workflows")
@@ -90,6 +93,9 @@ func cmdWorkflowsRun(args []string) int {
 	appSlug := fs.String("app", "", "app slug")
 	inputStr := fs.String("input", "{}", "JSON input payload for the workflow")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 

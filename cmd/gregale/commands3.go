@@ -89,6 +89,9 @@ func secretsList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *app == "" {
 		PrintUsage(os.Stderr, "usage: gregale secrets list --app <slug> [--scope <name>|__all__]", "secrets")
 		return 1
@@ -513,6 +516,9 @@ func secretsListAll(args []string) int {
 	before := fs.String("before", "", "pagination cursor from a previous call's next_before (slug|key)")
 	limit := fs.Int("limit", 100, "page size (1..200; server caps at 200)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {

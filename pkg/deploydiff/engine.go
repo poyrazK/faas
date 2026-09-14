@@ -664,7 +664,7 @@ func diffCrons(out *Diff, base []api.CronResponse, pending []api.CreateCronReque
 				After: AsAny(p),
 			})
 		default:
-			// Enabled flag flip is the only per-row modify.
+			// Scheduling options are mutable without replacing the cron.
 			// Pointer-aware: nil Enabled = "use default" (true per
 			// the gregalemanifest convention), so compare
 			// effective booleans.
@@ -676,6 +676,26 @@ func diffCrons(out *Diff, base []api.CronResponse, pending []api.CreateCronReque
 				out.Changes = append(out.Changes, Change{
 					Field: field + ".enabled", Kind: ChangeModify,
 					Before: AsAny(b.Enabled), After: AsAny(pendEnabled),
+				})
+			}
+			pendTimezone := p.Timezone
+			if pendTimezone == "" {
+				pendTimezone = "UTC"
+			}
+			if pendTimezone != b.Timezone {
+				out.Changes = append(out.Changes, Change{
+					Field: field + ".timezone", Kind: ChangeModify,
+					Before: AsAny(b.Timezone), After: AsAny(pendTimezone),
+				})
+			}
+			pendSkip := false
+			if p.SkipIfRunning != nil {
+				pendSkip = *p.SkipIfRunning
+			}
+			if pendSkip != b.SkipIfRunning {
+				out.Changes = append(out.Changes, Change{
+					Field: field + ".skip_if_running", Kind: ChangeModify,
+					Before: AsAny(b.SkipIfRunning), After: AsAny(pendSkip),
 				})
 			}
 		}

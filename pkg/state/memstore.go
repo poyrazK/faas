@@ -9029,6 +9029,17 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 	if !ok || app.Status == AppDeleted {
 		return Cron{}, ErrNotFound
 	}
+	if opts.Timezone == "" {
+		opts.Timezone = "UTC"
+	}
+	// Match PgStore: an identical retry returns the durable row before quota
+	// checks, so reapplying at the exact cap remains idempotent.
+	for _, c := range m.crons {
+		if c.AppID == appID && c.Schedule == schedule && c.Path == path &&
+			c.Enabled == enabled && c.Timezone == opts.Timezone && c.SkipIfRunning == opts.SkipIfRunning {
+			return c, nil
+		}
+	}
 	// 1. Per-app count. Disabled crons still count toward the cap so
 	//    toggling isn't a way to bypass it.
 	appCount := 0
@@ -9062,9 +9073,6 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 			Limit:    limits.CronLimitPerAccount,
 			Observed: accountCount,
 		}
-	}
-	if opts.Timezone == "" {
-		opts.Timezone = "UTC"
 	}
 	c := Cron{
 		ID:            newID(),

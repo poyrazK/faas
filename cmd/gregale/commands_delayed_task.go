@@ -89,12 +89,16 @@ func cmdDelayedTaskAdd(args []string) int {
 	// and --payload. The reorder helper pulls flags to the front so the
 	// parser sees them. Mirrors cmdAppSecurity (commands_app_security.go:42)
 	// + cmdWakeTimeline (commands_wake_timeline.go:54).
-	flags, _ := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("delayed-task add", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug (required)")
 	scheduledAt := fs.String("scheduled-at", "", "RFC3339 dispatch time (required; must be in the future)")
 	payload := fs.String("payload", "", "JSON payload (inline | @file | - for stdin; empty is valid)")
 	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(positional) != 0 {
+		PrintUsage(os.Stderr, "usage: gregale delayed-task add --app <slug> --scheduled-at <RFC3339> [--payload <json|@file|->]", "delayed-task")
 		return 1
 	}
 	if !validateDelayedTaskAddFlags(app, scheduledAt) {

@@ -139,12 +139,15 @@ func cmdMfaConfirm(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *code == "" && fs.NArg() == 1 {
-		*code = fs.Arg(0)
+	if *code != "" && rejectUnexpectedFlagArgs(fs) {
+		return 1
 	}
-	if *code == "" {
+	if *code == "" && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale mfa confirm <6-digit-code>", "mfa")
 		return 1
+	}
+	if *code == "" {
+		*code = fs.Arg(0)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -168,12 +171,15 @@ func cmdMfaVerify(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *code == "" && fs.NArg() == 1 {
-		*code = fs.Arg(0)
+	if *code != "" && rejectUnexpectedFlagArgs(fs) {
+		return 1
 	}
-	if *code == "" {
+	if *code == "" && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale mfa verify <6-digit-code>", "mfa")
 		return 1
+	}
+	if *code == "" {
+		*code = fs.Arg(0)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -196,12 +202,15 @@ func cmdMfaRecover(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *code == "" && fs.NArg() == 1 {
-		*code = fs.Arg(0)
+	if *code != "" && rejectUnexpectedFlagArgs(fs) {
+		return 1
 	}
-	if *code == "" {
+	if *code == "" && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale mfa recover <recovery-code>", "mfa")
 		return 1
+	}
+	if *code == "" {
+		*code = fs.Arg(0)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -227,6 +236,9 @@ func cmdMfaDisable(args []string) int {
 	password := fs.String("password", "", "account password (CI use; will prompt interactively if empty)")
 	recovery := fs.String("recovery-code", "", "single-use recovery code (alternative to --password)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *password != "" && *recovery != "" {

@@ -68,6 +68,9 @@ func cmdRegistryList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" {
 		PrintUsage(os.Stderr, "usage: gregale registry list --app <slug>", "registry")
 		return 1
@@ -113,6 +116,9 @@ func cmdRegistrySet(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if !validateRegistrySetFlags(slug, registry, username, password) {
 		return 1
 	}
@@ -148,6 +154,9 @@ func cmdRegistryRm(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	registry := fs.String("registry", "", "registry host[:port] (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" {

@@ -65,6 +65,9 @@ func cmdMirrorList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" {
 		PrintUsage(os.Stderr, "usage: gregale mirror list --app <slug>", "mirror")
 		return 1
@@ -107,6 +110,9 @@ func cmdMirrorCreate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" || *source == "" || *mirror == "" {
 		PrintUsage(os.Stderr, "usage: gregale mirror create --app <slug> --source <id> --mirror <id> [--percent N] [--include-body] [--redact-header Name]…", "mirror")
 		return 1
@@ -146,6 +152,9 @@ func cmdMirrorInfo(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	id := fs.String("id", "", "mirror rule id (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *id == "" {
@@ -199,6 +208,9 @@ func cmdMirrorUpdate(args []string) int {
 	var clearRedact bool
 	fs.BoolVar(&clearRedact, "clear-redact", false, "clear the customer's redact_headers list (drop to always-stripped only)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *id == "" {
@@ -285,6 +297,9 @@ func cmdMirrorRm(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" || *id == "" {
 		PrintUsage(os.Stderr, "usage: gregale mirror rm --app <slug> --id <mirror-id>", "mirror")
 		return 1
@@ -313,6 +328,9 @@ func cmdMirrorSummary(args []string) int {
 	id := fs.String("id", "", "mirror rule id (required)")
 	window := fs.String("window", "1h", "summary window: 1h | 24h | 7d (default 1h)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *id == "" {

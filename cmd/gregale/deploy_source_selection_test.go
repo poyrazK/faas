@@ -75,7 +75,7 @@ func TestImageDeployHasNoImplicitManifestSource(t *testing.T) {
 	if got, err := loadWorkflowManifestForDeploy(context.Background(), nil, ""); err != nil || len(got) != 0 {
 		t.Fatalf("image deploy imported cwd workflows: got=%v err=%v", got, err)
 	}
-	if got, err := deployManifestTriggersWithRollback(context.Background(), nil, "image-app", ""); err != nil || len(got) != 0 {
+	if got, err := deployManifestTriggersWithRollback(context.Background(), nil, "image-app", ""); err != nil || len(got.steps) != 0 {
 		t.Fatalf("image deploy imported cwd triggers: got=%v err=%v", got, err)
 	}
 }

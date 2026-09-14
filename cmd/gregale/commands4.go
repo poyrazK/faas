@@ -68,6 +68,9 @@ func cmdAccountExport(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -88,6 +91,9 @@ func cmdAccountDelete(args []string) int {
 	fs := newFlagSet("account delete", flag.ContinueOnError)
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	client, err := authedClient()

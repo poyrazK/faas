@@ -42,6 +42,9 @@ func envDiff(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *app == "" {
 		PrintUsage(os.Stderr, "usage: gregale env diff --app <slug>", "env")
 		return 1

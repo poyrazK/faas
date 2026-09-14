@@ -77,6 +77,9 @@ func cmdScan(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--repository OWNER/NAME --install-id N] [--production-branch BRANCH] [--show-affected] [--explain] [--exclude NAME,…]", "scan")
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 
 	// Exactly one of --tarball / --path / --repo. Default --path $PWD
 	// when stdin is a TTY and no flag is set (issue #313 zero-config).

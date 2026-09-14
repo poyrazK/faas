@@ -60,6 +60,9 @@ func cmdTenantSurfacesList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" {
 		PrintUsage(os.Stderr, "usage: gregale tenant-surfaces list --app <slug>", "tenant-surfaces")
 		return 1
@@ -105,6 +108,9 @@ func cmdTenantSurfacesAdd(args []string) int {
 	var hostnames stringListFlag
 	fs.Var(&hostnames, "hostname", "hostname to attach (repeatable)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *name == "" {
@@ -189,6 +195,9 @@ func cmdTenantSurfacesHostnameAdd(args []string) int {
 	surfaceID := fs.String("surface", "", "surface id (required)")
 	hostname := fs.String("hostname", "", "hostname to attach (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *surfaceID == "" || *hostname == "" {

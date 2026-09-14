@@ -3665,7 +3665,7 @@ func TestCreateCronIfUnderQuota_PerAppArm(t *testing.T) {
 	}
 	limits := api.MustLimitsFor(api.PlanPro) // Pro: 20/app, 50/acct
 	for i := 0; i < limits.CronLimitPerApp; i++ {
-		if _, err := m.CreateCronIfUnderQuota(ctx, app.ID, "*/5 * * * *", "/x", true, limits); err != nil {
+		if _, err := m.CreateCronIfUnderQuota(ctx, app.ID, "*/5 * * * *", fmt.Sprintf("/x-%d", i), true, limits); err != nil {
 			t.Fatalf("seed cron %d: %v", i, err)
 		}
 	}
@@ -3718,18 +3718,18 @@ func TestCreateCronIfUnderQuota_PerAccountArm(t *testing.T) {
 		t.Fatalf("CreateApp C: %v", err)
 	}
 	for i := 0; i < limits.CronLimitPerApp-1; i++ {
-		if _, err := m.CreateCronIfUnderQuota(ctx, appA.ID, "*/5 * * * *", "/x", true, limits); err != nil {
+		if _, err := m.CreateCronIfUnderQuota(ctx, appA.ID, "*/5 * * * *", fmt.Sprintf("/a-%d", i), true, limits); err != nil {
 			t.Fatalf("seed appA %d: %v", i, err)
 		}
 	}
 	for i := 0; i < limits.CronLimitPerApp-1; i++ {
-		if _, err := m.CreateCronIfUnderQuota(ctx, appB.ID, "*/5 * * * *", "/x", true, limits); err != nil {
+		if _, err := m.CreateCronIfUnderQuota(ctx, appB.ID, "*/5 * * * *", fmt.Sprintf("/b-%d", i), true, limits); err != nil {
 			t.Fatalf("seed appB %d: %v", i, err)
 		}
 	}
 	fillC := limits.CronLimitPerAccount - 2*(limits.CronLimitPerApp-1)
 	for i := 0; i < fillC; i++ {
-		if _, err := m.CreateCronIfUnderQuota(ctx, appC.ID, "*/5 * * * *", "/x", true, limits); err != nil {
+		if _, err := m.CreateCronIfUnderQuota(ctx, appC.ID, "*/5 * * * *", fmt.Sprintf("/c-%d", i), true, limits); err != nil {
 			t.Fatalf("seed appC %d: %v", i, err)
 		}
 	}

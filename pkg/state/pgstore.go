@@ -10543,6 +10543,21 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 		}
 		return Cron{}, fmt.Errorf("state: lock app %s: %w", appID, err)
 	}
+	// An identical create is an idempotent read, including at the exact app
+	// or account cap. This check must run after the app lock and before quota
+	// counts so concurrent retries cannot race into a duplicate INSERT.
+	existing, existingErr := scanCronRow(tx.QueryRow(ctx,
+		`select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
+		 from crons where app_id = $1 and schedule = $2 and path = $3`,
+		appID, schedule, path))
+	if existingErr == nil {
+		if existing.Enabled == enabled && existing.Timezone == opts.Timezone && existing.SkipIfRunning == opts.SkipIfRunning {
+			return existing, nil
+		}
+	}
+	if existingErr != nil && !errors.Is(existingErr, ErrNotFound) && !errors.Is(existingErr, pgx.ErrNoRows) {
+		return Cron{}, fmt.Errorf("state: find existing cron: %w", existingErr)
+	}
 
 	// 2. Per-app count, authoritative under the lock. crons_app_idx
 	//    (app_id) WHERE enabled (migration 00002) covers this for the
