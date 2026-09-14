@@ -1922,12 +1922,29 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return
 	}
 	st := state.AppEvictedCold
-	if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &st}); err != nil {
+	claimed, err := transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not park app"))
 		return
 	}
+	if !claimed {
+		current, readErr := s.store.AppByID(r.Context(), app.ID)
+		if readErr != nil || current.Status != state.AppEvictedCold {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"App lifecycle transition in progress", "retry after the current park or wake operation completes"))
+			return
+		}
+	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
 		fmt.Sprintf(`{"kind":"parked","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
+	if err := waitForAppInstancesDrained(r.Context(), s.store, app.ID, appParkDrainTimeout, appParkDrainPoll); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			api.WriteProblem(w, api.ErrCapacity("app instances did not drain before the park deadline").WithHeader("Retry-After", "1"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not verify app instance drain"))
+		return
+	}
 	if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventAppParked, map[string]any{
 		"app_id": app.ID, "slug": app.Slug, "status": st, "occurred_at": time.Now().UTC(),
 	}); err != nil {
@@ -1959,9 +1976,26 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, api.ErrCapacity("could not resolve the app's live deployment"))
 		return
 	}
+	if app.Status == state.AppEvictedCold {
+		if err := waitForAppInstancesDrained(r.Context(), s.store, app.ID, 0, 0); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+					"App is still draining", "wait for the preceding park operation to finish before requesting a wake"))
+				return
+			}
+			api.WriteProblem(w, api.ErrCapacity("could not verify app instance drain"))
+			return
+		}
+	}
 	st := state.AppActive
-	if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &st}); err != nil {
+	claimed, err := transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not wake app"))
+		return
+	}
+	if !claimed {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"App lifecycle transition in progress", "retry after the current park or wake operation completes"))
 		return
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,

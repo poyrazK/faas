@@ -1735,6 +1735,79 @@ func TestParkApp_HappyPath(t *testing.T) {
 	assertLifecycleAudit(t, e, "app.parked", appID, "")
 }
 
+func TestParkApp_WaitsForLiveInstanceDrain(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "park-drain")
+	ins, err := e.store.CreateInstance(t.Context(), dep.AppID, dep.ID, string(state.StateRunning), 128, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		_ = e.store.UpdateInstanceState(context.Background(), ins.ID, string(state.StateParked))
+	}()
+
+	started := time.Now()
+	rec := e.do(t, http.MethodPost, "/v1/apps/park-drain/park", nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if elapsed := time.Since(started); elapsed < 40*time.Millisecond {
+		t.Fatalf("park returned before the live instance drained: %s", elapsed)
+	}
+	rows, err := e.store.ListActiveInstancesForApp(t.Context(), dep.AppID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("active instances after park = %+v, want none", rows)
+	}
+}
+
+func TestWakeApp_RejectsWhileParkDrainIsInProgress(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "wake-draining")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppByID(t.Context(), dep.AppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked := state.AppEvictedCold
+	if _, err := e.store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateInstance(t.Context(), dep.AppID, dep.ID, string(state.StateRunning), 128, "node-1", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/wake-draining/wake", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	if !strings.Contains(rec.Body.String(), "still draining") {
+		t.Fatalf("wake response = %s, want drain guidance", rec.Body)
+	}
+	current, err := e.store.AppByID(t.Context(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != state.AppEvictedCold {
+		t.Fatalf("app status = %s, want evicted_cold", current.Status)
+	}
+}
+
+func TestWaitForAppInstancesDrainedTimesOut(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "park-timeout")
+	if _, err := e.store.CreateInstance(t.Context(), dep.AppID, dep.ID, string(state.StateRunning), 128, "node-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	err := waitForAppInstancesDrained(t.Context(), e.store, dep.AppID, 20*time.Millisecond, 5*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wait error = %v, want deadline exceeded", err)
+	}
+}
+
 // TestWakeApp_HappyPath parks, then wakes — exercises the inverse path.
 func TestWakeApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
