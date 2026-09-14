@@ -1210,6 +1210,29 @@ func (h *Harness) Stop() {
 // because no e2e boots the public edge yet.
 var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "meterd", "builderd"}
 
+// StaticHelperBinaries are built alongside the daemons but with CGO_ENABLED=0,
+// because they execute inside a jailer chroot that contains no dynamic loader
+// and no libc.
+//
+// vmmd-jail-helper is the one that matters. JailerVMM copies it into each
+// instance root as /faas-mount-helper and runs it under nsenter to set up the
+// jail's private device tree (resolveMountHelper in pkg/fcvm/mount_helper.go
+// looks for it as a sibling of the running vmmd, falling back to the vmmd
+// binary itself when absent). The harness never built it, so that fallback
+// applied — and the fallback cannot work here: the metal suite runs under
+// -race, which forces cgo, so the vmmd binary is dynamically linked. execve
+// of a dynamic binary with no loader in the chroot fails with ENOENT, which
+// surfaced on hardware as
+//
+//	prepare jail device tree: exit status 127
+//	  (nsenter: failed to execute /faas-mount-helper: No such file or directory)
+//
+// and failed every builder cold boot. Production ships this binary
+// (Makefile DAEMONS, deploy/packer/scripts/compile-daemons.sh,
+// pkg/releaseinstall.Names), so building it here makes the harness match the
+// node rather than depend on a fallback that only works for static builds.
+var StaticHelperBinaries = []string{"vmmd-jail-helper"}
+
 var (
 	sharedBinOnce sync.Once
 	sharedBinDir  string
@@ -1259,6 +1282,20 @@ func EnsureSharedBinaries() (string, error) {
 			if err := cmd.Run(); err != nil {
 				_ = os.RemoveAll(dir)
 				sharedBinErr = fmt.Errorf("e2etest: go build %s: %w\n%s", d, err, out.String())
+				return
+			}
+		}
+		for _, h := range StaticHelperBinaries {
+			var out bytes.Buffer
+			cmd := exec.Command("go", "build",
+				"-o", filepath.Join(dir, h), mod+"/cmd/"+h)
+			// CGO_ENABLED=0 is the entire point — see StaticHelperBinaries.
+			cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+			if err := cmd.Run(); err != nil {
+				_ = os.RemoveAll(dir)
+				sharedBinErr = fmt.Errorf("e2etest: go build %s: %w\n%s", h, err, out.String())
 				return
 			}
 		}
