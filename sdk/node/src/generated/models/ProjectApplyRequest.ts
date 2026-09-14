@@ -15,5 +15,9 @@ export type ProjectApplyRequest = {
   production_branch?: string;
   install_id?: number;
   only?: string;
+  /**
+   * Leave trigger declarations and existing project trigger state unchanged for this apply.
+   */
+  no_triggers?: boolean;
 };
 
