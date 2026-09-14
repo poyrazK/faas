@@ -109,6 +109,10 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 	cleanDst := filepath.Clean(dst)
 	extractionPrefix := cleanDst + string(filepath.Separator)
 	for {
+		// codeql[go/zipslip] — hdr.Name is normalized by
+		// cleanDeployArchiveName and the joined target must retain the
+		// fresh private extractionPrefix before any filesystem operation.
+		// Link entries are rejected outright.
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
