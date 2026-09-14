@@ -1373,7 +1373,6 @@ func (s *server) scanService(
 	if req.NoTriggers {
 		// Suppression leaves trigger state untouched. Existing rows must not
 		// block a workload-only deploy after a plan downgrade.
-		preProjectedCrons = observedCrons
 		projectedCrons = observedCrons
 		preCronGate = 0
 		cronGate = 0
