@@ -889,7 +889,7 @@ func validateExplicitDockerfile(sourceDir string) error {
 		return fmt.Errorf("inspect Dockerfile: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return errors.New("Dockerfile at the selected source root must be a regular file")
+		return errors.New("dockerfile at the selected source root must be a regular file")
 	}
 	return nil
 }
