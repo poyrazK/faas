@@ -10,6 +10,7 @@ package imaged
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -685,18 +686,43 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		vmstateKey := state.SnapshotVMStateKey(snap)
 		memErr := be.Delete(ctx, memKey)
 		vmstateErr := be.Delete(ctx, vmstateKey)
-		if memErr != nil {
+		memQuarantined := errors.Is(memErr, storage.ErrDeleteQuarantined)
+		vmstateQuarantined := errors.Is(vmstateErr, storage.ErrDeleteQuarantined)
+		if memErr != nil && !memQuarantined {
 			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "tier", t.Tier, "err", memErr)
 			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", memKey, memErr))
 		}
-		if vmstateErr != nil {
+		if vmstateErr != nil && !vmstateQuarantined {
 			l.log.Warn("imaged: gc remove snap vmstate", "deployment", t.DeploymentID, "tier", t.Tier, "err", vmstateErr)
 			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", vmstateKey, vmstateErr))
 		}
 		if legacyLocal != nil {
 			l.deleteLegacyLocalSnapshot(ctx, legacyLocal, t.DeploymentID, memKey, vmstateKey)
 		}
-		if memErr == nil && vmstateErr == nil {
+		deletable := (memErr == nil || memQuarantined) && (vmstateErr == nil || vmstateQuarantined)
+		terminalDisposition := memQuarantined || vmstateQuarantined
+		if terminalDisposition && deletable {
+			payload, marshalErr := json.Marshal(map[string]any{
+				"snapshot_id": t.ID, "deployment_id": t.DeploymentID, "app_id": t.AppID,
+				"tier": t.Tier, "disposition": "remote_quarantine_manual_retention",
+				"mem_quarantined": memQuarantined, "vmstate_quarantined": vmstateQuarantined,
+			})
+			var accountID *string
+			if t.AccountID != "" {
+				accountID = &t.AccountID
+			}
+			if marshalErr != nil {
+				deleteErrors = append(deleteErrors, marshalErr)
+				continue
+			}
+			if auditErr := l.store.AppendEvent(ctx, "imaged", "snapshot.remote_delete_quarantined", accountID, payload); auditErr != nil {
+				deleteErrors = append(deleteErrors, fmt.Errorf("audit terminal snapshot deletion disposition: %w", auditErr))
+				continue
+			}
+			l.log.Warn("imaged: remote snapshot retained in audited quarantine",
+				"snapshot", t.ID, "deployment", t.DeploymentID, "tier", t.Tier)
+		}
+		if deletable {
 			succeeded = append(succeeded, t)
 		} else if l.remoteDeleteFailures != nil {
 			l.remoteDeleteFailures.Inc()

@@ -415,13 +415,24 @@ func TestMemStoreSnapshotReplicaReadyRowsAreRevalidated(t *testing.T) {
 	row := m.snapshotReplicas[key]
 	row.readyAt = time.Now().Add(-snapshotReplicaRevalidateAfter - time.Second)
 	m.snapshotReplicas[key] = row
+	revalidationStarted := time.Now()
 	if refreshed, err := m.EnqueueSnapshotReplicasForNode(ctx, node.ID); err != nil {
 		t.Fatal(err)
-	} else if refreshed != 1 {
-		t.Fatalf("revalidated = %d, want 1", refreshed)
+	} else if refreshed != 0 {
+		t.Fatalf("new fan-out jobs = %d, want 0 during revalidation", refreshed)
 	}
-	if _, err := m.ClaimSnapshotReplica(ctx, node.ID); err != nil {
+	revalidation, err := m.ClaimSnapshotReplica(ctx, node.ID)
+	if err != nil {
 		t.Fatalf("claim revalidation: %v", err)
+	}
+	if !revalidation.Revalidation {
+		t.Fatal("claimed cache check was not marked as revalidation")
+	}
+	if revalidation.Attempts != job.Attempts {
+		t.Fatalf("revalidation attempts = %d, want unchanged %d", revalidation.Attempts, job.Attempts)
+	}
+	if revalidation.QueuedAt.Before(revalidationStarted) {
+		t.Fatalf("revalidation queue timestamp = %s, before check start %s", revalidation.QueuedAt, revalidationStarted)
 	}
 }
 

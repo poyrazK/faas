@@ -690,6 +690,9 @@ func (o *OCIRegistryStorageBackend) deleteGitHubPackageVersion(ctx context.Conte
 		if closeErr != nil {
 			return fmt.Errorf("list package versions: close response: %w", closeErr)
 		}
+		if resp.StatusCode == http.StatusNotFound {
+			return nil
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("list package versions returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		}
@@ -729,8 +732,12 @@ func (o *OCIRegistryStorageBackend) deleteGitHubPackageVersion(ctx context.Conte
 		return fmt.Errorf("delete package version: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusBadRequest {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("%w: github packages refused version deletion: %s", ErrDeleteQuarantined, strings.TrimSpace(string(body)))
+	}
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("delete package version returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil

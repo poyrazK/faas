@@ -80,9 +80,13 @@ type SnapshotReplicaJob struct {
 	NodeID           string
 	Region           string
 	Attempts         int
-	// QueuedAt is the durable enqueue timestamp. Workers use it to expose
-	// end-to-end prepositioning latency (queue wait plus artifact reads), not
-	// just the time spent copying bytes after a claim.
+	// Revalidation distinguishes a periodic local-cache check from the first
+	// fan-out of an immutable snapshot. Workers exclude these checks from the
+	// initial queue-to-ready metrics.
+	Revalidation bool
+	// QueuedAt is the durable initial enqueue timestamp, or the start of the
+	// current cache check for revalidation jobs. Workers expose the former as
+	// end-to-end prepositioning latency and exclude the latter from fan-out.
 	QueuedAt time.Time
 	// LeaseToken identifies this specific claim. Completion must present the
 	// same token so a worker whose lease was reclaimed cannot overwrite the

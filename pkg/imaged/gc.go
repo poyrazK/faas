@@ -32,6 +32,8 @@ type deleteTarget struct {
 	StorageKey   string
 	ID           string
 	DeploymentID string
+	AppID        string
+	AccountID    string
 	AppSlug      string
 	Tier         string
 }
@@ -208,6 +210,8 @@ func targetForSnapshot(r state.SnapshotForGC) deleteTarget {
 	return deleteTarget{
 		ID:           r.ID,
 		DeploymentID: r.DeploymentID,
+		AppID:        r.AppID,
+		AccountID:    r.AccountID,
 		StorageKey:   r.StorageKey,
 		AppSlug:      r.AppSlug,
 		Tier:         r.Tier,

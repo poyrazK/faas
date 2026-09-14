@@ -123,6 +123,11 @@ var ErrInvalidKey = errors.New("storage: invalid key")
 // this error never means the remote object is gone.
 var ErrDeleteUnsupported = errors.New("storage: delete unsupported")
 
+// ErrDeleteQuarantined reports a remote service refusal that will not change
+// on retry. Callers may move the object to a manual-retention disposition only
+// after recording a durable audit event; the remote object may still exist.
+var ErrDeleteQuarantined = errors.New("storage: delete quarantined")
+
 // ErrIncompleteEnumeration reports that a backend cannot prove a prefix list
 // is complete. Callers must not interpret the accompanying empty key set as an
 // authoritative inventory. OCI snapshot storage uses this while upgrading

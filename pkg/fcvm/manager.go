@@ -3985,7 +3985,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// The Manager selects its daemon lifecycle context so the loop
 	// survives the short-lived Wake RPC and exits with vmmd shutdown
 	// or explicit instance teardown.
-	if !req.ExecutionOnly {
+	if !req.ExecutionOnly && !lease.IsBuilder {
 		m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
 		m.startFrameworkReadyLoop(ctx, req.Instance)
 	}

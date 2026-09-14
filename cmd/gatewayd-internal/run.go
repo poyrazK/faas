@@ -2594,12 +2594,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		githubdTarget = "http://127.0.0.1:8083"
 	}
 	githubdSecret := loadGithubWebhookSecret(osGetenv)
+	platformDomain := osGetenv("FAAS_APPS_DOMAIN")
+	if platformDomain == "" {
+		platformDomain = cfg.AppsDomain
+	}
 	// Issue #294: wire the githubd proxy with the dedupe check and
 	// the audit emitter. The replay interface is satisfied by
 	// *state.PgStore; the auditStore interface is also satisfied by
 	// *state.PgStore (compile-time checked in audit.go). Tests with a nil store
 	// use the proxy's in-process fallback.
-	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, apidHandler, log, newGatewaydAuditor(deps.pgStore, log), deps.pgStore)
+	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, platformDomain, apidHandler, log, newGatewaydAuditor(deps.pgStore, log), deps.pgStore)
 
 	// ADR-096: customer-facing automatic error grouping writer
 	// path. gatewayd-internal records every 4xx/5xx response on

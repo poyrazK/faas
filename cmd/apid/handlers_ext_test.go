@@ -1603,6 +1603,98 @@ func TestRollbackApp_ExplicitTarget_Specific(t *testing.T) {
 	}
 }
 
+func TestRollbackApp_ExplicitTarget_UsesCurrentLiveDeployment(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	notif := &captureNotifier{}
+	e.s.notif = notif
+
+	depA := mustSeedDeployment(t, e, "rb-current-live")
+	app, err := e.store.AppBySlug(context.Background(), "rb-current-live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	depB, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:       app.ID,
+		ImageDigest: "sha256:" + repeat("b", 64),
+		Kind:        state.DeploymentKindImage,
+		Status:      state.DeployBuilding,
+		CreatedAt:   time.Now().UTC().Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(context.Background(), depB.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentSuperseded(context.Background(), depB.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(context.Background(), depA.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	body := api.RollbackRequest{TargetDeploymentID: &depB.ID}
+	rec := e.do(t, http.MethodPost, "/v1/apps/rb-current-live/rollback", body, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+
+	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := mustAuditEvent(t, findEventByKind(events, "app.rolled_back"), "missing app.rolled_back event")
+	var eventData map[string]any
+	if err := json.Unmarshal(event.Data, &eventData); err != nil {
+		t.Fatal(err)
+	}
+	if eventData["from"] != depA.ID || eventData["to"] != depB.ID || eventData["mode"] != "explicit" {
+		t.Fatalf("account audit transition = %#v, want from=%s to=%s mode=explicit", eventData, depA.ID, depB.ID)
+	}
+
+	audits, err := e.store.ListDeploymentAudit(context.Background(), depA.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audits) != 1 {
+		t.Fatalf("current deployment audit rows = %d, want 1", len(audits))
+	}
+	var deploymentData map[string]any
+	if err := json.Unmarshal(audits[0].Data, &deploymentData); err != nil {
+		t.Fatal(err)
+	}
+	if deploymentData["from"] != depA.ID || deploymentData["to"] != depB.ID || deploymentData["mode"] != "explicit" {
+		t.Fatalf("deployment audit transition = %#v, want from=%s to=%s mode=explicit", deploymentData, depA.ID, depB.ID)
+	}
+
+	calls := notif.byChannel(db.NotifyDeploymentChanged)
+	if len(calls) != 2 {
+		t.Fatalf("deployment notifications = %d, want 2: %#v", len(calls), calls)
+	}
+	statuses := map[string]string{}
+	for _, call := range calls {
+		var payload struct {
+			Status       string `json:"status"`
+			DeploymentID string `json:"deployment_id"`
+			From         string `json:"from"`
+			To           string `json:"to"`
+		}
+		if err := json.Unmarshal([]byte(call.payload), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if previous := statuses[payload.DeploymentID]; previous != "" && previous != payload.Status {
+			t.Fatalf("deployment %s emitted both %s and %s", payload.DeploymentID, previous, payload.Status)
+		}
+		statuses[payload.DeploymentID] = payload.Status
+		if payload.To != depB.ID {
+			t.Errorf("notification to = %s, want %s: %s", payload.To, depB.ID, call.payload)
+		}
+	}
+	if statuses[depA.ID] != "superseded" || statuses[depB.ID] != "live" {
+		t.Fatalf("notification statuses = %#v, want A superseded and B live", statuses)
+	}
+}
+
 // TestRollbackApp_ExplicitTarget_NotFound confirms the 404 path when
 // the caller names a deployment_id that doesn't exist (or belongs to
 // a different app).

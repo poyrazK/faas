@@ -1828,10 +1828,6 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 // this helper owns target selection, notifications, and audit records so the
 // two entry points cannot drift.
 func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest) (state.Deployment, *api.Problem) {
-	current, err := s.store.LatestDeployment(ctx, app.ID)
-	if err != nil {
-		return state.Deployment{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no deployments")
-	}
 	alertRuleID := uuid.Nil
 	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
 		if parsed, parseErr := uuid.Parse(*req.AlertRuleID); parseErr == nil {
@@ -1839,6 +1835,7 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 		}
 	}
 	var target state.Deployment
+	var err error
 	mode := "latest_superseded"
 	if req.TargetDeploymentID != nil && *req.TargetDeploymentID != "" {
 		mode = "explicit"
@@ -1866,6 +1863,10 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 			return state.Deployment{}, api.ErrNoRollbackTarget()
 		}
 	}
+	current, err := s.store.LiveDeployment(ctx, app.ID)
+	if err != nil {
+		return state.Deployment{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no deployments")
+	}
 	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
 		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
 		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
@@ -1887,7 +1888,7 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 			app.ID, target.ID, current.ID, target.ID))
 	_ = s.notif.Notify(ctx, db.NotifyDeploymentChanged,
 		fmt.Sprintf(`{"kind":"superseded","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`,
-			app.ID, current.ID, current.ID))
+			app.ID, current.ID, target.ID))
 	s.log.Info("app rolled back", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID, "mode", mode)
 	s.audit.Emit(ctx, "app.rolled_back", &acct.ID, map[string]any{
 		"app_id": app.ID, "from": current.ID, "to": target.ID, "mode": mode,

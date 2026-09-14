@@ -927,6 +927,48 @@ func TestLoopDeleteSnapshotsAndFilesRetainsDurableRowUntilRemoteDeleteSucceeds(t
 	}
 }
 
+func TestLoopDeleteSnapshotsAndFilesAuditsTerminalRemoteQuarantine(t *testing.T) {
+	store := state.NewMemStore()
+	_, _, snapshotID := seedSnapshotWithApp(t, store, 100, 100)
+	rows, err := store.ListSnapshotsForGC(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ListSnapshotsForGC = (%+v, %v), want one row", rows, err)
+	}
+	local, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{
+		store: store,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		storage: &failingDeleteStorage{
+			StorageBackend: local,
+			err:            fmt.Errorf("%w: protected package version", storage.ErrDeleteQuarantined),
+		},
+	}
+	loop := NewLoop(LoopConfig{Handler: handler, Store: store, Log: handler.log, Now: time.Now})
+	if err := loop.deleteSnapshotsAndFiles(context.Background(), []deleteTarget{targetForSnapshot(rows[0])}); err != nil {
+		t.Fatalf("terminal quarantine: %v", err)
+	}
+	backlog, err := store.ListSnapshotsPendingDelete(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backlog) != 0 {
+		t.Fatalf("backlog after audited terminal disposition = %+v, want empty", backlog)
+	}
+	events, err := store.ListEvents(context.Background(), rows[0].AccountID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Kind != "snapshot.remote_delete_quarantined" {
+		t.Fatalf("quarantine audit events = %+v", events)
+	}
+	if !strings.Contains(string(events[0].Data), snapshotID) {
+		t.Fatalf("quarantine audit does not identify snapshot %s: %s", snapshotID, events[0].Data)
+	}
+}
+
 func TestRemoteDeleteRetryPreservesOrdinaryStaleRollbackSnapshot(t *testing.T) {
 	store := state.NewMemStore()
 	_, _, snapshotID := seedSnapshotWithApp(t, store, 100, 100)

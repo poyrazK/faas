@@ -2149,6 +2149,23 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Not logged in", authErr)
 		}
 	}
+	// An explicitly shaped reservation is complete without source bytes. Stop
+	// before zero-config discovery, git inspection, doctor, hashing, or archive
+	// creation so an unrelated working tree cannot affect create-only latency.
+	if *createOnly && *templateName == "" && *sourcePath == "" && !*worktree && (deployFunction || deployApp) {
+		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		if *vcpu != 0 {
+			createReq.VCPU = *vcpu
+		}
+		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr); err != nil {
+			return printErr("Could not create or fetch app", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(map[string]any{"slug": slug, "status": "ready"}))
+		}
+		PrintOK(osStdout, "App %s is ready for configuration; no deployment uploaded.", slug)
+		return 0
+	}
 	if explicitTarball {
 		// Snapshot and extract the explicit archive before any doctor,
 		// preview, manifest, or trigger work. The snapshot is also the path

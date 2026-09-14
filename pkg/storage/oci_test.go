@@ -1020,6 +1020,59 @@ func TestOCIDeleteFallsBackToGitHubPackageVersionAPI(t *testing.T) {
 	}
 }
 
+func TestOCIDeleteGitHubPackageMissingIsIdempotent(t *testing.T) {
+	f := newFakeRegistry(t)
+	f.deleteUnsupported = true
+	defer f.srv.Close()
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Package not found", http.StatusNotFound)
+	}))
+	defer apiServer.Close()
+	be := f.clientWithOptions(t, WithGitHubPackagesAPI(apiServer.URL))
+	key := "apps/my-app/550e8400-e29b-41d4-a716-446655440000.ext4"
+	if err := be.Put(context.Background(), key, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := be.Delete(context.Background(), key); !errors.Is(err, ErrDeleteUnsupported) {
+		t.Fatalf("Delete without fallback credentials = %v, want ErrDeleteUnsupported", err)
+	}
+	be.user, be.pw = "poyrazK", "delete-token"
+	if err := be.Delete(context.Background(), key); err != nil {
+		t.Fatalf("GitHub package 404 must be idempotent success: %v", err)
+	}
+}
+
+func TestOCIDeleteGitHubDownloadProtectedVersionIsQuarantined(t *testing.T) {
+	f := newFakeRegistry(t)
+	f.deleteUnsupported = true
+	defer f.srv.Close()
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			version := githubPackageVersion{ID: 731}
+			version.Metadata.Container.Tags = []string{"my-app__550e8400-e29b-41d4-a716-446655440000"}
+			_ = json.NewEncoder(w).Encode([]githubPackageVersion{version})
+		case http.MethodDelete:
+			http.Error(w, "Package versions with more than 5,000 downloads cannot be deleted.", http.StatusBadRequest)
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+	defer apiServer.Close()
+	be := f.clientWithOptions(t, WithGitHubPackagesAPI(apiServer.URL))
+	key := "apps/my-app/550e8400-e29b-41d4-a716-446655440000.ext4"
+	if err := be.Put(context.Background(), key, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := be.Delete(context.Background(), key); !errors.Is(err, ErrDeleteUnsupported) {
+		t.Fatalf("Delete without fallback credentials = %v, want ErrDeleteUnsupported", err)
+	}
+	be.user, be.pw = "poyrazK", "delete-token"
+	if err := be.Delete(context.Background(), key); !errors.Is(err, ErrDeleteQuarantined) {
+		t.Fatalf("GitHub protected version error = %v, want ErrDeleteQuarantined", err)
+	}
+}
+
 // TestOCIListUnderApps pushes two apps under the same repo and asserts
 // List("apps/") returns both. The snap/ List path is exercised in a
 // separate test because it relies on the knownRepos cache.

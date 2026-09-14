@@ -410,6 +410,43 @@ func TestDeployTemplate_CreateOnlyReservesWithoutDeployment(t *testing.T) {
 	}
 }
 
+func TestDeployCreateOnlyExplicitFunctionSkipsEmptyWorkingTree(t *testing.T) {
+	withCwd(t, t.TempDir())
+	var createReq api.CreateAppRequest
+	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
+		switch {
+		case r.URL.Path == "/v1/apps/explicit-reservation" && r.Method == http.MethodGet:
+			z.gotCalls["get"]++
+			http.Error(w, "missing", http.StatusNotFound)
+		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			z.gotCalls["create"]++
+			if err := json.NewDecoder(r.Body).Decode(&createReq); err != nil {
+				t.Errorf("decode create app: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "explicit-reservation"})
+		case strings.Contains(r.URL.Path, "/deployments"):
+			z.gotCalls["deploy"]++
+			http.Error(w, "create-only must not deploy", http.StatusInternalServerError)
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	})
+	t.Setenv("FAAS_API", stub.srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	if code := cmdDeployTarball([]string{
+		"--create-only", "--function", "--runtime", "node22", "--name", "explicit-reservation",
+	}); code != 0 {
+		t.Fatalf("create-only exit = %d, want 0", code)
+	}
+	if stub.gotCalls["get"] != 1 || stub.gotCalls["create"] != 1 || stub.gotCalls["deploy"] != 0 {
+		t.Fatalf("remote calls = %#v, want one lookup, one create, and no deployment", stub.gotCalls)
+	}
+	if createReq.Type != "function" || createReq.Runtime != runtimeNode22 {
+		t.Fatalf("CreateApp shape = type %q runtime %q, want function/%s", createReq.Type, createReq.Runtime, runtimeNode22)
+	}
+}
+
 func TestDeployCreateOnlyRejectsPreview(t *testing.T) {
 	if code := cmdDeployTarball([]string{"--create-only", "--dry-run", "--name", "reserved"}); code != 1 {
 		t.Fatalf("create-only + dry-run exit = %d, want 1", code)

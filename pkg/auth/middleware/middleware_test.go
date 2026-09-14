@@ -122,6 +122,7 @@ type fakeLookups struct {
 	getErr     error
 	touchCalls []string
 	touchErr   error
+	touchCtx   chan error
 	// revokeCalls + revokeErr back the new middleware SessionLookup
 	// method (IAM-hardening-mega-PR logical change 5, ADR-076).
 	// The binding-mismatch branch calls RevokeSession during the
@@ -146,10 +147,17 @@ func (l *fakeLookups) GetSession(_ context.Context, sid string) (state.Session, 
 	}
 	return l.sess, l.getErr
 }
-func (l *fakeLookups) TouchSessionLastSeen(_ context.Context, sid string) error {
+func (l *fakeLookups) TouchSessionLastSeen(ctx context.Context, sid string) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.touchCalls = append(l.touchCalls, sid)
+	touchCtx := l.touchCtx
+	l.mu.Unlock()
+	if touchCtx != nil {
+		select {
+		case touchCtx <- ctx.Err():
+		default:
+		}
+	}
 	return l.touchErr
 }
 func (l *fakeLookups) RevokeSession(_ context.Context, sid, accountID string) (bool, error) {
@@ -1621,5 +1629,32 @@ func TestLog_SessionTouchFailedStripsControlChars(t *testing.T) {
 	}
 	if !strings.Contains(out, "INJECT") {
 		t.Errorf("sanitised log should still contain the printable payload: %q", out)
+	}
+}
+
+func TestSessionTouch_DetachesFromCancelledRequest(t *testing.T) {
+	authn := newFakeAuthn()
+	authn.acctByID["acct-1"] = mkActiveAccount("acct-1")
+	sessions := &fakeSessions{env: session.Envelope{AccountID: "acct-1", Sid: "sid-1"}}
+	touchCtx := make(chan error, 1)
+	lookups := &fakeLookups{
+		sess:     state.Session{ID: "sid-1", AccountID: "acct-1"},
+		touchCtx: touchCtx,
+	}
+	mw := newMW(t, authn, sessions, lookups, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	r := mkRequest("GET", "/v1/apps", nil, map[string]string{"faas_sid": "valid-cookie"}).WithContext(ctx)
+	mw.RequireSession(func(_ http.ResponseWriter, _ *http.Request, _ state.Account) {})(w, r)
+
+	select {
+	case ctxErr := <-touchCtx:
+		if ctxErr != nil {
+			t.Fatalf("detached session touch context error = %v, want nil", ctxErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detached session touch did not run")
 	}
 }

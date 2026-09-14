@@ -462,10 +462,14 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 	// entirely; write the pre-rendered body and headers.
 	if s.specCache != nil {
 		if hit, ok := s.specCache.Get(app.ID, docSHA, routesSHA, rulesSHA); ok {
-			writeAutoSpecHeaders(w, hit.Source, "hit", hit.AnnotationsCount)
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(hit.Body)
-			return
+			if err := validateRenderedOpenAPISpec(hit.Body); err == nil {
+				writeAutoSpecHeaders(w, hit.Source, "hit", hit.AnnotationsCount)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(hit.Body)
+				return
+			}
+			s.specCache.InvalidateByApp(app.ID)
+			s.log.Warn("discarding invalid cached auto OpenAPI document", "app_id", app.ID)
 		}
 	}
 
@@ -479,9 +483,15 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 	if genErr != nil {
 		if errors.Is(genErr, openapidiff.ErrImportMissing) {
 			source := autoOpenAPISource(openapidiff.SourceEmptyImportRules, observation, len(doc) > 0)
+			rendered := renderOpenAPISpecJSON(nil, openapidiff.GenerateFromAppMeta{Source: source}, app, observation)
+			if err := validateRenderedOpenAPISpec(rendered); err != nil {
+				api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+					"failed to generate valid OpenAPI doc", err.Error()))
+				return
+			}
 			writeAutoSpecHeaders(w, source, "miss", 0)
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(renderOpenAPISpecJSON(nil, openapidiff.GenerateFromAppMeta{Source: source}, app, observation))
+			_, _ = w.Write(rendered)
 			return
 		}
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
@@ -496,6 +506,11 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 	genMeta.RoutesSHA256 = routesSHA
 	genMeta.RulesSHA256 = rulesSHA
 	rendered := renderOpenAPISpecJSON(genSpec, genMeta, app, observation)
+	if err := validateRenderedOpenAPISpec(rendered); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+			"failed to generate valid OpenAPI doc", err.Error()))
+		return
+	}
 	if s.specCache != nil {
 		s.specCache.Put(app.ID, genMeta.DocSHA256, genMeta.RoutesSHA256, genMeta.RulesSHA256,
 			rendered, genMeta.Source, len(genMeta.Annotations), time.Now())
@@ -541,7 +556,9 @@ func renderOpenAPISpecJSON(spec *openapidiff.Spec, genMeta openapidiff.GenerateF
 		"paths":   map[string]any{},
 	}
 	if spec != nil {
-		out["openapi"] = spec.OpenAPIVersion()
+		if version := strings.TrimSpace(spec.OpenAPIVersion()); supportedOpenAPIVersion(version) {
+			out["openapi"] = version
+		}
 		out["paths"] = renderPathsJSON(spec.Paths)
 	}
 	if spec != nil && len(spec.Components) > 0 {
@@ -568,6 +585,37 @@ func renderOpenAPISpecJSON(spec *openapidiff.Spec, genMeta openapidiff.GenerateF
 		return []byte(`{"openapi":"3.1.0","info":{"title":"","version":""},"paths":{}}`)
 	}
 	return b
+}
+
+func supportedOpenAPIVersion(version string) bool {
+	return version == "3.0" || version == "3.1" ||
+		strings.HasPrefix(version, "3.0.") || strings.HasPrefix(version, "3.1.")
+}
+
+func validateRenderedOpenAPISpec(body []byte) error {
+	var doc struct {
+		OpenAPI string          `json:"openapi"`
+		Info    json.RawMessage `json:"info"`
+		Paths   json.RawMessage `json:"paths"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return fmt.Errorf("rendered document is not JSON: %w", err)
+	}
+	if !supportedOpenAPIVersion(strings.TrimSpace(doc.OpenAPI)) {
+		return fmt.Errorf("rendered document has unsupported OpenAPI version %q", doc.OpenAPI)
+	}
+	var info struct {
+		Title   string `json:"title"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(doc.Info, &info); err != nil || strings.TrimSpace(info.Title) == "" || strings.TrimSpace(info.Version) == "" {
+		return errors.New("rendered document requires non-empty info.title and info.version")
+	}
+	var paths map[string]json.RawMessage
+	if err := json.Unmarshal(doc.Paths, &paths); err != nil || paths == nil {
+		return errors.New("rendered document requires a paths object")
+	}
+	return nil
 }
 
 // renderPathsJSON converts the *PathItem.Methods map into the

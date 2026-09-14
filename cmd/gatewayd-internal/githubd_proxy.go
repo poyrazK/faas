@@ -22,6 +22,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -46,13 +47,14 @@ const githubWebhookPath = "/webhooks/github"
 // listener. Everything else falls through to next (dashboard proxy
 // → apid, or gateway.Handler's wake/route proxy).
 type githubdProxy struct {
-	target    *url.URL
-	secret    []byte
-	next      http.Handler
-	log       *slog.Logger
-	transport *http.Transport
-	auditor   *gatewaydAuditor
-	replay    webhookReplayStore
+	target         *url.URL
+	secret         []byte
+	next           http.Handler
+	log            *slog.Logger
+	transport      *http.Transport
+	auditor        *gatewaydAuditor
+	replay         webhookReplayStore
+	platformDomain string
 }
 
 type webhookReplayStore interface {
@@ -72,7 +74,7 @@ type webhookReplayStore interface {
 // Production passes a durable webhookReplayStore so protection survives
 // restarts and multiple gateway replicas. The variadic shape preserves the
 // process-local fallback for isolated unit harnesses.
-func newGithubdProxy(target string, secret []byte, next http.Handler, log *slog.Logger, auditor *gatewaydAuditor, replayStores ...webhookReplayStore) http.Handler {
+func newGithubdProxy(target string, secret []byte, platformDomain string, next http.Handler, log *slog.Logger, auditor *gatewaydAuditor, replayStores ...webhookReplayStore) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -86,7 +88,11 @@ func newGithubdProxy(target string, secret []byte, next http.Handler, log *slog.
 		return next
 	}
 	if len(secret) == 0 {
-		log.Warn("githubd proxy secret unset; /webhooks/github requests will be rejected")
+		if strings.TrimSpace(platformDomain) == "" {
+			log.Warn("githubd proxy secret unset; /webhooks/github requests will be rejected")
+		} else {
+			log.Info("githubd proxy unarmed on this node", "platform_domain", platformDomain)
+		}
 	} else {
 		log.Info("githubd proxy armed", "target", u.String())
 	}
@@ -95,13 +101,14 @@ func newGithubdProxy(target string, secret []byte, next http.Handler, log *slog.
 		replay = replayStores[0]
 	}
 	return &githubdProxy{
-		target:    u,
-		secret:    secret,
-		next:      next,
-		log:       log,
-		transport: &http.Transport{},
-		auditor:   auditor,
-		replay:    replay,
+		target:         u,
+		secret:         secret,
+		next:           next,
+		log:            log,
+		transport:      &http.Transport{},
+		auditor:        auditor,
+		replay:         replay,
+		platformDomain: normalizeWebhookHost(platformDomain),
 	}
 }
 
@@ -117,7 +124,25 @@ func (g *githubdProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.next.ServeHTTP(w, r)
 		return
 	}
+	if g.platformDomain != "" && !isPlatformWebhookHost(r.Host, g.platformDomain) {
+		g.next.ServeHTTP(w, r)
+		return
+	}
 	g.handleWebhook(w, r)
+}
+
+func normalizeWebhookHost(host string) string {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if parsed, _, err := net.SplitHostPort(host); err == nil {
+		host = parsed
+	}
+	return strings.TrimSuffix(host, ".")
+}
+
+func isPlatformWebhookHost(requestHost, platformDomain string) bool {
+	host := normalizeWebhookHost(requestHost)
+	platformDomain = normalizeWebhookHost(platformDomain)
+	return host == platformDomain || host == "api."+platformDomain
 }
 
 // handleWebhook reads the body, verifies the X-Hub-Signature-256

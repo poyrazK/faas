@@ -784,7 +784,7 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 	if t, fire := m.sessionDebounce.shouldTouch(env.Sid, time.Now(), m.sessionTouchWindow()); fire {
 		go func(parentCtx context.Context, sid string, ticket *TouchTicket) {
 			defer ticket.AfterFire(m.sessionTouchWindow())
-			c, cancel := context.WithTimeout(parentCtx, 2*time.Second)
+			c, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), 2*time.Second)
 			defer cancel()
 			if err := m.Lookups.TouchSessionLastSeen(c, sid); err != nil && m.Log != nil {
 				m.Log.Warn("session last_seen_at touch failed", "sid", logsanitize.Field(sid), "error", err.Error())
