@@ -895,6 +895,57 @@ func validateExplicitDockerfile(sourceDir string) error {
 	return nil
 }
 
+// materializeCommittedGitSource builds the HEAD archive selected by the
+// zero-config path, snapshots it, and returns the matching extracted source
+// view. Callers must use sourceDir for every source-derived decision and
+// archivePath for the eventual upload.
+func materializeCommittedGitSource(prov zeroConfigProvenance, selectedSourceDir, sourceRoot, sourcePath, workspaceContextRoot string) (archivePath, sourceDir string, cleanup func(), err error) {
+	tmpFile, err := os.CreateTemp("", "gregale-git-head-*.tar.gz")
+	if err != nil {
+		return "", "", nil, fmt.Errorf("could not create temp tarball: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", "", nil, fmt.Errorf("could not close temp tarball: %w", err)
+	}
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	switch {
+	case workspaceContextRoot != "":
+		err = gitArchiveHEAD(prov.Root, tmpPath)
+	case sourcePath == "":
+		err = gitArchiveHEAD(prov.Root, tmpPath)
+	default:
+		var relPath string
+		relPath, err = gitRelativePath(prov.Root, selectedSourceDir)
+		if err == nil {
+			err = gitArchiveHEADPath(prov.Root, relPath, tmpPath)
+		}
+	}
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	archivePath, archiveRoot, cleanup, err := materializeDeployArchive(tmpPath)
+	if err != nil {
+		return "", "", nil, err
+	}
+	sourceDir = archiveRoot
+	if sourceRoot != "" {
+		sourceDir = filepath.Join(archiveRoot, filepath.FromSlash(sourceRoot))
+		info, statErr := os.Stat(sourceDir)
+		if statErr != nil || !info.IsDir() {
+			cleanup()
+			if statErr != nil {
+				return "", "", nil, fmt.Errorf("committed source root %q: %w", sourceRoot, statErr)
+			}
+			return "", "", nil, fmt.Errorf("committed source root %q is not a directory", sourceRoot)
+		}
+	}
+	return archivePath, sourceDir, cleanup, nil
+}
+
 // incompatibleCreateOnlyFlags enforces an explicit allowlist for the mode
 // that reserves app metadata without creating a deployment. Any option whose
 // only destination is a deployment must fail instead of being silently lost.
@@ -2035,12 +2086,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
 		return printErr("Invalid --name", &api.APIError{Problem: *problem})
 	}
-	if (deployRuntime != "" || deployHandler != "") && !deployFunction {
-		functionSource := *image == "" && *tarball == "" && detectShape(sourceDir) == shapeFunction
-		if !functionSource {
-			return printErr("Invalid function flags", fmt.Errorf("--runtime and --handler require an explicit or detected function-shaped deploy"))
-		}
-	}
 	// --project is an explicit, safe opt-in to project apply. Keep the
 	// existing single-app slug rules for --name and --path, while making
 	// tarball/template invocations intuitive by using their basename when
@@ -2084,6 +2129,56 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		*tarball = archivePath
 		sourceDir = archiveSourceDir
 		defer archiveCleanup()
+	}
+	if localZeroConfig {
+		selectedSourceDir := sourceDir
+		if provVal, ok, perr := resolveZeroConfigProvenance(selectedSourceDir); ok {
+			prov = &provVal
+			if provVal.Dirty {
+				if dirtyOut, dirtyErr := runGitCmd(provVal.Root, "status", "--porcelain"); dirtyErr == nil {
+					dirtyFiles := 0
+					for _, line := range strings.Split(strings.TrimRight(dirtyOut, "\n"), "\n") {
+						if line != "" {
+							dirtyFiles++
+						}
+					}
+					if !jsonOutput && dirtyFiles > 0 && *worktree {
+						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying working-tree source (%s)", dirtyFiles, provVal.SHA[:7])
+					} else if !jsonOutput && dirtyFiles > 0 {
+						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying HEAD (%s) only — commit first to include the changes", dirtyFiles, provVal.SHA[:7])
+					}
+				}
+			}
+			if *deployedBy == "" && provVal.DeployedBy != "" {
+				*deployedBy = provVal.DeployedBy
+			}
+			if !*worktree {
+				archivePath, committedSourceDir, committedCleanup, archiveErr := materializeCommittedGitSource(
+					provVal, selectedSourceDir, sourceRoot, *sourcePath, workspaceContextRoot,
+				)
+				if archiveErr != nil {
+					return printErr("Could not archive git HEAD", archiveErr)
+				}
+				gitArchivePath = archivePath
+				sourceDir = committedSourceDir
+				defer committedCleanup()
+				if workspaceContextRoot != "" {
+					PrintProgress(os.Stderr, "archiving workspace HEAD (%s) with build root %s", provVal.SHA[:7], sourceRoot)
+				} else if *sourcePath == "" {
+					PrintProgress(os.Stderr, "archiving HEAD (%s) from %s", provVal.SHA[:7], filepath.Base(cwd))
+				} else {
+					PrintProgress(os.Stderr, "archiving HEAD (%s) from --path %s", provVal.SHA[:7], *sourcePath)
+				}
+			}
+		} else if !errors.Is(perr, ErrNotInGitRepo) && !errors.Is(perr, ErrNoGitRemote) {
+			return printErr("Could not resolve git metadata", perr)
+		}
+	}
+	if (deployRuntime != "" || deployHandler != "") && !deployFunction {
+		functionSource := localZeroConfig && detectShape(sourceDir) == shapeFunction
+		if !functionSource {
+			return printErr("Invalid function flags", fmt.Errorf("--runtime and --handler require an explicit or detected function-shaped deploy"))
+		}
 	}
 	if *dockerfile {
 		if dockerfileErr := validateExplicitDockerfile(sourceDir); dockerfileErr != nil {
@@ -2165,83 +2260,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		//     (existing behavior preserved for non-git dirs and for
 		//     git repos without origin)
 		//   - ok=false, err=other → surface the error
-		if provVal, ok, perr := resolveZeroConfigProvenance(sourceDir); ok {
-			prov = &provVal
-			if provVal.Dirty {
-				// Print a dirty warning naming the SHA + dirty count so
-				// the operator sees exactly what they're shipping. In
-				// the default mode the deploy is HEAD-only; --worktree
-				// makes the local bytes intentional.
-				if dirtyOut, derr := runGitCmd(provVal.Root, "status", "--porcelain"); derr == nil {
-					dirtyFiles := 0
-					for _, line := range strings.Split(strings.TrimRight(dirtyOut, "\n"), "\n") {
-						if line != "" {
-							dirtyFiles++
-						}
-					}
-					if !jsonOutput && dirtyFiles > 0 && *worktree {
-						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying working-tree source (%s)",
-							dirtyFiles, provVal.SHA[:7])
-					} else if !jsonOutput && dirtyFiles > 0 {
-						PrintProgress(os.Stdout, "Note: working tree has %d dirty file(s); deploying HEAD (%s) only — commit first to include the changes",
-							dirtyFiles, provVal.SHA[:7])
-					}
-				}
-			}
-			if !*worktree {
-				// Materialise HEAD as a temp gzipped tar via `git
-				// archive`. os.CreateTemp returns a *File we close
-				// immediately — the archive helper writes to the path,
-				// no fd leak on this path. The open that follows uses
-				// openCustomerFile + defer Close (the existing
-				// --tarball branch), which is fd-safe.
-				tmpFile, terr := os.CreateTemp("", "gregale-git-*.tar.gz")
-				if terr != nil {
-					return printErr("Could not create temp tarball", terr)
-				}
-				tmpPath := tmpFile.Name()
-				_ = tmpFile.Close()
-				defer func() { _ = os.Remove(tmpPath) }()
-				archiveErr := error(nil)
-				if workspaceContextRoot != "" {
-					PrintProgress(os.Stderr, "archiving workspace HEAD (%s) with build root %s",
-						provVal.SHA[:7], sourceRoot)
-					archiveErr = gitArchiveHEAD(provVal.Root, tmpPath)
-				} else if *sourcePath == "" {
-					archiveErr = gitArchiveHEAD(provVal.Root, tmpPath)
-				} else {
-					relPath, relErr := gitRelativePath(provVal.Root, sourceDir)
-					if relErr != nil {
-						return printErr("Could not resolve deploy source", relErr)
-					}
-					archiveErr = gitArchiveHEADPath(provVal.Root, relPath, tmpPath)
-				}
-				if archiveErr != nil {
-					return printErr("Could not archive git HEAD", archiveErr)
-				}
-				gitArchivePath = tmpPath
-				if *sourcePath == "" {
-					PrintProgress(os.Stderr, "archiving HEAD (%s) from %s",
-						provVal.SHA[:7], filepath.Base(cwd))
-				} else {
-					PrintProgress(os.Stderr, "archiving HEAD (%s) from --path %s",
-						provVal.SHA[:7], *sourcePath)
-				}
-			}
-			// Auto-capture `git config user.name` as deployed_by
-			// unless the operator explicitly passed --deployed-by.
-			// Mirrors the legacy path at cmd_deploy_zero_config.go
-			// (issue #977 / ADR-116).
-			if *deployedBy == "" && provVal.DeployedBy != "" {
-				*deployedBy = provVal.DeployedBy
-			}
-			// Keep the default shape until the filtered archive is ready.
-			// The archive detector below classifies the exact committed
-			// bytes, while --worktree and repositories without an origin
-			// use the source-directory detector.
-		} else if !errors.Is(perr, ErrNotInGitRepo) && !errors.Is(perr, ErrNoGitRemote) {
-			return printErr("Could not resolve git metadata", perr)
-		}
+		// Provenance and the committed archive were resolved before doctor.
+		// sourceDir now names the extracted HEAD view in default mode, or the
+		// selected working directory when --worktree/non-git fallback applies.
 		// Issue #737 / ADR-083: resolveDeployShape does detect +
 		// infer + print in one seam so the unit test can drive the
 		// "Detected:" line without bringing up apid. The print goes

@@ -32,6 +32,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
 // initZeroConfigRepo creates a tempdir git repo with a GitHub
@@ -77,6 +78,56 @@ func initZeroConfigRepo(t *testing.T) string {
 		}
 	}
 	return dir
+}
+
+// adr: 115
+func TestMaterializeCommittedGitSourceKeepsManifestAndArchiveOnHEAD(t *testing.T) {
+	repo := initZeroConfigRepo(t)
+	committed := "triggers:\n  - kind: cron\n    app: source-view\n    schedule: '17 3 * * *'\n    path: /committed\nworkflows:\n  - name: committed-flow\n    steps:\n      - name: run\n        run: source-view\n"
+	dirty := "triggers:\n  - kind: cron\n    app: source-view\n    schedule: '23 4 * * *'\n    path: /dirty\nworkflows:\n  - name: dirty-flow\n    steps:\n      - name: run\n        run: source-view\n"
+	manifestPath := filepath.Join(repo, "gregale.yaml")
+	if err := os.WriteFile(manifestPath, []byte(committed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "gregale.yaml"}, {"commit", "-q", "-m", "add committed manifest"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	if err := os.WriteFile(manifestPath, []byte(dirty), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prov, ok, err := resolveZeroConfigProvenance(repo)
+	if err != nil || !ok {
+		t.Fatalf("resolve provenance = (%+v, %t, %v)", prov, ok, err)
+	}
+	archivePath, sourceDir, cleanup, err := materializeCommittedGitSource(prov, repo, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	m, present, err := gregalemanifest.Load(sourceDir)
+	if err != nil || !present {
+		t.Fatalf("load committed manifest = (%+v, %t, %v)", m, present, err)
+	}
+	if len(m.Triggers) != 1 || m.Triggers[0].Path != "/committed" || len(m.Workflows) != 1 || m.Workflows[0].Name != "committed-flow" {
+		t.Fatalf("staged source view used dirty manifest: %+v", m)
+	}
+	archiveBytes, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := readCapturedDeployArchive(t, archiveBytes)
+	if !bytes.Equal(entries["gregale.yaml"], []byte(committed)) {
+		t.Fatalf("uploaded archive manifest differs from staged view: %q", entries["gregale.yaml"])
+	}
+	worktreeManifest, _, err := gregalemanifest.Load(repo)
+	if err != nil || worktreeManifest.Triggers[0].Path != "/dirty" || worktreeManifest.Workflows[0].Name != "dirty-flow" {
+		t.Fatalf("worktree opt-in did not retain dirty manifest: %+v, %v", worktreeManifest, err)
+	}
 }
 
 // withCwd chdirs into dir for the duration of the test and
