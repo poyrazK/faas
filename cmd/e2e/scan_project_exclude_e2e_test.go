@@ -360,11 +360,26 @@ func TestScanExclude_MultiSlug(t *testing.T) {
 		}
 	}
 
-	// None of the excluded slugs may appear in WillDeploy.
-	for _, w := range plan.WillDeploy {
-		if want[w.Slug] {
-			t.Errorf("WillDeploy carries excluded slug %q; want absent", w.Slug)
+	// Root-qualified selectors exclude only the matching workload identity.
+	// The fixture deliberately contains a root Compose "api" plus a
+	// services/api "api", and root Compose/Procfile "worker" entries plus a
+	// services/worker "worker". Those same-name root workloads must remain;
+	// asserting only on Slug would incorrectly treat them as the excluded
+	// convention workloads.
+	for _, w := range plan.Workloads {
+		if w.RootDir == "services/api" || w.RootDir == "services/worker" {
+			t.Errorf("workloads carries excluded identity %q at root %q", w.Name, w.RootDir)
 		}
+		if w.Name == "web" {
+			t.Errorf("workloads carries excluded root workload %q", w.Name)
+		}
+	}
+	willCounts := make(map[string]int)
+	for _, w := range plan.WillDeploy {
+		willCounts[w.Slug]++
+	}
+	if willCounts["api"] != 1 || willCounts["worker"] != 2 || willCounts["web"] != 0 {
+		t.Errorf("WillDeploy duplicate-name projection = %#v, want api=1 worker=2 web=0", willCounts)
 	}
 }
 
