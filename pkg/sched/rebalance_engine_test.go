@@ -1,3 +1,4 @@
+// spec: §6.2
 // rebalance_engine_test.go — Tier A4 (ADR-064) engine-method
 // tests for Engine.RebalanceOrphanedApps. The companion
 // rebalancer_test.go covers the watcher-loop filter and
