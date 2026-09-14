@@ -268,6 +268,10 @@ jobs:
           Environment=FAAS_BILLING_MODE=disabled
           EOF
           done
+          cat > "${BUNDLE_ROOT}/systemd/faas-apid.service.d/zz-faas-public-status.conf" <<'EOF'
+          [Service]
+          Environment=FAAS_PUBLIC_STATUS_LAUNCH_AT=2026-09-14T00:00:00Z
+          EOF
           # Tier A7 split: faas-gatewayd.service (the v1 monolithic unit)
           # was removed in PR-A (ADR-070). The CD refuses to ship a
           # leftover copy.
@@ -336,6 +340,22 @@ jobs:
             echo "production sealed.env contains a forbidden dev-only auth/bootstrap variable" >&2
             exit 1
           fi
+          archive=/etc/faas/secrets/storage-box/archive-creds.json
+          test -s "$archive" || {
+            echo "production log archive credentials are missing" >&2
+            exit 1
+          }
+          python3 - "$archive" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              data = json.load(stream)
+          assert all(isinstance(data.get(key), str) and data[key].strip() for key in ("endpoint", "bucket"))
+          hmac = all(isinstance(data.get(key), str) and data[key].strip() for key in ("key_id", "secret"))
+          metadata = data.get("auth_mode") == "gcp_metadata" and not data.get("key_id") and not data.get("secret")
+          assert hmac or metadata
+          PY
           REMOTE
 
       - name: Stage the shared fleet seal identity

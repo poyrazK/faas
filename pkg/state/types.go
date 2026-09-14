@@ -6803,6 +6803,7 @@ type StatusIncident struct {
 	ScheduledStartAt *time.Time
 	ScheduledEndAt   *time.Time
 	UpdatedAt        time.Time
+	EditedAt         *time.Time
 	Updates          []StatusIncidentUpdate
 }
 
@@ -6811,6 +6812,9 @@ type StatusIncidentUpdate struct {
 	State          publicstatus.Lifecycle
 	Message        string
 	At             time.Time
+	EditedAt       *time.Time
+	Impact         *publicstatus.State
+	Components     []publicstatus.Component
 	Actor          string
 	IdempotencyKey string
 }
@@ -6835,6 +6839,20 @@ type StatusEventUpdateInput struct {
 	State          publicstatus.Lifecycle
 	Message        string
 	At             time.Time
+	Impact         *publicstatus.State
+	Components     []publicstatus.Component
+}
+
+type StatusEventTitleEditInput struct {
+	Actor string
+	Title string
+	At    time.Time
+}
+
+type StatusUpdateMessageEditInput struct {
+	Actor   string
+	Message string
+	At      time.Time
 }
 
 type StatusEventListOptions struct {

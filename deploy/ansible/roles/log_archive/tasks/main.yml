@@ -60,6 +60,17 @@
   register: log_archive_creds_stat
   failed_when: false  # chroot/CI may not have /etc/faas/secrets
 
+- name: log_archive — require archive credentials on public fleets
+  ansible.builtin.assert:
+    that:
+      - log_archive_creds_stat.stat.exists
+      - (log_archive_creds_stat.stat.size | default(0) | int) > 2
+    fail_msg: >-
+      This fleet advertises customer log retention, but
+      /etc/faas/secrets/storage-box/archive-creds.json is missing or still a
+      placeholder. Provision the off-host bucket credentials before rollout.
+  when: faas_log_archive_required | bool
+
 # Skipped in chroot/CI (no /etc/faas/secrets/ yet). On a real
 # production box the v1 bootstrap.sh step that unseals host.age-sealed
 # secrets into the staging dir is required before this role
@@ -79,6 +90,24 @@
       unseal-archive-creds` (PR-A CLI leaf) to repopulate from
       the host.age-sealed form. systemd reads the source as root
       and stages it privately for apid, vmmd, and gatewayd-internal.
+  when: log_archive_creds_stat.stat.exists
+
+- name: log_archive — validate archive credential fields without exposing secrets
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import json,sys;
+        d=json.load(open(sys.argv[1], encoding='utf-8'));
+        required=('endpoint','bucket');
+        assert all(isinstance(d.get(k),str) and d[k].strip() for k in required);
+        hmac=all(isinstance(d.get(k),str) and d[k].strip() for k in ('key_id','secret'));
+        metadata=d.get('auth_mode') == 'gcp_metadata' and not d.get('key_id') and not d.get('secret');
+        assert hmac or metadata
+      - /etc/faas/secrets/storage-box/archive-creds.json
+  changed_when: false
+  no_log: true
   when: log_archive_creds_stat.stat.exists
 
 # Spec §11: /var/log/faas/archive is the spool root the apid

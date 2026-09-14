@@ -7,7 +7,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.admin_status_event_update_request import AdminStatusEventUpdateRequest
+from ...models.admin_status_update_edit_request import AdminStatusUpdateEditRequest
 from ...models.problem import Problem
 from ...models.public_status_event import PublicStatusEvent
 from ...types import UNSET, Response, Unset
@@ -15,22 +15,22 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     public_id: UUID,
+    update_id: UUID,
     *,
-    body: AdminStatusEventUpdateRequest,
-    idempotency_key: str,
+    body: AdminStatusUpdateEditRequest,
     faas_sid: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    headers["Idempotency-Key"] = idempotency_key
 
     cookies = {}
     if faas_sid is not UNSET:
         cookies["faas_sid"] = faas_sid
 
     _kwargs: dict[str, Any] = {
-        "method": "post",
-        "url": "/v1/admin/status/incidents/{public_id}/updates".format(
+        "method": "patch",
+        "url": "/v1/admin/status/incidents/{public_id}/updates/{update_id}".format(
             public_id=quote(str(public_id), safe=""),
+            update_id=quote(str(update_id), safe=""),
         ),
         "cookies": cookies,
     }
@@ -71,11 +71,6 @@ def _parse_response(
 
         return response_404
 
-    if response.status_code == 409:
-        response_409 = Problem.from_dict(response.json())
-
-        return response_409
-
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -100,22 +95,22 @@ def _build_response(
 
 def sync_detailed(
     public_id: UUID,
+    update_id: UUID,
     *,
     client: AuthenticatedClient,
-    body: AdminStatusEventUpdateRequest,
-    idempotency_key: str,
+    body: AdminStatusUpdateEditRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Response[Problem | PublicStatusEvent]:
-    """Append a public timeline update and lifecycle transition (admin-only).
+    """Correct a published timeline message without changing its posted time.
 
-     Updates are append-only. Terminal incidents and maintenance cannot reopen.
+     Requires an operator session. The entry remains in place and exposes edited_at; deletion is
+    unsupported.
 
     Args:
         public_id (UUID):
-        idempotency_key (str):
+        update_id (UUID):
         faas_sid (str | Unset):
-        body (AdminStatusEventUpdateRequest): Operator request to append a lifecycle update and
-            optionally re-rate its impact or affected components.
+        body (AdminStatusUpdateEditRequest): Operator correction to a published timeline message.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -127,8 +122,8 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         public_id=public_id,
+        update_id=update_id,
         body=body,
-        idempotency_key=idempotency_key,
         faas_sid=faas_sid,
     )
 
@@ -141,22 +136,22 @@ def sync_detailed(
 
 def sync(
     public_id: UUID,
+    update_id: UUID,
     *,
     client: AuthenticatedClient,
-    body: AdminStatusEventUpdateRequest,
-    idempotency_key: str,
+    body: AdminStatusUpdateEditRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Problem | PublicStatusEvent | None:
-    """Append a public timeline update and lifecycle transition (admin-only).
+    """Correct a published timeline message without changing its posted time.
 
-     Updates are append-only. Terminal incidents and maintenance cannot reopen.
+     Requires an operator session. The entry remains in place and exposes edited_at; deletion is
+    unsupported.
 
     Args:
         public_id (UUID):
-        idempotency_key (str):
+        update_id (UUID):
         faas_sid (str | Unset):
-        body (AdminStatusEventUpdateRequest): Operator request to append a lifecycle update and
-            optionally re-rate its impact or affected components.
+        body (AdminStatusUpdateEditRequest): Operator correction to a published timeline message.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -168,31 +163,31 @@ def sync(
 
     return sync_detailed(
         public_id=public_id,
+        update_id=update_id,
         client=client,
         body=body,
-        idempotency_key=idempotency_key,
         faas_sid=faas_sid,
     ).parsed
 
 
 async def asyncio_detailed(
     public_id: UUID,
+    update_id: UUID,
     *,
     client: AuthenticatedClient,
-    body: AdminStatusEventUpdateRequest,
-    idempotency_key: str,
+    body: AdminStatusUpdateEditRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Response[Problem | PublicStatusEvent]:
-    """Append a public timeline update and lifecycle transition (admin-only).
+    """Correct a published timeline message without changing its posted time.
 
-     Updates are append-only. Terminal incidents and maintenance cannot reopen.
+     Requires an operator session. The entry remains in place and exposes edited_at; deletion is
+    unsupported.
 
     Args:
         public_id (UUID):
-        idempotency_key (str):
+        update_id (UUID):
         faas_sid (str | Unset):
-        body (AdminStatusEventUpdateRequest): Operator request to append a lifecycle update and
-            optionally re-rate its impact or affected components.
+        body (AdminStatusUpdateEditRequest): Operator correction to a published timeline message.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -204,8 +199,8 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         public_id=public_id,
+        update_id=update_id,
         body=body,
-        idempotency_key=idempotency_key,
         faas_sid=faas_sid,
     )
 
@@ -216,22 +211,22 @@ async def asyncio_detailed(
 
 async def asyncio(
     public_id: UUID,
+    update_id: UUID,
     *,
     client: AuthenticatedClient,
-    body: AdminStatusEventUpdateRequest,
-    idempotency_key: str,
+    body: AdminStatusUpdateEditRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Problem | PublicStatusEvent | None:
-    """Append a public timeline update and lifecycle transition (admin-only).
+    """Correct a published timeline message without changing its posted time.
 
-     Updates are append-only. Terminal incidents and maintenance cannot reopen.
+     Requires an operator session. The entry remains in place and exposes edited_at; deletion is
+    unsupported.
 
     Args:
         public_id (UUID):
-        idempotency_key (str):
+        update_id (UUID):
         faas_sid (str | Unset):
-        body (AdminStatusEventUpdateRequest): Operator request to append a lifecycle update and
-            optionally re-rate its impact or affected components.
+        body (AdminStatusUpdateEditRequest): Operator correction to a published timeline message.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -244,9 +239,9 @@ async def asyncio(
     return (
         await asyncio_detailed(
             public_id=public_id,
+            update_id=update_id,
             client=client,
             body=body,
-            idempotency_key=idempotency_key,
             faas_sid=faas_sid,
         )
     ).parsed

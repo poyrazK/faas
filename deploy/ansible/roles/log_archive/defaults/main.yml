@@ -1,0 +1,4 @@
+---
+# Production fleets promise archive retention in every plan. Set false only
+# for local development inventories that intentionally omit object storage.
+faas_log_archive_required: false

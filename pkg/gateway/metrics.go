@@ -2680,13 +2680,19 @@ func (l *requestLogger) Log(appID, code string, latency time.Duration, cold bool
 	// codeql[go/log-injection] false-positive: logsanitize.Field is not in CodeQL's sanitizer model
 	// (the query only recognizes inline strings.ReplaceAll), but it does strip the injection bytes
 	// at runtime — matching the defense-in-depth precedent set for the synth RPC (47d5531).
-	l.log.Info("gateway_request",
+	fields := []any{
 		"app_id", appID,
 		"code", code,
 		"latency_ms", latency.Milliseconds(),
 		"cold", cold,
 		"request_id", logsanitize.Field(requestID),
-	)
+	}
+	hotSuccess := len(code) == 3 && code[0] == '2'
+	if cold || !hotSuccess {
+		l.log.Info("gateway_request", fields...)
+		return
+	}
+	l.log.Debug("gateway_request", fields...)
 }
 
 // Issue #676 / ADR-080 follow-up, PR-B: closed-set label constants

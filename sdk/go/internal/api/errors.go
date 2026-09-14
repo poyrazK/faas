@@ -562,7 +562,7 @@ func ErrAppConcurrencyReached(l Limits, observed int) *Problem {
 func ErrCapacity(detail string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeCapacity,
 		"Briefly at capacity", detail).
-		WithDocs("https://status.gregale.dev")
+		WithDocs("https://gregale.dev/status")
 }
 
 // ErrSourceTooLarge is returned when an uploaded tarball exceeds the plan cap.

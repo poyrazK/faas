@@ -7405,6 +7405,17 @@ func (m *MemStore) AppendPublicStatusUpdate(_ context.Context, publicID string, 
 		if err := publicstatus.ValidateTransition(inc.Kind, inc.State, input.State); err != nil {
 			return StatusIncident{}, err
 		}
+		nextImpact := inc.Impact
+		if input.Impact != nil {
+			nextImpact = *input.Impact
+		}
+		nextComponents := inc.Components
+		if input.Components != nil {
+			nextComponents = input.Components
+		}
+		if err := publicstatus.ValidateAttribution(inc.Kind, nextImpact, nextComponents); err != nil {
+			return StatusIncident{}, err
+		}
 		oldState := inc.State
 		at := input.At.UTC()
 		if at.IsZero() {
@@ -7415,17 +7426,96 @@ func (m *MemStore) AppendPublicStatusUpdate(_ context.Context, publicID string, 
 		}
 		inc.State = input.State
 		inc.Message = input.Message
+		inc.Impact = nextImpact
+		inc.Components = slices.Clone(nextComponents)
+		inc.Component = legacyStatusComponent(nextComponents[0])
+		inc.Severity = legacyStatusSeverity(nextImpact)
 		inc.UpdatedAt = at
 		if input.State == publicstatus.LifecycleResolved || input.State == publicstatus.LifecycleCompleted || input.State == publicstatus.LifecycleCancelled {
 			inc.ResolvedAt = &at
 		}
-		inc.Updates = append(inc.Updates, StatusIncidentUpdate{
+		update := StatusIncidentUpdate{
 			ID: uuid.NewString(), State: input.State, Message: input.Message, At: at,
 			Actor: input.Actor, IdempotencyKey: input.IdempotencyKey,
-		})
+			Components: slices.Clone(input.Components),
+		}
+		if input.Impact != nil {
+			value := *input.Impact
+			update.Impact = &value
+		}
+		inc.Updates = append(inc.Updates, update)
 		m.statusUpdateKeys[input.IdempotencyKey] = publicID
 		m.appendStatusMutationAuditLocked("status.event.updated", input.Actor, *inc, "update", oldState, input.State)
 		return cloneStatusIncident(*inc), nil
+	}
+	return StatusIncident{}, ErrNotFound
+}
+
+func (m *MemStore) EditPublicStatusEventTitle(_ context.Context, publicID string, input StatusEventTitleEditInput) (StatusIncident, error) {
+	if err := publicstatus.ValidateTitle(input.Title); err != nil {
+		return StatusIncident{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.statusIncidents {
+		inc := &m.statusIncidents[i]
+		if inc.PublicID != publicID {
+			continue
+		}
+		at := input.At.UTC()
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		if at.Before(inc.PostedAt) {
+			at = inc.PostedAt
+		}
+		title := strings.TrimSpace(input.Title)
+		if inc.Title == title {
+			return cloneStatusIncident(*inc), nil
+		}
+		inc.Title = title
+		inc.EditedAt = &at
+		m.appendStatusMutationAuditLocked("status.event.corrected", input.Actor, *inc, "correct_title", inc.State, inc.State)
+		return cloneStatusIncident(*inc), nil
+	}
+	return StatusIncident{}, ErrNotFound
+}
+
+func (m *MemStore) EditPublicStatusUpdateMessage(_ context.Context, publicID, updateID string, input StatusUpdateMessageEditInput) (StatusIncident, error) {
+	if err := publicstatus.ValidateMessage(input.Message); err != nil {
+		return StatusIncident{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.statusIncidents {
+		inc := &m.statusIncidents[i]
+		if inc.PublicID != publicID {
+			continue
+		}
+		for j := range inc.Updates {
+			update := &inc.Updates[j]
+			if update.ID != updateID {
+				continue
+			}
+			at := input.At.UTC()
+			if at.IsZero() {
+				at = time.Now().UTC()
+			}
+			if at.Before(update.At) {
+				at = update.At
+			}
+			if update.Message == input.Message {
+				return cloneStatusIncident(*inc), nil
+			}
+			update.Message = input.Message
+			update.EditedAt = &at
+			if j == len(inc.Updates)-1 {
+				inc.Message = input.Message
+			}
+			m.appendStatusMutationAuditLocked("status.update.corrected", input.Actor, *inc, "correct_update", inc.State, inc.State)
+			return cloneStatusIncident(*inc), nil
+		}
+		return StatusIncident{}, ErrNotFound
 	}
 	return StatusIncident{}, ErrNotFound
 }
@@ -7514,10 +7604,19 @@ func (m *MemStore) ListStatusBuckets(_ context.Context, from, to time.Time) ([]S
 func cloneStatusIncident(in StatusIncident) StatusIncident {
 	in.Components = slices.Clone(in.Components)
 	in.Updates = slices.Clone(in.Updates)
+	for i := range in.Updates {
+		in.Updates[i].Components = slices.Clone(in.Updates[i].Components)
+		in.Updates[i].EditedAt = cloneTimePtr(in.Updates[i].EditedAt)
+		if in.Updates[i].Impact != nil {
+			value := *in.Updates[i].Impact
+			in.Updates[i].Impact = &value
+		}
+	}
 	in.StartsAt = cloneTimePtr(in.StartsAt)
 	in.ScheduledStartAt = cloneTimePtr(in.ScheduledStartAt)
 	in.ScheduledEndAt = cloneTimePtr(in.ScheduledEndAt)
 	in.ResolvedAt = cloneTimePtr(in.ResolvedAt)
+	in.EditedAt = cloneTimePtr(in.EditedAt)
 	return in
 }
 

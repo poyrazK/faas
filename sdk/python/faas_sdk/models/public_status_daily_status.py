@@ -1,6 +1,8 @@
 from typing import Literal
 
-PublicStatusDailyStatus = Literal["degraded", "maintenance", "major_outage", "operational", "partial_outage", "unknown"]
+PublicStatusDailyStatus = Literal[
+    "degraded", "maintenance", "major_outage", "operational", "partial_outage", "pre_release", "unknown"
+]
 
 PUBLIC_STATUS_DAILY_STATUS_VALUES: set[PublicStatusDailyStatus] = {
     "degraded",
@@ -8,6 +10,7 @@ PUBLIC_STATUS_DAILY_STATUS_VALUES: set[PublicStatusDailyStatus] = {
     "major_outage",
     "operational",
     "partial_outage",
+    "pre_release",
     "unknown",
 }
 

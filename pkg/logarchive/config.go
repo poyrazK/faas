@@ -110,6 +110,10 @@ const EnvVMMDSpoolRoot = "FAAS_VMMD_LOG_ARCHIVE_SPOOL_ROOT"
 // and exposed to each daemon as a credential-directory path.
 const EnvCredentialsPath = "FAAS_LOG_ARCHIVE_CREDS_PATH"
 
+// EnvAuthMode selects credential acquisition. Empty uses S3 HMAC keys;
+// gcp_metadata uses the attached GCE service account's short-lived token.
+const EnvAuthMode = "FAAS_LOG_ARCHIVE_AUTH_MODE"
+
 // DefaultCredentialsPath is used outside systemd (for example by a manual
 // binary invocation) and is also the source path used by LoadCredential=.
 const DefaultCredentialsPath = "/etc/faas/secrets/storage-box/archive-creds.json"
@@ -140,6 +144,8 @@ type Config struct {
 	// disabled mode; Shipper.Run returns nil immediately on
 	// ctx.Done() without touching S3.
 	Bucket string
+	// AuthMode is empty for S3 SigV4 or "gcp_metadata" for keyless GCS.
+	AuthMode string
 	// KeyID is the S3 access key id. Paired with Secret; both
 	// must be set or the shipper refuses to boot.
 	KeyID string
@@ -195,6 +201,7 @@ func ConfigFromEnv(getenv func(string) string, log *slog.Logger) (Config, error)
 		Endpoint:       getenv(EnvEndpoint),
 		Region:         defaultRegion(getenv(EnvRegion)),
 		Bucket:         getenv(EnvBucket),
+		AuthMode:       getenv(EnvAuthMode),
 		KeyID:          getenv(EnvKeyID),
 		Secret:         getenv(EnvSecret),
 		FlushInterval:  parseDurationEnv(getenv(EnvInterval), DefaultFlushInterval, EnvInterval, log),

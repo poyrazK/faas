@@ -31,6 +31,9 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 // ErrAuthMissing is returned by PutObject/GetObject when the
@@ -68,35 +71,51 @@ func IsPermanent(err error) bool {
 // accessors are read-only after construction; no internal
 // mutex.
 type S3Client struct {
-	Endpoint string // e.g. "https://s3.us-east-1.amazonaws.com"
-	Region   string // e.g. "us-east-1"
-	Bucket   string
-	KeyID    string
-	Secret   string
-	HTTP     *http.Client
+	Endpoint    string // e.g. "https://s3.us-east-1.amazonaws.com"
+	Region      string // e.g. "us-east-1"
+	Bucket      string
+	KeyID       string
+	Secret      string
+	TokenSource oauth2.TokenSource
+	HTTP        *http.Client
 }
 
 // NewS3Client constructs a client. Returns ErrAuthMissing if
 // KeyID or Secret is empty (matches the apid wire-up's
 // fail-closed posture). HTTP defaults to a 30s-timeout client.
-func NewS3Client(endpoint, region, bucket, keyID, secret string) (*S3Client, error) {
-	if keyID == "" || secret == "" {
-		return nil, ErrAuthMissing
-	}
+func NewS3Client(endpoint, region, bucket, keyID, secret string, authMode ...string) (*S3Client, error) {
 	if endpoint == "" {
 		return nil, errors.New("logarchive: s3client endpoint required")
 	}
 	if bucket == "" {
 		return nil, errors.New("logarchive: s3client bucket required")
 	}
-	return &S3Client{
+	client := &S3Client{
 		Endpoint: strings.TrimRight(endpoint, "/"),
 		Region:   region,
 		Bucket:   bucket,
 		KeyID:    keyID,
 		Secret:   secret,
 		HTTP:     &http.Client{Timeout: 30 * time.Second},
-	}, nil
+	}
+	mode := ""
+	if len(authMode) > 0 {
+		mode = strings.TrimSpace(authMode[0])
+	}
+	switch mode {
+	case "":
+		if keyID == "" || secret == "" {
+			return nil, ErrAuthMissing
+		}
+	case "gcp_metadata":
+		if keyID != "" || secret != "" {
+			return nil, errors.New("logarchive: gcp_metadata auth cannot be combined with HMAC keys")
+		}
+		client.TokenSource = oauth2.ReuseTokenSource(nil, google.ComputeTokenSource("", "https://www.googleapis.com/auth/devstorage.read_write"))
+	default:
+		return nil, fmt.Errorf("logarchive: unsupported auth mode %q", mode)
+	}
+	return client, nil
 }
 
 // PutObject uploads r (with the given byte length) to
@@ -129,7 +148,7 @@ func (c *S3Client) PutObject(ctx context.Context, key, contentType string, r io.
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", size))
-	if err := c.sign(req, body, "PUT", key); err != nil {
+	if err := c.authorize(req, body, "PUT", key); err != nil {
 		return err
 	}
 	resp, err := c.HTTP.Do(req)
@@ -150,7 +169,7 @@ func (c *S3Client) GetObject(ctx context.Context, key string, w io.Writer) (int6
 	if err != nil {
 		return 0, fmt.Errorf("logarchive: build request: %w", err)
 	}
-	if err := c.sign(req, nil, "GET", key); err != nil {
+	if err := c.authorize(req, nil, "GET", key); err != nil {
 		return 0, err
 	}
 	resp, err := c.HTTP.Do(req)
@@ -168,6 +187,21 @@ func (c *S3Client) GetObject(ctx context.Context, key string, w io.Writer) (int6
 		return n, fmt.Errorf("logarchive: read body: %w", err)
 	}
 	return n, nil
+}
+
+func (c *S3Client) authorize(req *http.Request, body []byte, method, key string) error {
+	if c.TokenSource == nil {
+		return c.sign(req, body, method, key)
+	}
+	token, err := c.TokenSource.Token()
+	if err != nil {
+		return fmt.Errorf("logarchive: acquire GCP metadata token: %w", err)
+	}
+	if !token.Valid() {
+		return errors.New("logarchive: GCP metadata token is invalid")
+	}
+	token.SetAuthHeader(req)
+	return nil
 }
 
 // objectURL builds the canonical S3 object URL. The SigV4 host

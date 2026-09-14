@@ -457,6 +457,65 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/admin/status/incidents/{public_id}:
+    patch:
+      tags: [admin, status]
+      operationId: editAdminStatusEvent
+      summary: Correct a published event title without changing its timeline order.
+      description: Requires an operator session. The event remains published and exposes edited_at; deletion is unsupported.
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PublicStatusEventID'
+        - $ref: '#/components/parameters/CookieSession'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminStatusEventEditRequest' }
+      responses:
+        '200':
+          description: Corrected event with stable updated_at ordering and visible edited_at.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicStatusEvent' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/admin/status/incidents/{public_id}/updates/{update_id}:
+    patch:
+      tags: [admin, status]
+      operationId: editAdminStatusUpdate
+      summary: Correct a published timeline message without changing its posted time.
+      description: Requires an operator session. The entry remains in place and exposes edited_at; deletion is unsupported.
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/PublicStatusEventID'
+        - name: update_id
+          in: path
+          required: true
+          description: Public UUID of the timeline entry being corrected.
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/CookieSession'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminStatusUpdateEditRequest' }
+      responses:
+        '200':
+          description: Corrected timeline with stable posted_at and visible edited_at.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicStatusEvent' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/postgres/databases:
     get:
       operationId: listManagedPostgresDatabases
@@ -15296,7 +15355,7 @@ components:
       required: [date, status, uptime_pct, coverage_pct]
       properties:
         date: { type: string, format: date }
-        status: { type: string, enum: [operational, maintenance, degraded, partial_outage, major_outage, unknown] }
+        status: { type: string, enum: [operational, maintenance, degraded, partial_outage, major_outage, unknown, pre_release] }
         uptime_pct: { type: [number, 'null'], minimum: 0, maximum: 100 }
         coverage_pct: { type: number, minimum: 0, maximum: 100 }
     PublicStatusComponent:
@@ -15331,7 +15390,7 @@ components:
         target: { type: number }
         comparison: { type: string, enum: [gte, lte] }
     PublicStatusUpdate:
-      description: One append-only, plain-text event timeline entry.
+      description: One chronological event timeline entry. posted_at is immutable; edited_at discloses a later text correction. Optional impact and components record a re-rating made with this update.
       type: object
       additionalProperties: false
       required: [id, state, message, posted_at]
@@ -15340,6 +15399,13 @@ components:
         state: { type: string, enum: [investigating, identified, monitoring, resolved, scheduled, in_progress, completed, cancelled] }
         message: { type: string, minLength: 1, maxLength: 1024 }
         posted_at: { type: string, format: date-time }
+        edited_at: { type: string, format: date-time }
+        impact: { type: string, enum: [maintenance, degraded, partial_outage, major_outage] }
+        components:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [api_console, deployments, app_execution, networking, observability] }
     PublicStatusEvent:
       description: Public incident or maintenance metadata and chronological timeline.
       type: object
@@ -15360,6 +15426,7 @@ components:
         scheduled_start_at: { type: string, format: date-time }
         scheduled_end_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        edited_at: { type: string, format: date-time }
         resolved_at: { type: string, format: date-time }
         updates:
           type: array
@@ -15441,12 +15508,32 @@ components:
         scheduled_end_at: { type: string, format: date-time }
         message: { type: string, minLength: 1, maxLength: 1024 }
     AdminStatusEventUpdateRequest:
-      description: Operator request to append a plain-text lifecycle update.
+      description: Operator request to append a lifecycle update and optionally re-rate its impact or affected components.
       type: object
       additionalProperties: false
       required: [state, message]
       properties:
         state: { type: string, enum: [investigating, identified, monitoring, resolved, scheduled, in_progress, completed, cancelled] }
+        message: { type: string, minLength: 1, maxLength: 1024 }
+        impact: { type: string, enum: [maintenance, degraded, partial_outage, major_outage] }
+        components:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, enum: [api_console, deployments, app_execution, networking, observability] }
+    AdminStatusEventEditRequest:
+      description: Operator correction to a published event title.
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 160 }
+    AdminStatusUpdateEditRequest:
+      description: Operator correction to a published timeline message.
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
         message: { type: string, minLength: 1, maxLength: 1024 }
     StatusPage:
       description: Backwards-compatible three-indicator status response.

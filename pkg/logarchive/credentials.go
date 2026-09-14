@@ -17,6 +17,7 @@ type Credentials struct {
 	Endpoint string `json:"endpoint,omitempty"`
 	Region   string `json:"region,omitempty"`
 	Bucket   string `json:"bucket,omitempty"`
+	AuthMode string `json:"auth_mode,omitempty"`
 	KeyID    string `json:"key_id,omitempty"`
 	Secret   string `json:"secret,omitempty"`
 }
@@ -48,6 +49,9 @@ func (c Config) WithCredentials(creds Credentials) Config {
 	}
 	if c.Bucket == "" {
 		c.Bucket = creds.Bucket
+	}
+	if c.AuthMode == "" {
+		c.AuthMode = creds.AuthMode
 	}
 	if c.KeyID == "" {
 		c.KeyID = creds.KeyID

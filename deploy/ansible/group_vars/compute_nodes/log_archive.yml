@@ -1,0 +1,2 @@
+# Apply the archive gate to every present and future compute node in the fleet.
+faas_log_archive_required: true

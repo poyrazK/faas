@@ -24,7 +24,10 @@ from .admin_refund_response import AdminRefundResponse
 from .admin_refund_response_provider import AdminRefundResponseProvider
 from .admin_set_github_webhook_secret_request import AdminSetGithubWebhookSecretRequest
 from .admin_set_github_webhook_secret_response import AdminSetGithubWebhookSecretResponse
+from .admin_status_event_edit_request import AdminStatusEventEditRequest
 from .admin_status_event_update_request import AdminStatusEventUpdateRequest
+from .admin_status_event_update_request_components_item import AdminStatusEventUpdateRequestComponentsItem
+from .admin_status_event_update_request_impact import AdminStatusEventUpdateRequestImpact
 from .admin_status_event_update_request_state import AdminStatusEventUpdateRequestState
 from .admin_status_incident_create_request import AdminStatusIncidentCreateRequest
 from .admin_status_incident_create_request_components_item import AdminStatusIncidentCreateRequestComponentsItem
@@ -36,6 +39,7 @@ from .admin_status_maintenance_create_request_components_item import AdminStatus
 from .admin_status_maintenance_create_request_impact import AdminStatusMaintenanceCreateRequestImpact
 from .admin_status_maintenance_create_request_kind import AdminStatusMaintenanceCreateRequestKind
 from .admin_status_maintenance_create_request_state import AdminStatusMaintenanceCreateRequestState
+from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_status import AlertDeliveryResponseStatus
@@ -814,6 +818,8 @@ from .public_status_overview_data_status import PublicStatusOverviewDataStatus
 from .public_status_overview_overall_status import PublicStatusOverviewOverallStatus
 from .public_status_overview_region_scope import PublicStatusOverviewRegionScope
 from .public_status_update import PublicStatusUpdate
+from .public_status_update_components_item import PublicStatusUpdateComponentsItem
+from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
@@ -1078,7 +1084,10 @@ __all__ = (
     "AdminRefundResponseProvider",
     "AdminSetGithubWebhookSecretRequest",
     "AdminSetGithubWebhookSecretResponse",
+    "AdminStatusEventEditRequest",
     "AdminStatusEventUpdateRequest",
+    "AdminStatusEventUpdateRequestComponentsItem",
+    "AdminStatusEventUpdateRequestImpact",
     "AdminStatusEventUpdateRequestState",
     "AdminStatusIncidentCreateRequest",
     "AdminStatusIncidentCreateRequestComponentsItem",
@@ -1090,6 +1099,7 @@ __all__ = (
     "AdminStatusMaintenanceCreateRequestImpact",
     "AdminStatusMaintenanceCreateRequestKind",
     "AdminStatusMaintenanceCreateRequestState",
+    "AdminStatusUpdateEditRequest",
     "AdvanceCanaryRequest",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseStatus",
@@ -1860,6 +1870,8 @@ __all__ = (
     "PublicStatusOverviewOverallStatus",
     "PublicStatusOverviewRegionScope",
     "PublicStatusUpdate",
+    "PublicStatusUpdateComponentsItem",
+    "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",

@@ -16,3 +16,7 @@ faas_meterd_egress_tls_ca_path: /etc/faas/tls/ca/ca.crt
 # Initial public beta runs without charging. Set to live at the launch-date
 # transition to activate provider delivery and reconciliation paging.
 faas_billing_mode: disabled
+
+# Public uptime starts at the beta launch boundary. Buckets before this UTC
+# instant are labelled pre_release and excluded from coverage and uptime.
+faas_public_status_launch_at: "2026-09-14T00:00:00Z"

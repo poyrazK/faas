@@ -2733,6 +2733,8 @@ type Store interface {
 	ListOpenStatusIncidents(ctx context.Context) ([]StatusIncident, error)
 	CreatePublicStatusEvent(ctx context.Context, input StatusEventCreate) (StatusIncident, error)
 	AppendPublicStatusUpdate(ctx context.Context, publicID string, input StatusEventUpdateInput) (StatusIncident, error)
+	EditPublicStatusEventTitle(ctx context.Context, publicID string, input StatusEventTitleEditInput) (StatusIncident, error)
+	EditPublicStatusUpdateMessage(ctx context.Context, publicID, updateID string, input StatusUpdateMessageEditInput) (StatusIncident, error)
 	StatusEventByPublicID(ctx context.Context, publicID string) (StatusIncident, error)
 	ListPublicStatusEvents(ctx context.Context, options StatusEventListOptions) ([]StatusIncident, error)
 	RecordStatusBucket(ctx context.Context, bucket StatusBucket) error

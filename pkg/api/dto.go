@@ -3883,15 +3883,19 @@ type PublicStatusEvent struct {
 	ScheduledStartAt *time.Time           `json:"scheduled_start_at,omitempty"`
 	ScheduledEndAt   *time.Time           `json:"scheduled_end_at,omitempty"`
 	UpdatedAt        time.Time            `json:"updated_at"`
+	EditedAt         *time.Time           `json:"edited_at,omitempty"`
 	ResolvedAt       *time.Time           `json:"resolved_at,omitempty"`
 	Updates          []PublicStatusUpdate `json:"updates"`
 }
 
 type PublicStatusUpdate struct {
-	ID       string    `json:"id"`
-	State    string    `json:"state"`
-	Message  string    `json:"message"`
-	PostedAt time.Time `json:"posted_at"`
+	ID         string     `json:"id"`
+	State      string     `json:"state"`
+	Message    string     `json:"message"`
+	PostedAt   time.Time  `json:"posted_at"`
+	EditedAt   *time.Time `json:"edited_at,omitempty"`
+	Impact     *string    `json:"impact,omitempty"`
+	Components []string   `json:"components,omitempty"`
 }
 
 type AdminStatusEventCreateRequest struct {
@@ -3907,7 +3911,17 @@ type AdminStatusEventCreateRequest struct {
 }
 
 type AdminStatusEventUpdateRequest struct {
-	State   string `json:"state"`
+	State      string   `json:"state"`
+	Message    string   `json:"message"`
+	Impact     *string  `json:"impact,omitempty"`
+	Components []string `json:"components,omitempty"`
+}
+
+type AdminStatusEventEditRequest struct {
+	Title string `json:"title"`
+}
+
+type AdminStatusUpdateEditRequest struct {
 	Message string `json:"message"`
 }
 

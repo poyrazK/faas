@@ -8847,13 +8847,13 @@ func (s *PgStore) CreatePublicStatusEvent(ctx context.Context, input StatusEvent
 		set create_idempotency_key=excluded.create_idempotency_key
 		returning id,component,severity,message,posted_at,resolved_at,public_id::text,kind,
 		          title,impact,lifecycle_state,starts_at,scheduled_start_at,
-		          scheduled_end_at,updated_at,(xmax = 0)`,
+		          scheduled_end_at,updated_at,edited_at,(xmax = 0)`,
 		legacyComponent, legacySeverity, input.Message, publicID, string(input.Kind), strings.TrimSpace(input.Title),
 		string(input.Impact), components, string(input.State), input.StartsAt, input.ScheduledStartAt,
 		input.ScheduledEndAt, input.IdempotencyKey, input.Actor,
 	).Scan(&inc.ID, &inc.Component, &inc.Severity, &inc.Message, &inc.PostedAt, &inc.ResolvedAt, &inc.PublicID,
 		(*string)(&inc.Kind), &inc.Title, (*string)(&inc.Impact), (*string)(&inc.State),
-		&inc.StartsAt, &inc.ScheduledStartAt, &inc.ScheduledEndAt, &inc.UpdatedAt, &inserted)
+		&inc.StartsAt, &inc.ScheduledStartAt, &inc.ScheduledEndAt, &inc.UpdatedAt, &inc.EditedAt, &inserted)
 	if err != nil {
 		return StatusIncident{}, err
 	}
@@ -8926,8 +8926,10 @@ func (s *PgStore) AppendPublicStatusUpdate(ctx context.Context, publicID string,
 	var id int64
 	var kind string
 	var oldState string
+	var oldImpact string
+	var oldComponents []string
 	var updatedAt time.Time
-	err = tx.QueryRow(ctx, `select id,kind,lifecycle_state,updated_at from status_incidents where public_id=$1 for update`, publicID).Scan(&id, &kind, &oldState, &updatedAt)
+	err = tx.QueryRow(ctx, `select id,kind,lifecycle_state,impact,affected_components,updated_at from status_incidents where public_id=$1 for update`, publicID).Scan(&id, &kind, &oldState, &oldImpact, &oldComponents, &updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StatusIncident{}, ErrNotFound
 	}
@@ -8935,6 +8937,17 @@ func (s *PgStore) AppendPublicStatusUpdate(ctx context.Context, publicID string,
 		return StatusIncident{}, err
 	}
 	if validation := publicstatus.ValidateTransition(publicstatus.Kind(kind), publicstatus.Lifecycle(oldState), input.State); validation != nil {
+		return StatusIncident{}, validation
+	}
+	nextImpact := publicstatus.State(oldImpact)
+	if input.Impact != nil {
+		nextImpact = *input.Impact
+	}
+	nextComponents := parseComponents(oldComponents)
+	if input.Components != nil {
+		nextComponents = input.Components
+	}
+	if validation := publicstatus.ValidateAttribution(publicstatus.Kind(kind), nextImpact, nextComponents); validation != nil {
 		return StatusIncident{}, validation
 	}
 	at := input.At.UTC()
@@ -8945,9 +8958,14 @@ func (s *PgStore) AppendPublicStatusUpdate(ctx context.Context, publicID string,
 		at = updatedAt
 	}
 	var updateID string
-	err = tx.QueryRow(ctx, `insert into status_incident_updates(incident_id,lifecycle_state,message,posted_at,actor,idempotency_key)
-		values($1,$2,$3,$4,$5,$6) on conflict(idempotency_key) do nothing returning id::text`,
-		id, string(input.State), input.Message, at, input.Actor, input.IdempotencyKey).Scan(&updateID)
+	var updateImpact *string
+	if input.Impact != nil {
+		value := string(*input.Impact)
+		updateImpact = &value
+	}
+	err = tx.QueryRow(ctx, `insert into status_incident_updates(incident_id,lifecycle_state,message,posted_at,actor,idempotency_key,impact,affected_components)
+		values($1,$2,$3,$4,$5,$6,$7,$8) on conflict(idempotency_key) do nothing returning id::text`,
+		id, string(input.State), input.Message, at, input.Actor, input.IdempotencyKey, updateImpact, nullableComponentStrings(input.Components)).Scan(&updateID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = tx.QueryRow(ctx, `select i.public_id::text from status_incident_updates u join status_incidents i on i.id=u.incident_id where u.idempotency_key=$1`, input.IdempotencyKey).Scan(&replayID)
 		if err != nil {
@@ -8965,12 +8983,118 @@ func (s *PgStore) AppendPublicStatusUpdate(ctx context.Context, publicID string,
 		return StatusIncident{}, err
 	}
 	terminal := input.State == publicstatus.LifecycleResolved || input.State == publicstatus.LifecycleCompleted || input.State == publicstatus.LifecycleCancelled
-	_, err = tx.Exec(ctx, `update status_incidents set lifecycle_state=$2,message=$3,updated_at=$4,resolved_at=case when $5 then $4 else resolved_at end where id=$1`,
-		id, string(input.State), input.Message, at, terminal)
+	_, err = tx.Exec(ctx, `update status_incidents set lifecycle_state=$2,message=$3,updated_at=$4,
+		resolved_at=case when $5 then $4 else resolved_at end,impact=$6,affected_components=$7,component=$8,severity=$9 where id=$1`,
+		id, string(input.State), input.Message, at, terminal, string(nextImpact), componentStrings(nextComponents),
+		legacyStatusComponent(nextComponents[0]), legacyStatusSeverity(nextImpact))
 	if err != nil {
 		return StatusIncident{}, err
 	}
-	if err := appendStatusMutationAudit(ctx, tx, "status.event.updated", input.Actor, publicID, publicstatus.Kind(kind), "update", publicstatus.Lifecycle(oldState), input.State, nil); err != nil {
+	if err := appendStatusMutationAudit(ctx, tx, "status.event.updated", input.Actor, publicID, publicstatus.Kind(kind), "update", publicstatus.Lifecycle(oldState), input.State, nextComponents); err != nil {
+		return StatusIncident{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return StatusIncident{}, err
+	}
+	return s.StatusEventByPublicID(ctx, publicID)
+}
+
+func (s *PgStore) EditPublicStatusEventTitle(ctx context.Context, publicID string, input StatusEventTitleEditInput) (StatusIncident, error) {
+	if err := publicstatus.ValidateTitle(input.Title); err != nil {
+		return StatusIncident{}, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var kind string
+	var lifecycle string
+	var components []string
+	var postedAt time.Time
+	err = tx.QueryRow(ctx, `select kind,lifecycle_state,affected_components,posted_at from status_incidents where public_id=$1 for update`, publicID).
+		Scan(&kind, &lifecycle, &components, &postedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return StatusIncident{}, ErrNotFound
+	}
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	at := input.At.UTC()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	if at.Before(postedAt) {
+		at = postedAt
+	}
+	tag, err := tx.Exec(ctx, `update status_incidents set title=$2,edited_at=$3 where public_id=$1 and title is distinct from $2`, publicID, strings.TrimSpace(input.Title), at)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return StatusIncident{}, err
+		}
+		return s.StatusEventByPublicID(ctx, publicID)
+	}
+	state := publicstatus.Lifecycle(lifecycle)
+	if err := appendStatusMutationAudit(ctx, tx, "status.event.corrected", input.Actor, publicID, publicstatus.Kind(kind), "correct_title", state, state, parseComponents(components)); err != nil {
+		return StatusIncident{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return StatusIncident{}, err
+	}
+	return s.StatusEventByPublicID(ctx, publicID)
+}
+
+func (s *PgStore) EditPublicStatusUpdateMessage(ctx context.Context, publicID, updateID string, input StatusUpdateMessageEditInput) (StatusIncident, error) {
+	if err := publicstatus.ValidateMessage(input.Message); err != nil {
+		return StatusIncident{}, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var incidentID int64
+	var kind string
+	var lifecycle string
+	var components []string
+	var postedAt time.Time
+	err = tx.QueryRow(ctx, `select i.id,i.kind,i.lifecycle_state,i.affected_components,u.posted_at
+		from status_incidents i join status_incident_updates u on u.incident_id=i.id
+		where i.public_id=$1 and u.id=$2 for update of u`, publicID, updateID).
+		Scan(&incidentID, &kind, &lifecycle, &components, &postedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return StatusIncident{}, ErrNotFound
+	}
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	at := input.At.UTC()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	if at.Before(postedAt) {
+		at = postedAt
+	}
+	tag, err := tx.Exec(ctx, `update status_incident_updates set message=$3,edited_at=$4 where incident_id=$1 and id=$2 and message is distinct from $3`, incidentID, updateID, input.Message, at)
+	if err != nil {
+		return StatusIncident{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return StatusIncident{}, err
+		}
+		return s.StatusEventByPublicID(ctx, publicID)
+	}
+	// Keep the legacy current-message projection aligned when the corrected
+	// row is the latest timeline entry. This does not change updated_at.
+	if _, err := tx.Exec(ctx, `update status_incidents set message=$3 where id=$1 and $2::uuid=(select id from status_incident_updates where incident_id=$1 order by posted_at desc,id desc limit 1)`, incidentID, updateID, input.Message); err != nil {
+		return StatusIncident{}, err
+	}
+	state := publicstatus.Lifecycle(lifecycle)
+	if err := appendStatusMutationAudit(ctx, tx, "status.update.corrected", input.Actor, publicID, publicstatus.Kind(kind), "correct_update", state, state, parseComponents(components)); err != nil {
 		return StatusIncident{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -8997,7 +9121,7 @@ func (s *PgStore) ListPublicStatusEvents(ctx context.Context, options StatusEven
 	if limit <= 0 || limit > 200 {
 		limit = 200
 	}
-	rows, err := s.pool.Query(ctx, `select id,component,severity,message,posted_at,resolved_at,public_id::text,kind,title,impact,affected_components,lifecycle_state,starts_at,scheduled_start_at,scheduled_end_at,updated_at
+	rows, err := s.pool.Query(ctx, `select id,component,severity,message,posted_at,resolved_at,public_id::text,kind,title,impact,affected_components,lifecycle_state,starts_at,scheduled_start_at,scheduled_end_at,updated_at,edited_at
 		from status_incidents
 		where ($1='' or kind=$1) and (not $2 or resolved_at is null) and ($3::timestamptz is null or updated_at >= $3)
 		order by updated_at desc limit $4`, string(options.Kind), options.ActiveOnly, nullableTime(options.Since), limit)
@@ -9029,7 +9153,7 @@ func (s *PgStore) ListPublicStatusEvents(ctx context.Context, options StatusEven
 		ids[i] = out[i].ID
 		byID[out[i].ID] = i
 	}
-	updateRows, err := s.pool.Query(ctx, `select incident_id,id::text,lifecycle_state,message,posted_at,actor,idempotency_key
+	updateRows, err := s.pool.Query(ctx, `select incident_id,id::text,lifecycle_state,message,posted_at,edited_at,impact,affected_components,actor,idempotency_key
 		from status_incident_updates where incident_id=any($1) order by incident_id,posted_at,id`, ids)
 	if err != nil {
 		return nil, err
@@ -9039,10 +9163,17 @@ func (s *PgStore) ListPublicStatusEvents(ctx context.Context, options StatusEven
 		var incidentID int64
 		var update StatusIncidentUpdate
 		var lifecycle string
-		if err := updateRows.Scan(&incidentID, &update.ID, &lifecycle, &update.Message, &update.At, &update.Actor, &update.IdempotencyKey); err != nil {
+		var impact *string
+		var components []string
+		if err := updateRows.Scan(&incidentID, &update.ID, &lifecycle, &update.Message, &update.At, &update.EditedAt, &impact, &components, &update.Actor, &update.IdempotencyKey); err != nil {
 			return nil, err
 		}
 		update.State = publicstatus.Lifecycle(lifecycle)
+		if impact != nil {
+			value := publicstatus.State(*impact)
+			update.Impact = &value
+		}
+		update.Components = parseComponents(components)
 		if index, ok := byID[incidentID]; ok {
 			out[index].Updates = append(out[index].Updates, update)
 		}
@@ -9054,7 +9185,7 @@ func (s *PgStore) ListPublicStatusEvents(ctx context.Context, options StatusEven
 }
 
 func (s *PgStore) readPublicStatusEvent(ctx context.Context, clause string, arg any) (StatusIncident, error) {
-	row := s.pool.QueryRow(ctx, `select id,component,severity,message,posted_at,resolved_at,public_id::text,kind,title,impact,affected_components,lifecycle_state,starts_at,scheduled_start_at,scheduled_end_at,updated_at from status_incidents `+clause, arg)
+	row := s.pool.QueryRow(ctx, `select id,component,severity,message,posted_at,resolved_at,public_id::text,kind,title,impact,affected_components,lifecycle_state,starts_at,scheduled_start_at,scheduled_end_at,updated_at,edited_at from status_incidents `+clause, arg)
 	inc, err := scanPublicStatusEvent(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StatusIncident{}, ErrNotFound
@@ -9069,7 +9200,7 @@ func scanPublicStatusEvent(row statusScanner) (StatusIncident, error) {
 	var kind, impact, lifecycle string
 	var components []string
 	err := row.Scan(&inc.ID, &inc.Component, &inc.Severity, &inc.Message, &inc.PostedAt, &inc.ResolvedAt, &inc.PublicID,
-		&kind, &inc.Title, &impact, &components, &lifecycle, &inc.StartsAt, &inc.ScheduledStartAt, &inc.ScheduledEndAt, &inc.UpdatedAt)
+		&kind, &inc.Title, &impact, &components, &lifecycle, &inc.StartsAt, &inc.ScheduledStartAt, &inc.ScheduledEndAt, &inc.UpdatedAt, &inc.EditedAt)
 	if err != nil {
 		return StatusIncident{}, err
 	}
@@ -9081,7 +9212,7 @@ func scanPublicStatusEvent(row statusScanner) (StatusIncident, error) {
 }
 
 func (s *PgStore) readPublicStatusUpdates(ctx context.Context, incidentID int64) ([]StatusIncidentUpdate, error) {
-	rows, err := s.pool.Query(ctx, `select id::text,lifecycle_state,message,posted_at,actor,idempotency_key from status_incident_updates where incident_id=$1 order by posted_at,id`, incidentID)
+	rows, err := s.pool.Query(ctx, `select id::text,lifecycle_state,message,posted_at,edited_at,impact,affected_components,actor,idempotency_key from status_incident_updates where incident_id=$1 order by posted_at,id`, incidentID)
 	if err != nil {
 		return nil, err
 	}
@@ -9090,10 +9221,17 @@ func (s *PgStore) readPublicStatusUpdates(ctx context.Context, incidentID int64)
 	for rows.Next() {
 		var update StatusIncidentUpdate
 		var lifecycle string
-		if err := rows.Scan(&update.ID, &lifecycle, &update.Message, &update.At, &update.Actor, &update.IdempotencyKey); err != nil {
+		var impact *string
+		var components []string
+		if err := rows.Scan(&update.ID, &lifecycle, &update.Message, &update.At, &update.EditedAt, &impact, &components, &update.Actor, &update.IdempotencyKey); err != nil {
 			return nil, err
 		}
 		update.State = publicstatus.Lifecycle(lifecycle)
+		if impact != nil {
+			value := publicstatus.State(*impact)
+			update.Impact = &value
+		}
+		update.Components = parseComponents(components)
 		out = append(out, update)
 	}
 	return out, rows.Err()
@@ -9135,6 +9273,13 @@ func componentStrings(components []publicstatus.Component) []string {
 		out[i] = string(v)
 	}
 	return out
+}
+
+func nullableComponentStrings(components []publicstatus.Component) []string {
+	if components == nil {
+		return nil
+	}
+	return componentStrings(components)
 }
 func parseComponents(components []string) []publicstatus.Component {
 	out := make([]publicstatus.Component, len(components))

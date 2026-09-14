@@ -87,10 +87,93 @@ func (s *server) updateAdminStatusEvent(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrCapacity("could not load status event"))
 		return
 	}
+	var impact *publicstatus.State
+	if request.Impact != nil {
+		value := publicstatus.State(*request.Impact)
+		impact = &value
+	}
+	var components []publicstatus.Component
+	if request.Components != nil {
+		components = make([]publicstatus.Component, len(request.Components))
+		for i, component := range request.Components {
+			components[i] = publicstatus.Component(component)
+		}
+	}
 	event, err := s.store.AppendPublicStatusUpdate(r.Context(), publicID, state.StatusEventUpdateInput{
 		IdempotencyKey: acct.ID + ":" + strings.TrimSpace(r.Header.Get("Idempotency-Key")), Actor: acct.ID,
-		State: publicstatus.Lifecycle(request.State), Message: request.Message,
+		State: publicstatus.Lifecycle(request.State), Message: request.Message, Impact: impact, Components: components,
 	})
+	if err != nil {
+		s.statusMetrics.observeMutation(string(prior.Kind), "update", statusMutationOutcome(err))
+	}
+	if writeStatusMutationError(w, err) {
+		return
+	}
+	s.statusMetrics.observeMutation(string(prior.Kind), "update", "ok")
+	if s.statusCache != nil {
+		s.statusCache.invalidatePublic()
+	}
+	writeJSON(w, http.StatusOK, publicStatusEvent(event))
+}
+
+func (s *server) editAdminStatusEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if allowed, problem := s.adminAllows(acct); !allowed {
+		api.WriteProblem(w, problem)
+		return
+	}
+	publicID := r.PathValue("public_id")
+	if _, err := uuid.Parse(publicID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad event id", "expected a public UUID"))
+		return
+	}
+	var request api.AdminStatusEventEditRequest
+	if err := decodeJSON(r, &request); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad JSON", err.Error()))
+		return
+	}
+	prior, err := s.store.StatusEventByPublicID(r.Context(), publicID)
+	if writeStatusMutationError(w, err) {
+		return
+	}
+	event, err := s.store.EditPublicStatusEventTitle(r.Context(), publicID, state.StatusEventTitleEditInput{Actor: acct.ID, Title: request.Title})
+	if err != nil {
+		s.statusMetrics.observeMutation(string(prior.Kind), "update", statusMutationOutcome(err))
+	}
+	if writeStatusMutationError(w, err) {
+		return
+	}
+	s.statusMetrics.observeMutation(string(prior.Kind), "update", "ok")
+	if s.statusCache != nil {
+		s.statusCache.invalidatePublic()
+	}
+	writeJSON(w, http.StatusOK, publicStatusEvent(event))
+}
+
+func (s *server) editAdminStatusUpdate(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if allowed, problem := s.adminAllows(acct); !allowed {
+		api.WriteProblem(w, problem)
+		return
+	}
+	publicID := r.PathValue("public_id")
+	updateID := r.PathValue("update_id")
+	if _, err := uuid.Parse(publicID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad event id", "expected a public UUID"))
+		return
+	}
+	if _, err := uuid.Parse(updateID); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad update id", "expected a public UUID"))
+		return
+	}
+	var request api.AdminStatusUpdateEditRequest
+	if err := decodeJSON(r, &request); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad JSON", err.Error()))
+		return
+	}
+	prior, err := s.store.StatusEventByPublicID(r.Context(), publicID)
+	if writeStatusMutationError(w, err) {
+		return
+	}
+	event, err := s.store.EditPublicStatusUpdateMessage(r.Context(), publicID, updateID, state.StatusUpdateMessageEditInput{Actor: acct.ID, Message: request.Message})
 	if err != nil {
 		s.statusMetrics.observeMutation(string(prior.Kind), "update", statusMutationOutcome(err))
 	}

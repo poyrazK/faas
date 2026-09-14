@@ -88,6 +88,110 @@ func TestMemStorePublicStatusTerminalEventCannotReopen(t *testing.T) {
 	}
 }
 
+func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	startsAt := time.Now().UTC().Add(-time.Hour)
+	event, err := store.CreatePublicStatusEvent(ctx, StatusEventCreate{
+		IdempotencyKey: "create-correctable", Actor: "operator@example.com", Kind: publicstatus.KindIncident,
+		Title: "Elevated eror rate", Impact: publicstatus.StateDegraded,
+		Components: []publicstatus.Component{publicstatus.ComponentAPIConsole},
+		State:      publicstatus.LifecycleInvestigating, StartsAt: &startsAt, Message: "We are investigatng.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalPostedAt := event.Updates[0].At
+	major := publicstatus.StateMajorOutage
+	event, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, StatusEventUpdateInput{
+		IdempotencyKey: "rerate-major", Actor: "operator@example.com", State: publicstatus.LifecycleIdentified,
+		Message: "The outage affects application networking.", Impact: &major,
+		Components: []publicstatus.Component{publicstatus.ComponentNetworking}, At: event.UpdatedAt.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Impact != major || len(event.Components) != 1 || event.Components[0] != publicstatus.ComponentNetworking {
+		t.Fatalf("event attribution = impact:%q components:%v", event.Impact, event.Components)
+	}
+	latest := event.Updates[len(event.Updates)-1]
+	if latest.Impact == nil || *latest.Impact != major || len(latest.Components) != 1 {
+		t.Fatalf("rerating missing from timeline: %#v", latest)
+	}
+
+	degraded := publicstatus.StateDegraded
+	event, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, StatusEventUpdateInput{
+		IdempotencyKey: "rerate-degraded", Actor: "operator@example.com", State: publicstatus.LifecycleMonitoring,
+		Message: "Mitigation reduced the impact.", Impact: &degraded, At: event.UpdatedAt.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Impact != degraded || event.Components[0] != publicstatus.ComponentNetworking {
+		t.Fatalf("omitted components changed attribution: impact:%q components:%v", event.Impact, event.Components)
+	}
+	orderedAt := event.UpdatedAt
+	event, err = store.EditPublicStatusEventTitle(ctx, event.PublicID, StatusEventTitleEditInput{
+		Actor: "operator@example.com", Title: "Elevated error rate", At: orderedAt.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Title != "Elevated error rate" || event.EditedAt == nil || !event.UpdatedAt.Equal(orderedAt) {
+		t.Fatalf("title correction changed ordering metadata: %#v", event)
+	}
+
+	event, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, StatusEventUpdateInput{
+		IdempotencyKey: "resolve-correctable", Actor: "operator@example.com", State: publicstatus.LifecycleResolved,
+		Message: "Recovered.", At: orderedAt.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminalUpdatedAt := event.UpdatedAt
+	event, err = store.EditPublicStatusEventTitle(ctx, event.PublicID, StatusEventTitleEditInput{
+		Actor: "operator@example.com", Title: "Elevated API error rate", At: terminalUpdatedAt.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("correct terminal event title: %v", err)
+	}
+	if !event.UpdatedAt.Equal(terminalUpdatedAt) {
+		t.Fatalf("terminal title correction moved updated_at from %v to %v", terminalUpdatedAt, event.UpdatedAt)
+	}
+	titleEditedAt := *event.EditedAt
+	event, err = store.EditPublicStatusEventTitle(ctx, event.PublicID, StatusEventTitleEditInput{
+		Actor: "operator@example.com", Title: "Elevated API error rate", At: terminalUpdatedAt.Add(5 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.EditedAt == nil || !event.EditedAt.Equal(titleEditedAt) {
+		t.Fatalf("repeated title correction changed edited_at: got %v want %v", event.EditedAt, titleEditedAt)
+	}
+	event, err = store.EditPublicStatusUpdateMessage(ctx, event.PublicID, event.Updates[0].ID, StatusUpdateMessageEditInput{
+		Actor: "operator@example.com", Message: "We are investigating.", At: terminalUpdatedAt.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Updates[0].Message != "We are investigating." || event.Updates[0].EditedAt == nil || !event.Updates[0].At.Equal(originalPostedAt) {
+		t.Fatalf("timeline correction changed posted ordering: %#v", event.Updates[0])
+	}
+	if !event.UpdatedAt.Equal(terminalUpdatedAt) {
+		t.Fatalf("timeline correction moved event updated_at from %v to %v", terminalUpdatedAt, event.UpdatedAt)
+	}
+	messageEditedAt := *event.Updates[0].EditedAt
+	event, err = store.EditPublicStatusUpdateMessage(ctx, event.PublicID, event.Updates[0].ID, StatusUpdateMessageEditInput{
+		Actor: "operator@example.com", Message: "We are investigating.", At: terminalUpdatedAt.Add(6 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Updates[0].EditedAt == nil || !event.Updates[0].EditedAt.Equal(messageEditedAt) {
+		t.Fatalf("repeated timeline correction changed edited_at: got %v want %v", event.Updates[0].EditedAt, messageEditedAt)
+	}
+}
+
 func TestMemStoreStatusBucketsDeduplicateFiveMinuteTimestamp(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemStore()

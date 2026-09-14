@@ -7,7 +7,7 @@
  */
 export type PublicStatusDaily = {
   date: string;
-  status: 'operational' | 'maintenance' | 'degraded' | 'partial_outage' | 'major_outage' | 'unknown';
+  status: 'operational' | 'maintenance' | 'degraded' | 'partial_outage' | 'major_outage' | 'unknown' | 'pre_release';
   uptime_pct: number | null;
   coverage_pct: number;
 };

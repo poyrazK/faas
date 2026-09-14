@@ -181,6 +181,15 @@
     - faas-apid
     - faas-meterd
 
+- name: control_plane_service — set public status launch boundary
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-public-status.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-public-status.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Mega-PR-A (issue #911 / ADR-110 PR-1): drop the FAAS_NODE_NAME
 # env line into every control-plane unit so the multi-box identity
 # travels from host_vars to the daemons without a TOML edit on every

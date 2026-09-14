@@ -153,7 +153,7 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 		log.Info("vmmd: log archive disabled", "reason", "archive bucket not configured")
 		return nil, nil
 	}
-	s3, err := logarchive.NewS3Client(cfg.Endpoint, cfg.Region, cfg.Bucket, cfg.KeyID, cfg.Secret)
+	s3, err := logarchive.NewS3Client(cfg.Endpoint, cfg.Region, cfg.Bucket, cfg.KeyID, cfg.Secret, cfg.AuthMode)
 	if err != nil {
 		log.Warn("vmmd: log archive client init failed", "err", err)
 		return nil, nil
