@@ -23,6 +23,10 @@ class AppliedBuild:
     app_id: str
     deployment_id: str | Unset = UNSET
     build_id: str | Unset = UNSET
+    deployment_status: str | Unset = UNSET
+    """Terminal deployment status added by wait-aware CLI responses."""
+    build_status: str | Unset = UNSET
+    """Terminal build status added by wait-aware CLI responses."""
     error: str | Unset = UNSET
     """Staging or enqueue error message; partial-failure rows carry this in lieu of IDs."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -35,6 +39,10 @@ class AppliedBuild:
         deployment_id = self.deployment_id
 
         build_id = self.build_id
+
+        deployment_status = self.deployment_status
+
+        build_status = self.build_status
 
         error = self.error
 
@@ -50,6 +58,10 @@ class AppliedBuild:
             field_dict["deployment_id"] = deployment_id
         if build_id is not UNSET:
             field_dict["build_id"] = build_id
+        if deployment_status is not UNSET:
+            field_dict["deployment_status"] = deployment_status
+        if build_status is not UNSET:
+            field_dict["build_status"] = build_status
         if error is not UNSET:
             field_dict["error"] = error
 
@@ -66,6 +78,10 @@ class AppliedBuild:
 
         build_id = d.pop("build_id", UNSET)
 
+        deployment_status = d.pop("deployment_status", UNSET)
+
+        build_status = d.pop("build_status", UNSET)
+
         error = d.pop("error", UNSET)
 
         applied_build = cls(
@@ -73,6 +89,8 @@ class AppliedBuild:
             app_id=app_id,
             deployment_id=deployment_id,
             build_id=build_id,
+            deployment_status=deployment_status,
+            build_status=build_status,
             error=error,
         )
 

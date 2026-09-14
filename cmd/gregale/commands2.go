@@ -128,7 +128,9 @@ const (
 	// though they're the same string semantically. (The build
 	// status enum is a different 4-state set with `succeeded`/`failed`
 	// vs deployment's `live`/`failed`.)
-	deploymentStatusFailed = "failed"
+	deploymentStatusFailed     = "failed"
+	deploymentStatusCancelled  = "cancelled"
+	deploymentStatusSuperseded = "superseded"
 
 	// streamEventError is the SSE event name emitted by the build
 	// log stream when the upstream closes (5xx mid-stream, network
@@ -1395,6 +1397,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			"gregale deploy accepts flags only; unexpected positional arguments: %s",
 			strings.Join(fs.Args(), " ")))
 	}
+	// Project scope controls are all planner inputs. Treat each one as a
+	// project deploy request even when the operator omitted the discoverable
+	// --project spelling; otherwise --exclude/--show-affected silently fell
+	// through to the single-app upload path and were ignored.
+	projectRequested := *deployOnly != "" || *deployExclude != "" ||
+		*deployPersistExclude || *deployShowAffected || *projectSlug != "" || *projectDeploy
 	if *waitTimeoutSeconds <= 0 {
 		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
 	}
@@ -1443,18 +1451,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *secretsFile != "" && (*githubSnippet || *diff || *dryRun || *repo != "") {
 		return printErr("Invalid flags", fmt.Errorf("--secrets-file cannot be combined with --github, --diff, --dry-run, or --repo"))
 	}
-	if *projectDeploy {
+	if projectRequested {
 		if *image != "" {
-			return printErr("Invalid flags", errors.New("--project requires a source archive; --image deploys one app"))
+			return printErr("Invalid flags", errors.New("project deploy requires a source archive; --image deploys one app"))
 		}
 		if *githubSnippet {
-			return printErr("Invalid flags", errors.New("--project cannot be combined with --github"))
+			return printErr("Invalid flags", errors.New("project deploy cannot be combined with --github"))
 		}
 		if *function || *app || *runtime != "" || *handler != "" {
-			return printErr("Invalid flags", errors.New("--project cannot be combined with --function, --app, --runtime, or --handler"))
+			return printErr("Invalid flags", errors.New("project deploy cannot be combined with --function, --app, --runtime, or --handler"))
 		}
 		if _, _, ok := templateFunctionConfig(*templateName); ok {
-			return printErr("Invalid flags", errors.New("--project cannot be combined with a function template"))
+			return printErr("Invalid flags", errors.New("project deploy cannot be combined with a function template"))
 		}
 	}
 	if *profile != "" {
@@ -1526,10 +1534,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customers see no behaviour change.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
+	if projectRequested {
 		if explicit["no-triggers"] {
 			return printErr("Unsupported project deploy flags", errors.New(
-				"--no-triggers cannot be combined with --project, --project-slug, or --only; project deploy trigger suppression is not yet supported"))
+				"--no-triggers cannot be combined with project scope controls; project deploy trigger suppression is not yet supported"))
 		}
 		var unsupported []string
 		for _, name := range []string{
@@ -1549,7 +1557,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if len(unsupported) > 0 {
 			return printErr("Unsupported project deploy flags", fmt.Errorf(
-				"%s cannot be combined with --project, --project-slug, or --only; project deploy policy is not yet supported",
+				"%s cannot be combined with project scope controls; project deploy policy is not yet supported",
 				strings.Join(unsupported, ", ")))
 		}
 	}
@@ -1665,7 +1673,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// Phase 3 guard: --repo is the source-ref path; the
 		// one-key provision surface takes --tarball/--path, not
 		// --repo. Mixing them is almost always a mistake.
-		if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
+		if projectRequested {
 			PrintFail(os.Stderr, "--repo cannot be combined with --project, --only, or --project-slug")
 			return 1
 		}
@@ -1859,7 +1867,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// existing single-app slug rules for --name and --path, while making
 	// tarball/template invocations intuitive by using their basename when
 	// no name was supplied. An explicit --project-slug always wins.
-	if *projectDeploy && *projectSlug == "" {
+	if projectRequested && *projectSlug == "" {
 		projectName := slug
 		switch {
 		case *name == "" && *tarball != "":
@@ -2240,7 +2248,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// workload/managed/warning response. Keeping this branch ahead
 		// of runDiff prevents a project preview from silently falling
 		// back to the root-app diff (issue #1976).
-		if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
+		if projectRequested {
 			if *profile != "" {
 				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --project, --only, or --project-slug"))
 			}
@@ -2260,12 +2268,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 
 	// Phase 3 (repo decomposition) one-key provision path. Triggered
-	// by --only or --project-slug on a --tarball / --template / zero-config
+	// by any project scope control (--project, --project-slug, --only,
+	// --exclude, --persist-exclude, or --show-affected) on a --tarball /
+	// --template / zero-config
 	// pack. The plan is fetched via ScanProject, the apply is
 	// transactional on the server (rollback on over-quota per
 	// ADR-050), and mutation requires --yes or an interactive prompt;
 	// non-TTY invocations fail closed after rendering the plan.
-	if *deployOnly != "" || *projectSlug != "" || *projectDeploy {
+	if projectRequested {
 		if *createOnly {
 			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with --only or --project-slug"))
 		}
@@ -2348,10 +2358,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not reopen tarball", err)
 		}
 		defer func() { _ = openTarball2.Close() }()
-		apply, err := client.ApplyProjectPlanWithBinding(ctx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
+		applyCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply"))
+		apply, err := client.ApplyProjectPlanWithBinding(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
 			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude)
 		if err != nil {
 			return printErr("Apply failed", err)
+		}
+		var projectWaitTimedOut bool
+		if waitForDeploy && len(apply.Builds) > 0 {
+			apply, projectWaitTimedOut = waitForProjectApply(ctx, client, apply,
+				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
 		applyStatus := summarizeProjectApply(apply)
 		// Project deploys share the same sealed app-secret storage as
@@ -2374,11 +2390,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			if applyStatus.buildsFailed > 0 {
 				reportProjectApplyFailure(osStderr, applyStatus)
+				if projectWaitTimedOut {
+					return 3
+				}
 				return 1
 			}
 			return 0
 		}
-		return renderProjectApplyResult(osStdout, plan, apply)
+		code := renderProjectApplyResult(osStdout, plan, apply)
+		if projectWaitTimedOut {
+			return 3
+		}
+		return code
 	}
 
 	var workflowDefs []api.WorkflowSpec
@@ -4545,7 +4568,7 @@ func pollDeploymentFinalContext(ctx context.Context, c *Client, dep api.Deployme
 	if err != nil {
 		return api.DeploymentResponse{}, false
 	}
-	if got.Status == statusLive || got.Status == deploymentStatusFailed {
+	if got.Status == statusLive || got.Status == deploymentStatusFailed || got.Status == deploymentStatusCancelled || got.Status == deploymentStatusSuperseded {
 		return got, true
 	}
 	return api.DeploymentResponse{}, false

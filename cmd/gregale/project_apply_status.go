@@ -65,11 +65,21 @@ func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.Appl
 	for _, build := range apply.Builds {
 		switch {
 		case build.Error != "":
-			_, _ = fmt.Fprintf(w, "  ! %s: %s\n", build.Slug, build.Error)
+			if build.DeploymentStatus != "" || build.BuildStatus != "" {
+				_, _ = fmt.Fprintf(w, "  ! %s: %s (status=%s build_status=%s)\n",
+					build.Slug, build.Error, build.DeploymentStatus, build.BuildStatus)
+			} else {
+				_, _ = fmt.Fprintf(w, "  ! %s: %s\n", build.Slug, build.Error)
+			}
 		case build.DeploymentID == "" || build.BuildID == "":
 			_, _ = fmt.Fprintf(w, "  ! %s: incomplete build result (deployment_id/build_id missing)\n", build.Slug)
 		default:
-			_, _ = fmt.Fprintf(w, "  ✓ %s: deployment=%s build=%s\n", build.Slug, build.DeploymentID, build.BuildID)
+			if build.DeploymentStatus != "" || build.BuildStatus != "" {
+				_, _ = fmt.Fprintf(w, "  ✓ %s: deployment=%s build=%s status=%s build_status=%s\n",
+					build.Slug, build.DeploymentID, build.BuildID, build.DeploymentStatus, build.BuildStatus)
+			} else {
+				_, _ = fmt.Fprintf(w, "  ✓ %s: deployment=%s build=%s\n", build.Slug, build.DeploymentID, build.BuildID)
+			}
 		}
 	}
 	if status.missingBuilds > 0 {

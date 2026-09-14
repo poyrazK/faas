@@ -1316,7 +1316,15 @@ func (c *Client) ApplyProjectPlanWithBinding(
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("Idempotency-Key", newUUIDv4())
+	// Multipart project applies bypass Client.do because the request body
+	// carries a file. Preserve the caller's logical retry key just like the
+	// JSON and single-app multipart paths; only mint a key for legacy callers
+	// that did not attach one to the context.
+	idempotencyKey := IdempotencyKeyFromContext(ctx)
+	if idempotencyKey == "" {
+		idempotencyKey = newUUIDv4()
+	}
+	req.Header.Set("Idempotency-Key", idempotencyKey)
 	var out ApplyResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }

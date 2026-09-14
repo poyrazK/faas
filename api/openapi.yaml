@@ -21866,6 +21866,8 @@ components:
         app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         build_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        deployment_status: { type: string, description: "Terminal deployment status added by wait-aware CLI responses." }
+        build_status: { type: string, description: "Terminal build status added by wait-aware CLI responses." }
         error: { type: string, description: "Staging or enqueue error message; partial-failure rows carry this in lieu of IDs." }
 
     # ─── Alert rules (issue #396 / ADR-045 PR 3) ──────────────────────────

@@ -1,5 +1,7 @@
 package main
 
+// adr: 050
+
 // commands_decompose_test.go — Phase 3 CLI tests for the
 // repo decomposition surface (ADR-050). Covers the §4 acceptance
 // gate (`gregale deploy` on the fixture repo creates 3 apps + 1
@@ -66,6 +68,13 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.capturedMultipart = body
 		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.applyStatus, s.applyBody)
+	case strings.HasPrefix(r.URL.Path, "/v1/deployments/") && r.Method == http.MethodGet:
+		// Project deploys now honor the normal wait contract. Return a
+		// terminal fixture for each golden deployment so these planner tests
+		// exercise that path without a real scheduler.
+		writeJSONTestStatus(w, http.StatusOK, api.DeploymentResponse{
+			ID: strings.TrimPrefix(r.URL.Path, "/v1/deployments/"), Status: statusLive,
+		})
 	default:
 		http.Error(w, "decomposeSink: not found: "+r.URL.Path, http.StatusNotFound)
 	}
@@ -577,6 +586,51 @@ func TestCmdDeployTarball_ProjectFlagDefaultsSlug(t *testing.T) {
 	}
 	if sink.projectSlug != "fixture" {
 		t.Errorf("derived project slug = %q, want %q", sink.projectSlug, "fixture")
+	}
+}
+
+// TestCmdDeployTarball_ProjectScopeFlagsRouteToPlanner pins the implicit
+// project mode for each scope-only control. These flags must never fall
+// through to a single-app deployment where they would be silently ignored.
+func TestCmdDeployTarball_ProjectScopeFlagsRouteToPlanner(t *testing.T) {
+	cases := []struct {
+		name string
+		flag string
+		arg  string
+	}{
+		{name: "exclude", flag: "--exclude", arg: "worker"},
+		{name: "show affected", flag: "--show-affected"},
+		{name: "persist exclude", flag: "--persist-exclude"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &decomposeSink{
+				scanStatus:  http.StatusOK,
+				scanBody:    goldenPlan,
+				applyStatus: http.StatusOK,
+				applyBody:   goldenApply,
+			}
+			srv := httptest.NewServer(sink)
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			_, restore := captureStdout(t)
+			defer restore()
+			args := []string{"--tarball", writeTarball(t), "--yes", tc.flag}
+			if tc.arg != "" {
+				args = append(args, tc.arg)
+			}
+			if code := cmdDeployTarball(args); code != 0 {
+				t.Fatalf("implicit project %s exit = %d", tc.name, code)
+			}
+			if sink.scanCalls != 1 || sink.applyCalls != 1 {
+				t.Fatalf("implicit project %s calls: scan=%d apply=%d, want one each", tc.name, sink.scanCalls, sink.applyCalls)
+			}
+			if sink.projectSlug != "fixture" {
+				t.Fatalf("implicit project %s slug = %q, want fixture", tc.name, sink.projectSlug)
+			}
+		})
 	}
 }
 

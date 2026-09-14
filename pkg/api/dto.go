@@ -5215,7 +5215,8 @@ type ApplyResponseApp struct {
 
 // AppliedBuild is the per-workload build result that
 // cmd/apid/scanService returns alongside the reconcile Result.
-// Renders as {slug, app_id, deployment_id, build_id, error?}.
+// Renders as {slug, app_id, deployment_id, build_id, deployment_status,
+// build_status, error?}; status fields are client-side wait enrichment.
 // On staging or enqueue failure, Error is non-empty and the
 // deployment/build IDs are empty. Partial failure is by design.
 type AppliedBuild struct {
@@ -5223,7 +5224,12 @@ type AppliedBuild struct {
 	AppID        string `json:"app_id"`
 	DeploymentID string `json:"deployment_id,omitempty"`
 	BuildID      string `json:"build_id,omitempty"`
-	Error        string `json:"error,omitempty"`
+	// DeploymentStatus and BuildStatus are populated by clients that wait for
+	// project readiness. They are omitted in the immediate server enqueue
+	// response, preserving the original apply wire shape for --no-wait users.
+	DeploymentStatus string `json:"deployment_status,omitempty"`
+	BuildStatus      string `json:"build_status,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 // --- cosign trusted-publisher wire types (issue #472 / ADR-054) -------------
