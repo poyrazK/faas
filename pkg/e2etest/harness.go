@@ -1217,7 +1217,12 @@ func EnsureSharedBinaries() (string, error) {
 		}
 		for _, d := range DaemonBinaries {
 			var out bytes.Buffer
-			cmd := exec.Command("go", "build", "-o", filepath.Join(dir, d), mod+"/cmd/"+d)
+			args := []string{"build"}
+			if daemonBuildTags != "" {
+				args = append(args, "-tags", daemonBuildTags)
+			}
+			args = append(args, "-o", filepath.Join(dir, d), mod+"/cmd/"+d)
+			cmd := exec.Command("go", args...)
 			cmd.Stdout = &out
 			cmd.Stderr = &out
 			if err := cmd.Run(); err != nil {
