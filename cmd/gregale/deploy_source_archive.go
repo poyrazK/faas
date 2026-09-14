@@ -106,12 +106,9 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 	nested := false
 	seen := map[string]struct{}{}
 	var entries, expanded int64
+	cleanDst := filepath.Clean(dst)
+	extractionPrefix := cleanDst + string(filepath.Separator)
 	for {
-		// codeql[go/path-injection] false-positive: cleanDeployArchiveName
-		// rejects absolute paths, volume names, NUL bytes, and every `..`
-		// component before the value reaches filepath.Join below. The
-		// deployArchivePathStaysUnder check is a second containment guard,
-		// and dst is a fresh 0700 directory owned by this invocation.
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
@@ -157,8 +154,11 @@ func extractDeployArchive(archivePath, dst string) (string, error) {
 			nested = true
 		}
 
-		target := filepath.Join(dst, filepath.FromSlash(name))
-		if !deployArchivePathStaysUnder(target, dst) {
+		target := filepath.Join(cleanDst, filepath.FromSlash(name))
+		// Keep this direct prefix guard beside the filesystem operations.
+		// It is deliberately redundant with cleanDeployArchiveName: the
+		// archive name is untrusted, while dst is a fresh private directory.
+		if !strings.HasPrefix(target, extractionPrefix) {
 			return "", fmt.Errorf("archive entry %q escapes extraction root", hdr.Name)
 		}
 		if hdr.Typeflag == tar.TypeDir {
@@ -234,12 +234,4 @@ func cleanDeployArchiveName(name string) (string, error) {
 		}
 	}
 	return name, nil
-}
-
-func deployArchivePathStaysUnder(target, root string) bool {
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
