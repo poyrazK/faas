@@ -158,24 +158,15 @@ func existingComputeNode(t *testing.T, pool *pgxpool.Pool, name string) (string,
 // one that flips it to 'unavailable' under fault injection.
 func upsertComputeNode(t *testing.T, pool *pgxpool.Pool, name, host string) (string, error) {
 	t.Helper()
-	const q = `INSERT INTO compute_nodes
-		(name, target_url, schedd_target_url, gateway_target_url, lifecycle,
-		 mem_mb, max_concurrency, admission_ceiling_mb, vcpus, vcpu_budget,
-		 plan_host, overlay_ip, gateway_port)
-		VALUES ($1, $2, $3, $4, 'active'::compute_node_lifecycle,
-			8192, 16, 256, 4, 160,
-			$5, '10.99.0.2', 8080)
-		ON CONFLICT (name) DO UPDATE SET
-			schedd_target_url = EXCLUDED.schedd_target_url,
-			gateway_target_url = EXCLUDED.gateway_target_url
-		RETURNING id`
+	// The statement lives in the untagged twonode_sql.go so ordinary CI
+	// compiles and exercises it; see the comment there for the four wrong
+	// column names this file carried until the first hardware run.
 	var id string
-	err := pool.QueryRow(context.Background(), q,
+	err := pool.QueryRow(context.Background(), upsertComputeNodeSQL,
 		name,
 		"unix:///run/faas/"+host+"/vmmd.sock",
 		"unix:///run/faas/"+host+"/schedd.sock",
 		"tcp://"+host+".test.local:8080",
-		host,
 	).Scan(&id)
 	return id, err
 }
