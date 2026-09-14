@@ -39,11 +39,13 @@ func UnitVmmd() daemonunit.Unit {
 			"faas-tenant.slice", "faas-cp.slice", "faas-cp-build.slice",
 			"faas-tenant-free.slice", "faas-tenant-hobby.slice",
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
+			"nftables.service", "br-tenants-up.service",
 		},
 		Wants: []string{
 			"faas-tenant.slice", "faas-cp.slice", "faas-cp-build.slice",
 			"faas-tenant-free.slice", "faas-tenant-hobby.slice",
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
+			"nftables.service", "br-tenants-up.service",
 		},
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
