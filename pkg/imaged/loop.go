@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -51,6 +52,10 @@ type Loop struct {
 	appsRoot    string
 	storageRoot string
 	gcMu        sync.Mutex
+
+	remoteDeleteBacklogCount     prometheus.Gauge
+	remoteDeleteBacklogOldestAge prometheus.Gauge
+	remoteDeleteFailures         prometheus.Counter
 
 	// Injected channels so tests never block on time.Sleep. Defaults are
 	// built in NewLoop and can be overridden by WithGCChannel/WithFCSweepCh.
@@ -86,7 +91,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 	if cfg.GCEvery == 0 {
 		cfg.GCEvery = 24 * time.Hour
 	}
-	return &Loop{
+	loop := &Loop{
 		handler:     cfg.Handler,
 		store:       cfg.Store,
 		pool:        cfg.Pool,
@@ -98,6 +103,26 @@ func NewLoop(cfg LoopConfig) *Loop {
 		storageRoot: cfg.StorageRoot,
 		gcEvery:     cfg.GCEvery,
 	}
+	if cfg.Handler != nil && cfg.Handler.ops != nil {
+		loop.remoteDeleteBacklogCount = prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "imaged_snapshot_remote_delete_backlog_count",
+			Help: "Number of stale snapshot rows retained because remote artifact deletion has not completed.",
+		})
+		loop.remoteDeleteBacklogOldestAge = prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "imaged_snapshot_remote_delete_backlog_oldest_age_seconds",
+			Help: "Age in seconds of the oldest stale snapshot awaiting verified remote deletion.",
+		})
+		loop.remoteDeleteFailures = prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "imaged_snapshot_remote_delete_failures_total",
+			Help: "Remote snapshot artifact deletion failures; the snapshot row remains as a retryable durable tombstone.",
+		})
+		cfg.Handler.ops.Registry().MustRegister(
+			loop.remoteDeleteBacklogCount,
+			loop.remoteDeleteBacklogOldestAge,
+			loop.remoteDeleteFailures,
+		)
+	}
+	return loop
 }
 
 // WithGCChannel swaps the GC tick channel. Used by tests to drive a
@@ -337,6 +362,12 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 		"now", now.Format(time.RFC3339),
 		"lv_fc_pct", pctForLog, "lv_fc_pct_known", pctKnown, "pressure", pressure)
 
+	// Retry durable stale rows before selecting new rollback-window work.
+	// A remote registry failure leaves these rows in Postgres instead of
+	// falsely reporting cleanup success, so every normal GC tick makes
+	// progress as soon as the remote deletion path recovers.
+	l.retryRemoteDeleteBacklog(ctx, now)
+
 	rows, err := l.store.ListSnapshotsForGC(ctx)
 	if err != nil {
 		l.log.Warn("imaged: gc list", "err", err)
@@ -379,6 +410,41 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 			return
 		}
 	}
+}
+
+func (l *Loop) retryRemoteDeleteBacklog(ctx context.Context, now time.Time) {
+	rows, err := l.store.ListSnapshotsPendingDelete(ctx)
+	if err != nil {
+		l.log.Warn("imaged: list remote delete backlog", "err", err)
+		return
+	}
+	l.observeRemoteDeleteBacklog(rows, now)
+	if len(rows) == 0 {
+		return
+	}
+	if err := l.deleteSnapshotsAndFiles(ctx, snapshotTargets(rows)); err != nil {
+		l.log.Warn("imaged: retry remote delete backlog", "count", len(rows), "err", err)
+	}
+	remaining, err := l.store.ListSnapshotsPendingDelete(ctx)
+	if err != nil {
+		l.log.Warn("imaged: refresh remote delete backlog", "err", err)
+		return
+	}
+	l.observeRemoteDeleteBacklog(remaining, now)
+}
+
+func (l *Loop) observeRemoteDeleteBacklog(rows []state.SnapshotForGC, now time.Time) {
+	if l.remoteDeleteBacklogCount == nil || l.remoteDeleteBacklogOldestAge == nil {
+		return
+	}
+	l.remoteDeleteBacklogCount.Set(float64(len(rows)))
+	oldestAge := time.Duration(0)
+	for _, row := range rows {
+		if age := now.Sub(row.CreatedAt); age > oldestAge {
+			oldestAge = age
+		}
+	}
+	l.remoteDeleteBacklogOldestAge.Set(math.Max(0, oldestAge.Seconds()))
 }
 
 const localSnapshotOrphanGrace = time.Hour
@@ -555,8 +621,9 @@ func (l *Loop) runAppProtocolSweep(ctx context.Context) {
 // DeleteSnapshotsByID) and the deployment id (for the storage key
 // under sched.SnapshotMemKey / sched.SnapshotVMStateKey). Marks the rows
 // stale first so schedd's per-row freshness check refuses them in the
-// brief mark→delete window, bulk-deletes the rows, then drops the
-// on-disk artifacts via the Storage backend. F-05 fixes the prior
+// brief mark→delete window, deletes the storage artifacts, then removes only
+// the rows whose remote deletes succeeded. A failed remote delete therefore
+// leaves a durable stale-row tombstone for retry on the next GC tick. F-05 fixes the prior
 // snapshot-id/deployment-id namespace mismatch that prevented any
 // filesystem cleanup from running.
 //
@@ -587,9 +654,6 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 	if _, err := l.store.MarkOldSnapshotsStale(ctx, ids); err != nil {
 		return err
 	}
-	if _, err := l.store.DeleteSnapshotsByID(ctx, ids); err != nil {
-		return err
-	}
 	be, err := l.handler.storageFor()
 	if err != nil {
 		return fmt.Errorf("imaged: gc storageFor: %w", err)
@@ -601,6 +665,8 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 			l.log.Warn("imaged: gc legacy storage root", "root", l.storageRoot, "err", err)
 		}
 	}
+	succeeded := make([]deleteTarget, 0, len(ts))
+	var deleteErrors []error
 	for _, t := range ts {
 		// snap blobs: pick the keys by tier. The storage backend
 		// swallows missing keys so a transient race with restore
@@ -617,22 +683,40 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 			}
 		}
 		vmstateKey := state.SnapshotVMStateKey(snap)
-		if err := be.Delete(ctx, memKey); err != nil {
-			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "tier", t.Tier, "err", err)
+		memErr := be.Delete(ctx, memKey)
+		vmstateErr := be.Delete(ctx, vmstateKey)
+		if memErr != nil {
+			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "tier", t.Tier, "err", memErr)
+			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", memKey, memErr))
 		}
-		if err := be.Delete(ctx, vmstateKey); err != nil {
-			l.log.Warn("imaged: gc remove snap vmstate", "deployment", t.DeploymentID, "tier", t.Tier, "err", err)
+		if vmstateErr != nil {
+			l.log.Warn("imaged: gc remove snap vmstate", "deployment", t.DeploymentID, "tier", t.Tier, "err", vmstateErr)
+			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", vmstateKey, vmstateErr))
 		}
 		if legacyLocal != nil {
 			l.deleteLegacyLocalSnapshot(ctx, legacyLocal, t.DeploymentID, memKey, vmstateKey)
+		}
+		if memErr == nil && vmstateErr == nil {
+			succeeded = append(succeeded, t)
+		} else if l.remoteDeleteFailures != nil {
+			l.remoteDeleteFailures.Inc()
+		}
+	}
+	if len(succeeded) > 0 {
+		succeededIDs := make([]string, len(succeeded))
+		for i, target := range succeeded {
+			succeededIDs[i] = target.ID
+		}
+		if _, err := l.store.DeleteSnapshotsByID(ctx, succeededIDs); err != nil {
+			return errors.Join(append(deleteErrors, err)...)
 		}
 	}
 	// A deployment may have one init and one warm row. Only discard its
 	// shared app layer after both rows are gone; otherwise the surviving tier
 	// would point at a drive1 that no longer exists and every restore would
 	// degrade into a cold boot.
-	seenDeployments := make(map[string]deleteTarget, len(ts))
-	for _, t := range ts {
+	seenDeployments := make(map[string]deleteTarget, len(succeeded))
+	for _, t := range succeeded {
 		seenDeployments[t.DeploymentID] = t
 	}
 	for deploymentID, t := range seenDeployments {
@@ -665,7 +749,7 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		l.log.Warn("imaged: gc backend cannot list; rely on remote driver to reclaim space",
 			"backend", fmt.Sprintf("%T", be))
 	}
-	return nil
+	return errors.Join(deleteErrors...)
 }
 
 // deleteLegacyLocalSnapshot removes snapshot files left in FAAS_STORAGE_ROOT

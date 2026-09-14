@@ -103,6 +103,7 @@ When you receive a page:
 | `prometheus_health` | page | [`FaasPrometheusAlertingPathDegraded.md`](../runbooks/FaasPrometheusAlertingPathDegraded.md) | A short Prometheus restart can leave self-scrape series absent; verify service readiness and the active rule groups. |
 | `alertmanager_health` | page/warn | [`FaasAlertmanagerDeliveryDegraded.md`](../runbooks/FaasAlertmanagerDeliveryDegraded.md) | Receiver provider outages or a deliberate notification disablement can fail delivery while alert evaluation remains healthy. |
 | `managed_postgres` | page/warn | [`FaasManagedPostgresDegraded.md`](../runbooks/FaasManagedPostgresDegraded.md) | A planned staging canary drain can defer provisioning; confirm the rollout gate and deletion recovery before escalating. |
+| `snapshot_remote_delete` | warn | [`FaasSnapshotRemoteDeleteBacklog.md`](../runbooks/FaasSnapshotRemoteDeleteBacklog.md) | A transient registry or GitHub Packages API failure is safe while the durable backlog stays bounded; verify retries are making progress. |
 
 ## Cross-cutting triage commands
 

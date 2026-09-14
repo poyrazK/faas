@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -52,6 +53,32 @@ func TestGetCapabilitiesReturnsPlanResolvedRegistry(t *testing.T) {
 	}
 	if got := capabilityByKey(t, response, "object-storage"); got.Enabled {
 		t.Fatalf("object storage advertised enabled without provider configuration: %+v", got)
+	}
+	if got := capabilityByKey(t, response, "github-deploys"); got.Enabled {
+		t.Fatalf("GitHub deploys advertised without a healthy githubd runtime: %+v", got)
+	}
+}
+
+func TestGetCapabilitiesGatesGitHubDeploysOnRuntimeReadiness(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		ready bool
+	}{
+		{name: "ready", ready: true},
+		{name: "not ready", ready: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := (&server{}).WithGitHubDeploysAvailable(func(context.Context) bool { return tc.ready })
+			recorder := httptest.NewRecorder()
+			s.getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+			var response api.CapabilitiesResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if got := capabilityByKey(t, response, "github-deploys").Enabled; got != tc.ready {
+				t.Fatalf("github-deploys enabled = %t, want %t", got, tc.ready)
+			}
+		})
 	}
 }
 

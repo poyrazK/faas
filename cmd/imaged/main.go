@@ -585,6 +585,14 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if prestageOnlyFromEnv(getenv) {
+		log.Info("imaged runtime-base pre-stage complete",
+			"arch", arch,
+			"assigned_runtimes", assignedBases.Runtimes,
+			"assigned_minimal", assignedBases.Minimal,
+		)
+		return nil
+	}
 
 	loop := imaged.NewLoop(imaged.LoopConfig{
 		Handler:     h,
@@ -717,6 +725,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}()
 
 	return loop.Run(ctx)
+}
+
+func prestageOnlyFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_IMAGED_PRESTAGE_ONLY")) == "1"
 }
 
 // dbNotifier adapts *pgxpool.Pool to imaged.Notifier by closing over the pool

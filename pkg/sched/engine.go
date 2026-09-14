@@ -3769,6 +3769,15 @@ func (e *Engine) RebalanceOrphanedApps(ctx context.Context, deadNodeID string) e
 			"dead_node_id", deadNodeID)
 		return nil
 	}
+	// Every schedd receives the same compute_node_changed notification. The
+	// scheduler on the node being drained must not race its healthy peers and
+	// reassign the orphan back to itself; that keeps public routing pinned to
+	// the node which is about to stop. Live migration already has this guard.
+	if deadNodeID != "" && deadNodeID == e.ownerNodeID {
+		e.log.Info("sched: rebalance skipped — source node cannot reclaim its own apps",
+			"dead_node_id", deadNodeID)
+		return nil
+	}
 
 	// Load the full orphan set; cap + cooldown filter are SQL
 	// constraints, not in-memory filters, so the caller's

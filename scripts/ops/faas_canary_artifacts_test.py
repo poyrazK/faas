@@ -208,6 +208,41 @@ fi'''
         self.assertTrue(path.exists())
         self.assertEqual(manager.counters()["cleanup_failures_total"], 1)
 
+    def test_sweep_propagates_failed_reference_proof_after_writing_metrics(self):
+        path = self.artifact()
+        os.utime(path, (self.clock - 101, self.clock - 101))
+        manager = self.manager(self._systemctl("exit 1"))
+
+        with self.assertRaises(MODULE.ReferenceProofError):
+            manager.sweep()
+
+        self.assertTrue(path.exists())
+        self.assertEqual(manager.counters()["cleanup_failures_total"], 1)
+        self.assertIn(
+            "faas_canary_artifact_cleanup_failures_total 1",
+            self.metrics.read_text(encoding="utf-8"),
+        )
+
+    def test_systemd_unit_starting_with_dash_uses_option_terminator(self):
+        path = self.artifact()
+        os.utime(path, (self.clock - 101, self.clock - 101))
+        systemctl = self._systemctl(
+            '''if [ "$1" = "list-units" ]; then
+  echo "-.mount loaded active mounted Root Mount"
+  exit 0
+fi
+for arg in "$@"; do
+  if [ "$arg" = "--" ]; then
+    exit 0
+  fi
+done
+exit 64'''
+        )
+
+        self.manager(systemctl).sweep()
+
+        self.assertFalse(path.exists())
+
     def test_closed_policy_rejects_outside_and_symlink_paths(self):
         outside = self.root / "outside"
         outside.mkdir()

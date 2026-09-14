@@ -11556,9 +11556,10 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			// #96 / ADR-025 axis 2: forward the canonical storage
 			// key so imaged's GC loop can Storage.Delete under it
 			// without a second hop through Snapshot.
-			StorageKey: s.StorageKey,
-			Stale:      s.Stale,
-			CreatedAt:  s.CreatedAt,
+			StorageKey:    s.StorageKey,
+			Stale:         s.Stale,
+			DeletePending: s.DeletePending,
+			CreatedAt:     s.CreatedAt,
 			// Issue #470 / PR C / ADR-072: forward
 			// apps.warm_snapshot_enabled so the rollback-window
 			// policy can retain both tiers on warm-enabled apps and
@@ -11605,11 +11606,27 @@ func (m *MemStore) ListSnapshotsStaleOlderThan(_ context.Context, retention time
 			AccountID: app.AccountID, AppSlug: app.Slug, AppStatus: app.Status,
 			DeploymentStatus: dep.Status, FCVersion: s.FCVersion,
 			MemBytes: s.MemBytes, DiskBytes: s.DiskBytes, Tier: s.Tier,
-			StorageKey: s.StorageKey, Stale: true, CreatedAt: s.CreatedAt,
+			StorageKey: s.StorageKey, Stale: true, DeletePending: s.DeletePending, CreatedAt: s.CreatedAt,
 			AppWarmSnapshotEnabled: app.WarmSnapshotEnabled,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+// ListSnapshotsPendingDelete returns only durable GC tombstones, preserving
+// ordinary stale rows for the rollback retention window.
+func (m *MemStore) ListSnapshotsPendingDelete(ctx context.Context) ([]SnapshotForGC, error) {
+	rows, err := m.ListSnapshotsStaleOlderThan(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := rows[:0]
+	for _, row := range rows {
+		if row.DeletePending {
+			out = append(out, row)
+		}
+	}
 	return out, nil
 }
 
@@ -11788,6 +11805,7 @@ func (m *MemStore) MarkOldSnapshotsStale(_ context.Context, beforeSnapshotIDs []
 	for i := range m.snapshots {
 		if _, ok := idSet[m.snapshots[i].ID]; ok {
 			m.snapshots[i].Stale = true
+			m.snapshots[i].DeletePending = true
 			m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 			n++
 		}

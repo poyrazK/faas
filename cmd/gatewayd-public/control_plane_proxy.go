@@ -19,11 +19,12 @@ import (
 // routes continue to the compute gateway, but a compute outage can never turn
 // /v1, dashboard, auth, or health traffic into a gateway 502.
 type controlPlaneProxy struct {
-	target     *url.URL
-	next       http.Handler
-	proxy      *httputil.ReverseProxy
-	log        *slog.Logger
-	appsDomain string
+	target      *url.URL
+	next        http.Handler
+	proxy       *httputil.ReverseProxy
+	githubProxy *httputil.ReverseProxy
+	log         *slog.Logger
+	appsDomain  string
 }
 
 func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger) (http.Handler, error) {
@@ -66,10 +67,52 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger)
 			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "control_plane_unavailable", "Control plane unavailable", "the control-plane API is not reachable"))
 		},
 	}
+	githubTargetText := strings.TrimSpace(os.Getenv("FAAS_GITHUBD_LOOPBACK"))
+	if githubTargetText == "" {
+		githubTargetText = "http://127.0.0.1:8083"
+	}
+	githubTarget, githubErr := url.Parse(githubTargetText)
+	if githubErr != nil || githubTarget.Scheme == "" || githubTarget.Host == "" || githubTarget.Path != "" {
+		return nil, fmt.Errorf("githubd target must be an absolute URL, got %q", githubTargetText)
+	}
+	p.githubProxy = &httputil.ReverseProxy{
+		Rewrite: func(req *httputil.ProxyRequest) {
+			req.SetURL(githubTarget)
+			req.Out.Host = req.In.Host
+			req.Out.Header.Del("X-Forwarded-For")
+			req.Out.Header.Del("X-Forwarded-Host")
+			req.Out.Header.Del("X-Forwarded-Proto")
+			if host, _, splitErr := net.SplitHostPort(req.In.RemoteAddr); splitErr == nil && host != "" {
+				req.Out.Header.Set("X-Forwarded-For", host)
+			}
+			if req.In.TLS != nil {
+				req.Out.Header.Set("X-Forwarded-Proto", "https")
+			} else {
+				req.Out.Header.Set("X-Forwarded-Proto", "http")
+			}
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			httpsec.StripStaticHeaders(resp.Header)
+			return nil
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			log.Error("githubd upstream unavailable", "path", r.URL.Path, "err", err)
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "github_integration_unavailable", "GitHub integration unavailable", "the GitHub webhook receiver is not reachable"))
+		},
+	}
 	return p, nil
 }
 
 func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// githubd is loopback-only on the control-plane host. Route the exact
+	// public webhook endpoint here before the generic compute data plane; app
+	// and custom-domain workloads may still own the same path on their hosts.
+	// githubd remains the authority for method, body-limit, signature, and
+	// delivery de-duplication checks.
+	if r.URL.Path == "/webhooks/github" && isPlatformHealthHost(r.Host, p.appsDomain) {
+		p.githubProxy.ServeHTTP(w, r)
+		return
+	}
 	// Prometheus consumes this registry-backed service-discovery endpoint only
 	// over apid's loopback listener. Do not let the public control-plane proxy
 	// turn it into an externally reachable API route.

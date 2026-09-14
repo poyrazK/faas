@@ -1217,9 +1217,9 @@ groups:
       # A scrape target can be up while the daemon is still warming,
       # dependency-degraded, or draining. Alert on the readiness state
       # separately so an HTTP 200 metrics endpoint is not mistaken for a
-      # traffic-safe serving instance. githubd is excluded because it is an
-      # optional integration; its credential-gated degraded state is covered
-      # by the githubd path-filter alert.
+      # traffic-safe serving instance. githubd readiness includes its database,
+      # GitHub App credentials, and webhook verifier secret; capability
+      # discovery uses the same endpoint before advertising GitHub deploys.
       - alert: FaasDaemonNotReady
         expr: |
           apid_daemon_ready{daemon="apid"} == 0
@@ -1231,6 +1231,7 @@ groups:
           or builderd_daemon_ready{daemon="builderd"} == 0
           or meterd_daemon_ready{daemon="meterd"} == 0
           or outboundd_daemon_ready{daemon="outboundd"} == 0
+          or githubd_daemon_ready{daemon="githubd"} == 0
         for: 5m
         labels:
           severity: page
@@ -2978,6 +2979,35 @@ groups:
           summary: "A compute node has too many trusted capacity signing keys"
           description: "Schedd trusts more than the current key and one bounded rotation-overlap key for a compute node. Treat the extra credentials as a capacity-report authentication incident."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeTrustedKeyOverflow.md"
+
+  - name: snapshot_remote_delete
+    interval: 1m
+    rules:
+      - alert: FaasSnapshotRemoteDeleteBacklog
+        expr: imaged_snapshot_remote_delete_backlog_count > 0 and imaged_snapshot_remote_delete_backlog_oldest_age_seconds > 1800
+        for: 15m
+        labels:
+          severity: warn
+          component: imaged
+          family: snapshot_remote_delete
+          public_status: internal
+        annotations:
+          summary: "Snapshot artifacts are waiting for verified remote deletion"
+          description: "Imaged has retained GC tombstones for more than 30 minutes because at least one remote snapshot artifact has not been verified deleted. Restore safety is preserved, but registry storage will grow until cleanup succeeds."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotRemoteDeleteBacklog.md"
+
+      - alert: FaasSnapshotRemoteDeleteFailures
+        expr: increase(imaged_snapshot_remote_delete_failures_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: snapshot_remote_delete
+          public_status: internal
+        annotations:
+          summary: "Remote snapshot deletion is failing"
+          description: "At least one snapshot memory or VM-state artifact could not be deleted remotely. Imaged kept its database tombstone and will retry on the normal GC interval."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotRemoteDeleteBacklog.md"
 
   - name: internal_mtls_lifecycle
     interval: 1m

@@ -118,9 +118,9 @@ var ErrNotFound = errors.New("storage: key not found")
 var ErrInvalidKey = errors.New("storage: invalid key")
 
 // ErrDeleteUnsupported reports that a backend can read and write artifacts
-// but its remote service does not implement deletion. Callers should still
-// evict local caches and rely on the service's retention policy for the
-// remote object.
+// but its remote service does not implement deletion. Callers must retain a
+// durable cleanup record and retry through a supported retention mechanism;
+// this error never means the remote object is gone.
 var ErrDeleteUnsupported = errors.New("storage: delete unsupported")
 
 // ErrIncompleteEnumeration reports that a backend cannot prove a prefix list

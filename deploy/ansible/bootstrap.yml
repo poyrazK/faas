@@ -33,8 +33,15 @@
 # manifest and daemon configuration remain hostname-only.
 - name: Discover provider-neutral private transport addresses
   hosts: control_plane:compute_nodes
-  gather_facts: true
+  gather_facts: false
   become: false
+  pre_tasks:
+    - name: End managed-host bootstrap discovery on the release-only fast path
+      ansible.builtin.meta: end_host
+      when: faas_join_bootstrap_contract_current | default(false) | bool
+
+    - name: Gather facts for hosts requiring bootstrap convergence
+      ansible.builtin.setup:
   tasks:
     - name: Require a usable private transport address
       ansible.builtin.assert:
@@ -53,13 +60,21 @@
 
 - name: Bootstrap a Gate-B control-plane node (fsn-1)
   hosts: control_plane
-  gather_facts: true
+  gather_facts: false
   become: true
   serial: 1
   max_fail_percentage: 0
 
   vars_files:
     - group_vars/control_plane/off_host_backup.yml
+
+  pre_tasks:
+    - name: End managed control-plane bootstrap on the release-only fast path
+      ansible.builtin.meta: end_host
+      when: faas_join_bootstrap_contract_current | default(false) | bool
+
+    - name: Gather facts for control-plane bootstrap convergence
+      ansible.builtin.setup:
 
   roles:
     # Shared preconditions (every box):
@@ -110,10 +125,18 @@
 
 - name: Bootstrap a Gate-B compute-only node (fsn-2)
   hosts: compute_nodes
-  gather_facts: true
+  gather_facts: false
   become: true
   serial: 1
   max_fail_percentage: 0
+
+  pre_tasks:
+    - name: End managed compute bootstrap on the release-only fast path
+      ansible.builtin.meta: end_host
+      when: faas_join_bootstrap_contract_current | default(false) | bool
+
+    - name: Gather facts for compute bootstrap convergence
+      ansible.builtin.setup:
 
   roles:
     # Cheap fail-closed admission checks must run before storage discovery or

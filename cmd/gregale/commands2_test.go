@@ -407,6 +407,50 @@ func TestCmdTrafficSet_MissingArgs(t *testing.T) {
 	}
 }
 
+func TestCmdTrafficStatusListsOnlyLiveDeploymentWeights(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo/deployments" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
+			{ID: "dep-live-a", Status: statusLive, TrafficPercent: 75},
+			{ID: "dep-live-b", Status: statusLive, TrafficPercent: 25},
+			{ID: "dep-old", Status: "superseded", TrafficPercent: 0},
+		}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdTraffic([]string{"status", "demo"}); code != 0 {
+		t.Fatalf("traffic status exit = %d", code)
+	}
+	output := out.String()
+	for _, want := range []string{"dep-live-a", "75%", "dep-live-b", "25%", "Total\t\t100%"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q: %s", want, output)
+		}
+	}
+	if strings.Contains(output, "dep-old") {
+		t.Fatalf("superseded deployment shown in traffic status: %s", output)
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("request count = %d, want 1", hits)
+	}
+}
+
+func TestCmdTrafficStatusRequiresExactlyOneSlug(t *testing.T) {
+	for _, args := range [][]string{{"status"}, {"status", "one", "two"}} {
+		if code := cmdTraffic(args); code == 0 {
+			t.Fatalf("cmdTraffic(%v) exit = 0", args)
+		}
+	}
+}
+
 // TestCmdTrafficSet_DefaultIsProportional (issue #556 / PR-C) pins
 // the CLI's default behaviour post-C7: a bare `faas traffic set
 // --deployment <id> --percent N` performs a proportional

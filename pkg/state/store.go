@@ -4218,6 +4218,9 @@ type Store interface {
 	// ListSnapshotsStaleOlderThan returns stale snapshots whose retention
 	// window has expired, including the metadata needed to remove their files.
 	ListSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) ([]SnapshotForGC, error)
+	// ListSnapshotsPendingDelete returns GC tombstones whose remote artifacts
+	// have not yet been fully deleted. Ordinary stale rollback rows are excluded.
+	ListSnapshotsPendingDelete(ctx context.Context) ([]SnapshotForGC, error)
 	// ListSnapshotDeploymentIDs returns the distinct deployment IDs referenced
 	// by every snapshot row, including retained stale rows. Imaged uses this
 	// compact projection to distinguish legacy local orphans from retained data.
@@ -4243,8 +4246,8 @@ type Store interface {
 	// snapshot matches the id AND the deployment's app.app_protocol
 	// ∈ appProtocols. Empty appProtocols is an error (caller bug).
 	MarkSnapshotStaleByAppProtocol(ctx context.Context, snapshotID string, appProtocols []string) error
-	// MarkOldSnapshotsStale marks the given snapshot IDs stale (the imaged
-	// rollback-window GC calls this immediately before DeleteSnapshotsByID).
+	// MarkOldSnapshotsStale marks the given snapshot IDs stale and delete-pending
+	// (the imaged rollback-window GC calls this before remote artifact deletion).
 	MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error)
 	// DeleteSnapshotsStaleOlderThan removes rows where stale=true AND
 	// created_at < now()-retention. Used by imaged's F2 startup sweep

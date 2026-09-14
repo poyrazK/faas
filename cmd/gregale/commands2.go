@@ -2799,8 +2799,52 @@ func cmdTrafficSet(args []string) int {
 	return 0
 }
 
-// cmdTraffic dispatches the `traffic` sub-command. PR-A wires the
-// `set` leaf; `status` is a follow-up that re-uses the same DTO.
+// cmdTrafficStatus prints the live deployment weights that currently make up
+// an app's routing table. Read access is available on every plan; Free and
+// Hobby apps normally show one 100% row while Pro/Scale may show a split.
+func cmdTrafficStatus(args []string) int {
+	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+		PrintUsage(os.Stderr, "usage: gregale traffic status <slug>", "traffic")
+		return 1
+	}
+	slug := strings.TrimSpace(args[0])
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	deployments, err := client.ListAppDeploymentsAll(context.Background(), slug)
+	if err != nil {
+		return printErr("Traffic status failed", err)
+	}
+	live := make([]api.DeploymentResponse, 0, len(deployments))
+	total := 0
+	for _, deployment := range deployments {
+		if deployment.Status != statusLive {
+			continue
+		}
+		live = append(live, deployment)
+		total += deployment.TrafficPercent
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(struct {
+			App          string                   `json:"app"`
+			Deployments  []api.DeploymentResponse `json:"deployments"`
+			TotalPercent int                      `json:"total_percent"`
+		}{App: slug, Deployments: live, TotalPercent: total}))
+	}
+	if len(live) == 0 {
+		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
+		return 0
+	}
+	_, _ = fmt.Fprintln(osStdout, "DEPLOYMENT\tSTATUS\tTRAFFIC")
+	for _, deployment := range live {
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%d%%\n", deployment.ID, deployment.Status, deployment.TrafficPercent)
+	}
+	_, _ = fmt.Fprintf(osStdout, "Total\t\t%d%%\n", total)
+	return 0
+}
+
+// cmdTraffic dispatches the implemented traffic leaves.
 func cmdTraffic(args []string) int {
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale traffic <set|status> [args]", "traffic")
@@ -2809,6 +2853,8 @@ func cmdTraffic(args []string) int {
 	switch args[0] {
 	case "set":
 		return cmdTrafficSet(args[1:])
+	case "status":
+		return cmdTrafficStatus(args[1:])
 	default:
 		PrintUsage(os.Stderr, "usage: gregale traffic <set|status> [args]", "traffic")
 		return 1

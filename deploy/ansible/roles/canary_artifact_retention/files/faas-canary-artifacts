@@ -270,6 +270,7 @@ class Manager:
             total = sum(item.size for item in artifacts)
             now = self.now()
             references = None
+            proof_error = None
             for item in sorted(artifacts, key=lambda value: value.created_at):
                 age = max(0, now - item.created_at)
                 expired = (
@@ -294,12 +295,19 @@ class Manager:
                 except ReferenceProofError as error:
                     self.increment_counter("cleanup_failures_total")
                     print(f"cleanup proof failed; retaining all remaining artifacts: {error}", file=sys.stderr)
+                    proof_error = error
                     break
                 except OSError as error:
                     self.increment_counter("cleanup_failures_total")
                     print(f"cleanup failed for {item.path}: {error}", file=sys.stderr)
             self.set_counter("last_sweep_timestamp_seconds", int(self.now()))
             self.write_metrics(self.scan())
+            if proof_error is not None:
+                # The timer must be observably failed when the safety proof
+                # cannot complete. Metrics are written first so operators can
+                # diagnose the failure without mistaking a zero exit status
+                # for a successful sweep.
+                raise proof_error
 
     def remove(self, path: pathlib.Path, record: Optional[dict]) -> None:
         self.validate_path(str(path))
@@ -400,7 +408,14 @@ class Manager:
         for unit in units:
             try:
                 shown = subprocess.run(
-                    [self.systemctl, "show", unit, *[f"--property={name}" for name in properties], "--no-pager"],
+                    [
+                        self.systemctl,
+                        "show",
+                        *[f"--property={name}" for name in properties],
+                        "--no-pager",
+                        "--",
+                        unit,
+                    ],
                     check=True,
                     capture_output=True,
                     text=True,

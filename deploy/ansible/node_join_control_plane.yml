@@ -7,11 +7,29 @@
 
 - name: Converge control-plane peer access for the joining node
   hosts: control_plane
-  gather_facts: true
+  gather_facts: false
   become: true
   serial: 1
   max_fail_percentage: 0
   pre_tasks:
+    - name: Probe the control-plane peer contract
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          test -n "{{ faas_join_peer_contract_sha256 | default('') }}"
+          test "$(cat /var/lib/faas/bootstrap/control-plane-peer-contract.sha256)" = "{{ faas_join_peer_contract_sha256 }}"
+        executable: /bin/bash
+      register: faas_join_peer_contract_probe
+      changed_when: false
+      failed_when: false
+
+    - name: End unchanged control-plane peer convergence
+      ansible.builtin.meta: end_host
+      when: faas_join_peer_contract_probe.rc == 0
+
+    - name: Gather facts for changed control-plane peer convergence
+      ansible.builtin.setup:
+
     # Keep the control-plane staging path fail-closed too. The same shared
     # file is installed on both sides of a split-box fleet, and a direct
     # Ansible invocation must not bypass the provider-neutral OCI contract.
@@ -105,3 +123,20 @@
     # owns password/bootstrap policy. A join must only update the listener
     # and pg_hba from the already-provisioned control-plane credentials.
     - role: control_plane_peer_access
+
+  post_tasks:
+    - name: Ensure the control-plane peer contract directory exists
+      ansible.builtin.file:
+        path: /var/lib/faas/bootstrap
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Persist the converged control-plane peer contract
+      ansible.builtin.copy:
+        dest: /var/lib/faas/bootstrap/control-plane-peer-contract.sha256
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ faas_join_peer_contract_sha256 }}\n"

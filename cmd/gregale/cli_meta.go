@@ -1331,6 +1331,10 @@ var cliCommands = []cliCommand{
 					{Name: "percent", Short: "traffic weight in [0, 100]; -1 = unset (server default 100)", Req: true, Value: "N"},
 				},
 			},
+			{
+				Name:  "status",
+				Short: "Show live deployment traffic weights for an app",
+			},
 		},
 	},
 	{

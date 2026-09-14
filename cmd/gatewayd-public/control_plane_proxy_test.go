@@ -88,6 +88,52 @@ func TestControlPlaneProxyScopesHealthToPlatformHost(t *testing.T) {
 	}
 }
 
+func TestControlPlaneProxyRoutesExactGitHubWebhookOnPlatformHost(t *testing.T) {
+	t.Setenv("FAAS_APPS_DOMAIN", "gregale.dev")
+	githubd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/webhooks/github" {
+			t.Fatalf("githubd path = %q", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Hub-Signature-256"); got != "sha256=test" {
+			t.Fatalf("signature header = %q", got)
+		}
+		_, _ = io.WriteString(w, "githubd")
+	}))
+	t.Cleanup(githubd.Close)
+	t.Setenv("FAAS_GITHUBD_LOOPBACK", githubd.URL)
+
+	controlPlane := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(controlPlane.Close)
+	compute := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "compute")
+	})
+	handler, err := newControlPlaneProxy(controlPlane.URL, compute, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		host string
+		path string
+		want string
+	}{
+		{host: "api.gregale.dev", path: "/webhooks/github", want: "githubd"},
+		{host: "gregale.dev", path: "/webhooks/github", want: "githubd"},
+		{host: "app.gregale.dev", path: "/webhooks/github", want: "compute"},
+		{host: "api.gregale.dev", path: "/webhooks/github/extra", want: "compute"},
+	} {
+		t.Run(tc.host+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "https://"+tc.host+tc.path, strings.NewReader("{}"))
+			req.Header.Set("X-Hub-Signature-256", "sha256=test")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if got := rec.Body.String(); got != tc.want {
+				t.Fatalf("body = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestControlPlaneProxyPublicEdgeOwnsStaticSecurityHeaders(t *testing.T) {
 	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Add(httpsec.HeaderXFrameOptions, "inner-one")

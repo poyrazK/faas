@@ -57,6 +57,10 @@ type OCIRegistryStorageBackend struct {
 	pw       string       // optional Basic-Auth password
 	ua       string       // User-Agent header on every request
 	timeout  time.Duration
+	// githubPackagesAPI enables GHCR's supported package-version deletion
+	// fallback. GHCR rejects distribution-spec manifest DELETE with 405, but
+	// exposes version deletion through api.github.com.
+	githubPackagesAPI string
 	// snapshotCompression controls the encoding used for snapshot memory
 	// blobs in the remote registry. LocalCacheBackend wraps this backend in
 	// production, so its origin-node file remains an uncompressed sparse
@@ -89,8 +93,9 @@ type OCIRegistryStorageBackend struct {
 
 	// deleteUnsupported is set after a registry returns 405 to a conforming
 	// digest DELETE. Public registries such as GHCR may disable that API. One
-	// observed error remains visible to the caller; later cleanup skips the
-	// known-unsupported network round trip and relies on registry retention.
+	// observed 405 switches later cleanup directly to the GitHub Packages API.
+	// Other registries keep returning ErrDeleteUnsupported; they must never be
+	// reported as deleted while the remote object remains.
 	deleteUnsupported atomic.Bool
 }
 
@@ -169,6 +174,15 @@ func WithCredentials(user, pw string) Option {
 	}
 }
 
+// WithGitHubPackagesAPI overrides the GitHub Packages REST root. It is a
+// hermetic-test seam; production automatically uses api.github.com only when
+// the configured registry host is ghcr.io.
+func WithGitHubPackagesAPI(raw string) Option {
+	return func(o *OCIRegistryStorageBackend) {
+		o.githubPackagesAPI = strings.TrimRight(strings.TrimSpace(raw), "/")
+	}
+}
+
 // WithTimeout overrides the per-request HTTP timeout. The default is
 // api.OCIPullTimeoutSeconds (60s, ADR-021) — mirrors the build-time
 // puller so a Put of a 150 MB layer has the same budget as a PullBlob
@@ -223,6 +237,9 @@ func NewOCIRegistryStorageBackend(opts ...Option) (*OCIRegistryStorageBackend, e
 	}
 	if o.registry == "" {
 		return nil, fmt.Errorf("%w: empty registry (set FAAS_OCI_REGISTRY or pass WithRegistry)", ErrInvalidKey)
+	}
+	if parsed, err := url.Parse(o.registry); err == nil && strings.EqualFold(parsed.Hostname(), "ghcr.io") && o.githubPackagesAPI == "" {
+		o.githubPackagesAPI = "https://api.github.com"
 	}
 	if o.hc == nil {
 		o.hc = oci.NewEgressHTTPClient()
@@ -597,13 +614,19 @@ func (o *OCIRegistryStorageBackend) Delete(ctx context.Context, key string) erro
 		return fmt.Errorf("storage: oci delete %q: %w", key, err)
 	}
 	if o.deleteUnsupported.Load() {
+		if err := o.deleteGitHubPackageVersion(ctx, repo, tag); err != nil {
+			return fmt.Errorf("storage: oci delete %q: %w", key, err)
+		}
 		return nil
 	}
 
 	if err := o.deleteManifest(ctx, repo, tag); err != nil {
 		if errors.Is(err, ErrDeleteUnsupported) {
 			o.deleteUnsupported.Store(true)
-			return fmt.Errorf("storage: oci delete %q: %w", key, err)
+			if fallbackErr := o.deleteGitHubPackageVersion(ctx, repo, tag); fallbackErr != nil {
+				return fmt.Errorf("storage: oci delete %q: registry delete unsupported: %v; github packages fallback: %w", key, err, fallbackErr)
+			}
+			return nil
 		}
 		// 404 on manifest means "already gone" — non-error.
 		if !isNotFoundErr(err) {
@@ -611,6 +634,110 @@ func (o *OCIRegistryStorageBackend) Delete(ctx context.Context, key string) erro
 		}
 	}
 	return nil
+}
+
+type githubPackageVersion struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Metadata struct {
+		Container struct {
+			Tags []string `json:"tags"`
+		} `json:"container"`
+	} `json:"metadata"`
+}
+
+// deleteGitHubPackageVersion removes the package version carrying tag from a
+// user-owned GHCR namespace. GitHub documents this as the supported deletion
+// path for Container registry packages when the distribution DELETE endpoint
+// is disabled. The configured registry username is the package owner and the
+// registry password is the classic PAT used for package authentication.
+func (o *OCIRegistryStorageBackend) deleteGitHubPackageVersion(ctx context.Context, repo, tag string) error {
+	if o.githubPackagesAPI == "" {
+		return ErrDeleteUnsupported
+	}
+	owner := strings.TrimSpace(o.user)
+	if owner == "" || strings.TrimSpace(o.pw) == "" {
+		return fmt.Errorf("%w: GHCR package deletion requires username and token", ErrDeleteUnsupported)
+	}
+	packageName := strings.Trim(o.prefix+"/"+repo, "/")
+	// OCI paths include the GHCR owner (`ghcr.io/<owner>/<package>`), while
+	// the Packages REST path receives owner and package as separate fields.
+	ownerPrefix := strings.ToLower(owner) + "/"
+	if strings.HasPrefix(strings.ToLower(packageName), ownerPrefix) {
+		packageName = packageName[len(ownerPrefix):]
+	}
+	base := o.githubPackagesAPI + "/users/" + url.PathEscape(owner) + "/packages/container/" + url.PathEscape(packageName) + "/versions"
+
+	var versionID int64
+	for page := 1; page <= 100 && versionID == 0; page++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"?per_page=100&page="+strconv.Itoa(page), nil)
+		if err != nil {
+			return err
+		}
+		o.setGitHubPackagesHeaders(req)
+		resp, err := o.hc.Do(req)
+		if err != nil {
+			return fmt.Errorf("list package versions: %w", err)
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		closeErr := resp.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("list package versions: %w", readErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("list package versions: close response: %w", closeErr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("list package versions returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		var versions []githubPackageVersion
+		if err := json.Unmarshal(body, &versions); err != nil {
+			return fmt.Errorf("decode package versions: %w", err)
+		}
+		for _, version := range versions {
+			for _, candidate := range version.Metadata.Container.Tags {
+				if candidate == tag {
+					versionID = version.ID
+					break
+				}
+			}
+			if versionID != 0 {
+				break
+			}
+		}
+		if len(versions) < 100 {
+			break
+		}
+	}
+	if versionID == 0 {
+		// Idempotent delete: the package version may have been removed by a
+		// prior retry whose response was lost, or by the registry retention
+		// policy between list and cleanup.
+		return nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, base+"/"+strconv.FormatInt(versionID, 10), nil)
+	if err != nil {
+		return err
+	}
+	o.setGitHubPackagesHeaders(req)
+	resp, err := o.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete package version: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return fmt.Errorf("delete package version returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+func (o *OCIRegistryStorageBackend) setGitHubPackagesHeaders(req *http.Request) {
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+o.pw)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", o.ua)
 }
 
 // --- List --------------------------------------------------------------

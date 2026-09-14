@@ -92,6 +92,10 @@ type server struct {
 	// githubd is apid's handle to the githubd daemon (ADR-012). Never nil:
 	// slice 1 default is stubGithubdClient; slice 7 swaps for a live dial.
 	githubd GithubdClient
+	// githubDeploysAvailable probes githubd's credential- and database-aware
+	// readiness endpoint. Capability discovery uses it so an installed but
+	// unarmed GitHub integration is never advertised to customers.
+	githubDeploysAvailable func(context.Context) bool
 	// gatewaydControlURL (ADR-093) is the loopback URL apid uses
 	// to reach gatewayd-internal's control listener
 	// (default http://127.0.0.1:9090). Only the /v1/internal/apps/{slug}/routes
@@ -644,6 +648,11 @@ func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 	return s
 }
 
+func (s *server) WithGitHubDeploysAvailable(probe func(context.Context) bool) *server {
+	s.githubDeploysAvailable = probe
+	return s
+}
+
 // WithRuntimeConfigManager replaces the default environment-seeded manager
 // with the production manager using the caller's environment seam. The
 // setter keeps the existing test constructors source-compatible while making
@@ -948,6 +957,7 @@ func newServerWithDeps(
 		stripeWebhookSecret:    stripeSecret,
 		mailer:                 mailer,
 		githubd:                githubd,
+		githubDeploysAvailable: func(context.Context) bool { return false },
 		events:                 bcaster,
 		bindingKeyFn:           func() []byte { return sessions.BindingKey() },
 		sessions:               sessions,

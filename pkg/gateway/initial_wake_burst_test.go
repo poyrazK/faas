@@ -189,6 +189,15 @@ func TestColdStartSkipsRedundantReconcileForAuthoritativeEnsureWarm(t *testing.T
 	if until := h.burstPressure.state("app").settlingUntil.Load(); until <= time.Now().UnixNano() {
 		t.Fatalf("restore settling deadline = %d, want a future deadline", until)
 	}
+	request := httptest.NewRequest(http.MethodGet, "http://app.example.com/", nil)
+	_, armed := h.armWakeFirstByte(request, "app", b.Pick("app").Target, wakeID)
+	if armed.WakeID != wakeID {
+		t.Fatalf("first-byte wake ID = %q, want %q", armed.WakeID, wakeID)
+	}
+	_, duplicate := h.armWakeFirstByte(request, "app", b.Pick("app").Target, wakeID)
+	if duplicate.WakeID != "" {
+		t.Fatalf("duplicate first-byte wake ID = %q, want empty", duplicate.WakeID)
+	}
 }
 
 func TestColdStartKeepsReconcileForPreviewScope(t *testing.T) {

@@ -428,9 +428,6 @@
 
 - name: Converge the adopted node with the production bootstrap
   import_playbook: bootstrap.yml
-  when: >-
-    not (hostvars[inventory_hostname].faas_join_bootstrap_contract_current |
-         default(false) | bool)
 
 - name: Record successful compute bootstrap convergence
   hosts: compute_nodes
@@ -539,6 +536,89 @@
           Environment=FAAS_COMPUTE_MAX_CONCURRENCY={{ faas_join_max_concurrency | default((ansible_processor_vcpus | int) * 5, true) }}
           Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}
           Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((ansible_processor_vcpus | int) * 8, true) }}
+
+    # Changed runtime bases used to be built by faas-imaged after this play
+    # drained the node. Extract the signed candidate and run its normal base
+    # staging path while the serving release and vmmd are still available.
+    - name: Create the release-bound runtime-base pre-stage directory
+      ansible.builtin.file:
+        path: "/opt/faas/prestage/{{ faas_join_release_git_sha }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Extract the signed candidate for runtime-base pre-staging
+      ansible.builtin.unarchive:
+        src: /var/lib/faas/bootstrap/release.tar.gz
+        dest: "/opt/faas/prestage/{{ faas_join_release_git_sha }}"
+        remote_src: true
+        owner: root
+        group: root
+
+    - name: Install the runtime-base pre-stage one-shot
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-imaged-prestage.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Gregale release-bound runtime base pre-stage
+          After=network.target faas-vmmd.service
+          Requires=faas-vmmd.service
+
+          [Service]
+          Type=oneshot
+          User=faas-imaged
+          Group=faas
+          ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/imaged --config /etc/faas/imaged.toml
+          EnvironmentFile=-/etc/faas/compute-db.env
+          EnvironmentFile=-/etc/faas/storage.env
+          EnvironmentFile=-/etc/faas/runtime-bases.env
+          EnvironmentFile=-/etc/faas/otel.env
+          Environment=FAAS_IMAGED_PRESTAGE_ONLY=1
+          Environment=FAAS_IMAGED_ROLE=compute-only
+          Environment=FAAS_NODE_NAME={{ faas_join_database_node }}
+          Environment=FAAS_MANIFEST_PATH=/etc/faas/manifest.yaml
+          Environment=FAAS_BUILDER_BASE_REF={{ faas_builder_base_ref | default(faas_join_builder_base_ref) }}
+          Environment=FAAS_VMM_SOCK={{ faas_vmmd_target_url }}
+          Environment=FAAS_VMM_TLS_CERT_PATH=/etc/faas/tls/imaged/vmmd-client.crt
+          Environment=FAAS_VMM_TLS_KEY_PATH=/etc/faas/tls/imaged/vmmd-client.key
+          Environment=FAAS_VMM_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt
+          Environment=GRYPE_DB_CACHE_DIR=/var/lib/faas/grype
+          Environment=TMPDIR=/srv/fc/base
+          Environment=FAAS_BASE_STAGING_ROOT=/dev/shm/faas-base-staging
+          Environment=FAAS_BASE_EXTRACT_ROOT=/srv/fc/base-staging
+          Environment=FAAS_BASE_TMP_ROOT=/srv/fc/base
+          Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_fleet_age_identity
+          Environment=FAAS_GUEST_INIT=/opt/faas/prestage/{{ faas_join_release_git_sha }}/init
+          Environment=FAAS_FUNCTION_RUNNER_NODE22=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/node22/faas-runner
+          Environment=FAAS_FUNCTION_RUNNER_NODE24=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/node24/faas-runner
+          Environment=FAAS_FUNCTION_RUNNER_PYTHON312=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/python312/faas-runner
+          Environment=FAAS_FUNCTION_RUNNER_PYTHON313=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/python313/faas-runner
+          Environment=FAAS_FUNCTION_RUNNER_GO124=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/go124/faas-runner
+          Environment=FAAS_FUNCTION_RUNNER_GO124_ALPINE=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/go124-alpine/faas-runner
+          LoadCredential=faas_fleet_age_identity:/etc/faas/secrets/fleet.age
+          LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
+          NoNewPrivileges=yes
+          ProtectSystem=strict
+          ProtectHome=yes
+          PrivateTmp=yes
+          ProtectKernelTunables=yes
+          ProtectKernelModules=yes
+          ProtectControlGroups=yes
+          ReadOnlyPaths=/etc/faas /opt/faas/prestage/{{ faas_join_release_git_sha }}
+          ReadWritePaths=/srv/fc/snap /srv/fc/base /srv/fc/base-staging /srv/fc/scans /srv/fc/sigs /var/log/faas /var/spool/faas /var/lib/faas/cache /var/lib/faas/grype /var/cache/faas/builds/.leases /dev/shm/faas-base-staging
+
+    - name: Reload systemd for runtime-base pre-staging
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Pre-stage release-bound runtime bases before draining the node
+      ansible.builtin.systemd:
+        name: faas-imaged-prestage.service
+        state: started
 
     - name: Pre-register the adopted node as drained before release installation
       ansible.builtin.command:
@@ -662,6 +742,16 @@
         faas_active_release.rc != 0 or
         (faas_active_release.stdout | trim) !=
         ('/opt/faas/releases/' ~ faas_join_release_git_sha)
+
+    - name: Remove superseded runtime-base pre-stage trees
+      ansible.builtin.shell:
+        cmd: >-
+          set -euo pipefail;
+          find /opt/faas/prestage -mindepth 1 -maxdepth 1 -type d
+          ! -name '{{ faas_join_release_git_sha }}' -print -exec rm -rf -- {} +
+        executable: /bin/bash
+      register: faas_join_prestage_cleanup
+      changed_when: (faas_join_prestage_cleanup.stdout | trim) != ''
 
     - name: Render the manifest for this exact host
       ansible.builtin.command:

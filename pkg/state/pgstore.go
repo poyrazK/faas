@@ -14405,7 +14405,7 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 	row := s.pool.QueryRow(ctx,
 		`insert into snapshots (deployment_id, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, tier)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		 returning id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier`,
+		 returning id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, delete_pending, created_at, tier`,
 		snap.DeploymentID, snap.FCVersion, snap.BaseImageVersion, snap.MemBytes, snap.DiskBytes, snap.StoredBytes, snap.StorageKey, snap.Stale, tier)
 	out, err := scanSnapshot(row)
 	if err != nil {
@@ -14428,7 +14428,7 @@ func (s *PgStore) CreateSnapshot(ctx context.Context, snap Snapshot) (Snapshot, 
 // (dashboard queries, snapshot dashboards, manual SQL ops).
 func (s *PgStore) LatestSnapshot(ctx context.Context, deploymentID string) (Snapshot, error) {
 	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier
+		`select id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, delete_pending, created_at, tier
 		 from snapshots where deployment_id = $1 and stale = false
 		 order by (tier = 'warm') desc, created_at desc limit 1`, deploymentID)
 	return scanSnapshot(row)
@@ -14447,7 +14447,7 @@ func (s *PgStore) LatestSnapshotForTier(ctx context.Context, deploymentID, tier 
 		tier = SnapshotTierInit
 	}
 	row := s.pool.QueryRow(ctx,
-		`select id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, created_at, tier
+		`select id, deployment_id::text, fc_version, base_image_version, mem_bytes, disk_bytes, stored_bytes, storage_key, stale, delete_pending, created_at, tier
 		 from snapshots where deployment_id = $1 and tier = $2 and stale = false
 		 order by created_at desc limit 1`, deploymentID, tier)
 	return scanSnapshot(row)
@@ -14493,7 +14493,7 @@ func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) erro
 func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error) {
 	rows, err := s.pool.Query(ctx,
 		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
-		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.created_at, s.tier,
+		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
 		        a.warm_snapshot_enabled
 		   from snapshots s
 		   join deployments d on d.id = s.deployment_id
@@ -14511,7 +14511,7 @@ func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, erro
 	for rows.Next() {
 		var r SnapshotForGC
 		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
-			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.CreatedAt, &r.Tier,
+			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.DeletePending, &r.CreatedAt, &r.Tier,
 			&r.AppWarmSnapshotEnabled); err != nil {
 			return nil, err
 		}
@@ -14526,7 +14526,7 @@ func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, erro
 func (s *PgStore) ListSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) ([]SnapshotForGC, error) {
 	rows, err := s.pool.Query(ctx,
 		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
-		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.created_at, s.tier,
+		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
 		        a.warm_snapshot_enabled
 		   from snapshots s
 		   join deployments d on d.id = s.deployment_id
@@ -14544,7 +14544,39 @@ func (s *PgStore) ListSnapshotsStaleOlderThan(ctx context.Context, retention tim
 	for rows.Next() {
 		var r SnapshotForGC
 		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
-			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.CreatedAt, &r.Tier,
+			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.DeletePending, &r.CreatedAt, &r.Tier,
+			&r.AppWarmSnapshotEnabled); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListSnapshotsPendingDelete returns only rows for which imaged already made
+// the GC decision and marked the restore material unusable. This is separate
+// from stale retention: version-invalid snapshots remain rollback evidence
+// until SnapshotStaleRetention elapses.
+func (s *PgStore) ListSnapshotsPendingDelete(ctx context.Context) ([]SnapshotForGC, error) {
+	rows, err := s.pool.Query(ctx,
+		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
+		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
+		        a.warm_snapshot_enabled
+		   from snapshots s
+		   join deployments d on d.id = s.deployment_id
+		   join apps a       on a.id = d.app_id
+		  where s.delete_pending = true
+		  order by s.created_at
+		  limit 10000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotForGC
+	for rows.Next() {
+		var r SnapshotForGC
+		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
+			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.DeletePending, &r.CreatedAt, &r.Tier,
 			&r.AppWarmSnapshotEnabled); err != nil {
 			return nil, err
 		}
@@ -14604,7 +14636,8 @@ func (s *PgStore) MarkAllSnapshotsStaleByFCVersion(ctx context.Context, currentV
 	return tag.RowsAffected(), nil
 }
 
-// MarkOldSnapshotsStale marks the given snapshot IDs stale. Used by the
+// MarkOldSnapshotsStale marks the given snapshot IDs stale and records the
+// durable intent to delete their artifacts. Used by the
 // imaged GC's per-app "current + previous" enforcement: the per-app walk
 // identifies the IDs to drop, marks them stale first (so a concurrent
 // wake's "is this usable?" check refuses them safely), and then calls
@@ -14616,7 +14649,7 @@ func (s *PgStore) MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs [
 		return 0, nil
 	}
 	tag, err := s.pool.Exec(ctx,
-		`update snapshots set stale = true where id = any($1::uuid[])`, beforeSnapshotIDs)
+		`update snapshots set stale = true, delete_pending = true where id = any($1::uuid[])`, beforeSnapshotIDs)
 	if err != nil {
 		return 0, err
 	}
@@ -21300,12 +21333,12 @@ func scanInstancesWithTerminal(rows pgx.Rows) ([]Instance, error) {
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
 	s := Snapshot{}
-	// The 11th column is tier (issue #470 / ADR-055). Every query
+	// The 12th column is tier (issue #470 / ADR-055). Every query
 	// in this file now selects the tier column explicitly; the
 	// scan returns "init" if the column is NULL (legacy rows from
 	// before migration 00110 applied).
 	var tier *string
-	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.BaseImageVersion, &s.MemBytes, &s.DiskBytes, &s.StoredBytes, &s.StorageKey, &s.Stale, &s.CreatedAt, &tier); err != nil {
+	if err := row.Scan(&s.ID, &s.DeploymentID, &s.FCVersion, &s.BaseImageVersion, &s.MemBytes, &s.DiskBytes, &s.StoredBytes, &s.StorageKey, &s.Stale, &s.DeletePending, &s.CreatedAt, &tier); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Snapshot{}, ErrNotFound
 		}

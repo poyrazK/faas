@@ -4941,9 +4941,10 @@ type Snapshot struct {
 	// test fixtures that bypass the storage contract. Wake sends
 	// StorageKey on the wire; vmmd resolves it through the
 	// configured StorageBackend.
-	StorageKey string
-	Stale      bool
-	CreatedAt  time.Time
+	StorageKey    string
+	Stale         bool
+	DeletePending bool
+	CreatedAt     time.Time
 }
 
 // Snapshot tier constants (issue #470 / ADR-055). Use these rather
@@ -4991,7 +4992,11 @@ type SnapshotForGC struct {
 	Tier       string
 	StorageKey string
 	Stale      bool
-	CreatedAt  time.Time
+	// DeletePending distinguishes a GC tombstone from an ordinary stale
+	// snapshot retained for Firecracker or base-image rollback. Only imaged's
+	// artifact GC sets it before attempting remote deletion.
+	DeletePending bool
+	CreatedAt     time.Time
 	// AppWarmSnapshotEnabled (issue #470 / PR C / ADR-072) projects
 	// apps.warm_snapshot_enabled from the JOIN so the GC policy can
 	// apply the two-tier rollback window only on apps that opted in to warm.

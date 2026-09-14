@@ -653,6 +653,10 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if err != nil {
 		return 1, err
 	}
+	peerContractSHA256, err := joinPeerContractHash(ansibleDir, m, opts.AnsibleVarsFile, opts.StorageEnvSource, opts.FleetAgeKeySource, opts.FleetAgeRecipientSource)
+	if err != nil {
+		return 3, err
+	}
 	if opts.SSHKnownHostsSource != "" {
 		if err := requireFleetKnownHosts(opts.SSHKnownHostsFile, m); err != nil {
 			return 3, err
@@ -754,6 +758,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_release_sbom_source":        sbom,
 		"faas_join_builder_base_ref":           builderBaseRef,
 		"faas_join_bootstrap_contract_sha256":  bootstrapContractSHA256,
+		"faas_join_peer_contract_sha256":       peerContractSHA256,
 		"faas_postgres_rollout_overlap_nodes":  postgresRolloutOverlapNodes(opts.PostgresOverlapNodes),
 		// A clean provider-created host does not have the release binary or
 		// rendered daemon configuration yet. Defer bootstrap service handlers
@@ -829,6 +834,58 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	}
 	report.Applied = true
 	return 0, nil
+}
+
+func joinPeerContractHash(ansibleDir string, m *manifest.Manifest, inputFiles ...string) (string, error) {
+	roots := []string{
+		"node_join_control_plane.yml",
+		"roles/_shared",
+		"roles/postgres_capacity",
+		"roles/nftables",
+		"roles/control_plane_peer_access",
+	}
+	var paths []string
+	for _, root := range roots {
+		path := filepath.Join(ansibleDir, root)
+		if err := filepath.WalkDir(path, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() {
+				paths = append(paths, path)
+			}
+			return nil
+		}); err != nil {
+			return "", fmt.Errorf("walk control-plane peer contract %s: %w", root, err)
+		}
+	}
+	sort.Strings(paths)
+	hash := sha256.New()
+	fleetBody, err := json.Marshal(m.Fleet)
+	if err != nil {
+		return "", fmt.Errorf("encode fleet peer contract: %w", err)
+	}
+	_, _ = hash.Write([]byte("fleet\x00"))
+	_, _ = hash.Write(fleetBody)
+	_, _ = hash.Write([]byte{0})
+	for _, path := range append(paths, inputFiles...) {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return "", fmt.Errorf("read control-plane peer contract input %s: %w", path, readErr)
+		}
+		rel, relErr := filepath.Rel(ansibleDir, path)
+		if relErr != nil || strings.HasPrefix(rel, "..") {
+			rel = filepath.Base(path)
+		}
+		_, _ = io.WriteString(hash, filepath.ToSlash(rel))
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write(body)
+		_, _ = hash.Write([]byte{0})
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func joinBootstrapContractHash(ansibleDir string) (string, error) {

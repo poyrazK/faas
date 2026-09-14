@@ -140,7 +140,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
 | `FAAS_GEOIP_AUTO_REFRESH` | gatewayd-internal | `default` |  |  | `` | 0; the geoip role owns refresh through re-bootstrap |
 | `FAAS_GEOIP_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it |
-| `FAAS_GITHUBD_LOOPBACK` | gatewayd-internal | `default` |  |  | `` |  |
+| `FAAS_GITHUBD_LOOPBACK` | apid, gatewayd-internal, gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_GITHUBD_ROLE` | githubd, shared | `dropin` |  |  | `` |  |
 | `FAAS_GITHUBD_SOCKET` | apid | `default` |  |  | `` |  |
 | `FAAS_GITHUBD_WORK_DIR` | apid, githubd | `default` |  |  | `` |  |
@@ -164,6 +164,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_HSTS_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_IMAGED_METRICS_ADDR` | imaged | `default` |  |  | `` |  |
 | `FAAS_IMAGED_NODE_NAME` | shared | `default` |  |  | `` |  |
+| `FAAS_IMAGED_PRESTAGE_ONLY` | imaged | `dropin` |  |  | `` | release rollout one-shot exits after staging every assigned runtime base before node drain |
 | `FAAS_IMAGED_ROLE` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_INTERNAL_H2C` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SOCKET` | gatewayd-public | `default` |  |  | `` |  |

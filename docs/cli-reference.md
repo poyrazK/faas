@@ -1787,6 +1787,10 @@ Set the traffic split for a deployment
 | `--deployment <ID>` | deployment id to set the traffic split on | required |
 | `--percent <N>` | traffic weight in [0, 100]; -1 = unset (server default 100) | required |
 
+### traffic status
+
+Show live deployment traffic weights for an app
+
 
 ## mirror
 

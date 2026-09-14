@@ -196,6 +196,34 @@ func TestRebalanceOrphanedApps_MigratesParkedApps(t *testing.T) {
 	}
 }
 
+func TestRebalanceOrphanedApps_SourceNodeCannotReclaimItsOwnApps(t *testing.T) {
+	store, ctx, _, peer := rebalanceTestOwners(t)
+	app := seedAppOnNode(t, store, ctx, api.PlanHobby, 128, peer.ID)
+	if err := store.SetComputeNodeActive(ctx, peer.ID, false); err != nil {
+		t.Fatalf("flip peer inactive: %v", err)
+	}
+
+	notif := &fakeNotifier{}
+	source := newRebalanceEngine(t, store, peer.ID, notif)
+	if err := source.RebalanceOrphanedApps(ctx, peer.ID); err != nil {
+		t.Fatalf("RebalanceOrphanedApps: %v", err)
+	}
+
+	got, err := store.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if got.NodeID != peer.ID {
+		t.Fatalf("NodeID = %q, want draining source %q unchanged for a healthy peer to claim", got.NodeID, peer.ID)
+	}
+	if got.ReassignedAt != nil {
+		t.Fatalf("ReassignedAt = %v, want nil", got.ReassignedAt)
+	}
+	if got := countRebalancedNotifies(notif); got != 0 {
+		t.Fatalf("rebalanced notifications = %d, want 0", got)
+	}
+}
+
 // TestRebalanceOrphanedApps_RespectsCooldown pins the
 // cooldown filter: an app whose reassigned_at is <60s old
 // must be skipped on a subsequent rebalance; an app whose

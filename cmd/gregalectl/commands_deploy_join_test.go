@@ -162,8 +162,13 @@ func TestNodeJoinFullBootstrapPreservesPlayLevelRoleSemantics(t *testing.T) {
 	if !strings.Contains(block, "import_playbook: bootstrap.yml") {
 		t.Fatalf("full node convergence must retain bootstrap.yml play-level role semantics")
 	}
-	if !strings.Contains(block, "faas_join_bootstrap_contract_current") {
-		t.Fatalf("full bootstrap convergence must remain conditional on the managed-host contract")
+	bootstrapBody, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "bootstrap.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(bootstrapBody), "ansible.builtin.meta: end_host") ||
+		!strings.Contains(string(bootstrapBody), "faas_join_bootstrap_contract_current | default(false) | bool") {
+		t.Fatalf("bootstrap.yml must end each managed host before evaluating full-bootstrap roles")
 	}
 }
 
@@ -247,6 +252,45 @@ func TestNodeJoinRemovesEmergencyGatewayReleaseOverrideBeforeRestart(t *testing.
 	block := playbook[remove:restart]
 	if !strings.Contains(block, "/etc/systemd/system/faas-gatewayd-internal.service.d/zz-emergency-release.conf") {
 		t.Fatal("node_join emergency override cleanup targets the wrong path")
+	}
+}
+
+func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
+	preregister := strings.Index(playbook, "Pre-register the adopted node as drained before release installation")
+	if prestage < 0 || preregister < 0 || prestage >= preregister {
+		t.Fatal("runtime bases must be staged with the candidate release before node preregistration and drain")
+	}
+	block := playbook[strings.Index(playbook, "Install the runtime-base pre-stage one-shot"):preregister]
+	for _, token := range []string{
+		"FAAS_IMAGED_PRESTAGE_ONLY=1",
+		"FAAS_GUEST_INIT=/opt/faas/prestage/",
+		"FAAS_FUNCTION_RUNNER_NODE24=/opt/faas/prestage/",
+		"LoadCredential=faas_fleet_age_identity",
+	} {
+		if !strings.Contains(block, token) {
+			t.Errorf("pre-stage unit missing %q", token)
+		}
+	}
+}
+
+func TestControlPlanePeerConvergenceHasContractFastPath(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join_control_plane.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	probe := strings.Index(playbook, "Probe the control-plane peer contract")
+	end := strings.Index(playbook, "ansible.builtin.meta: end_host")
+	gather := strings.Index(playbook, "Gather facts for changed control-plane peer convergence")
+	persist := strings.Index(playbook, "Persist the converged control-plane peer contract")
+	if probe < 0 || end <= probe || gather <= end || persist <= gather {
+		t.Fatal("control-plane peer contract must exit unchanged hosts before fact gathering and persist only after convergence")
 	}
 }
 
@@ -809,10 +853,13 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ansibleDir, "requirements.yml"), []byte("---\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{"group_vars", "roles/_shared", "roles/compute"} {
+	for _, dir := range []string{"group_vars", "roles/_shared", "roles/compute", "roles/postgres_capacity", "roles/nftables", "roles/control_plane_peer_access"} {
 		if err := os.MkdirAll(filepath.Join(ansibleDir, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(ansibleDir, "node_join_control_plane.yml"), []byte("---\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	artifactDir := t.TempDir()

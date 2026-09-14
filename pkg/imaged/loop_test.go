@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -39,6 +40,13 @@ type gcFixture struct {
 	tickSent func() // tickOnce helper
 	be       storage.StorageBackend
 }
+
+type failingDeleteStorage struct {
+	storage.StorageBackend
+	err error
+}
+
+func (s *failingDeleteStorage) Delete(_ context.Context, _ string) error { return s.err }
 
 func newGCFixture(t *testing.T, lvPct float64) *gcFixture {
 	t.Helper()
@@ -860,6 +868,79 @@ func TestLoopDeleteSnapshotsAndFiles_RetainsLayerUntilLastTier(t *testing.T) {
 	if rc, err := be.Get(context.Background(), sched.AppLayerKey(app.Slug, dep.ID)); err == nil {
 		_ = rc.Close()
 		t.Error("app layer survived after the last snapshot tier was deleted")
+	}
+}
+
+func TestLoopDeleteSnapshotsAndFilesRetainsDurableRowUntilRemoteDeleteSucceeds(t *testing.T) {
+	store := state.NewMemStore()
+	_, deploymentID, snapshotID := seedSnapshotWithApp(t, store, 100, 100)
+	local, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteErr := fmt.Errorf("%w: registry refused manifest delete", storage.ErrDeleteUnsupported)
+	handler := &Handler{
+		store: store,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		storage: &failingDeleteStorage{
+			StorageBackend: local,
+			err:            remoteErr,
+		},
+	}
+	loop := NewLoop(LoopConfig{
+		Handler: handler,
+		Store:   store,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:     time.Now,
+		LvUsedPct: func(context.Context) (float64, error) {
+			return 0, nil
+		},
+	})
+	target := deleteTarget{
+		ID:           snapshotID,
+		DeploymentID: deploymentID,
+		AppSlug:      "snap-app",
+		StorageKey:   state.SnapMemKey(deploymentID),
+		Tier:         state.SnapshotTierInit,
+	}
+	if err := loop.deleteSnapshotsAndFiles(context.Background(), []deleteTarget{target}); !errors.Is(err, storage.ErrDeleteUnsupported) {
+		t.Fatalf("delete error = %v, want ErrDeleteUnsupported", err)
+	}
+	backlog, err := store.ListSnapshotsPendingDelete(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backlog) != 1 || backlog[0].ID != snapshotID {
+		t.Fatalf("durable backlog = %+v, want snapshot %s", backlog, snapshotID)
+	}
+
+	// Once the storage path recovers, the ordinary retry loop removes the
+	// remote artifacts and only then deletes the stale database row.
+	handler.storage = local
+	loop.retryRemoteDeleteBacklog(context.Background(), time.Now())
+	backlog, err = store.ListSnapshotsPendingDelete(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backlog) != 0 {
+		t.Fatalf("backlog after recovery = %+v, want empty", backlog)
+	}
+}
+
+func TestRemoteDeleteRetryPreservesOrdinaryStaleRollbackSnapshot(t *testing.T) {
+	store := state.NewMemStore()
+	_, _, snapshotID := seedSnapshotWithApp(t, store, 100, 100)
+	if err := store.MarkSnapshotStale(context.Background(), snapshotID); err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	loop.retryRemoteDeleteBacklog(context.Background(), time.Now())
+	rows, err := store.ListSnapshotsStaleOlderThan(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != snapshotID || rows[0].DeletePending {
+		t.Fatalf("ordinary stale rollback row changed by remote retry: %+v", rows)
 	}
 }
 

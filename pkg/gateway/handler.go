@@ -7340,9 +7340,17 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					if e != nil {
 						return e
 					}
-					if !atCapacity {
-						admittedWakeID, method, cold = id, m, true
+					if atCapacity {
+						h.finishWakePageCycle(admitCtx, appID, "")
+						return nil
 					}
+					admittedWakeID, method, cold = id, m, true
+					// Keep the capacity-aware production path identical to the
+					// single-admit path below: publish the scheduler wake ID before
+					// the first request is forwarded. Without this transition,
+					// armWakeFirstByte cannot claim the cycle and silently drops the
+					// per-wake proxy-first-byte event.
+					h.finishWakePageCycle(admitCtx, appID, id)
 					return nil
 				}
 				if ensurer, ok := h.backend.(warmEnsurer); ok && scope == "" {

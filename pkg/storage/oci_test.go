@@ -935,14 +935,88 @@ func TestOCIDeleteStopsRetryingWhenRegistryRejectsDigestDelete(t *testing.T) {
 	if err := be.Delete(ctx, key); !errors.Is(err, ErrDeleteUnsupported) {
 		t.Fatalf("first Delete error = %v, want ErrDeleteUnsupported", err)
 	}
-	if err := be.Delete(ctx, key); err != nil {
-		t.Fatalf("second Delete should skip known-unsupported API: %v", err)
+	if err := be.Delete(ctx, key); !errors.Is(err, ErrDeleteUnsupported) {
+		t.Fatalf("second Delete error = %v, want durable ErrDeleteUnsupported", err)
 	}
 	f.mu.Lock()
 	hits := f.manifestDeleteHits
 	f.mu.Unlock()
 	if hits != 1 {
 		t.Fatalf("manifest DELETE requests = %d, want 1", hits)
+	}
+}
+
+func TestOCIDeleteFallsBackToGitHubPackageVersionAPI(t *testing.T) {
+	f := newFakeRegistry(t)
+	f.deleteUnsupported = true
+	defer f.srv.Close()
+
+	const versionID = int64(731)
+	var listHits, deleteHits int
+	deleted := false
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer delete-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			listHits++
+			if deleted {
+				_ = json.NewEncoder(w).Encode([]githubPackageVersion{})
+				return
+			}
+			version := githubPackageVersion{ID: versionID}
+			version.Metadata.Container.Tags = []string{"my-app__550e8400-e29b-41d4-a716-446655440000"}
+			_ = json.NewEncoder(w).Encode([]githubPackageVersion{version})
+		case http.MethodDelete:
+			deleteHits++
+			if !strings.HasSuffix(r.URL.Path, "/731") {
+				t.Fatalf("delete path = %q", r.URL.Path)
+			}
+			deleted = true
+			f.mu.Lock()
+			delete(f.manifests["faas/apps"], "my-app__550e8400-e29b-41d4-a716-446655440000")
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+	defer apiServer.Close()
+
+	key := "apps/my-app/550e8400-e29b-41d4-a716-446655440000.ext4"
+	be := f.clientWithOptions(t,
+		WithGitHubPackagesAPI(apiServer.URL),
+	)
+	if err := be.Put(context.Background(), key, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	// The first conforming registry DELETE discovers the 405. No credentials
+	// means the fallback remains a visible durable failure.
+	if err := be.Delete(context.Background(), key); !errors.Is(err, ErrDeleteUnsupported) {
+		t.Fatalf("Delete without fallback credentials = %v, want ErrDeleteUnsupported", err)
+	}
+	be.user, be.pw = "poyrazK", "delete-token"
+	if err := be.Delete(context.Background(), key); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if rc, err := be.Get(context.Background(), key); !IsNotFound(err) {
+		if rc != nil {
+			_ = rc.Close()
+		}
+		t.Fatalf("remote manifest still readable after GitHub delete: %v", err)
+	}
+	if err := be.Delete(context.Background(), key); err != nil {
+		t.Fatalf("second Delete must use GitHub fallback: %v", err)
+	}
+	if listHits != 2 || deleteHits != 1 {
+		t.Fatalf("GitHub calls list=%d delete=%d, want 2/1", listHits, deleteHits)
+	}
+	f.mu.Lock()
+	manifestDeleteHits := f.manifestDeleteHits
+	f.mu.Unlock()
+	if manifestDeleteHits != 1 {
+		t.Fatalf("distribution delete hits = %d, want 1", manifestDeleteHits)
 	}
 }
 

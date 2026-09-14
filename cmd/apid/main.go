@@ -217,6 +217,27 @@ func executionAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_EXECUTION_API_ENABLED")) == "1"
 }
 
+func githubDeploysAvailabilityProbe(getenv func(string) string) func(context.Context) bool {
+	base := strings.TrimRight(strings.TrimSpace(getenv("FAAS_GITHUBD_LOOPBACK")), "/")
+	if base == "" {
+		base = "http://127.0.0.1:8083"
+	}
+	readyURL := base + "/readyz"
+	client := &http.Client{Timeout: time.Second}
+	return func(ctx context.Context) bool {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, readyURL, nil)
+		if err != nil {
+			return false
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}
+}
+
 // resolveMetricsAddr reads FAAS_APID_METRICS_ADDR via the test seam
 // (deps.getenv). Empty string disables the listener (this is the
 // deliberately-distinct envOr path: envOr() collapses empty→unset→
@@ -1344,7 +1365,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv := newServerWithDeps(store, log, cfg.GetAppsDomain(deps.getenv), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv)).
 		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv)).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
-		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv))
+		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
+		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid: billing mode: %w", err)

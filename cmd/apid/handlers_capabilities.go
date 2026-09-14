@@ -12,7 +12,7 @@ const disposableRunsCapabilityKey = "disposable-runs"
 // getCapabilities returns the canonical customer capability registry with
 // plan entitlement resolved for the authenticated account. It is read-only
 // and intentionally does not require MFA so API keys can use it during setup.
-func (s *server) getCapabilities(w http.ResponseWriter, _ *http.Request, acct state.Account) {
+func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	capabilities, err := api.CapabilitiesForPlan(acct.Plan)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Capability registry unavailable", err.Error()))
@@ -30,6 +30,9 @@ func (s *server) getCapabilities(w http.ResponseWriter, _ *http.Request, acct st
 			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.executionAPIEnabled
 		case "object-storage":
 			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && s.objectStorageEnabled()
+		case "github-deploys":
+			available := s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())
+			capabilities.Capabilities[i].Enabled = capabilities.Capabilities[i].Enabled && available
 		}
 	}
 	writeJSON(w, http.StatusOK, capabilities)
