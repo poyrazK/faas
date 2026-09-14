@@ -1453,9 +1453,9 @@ func (s *server) scanService(
 	}
 	preProjectedApps := projectedAppCount(observedApps, prePartition)
 	projectedApps := projectedAppCount(observedApps, partition)
-	preProjectedCrons := observedCrons - existingProjectCrons + len(preDesiredCrons)
 	projectedCrons := observedCrons - existingProjectCrons + len(desiredCrons)
-	preCronGate, cronGate := preProjectedCrons, projectedCrons
+	preCronGate := observedCrons - existingProjectCrons + len(preDesiredCrons)
+	cronGate := projectedCrons
 	if req.NoTriggers {
 		// Suppression leaves trigger state untouched. Existing rows must not
 		// block a workload-only deploy after a plan downgrade.

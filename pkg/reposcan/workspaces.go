@@ -481,7 +481,7 @@ func discoverNxProjectConfigs(fsys fs.FS) ([]nxProjectConfig, error) {
 				return err
 			}
 			var project nxProjectConfig
-			if json.Unmarshal(body, &project) != nil {
+			if !decodeWorkspaceJSON(body, &project) {
 				return nil
 			}
 			if project.Root == "" {
@@ -499,11 +499,11 @@ func discoverNxProjectConfigs(fsys fs.FS) ([]nxProjectConfig, error) {
 				Name string          `json:"name"`
 				Nx   json.RawMessage `json:"nx"`
 			}
-			if json.Unmarshal(body, &manifest) != nil || len(manifest.Nx) == 0 || string(manifest.Nx) == "null" {
+			if !decodeWorkspaceJSON(body, &manifest) || len(manifest.Nx) == 0 || string(manifest.Nx) == "null" {
 				return nil
 			}
 			var project nxProjectConfig
-			if json.Unmarshal(manifest.Nx, &project) != nil {
+			if !decodeWorkspaceJSON(manifest.Nx, &project) {
 				return nil
 			}
 			if project.Name == "" {
@@ -528,6 +528,13 @@ func discoverNxProjectConfigs(fsys fs.FS) ([]nxProjectConfig, error) {
 		return projects[i].Source < projects[j].Source
 	})
 	return projects, nil
+}
+
+// decodeWorkspaceJSON treats unrelated malformed workspace metadata as an
+// unsupported discovery hint. Authoritative manifest parsing is handled by
+// the dedicated detectors, which return customer-facing syntax errors.
+func decodeWorkspaceJSON(body []byte, dst any) bool {
+	return json.Unmarshal(body, dst) == nil
 }
 
 func normalizeWorkspaceMember(member string) string {
