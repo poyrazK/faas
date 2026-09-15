@@ -337,6 +337,7 @@ kernel_path = %q
 		}
 	}
 
+	h.requireDaemonsAlive(t)
 	t.Cleanup(h.stop)
 	return h
 }
@@ -751,6 +752,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	if which&Gatewayd != 0 {
 		startGatewayd(t, h, bin, dbURL, extraEnv)
 	}
+	h.requireDaemonsAlive(t)
 	t.Cleanup(h.stop)
 	return h
 }
@@ -1473,6 +1475,63 @@ func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 		t.Fatalf("e2etest: start %s: %v", name, err)
 	}
 	return cmd
+}
+
+// requireDaemonsAlive fails the test immediately if a daemon this harness
+// started has already exited.
+//
+// startProc only reports whether fork/exec succeeded; it deliberately does not
+// Wait (stop() owns the single Wait, and a double Wait trips the race
+// detector). So a daemon that dies milliseconds after exec goes unnoticed, and
+// its captured output only reaches the log at stop time — by which point it is
+// buried under everything the test did in between.
+//
+// imaged is the reason this exists. It has no listening socket, so unlike
+// apid/schedd/vmmd it gets no waitUnix/waitPort gate and nothing checked it at
+// all. On the acceptance node it exited at boot with
+//
+//	imaged: sign key "/etc/faas/secrets/sign.key": ...
+//
+// and because nothing advances a deployment from `building` to `live` without
+// imaged, every build test then burned its full 4-minute deployment deadline.
+// Six subtests did that: roughly 24 minutes of a 30-minute phase spent waiting
+// on a daemon that was never running, reported as a slow build rather than a
+// dead daemon.
+func (h *Harness) requireDaemonsAlive(t *testing.T) {
+	t.Helper()
+	// Daemons that fail their own boot checks do so within a few ms; the
+	// settle keeps this from racing a healthy daemon that has not yet
+	// scheduled. One sleep for the whole set, not one per daemon.
+	time.Sleep(150 * time.Millisecond)
+
+	if name, out, dead := firstDeadDaemon(h.procs); dead {
+		t.Fatalf("e2etest: %s exited during startup; nothing it owns will happen, "+
+			"and the failure would otherwise surface much later as an unrelated "+
+			"timeout.\n%s", name, out)
+	}
+}
+
+// firstDeadDaemon reports the first process that is no longer running, with
+// whatever it managed to write. Split from requireDaemonsAlive so the decision
+// is testable without a *testing.T to fail.
+//
+// Signal(0) rather than Wait: it asks the kernel whether the pid is still
+// deliverable without reaping, so stop()'s Wait stays the only one.
+func firstDeadDaemon(procs []*exec.Cmd) (name, output string, dead bool) {
+	for _, p := range procs {
+		if p == nil || p.Process == nil {
+			continue
+		}
+		if err := p.Process.Signal(syscall.Signal(0)); err == nil {
+			continue
+		}
+		out := ""
+		if buf, ok := p.Stdout.(*safeBuffer); ok {
+			out = buf.String()
+		}
+		return filepath.Base(p.Path), out, true
+	}
+	return "", "", false
 }
 
 // DumpLogs prints the captured stdout/stderr of every running daemon
