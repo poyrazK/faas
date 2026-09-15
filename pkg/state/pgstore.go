@@ -17044,9 +17044,9 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 	//
 	// Both LATERAL subqueries hit the existing events_wake_id_idx
 	// partial index from migration 00114 — no new index, no new
-	// migration. The DISTINCT ON still prefers the earliest
-	// wake.boot_started row (canonical) over the vmmd mirror
-	// fallback (pkg/vmmdgrpc/server.go:emitBootStartedMirror).
+	// migration. The DISTINCT ON still prefers the canonical schedd row over
+	// duplicate vmmd wake.boot_started rows written by pre-cutover releases.
+	// Current vmmd releases emit the separate wake.boot_observed kind.
 	rows, err := s.pool.Query(ctx,
 		`SELECT DISTINCT ON (bs.wake_id)
 		        bs.wake_id                       AS wake_id,
@@ -17123,9 +17123,10 @@ func (s *PgStore) LookupBootStartedForWakes(ctx context.Context, wakeIDs []strin
 
 // CountWakeBootStarted24h (per-app dashboard, Hobby+) returns the
 // count of distinct logical wakes the schedd recorded for the given
-// app in the trailing 24 hours. A vmmd mirror has the same wake_id,
-// so COUNT(DISTINCT wake_id) prevents the corroborating observation
-// from inflating the customer-facing count. Hand-written raw-SQL path
+// app in the trailing 24 hours. A legacy vmmd mirror has the same wake_id,
+// so COUNT(DISTINCT wake_id) prevents pre-cutover duplicates from inflating
+// the customer-facing count. Current vmmd observations use a distinct kind.
+// Hand-written raw-SQL path
 // — the sqlc-generated binding was deleted because it had the
 // wrong parameter shape (bound the whole jsonb row against a UUID
 // literal, which would always return 0). See the rationale

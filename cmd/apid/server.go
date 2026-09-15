@@ -3057,8 +3057,9 @@ func (s *server) observeWrap(h http.Handler) http.Handler {
 		// (status >= 400 only) for the error-rate view. The §12
 		// traffic-anomaly recording rules (faas_apid_request_rate_5m,
 		// _error_rate_5m, _3d_baseline, _ratio) read from this
-		// counter plus the code label. The code label is derived
-		// observeErrFromStatus-style: 2xx/3xx → "ok", 4xx/5xx → "err".
+		// counter plus the code label. The code label reserves "err" for
+		// 5xx; expected 4xx outcomes remain visible in requestFailures but
+		// do not drive the platform error-rate alert.
 		//
 		// account_id resolution reuses the same principalFrom(r)
 		// chain as RequestFailureFor below — empty resolves to

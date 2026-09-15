@@ -779,7 +779,7 @@ groups:
           family: resident_ram
         annotations:
           summary: "Resident RAM > 80% of tenant budget"
-          description: "Resident RAM between 80% and 92% of budget for 10m. Watch FaasHighResidentRamPct for the page-tier crossing."
+          description: "Resident RAM has remained between 80% and 92% of the host budget for 10m. Start or provision another SSD compute node through the reviewed node-join path before this host reaches the admission ceiling."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
 
       # ─────────────────────────────────────────────────────────────────
@@ -2796,16 +2796,16 @@ groups:
       # remains the account-authoritative webhook path.
       - record: faas_slo_burn_rate_1h:by_app
         expr: |
-          sum by (app) (rate(gateway_requests_total{app!="-",code!~"2.."}[1h]))
+          sum by (app) (rate(gateway_requests_total{app!="-",code=~"5.."}[1h]))
             /
-          sum by (app) (rate(gateway_requests_total{app!="-"}[1h]))
+          sum by (app) (rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h]))
             / 0.005
 
       - record: faas_slo_burn_rate_6h:by_app
         expr: |
-          sum by (app) (rate(gateway_requests_total{app!="-",code!~"2.."}[6h]))
+          sum by (app) (rate(gateway_requests_total{app!="-",code=~"5.."}[6h]))
             /
-          sum by (app) (rate(gateway_requests_total{app!="-"}[6h]))
+          sum by (app) (rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h]))
             / 0.005
 
       - alert: FaasSLOBurnRateHigh

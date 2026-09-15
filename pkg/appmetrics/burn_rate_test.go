@@ -51,6 +51,11 @@ func TestFetchSLOBurnRate_UsesBothWindows(t *testing.T) {
 			if len(stub.seen) != 2 || !strings.Contains(stub.seen[0], "[1h]") || !strings.Contains(stub.seen[1], "[6h]") {
 				t.Fatalf("queries = %v; want 1h and 6h windows", stub.seen)
 			}
+			for _, query := range stub.seen {
+				if !strings.Contains(query, `code=~"5.."`) || !strings.Contains(query, `code=~"2..|5.."`) {
+					t.Fatalf("query = %q; want 5xx numerator over eligible 2xx/5xx outcomes", query)
+				}
+			}
 		})
 	}
 }

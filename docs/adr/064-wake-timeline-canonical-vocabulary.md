@@ -112,7 +112,8 @@ Rejected: `kind string + data map[string]any` (mirrors
 |---|---|---|
 | `wake.queue_accepted` | `{wake_id, app_id, request_id, queue_wait_ms}` | schedd `pkg/sched/engine.go` Wake Phase 1 + `pkg/sched/loop.go` cron boundary |
 | `wake.admitted` | `{wake_id, app_id, request_id, account_id, plan, admitted_at}` | schedd admission gate |
-| `wake.boot_started` | `{wake_id, app_id, instance_id, node_id, method, requested_at}` | schedd boot path + vmmd mirror in `pkg/vmmdgrpc/server.go::CreateFromSnapshot` |
+| `wake.boot_started` | `{wake_id, app_id, instance_id, node_id, method, requested_at}` | canonical schedd boot path |
+| `wake.boot_observed` | `{wake_id, app_id, instance_id, node_id, method, observed_at}` | vmmd RPC-boundary corroboration; never counted as a second wake or used as scheduler-decision metadata |
 | `wake.restore_breakdown` | `{wake_id, app_id, instance_id, chroot_ms, materialize_mem_ms, materialize_vmstate_ms, resolve_images_ms, resolve_artifacts[{artifact, source, duration_ms}], stage_drives_ms, stage_snapshot_ms, helper_ms, start_jailer_ms, bind_tun_ms, load_snapshot_ms, resume_hook_ms, wait_ready_ms, total_ms}` | vmmd `pkg/fcvm/vmm.go::Restore` after successful snapshot readiness |
 | `wake.cold_boot_breakdown` | `{wake_id, app_id, instance_id, resolve_images_ms, resolve_artifacts[{artifact, source, duration_ms, bytes}], chroot_ms, provision_ms, stage_runtime_ms, prepare_config_ms, helper_ms, start_jailer_ms, bind_tun_ms, cgroup_ms, write_config_ms, wait_ready_ms, quota_restore_ms, total_ms}` | vmmd `pkg/fcvm/vmm.go::BootColdBoot` after successful cold-boot readiness |
 | `wake.cold_boot_cpu` | `{wake_id, app_id, instance_id, startup_cpu_millicores, configured_cpu_millicores, pre_ready_ms, wait_ready_ms, quota_restore_ms, total_ms}` | vmmd after cold-boot readiness and successful restoration of the configured host `cpu.max` |

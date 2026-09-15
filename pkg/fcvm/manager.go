@@ -229,8 +229,8 @@ type VMM interface {
 	// WithEvents (issue #517 / PR-C / ADR-064) wires the wake-timeline
 	// fan-out (pkg/events.Platform) on the VMM. vmmd is the canonical
 	// emit site for wake.readiness_200 (the first 2xx probe) and a
-	// corroborating observation for wake.boot_started (mirror at the
-	// gRPC server boundary). nil opts out (pre-PR-C fixtures).
+	// corroborating wake.boot_observed event at the gRPC server
+	// boundary. nil opts out (pre-PR-C fixtures).
 	// Mirrors WithStorage's nil-tolerance / one-shot wiring posture.
 	WithEvents(p *events.Platform) VMM
 }

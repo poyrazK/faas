@@ -14,7 +14,7 @@
 //     line, bad status code, out-of-range code)
 //   - readUntilBlankLine error path
 //   - buildStreamingBridgeScript branch coverage
-//   - emitBootStartedMirror nil-events noop + with-events emit
+//   - emitBootObserved nil-events noop + with-events emit
 //   - ForgetNet nil-cache / non-nil-cache
 //   - ParseSeccompLines edge branches (missing line, malformed)
 //   - FrameworkReady / UpdateEgressAllowlist / MaterializeParentExt4
@@ -237,16 +237,16 @@ func TestBuildStreamingBridgeScript_SkipsContentLengthHeader_Mega4(t *testing.T)
 	}
 }
 
-// --- emitBootStartedMirror branches ------------------------------
+// --- emitBootObserved branches ------------------------------
 
-func TestEmitBootStartedMirror_NilEvents_Noop_Mega4(t *testing.T) {
+func TestEmitBootObserved_NilEvents_Noop_Mega4(t *testing.T) {
 	t.Parallel()
 	// Server with nil events → noop, no panic.
 	srv := &Server{events: nil}
-	srv.emitBootStartedMirror(context.Background(), "i-1", "CreateColdBoot")
+	srv.emitBootObserved(context.Background(), "i-1", "CreateColdBoot")
 }
 
-func TestEmitBootStartedMirror_WithWireCtx_Mega4(t *testing.T) {
+func TestEmitBootObserved_WithWireCtx_Mega4(t *testing.T) {
 	t.Parallel()
 	// Build a server, hand it a *Platform via the WithEvents setter,
 	// and exercise the FromContext success branch. We do not assert
@@ -261,7 +261,7 @@ func TestEmitBootStartedMirror_WithWireCtx_Mega4(t *testing.T) {
 		QueuedCount: 7, ConcurrencyAtAdmit: 3,
 	})
 	// Nil events → noop branch even with stamped ctx.
-	srv.emitBootStartedMirror(ctx, "i-1", "CreateColdBoot")
+	srv.emitBootObserved(ctx, "i-1", "CreateColdBoot")
 }
 
 // --- ForgetNet branches ------------------------------------------

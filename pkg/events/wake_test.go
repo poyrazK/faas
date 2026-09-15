@@ -22,6 +22,7 @@ func TestWakeEvent_AllKindsImplementInterface(t *testing.T) {
 	var _ WakeEvent = QueueAccepted{EmitAt: now, WakeID: "w", AppID: "a", RequestID: "r"}
 	var _ WakeEvent = Admitted{EmitAt: now, WakeID: "w", AppID: "a", RequestID: "r", AccountID: "acct-1", Plan: "hobby"}
 	var _ WakeEvent = BootStarted{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", Trigger: "gateway", QueuedCount: 2, ConcurrencyAtAdmit: 3, AtCapacity: true}
+	var _ WakeEvent = BootObserved{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", NodeID: "n", Method: "cold_boot", ObservedAt: now}
 	var _ WakeEvent = RestoreBreakdown{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", TotalMs: 596}
 	var _ WakeEvent = ColdBootBreakdown{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", TotalMs: 23474}
 	var _ WakeEvent = ColdBootCPU{EmitAt: now, WakeID: "w", AppID: "a", InstanceID: "i", StartupCPUMillicores: 1000, ConfiguredCPUMillicores: 250}
@@ -182,6 +183,7 @@ func TestWakePhaseFromKind(t *testing.T) {
 		in, want string
 	}{
 		{"wake.boot_started", "boot_started"},
+		{"wake.boot_observed", "boot_observed"},
 		{"wake.readiness_200", "readiness_200"},
 		{"wake.proxy_first_byte", "proxy_first_byte"},
 		{"legacy", "legacy"}, // bare names pass through unchanged
@@ -189,6 +191,21 @@ func TestWakePhaseFromKind(t *testing.T) {
 	for _, c := range cases {
 		if got := wakePhaseFromKind(c.in); got != c.want {
 			t.Errorf("wakePhaseFromKind(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestBootObservedIsDistinctFromCanonicalBootStart(t *testing.T) {
+	e := BootObserved{WakeID: "wake-1", AppID: "app-1", InstanceID: "instance-1", ObservedAt: time.Unix(123, 0).UTC()}
+	if got := e.Kind(); got != WakeBootObserved {
+		t.Fatalf("Kind() = %q, want %q", got, WakeBootObserved)
+	}
+	if got := e.Payload()["wake_id"]; got != "wake-1" {
+		t.Fatalf("wake_id = %v, want wake-1", got)
+	}
+	for _, schedulerOnly := range []string{"trigger", "trigger_class", "queued_count", "concurrency_at_admit", "at_capacity", "tier"} {
+		if _, ok := e.Payload()[schedulerOnly]; ok {
+			t.Errorf("BootObserved payload must not contain scheduler-only field %q", schedulerOnly)
 		}
 	}
 }

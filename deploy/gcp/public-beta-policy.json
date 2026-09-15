@@ -11,7 +11,9 @@
   },
   "compute": {
     "instance_prefix": "faas-compute-node-",
-    "minimum_running": 1,
+    "availability_target": "active-active",
+    "minimum_running": 2,
+    "minimum_running_zones": 2,
     "maximum_stopped_hours_with_disks": 24,
     "require_deletion_protection": true,
     "require_ssd_for_running_nodes": true,

@@ -27,12 +27,22 @@ tests:
             value: 0
 
   - interval: 30s
-    name: "client errors do not degrade successful low-volume API traffic"
+    name: "client and entitlement errors do not degrade successful low-volume API traffic"
     input_series:
       - series: 'gateway_requests_total{code="200",app="low-volume"}'
         values: '0+1x50'
+      - series: 'gateway_requests_total{code="400",app="low-volume"}'
+        values: '0+1x50'
+      - series: 'gateway_requests_total{code="401",app="low-volume"}'
+        values: '0+1x50'
+      - series: 'gateway_requests_total{code="402",app="low-volume"}'
+        values: '0+1x50'
       - series: 'gateway_requests_total{code="404",app="low-volume"}'
-        values: '0+3x50'
+        values: '0+1x50'
+      - series: 'gateway_requests_total{code="409",app="low-volume"}'
+        values: '0+1x50'
+      - series: 'gateway_requests_total{code="429",app="low-volume"}'
+        values: '0+1x50'
     promql_expr_test:
       - expr: '(sum(rate(gateway_requests_total{app!="-",code=~"2.."}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))'
         eval_time: 15m
@@ -44,6 +54,8 @@ tests:
         alertname: FaasApiAvailabilityLow
       - eval_time: 15m
         alertname: FaasApiAvailabilityBurnRateHigh
+      - eval_time: 15m
+        alertname: FaasSLOBurnRateHigh
 
   - interval: 30s
     name: "failed low-volume API traffic still pages"
@@ -99,6 +111,19 @@ tests:
               summary: "API availability is consuming its monthly error budget rapidly"
               description: "The API error rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
+      - eval_time: 15m
+        alertname: FaasSLOBurnRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: alert_preset_signals
+              preset: slo_burn_rate
+              app: failed-only
+            exp_annotations:
+              summary: "SLO burn rate is high for app failed-only"
+              description: "The app's API error budget exceeded the Google SRE multi-window thresholds: >14.4x over 1h and >6x over 6h of the ADR-082 99.5% availability SLO. gateway_requests_total is app-labelled; use the meterd alert delivery or app dashboard to correlate the app with its customer account."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSLOBurnRateHigh.md"
 
   - interval: 30s
     name: "successful low-volume builds do not warn"

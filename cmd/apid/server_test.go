@@ -523,7 +523,8 @@ func TestHealthz(t *testing.T) {
 }
 
 // observeWrap is the outermost middleware on every route; assert
-// it tags successes as code="ok" and 4xx as code="err", and uses
+// it tags handler outcomes for ops while keeping 4xx out of the platform
+// error-rate counter, and uses
 // the route template (not the URL) for the op label so cardinality
 // stays bounded.
 func TestObserveWrap_OKAndErrRoutes(t *testing.T) {
@@ -571,6 +572,13 @@ func TestObserveWrap_OKAndErrRoutes(t *testing.T) {
 		if !strings.Contains(body, w) {
 			t.Errorf("metrics body missing %q:\n%s", w, body)
 		}
+	}
+	requestTotal := fmt.Sprintf(`apid_test_request_total{account_id=%q,code="ok",route="POST /v1/apps"} 2`, e.acct.ID)
+	if !strings.Contains(body, requestTotal) {
+		t.Errorf("metrics body missing 409-as-non-platform-error series %q:\n%s", requestTotal, body)
+	}
+	if strings.Contains(body, fmt.Sprintf(`apid_test_request_total{account_id=%q,code="err",route="POST /v1/apps"} 1`, e.acct.ID)) {
+		t.Errorf("409 response entered the platform/server error-rate series:\n%s", body)
 	}
 }
 

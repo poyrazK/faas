@@ -50,11 +50,11 @@ const (
 	mdKeyTraceID      = "x-faas-trace-id"
 	mdKeySpanID       = "x-faas-span-id"
 	// ADR-123 — wake-boot telemetry fields (closed trigger enum +
-	// ledger.Concurrency snapshot). Threaded from schedd to vmmd via
-	// the gRPC metadata envelope so the vmmd-side BootStarted mirror
-	// (pkg/vmmdgrpc/server.go:emitBootStartedMirror) carries the same
-	// context as the canonical schedd emit. Empty values are skipped
-	// — a producer that doesn't know ADR-123 sends no keys at all.
+	// ledger.Concurrency snapshot). Threaded through the gRPC metadata
+	// envelope for correlated logs and restore diagnostics. The vmmd-side
+	// BootObserved event intentionally excludes these scheduler-owned values.
+	// Empty values are skipped — a producer that doesn't know ADR-123 sends
+	// no keys at all.
 	mdKeyWakeBootTrigger  = "x-faas-wake-boot-trigger"
 	mdKeyWakeTriggerClass = "x-faas-wake-trigger-class"
 	mdKeyWakeBootQueued   = "x-faas-wake-boot-queued"

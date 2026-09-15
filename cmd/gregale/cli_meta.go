@@ -759,6 +759,10 @@ var cliCommands = []cliCommand{
 		Name:    "tenant-surfaces",
 		DocSlug: "tenant-surfaces",
 		Short:   "Manage tenant surfaces (multi-hostname SAN bundle per app)",
+		// The API remains behind FAAS_TENANT_SURFACES_ENABLED in production.
+		// Keep the compatibility entry callable for prepared clusters, but do
+		// not advertise it as a generally available customer feature.
+		Audience: cliAudienceCompatibility,
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List tenant surfaces on an app", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (required)", Value: "slug"},

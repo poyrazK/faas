@@ -16,9 +16,16 @@ SPEC.loader.exec_module(AUDIT)
 POLICY = json.loads((MODULE_PATH.parents[2] / "deploy/gcp/public-beta-policy.json").read_text())
 
 
-def instance(name: str, service_account: str, *, running: bool = True) -> dict:
+def instance(
+    name: str,
+    service_account: str,
+    *,
+    running: bool = True,
+    zone: str = "europe-west3-b",
+) -> dict:
     return {
         "name": name,
+        "zone": f"https://compute/zones/{zone}",
         "status": "RUNNING" if running else "TERMINATED",
         "deletionProtection": True,
         "lastStopTimestamp": "2026-09-12T11:30:00Z",
@@ -47,8 +54,9 @@ def healthy_snapshot() -> dict:
     control = instance(POLICY["control_plane"]["instance"], POLICY["control_plane"]["service_account"])
     control["tags"]["items"].append(POLICY["access"]["origin_target_tag"])
     compute = instance("faas-compute-node-1", compute_sa)
+    compute_peer = instance("faas-compute-node-2", compute_sa, zone="europe-west3-c")
     disks = []
-    for vm in (control, compute):
+    for vm in (control, compute, compute_peer):
         for attached in vm["disks"]:
             name = attached["source"].split("/")[-1]
             disk = {"name": name, "type": "https://compute/diskTypes/pd-ssd"}
@@ -70,7 +78,7 @@ def healthy_snapshot() -> dict:
                 ]
             }
         },
-        "instances": [control, compute],
+        "instances": [control, compute, compute_peer],
         "disks": disks,
         "firewalls": [
             {
@@ -220,6 +228,12 @@ class AuditTest(unittest.TestCase):
         joined = "\n".join(failures)
         self.assertIn("stopped for 60.0h", joined)
         self.assertIn("public-all exposes", joined)
+
+    def test_active_compute_must_span_two_zones(self) -> None:
+        snap = healthy_snapshot()
+        snap["instances"][2]["zone"] = snap["instances"][1]["zone"]
+        failures = AUDIT.audit(POLICY, snap)
+        self.assertIn("running compute zones=1, require at least 2", failures)
 
     def test_dev_only_control_plane_environment_fails_without_values(self) -> None:
         snap = healthy_snapshot()

@@ -6,12 +6,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 )
 
@@ -19,15 +21,16 @@ import (
 // routes continue to the compute gateway, but a compute outage can never turn
 // /v1, dashboard, auth, or health traffic into a gateway 502.
 type controlPlaneProxy struct {
-	target      *url.URL
-	next        http.Handler
-	proxy       *httputil.ReverseProxy
-	githubProxy *httputil.ReverseProxy
-	log         *slog.Logger
-	appsDomain  string
+	target              *url.URL
+	next                http.Handler
+	proxy               *httputil.ReverseProxy
+	githubProxy         *httputil.ReverseProxy
+	log                 *slog.Logger
+	appsDomain          string
+	trustedIngressCIDRs []netip.Prefix
 }
 
-func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger) (http.Handler, error) {
+func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger, trustedIngressCIDRs ...netip.Prefix) (http.Handler, error) {
 	target, err := url.Parse(rawTarget)
 	if err != nil || target.Scheme == "" || target.Host == "" || target.Path != "" {
 		return nil, fmt.Errorf("control-plane API target must be an absolute URL, got %q", rawTarget)
@@ -40,7 +43,10 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger)
 	if appsDomain == "" {
 		appsDomain = "gregale.dev"
 	}
-	p := &controlPlaneProxy{target: target, next: next, log: log, appsDomain: appsDomain}
+	p := &controlPlaneProxy{
+		target: target, next: next, log: log, appsDomain: appsDomain,
+		trustedIngressCIDRs: append([]netip.Prefix(nil), trustedIngressCIDRs...),
+	}
 	p.proxy = &httputil.ReverseProxy{
 		Rewrite: func(req *httputil.ProxyRequest) {
 			req.SetURL(target)
@@ -48,14 +54,11 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger)
 			req.Out.Header.Del("X-Forwarded-For")
 			req.Out.Header.Del("X-Forwarded-Host")
 			req.Out.Header.Del("X-Forwarded-Proto")
-			if host, _, splitErr := net.SplitHostPort(req.In.RemoteAddr); splitErr == nil && host != "" {
-				req.Out.Header.Set("X-Forwarded-For", host)
+			clientIP, proto := gateway.CanonicalForwardingContext(req.In, p.trustedIngressCIDRs)
+			if clientIP != "" {
+				req.Out.Header.Set("X-Forwarded-For", clientIP)
 			}
-			if req.In.TLS != nil {
-				req.Out.Header.Set("X-Forwarded-Proto", "https")
-			} else {
-				req.Out.Header.Set("X-Forwarded-Proto", "http")
-			}
+			req.Out.Header.Set("X-Forwarded-Proto", proto)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			// The outer gatewayd-public middleware owns these headers.
@@ -82,14 +85,11 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger)
 			req.Out.Header.Del("X-Forwarded-For")
 			req.Out.Header.Del("X-Forwarded-Host")
 			req.Out.Header.Del("X-Forwarded-Proto")
-			if host, _, splitErr := net.SplitHostPort(req.In.RemoteAddr); splitErr == nil && host != "" {
-				req.Out.Header.Set("X-Forwarded-For", host)
+			clientIP, proto := gateway.CanonicalForwardingContext(req.In, p.trustedIngressCIDRs)
+			if clientIP != "" {
+				req.Out.Header.Set("X-Forwarded-For", clientIP)
 			}
-			if req.In.TLS != nil {
-				req.Out.Header.Set("X-Forwarded-Proto", "https")
-			} else {
-				req.Out.Header.Set("X-Forwarded-Proto", "http")
-			}
+			req.Out.Header.Set("X-Forwarded-Proto", proto)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			httpsec.StripStaticHeaders(resp.Header)

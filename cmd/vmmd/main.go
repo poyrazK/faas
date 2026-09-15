@@ -929,10 +929,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// (pkg/events.Platform) on the VMM. vmmd is the canonical emit
 	// site for wake.readiness_200 (the first 2xx probe) and a
-	// corroborating observation for wake.boot_started (mirror at
-	// the gRPC server boundary). nil events opts out (legacy
+	// corroborating wake.boot_observed event at the gRPC server
+	// boundary. nil events opts out (legacy
 	// default-local path). Schedd is the canonical writer for
-	// wake.boot_started — vmmd's mirror is a sanity check that the
+	// wake.boot_started — the vmmd observation is a sanity check that the
 	// boot RPC actually entered the FC bring-up path.
 	vmm := mgr.VMM()
 	if vmm != nil && store != nil {
@@ -1289,9 +1289,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
 		WithNodeID(nodeID)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
-	// on the gRPC server. vmmd is the corroborating-observation
-	// source for wake.boot_started (mirror at the gRPC server
-	// boundary) and the canonical emit site for wake.readiness_200
+	// on the gRPC server. vmmd is the source for the corroborating wake.boot_observed event at the
+	// gRPC server boundary and the canonical emit site for wake.readiness_200
 	// (the first 2xx probe). nil events opts out (legacy default-
 	// local path).
 	if store != nil {

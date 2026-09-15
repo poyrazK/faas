@@ -6,7 +6,6 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
-| [`admin`](#admin) | Operator-only billing ops (admin credit\|refund\|consume-credits) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`apps`](#apps) | List your apps |
@@ -31,7 +30,6 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
-| [`tenant-surfaces`](#tenant-surfaces) | Manage tenant surfaces (multi-hostname SAN bundle per app) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt;) |
@@ -57,16 +55,13 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
-| [`postgres`](#postgres) | Operator preview: manage PostgreSQL databases and bindings |
 | [`ps`](#ps) | Show live instances + state for an app |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
 | [`rollback`](#rollback) | Re-promote the previous deployment |
-| [`rollouts`](#rollouts) | Operator manual rollout recovery (rollouts recover &lt;slug&gt; --action advance\|promote\|abort --reason &lt;text&gt;) |
 | [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
 | [`secrets`](#secrets) | Manage env secrets (secrets list\|set\|unset\|list-all\|rotate) |
-| [`github-webhook-secret`](#github-webhook-secret) | Manage legacy installation-scoped webhook secrets (admin) |
 | [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]) |
 | [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
 | [`tail`](#tail) | Live tail of the unified event stream |
@@ -76,7 +71,6 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`config`](#config) | Manage non-secret local CLI settings (config get\|set\|list) |
 | [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline &lt;slug&gt; &lt;wake-id&gt; [--since RFC3339] [--limit N] [--all]) |
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
-| [`mail`](#mail) | Mail operator dry-run (issue #246 acceptance item 6): `gregale mail dry-run [--unsubscribe-url URL]` renders every production template against a fixture account + day and writes the wire payload as JSON. The eyeball gate before flipping a box to FAAS_MAIL_TRANSPORT=resend. |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (issue #556; Pro/Scale only) |
 | [`mirror`](#mirror) | Manage traffic mirroring (mirror list\|create\|info\|update\|rm\|summary --app &lt;slug&gt;; issue #72 / ADR-124; Pro/Scale only) |
@@ -123,34 +117,6 @@ Account-wide SLO panel
 Show feature maturity and plan availability
 
 `gregale capabilities`
-
-
-## admin
-
-Operator-only billing ops (admin credit|refund|consume-credits)
-
-`gregale admin [<subcommand>] <uuid> <cents>`
-
-### admin credit
-
-Issue a billing credit
-
-| Flag | Meaning | |
-|---|---|---|
-| `--reason <text>` | credit reason text | required |
-
-### admin refund
-
-Refund a paid Polar invoice
-
-| Flag | Meaning | |
-|---|---|---|
-| `--reason <text>` | refund reason text | required |
-| `--idempotency-key <key>` | stable provider retry key |  |
-
-### admin consume-credits
-
-Consume credits against an invoice
 
 
 ## alerts
@@ -898,37 +864,6 @@ Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)
 Tear down a preview app (POST /v1/preview/{slug}/destroy)
 
 
-## tenant-surfaces
-
-Manage tenant surfaces (multi-hostname SAN bundle per app)
-
-`gregale tenant-surfaces [<subcommand>] [--app <slug>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <slug>` | app slug |  |
-
-### tenant-surfaces list
-
-List tenant surfaces on an app
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <slug>` | app slug (required) |  |
-
-### tenant-surfaces add
-
-Add a tenant surface (with seed hostnames)
-
-### tenant-surfaces rm
-
-Remove a tenant surface (cascades hostnames)
-
-### tenant-surfaces hostname
-
-Manage hostnames on a surface (add|rm)
-
-
 ## edge-rules
 
 Per-app edge rules (edge-rules list|create|get|update|rm --app &lt;slug&gt;)
@@ -1415,56 +1350,6 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 `gregale plan`
 
 
-## postgres
-
-Operator preview: manage PostgreSQL databases and bindings
-
-`gregale postgres [<subcommand>]`
-
-### postgres list
-
-List managed PostgreSQL databases
-
-### postgres usage
-
-Show monthly managed PostgreSQL usage and guardrail state
-
-### postgres create
-
-Create a managed PostgreSQL database
-
-| Flag | Meaning | |
-|---|---|---|
-| `--region <REGION>` | provider-neutral region | required |
-| `--postgres-major <N>` | PostgreSQL major version |  |
-| `--class <CLASS>` | service class | one of `development` · `burstable` · `production` |
-| `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
-| `--scale-to-zero` | suspend compute when idle |  |
-| `--storage-bytes <N>` | storage limit in bytes |  |
-| `--restore-window-seconds <N>` | point-in-time restore window |  |
-
-### postgres get
-
-Show one managed PostgreSQL database
-
-### postgres delete
-
-Delete a managed PostgreSQL database
-
-### postgres restore
-
-Restore a database to a new database
-
-| Flag | Meaning | |
-|---|---|---|
-| `--name <NAME>` | name for the restored database | required |
-| `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
-
-### postgres bindings
-
-Manage app database bindings
-
-
 ## ps
 
 Show live instances + state for an app
@@ -1550,22 +1435,6 @@ Re-promote the previous deployment
 | `--json` | machine-readable output |  |
 
 
-## rollouts
-
-Operator manual rollout recovery (rollouts recover &lt;slug&gt; --action advance|promote|abort --reason &lt;text&gt;)
-
-`gregale rollouts [<subcommand>] <slug> --action <value> [--reason <text>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--action <value>` | recover action | required; one of `advance` · `promote` · `abort` |
-| `--reason <text>` | operator-supplied reason (logged to deployment_audit) |  |
-
-### rollouts recover
-
-Manually advance / promote / abort a stuck rollout (operator escape hatch)
-
-
 ## projects
 
 Inspect and recover repository projects
@@ -1645,17 +1514,6 @@ List every secret across apps
 ### secrets rotate
 
 Re-seal one secret under the current host key
-
-
-## github-webhook-secret
-
-Manage legacy installation-scoped webhook secrets (admin)
-
-`gregale github-webhook-secret [<subcommand>]`
-
-### github-webhook-secret set
-
-Rotate the secret for one installation_id
 
 
 ## slo
@@ -1782,21 +1640,6 @@ Per-route throttle recommendations + dry-run preview (gregale throttle-suggestio
 | `--dry-run` | enable the dry-run preview pass (requires --candidate-rps) |  |
 | `--candidate-rps <N>` | candidate rate-limit rps for the dry-run preview |  |
 | `--candidate-burst <N>` | candidate burst for the dry-run preview |  |
-
-
-## mail
-
-Mail operator dry-run (issue #246 acceptance item 6): `gregale mail dry-run [--unsubscribe-url URL]` renders every production template against a fixture account + day and writes the wire payload as JSON. The eyeball gate before flipping a box to FAAS_MAIL_TRANSPORT=resend.
-
-`gregale mail [<subcommand>] [--unsubscribe-url <URL>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--unsubscribe-url <URL>` | List-Unsubscribe URL (RFC 8058); empty disables the header |  |
-
-### mail dry-run
-
-render every mail template against a fixture; print wire JSON
 
 
 ## wake

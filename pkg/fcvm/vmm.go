@@ -127,8 +127,8 @@ type JailerVMM struct {
 	// when multiple VMs bind the same shared base image concurrently.
 	bindSourceModes map[string]bindSourceMode
 	// events is the wake-timeline fan-out (issue #517 / PR-C /
-	// ADR-064). vmmd is the corroborating-observation source for
-	// wake.boot_started (mirror) and the canonical emit site for
+	// ADR-064). vmmd is the source for the corroborating wake.boot_observed
+	// event and the canonical emit site for
 	// wake.readiness_200 (the first 2xx probe). nil opts out
 	// (pre-PR-C test fixtures).
 	events *events.Platform
@@ -476,8 +476,8 @@ func (v *JailerVMM) acquireRestoreSlot(ctx context.Context) (func(), error) {
 }
 
 // WithEvents stamps the wake-timeline fan-out (issue #517 / PR-C /
-// ADR-064) on the VMM. vmmd is the corroborating-observation source
-// for wake.boot_started (mirror at the gRPC server) and the
+// ADR-064) on the VMM. vmmd is the source for the corroborating wake.boot_observed event at the
+// gRPC server and the
 // canonical emit site for wake.readiness_200 (the first 2xx probe).
 // Sibling of WithStorage — nil opts out (pre-PR-C fixtures).
 func (v *JailerVMM) WithEvents(p *events.Platform) VMM {

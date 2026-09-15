@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -49,6 +50,52 @@ func TestControlPlaneProxyKeepsAPIOnControlPlane(t *testing.T) {
 				t.Fatalf("body = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestControlPlaneProxyPreservesTrustedIngressClient(t *testing.T) {
+	var gotXFF, gotProto string
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotXFF = r.Header.Get("X-Forwarded-For")
+		gotProto = r.Header.Get("X-Forwarded-Proto")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(controlPlane.Close)
+	handler, err := newControlPlaneProxy(controlPlane.URL, http.NotFoundHandler(), slog.Default(),
+		netip.MustParsePrefix("127.0.0.0/8"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://api.gregale.dev/v1/whoami", nil)
+	req.RemoteAddr = "127.0.0.1:43210"
+	req.Header.Set("X-Forwarded-For", "203.0.113.42")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	if gotXFF != "203.0.113.42" || gotProto != "https" {
+		t.Fatalf("forwarding context = (%q, %q), want trusted client and https", gotXFF, gotProto)
+	}
+}
+
+func TestControlPlaneProxyRejectsSpoofedForwardingContext(t *testing.T) {
+	var gotXFF, gotProto string
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotXFF = r.Header.Get("X-Forwarded-For")
+		gotProto = r.Header.Get("X-Forwarded-Proto")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(controlPlane.Close)
+	handler, err := newControlPlaneProxy(controlPlane.URL, http.NotFoundHandler(), slog.Default(),
+		netip.MustParsePrefix("127.0.0.0/8"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://api.gregale.dev/v1/whoami", nil)
+	req.RemoteAddr = "198.51.100.9:43210"
+	req.Header.Set("X-Forwarded-For", "203.0.113.42")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	if gotXFF != "198.51.100.9" || gotProto != "http" {
+		t.Fatalf("forwarding context = (%q, %q), want immediate peer and http", gotXFF, gotProto)
 	}
 }
 

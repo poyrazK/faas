@@ -11,13 +11,24 @@ import (
 // without a regenerate fails CI with the exact command to run.
 func TestMarkdownReferenceFresh(t *testing.T) {
 	var buf bytes.Buffer
-	renderMarkdownReference(&buf, cliCommands)
+	renderMarkdownReference(&buf, customerCliCommands())
 	want, err := os.ReadFile("../../docs/cli-reference.md")
 	if err != nil {
 		t.Fatalf("docs/cli-reference.md missing: %v — run `go run ./cmd/gregale man --markdown > docs/cli-reference.md`", err)
 	}
 	if !bytes.Equal(buf.Bytes(), want) {
 		t.Fatalf("docs/cli-reference.md is stale — run `go run ./cmd/gregale man --markdown > docs/cli-reference.md`")
+	}
+}
+
+func TestMarkdownReferenceOmitsAdvancedCommands(t *testing.T) {
+	var buf bytes.Buffer
+	renderMarkdownReference(&buf, customerCliCommands())
+	out := buf.String()
+	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces"} {
+		if strings.Contains(out, "## "+command+"\n") {
+			t.Errorf("public Markdown reference exposes advanced command %q", command)
+		}
 	}
 }
 

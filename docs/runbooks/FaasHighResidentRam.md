@@ -74,3 +74,19 @@ The invariant §6.2/2 (Σ(ram_mb+8) ≤ 47,600 MB) is hard-enforced; the
 alert is the operator's leading indicator that a wake will start
 failing admission. Eviction policy is per-tenant — see the
 [eviction runbook](../ops/eviction.md) for the ordering and dry run.
+
+The warn tier is also the compute-host scale-out trigger. Confirm the peer
+active node has admission headroom, then start an existing release-current SSD
+node or provision and enroll a new one before the 92% page threshold:
+
+```bash
+bash scripts/ops/gcp_provision_compute.sh \
+  --instance faas-compute-node-3 --node fsn-3
+bash scripts/ops/gcp_provision_compute.sh \
+  --instance faas-compute-node-3 --node fsn-3 --apply
+gregalectl deploy join-node --help
+```
+
+The provision command is dry-run by default. Complete the signed join and
+snapshot-restore probe before activating the node; the provider-ready timestamp
+alone is not customer capacity.

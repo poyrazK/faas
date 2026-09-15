@@ -170,6 +170,7 @@ func TestPlatformRejectsKnownWakeWithMissingAuthoritativeIdentity(t *testing.T) 
 		event WakeEvent
 		want  string
 	}{
+		{"boot observation node", BootObserved{EmitAt: time.Now(), WakeID: "wake-1", AppID: "app-1"}, "boot_observed:node_id"},
 		{"readiness node", Readiness200{EmitAt: time.Now(), WakeID: "wake-1", AppID: "app-1"}, "readiness_200:node_id"},
 		{"first byte app", ProxyFirstByte{EmitAt: time.Now(), WakeID: "wake-1", NodeID: "node-1"}, "proxy_first_byte:app_id"},
 		{"other lifecycle app", QueueAccepted{EmitAt: time.Now(), WakeID: "wake-1"}, "queue_accepted:app_id"},

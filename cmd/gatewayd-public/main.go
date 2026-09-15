@@ -474,7 +474,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// routes /v1/traces/ to the handler and falls through to the
 	// proxy for everything else.
 	controlPlaneTarget := envOr("FAAS_CONTROL_PLANE_API_TARGET", "http://127.0.0.1:8081")
-	controlPlaneHandler, err := newControlPlaneProxy(controlPlaneTarget, proxy, log)
+	controlPlaneHandler, err := newControlPlaneProxy(controlPlaneTarget, proxy, log, trustedIngressCIDRs...)
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: control-plane API proxy: %w", err)
 	}

@@ -1774,7 +1774,7 @@ type OpsMetrics struct {
 	// registered on every daemon so the struct stays a single
 	// registry — only schedd / vmmd / gatewayd-internal / builderd / apid
 	// increment via Platform.Emit in production; other daemons
-	// sit at zero. Closed set is the 15 phases from
+	// sit at zero. Closed set is the 18 phases from
 	// pkg/events/wake.go (extended by ADR-098 C11 to surface
 	// the three vmmd-side phase-decomposed wake timings).
 	wakePhaseEmitted    *prometheus.CounterVec
@@ -2585,7 +2585,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"account_id", "route", "code"})
 	requestTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_request_total",
-		Help: "HTTP requests completed, labelled by account_id, route, and code (issue #303, ADR-039). The counter is the per-request total — paired with requestFailures (status >= 400 only) for the per-account error-rate view. account_id flows through the same accountLabelSet as requestFailures so a customer is represented by their real id in both, or by \"__other__\" in both. code ∈ {ok, err} (ok on 2xx/3xx, err on 4xx/5xx). route is r.Pattern or \"unmatched\". Backed by the §12 traffic-anomaly recording rules (faas_apid_request_rate_5m, _3d_baseline, _ratio).",
+		Help: "HTTP requests completed, labelled by account_id, route, and code (issue #303, ADR-039). The counter is the per-request total — paired with requestFailures (status >= 400 only) for customer-error inspection. account_id flows through the same accountLabelSet as requestFailures so a customer is represented by their real id in both, or by \"__other__\" in both. code ∈ {ok, err}: ok covers every non-5xx response, while err is reserved for platform/server 5xx outcomes. route is r.Pattern or \"unmatched\". Backed by the §12 traffic-anomaly recording rules (faas_apid_request_rate_5m, _3d_baseline, _ratio).",
 	}, []string{"account_id", "route", "code"})
 	// Issue #601 / ADR-131: CVE-vs-SBOM check + open CVE counters
 	// pushed from the cve-check workflow via meterd. Closed-set
@@ -3354,14 +3354,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// Issue #517 / PR-C / ADR-064 — wake-phase collector pair.
 	// Counter gauges per-phase emit counts; histogram buckets
 	// the per-phase duration. Both labelled by the same closed
-	// (phase, result) tuple; the closed 14-phase set is
+	// (phase, result) tuple; the closed 18-phase set is
 	// pre-instantiated below so the §12 wake-latency panel exists
 	// from boot. The histogram buckets are sized for the wake
 	// envelope: queue→admit <100ms; boot <30s; readiness <60s;
 	// proxy <5s; the 60s tail catches pathological stalls.
 	wakePhaseEmitted := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_wake_phase_emitted_total",
-		Help: "Count of wake-timeline events emitted via pkg/events.Platform, labelled by phase (the substring after `wake.`, e.g. `boot_started`, `readiness_200`, `proxy_first_byte`) and result ∈ {ok, failed} (issue #517 / PR-C, ADR-064). Single-registry: registered on every daemon; only schedd / vmmd / gatewayd-internal / builderd / apid increment via Platform.Emit. The closed 14-phase set is pre-instantiated at boot so the §12 wake-latency panel surfaces zero on an idle daemon.",
+		Help: "Count of wake-timeline events emitted via pkg/events.Platform, labelled by phase (the substring after `wake.`, e.g. `boot_started`, `readiness_200`, `proxy_first_byte`) and result ∈ {ok, failed} (issue #517 / PR-C, ADR-064). Single-registry: registered on every daemon; only schedd / vmmd / gatewayd-internal / builderd / apid increment via Platform.Emit. The closed 18-phase set is pre-instantiated at boot so the §12 wake-latency panel surfaces zero on an idle daemon.",
 	}, []string{"phase", "result"})
 	wakeIdentityInvalid := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_wake_identity_invalid_total",
@@ -4372,7 +4372,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		snapshotBackoffStamp.WithLabelValues(outcome)
 	}
 	// Issue #517 / PR-C / ADR-064: pre-instantiate the closed
-	// 17-phase × 2-result label set for wakePhaseEmitted and
+	// 18-phase × 2-result label set for wakePhaseEmitted and
 	// wakePhaseDur so the §12 wake-latency panel surfaces zero
 	// on an idle daemon (mirrors the buildDuration / stripePush
 	// pre-instantiation precedents above). The phase list mirrors
@@ -4380,7 +4380,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// platform vocabulary requires extending this loop in
 	// lock-step. result ∈ {ok, failed}.
 	for _, phase := range []string{
-		"queue_accepted", "admitted", "boot_started", "boot_completed",
+		"queue_accepted", "admitted", "boot_started", "boot_observed", "boot_completed",
 		"boot_failed", "readiness_200", "proxy_first_byte", "page_served",
 		"park_started", "park_completed", "stalled",
 		"build_succeeded", "build_failed", "deploy_failed",
@@ -4400,7 +4400,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			wakePhaseDur.WithLabelValues(phase, result)
 		}
 	}
-	for _, identity := range [][2]string{{"readiness_200", "node_id"}, {"proxy_first_byte", "app_id"}} {
+	for _, identity := range [][2]string{{"boot_observed", "node_id"}, {"readiness_200", "node_id"}, {"proxy_first_byte", "app_id"}} {
 		wakeIdentityInvalid.WithLabelValues(identity[0], identity[1])
 	}
 	// Workstream B / issue #1184: pre-instantiate the closed
@@ -6588,18 +6588,16 @@ func (s *topAccountSet) SnapshotCounts() map[string]uint64 {
 }
 
 // CodeFromStatus returns the wire-level code label for a recorded
-// HTTP response status. "ok" covers 2xx/3xx (the request landed
-// server-side and produced a response); "err" covers 4xx/5xx (the
-// request failed before, during, or after the handler). This is the
-// same split observeErrFromStatus uses in cmd/apid/server.go for
-// apid_ops_total{code} — kept in lockstep so the §12 traffic-anomaly
-// recording rules (faas_apid_request_rate_5m, _error_rate_5m) read
-// from a consistent client/server view.
+// HTTP response status. "ok" covers every completed non-5xx response,
+// including expected client and entitlement errors; "err" is reserved for
+// 5xx responses attributable to the platform or an upstream dependency. The
+// separate request-failure counter retains all 4xx/5xx outcomes for customer
+// diagnostics without allowing expected 4xx traffic to page the platform.
 func CodeFromStatus(status int) string {
-	if status >= 200 && status < 400 {
-		return "ok"
+	if status >= 500 && status < 600 {
+		return "err"
 	}
-	return "err"
+	return "ok"
 }
 
 // WakeIDV4Fallback returns the unlabelled counter the wake_id mint

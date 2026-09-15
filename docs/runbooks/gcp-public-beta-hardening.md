@@ -178,15 +178,17 @@ network egress, and backup storage.
 
 ## Availability and stopped capacity
 
-The beta target is one active SSD compute node plus a release-current recovery
-path. Application autoscaling only adds Firecracker guests within that host;
-it does not replace a lost GCE VM. Keep a stopped node for at most 24 hours
-while it has paid disks. Beyond that window, either start and roll it as the
-declared recovery node or snapshot required evidence and delete the VM/disks.
+The beta target is two release-current SSD compute nodes running active-active
+in at least two GCP zones. Application autoscaling only adds Firecracker guests
+within those hosts; it does not replace a lost GCE VM. Keep a stopped node for
+at most 24 hours while it has paid disks. Beyond that window, either start and
+roll it into the active fleet or snapshot required evidence and delete the
+VM/disks.
 
-The audit fails when active compute has no SSD, when no compute node runs, or
-when a stopped node retains disks beyond 24 hours. For public beta, record these
-timings during every node replacement drill:
+The audit fails when either active compute node has no SSD, fewer than two
+compute nodes run, the running nodes occupy fewer than two zones, or a stopped
+node retains disks beyond 24 hours. For public beta, record these timings during
+every node replacement drill:
 
 1. failure detection and scheduler drain;
 2. GCE VM and SSD provisioning;
@@ -194,10 +196,9 @@ timings during every node replacement drill:
 4. snapshot readiness and first successful restore;
 5. customer traffic recovery.
 
-The current beta recovery objective is 20 minutes from confirmed host loss to
-an admitted replacement. If repeated drills cannot meet that objective, keep a
-second release-current SSD node running; a stopped legacy HDD node is not a
-standby.
+The current beta recovery objective is immediate placement on the surviving
+active node and 20 minutes from confirmed host loss to an admitted replacement.
+A stopped legacy HDD node is not a standby.
 
 The provider step is scripted and timed. It creates a private, deletion-
 protected N2 host with nested virtualization and a retained 100 GB `pd-ssd`,

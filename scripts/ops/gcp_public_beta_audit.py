@@ -251,6 +251,13 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
     running = [i for i in compute if i.get("status") == "RUNNING"]
     if len(running) < compute_policy["minimum_running"]:
         failures.append(f"running compute nodes={len(running)}, require at least {compute_policy['minimum_running']}")
+    running_zones = {zone_name(str(i.get("zone", ""))) for i in running}
+    running_zones.discard("")
+    if len(running_zones) < compute_policy["minimum_running_zones"]:
+        failures.append(
+            f"running compute zones={len(running_zones)}, "
+            f"require at least {compute_policy['minimum_running_zones']}"
+        )
     for item in compute:
         check_instance(item, compute_policy, "compute")
         if item.get("status") == "RUNNING" and compute_policy.get("require_ssd_for_running_nodes"):

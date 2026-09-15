@@ -50,11 +50,11 @@ var gregaleVersion = "dev"
 // users typo'ing `gregale man aps` get "did you mean 'apps'?"
 // instead of a bare "unknown command".
 func cmdMan(args []string) int {
-	// `--markdown` renders the whole manifest as one Markdown document —
-	// the committed docs/cli-reference.md the public site vendors. Roff
-	// stays the human-page format; this is the machine-vendorable one.
+	// `--markdown` renders the customer command surface as one Markdown
+	// document for the public site. Operator and compatibility commands remain
+	// available through explicit man pages and `help --all`.
 	if len(args) == 1 && args[0] == "--markdown" {
-		renderMarkdownReference(osStdout, cliCommands)
+		renderMarkdownReference(osStdout, customerCliCommands())
 		return 0
 	}
 	switch len(args) {

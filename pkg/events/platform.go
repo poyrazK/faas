@@ -287,7 +287,7 @@ func invalidWakeIdentity(kind string, payload map[string]any) string {
 		return "app_id"
 	}
 	switch kind {
-	case WakeReadiness200:
+	case WakeReadiness200, WakeBootObserved:
 		if nodeID, _ := payload["node_id"].(string); nodeID == "" {
 			return "node_id"
 		}
