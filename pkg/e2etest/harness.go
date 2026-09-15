@@ -218,7 +218,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 		// migration 00090 seeds with the canonical production
 		// socket (/run/faas/schedd.sock). Re-point the row at the
 		// per-test socket so synth dispatch can find schedd.
-		setDefaultLocalScheddTarget(t, pool, sockPath)
+		setDefaultLocalScheddTarget(t, pool, sockPath, h.VMMDSock)
 	}
 
 	if which&VMMD != 0 {
@@ -743,7 +743,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		// migration 00090 seeds with the canonical production
 		// socket (/run/faas/schedd.sock). Re-point the row at the
 		// per-test socket so synth dispatch can find schedd.
-		setDefaultLocalScheddTarget(t, pool, sockPath)
+		setDefaultLocalScheddTarget(t, pool, sockPath, h.VMMDSock)
 	}
 	if which&Meterd != 0 {
 		startMeterd(t, h, bin, dbURL, extraEnv)
@@ -1650,16 +1650,42 @@ func waitTCP(t *testing.T, addr string, d time.Duration) {
 // pkg/gateway/pgbackend.go:1286 deletes the resolveSched branch
 // that previously returned b.sched on transient triggers).
 //
+// target_url is repointed for the same reason, and it is the one that was
+// missing. That column is the VMMD endpoint: schedd's heartbeat dials it to
+// prove the node is alive. Left at the seeded /run/faas/vmmd.sock — a path the
+// gate guarantees is absent, because it stops the production daemons — every
+// heartbeat failed with
+//
+//	rpc error: code = Unavailable desc = connection error
+//
+// the heartbeat gate flipped default-local to lifecycle='unavailable',
+// active=false, and schedd then refused every placement with
+//
+//	claim unplaced: choose: capacity_unavailable: placement:
+//	no active compute_node fits 264 MB billable
+//
+// Builds succeeded and the deployment sat in `building` until the test gave
+// up, so it read as a slow build rather than a node marked dead. Capacity was
+// never the issue: the row carries a 47,600 MB ceiling.
+//
 // Idempotent: the UPDATE re-applies on every Start/StartWithEnv
 // call so two schedd boots in the same process (e.g. back-to-back
 // subtests) both converge on the active socket.
-func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath string) {
+func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath, vmmdSockPath string) {
 	t.Helper()
 	target := "unix://" + sockPath
 	if _, err := pool.Exec(context.Background(),
 		`update compute_nodes set schedd_target_url = $1 where name = 'default-local'`,
 		target); err != nil {
 		t.Fatalf("e2etest: set default-local schedd_target_url: %v", err)
+	}
+	if strings.TrimSpace(vmmdSockPath) == "" {
+		return
+	}
+	if _, err := pool.Exec(context.Background(),
+		`update compute_nodes set target_url = $1 where name = 'default-local'`,
+		"unix://"+vmmdSockPath); err != nil {
+		t.Fatalf("e2etest: set default-local target_url: %v", err)
 	}
 }
 
