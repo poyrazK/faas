@@ -21,9 +21,23 @@ func StagedBuilderBasePath() string {
 	return filepath.Join(root, "base", "runner-builder-"+runtime.GOARCH+".ext4")
 }
 
-// HasStagedBuilderBase reports whether this host already carries a real
-// builder base.
-func HasStagedBuilderBase() bool {
+// HasRealBuilderBase reports whether imaged can obtain a real builder base on
+// this host, by either route it supports.
+//
+// A local-backend host keeps the base as a file on disk. An OCI-backend host
+// keeps NO file under /srv/fc/base at all — imaged resolves the production ref
+// through the registry and the read-through blob cache, exactly as
+// run-native-e2e.sh's own pre-flight documents when it skips the file check
+// for FAAS_STORAGE_BACKEND=oci.
+//
+// Checking only for the file therefore reports "no base" on precisely the host
+// that has one. faas-acceptance-1 runs the OCI backend, so the first version of
+// this check was false there and the stub override still applied, leaving the
+// 14 validate-base-ext4 failures in place.
+func HasRealBuilderBase() bool {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_STORAGE_BACKEND")), "oci") {
+		return true
+	}
 	info, err := os.Stat(StagedBuilderBasePath())
 	return err == nil && info.Mode().IsRegular() && info.Size() > 0
 }
@@ -51,10 +65,18 @@ func HasStagedBuilderBase() bool {
 // there is one.
 func OverrideBuilderBase(t *testing.T, stubRef string) {
 	t.Helper()
-	if HasStagedBuilderBase() {
-		t.Logf("e2etest: host has a real builder base at %s; not overriding it with the stub registry",
-			StagedBuilderBasePath())
+	if HasRealBuilderBase() {
+		t.Logf("e2etest: host can resolve a real builder base (backend=%q, path=%s); "+
+			"not overriding it with the stub registry",
+			envOrLocalBackend(), StagedBuilderBasePath())
 		return
 	}
 	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", stubRef)
+}
+
+func envOrLocalBackend() string {
+	if v := strings.TrimSpace(os.Getenv("FAAS_STORAGE_BACKEND")); v != "" {
+		return v
+	}
+	return "local"
 }
