@@ -188,6 +188,34 @@ func TestDashboardDebugRunningCauseLabels(t *testing.T) {
 	}
 }
 
+func TestDashboardDebugRunningCauseRequestAttribution(t *testing.T) {
+	trace := "0123456789abcdef0123456789abcdef"
+	views := dashboardDebugRunningCauseViews([]api.DebugRunningCause{{
+		Code:    api.DebugRunningReasonRequestActivity,
+		Summary: "request activity",
+		Request: &api.DebugRunningRequestAttribution{
+			TelemetryID:  "00000000-0000-0000-0000-000000000001",
+			DeploymentID: "00000000-0000-0000-0000-000000000002",
+			Route:        "GET /summary",
+			Method:       "GET",
+			TraceID:      &trace,
+			ReceivedAt:   "2026-09-13T12:00:00Z",
+			Count:        3,
+			MatchDeltaMS: 42,
+		},
+	}}, "running-app", "3h")
+	if len(views) != 1 || views[0].Request == nil {
+		t.Fatalf("views = %+v, want request attribution", views)
+	}
+	request := views[0].Request
+	if request.Route != "GET /summary" || request.MatchDeltaMS != 42 {
+		t.Fatalf("request = %+v, want route and match delta", request)
+	}
+	if !strings.Contains(request.RequestURL, "request_id=00000000-0000-0000-0000-000000000001") || !strings.Contains(request.RequestURL, "#request-detail") {
+		t.Fatalf("request URL = %q, want request detail link", request.RequestURL)
+	}
+}
+
 func TestDashboardDebugReplayRequiresCSRF(t *testing.T) {
 	h, cookie, store, _ := newAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")

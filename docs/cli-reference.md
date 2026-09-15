@@ -1101,7 +1101,7 @@ Observed debugger signal coverage (coverage &lt;slug&gt; [--since D])
 
 ### debug running
 
-Explain why an app is still running (running &lt;slug&gt; [--since D] [--limit N])
+Explain why an app is still running, with request evidence when available (running &lt;slug&gt; [--since D] [--limit N])
 
 ### debug regressions
 

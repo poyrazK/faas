@@ -1769,6 +1769,24 @@ type DebugRunningCauseView struct {
 	WorkloadClass   string
 	LastActivityAt  string
 	IdleDeadline    string
+	Request         *DebugRunningRequestView
+}
+
+// DebugRunningRequestView is the dashboard-safe projection of the nearest
+// retained request telemetry representative attached to a request-activity
+// cause. RequestURL points back into the request evidence panel.
+type DebugRunningRequestView struct {
+	TelemetryID  string
+	DeploymentID string
+	Route        string
+	Method       string
+	TraceID      string
+	ReceivedAt   string
+	Count        int
+	WakeID       string
+	InstanceID   string
+	MatchDeltaMS int64
+	RequestURL   string
 }
 
 // DebugCoverageView is the template-safe projection of observed debugger

@@ -456,7 +456,7 @@ func dashboardDebugRunningView(response api.DebugRunningResponse, slug string) *
 		HistoryTruncated: response.HistoryTruncated,
 		HasObservation:   len(response.History) > 0,
 		CLICommand:       fmt.Sprintf("gregale debug running --since %s %s", response.Since, slug),
-		Current:          dashboardDebugRunningCauseViews(response.Current),
+		Current:          dashboardDebugRunningCauseViews(response.Current, slug, response.Since),
 		History:          make([]dashboard.DebugRunningObservationView, 0, len(response.History)),
 	}
 	for _, observation := range response.History {
@@ -468,16 +468,16 @@ func dashboardDebugRunningView(response api.DebugRunningResponse, slug string) *
 			PrewarmMinInstances:    observation.PrewarmMinInstances,
 			IdleTimeoutSeconds:     observation.IdleTimeoutSeconds,
 			Degraded:               observation.Degraded,
-			Causes:                 dashboardDebugRunningCauseViews(observation.Causes),
+			Causes:                 dashboardDebugRunningCauseViews(observation.Causes, slug, response.Since),
 		})
 	}
 	return view
 }
 
-func dashboardDebugRunningCauseViews(causes []api.DebugRunningCause) []dashboard.DebugRunningCauseView {
+func dashboardDebugRunningCauseViews(causes []api.DebugRunningCause, slug, since string) []dashboard.DebugRunningCauseView {
 	views := make([]dashboard.DebugRunningCauseView, 0, len(causes))
 	for _, cause := range causes {
-		views = append(views, dashboard.DebugRunningCauseView{
+		view := dashboard.DebugRunningCauseView{
 			Code:            cause.Code,
 			Label:           dashboardDebugRunningCauseLabel(cause.Code),
 			Summary:         cause.Summary,
@@ -488,7 +488,29 @@ func dashboardDebugRunningCauseViews(causes []api.DebugRunningCause) []dashboard
 			WorkloadClass:   cause.WorkloadClass,
 			LastActivityAt:  cause.LastActivityAt,
 			IdleDeadline:    cause.IdleDeadline,
-		})
+		}
+		if cause.Request != nil {
+			request := cause.Request
+			values := url.Values{}
+			values.Set("request_id", request.TelemetryID)
+			if since != "" {
+				values.Set("since", since)
+			}
+			view.Request = &dashboard.DebugRunningRequestView{
+				TelemetryID:  request.TelemetryID,
+				DeploymentID: request.DeploymentID,
+				Route:        request.Route,
+				Method:       request.Method,
+				TraceID:      valueOrEmpty(request.TraceID),
+				ReceivedAt:   request.ReceivedAt,
+				Count:        request.Count,
+				WakeID:       request.WakeID,
+				InstanceID:   request.InstanceID,
+				MatchDeltaMS: request.MatchDeltaMS,
+				RequestURL:   "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode() + "#request-detail",
+			}
+		}
+		views = append(views, view)
 	}
 	return views
 }

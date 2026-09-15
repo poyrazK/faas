@@ -356,6 +356,7 @@ from .debug_running_cause import DebugRunningCause
 from .debug_running_cause_code import DebugRunningCauseCode
 from .debug_running_config import DebugRunningConfig
 from .debug_running_observation import DebugRunningObservation
+from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
 from .debug_telemetry_list_filters import DebugTelemetryListFilters
 from .debug_telemetry_list_response import DebugTelemetryListResponse
@@ -1419,6 +1420,7 @@ __all__ = (
     "DebugRunningCauseCode",
     "DebugRunningConfig",
     "DebugRunningObservation",
+    "DebugRunningRequestAttribution",
     "DebugRunningResponse",
     "DebugTelemetryListFilters",
     "DebugTelemetryListResponse",

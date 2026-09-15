@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.debug_running_cause_code import DebugRunningCauseCode, check_debug_running_cause_code
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.debug_running_request_attribution import DebugRunningRequestAttribution
+
 
 T = TypeVar("T", bound="DebugRunningCause")
 
@@ -30,6 +34,12 @@ class DebugRunningCause:
     workload_class: str | Unset = UNSET
     last_activity_at: datetime.datetime | Unset = UNSET
     idle_deadline: datetime.datetime | Unset = UNSET
+    request: DebugRunningRequestAttribution | Unset = UNSET
+    """The nearest retained request-telemetry representative linked to a
+    request-activity cause. A representative may contain several
+    collapsed requests; match_delta_ms and count make that limitation
+    explicit.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +65,10 @@ class DebugRunningCause:
         if not isinstance(self.idle_deadline, Unset):
             idle_deadline = self.idle_deadline.isoformat()
 
+        request: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.request, Unset):
+            request = self.request.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -76,11 +90,15 @@ class DebugRunningCause:
             field_dict["last_activity_at"] = last_activity_at
         if idle_deadline is not UNSET:
             field_dict["idle_deadline"] = idle_deadline
+        if request is not UNSET:
+            field_dict["request"] = request
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.debug_running_request_attribution import DebugRunningRequestAttribution
+
         d = dict(src_dict)
         code = check_debug_running_cause_code(d.pop("code"))
 
@@ -110,6 +128,13 @@ class DebugRunningCause:
         else:
             idle_deadline = datetime.datetime.fromisoformat(_idle_deadline)
 
+        _request = d.pop("request", UNSET)
+        request: DebugRunningRequestAttribution | Unset
+        if isinstance(_request, Unset):
+            request = UNSET
+        else:
+            request = DebugRunningRequestAttribution.from_dict(_request)
+
         debug_running_cause = cls(
             code=code,
             summary=summary,
@@ -120,6 +145,7 @@ class DebugRunningCause:
             workload_class=workload_class,
             last_activity_at=last_activity_at,
             idle_deadline=idle_deadline,
+            request=request,
         )
 
         debug_running_cause.additional_properties = d
