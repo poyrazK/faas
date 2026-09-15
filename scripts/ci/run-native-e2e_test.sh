@@ -294,6 +294,32 @@ fi
 grep -Fq 'FAAS_STORAGE_BACKEND:-local' "${runner}" ||
   fail "the wrapper requires a local builder-base file unconditionally; that is wrong under an OCI backend"
 
+# The NIC lookup must survive a host with no vmmd drop-in directory. A
+# DEDICATED acceptance host has none, grep exits 1, and under the runner's own
+# `set -Eeuo pipefail` that kills the script before any test runs — observed on
+# faas-acceptance-1's first dispatch (34954126133): exit 2, two lines of log.
+# Execute the real snippet under the runner's shell options, with the directory
+# absent, rather than grepping for the guard.
+nic_probe="$(mktemp -d)"
+nic_out="$(bash -c '
+  set -Eeuo pipefail
+  iface=""
+  if [[ -z "${iface:-}" ]]; then
+    iface="$(
+      {
+        grep -rhoE "FAAS_PUBLIC_IFACE=[A-Za-z0-9._-]+" "$1/absent.d/" 2>/dev/null || true
+      } | head -1 | cut -d= -f2
+    )"
+  fi
+  echo "survived:${iface}"
+' _ "${nic_probe}" 2>&1)" || {
+  rm -rf "${nic_probe}"
+  fail "the NIC lookup dies under set -Eeuo pipefail when the vmmd drop-in directory is absent"
+}
+rm -rf "${nic_probe}"
+[[ "${nic_out}" == "survived:" ]] ||
+  fail "the NIC lookup returned ${nic_out} with no drop-in present; expected an empty value it can fall back from"
+
 # Tenant egress NIC. vmmd defaults to eth0; this node has none (ens4), so
 # without the override the masquerade rule targets a missing interface and
 # every builder microVM boots and then has no egress, dying at guest-init's

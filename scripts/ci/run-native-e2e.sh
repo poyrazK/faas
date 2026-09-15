@@ -149,15 +149,28 @@ fi
 #
 # Prefer the value production uses on THIS host; fall back to the interface the
 # default route actually leaves by, which is what the setting means.
+#
+# The `|| true` is load-bearing, not defensive noise. A DEDICATED acceptance
+# host runs no vmmd service, so /etc/systemd/system/faas-vmmd.service.d does
+# not exist; grep exits 1, `set -o pipefail` propagates that out of the command
+# substitution, and `set -e` kills the runner before a single test runs. That
+# is exactly what happened on faas-acceptance-1's first dispatch (34954126133,
+# exit code 2, two lines of log). The dual-use node hid it because the
+# directory exists there.
 if [[ -z "${FAAS_PUBLIC_IFACE:-}" ]]; then
   FAAS_PUBLIC_IFACE="$(
-    grep -rhoE 'FAAS_PUBLIC_IFACE=[A-Za-z0-9._-]+' \
-      /etc/systemd/system/faas-vmmd.service.d/ 2>/dev/null |
-      head -1 | cut -d= -f2
+    {
+      grep -rhoE 'FAAS_PUBLIC_IFACE=[A-Za-z0-9._-]+' \
+        /etc/systemd/system/faas-vmmd.service.d/ 2>/dev/null || true
+    } | head -1 | cut -d= -f2
   )"
 fi
 if [[ -z "${FAAS_PUBLIC_IFACE:-}" ]]; then
-  FAAS_PUBLIC_IFACE="$(ip route show default 2>/dev/null | awk '{print $5; exit}')"
+  # Same guard, same reason: a host with no default route must reach the die
+  # below with an actionable message, not exit 2 with none.
+  FAAS_PUBLIC_IFACE="$(
+    { ip route show default 2>/dev/null || true; } | awk '{print $5; exit}'
+  )"
 fi
 [[ -n "${FAAS_PUBLIC_IFACE}" ]] ||
   die "cannot determine the outward NIC; set FAAS_PUBLIC_IFACE or give the host a default route"
