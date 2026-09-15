@@ -35,12 +35,12 @@ The current contract is intentionally small and high-signal:
 | `TestE2E_NormalPath_HEADSuppressesResponseBody` | HEAD response-body suppression with header preservation |
 | `TestE2E_NormalPath_PreservesResponseTrailers` | post-body trailer metadata survives the bridge |
 | `TestE2E_NormalPath_AsyncInvokeUsesRealGatewayBridge` | durable async dispatch through schedd and the real gateway synth bridge |
-| `TestE2E_NormalPath_AsyncInvokeGuestFailureIsTerminal` | guest 4xx becomes a terminal failed invocation with its result retained |
+| `TestE2E_NormalPath_AsyncInvokeGuestFailureIsTerminal` | guest 4xx becomes a terminal failed invocation with HTTP and guest detail retained |
 | `TestE2E_NormalPath_AsyncInvokeRetriesGuestServerError` | guest 503 is retryable and a later success completes the same invocation |
 | `TestE2E_NormalPath_AsyncIdempotencyDoesNotDuplicateWork` | retrying an async request reuses one durable invocation row |
 | `TestE2E_NormalPath_SyncInvokeReturnsRealBridgeResult` | synchronous long-poll completion and result projection |
 | `TestE2E_NormalPath_QueueUsesRealGatewayBridge` | queue send/receive delivery through the real gateway synth bridge |
-| `TestE2E_NormalPath_QueueDeliversMultipleMessagesExactlyOnce` | multiple queue payloads are delivered without loss or immediate redelivery |
+| `TestE2E_NormalPath_QueueDeliversMultipleMessages` | multiple queue payloads are delivered without loss through the real bridge |
 | `TestE2E_NormalPath_QueueFailureExhaustsIntoDeadLetter` | transient guest failures stop at the plan budget and remain inspectable |
 | `TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge` | delayed scheduling, due-time dispatch, and result persistence through the real synth bridge |
 | `TestE2E_NormalPath_CancelledDelayedTaskNeverReachesBridge` | pending delayed-task cancellation prevents later bridge delivery |
@@ -49,7 +49,7 @@ The current contract is intentionally small and high-signal:
 | `TestE2E_NormalPath_GuestServerErrorPassesThrough` | guest 5xx remains distinguishable from a gateway/VMMD outage |
 | `TestE2E_NormalPath_ProxyActivityBecomesDurable` | successful proxy activity reaches schedd and persists request count/last-seen state, including a burst |
 | `TestE2E_NormalPath_GuestFailureDoesNotRefreshActivity` | guest 4xx does not increment request count or refresh durable last-seen state |
-| `TestE2E_NormalPath_BridgeUnavailableThenRecovers` | VMMD outage maps to 503 and does not poison the route |
+| `TestE2E_NormalPath_BridgeUnavailableSurfaces503` | VMMD outage maps to a customer-visible 503 |
 | `TestE2E_NormalPath_StoppedInstanceInvalidatesRoute` | stopped instance state invalidates a previously cached route |
 | `TestE2E_NormalPath_GatewayRestartReloadsDurableRoute` | gateway restart rehydrates routing from Postgres |
 
