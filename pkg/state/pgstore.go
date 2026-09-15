@@ -3257,13 +3257,12 @@ func (s *PgStore) AbortMigratingInstance(ctx context.Context, instanceID, leaseT
 // can age the row out.
 //
 // The predicate is the load-bearing race-safety guarantee, exactly as
-// in AbortMigratingInstance: `state = 'running' AND node_id = $2`. If
-// the node came back and its vmmd re-registered, or a peer already
-// transitioned the row (park, evict, migrate), RowsAffected() is 0 and
-// we return ErrConflict so the caller counts it and moves on rather
-// than second-guessing the state machine. Pinning node_id means a row
-// that migrated to a healthy node between the SELECT and this UPDATE
-// is never failed by a stale read.
+// in AbortMigratingInstance: the row must still be running on the observed
+// node, that node must still meet the liveness threshold, and an app-backed
+// row must not be owned by the recovery controller. If vmmd re-registers,
+// a heartbeat arrives, recovery starts, or a peer already transitions the
+// row, RowsAffected() is 0 and we return ErrConflict so the caller moves on
+// without second-guessing the state machine.
 //
 // running → failed is a legal edge (machine.go validTransitions), and
 // FAILED is excluded from CountsForRAM(), which is what actually stops
@@ -3271,7 +3270,7 @@ func (s *PgStore) AbortMigratingInstance(ctx context.Context, instanceID, leaseT
 // FAILED (not PARKED) because no snapshot was taken — the VM died with
 // its host. The wake path treats FAILED as cold-bootable (ADR-005), so
 // the customer's next request still serves.
-func (s *PgStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string) error {
+func (s *PgStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string, threshold time.Time) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: fail running instance on dead node: empty instanceID")
 	}
@@ -3284,8 +3283,14 @@ func (s *PgStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID,
 		        terminal_at = now()
 		  where id = $1
 		    and state = 'running'
-		    and node_id = $2`,
-		instanceID, nodeID)
+		    and node_id = $2
+		    and not exists (
+		      select 1 from compute_nodes n
+		       where n.id = instances.node_id
+		         and ((n.active = true and n.last_heartbeat_at >= $3)
+		           or (instances.app_id is not null and n.lifecycle in ('draining', 'force_draining', 'unavailable', 'recovering')))
+		    )`,
+		instanceID, nodeID, threshold)
 	if err != nil {
 		return fmt.Errorf("state: fail running instance on dead node: %w", err)
 	}
@@ -14454,6 +14459,15 @@ func (s *PgStore) ListInstancesByStatesOlderThan(ctx context.Context, states []S
 //     Without this second predicate the reconciler would inherit the
 //     exact liveness blind spot it exists to close.
 //
+// App-backed rows in a recovery-managed lifecycle are excluded. The
+// recovery runner is the sole owner of their live migration or recreation;
+// racing that work here terminalizes the row before handoff can finish.
+// App-less job tasks remain eligible because they cannot use app snapshot
+// handoff and their lease/reaper owns retry.
+// An instance whose compute-node row is missing is also eligible. There is no
+// foreign key on instances.node_id, and a vanished owner cannot be alive or
+// recover the instance.
+//
 // ORDER BY last_heartbeat_at ASC so a capped tick drains the
 // longest-dead nodes first — those are the rows accruing the most
 // incorrect billing. The limit keeps one tick's write burst bounded
@@ -14468,16 +14482,17 @@ func (s *PgStore) ListRunningInstancesOnDeadNodes(ctx context.Context, threshold
 		        coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at,
 		        i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
 		 from instances i
-		 join compute_nodes n on n.id = i.node_id
+		 left join compute_nodes n on n.id = i.node_id
 		 where i.state = 'running'
-		   and (n.active = false or n.last_heartbeat_at < $1)
+		   and (n.id is null or i.app_id is null or n.lifecycle not in ('draining', 'force_draining', 'unavailable', 'recovering'))
+		   and (n.id is null or n.active = false or n.last_heartbeat_at < $1)
 		 -- Tie-break on instance id so a capped query is
 		 -- deterministic when many rows share the same heartbeat
 		 -- timestamp (MemStore's ListRunningInstancesOnDeadNodes
 		 -- does the same). Without this, a multi-host fleet where
 		 -- N>cap rows die at once can leave different rows waiting
 		 -- an extra tick between runs of identical input.
-		 order by n.last_heartbeat_at asc, i.id asc
+		 order by n.last_heartbeat_at asc nulls first, i.id asc
 		 limit $2`,
 		threshold, limit)
 	if err != nil {
@@ -16656,6 +16671,7 @@ func (s *PgStore) InstanceListByNodeForRecovery(ctx context.Context, nodeID stri
 			State:        r.State,
 			AppID:        uuidString(r.AppID),
 			DeploymentID: uuidString(r.DeploymentID),
+			Kind:         r.Kind,
 		}
 	}
 	return out, nil

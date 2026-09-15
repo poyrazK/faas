@@ -4132,6 +4132,10 @@ type Store interface {
 	// (schedd's heartbeat sweep already flipped it) or
 	// last_heartbeat_at older than threshold (the flip has not landed
 	// yet, e.g. the schedd that owns the heartbeat loop restarted).
+	// App-backed rows on draining, force_draining, unavailable, or
+	// recovering nodes are excluded because the recovery controller owns
+	// their transition. App-less job-task rows remain eligible; their
+	// lease and stuck-task reaper own retry after this billing stop.
 	//
 	// Why this exists: MarkComputeNodeInactive only writes
 	// compute_nodes; it deliberately leaves instances untouched. A
@@ -4153,13 +4157,15 @@ type Store interface {
 	// stops meterd billing for a VM that no longer exists; it also
 	// frees the row from the §6.2-2 RAM ceiling.
 	//
-	// Implementations MUST make the write conditional on both
-	// `state = 'running'` and the supplied nodeID, and MUST return
+	// Implementations MUST make the write conditional on `state =
+	// 'running'`, the supplied nodeID, the same dead-node threshold used
+	// by the list, and the recovery-controller lifecycle exclusion. They
+	// MUST return
 	// ErrConflict (not an error) when no row matches — that is the
 	// benign "a peer got there first / the node recovered" path. The
 	// nodeID predicate prevents a stale read from failing an instance
 	// that has since migrated to a healthy node.
-	FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string) error
+	FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string, threshold time.Time) error
 	// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
 	// lookup (PR #74). Returns rows currently in any of the given states
 	// (today: {STOPPED, FAILED}) whose terminal_at is strictly older than

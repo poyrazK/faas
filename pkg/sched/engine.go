@@ -4840,12 +4840,12 @@ func (e *Engine) dispatchRecovery(ctx context.Context, node state.ComputeNode, i
 // verdict would terminate instances on a node that is merely slow.
 //
 // Per-row safety comes from the conditional UPDATE in
-// FailRunningInstanceOnDeadNode (state = 'running' AND node_id = $2).
-// If the node recovered, or a peer already parked/evicted/migrated the
-// row, RowsAffected() is 0, the store returns ErrConflict, and we count
-// it as a peer-wins no-op rather than second-guessing the state
-// machine. That is the same race-safety contract as
-// ReconcileExpiredMigrations.
+// FailRunningInstanceOnDeadNode: it rechecks state, owner, node liveness,
+// and whether the recovery controller owns the lifecycle. If the node
+// recovered, recovery began, or a peer already parked/evicted/migrated the
+// row, RowsAffected() is 0, the store returns ErrConflict, and we count it
+// as a peer-wins no-op rather than second-guessing the state machine. That
+// is the same race-safety contract as ReconcileExpiredMigrations.
 //
 // FAILED (not PARKED) is the correct terminal state: no snapshot was
 // taken, because the VM died with its host. Claiming PARKED would
@@ -4882,7 +4882,7 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 
 	reconciled := 0
 	for _, ins := range rows {
-		recErr := e.store.FailRunningInstanceOnDeadNode(ctx, ins.ID, ins.NodeID)
+		recErr := e.store.FailRunningInstanceOnDeadNode(ctx, ins.ID, ins.NodeID, threshold)
 		switch {
 		case recErr == nil:
 			// Release the admission reservation so a replacement

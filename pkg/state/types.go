@@ -3976,6 +3976,19 @@ func (l NodeLifecycle) IsAdmitting() bool {
 	return l == NodeLifecycleActive || l == NodeLifecycleRecovering
 }
 
+// UsesRecoveryController reports whether the durable recovery runner owns
+// live instance transitions for this lifecycle. The dead-node billing
+// reconciler must not terminalize app instances while a handoff is in flight.
+func (l NodeLifecycle) UsesRecoveryController() bool {
+	switch l {
+	case NodeLifecycleDraining, NodeLifecycleForceDraining,
+		NodeLifecycleUnavailable, NodeLifecycleRecovering:
+		return true
+	default:
+		return false
+	}
+}
+
 // RecoveryInstance is the per-instance view returned by
 // InstanceListByNodeForRecovery — the minimum tuple the arbiter
 // needs to make a live-migrate-vs-recreate decision. Wider context
@@ -3987,6 +4000,7 @@ type RecoveryInstance struct {
 	State        string // 'running' | 'cold_booting' | 'waking' | ...
 	AppID        string
 	DeploymentID string
+	Kind         string
 }
 
 // ComputeNodeHeartbeat is one row in the append-only

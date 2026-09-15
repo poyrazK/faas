@@ -4076,7 +4076,7 @@ func (q *Queries) InstanceByID(ctx context.Context, db DBTX, id pgtype.UUID) (In
 }
 
 const instanceListByNodeForRecovery = `-- name: InstanceListByNodeForRecovery :many
-SELECT id, state, app_id, deployment_id
+SELECT id, state, app_id, deployment_id, kind
 FROM instances
 WHERE node_id = $1
   AND state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
@@ -4088,6 +4088,7 @@ type InstanceListByNodeForRecoveryRow struct {
 	State        string
 	AppID        pgtype.UUID
 	DeploymentID pgtype.UUID
+	Kind         string
 }
 
 // Live instances on a specific node — input to the arbiter's
@@ -4112,6 +4113,7 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 			&i.State,
 			&i.AppID,
 			&i.DeploymentID,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}

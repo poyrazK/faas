@@ -4247,10 +4247,13 @@ func (m *MemStore) AbortMigratingInstance(_ context.Context, instanceID, leaseTo
 
 // ListRunningInstancesOnDeadNodes mirrors the PgStore join: RUNNING
 // rows whose node is inactive OR whose last heartbeat predates the
-// threshold. Sorted oldest-heartbeat-first so the capped tick drains
-// the longest-dead nodes first, matching the SQL ORDER BY. A row whose
-// node_id has no compute_nodes entry is treated as dead — the owner is
-// unknowable, so it cannot be confirmed alive.
+// threshold. App-backed rows on recovery-managed lifecycles are excluded;
+// the recovery controller owns them. App-less job-task rows remain eligible
+// so metering stops while their lease/reaper arranges retry. Results are
+// sorted oldest-heartbeat-first so the capped tick drains the longest-dead
+// nodes first, matching the SQL ORDER BY. A row whose node_id has no
+// compute_nodes entry is treated as dead — the owner is unknowable, so it
+// cannot be confirmed alive.
 func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold time.Time, limit int) ([]Instance, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("state: list running instances on dead nodes: limit must be > 0, got %d", limit)
@@ -4267,8 +4270,15 @@ func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold 
 			continue
 		}
 		node, ok := m.computeNodes[ins.NodeID]
-		if ok && node.Active && !node.LastHeartbeatAt.Before(threshold) {
-			continue
+		if ok {
+			// App-backed rows belong to the recovery arbiter in managed
+			// lifecycle states. App-less job tasks use their lease/reaper.
+			if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() {
+				continue
+			}
+			if node.Active && !node.LastHeartbeatAt.Before(threshold) {
+				continue
+			}
 		}
 		hits = append(hits, scored{ins: ins, hb: node.LastHeartbeatAt})
 	}
@@ -4291,8 +4301,11 @@ func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold 
 }
 
 // FailRunningInstanceOnDeadNode mirrors the PgStore conditional
-// UPDATE: the transition only lands when the row is still RUNNING and
-// still owned by the node the caller observed as dead. A row that
+// UPDATE: the transition only lands when the row is still RUNNING, still
+// owned by the node the caller observed as dead, and the node still meets
+// the dead-node predicate. App-backed instances on a recovery-managed
+// lifecycle are protected because the recovery controller owns their
+// transition. A row that
 // has vanished between the input-set query and this call returns
 // ErrConflict — the same outcome PgStore surfaces via
 // RowsAffected()==0. The reconciler's caller treats ErrConflict as
@@ -4302,7 +4315,7 @@ func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold 
 // is reserved for explicit precondition violations (the caller
 // passed an instanceID the store has never heard of) — that signal
 // is too loud to use as a silent "the row disappeared" handler.
-func (m *MemStore) FailRunningInstanceOnDeadNode(_ context.Context, instanceID, nodeID string) error {
+func (m *MemStore) FailRunningInstanceOnDeadNode(_ context.Context, instanceID, nodeID string, threshold time.Time) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: fail running instance on dead node: empty instanceID")
 	}
@@ -4317,6 +4330,14 @@ func (m *MemStore) FailRunningInstanceOnDeadNode(_ context.Context, instanceID, 
 	}
 	if ins.State != string(StateRunning) || ins.NodeID != nodeID {
 		return ErrConflict
+	}
+	if node, ok := m.computeNodes[nodeID]; ok {
+		if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() {
+			return ErrConflict
+		}
+		if node.Active && !node.LastHeartbeatAt.Before(threshold) {
+			return ErrConflict
+		}
 	}
 	ins.State = string(StateFailed)
 	now := m.clock()
@@ -12777,6 +12798,7 @@ func (m *MemStore) InstanceListByNodeForRecovery(_ context.Context, nodeID strin
 				State:        ins.State,
 				AppID:        ins.AppID,
 				DeploymentID: ins.DeploymentID,
+				Kind:         ins.Kind,
 			})
 		}
 	}

@@ -110,6 +110,9 @@ func TestUnitVmmd_Shape(t *testing.T) {
 	if !hasReadWrite(u, "/srv/fc") {
 		t.Errorf("vmmd: missing ReadWritePaths=/srv/fc (jailer tmpfs)")
 	}
+	if !hasReadWrite(u, "/sys/fs/cgroup/faas.slice") {
+		t.Errorf("vmmd: missing ReadWritePaths=/sys/fs/cgroup/faas.slice (snapshot memory headroom)")
+	}
 	// vmmd is the only root component — no User/Group by design.
 	if u.User != "" {
 		t.Errorf("vmmd: User = %q, want empty (root by design)", u.User)

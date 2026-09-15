@@ -61,6 +61,12 @@ func TestArbiter_Decide_Table(t *testing.T) {
 			want:     DecisionLiveMigrate,
 		},
 		{
+			name:     "draining_job_task → None (lease reaper owns retry)",
+			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
+			instance: state.RecoveryInstance{State: "running", Kind: "job_task"},
+			want:     DecisionNone,
+		},
+		{
 			name:     "draining_waking → None (healthy boot stays local)",
 			node:     state.ComputeNode{Lifecycle: state.NodeLifecycleDraining},
 			instance: state.RecoveryInstance{State: "waking"},

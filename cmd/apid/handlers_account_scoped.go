@@ -275,9 +275,9 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 			RequestCount: int64(appmetrics.SafeRoundNonNeg(countByApp[app.ID])),
 			ErrorRatePct: appmetrics.SafePercent(errRateByApp[app.ID]),
 			ColdStartPct: appmetrics.SafePercent(coldByApp[app.ID]),
-			LatencyP50MS: appmetrics.SafeFloat(histogramQuantile(0.50, appBuckets)),
-			LatencyP95MS: appmetrics.SafeFloat(histogramQuantile(0.95, appBuckets)),
-			LatencyP99MS: appmetrics.SafeFloat(histogramQuantile(0.99, appBuckets)),
+			LatencyP50MS: appmetrics.SafeFloat(histogramQuantile(0.50, appBuckets) * 1000),
+			LatencyP95MS: appmetrics.SafeFloat(histogramQuantile(0.95, appBuckets) * 1000),
+			LatencyP99MS: appmetrics.SafeFloat(histogramQuantile(0.99, appBuckets) * 1000),
 			WakeP95MS:    appmetrics.SafeFloat(wakeV),
 		}
 		resp.Apps[app.Slug] = single

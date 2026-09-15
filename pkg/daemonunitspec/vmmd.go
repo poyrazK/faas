@@ -207,7 +207,7 @@ func UnitVmmd() daemonunit.Unit {
 		ProtectHostname:         true,
 		ProtectClock:            true,
 
-		ReadWritePaths: []string{"/etc/faas/secrets", "/run/faas", "/run/netns", "/srv/fc", "/var/log/faas", "/var/lib/faas/cache"},
+		ReadWritePaths: []string{"/etc/faas/secrets", "/run/faas", "/run/netns", "/srv/fc", "/var/log/faas", "/var/lib/faas/cache", "/sys/fs/cgroup/faas.slice"},
 
 		WantedBy: "multi-user.target",
 	}

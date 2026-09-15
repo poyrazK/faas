@@ -40,7 +40,7 @@ RestrictSUIDSGID=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_VSOCK
 ProtectHostname=yes
 ProtectClock=yes
-ReadWritePaths=/etc/faas/secrets /run/faas /run/netns /srv/fc /var/log/faas /var/lib/faas/cache
+ReadWritePaths=/etc/faas/secrets /run/faas /run/netns /srv/fc /var/log/faas /var/lib/faas/cache /sys/fs/cgroup/faas.slice
 
 [Install]
 WantedBy=multi-user.target

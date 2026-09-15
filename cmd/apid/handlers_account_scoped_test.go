@@ -1,5 +1,7 @@
 package main
 
+// adr: 045
+
 // Tests for the three account-scoped list endpoints (issue #393):
 //
 //   GET /v1/instances        → listInstancesForAccount
@@ -462,14 +464,15 @@ func TestGetAppsMetrics_HappyPath_WithProm(t *testing.T) {
 		// for foo-app, 16.15/17 for bar-app) lands above the last
 		// finite bucket (0.5) so the walk returns prevNonEmptyUpper
 		// = 0.5 (the +Inf bucket is skipped per PromQL semantics).
-		if row.LatencyP50MS <= 0 {
-			t.Errorf("app %s latency_p50_ms=%.4f, want >0", slug, row.LatencyP50MS)
+		wantP50 := map[string]float64{"foo-app": 126.66666666666667, "bar-app": 85}[slug]
+		if math.Abs(row.LatencyP50MS-wantP50) > 1e-9 {
+			t.Errorf("app %s latency_p50_ms=%.6f, want %.6f", slug, row.LatencyP50MS, wantP50)
 		}
-		if math.Abs(row.LatencyP95MS-0.5) > 1e-9 {
-			t.Errorf("app %s latency_p95_ms=%.6f, want 0.5 (cap at last finite bucket)", slug, row.LatencyP95MS)
+		if math.Abs(row.LatencyP95MS-500) > 1e-9 {
+			t.Errorf("app %s latency_p95_ms=%.6f, want 500 (cap at last finite bucket)", slug, row.LatencyP95MS)
 		}
-		if math.Abs(row.LatencyP99MS-0.5) > 1e-9 {
-			t.Errorf("app %s latency_p99_ms=%.6f, want 0.5 (same fixture)", slug, row.LatencyP99MS)
+		if math.Abs(row.LatencyP99MS-500) > 1e-9 {
+			t.Errorf("app %s latency_p99_ms=%.6f, want 500 (same fixture)", slug, row.LatencyP99MS)
 		}
 	}
 }

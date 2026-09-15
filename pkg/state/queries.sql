@@ -2519,7 +2519,7 @@ ORDER BY name;
 -- (app_id, deployment_id, state, id) tuple — account_id is reachable
 -- via the existing app/deployment joins if needed by downstream
 -- code, but the per-tick hot loop doesn't pay for it here.
-SELECT id, state, app_id, deployment_id
+SELECT id, state, app_id, deployment_id, kind
 FROM instances
 WHERE node_id = $1
   AND state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
