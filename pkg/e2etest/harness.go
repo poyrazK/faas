@@ -1304,6 +1304,17 @@ var (
 // Uses the full module import path (not the ./cmd/<d> form) so the build
 // doesn't depend on the test's CWD — `go test` runs with the package
 // directory as CWD, which breaks the relative-path form.
+// FAAS_E2E_BIN_DIR overrides the temp directory with a caller-owned one and
+// makes the build incremental: a binary already present there is not rebuilt.
+//
+// The link cost is per PROCESS, and the native gate now runs the suite as
+// several phases — separate `go test` invocations — so an unshared directory
+// would pay the full link for all eight binaries once per phase. The Go build
+// cache does not help: it caches compiled packages, never the final link. The
+// gate builds them once into a stage directory and points every phase at it.
+//
+// Unset keeps the previous behaviour exactly (fresh temp dir per process),
+// which is what ordinary CI and local runs want.
 func EnsureSharedBinaries() (string, error) {
 	sharedBinOnce.Do(func() {
 		mod, err := moduleImportPath()
@@ -1311,12 +1322,24 @@ func EnsureSharedBinaries() (string, error) {
 			sharedBinErr = err
 			return
 		}
-		dir, err := os.MkdirTemp("", "faas-e2e-bin-*")
-		if err != nil {
-			sharedBinErr = fmt.Errorf("e2etest: mkdir shared bin dir: %w", err)
-			return
+		dir := strings.TrimSpace(os.Getenv("FAAS_E2E_BIN_DIR"))
+		if dir != "" {
+			if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+				sharedBinErr = fmt.Errorf("e2etest: mkdir FAAS_E2E_BIN_DIR %q: %w", dir, mkErr)
+				return
+			}
+		} else {
+			dir, err = os.MkdirTemp("", "faas-e2e-bin-*")
+			if err != nil {
+				sharedBinErr = fmt.Errorf("e2etest: mkdir shared bin dir: %w", err)
+				return
+			}
 		}
 		for _, d := range DaemonBinaries {
+			// Already built by a previous phase into a shared FAAS_E2E_BIN_DIR.
+			if binaryPresent(filepath.Join(dir, d)) {
+				continue
+			}
 			var out bytes.Buffer
 			args := []string{"build"}
 			if daemonBuildTags != "" {
@@ -1333,6 +1356,9 @@ func EnsureSharedBinaries() (string, error) {
 			}
 		}
 		for _, h := range StaticHelperBinaries {
+			if binaryPresent(filepath.Join(dir, h)) {
+				continue
+			}
 			var out bytes.Buffer
 			cmd := exec.Command("go", "build",
 				"-o", filepath.Join(dir, h), mod+"/cmd/"+h)
@@ -1351,12 +1377,28 @@ func EnsureSharedBinaries() (string, error) {
 	return sharedBinDir, sharedBinErr
 }
 
+// binaryPresent reports whether path is a non-empty executable regular file.
+// A zero-length or half-written file from an interrupted build must be
+// rebuilt, not reused — exec would fail with a far less obvious error.
+func binaryPresent(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() &&
+		info.Size() > 0 && info.Mode().Perm()&0o111 != 0
+}
+
 // RemoveSharedBinaries deletes the directory EnsureSharedBinaries created.
 // Intended for TestMain after m.Run; safe to call when nothing was built.
+//
+// A caller-supplied FAAS_E2E_BIN_DIR is NOT removed: it is shared by later
+// phases, and the process that happens to finish first does not own it.
 func RemoveSharedBinaries() {
-	if sharedBinDir != "" {
-		_ = os.RemoveAll(sharedBinDir)
+	if sharedBinDir == "" {
+		return
 	}
+	if strings.TrimSpace(os.Getenv("FAAS_E2E_BIN_DIR")) != "" {
+		return
+	}
+	_ = os.RemoveAll(sharedBinDir)
 }
 
 // buildBinaries is the *testing.T-flavoured wrapper the Start variants use:

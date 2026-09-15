@@ -43,6 +43,8 @@ done
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/ci/native-e2e-verdict.sh
 source "${repo_root}/scripts/ci/native-e2e-verdict.sh"
+# shellcheck source=scripts/ci/native-e2e-phases.sh
+source "${repo_root}/scripts/ci/native-e2e-phases.sh"
 marker_sha="$(tr -d '\n' < "${repo_root}/.faas-e2e-source-sha")"
 [[ "${marker_sha}" == "${FAAS_E2E_SOURCE_SHA}" ]] ||
   die "source archive marker ${marker_sha} does not match ${FAAS_E2E_SOURCE_SHA}"
@@ -355,22 +357,69 @@ done
 # Passed to make through the ENVIRONMENT, never through RUN_ARGS: Make eats the
 # trailing `$` and the shell then chokes on the unquoted `(` and `|`, which ran
 # zero tests on 2026-09-13 while every guard reported healthy.
-RUN_REGEX="^($(printf '%s\n' "${metal_tests}" | paste -sd'|' -))$"
+# Phases must be an exact partition of the derived set. Checked on every run,
+# not just in the contract test: a metal file added without a phase would
+# otherwise never execute while the suite still reported 50 tests.
+native_e2e_assert_phase_partition "${repo_root}" ||
+  die "the metal phases are not a partition of the metal suite"
+
+# FAAS_E2E_PHASE selects one phase; unset runs the whole suite as before, which
+# keeps `bash scripts/ci/run-native-e2e.sh` usable by hand.
+phase="${FAAS_E2E_PHASE:-}"
+if [[ -n "${phase}" ]]; then
+  printf '%s\n' "${NATIVE_E2E_PHASES[@]}" | grep -qx "${phase}" ||
+    die "unknown phase ${phase}; known: ${NATIVE_E2E_PHASES[*]}"
+  RUN_REGEX="$(native_e2e_phase_regex "${phase}" "${repo_root}")"
+  run_count="$(native_e2e_phase_tests "${phase}" "${repo_root}" | grep -c . || true)"
+  echo "native e2e: phase ${phase} — ${run_count} of ${metal_test_count} metal tests"
+  native_e2e_phase_tests "${phase}" "${repo_root}" | sed 's/^/  - /'
+  e2e_log="${FAAS_E2E_TRANSFER_ROOT:-/var/tmp}/cmd-e2e-${phase}.log"
+  # Per-phase budget. The whole-suite 75m was one opaque ceiling; a phase that
+  # wedges now fails its own step instead of consuming the run's remaining
+  # time. build is the outlier — real builder microVMs, 10 min each.
+  case "${phase}" in
+    build) phase_timeout=40m ;;
+    twonode | deploy | streaming) phase_timeout=25m ;;
+    *) phase_timeout=15m ;;
+  esac
+else
+  # Passed to make through the ENVIRONMENT, never through RUN_ARGS: Make eats the
+  # trailing `$` and the shell then chokes on the unquoted `(` and `|`, which ran
+  # zero tests on 2026-09-13 while every guard reported healthy.
+  RUN_REGEX="^($(printf '%s\n' "${metal_tests}" | paste -sd'|' -))$"
+  echo "native e2e: run ${metal_test_count} metal-tagged tests from ./cmd/e2e"
+  e2e_log="${FAAS_E2E_TRANSFER_ROOT:-/var/tmp}/cmd-e2e.log"
+  phase_timeout=75m
+fi
 export RUN_REGEX
-echo "native e2e: run ${metal_test_count} metal-tagged tests from ./cmd/e2e"
+
+# Compile the daemons once into a stage-owned directory and let every phase
+# reuse them. The link is per process and is NOT covered by the Go build cache,
+# so without this each phase would re-link all eight binaries.
+export FAAS_E2E_BIN_DIR="${stage_root}/bin"
+mkdir -p "${FAAS_E2E_BIN_DIR}"
+
 # Distinct from the transient unit's own native-e2e.log: the unit already
 # appends this script's stdout there, and tee-ing into the same file would
 # interleave every line with itself and corrupt the tally greps below.
-e2e_log="${FAAS_E2E_TRANSFER_ROOT:-/var/tmp}/cmd-e2e.log"
 set +e
 make GO="${FAAS_E2E_GO}" PKGS=./cmd/e2e/... \
-  RUN_ARGS='-timeout=75m -v' test-metal 2>&1 | tee "${e2e_log}"
+  RUN_ARGS="-timeout=${phase_timeout} -v" test-metal 2>&1 | tee "${e2e_log}"
 e2e_rc="${PIPESTATUS[0]}"
 set -e
 
 # Tally + required-test contract. The rules live in native-e2e-verdict.sh so
 # run-native-e2e_test.sh can drive them with synthetic go-test output instead
 # of grepping this file for its own strings.
-native_e2e_verdict "${e2e_log}" || e2e_rc=1
+#
+# The required-test contract is a WHOLE-SUITE claim: no single phase contains
+# all eight required tests, so applying it per phase would fail every phase for
+# tests it was never meant to run. In phase mode report the phase's own tally
+# and let the workflow's final verdict step own the contract.
+if [[ -n "${phase}" ]]; then
+  native_e2e_phase_tally "${e2e_log}" "${phase}" || e2e_rc=1
+else
+  native_e2e_verdict "${e2e_log}" || e2e_rc=1
+fi
 
 exit "${e2e_rc}"

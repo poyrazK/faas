@@ -129,6 +129,22 @@
           args:
             executable: /bin/bash
 
+    # vmmd writes each microVM's serial console to
+    # /var/log/faas/vm-<instance>.console. That file is the ONLY view inside a
+    # guest — it is what identified "guest-init: build failed: registry DNS
+    # preflight: signal: killed" as the real cause of every builder failure,
+    # after three host-side fixes had each removed a real defect without
+    # touching it. The directory is not created by any role, so on a dedicated
+    # host every builder VM ran blind and a stalled build looked identical to a
+    # hung one.
+    - name: native acceptance — ensure /var/log/faas exists (guest serial consoles)
+      ansible.builtin.file:
+        path: /var/log/faas
+        state: directory
+        owner: root
+        group: faas
+        mode: "0750"
+
     # Asserted by roles/_shared/tasks/sealed_env_split_perm_asserts.yml, and
     # applied unconditionally so a hand-provisioned host converges too.
     - name: native acceptance — pin fleet identity permissions

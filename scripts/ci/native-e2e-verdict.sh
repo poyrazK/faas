@@ -110,3 +110,43 @@ native_e2e_verdict() {
   echo "native e2e: required chain executed; ${passed} passed, ${skipped} skipped"
   return 0
 }
+
+# native_e2e_phase_tally reports one phase's result.
+#
+# Deliberately NOT native_e2e_verdict: the required-test contract is a
+# whole-suite claim (its eight tests span several phases), so applying it per
+# phase would fail every phase for tests it was never asked to run. The
+# workflow's final verdict step owns that contract across the phases' logs.
+#
+# What still holds per phase: a phase that executed nothing is a failure. That
+# is the retired metal job's exact failure mode — a filter that matches no test
+# reports "ok" and looks green.
+native_e2e_phase_tally() {
+  local log="$1" phase="$2"
+  local rc=0 passed skipped failed
+
+  if [[ ! -r "${log}" ]]; then
+    echo "native e2e: phase ${phase}: test log is unreadable: ${log}" >&2
+    return 1
+  fi
+
+  passed="$(grep -cE '^--- PASS: ' "${log}" || true)"
+  skipped="$(grep -cE '^--- SKIP: ' "${log}" || true)"
+  failed="$(grep -cE '^--- FAIL: ' "${log}" || true)"
+  echo "native e2e: phase ${phase} — ${passed} passed, ${skipped} skipped, ${failed} failed"
+
+  if [[ "${failed}" -gt 0 ]]; then
+    echo "native e2e: phase ${phase} failures:"
+    grep -E '^--- FAIL: ' "${log}" | sed 's/^/  /'
+  fi
+  if [[ "${skipped}" -gt 0 ]]; then
+    echo "native e2e: phase ${phase} skips (each names the fixture it wants):"
+    grep -E '^--- SKIP: ' "${log}" | sed 's/^/  /'
+  fi
+
+  if [[ "${passed}" -eq 0 && "${skipped}" -eq 0 && "${failed}" -eq 0 ]]; then
+    echo "native e2e: phase ${phase} executed no test at all; its -run filter matched nothing" >&2
+    rc=1
+  fi
+  return "${rc}"
+}

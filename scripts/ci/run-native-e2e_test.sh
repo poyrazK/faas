@@ -333,4 +333,20 @@ grep -Fq 'export FAAS_PUBLIC_IFACE' "${runner}" ||
 grep -Fq 'does not exist on this host' "${runner}" ||
   fail "the wrapper does not verify the outward NIC exists"
 
+# Phase mode. The gate now runs the suite as named phases so a failure names a
+# layer instead of "the gate is red"; the wrapper must honour FAAS_E2E_PHASE
+# and must still refuse an unpartitioned tree.
+grep -Fq 'FAAS_E2E_PHASE' "${runner}" ||
+  fail "the wrapper does not support phase mode"
+grep -Fq 'native_e2e_assert_phase_partition' "${runner}" ||
+  fail "the wrapper does not assert the phases partition the metal suite"
+# Compiling once and sharing the binaries is what keeps N phases from paying N
+# link costs; the Go build cache does not cover the final link.
+grep -Fq 'FAAS_E2E_BIN_DIR' "${runner}" ||
+  fail "the wrapper does not share compiled daemons across phases"
+# Whole-suite contract must NOT be applied per phase: no phase holds all eight
+# required tests, so it would fail every phase for tests it never ran.
+grep -Fq 'native_e2e_phase_tally' "${runner}" ||
+  fail "the wrapper applies the whole-suite verdict to a single phase"
+
 echo "native e2e wrapper contracts OK"
