@@ -2419,19 +2419,19 @@ type DomainDoctorObservation struct {
 
 // Cron is a scheduled synthetic POST through gatewayd-internal (spec §4.3).
 type Cron struct {
-	ID            string
-	AppID         string
-	Schedule      string // cron expression
-	Path          string
-	Enabled       bool
+	ID       string
+	AppID    string
+	Schedule string // cron expression
+	Path     string
+	Enabled  bool
 	// SuspendedReason is set by the scheduler when customer intent remains
 	// enabled but the app has no live deployment. A later successful deploy
 	// clears it without re-enabling a cron the customer disabled explicitly.
 	SuspendedReason string
-	Timezone      string // IANA timezone; empty is normalized to UTC
-	SkipIfRunning bool   // skip a scheduled fire while a prior cron run is active
-	CreatedAt     time.Time
-	LastFiredAt   time.Time // zero until first fire; updated by MarkCronFired
+	Timezone        string // IANA timezone; empty is normalized to UTC
+	SkipIfRunning   bool   // skip a scheduled fire while a prior cron run is active
+	CreatedAt       time.Time
+	LastFiredAt     time.Time // zero until first fire; updated by MarkCronFired
 }
 
 const CronSuspendedNoLiveDeployment = "no_live_deployment"

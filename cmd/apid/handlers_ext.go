@@ -4920,15 +4920,15 @@ func cronResponse(c state.Cron) api.CronResponse {
 		c.Timezone = defaultCronTimezone
 	}
 	resp := api.CronResponse{
-		ID:            c.ID,
-		AppID:         c.AppID,
-		Schedule:      c.Schedule,
-		Path:          c.Path,
-		Enabled:       c.Enabled,
+		ID:              c.ID,
+		AppID:           c.AppID,
+		Schedule:        c.Schedule,
+		Path:            c.Path,
+		Enabled:         c.Enabled,
 		SuspendedReason: c.SuspendedReason,
-		Timezone:      c.Timezone,
-		SkipIfRunning: c.SkipIfRunning,
-		CreatedAt:     c.CreatedAt.UTC().Format(time.RFC3339),
+		Timezone:        c.Timezone,
+		SkipIfRunning:   c.SkipIfRunning,
+		CreatedAt:       c.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
