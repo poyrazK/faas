@@ -206,7 +206,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Resolve the sidecar through the same backend as the base; deriving it
 	// from builderBasePath is wrong whenever that path came from the OCI
 	// read-through cache. Empty keeps the sibling derivation.
-	builderBaseDigestPath, err := resolveBuilderBaseDigestPath(sourceStorage)
+	builderBaseDigestPath, err := resolveBuilderBaseDigestPath(ctx, sourceStorage)
 	if err != nil {
 		return err
 	}
@@ -536,7 +536,7 @@ func resolveBuilderBasePath(configured string, sourceStorage storage.StorageBack
 // pkg/builderd to keep the sibling derivation — correct for the local backend
 // and the right fallback for a cold cache, where readiness stays false with an
 // actionable error until imaged pre-stage fills it.
-func resolveBuilderBaseDigestPath(sourceStorage storage.StorageBackend) (string, error) {
+func resolveBuilderBaseDigestPath(ctx context.Context, sourceStorage storage.StorageBackend) (string, error) {
 	if sourceStorage == nil {
 		return "", nil
 	}
@@ -548,6 +548,47 @@ func resolveBuilderBaseDigestPath(sourceStorage storage.StorageBackend) (string,
 	path, local, err := resolver.LocalPath(key)
 	if err != nil {
 		return "", fmt.Errorf("builderd: resolve builder base digest sidecar %q: %w", key, err)
+	}
+	if local && strings.TrimSpace(path) != "" {
+		return path, nil
+	}
+
+	// Not in the read-through cache yet. Returning "" here sends the caller
+	// back to the sibling derivation (builderBase + ".digest"), and under an
+	// OCI backend the base is a content-addressed blob whose sibling can never
+	// exist — so every build fails with
+	//
+	//   stat builder base digest sidecar:
+	//   /var/lib/faas/cache/<aa>/<hash>.digest: no such file or directory
+	//
+	// That is issue #2577 returning by a different route: #2578 stopped
+	// DERIVING the path but still gave up when the sidecar had not been pulled.
+	// A node that has never staged this base (a fresh acceptance host) is
+	// exactly that case, while the node the fix was written on happened to
+	// have it cached.
+	//
+	// Pull it. The sidecar is a few hundred bytes, the cache is read-through,
+	// and this runs once at builderd startup.
+	cache, relKey, routeErr := storage.CacheBackendForKey(sourceStorage, key)
+	if routeErr != nil {
+		return "", fmt.Errorf("builderd: route builder base digest sidecar %q: %w", key, routeErr)
+	}
+	if cache == nil {
+		return "", nil
+	}
+	rc, refreshErr := cache.Refresh(ctx, relKey)
+	if refreshErr != nil {
+		// Readiness stays false with an actionable error rather than builderd
+		// refusing to start: imaged pre-stage may still be in flight.
+		return "", nil
+	}
+	if closeErr := rc.Close(); closeErr != nil {
+		return "", fmt.Errorf("builderd: close refreshed digest sidecar %q: %w", key, closeErr)
+	}
+
+	path, local, err = resolver.LocalPath(key)
+	if err != nil {
+		return "", fmt.Errorf("builderd: re-resolve builder base digest sidecar %q: %w", key, err)
 	}
 	if local && strings.TrimSpace(path) != "" {
 		return path, nil

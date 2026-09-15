@@ -10,6 +10,7 @@ package main
 // sidecar: no such file or directory".
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,7 +39,7 @@ func TestResolveBuilderBaseDigestPath_ResolvesThroughStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := resolveBuilderBaseDigestPath(be)
+	got, err := resolveBuilderBaseDigestPath(context.Background(), be)
 	if err != nil {
 		t.Fatalf("resolveBuilderBaseDigestPath: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestResolveBuilderBaseDigestPath_UsesTheDigestKeyNotTheBaseKey(t *testing.T
 		}
 	}
 
-	got, err := resolveBuilderBaseDigestPath(be)
+	got, err := resolveBuilderBaseDigestPath(context.Background(), be)
 	if err != nil {
 		t.Fatalf("resolveBuilderBaseDigestPath: %v", err)
 	}
@@ -110,7 +111,7 @@ func TestResolveBuilderBaseDigestPath_EmptyWhenNotLocallyResolvable(t *testing.T
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveBuilderBaseDigestPath(tc.backend(t))
+			got, err := resolveBuilderBaseDigestPath(context.Background(), tc.backend(t))
 			if err != nil {
 				t.Fatalf("resolveBuilderBaseDigestPath: %v", err)
 			}
@@ -134,7 +135,7 @@ func TestResolveBuilderBaseDigestPath_LocalBackendAbsentSidecarMatchesTheSibling
 		t.Fatal(err)
 	}
 
-	got, err := resolveBuilderBaseDigestPath(be)
+	got, err := resolveBuilderBaseDigestPath(context.Background(), be)
 	if err != nil {
 		t.Fatalf("resolveBuilderBaseDigestPath: %v", err)
 	}
@@ -148,5 +149,66 @@ func TestResolveBuilderBaseDigestPath_LocalBackendAbsentSidecarMatchesTheSibling
 	}
 	if _, statErr := os.Stat(got); statErr == nil {
 		t.Fatal("fixture unexpectedly created the sidecar; this test covers the absent case")
+	}
+}
+
+// The regression that reopened #2577 by a different route.
+//
+// #2578 stopped DERIVING the sidecar path, but still returned "" when the
+// sidecar had not yet been pulled into the read-through cache — and "" sends
+// the caller straight back to the sibling derivation, which under an OCI
+// backend is a content-addressed blob whose sibling can never exist:
+//
+//	stat builder base digest sidecar:
+//	/var/lib/faas/cache/<aa>/<hash>.digest: no such file or directory
+//
+// A node that has never staged this base is exactly that case. The node the
+// original fix was written on happened to have it cached, which is why it
+// looked complete. The resolver must now PULL the sidecar rather than give up.
+func TestResolveBuilderBaseDigestPath_WarmsAColdCache(t *testing.T) {
+	// A LocalCacheBackend over an origin that holds the sidecar: the shape of
+	// an OCI-backed node whose cache has not seen this key yet.
+	origin := t.TempDir()
+	key := sched.BaseDigestKey("builder")
+	originPath := filepath.Join(origin, key)
+	if err := os.MkdirAll(filepath.Dir(originPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := "sha256:deadbeef\nfaas-base-layout-v3\n"
+	if err := os.WriteFile(originPath, []byte(want), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	originBackend, err := storage.NewLocalStorageBackend(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The parent must NOT be a LocalPathResolver. LocalCacheBackend asks the
+	// parent first and returns its path directly when it can, so a
+	// locally-resolvable parent never exercises the cold-cache branch at all —
+	// which is how an earlier version of this test passed against both the
+	// fixed and the unfixed resolver. An OCI backend is not locally
+	// resolvable; nonResolvingBackend reproduces that.
+	cacheDir := t.TempDir()
+	cache, err := storage.NewLocalCacheBackend(
+		nonResolvingBackend{StorageBackend: originBackend}, cacheDir, 1<<30)
+	if err != nil {
+		t.Skipf("cache backend unavailable in this build: %v", err)
+	}
+
+	got, err := resolveBuilderBaseDigestPath(context.Background(), cache)
+	if err != nil {
+		t.Fatalf("resolveBuilderBaseDigestPath on a cold cache: %v", err)
+	}
+	if got == "" {
+		t.Fatal("resolver gave up on a cold cache; the caller then derives " +
+			"builderBase + \".digest\", which cannot exist under an OCI backend")
+	}
+	data, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("resolved path %q is not readable after the warm: %v", got, err)
+	}
+	if string(data) != want {
+		t.Errorf("warmed sidecar holds %q, want %q", string(data), want)
 	}
 }
