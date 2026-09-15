@@ -1024,7 +1024,7 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-])
 
 Run untrusted code in an isolated disposable microVM
 
-`gregale run [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--wait] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1038,6 +1038,7 @@ Run untrusted code in an isolated disposable microVM
 | `--ephemeral-disk-mb <N>` | ephemeral scratch size |  |
 | `--max-output-bytes <N>` | combined output cap |  |
 | `--wait` | wait for terminal result |  |
+| `--watch` | stream live output while waiting |  |
 | `--poll-interval <D>` | status polling interval with --wait |  |
 | `--wait-timeout <D>` | maximum client wait duration |  |
 

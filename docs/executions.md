@@ -12,11 +12,19 @@ ephemeral scratch filesystem.
 
 ```sh
 gregale run --runtime node22 --file handler.js --input '{"url":"https://example.invalid"}' --wait
+gregale run --runtime node22 --file handler.js --watch
+gregale run --runtime node22 --file handler.js --watch --json
 gregale run --runtime node22 --dir . --entrypoint src/index.mjs --wait
 gregale runs list --status running --json
 gregale runs status <execution-id>
 gregale runs cancel <execution-id>
 ```
+
+`--watch` implies `--wait` and follows the resumable execution event stream,
+printing stdout/stderr as they arrive. If the connection drops, the CLI
+reconnects from the last event ID without duplicating output. Combine it with
+`--json` to emit one NDJSON object per event (`type`, `id`, and `data`); the
+terminal event also includes the complete `receipt` for agent consumers.
 
 `--input` accepts inline JSON, `@path.json`, or `-` for stdin. `--file` accepts
 only a regular, non-symlink file. `--dir` walks regular files below the

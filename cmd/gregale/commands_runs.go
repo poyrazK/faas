@@ -9,9 +9,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -36,16 +39,17 @@ func cmdRun(args []string) int {
 	diskMB := fs.Int("ephemeral-disk-mb", 0, "ephemeral scratch size in MB")
 	maxOutputBytes := fs.Int("max-output-bytes", 0, "combined stdout/stderr/result cap")
 	wait := fs.Bool("wait", false, "wait for the terminal result")
+	watch := fs.Bool("watch", false, "stream live output while waiting for the terminal result")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval when --wait is set")
 	waitTimeout := fs.Duration("wait-timeout", executionWaitTimeoutDefault, "maximum client wait duration")
-	flags, positional := splitArgsForFlags(args, "wait")
+	flags, positional := splitArgsForFlags(args, "wait", "watch")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	legacyMode := *source != "" || *file != ""
 	bundleMode := *dir != ""
 	if len(positional) != 0 || (legacyMode && bundleMode) || (!legacyMode && !bundleMode) || (*source != "" && *file != "") || (bundleMode && *entrypoint == "") || (!bundleMode && *entrypoint != "") {
-		PrintUsage(osStderr, "usage: gregale run --runtime R (--source CODE | --file PATH | --dir PATH --entrypoint FILE) [--input J|@file|-] [--wait]", "run")
+		PrintUsage(osStderr, "usage: gregale run --runtime R (--source CODE | --file PATH | --dir PATH --entrypoint FILE) [--input J|@file|-] [--wait|--watch]", "run")
 		return 1
 	}
 	if *pollInterval <= 0 || *waitTimeout <= 0 {
@@ -95,7 +99,7 @@ func cmdRun(args []string) int {
 	if err != nil {
 		return printErr("Run submission failed", err)
 	}
-	if !*wait {
+	if !*wait && !*watch {
 		if jsonOutput {
 			return jsonOut(writeJSON(resp))
 		}
@@ -103,8 +107,33 @@ func cmdRun(args []string) int {
 		return 0
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *waitTimeout)
+	waitContext := context.Background()
+	if *watch {
+		var stop func()
+		waitContext, stop = signal.NotifyContext(waitContext, os.Interrupt)
+		defer stop()
+	}
+	ctx, cancel := context.WithTimeout(waitContext, *waitTimeout)
 	defer cancel()
+	if *watch {
+		resp, err = watchExecution(ctx, client, resp.ID)
+		if err != nil {
+			if errors.Is(err, context.Canceled) && waitContext.Err() != nil {
+				return 130
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return printErr("Run wait timed out", err)
+			}
+			return printErr("Run watch failed", err)
+		}
+		if jsonOutput {
+			if resp.Status != api.ExecutionStatusSucceeded {
+				return 1
+			}
+			return 0
+		}
+		return renderExecutionTerminalSummary(resp)
+	}
 	for !resp.Status.Terminal() {
 		select {
 		case <-ctx.Done():
@@ -247,6 +276,17 @@ func resolveExecutionInput(s string) ([]byte, error) {
 }
 
 func renderExecutionTerminal(resp api.ExecutionResponse) int {
+	code := renderExecutionTerminalSummary(resp)
+	if resp.Stdout != "" {
+		_, _ = fmt.Fprint(osStdout, resp.Stdout)
+	}
+	if resp.Stderr != "" {
+		_, _ = fmt.Fprint(osStderr, resp.Stderr)
+	}
+	return code
+}
+
+func renderExecutionTerminalSummary(resp api.ExecutionResponse) int {
 	if resp.Status == api.ExecutionStatusSucceeded {
 		PrintOK(osStdout, "Run %s succeeded.", resp.ID)
 	} else {
@@ -254,12 +294,6 @@ func renderExecutionTerminal(resp api.ExecutionResponse) int {
 	}
 	if resp.Result != nil {
 		_, _ = fmt.Fprintln(osStdout, string(resp.Result))
-	}
-	if resp.Stdout != "" {
-		_, _ = fmt.Fprint(osStdout, resp.Stdout)
-	}
-	if resp.Stderr != "" {
-		_, _ = fmt.Fprint(osStderr, resp.Stderr)
 	}
 	if resp.Status != api.ExecutionStatusSucceeded {
 		return 1

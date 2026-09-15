@@ -892,6 +892,7 @@ var cliCommands = []cliCommand{
 			{Name: "ephemeral-disk-mb", Short: "ephemeral scratch size", Value: "N"},
 			{Name: "max-output-bytes", Short: "combined output cap", Value: "N"},
 			{Name: "wait", Short: "wait for terminal result"},
+			{Name: "watch", Short: "stream live output while waiting"},
 			{Name: "poll-interval", Short: "status polling interval with --wait", Value: "D"},
 			{Name: "wait-timeout", Short: "maximum client wait duration", Value: "D"},
 		},
