@@ -362,4 +362,39 @@ leak_line="$(grep -n 'leakcheck.sh' "${runner}" | head -1 | cut -d: -f1)"
 [[ -n "${reap_line}" && -n "${leak_line}" && "${reap_line}" -lt "${leak_line}" ]] ||
   fail "reaping must run BEFORE leakcheck, or leakcheck can never fail"
 
+# Shared staging must survive a phase. The transfer root holds the source tree
+# and the pinned Go toolchain; the stage root holds guest-init and the daemons
+# compiled once for every phase. A per-phase cleanup that removes either
+# destroys the run — and did: phase 1 finishes in about a minute and scheduled
+# `find <transfer_root> -delete` five minutes out, so the source tree vanished
+# mid-run and later phases had nothing to build from.
+grep -Fq 'phase ${FAAS_E2E_PHASE} leaves shared staging' "${runner}" ||
+  fail "the wrapper removes shared staging inside a phase; later phases lose the source tree"
+
+# The run must still clean up, or every dispatch leaks a source tree + toolchain.
+workflow="${repo_root}/.github/workflows/e2e-native.yml"
+[[ -r "${workflow}" ]] || fail "missing ${workflow}"
+grep -Fq 'faas-canary-artifacts finish' "${workflow}" ||
+  fail "the workflow never finishes the transfer root"
+grep -Fq "rm -rf '\$stage_root'" "${workflow}" ||
+  fail "the workflow never removes the stage root that phases no longer clean"
+
+# The two paths are built independently in bash and in YAML; if they drift the
+# workflow silently removes nothing and the node fills up.
+runner_stage="$(grep -oE 'stage_root="/srv/fc/acceptance/e2e-[^"]+"' "${runner}" | head -1)"
+wf_stage="$(grep -oE 'stage_root="/srv/fc/acceptance/e2e-[^"]+"' "${workflow}" | head -1)"
+[[ -n "${runner_stage}" && -n "${wf_stage}" ]] ||
+  fail "could not locate both stage_root definitions"
+# Normalise the variable names: the runner uses FAAS_E2E_SOURCE_SHA/run_id,
+# the workflow uses SOURCE_SHA/GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT, and run_id IS
+# "<run id>-<attempt>". What must match is the literal prefix and the shape.
+runner_norm="${runner_stage//FAAS_E2E_SOURCE_SHA/SHA}"
+runner_norm="${runner_norm//\$\{run_id\}/RUN}"
+wf_norm="${wf_stage//SOURCE_SHA/SHA}"
+wf_norm="${wf_norm//\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}/RUN}"
+[[ "${runner_norm}" == "${wf_norm}" ]] ||
+  fail "stage_root drifted between the wrapper and the workflow:
+  wrapper:  ${runner_stage}
+  workflow: ${wf_stage}"
+
 echo "native e2e wrapper contracts OK"

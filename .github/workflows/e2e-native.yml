@@ -344,6 +344,8 @@ jobs:
 
       - name: Collect log and remove remote transfer bundle
         if: always() && steps.auth.outcome == 'success'
+        env:
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -357,6 +359,14 @@ jobs:
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
             --command "sudo /usr/local/sbin/faas-canary-artifacts finish --path '$remote_root' --state '$cleanup_state'"
+          # The stage root is shared by every phase (guest-init, and the
+          # daemons compiled once for all of them), so no single phase may
+          # remove it — see the phase branch in run-native-e2e.sh's cleanup.
+          # The run owns it, here, on every exit path.
+          stage_root="/srv/fc/acceptance/e2e-${SOURCE_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo rm -rf '$stage_root'" || true
 
       # Every phase runs with continue-on-error so one broken layer cannot hide
       # the state of the others — that is the whole point of the split. This

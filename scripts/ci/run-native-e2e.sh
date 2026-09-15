@@ -273,10 +273,23 @@ cleanup() {
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
 
-  rm -rf "${stage_root}"
-  if [[ -n "${transfer_root}" ]]; then
-    systemd-run --quiet --collect --unit="faas-native-e2e-clean-${run_id}" \
-      --on-active=5m /usr/bin/find "${transfer_root}" -depth -delete >/dev/null 2>&1
+  # In phase mode these are SHARED with the phases that follow: the transfer
+  # root holds the source tree and the pinned Go toolchain, and the stage root
+  # holds the guest-init and the daemons compiled once for every phase to
+  # reuse. A per-phase cleanup that removes them destroys the run.
+  #
+  # It did exactly that. Phase 1 (fixtures) finishes in about a minute and
+  # scheduled `find <transfer_root> -delete` for five minutes later; by the
+  # time the build phase was underway the source tree was gone. The workflow's
+  # own finish step owns both paths across the whole run.
+  if [[ -n "${FAAS_E2E_PHASE:-}" ]]; then
+    echo "native e2e: phase ${FAAS_E2E_PHASE} leaves shared staging for the run to clean"
+  else
+    rm -rf "${stage_root}"
+    if [[ -n "${transfer_root}" ]]; then
+      systemd-run --quiet --collect --unit="faas-native-e2e-clean-${run_id}" \
+        --on-active=5m /usr/bin/find "${transfer_root}" -depth -delete >/dev/null 2>&1
+    fi
   fi
 
   if [[ "${rc}" -eq 0 ]]; then
