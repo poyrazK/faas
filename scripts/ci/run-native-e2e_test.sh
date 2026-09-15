@@ -349,4 +349,17 @@ grep -Fq 'FAAS_E2E_BIN_DIR' "${runner}" ||
 grep -Fq 'native_e2e_phase_tally' "${runner}" ||
   fail "the wrapper applies the whole-suite verdict to a single phase"
 
+# Orphan reaping. A wedged builder VM outlives the test that owns it and then
+# makes the NEXT run's pre-flight refuse the node ("Firecracker workloads are
+# active"). Every phase of run 34971983239's predecessor failed in 3s for
+# exactly that reason.
+grep -Fq 'reap_test_microvms' "${runner}" ||
+  fail "the wrapper does not reap microVMs it left running; the next run will be refused"
+# Order matters: leakcheck is the assertion that the node is clean. Reaping
+# after it would make it permanently unable to fail.
+reap_line="$(grep -n 'reap_test_microvms$' "${runner}" | tail -1 | cut -d: -f1)"
+leak_line="$(grep -n 'leakcheck.sh' "${runner}" | head -1 | cut -d: -f1)"
+[[ -n "${reap_line}" && -n "${leak_line}" && "${reap_line}" -lt "${leak_line}" ]] ||
+  fail "reaping must run BEFORE leakcheck, or leakcheck can never fail"
+
 echo "native e2e wrapper contracts OK"

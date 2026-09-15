@@ -192,11 +192,70 @@ mkdir -p "${stage_root}" "${cache_root}/go-build" "${cache_root}/go-mod" \
   "${cache_root}/home"
 : > "${active_services}"
 
+# reap_test_microvms destroys microVMs this run left behind, plus the host
+# resources that outlive them.
+#
+# A builder VM that wedges rides out its timeout, and the test that owns it
+# gives up and moves on — but nothing destroys the VM. It then survives the
+# whole run, and the NEXT run's pre-flight refuses the node outright:
+#
+#   native e2e: Firecracker workloads are active; drain the designated
+#   acceptance node before retrying
+#
+# Observed on 2026-09-15: two builder VMs orphaned by run 34964279616 (one had
+# been alive 15m52s against a 10-minute budget) made every phase of the next
+# run fail in three seconds. The pre-flight is right to refuse — a dirty node
+# makes leakcheck meaningless — so the fix is to not leave it dirty.
+#
+# Scoped to build-* instances: those belong to this suite. A VM the operator
+# is running for another reason is not ours to kill, and on a DEDICATED
+# acceptance host there should be none anyway.
+reap_test_microvms() {
+  local reaped=0 ns m c d
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    kill -TERM "${pid}" 2>/dev/null && reaped=$((reaped + 1))
+  done < <(pgrep -f 'firecracker-v[0-9]' 2>/dev/null)
+  [[ "${reaped}" -eq 0 ]] || sleep 3
+  pkill -KILL -f 'firecracker-v[0-9]' 2>/dev/null
+
+  while IFS= read -r ns; do
+    [[ -n "${ns}" ]] || continue
+    ip netns delete "${ns}" 2>/dev/null
+  done < <(ip netns list 2>/dev/null | awk '/^fc-/{print $1}')
+
+  # Lazy umount, deepest first: a jail chroot cannot be removed while its
+  # bind mounts are live, and they nest.
+  while IFS= read -r m; do
+    [[ -n "${m}" ]] || continue
+    umount -l "${m}" 2>/dev/null
+  done < <(awk '/firecracker-v[0-9]/{print $2}' /proc/mounts | sort -r)
+
+  rm -rf /srv/fc/jail/firecracker-v*/build-* 2>/dev/null
+
+  for c in /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/build-*; do
+    [[ -d "${c}" ]] && rmdir "${c}" 2>/dev/null
+  done
+
+  while IFS= read -r d; do
+    [[ -n "${d}" ]] || continue
+    ip link delete "${d}" 2>/dev/null
+  done < <(ip -brief link show 2>/dev/null | awk '/^vh[0-9]/{print $1}' | cut -d@ -f1)
+
+  [[ "${reaped}" -eq 0 ]] ||
+    echo "native e2e: reaped ${reaped} microVM(s) this run left running"
+}
+
 cleanup() {
   local rc=$?
   local restore_failed=0
   trap - EXIT HUP INT TERM
   set +e
+
+  # Before leakcheck, not after: leakcheck is the ASSERTION that the node is
+  # clean. Reaping afterwards would make it permanently unable to fail.
+  reap_test_microvms
 
   if ! bash "${repo_root}/deploy/scripts/leakcheck.sh"; then
     echo "native e2e: final leak check failed" >&2
