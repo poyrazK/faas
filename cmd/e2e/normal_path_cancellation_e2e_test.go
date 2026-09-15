@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -100,6 +101,10 @@ func TestE2E_NormalPath_CancelledResponseClosesBridge(t *testing.T) {
 	}
 	req.Host = f.host
 	client := *f.h.HTTPClient()
+	responseRelease := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseResponse := func() { releaseOnce.Do(func() { close(responseRelease) }) }
+	defer releaseResponse()
 	type responseResult struct {
 		resp *http.Response
 		err  error
@@ -108,6 +113,10 @@ func TestE2E_NormalPath_CancelledResponseClosesBridge(t *testing.T) {
 	go func() {
 		resp, requestErr := client.Do(req)
 		responseDone <- responseResult{resp: resp, err: requestErr}
+		if resp != nil {
+			<-responseRelease
+			_ = resp.Body.Close()
+		}
 	}()
 
 	waitNormalPathProbe(t, probe.headersSent, "bridge response headers")
@@ -126,7 +135,7 @@ func TestE2E_NormalPath_CancelledResponseClosesBridge(t *testing.T) {
 	}
 
 	cancel()
-	_ = result.resp.Body.Close()
+	releaseResponse()
 	waitNormalPathProbe(t, probe.canceled, "bridge cancellation")
 }
 
