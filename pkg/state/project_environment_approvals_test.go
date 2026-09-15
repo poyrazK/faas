@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -26,7 +27,7 @@ func TestMemStoreProjectEnvironmentApprovalExactBindingAndExpiry(t *testing.T) {
 	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "production", "plan-hash", "approval-hash"); err != nil {
 		t.Fatalf("exact approval lookup: %v", err)
 	}
-	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "staging", "plan-hash", "approval-hash"); err != ErrNotFound {
+	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "staging", "plan-hash", "approval-hash"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("wrong environment lookup error = %v, want ErrNotFound", err)
 	}
 
@@ -41,7 +42,7 @@ func TestMemStoreProjectEnvironmentApprovalExactBindingAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create expired approval: %v", err)
 	}
-	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "production", "expired-plan", "expired-approval"); err != ErrNotFound {
+	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "production", "expired-plan", "expired-approval"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expired approval lookup = %v, want ErrNotFound (id %s)", err, expired.ID)
 	}
 }

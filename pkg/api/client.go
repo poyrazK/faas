@@ -1447,6 +1447,13 @@ func (c *Client) ApproveProjectEnvironment(ctx context.Context, projectSlug, env
 	return out, c.do(ctx, http.MethodPost, path, req, &out)
 }
 
+// PostProjectsSlugEnvironmentsEnvironmentApprovals is the route-shaped SDK
+// alias used by the SDK coverage contract. Prefer ApproveProjectEnvironment
+// for new Go callers.
+func (c *Client) PostProjectsSlugEnvironmentsEnvironmentApprovals(ctx context.Context, projectSlug, environmentSlug string, req CreateProjectEnvironmentApprovalRequest) (ProjectEnvironmentApprovalResponse, error) {
+	return c.ApproveProjectEnvironment(ctx, projectSlug, environmentSlug, req)
+}
+
 // PreviewDeleteProject returns the state related to a project deletion.
 func (c *Client) PreviewDeleteProject(ctx context.Context, slug string) (ProjectDeletePreviewResponse, error) {
 	var out ProjectDeletePreviewResponse

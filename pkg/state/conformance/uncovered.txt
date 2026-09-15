@@ -154,6 +154,7 @@ CreateOrg
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
 CreateOrgInvitation
+CreateProjectEnvironmentApproval
 CreateRuntimeConfigOperation
 CreateSession
 CreateSessionWithBinding
@@ -533,6 +534,7 @@ PreviewAppsByParent
 ProjectByID
 ProjectByRepo
 ProjectBySlug
+ProjectEnvironmentApprovalByToken
 ProvisionedStaticEgressIPExists
 PruneAppLogDrainDeliveryAnalytics
 PruneDataUpstreamProbesOlderThan
