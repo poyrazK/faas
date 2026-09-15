@@ -437,8 +437,15 @@ def install_chain(
     # Sync chain.
     inner = client.get_httpx_client() if hasattr(client, "get_httpx_client") else None
     if inner is not None and hasattr(client, "set_httpx_client"):
+        # Preserve a caller-supplied transport (MockTransport, proxy, or
+        # custom tracing transport) when inserting the wrapper chain. The
+        # generated client materializes it before this hook runs, so it is
+        # available as the private httpx transport here.
+        user_transport = getattr(inner, "_transport", None)
+        if not isinstance(user_transport, httpx.BaseTransport):
+            user_transport = httpx.HTTPTransport(verify=verify_ssl)
         chain = build_chain(
-            httpx.HTTPTransport(verify=verify_ssl),
+            user_transport,
             options=options,
         )
         new_inner = httpx.Client(
@@ -457,8 +464,11 @@ def install_chain(
         else None
     )
     if async_inner is not None and hasattr(client, "set_async_httpx_client"):
+        user_async_transport = getattr(async_inner, "_transport", None)
+        if not isinstance(user_async_transport, httpx.AsyncBaseTransport):
+            user_async_transport = httpx.AsyncHTTPTransport(verify=verify_ssl)
         async_chain = build_async_chain(
-            httpx.AsyncHTTPTransport(verify=verify_ssl),
+            user_async_transport,
             options=options,
         )
         new_async = httpx.AsyncClient(
