@@ -61,6 +61,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -74,6 +76,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type normalPathFixture struct {
@@ -97,8 +100,15 @@ func newNormalPathFixture(t *testing.T, slug string) *normalPathFixture {
 		t.Fatalf("migrate: %v", err)
 	}
 
+	vmmdSockDir, err := os.MkdirTemp("", "faas-e2e-normal-vmmd-*")
+	if err != nil {
+		t.Fatalf("create fake vmmd socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(vmmdSockDir) })
+	vmmdSock := filepath.Join(vmmdSockDir, "vmmd.sock")
+	vmmd := startNormalPathVMMD(t, vmmdSock)
+	t.Setenv("FAAS_E2E_VMMD_SOCKET", vmmdSock)
 	h := e2etest.Start(t, pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
-	vmmd := startNormalPathVMMD(t, h.VMMDSock)
 	ctx := context.Background()
 	key := h.SeedAccount(ctx, api.PlanHobby, slug)
 	body, statusCode := doReq(t, h, key, http.MethodPost, "/v1/apps",
@@ -1488,8 +1498,7 @@ func (s *normalPathVMMD) LastRequest() *vmmdpb.ForwardHTTPRequestInit {
 	if s.last == nil {
 		return nil
 	}
-	copy := *s.last
-	return &copy
+	return proto.Clone(s.last).(*vmmdpb.ForwardHTTPRequestInit)
 }
 
 func (s *normalPathVMMD) LastBody() []byte {

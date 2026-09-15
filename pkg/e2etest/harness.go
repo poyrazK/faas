@@ -196,16 +196,24 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 
 	if which&Schedd != 0 {
 		sockPath := filepath.Join(h.SockDir, "schedd.sock")
-		vmmdSock := filepath.Join(h.SockDir, "vmmd.sock")
+		vmmdSock := os.Getenv("FAAS_E2E_VMMD_SOCKET")
+		if vmmdSock == "" {
+			vmmdSock = filepath.Join(h.SockDir, "vmmd.sock")
+		}
+		h.ScheddSock = sockPath
+		h.VMMDSock = vmmdSock
 		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
 		signPubPath := writeScheddSignPub(t, h)
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
 		)
+		// Repoint the seeded node before schedd's initial heartbeat. A
+		// KVM-free test may already have a fake VMMD listening on the
+		// configured socket; even when it does not, keeping the durable
+		// target aligned before boot avoids one probe using /run/faas.
+		setDefaultLocalScheddTarget(t, pool, sockPath, vmmdSock)
 		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
-		h.ScheddSock = sockPath
-		h.VMMDSock = vmmdSock
 		// 30s tolerates schedd's first-boot db.MigrateUp on a fresh
 		// schema — observed 16s on CI's postgres15 service for 12
 		// migrations. The metal path reuses the same socket so this
@@ -723,7 +731,12 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	}
 	if which&Schedd != 0 {
 		sockPath := filepath.Join(h.SockDir, "schedd.sock")
-		vmmdSock := filepath.Join(h.SockDir, "vmmd.sock")
+		vmmdSock := os.Getenv("FAAS_E2E_VMMD_SOCKET")
+		if vmmdSock == "" {
+			vmmdSock = filepath.Join(h.SockDir, "vmmd.sock")
+		}
+		h.ScheddSock = sockPath
+		h.VMMDSock = vmmdSock
 		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
 		signPubPath := writeScheddSignPub(t, h)
 		env := append(testEnvCommon(dbURL),
@@ -731,9 +744,10 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_SIGN_PUB="+signPubPath,
 		)
 		env = append(env, extraEnv...)
+		// See Start: make the node target correct before schedd performs
+		// its initial heartbeat, including for a pre-bound fake VMMD.
+		setDefaultLocalScheddTarget(t, pool, sockPath, vmmdSock)
 		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
-		h.ScheddSock = sockPath
-		h.VMMDSock = vmmdSock
 		// 30s tolerates schedd's first-boot db.MigrateUp (same
 		// rationale as the Start path above).
 		waitUnix(t, sockPath, 30*time.Second)
@@ -812,7 +826,10 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 func writeScheddConfig(t *testing.T, h *Harness, tmp string, includeSynth bool) string {
 	t.Helper()
 	sockPath := filepath.Join(h.SockDir, "schedd.sock")
-	vmmdSock := filepath.Join(h.SockDir, "vmmd.sock")
+	vmmdSock := h.VMMDSock
+	if vmmdSock == "" {
+		vmmdSock = filepath.Join(h.SockDir, "vmmd.sock")
+	}
 	gatewaySynth := ""
 	if includeSynth {
 		gatewaySynth = filepath.Join(h.SockDir, "gatewayd-internal.sock")
