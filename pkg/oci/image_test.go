@@ -56,6 +56,8 @@ func TestLayersAboveBaseRejectsShorterApp(t *testing.T) {
 	app := []string{"sha256:aaa"}
 	if _, err := LayersAboveBase(base, app); err == nil {
 		t.Error("expected error when app has fewer layers than base")
+	} else if !errors.Is(err, ErrLayersNotAboveBase) {
+		t.Errorf("err = %v, want errors.Is(_, ErrLayersNotAboveBase) true", err)
 	}
 }
 

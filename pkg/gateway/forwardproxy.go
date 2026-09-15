@@ -308,12 +308,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if handleForwardRequestCancellation(w, r, true) {
 			return
 		}
+		responseStatus := http.StatusBadGateway
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 			markStaleTarget(r.Context())
+			responseStatus = http.StatusServiceUnavailable
 		}
 		log.Error("gateway: forwarder stream open failed",
 			"node", t.NodeID, "err", err.Error())
-		http.Error(w, "forwarder stream open failed", http.StatusBadGateway)
+		http.Error(w, "forwarder stream open failed", responseStatus)
 		return
 	}
 

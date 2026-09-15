@@ -278,6 +278,35 @@
         - /srv/fc/base/builder-base.ext4
         - /srv/fc/base/builder-base.ext4.digest
 
+    # Capture the database-side attestation before replacing the on-disk leaf.
+    # A managed node can receive a refreshed PKI bundle during convergence;
+    # vmmd correctly refuses to start while compute_nodes still names the old
+    # fingerprint. The captured value is the CAS guard used immediately after
+    # staging so pre-stage never depends on a vmmd that is deadlocked behind
+    # stale attestation state.
+    - name: Inspect existing compute-node certificate attestation before trust refresh
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - show
+          - --node
+          - "{{ faas_join_database_node }}"
+          - --json
+          - --break-glass-db
+      register: faas_join_existing_compute_node
+      changed_when: false
+      failed_when: faas_join_existing_compute_node.rc not in [0, 3]
+
+    - name: Remember the pre-refresh certificate fingerprint
+      ansible.builtin.set_fact:
+        faas_join_expected_cert_fingerprint: >-
+          {{
+            ((faas_join_existing_compute_node.stdout | from_json).cert_fingerprint | default('', true))
+            if faas_join_existing_compute_node.rc == 0
+            else ''
+          }}
+
     - name: Stage the compute trust bundle (the source never includes the CA private key)
       ansible.builtin.copy:
         src: "{{ faas_join_pki_source }}/"
@@ -314,6 +343,19 @@
         - { path: /etc/faas/tls/imaged/vmmd-client.key, mode: "0440" }
         - { path: /etc/faas/tls/egress/egress.key, mode: "0440" }
         - { path: /etc/faas/tls/egress/egress.crt, mode: "0444" }
+
+    - name: CAS-stamp the staged vmmd certificate before runtime pre-stage
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - secrets
+          - stamp
+          - --host
+          - "{{ faas_join_database_node }}"
+          - --expected-fingerprint
+          - "{{ faas_join_expected_cert_fingerprint }}"
+      when: (faas_join_expected_cert_fingerprint | default('') | trim) != ''
+      changed_when: true
 
     - name: Stage the image-signing private key
       ansible.builtin.copy:
@@ -703,7 +745,23 @@
         name: faas-imaged-prestage.service
         state: started
 
-    - name: Pre-register the adopted node as drained before release installation
+    - name: Begin graceful drain of the existing node before release installation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - drain
+          - --node
+          - "{{ faas_join_database_node }}"
+          - --reason
+          - node_join_preregister
+          - --break-glass-db
+          - --yes
+      when: faas_join_existing_compute_node.rc == 0
+      register: faas_compute_node_drain
+      changed_when: true
+
+    - name: Pre-register the newly adopted node as unavailable before release installation
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -736,18 +794,39 @@
           - --yes
       register: faas_compute_node_preregister
       changed_when: true
+      when: faas_join_existing_compute_node.rc == 3
+
+    # Existing nodes enter draining first: placement stops admitting new work,
+    # while the forwarding bridge remains available to live instances until
+    # the recovery controller migrates them. Maintenance plus zero live rows is
+    # the deterministic cache/traffic barrier before listener shutdown.
+    - name: Wait for the existing node to reach an empty maintenance hold
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - drain-status
+          - --node
+          - "{{ faas_join_database_node }}"
+          - --break-glass-db
+      when: faas_join_existing_compute_node.rc == 0
+      register: faas_compute_node_drain_status
+      changed_when: false
+      retries: 48
+      delay: 2
+      until: faas_compute_node_drain_status.rc == 0
 
     - name: Stop stale compute-only services before replacing the active release
       ansible.builtin.systemd:
         name: "{{ item }}"
         state: stopped
       loop:
-        - faas-vmmd.service
-        - faas-schedd.service
-        - faas-realtimed.service
         - faas-gatewayd-internal.service
-        - faas-builderd.service
+        - faas-realtimed.service
         - faas-imaged.service
+        - faas-builderd.service
+        - faas-schedd.service
+        - faas-vmmd.service
 
     - name: Install the verified release while keeping the row drained
       ansible.builtin.command:

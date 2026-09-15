@@ -615,6 +615,12 @@ func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string,
 	if a.forward == nil {
 		return inv, 0, fmt.Errorf("gateway synth: invocation forwarder is not wired")
 	}
+	// Schedd's pre-woken response identifies the instance and node, while the
+	// invocation request remains authoritative for the app. Keep that identity
+	// on the target so the shared forwarding path can attribute
+	// wake.proxy_first_byte events just like an ordinary HTTP wake.
+	target.AppID = appID
+	inv.AppID = appID
 	inv.InstanceID = target.InstanceID
 	return a.forwardInvocationWithStatus(ctx, target, inv)
 }

@@ -262,7 +262,7 @@ func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
 	}
 	playbook := string(body)
 	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
-	preregister := strings.Index(playbook, "Pre-register the adopted node as drained before release installation")
+	preregister := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before release installation")
 	if prestage < 0 || preregister < 0 || prestage >= preregister {
 		t.Fatal("runtime bases must be staged with the candidate release before node preregistration and drain")
 	}
@@ -275,6 +275,27 @@ func TestNodeJoinPrestagesRuntimeBasesBeforeDrain(t *testing.T) {
 	} {
 		if !strings.Contains(block, token) {
 			t.Errorf("pre-stage unit missing %q", token)
+		}
+	}
+}
+
+func TestNodeJoinCASStampsRefreshedCertificateBeforePrestage(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	inspect := strings.Index(playbook, "Inspect existing compute-node certificate attestation before trust refresh")
+	stage := strings.Index(playbook, "Stage the compute trust bundle (the source never includes the CA private key)")
+	stamp := strings.Index(playbook, "CAS-stamp the staged vmmd certificate before runtime pre-stage")
+	prestage := strings.Index(playbook, "Pre-stage release-bound runtime bases before draining the node")
+	if inspect < 0 || stage < 0 || stamp < 0 || prestage < 0 || !(inspect < stage && stage < stamp && stamp < prestage) {
+		t.Fatalf("certificate convergence order invalid: inspect=%d stage=%d stamp=%d prestage=%d", inspect, stage, stamp, prestage)
+	}
+	block := playbook[inspect:prestage]
+	for _, token := range []string{"compute-nodes", "show", "--break-glass-db", "secrets", "stamp", "--expected-fingerprint"} {
+		if !strings.Contains(block, token) {
+			t.Errorf("certificate convergence block missing %q", token)
 		}
 	}
 }
@@ -300,7 +321,7 @@ func TestNodeJoinPreregistrationAcknowledgesBootstrapDatabaseWrite(t *testing.T)
 		t.Fatal(err)
 	}
 	playbook := string(body)
-	start := strings.Index(playbook, "Pre-register the adopted node as drained before release installation")
+	start := strings.Index(playbook, "Pre-register the newly adopted node as unavailable before release installation")
 	end := strings.Index(playbook, "Stop stale compute-only services before replacing the active release")
 	if start < 0 || end < 0 || start >= end {
 		t.Fatal("node_join.yml is missing the compute-node preregistration block")
@@ -315,6 +336,37 @@ func TestNodeJoinPreregistrationAcknowledgesBootstrapDatabaseWrite(t *testing.T)
 		if !strings.Contains(block, token) {
 			t.Errorf("compute-node preregistration missing %q", token)
 		}
+	}
+}
+
+func TestNodeJoinDrainsExistingTrafficBeforeStoppingListeners(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbook := string(body)
+	drain := strings.Index(playbook, "Begin graceful drain of the existing node before release installation")
+	wait := strings.Index(playbook, "Wait for the existing node to reach an empty maintenance hold")
+	stop := strings.Index(playbook, "Stop stale compute-only services before replacing the active release")
+	if drain < 0 || wait < 0 || stop < 0 || !(drain < wait && wait < stop) {
+		t.Fatalf("graceful drain order invalid: drain=%d wait=%d stop=%d", drain, wait, stop)
+	}
+	waitBlock := playbook[wait:stop]
+	for _, token := range []string{"drain-status", "--break-glass-db", "retries: 48", "until: faas_compute_node_drain_status.rc == 0"} {
+		if !strings.Contains(waitBlock, token) {
+			t.Errorf("drain barrier missing %q", token)
+		}
+	}
+	stopBlockEnd := strings.Index(playbook[stop:], "Install the verified release while keeping the row drained")
+	if stopBlockEnd < 0 {
+		t.Fatal("node_join is missing the release install after service stop")
+	}
+	stopBlock := playbook[stop : stop+stopBlockEnd]
+	gateway := strings.Index(stopBlock, "faas-gatewayd-internal.service")
+	schedd := strings.Index(stopBlock, "faas-schedd.service")
+	vmmd := strings.Index(stopBlock, "faas-vmmd.service")
+	if gateway < 0 || schedd < 0 || vmmd < 0 || !(gateway < schedd && schedd < vmmd) {
+		t.Fatalf("service stop order must quiesce ingress before schedd and vmmd: gateway=%d schedd=%d vmmd=%d", gateway, schedd, vmmd)
 	}
 }
 

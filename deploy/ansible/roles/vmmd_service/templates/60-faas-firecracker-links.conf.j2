@@ -4,6 +4,13 @@
 # Persistent-interface status failures, hook failures, and networkctl-list
 # failures remain visible at their original level.
 [Service]
+# networkd-dispatcher invokes networkctl while refreshing the short-lived
+# interface list. systemd-networkctl inherits NOTIFY_SOCKET and emits a
+# harmless notification from that child process; NotifyAccess=main rejects it
+# and systemd itself logs one warning per refresh. Trust every process in this
+# tightly scoped service cgroup so those notifications are accepted while
+# dispatcher and networkctl failures continue through the filters below.
+NotifyAccess=all
 LogFilterPatterns='~^WARNING:Unknown index [0-9]+ seen, reloading interface list$'
 LogFilterPatterns='~^ERROR:Unknown interface index [0-9]+ seen even after reload$'
 LogFilterPatterns='~^ERROR:Failed to get interface "vh[0-9]+" status: '

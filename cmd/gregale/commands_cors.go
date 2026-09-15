@@ -114,7 +114,7 @@ func cmdCors(args []string) int {
 //	  [--method GET] [--method POST] ...
 //	  [--credentials] [--allow-header NAME] [--max-age 600] [--host <match-host>]
 //
-// Each <origin> creates one rule. Repeated --method flags extend the
+// Each <origin> creates one rule. Repeated --method flags replace the
 // default method set. --credentials flips allow_credentials on every
 // created rule (rare; most CORS APIs run without creds). --max-age
 // accepts the same int the SDK helper does (0 = use default 600;
@@ -133,11 +133,8 @@ func cmdCorsAllow(args []string) int {
 	origins := positional[1:]
 
 	methodSet := map[string]struct{}{}
-	for _, m := range corsDefaultMethods {
-		methodSet[m] = struct{}{}
-	}
 	fs := newFlagSet("cors allow", flag.ContinueOnError)
-	fs.Func("method", "allowed HTTP method (repeatable; extends the default set)", func(s string) error {
+	fs.Func("method", "allowed HTTP method (repeatable; replaces the default set when supplied)", func(s string) error {
 		if _, ok := corsAllowedMethods[s]; !ok {
 			return fmt.Errorf("unsupported HTTP method %q; allowed: %s",
 				s, sortedAllowedMethods())
@@ -152,6 +149,11 @@ func cmdCorsAllow(args []string) int {
 	host := fs.String("host", "", "match_host override (default: app's first verified custom domain)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	if len(methodSet) == 0 {
+		for _, method := range corsDefaultMethods {
+			methodSet[method] = struct{}{}
+		}
 	}
 	for i, header := range allowedHeaders {
 		header = strings.TrimSpace(header)

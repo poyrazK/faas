@@ -314,7 +314,8 @@ func headerValue(headers []*vmmdpb.Header, name string) string {
 // Stream field carries the configured fakeBidiStream; an
 // unset Stream + a drive-through call panics ("not stubbed").
 type fakeVmmdClient struct {
-	Stream *fakeBidiStream
+	Stream    *fakeBidiStream
+	StreamErr error
 	// HTTPStreams, when configured, returns one stream per request. This
 	// lets warm-instance tests issue sequential requests through one client
 	// while inspecting each request's independently injected context.
@@ -330,6 +331,9 @@ type fakeVmmdClient struct {
 // ForwardHTTPStream returns the configured Stream. The forwarder
 // drives the bidi stream directly through Send/Recv/CloseSend.
 func (f *fakeVmmdClient) ForwardHTTPStream(_ context.Context, _ ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse], error) {
+	if f.StreamErr != nil {
+		return nil, f.StreamErr
+	}
 	if len(f.HTTPStreams) > 0 {
 		stream := f.HTTPStreams[0]
 		f.HTTPStreams = f.HTTPStreams[1:]
@@ -1047,6 +1051,20 @@ func TestForwardingReverseProxy_StreamUnavailableIs503(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("rec.Code = %d, want 503 (Unavailable must map to 503)", rec.Code)
+	}
+}
+
+func TestForwardingReverseProxy_StreamOpenUnavailableIs503(t *testing.T) {
+	cli := &fakeVmmdClient{StreamErr: status.Error(codes.Unavailable, "node stopping")}
+	lookup := &fakeNodeLookup{cli: cli}
+	proxy := gateway.ForwardingReverseProxy(lookup, nil)
+	rec := httptest.NewRecorder()
+	proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(
+		rec,
+		httptest.NewRequest(http.MethodGet, "/", nil),
+	)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 for unavailable stream open", rec.Code)
 	}
 }
 

@@ -24,7 +24,27 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestNodeAllowsForwardingDuringGracefulDrain(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		node state.ComputeNode
+		want bool
+	}{
+		{name: "active", node: state.ComputeNode{Active: true, Lifecycle: state.NodeLifecycleActive}, want: true},
+		{name: "draining", node: state.ComputeNode{Active: false, Lifecycle: state.NodeLifecycleDraining}, want: true},
+		{name: "maintenance", node: state.ComputeNode{Active: false, Lifecycle: state.NodeLifecycleMaintenance}, want: false},
+		{name: "unavailable", node: state.ComputeNode{Active: false, Lifecycle: state.NodeLifecycleUnavailable}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nodeAllowsForwarding(tc.node); got != tc.want {
+				t.Fatalf("nodeAllowsForwarding(%s) = %t, want %t", tc.node.Lifecycle, got, tc.want)
+			}
+		})
+	}
+}
 
 // fakeSubscribe is the test seam for WatchEvictions — see
 // subscribeFunc in nodecache.go. The returned channel is closed by

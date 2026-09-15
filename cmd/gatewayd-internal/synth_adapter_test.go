@@ -122,20 +122,28 @@ func TestSynthAdapterForwardInvocationMarksHandlerErrorFailed(t *testing.T) {
 }
 
 func TestSynthAdapterForwardInvocationKeepsOrdinaryServerErrorRetryable(t *testing.T) {
-	a := &synthAdapter{forward: func(gateway.Target) http.Handler {
+	var forwarded gateway.Target
+	a := &synthAdapter{forward: func(target gateway.Target) http.Handler {
+		forwarded = target
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte(`{"error":"upstream_unavailable"}`))
 		})
 	}}
 	out, statusCode, err := a.InvokeWithTargetStatus(context.Background(), "app-1", state.Invocation{
-		ID: "inv-1", AppID: "app-1", Source: state.InvocationAsyncInvoke,
+		ID: "inv-1", Source: state.InvocationAsyncInvoke,
 	}, gateway.Target{InstanceID: "instance-1", NodeID: "node-1"})
 	if err != nil {
 		t.Fatalf("InvokeWithTargetStatus: %v", err)
 	}
 	if statusCode != http.StatusServiceUnavailable || out.State != state.InvocationDispatching {
 		t.Fatalf("status/state = %d/%q, want 503/dispatching", statusCode, out.State)
+	}
+	if forwarded.AppID != "app-1" {
+		t.Fatalf("forwarded target app_id = %q, want authoritative invocation app_id", forwarded.AppID)
+	}
+	if out.AppID != "app-1" {
+		t.Fatalf("result app_id = %q, want authoritative invocation app_id", out.AppID)
 	}
 }
 

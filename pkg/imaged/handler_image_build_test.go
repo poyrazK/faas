@@ -301,8 +301,8 @@ func TestHandleDeployment_RealBuildPath(t *testing.T) {
 // TestHandleDeployment_FullRootfsWithSidecars proves the full-rootfs dispatch
 // keeps the deployment's sidecar set instead of rejecting it before the main
 // artifact is built. The fake builder stands in for mkfs and the fake puller
-// supplies an app whose diff-id prefix does not match the shared base, forcing
-// the typed full-rootfs fallback.
+// supplies an app with fewer layers than the shared base, matching the
+// arbitrary-image production regression that must enter the typed fallback.
 func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
@@ -310,7 +310,6 @@ func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 		AccountID: acct.ID, Slug: "img-app-fullroot-sidecars", RAMMB: 512, Runtime: "node22",
 		IdleTimeoutS: 60, MaxConcurrency: 5,
 	})
-	fullRootfs := true
 	sidecarRef := "ghcr.io/org/metrics@sha256:" + strings.Repeat("a", 64)
 	sidecarsJSON, err := json.Marshal([]map[string]any{
 		{"name": "metrics", "image": sidecarRef, "type": "sidecar", "port": 9090},
@@ -320,25 +319,23 @@ func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 	}
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, ImageDigest: "ghcr.io/org/app:v1", Kind: state.DeploymentKindImage,
-		Sidecars: sidecarsJSON, FullRootfsOverride: &fullRootfs,
+		Sidecars: sidecarsJSON, FullRootfsAllowAuto: true,
 	})
 
 	appConfigDigest := "sha256:" + strings.Repeat("b", 64)
 	baseConfigDigest := "sha256:" + strings.Repeat("c", 64)
-	baseLayer := "sha256:" + strings.Repeat("d", 64)
 	appLayer := "sha256:" + strings.Repeat("e", 64)
 	sidecarLayer := "sha256:" + strings.Repeat("f", 64)
 	appDiff := "sha256:" + strings.Repeat("1", 64)
 	baseDiff := "sha256:" + strings.Repeat("2", 64)
+	baseDiff2 := "sha256:" + strings.Repeat("3", 64)
 	mp := &fakeManifestPuller{
-		digest: "ghcr.io/org/app@sha256:" + strings.Repeat("9", 64),
-		appRef: dep.ImageDigest,
-		appManifest: oci.Manifest{Config: oci.Descriptor{Digest: appConfigDigest}, Layers: []oci.Descriptor{
-			{Digest: baseLayer, Size: 100}, {Digest: appLayer, Size: 100},
-		}},
+		digest:       "ghcr.io/org/app@sha256:" + strings.Repeat("9", 64),
+		appRef:       dep.ImageDigest,
+		appManifest:  oci.Manifest{Config: oci.Descriptor{Digest: appConfigDigest}, Layers: []oci.Descriptor{{Digest: appLayer, Size: 100}}},
 		appConfig:    oci.Config{Entrypoint: []string{"/bin/sh"}, Cmd: []string{"-c", "echo ok"}, DiffIDs: []string{appDiff}},
 		baseManifest: oci.Manifest{Config: oci.Descriptor{Digest: baseConfigDigest}},
-		baseConfig:   oci.Config{DiffIDs: []string{baseDiff}},
+		baseConfig:   oci.Config{DiffIDs: []string{baseDiff, baseDiff2}},
 		sidecarManifests: map[string]oci.Manifest{
 			sidecarRef: {Layers: []oci.Descriptor{{Digest: sidecarLayer, Size: 100}}},
 		},
@@ -346,7 +343,6 @@ func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 	}
 	mp.putConfig(appConfigDigest, mp.appConfig)
 	mp.putConfig(baseConfigDigest, mp.baseConfig)
-	mp.layerBlobs[baseLayer] = gzTar(t, map[string]string{"etc/passwd": "app:x:1000:1000::/home/app:/bin/sh\n"})
 	mp.layerBlobs[appLayer] = gzTar(t, map[string]string{"app/server": "#!/bin/sh\n"})
 	mp.layerBlobs[sidecarLayer] = gzTar(t, map[string]string{"metrics": "#!/bin/sh\n"})
 

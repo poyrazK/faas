@@ -302,6 +302,9 @@ func dispatcherFilterPatterns(t *testing.T) []*regexp.Regexp {
 	if len(patterns) != 3 {
 		t.Fatalf("got %d deny patterns, want 3", len(patterns))
 	}
+	if !strings.Contains(string(raw), "NotifyAccess=all") {
+		t.Fatal("networkd-dispatcher must accept notifications from its trusted networkctl child")
+	}
 	return patterns
 }
 
