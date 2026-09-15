@@ -1,7 +1,7 @@
 # Native end-to-end CI
 
 `e2e-native.yml` is the hardware gate for the platform itself. It runs the
-**metal-tagged tests** of `./cmd/e2e` on `faas-compute-node-2` in
+**metal-tagged tests** of `./cmd/e2e` on `faas-acceptance-1` in
 `europe-west3-c`, against real `/dev/kvm` and Firecracker.
 
 The run set is derived from source — every top-level test declared in a
@@ -24,7 +24,7 @@ park → gateway wake → invoke, plus the §11 jail fences (`memory.max`, secco
 
 It runs nightly at 04:43 UTC and can be dispatched manually from `main`. The
 04:43 slot sits after `builder-native.yml`'s 03:17 nightly; both share the
-`builder-native-compute-node-2` concurrency group and the
+`e2e-native-faas-acceptance-1` concurrency group and the
 `/var/lock/faas-builder-acceptance.lock` host lock, so an overrun waits instead
 of colliding.
 
@@ -44,7 +44,7 @@ assertion.repository == 'poyrazK/faas' && assertion.ref == 'refs/heads/main' &&
    assertion.job_workflow_ref == 'poyrazK/faas/.github/workflows/e2e-native.yml@refs/heads/main')
 ```
 
-**Any future workflow that needs compute node 2 must be added to that
+**Any future workflow that needs the acceptance node must be added to that
 disjunction**, or it fails at the auth step. The node is never contacted, so a
 rejected run is inert rather than disruptive. Read the live condition before
 changing it — `update-oidc` replaces it wholesale, and dropping the

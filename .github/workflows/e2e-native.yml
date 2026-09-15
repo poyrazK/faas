@@ -1,7 +1,18 @@
 name: e2e-native
 
 # End-to-end platform gate on real hardware: the whole ./cmd/e2e suite with the
-# metal build tag, on faas-compute-node-2, against /dev/kvm and Firecracker.
+# metal build tag, on faas-acceptance-1, against /dev/kvm and Firecracker.
+#
+# faas-acceptance-1 is a DEDICATED acceptance node. This gate stops every
+# production daemon on its host for the duration of a run, and leakcheck asserts
+# zero netns/TAP/jail afterwards. Both are safe only on a host that serves no
+# tenants. It previously ran on faas-compute-node-2, which is a live compute
+# node: runs collided with real workloads (a dispatch was refused outright by
+# the "Firecracker workloads are active" pre-flight), leakcheck reported the
+# production pre-warm netns pool as leaks, and the harness inherited that host's
+# production configuration in ways that produced failures looking like product
+# defects (see #2572, #2579, #2602). Point this at a serving node again and all
+# of that returns.
 #
 # builder-native.yml proves the builder image and the pkg/fcvm package work on
 # metal. This workflow proves the product does: source upload -> apid ->
@@ -24,9 +35,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # Deliberately the same group builder-native.yml uses: all native gates stop
-  # services on this one node and must never overlap.
-  group: builder-native-compute-node-2
+  # Per-host group. builder-native.yml still runs on faas-compute-node-2, so
+  # the two gates no longer contend and must not serialize behind each other.
+  # The host flock (/var/lock/faas-builder-acceptance.lock) remains the real
+  # mutual exclusion if both are ever pointed at the same node again.
+  group: e2e-native-faas-acceptance-1
   cancel-in-progress: false
 
 permissions:
@@ -37,7 +50,7 @@ env:
   GO_VERSION: "1.25.13"
   GCP_PROJECT: project-5ae37259-04cf-4070-bef
   GCP_ZONE: europe-west3-c
-  GCP_INSTANCE: faas-compute-node-2
+  GCP_INSTANCE: faas-acceptance-1
   GCP_WORKLOAD_IDENTITY_PROVIDER: projects/811654175645/locations/global/workloadIdentityPools/github-actions/providers/gregale-builder-native
   GCP_SERVICE_ACCOUNT: gregale-builder-ci@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com
 
@@ -92,7 +105,7 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v3
 
-      - name: Start compute node 2 when CI owns its lifecycle
+      - name: Start the acceptance node when CI owns its lifecycle
         id: compute-node
         run: |
           set -euo pipefail
@@ -103,7 +116,7 @@ jobs:
           )"
           case "$status" in
             RUNNING)
-              echo "Compute node 2 was already running; this workflow will leave it running."
+              echo "Acceptance node was already running; this workflow will leave it running."
               echo "started=false" >> "$GITHUB_OUTPUT"
               ;;
             TERMINATED)
@@ -112,7 +125,7 @@ jobs:
                 --project "$GCP_PROJECT" --zone "$GCP_ZONE"
               ;;
             *)
-              echo "::error::compute node 2 is in unexpected state: ${status:-missing}" >&2
+              echo "::error::acceptance node is in unexpected state: ${status:-missing}" >&2
               exit 1
               ;;
           esac
@@ -128,13 +141,13 @@ jobs:
               --command true >/dev/null 2>&1; then
               exit 0
             fi
-            echo "Waiting for compute node 2 SSH readiness (${attempt}/24)."
+            echo "Waiting for acceptance node SSH readiness (${attempt}/24)."
             sleep 5
           done
-          echo "::error::compute node 2 did not become SSH-ready within 120 seconds" >&2
+          echo "::error::acceptance node did not become SSH-ready within 120 seconds" >&2
           exit 1
 
-      - name: Run the platform e2e suite on compute node 2
+      - name: Run the platform e2e suite on the acceptance node
         env:
           SOURCE_SHA: ${{ github.sha }}
         run: |
@@ -189,7 +202,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Stop compute node 2
+      - name: Stop the acceptance node
         # Only when this run started it: a node that was already running
         # belongs to whoever started it.
         if: always() && steps.compute-node.outputs.started == 'true'

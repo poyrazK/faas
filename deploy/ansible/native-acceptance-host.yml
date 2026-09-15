@@ -7,13 +7,67 @@
 # routine converge will fight the acceptance provisioning.
 #
 #   ansible-playbook -i inventory/native-acceptance.ini native-acceptance-host.yml
+#
+# This provisions a host from SCRATCH. It used to install only the runner
+# tooling, the e2e Postgres cluster and the designation marker, which silently
+# assumed the host had already been through bootstrap.yml as a compute node —
+# true for the first acceptance host, and false for a dedicated one. Running it
+# against a fresh VM produced a host that passed the playbook and then failed
+# the gate's own pre-flight on firecracker, jailer, the guest kernel and
+# br-tenants. The infrastructure roles below close that gap; all are idempotent,
+# so a host that was already bootstrapped converges unchanged.
 - name: Provision the designated native acceptance host
   hosts: native_acceptance
   become: true
   gather_facts: true
   serial: 1
   max_fail_percentage: 0
+
+  pre_tasks:
+    # bootstrap.yml gets the faas identity from the `storage` role, which also
+    # does LVM and filesystem work a dedicated acceptance host does not want —
+    # its artifact store is a single dedicated disk mounted at /srv/fc. Create
+    # just the identity, which the firecracker role chowns /srv/fc/{base,kernel}
+    # to. Without it that role fails with "chgrp failed: failed to look up
+    # group faas".
+    - name: native acceptance — ensure 'faas' group exists (socket auth group, ADR-015)
+      ansible.builtin.group:
+        name: faas
+        state: present
+        system: true
+
+    - name: native acceptance — ensure 'faas' system user exists
+      ansible.builtin.user:
+        name: faas
+        group: faas
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: false
+        password: "*"
+
+  # Order is load-bearing. native_acceptance_host writes the designation marker
+  # LAST, and the runners treat that marker as "this host consents to having its
+  # daemons stopped and microVMs booted on it". Everything the gate needs must
+  # therefore be installed BEFORE it, so a half-provisioned host is never
+  # designated.
   roles:
+    # cgroups v2 is required, not preferred: Firecracker snapshot restore is
+    # slow on v1 (CLAUDE.md "Gotchas"), which would make every restore timing
+    # measured on this host meaningless.
+    - role: cgroups_v2
+    # firecracker + jailer binaries and the pinned guest kernel at
+    # /srv/fc/base/vmlinux-<version>. The runner pre-flights all three.
+    - role: firecracker
+    # faas-cp.slice / faas-tenant.slice. builderd's VMs run in the control-plane
+    # slice (spec §13), which is what keeps a builder OOM from killing a tenant.
+    - role: systemd_slices
+    # grype: imaged writes the Grype scan sidecar that vmmd's issue #299
+    # admission gate refuses to boot without.
+    - role: supply_chain_scanners
+    # br-tenants, the masquerade rule and the tenant egress policy. Without this
+    # a builder microVM boots and then has no egress, dying at guest-init's DNS
+    # preflight — which reads like a broken build, not a missing bridge.
+    - role: nftables
     - role: canary_artifact_retention
     - role: native_acceptance_host
       vars:
