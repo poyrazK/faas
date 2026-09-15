@@ -1049,6 +1049,18 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	if scheddSock != "" {
 		env = append(env, "FAAS_VMMD_SCHEDD_TARGET=unix://"+scheddSock)
 	}
+	// Outward NIC for tenant egress NAT. vmmd defaults to "eth0"
+	// (pkg/netns.DefaultHostPolicy.PublicIface) and production overrides it
+	// per host via a systemd drop-in, because the name is provider-specific.
+	// The gate's node has no eth0 — its NIC is ens4 — so without this the
+	// masquerade rule targets a missing interface and every builder microVM
+	// boots fine and then has no egress, dying at guest-init's 5s DNS
+	// preflight with "registry DNS preflight: signal: killed" and a 0-byte
+	// build log. The runner resolves the value from the host and exports it;
+	// unset (ordinary CI, where no VM does egress) keeps vmmd's default.
+	if iface := os.Getenv("FAAS_PUBLIC_IFACE"); iface != "" {
+		env = append(env, "FAAS_PUBLIC_IFACE="+iface)
+	}
 	return env
 }
 

@@ -294,4 +294,17 @@ fi
 grep -Fq 'FAAS_STORAGE_BACKEND:-local' "${runner}" ||
   fail "the wrapper requires a local builder-base file unconditionally; that is wrong under an OCI backend"
 
+# Tenant egress NIC. vmmd defaults to eth0; this node has none (ens4), so
+# without the override the masquerade rule targets a missing interface and
+# every builder microVM boots and then has no egress, dying at guest-init's
+# DNS preflight with a zero-byte build log.
+grep -Fq 'FAAS_PUBLIC_IFACE' "${runner}" ||
+  fail "the wrapper does not resolve the outward NIC; tenant egress NAT would target vmmd's eth0 default"
+grep -Fq 'export FAAS_PUBLIC_IFACE' "${runner}" ||
+  fail "the wrapper resolves the outward NIC without exporting it, so vmmd never sees it"
+# A name that does not exist must be fatal: the NAT rule would install and
+# silently do nothing, which is far harder to diagnose than a failed pre-flight.
+grep -Fq 'does not exist on this host' "${runner}" ||
+  fail "the wrapper does not verify the outward NIC exists"
+
 echo "native e2e wrapper contracts OK"

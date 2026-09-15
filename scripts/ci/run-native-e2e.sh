@@ -133,6 +133,39 @@ else
   echo "native e2e: no ${storage_env_file}; harness daemons use the default local backend at /srv/fc"
 fi
 
+# Outward NIC for tenant egress NAT. vmmd defaults this to "eth0"
+# (pkg/netns.DefaultHostPolicy.PublicIface); production overrides it per host
+# through a systemd drop-in, because the name is provider-specific — this node
+# has no eth0 at all, its NIC is ens4. Without the override the harness's vmmd
+# installs its masquerade rule against an interface that does not exist, so a
+# builder microVM boots correctly and then has no egress. It dies at guest-init's
+# 5s DNS preflight:
+#
+#   guest-init: build failed: registry DNS preflight: signal: killed
+#
+# which reads like a broken build (0-byte build.log, failure_class=user_error)
+# rather than a NAT rule pointed at a missing NIC. Observed 2026-09-14 on every
+# build of dispatch 34904036016.
+#
+# Prefer the value production uses on THIS host; fall back to the interface the
+# default route actually leaves by, which is what the setting means.
+if [[ -z "${FAAS_PUBLIC_IFACE:-}" ]]; then
+  FAAS_PUBLIC_IFACE="$(
+    grep -rhoE 'FAAS_PUBLIC_IFACE=[A-Za-z0-9._-]+' \
+      /etc/systemd/system/faas-vmmd.service.d/ 2>/dev/null |
+      head -1 | cut -d= -f2
+  )"
+fi
+if [[ -z "${FAAS_PUBLIC_IFACE:-}" ]]; then
+  FAAS_PUBLIC_IFACE="$(ip route show default 2>/dev/null | awk '{print $5; exit}')"
+fi
+[[ -n "${FAAS_PUBLIC_IFACE}" ]] ||
+  die "cannot determine the outward NIC; set FAAS_PUBLIC_IFACE or give the host a default route"
+ip link show "${FAAS_PUBLIC_IFACE}" >/dev/null 2>&1 ||
+  die "FAAS_PUBLIC_IFACE=${FAAS_PUBLIC_IFACE} does not exist on this host; tenant egress NAT would silently do nothing"
+export FAAS_PUBLIC_IFACE
+echo "native e2e: tenant egress NIC: ${FAAS_PUBLIC_IFACE}"
+
 mkdir -p /var/lock
 # Same lock as the builder and metal gates: all three stop services on this
 # node, so they must never overlap.

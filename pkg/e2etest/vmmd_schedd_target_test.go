@@ -93,3 +93,36 @@ func TestVMMDEnv_StillCarriesForwardedStorageConfiguration(t *testing.T) {
 			"artifacts through the node's backend", got, ok)
 	}
 }
+
+// Tenant egress NAT needs the host's real outward NIC. vmmd defaults to
+// "eth0" and production overrides it per host via a systemd drop-in, because
+// the name is provider-specific. The gate's node has no eth0 at all (ens4),
+// so leaving the default in place pointed the masquerade rule at a missing
+// interface: builder microVMs booted, had no egress, and died at guest-init's
+// 5s DNS preflight with "registry DNS preflight: signal: killed" and a
+// zero-byte build log — indistinguishable from a broken customer build.
+func TestVMMDEnv_ForwardsThePublicInterface(t *testing.T) {
+	t.Setenv("FAAS_PUBLIC_IFACE", "ens4")
+
+	got, ok := envValue(t, vmmdEnv("postgres:///faas_e2e", "/tmp/vmmd.toml", "/tmp/s/schedd.sock"),
+		"FAAS_PUBLIC_IFACE")
+	if !ok {
+		t.Fatal("FAAS_PUBLIC_IFACE absent; vmmd would NAT out of its eth0 default, " +
+			"which does not exist on the gate's node")
+	}
+	if got != "ens4" {
+		t.Errorf("FAAS_PUBLIC_IFACE = %q, want ens4", got)
+	}
+}
+
+// Ordinary CI sets nothing and runs no microVM egress, so vmmd keeps its own
+// default rather than receiving an empty interface name.
+func TestVMMDEnv_OmitsThePublicInterfaceWhenUnset(t *testing.T) {
+	t.Setenv("FAAS_PUBLIC_IFACE", "")
+
+	if got, ok := envValue(t, vmmdEnv("postgres:///faas_e2e", "/tmp/vmmd.toml", ""),
+		"FAAS_PUBLIC_IFACE"); ok {
+		t.Errorf("FAAS_PUBLIC_IFACE = %q was forwarded while unset; an empty NIC "+
+			"name is worse than vmmd's default", got)
+	}
+}
