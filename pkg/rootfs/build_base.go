@@ -405,15 +405,14 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	if err != nil {
 		return BuildResult{}, err
 	}
-	sizeMB, err := CheckCapForStaging(limits, stats)
-	if err != nil {
+	if _, err := CheckCapForStaging(limits, stats); err != nil {
 		return BuildResult{}, err
 	}
 	// Full-rootfs workloads use the image itself as their writable root.
 	// Give them the same total logical capacity promised by
 	// ephemeral_disk_max_mb and bake it into the deployment artifact so
 	// restore never needs to grow the filesystem in the wake path.
-	sizeMB = limits.EphemeralDiskMaxMB()
+	sizeMB := limits.EphemeralDiskMaxMB()
 	// M-3 commit 9 / ADR-141 §Decision 5: per-plan ceiling on
 	// the unpacked full-rootfs staging tree size. Hobby 256 MB /
 	// Pro 1 GB / Scale 4 GB; unknown plan → no extra cap (the

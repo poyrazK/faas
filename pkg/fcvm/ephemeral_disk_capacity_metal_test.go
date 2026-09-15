@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+// spec: §8 snapshot restore must preserve a deployment's immutable disk source.
 // TestMetalEphemeralDiskCapacity exercises the customer-visible filesystem in
 // a real restored Firecracker guest. The ordinary write remains visible for
 // that instance, filling the disk returns ENOSPC, and a second restore from the

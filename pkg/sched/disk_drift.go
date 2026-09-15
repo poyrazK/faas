@@ -330,7 +330,7 @@ func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs 
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			drift += d.recordDrift("snapshot-path-invalid", path)
-			return nil
+			return nil //nolint:nilerr // one malformed entry must not abort the bounded inventory
 		}
 		rel = filepath.ToSlash(rel)
 		if entry.IsDir() {
@@ -356,7 +356,7 @@ func (d *DiskDrift) scanDiskForDrift(ctx context.Context, root string, diskDirs 
 		info, err := entry.Info()
 		if err != nil {
 			drift += d.recordDrift("snapshot-entry-unreadable", path)
-			return nil
+			return nil //nolint:nilerr // record the unreadable entry and continue with siblings
 		}
 		if present[objectID] == nil {
 			present[objectID] = make(map[string]diskPart, 2)
@@ -624,105 +624,6 @@ func parseSnapKey(key string) (objectID, part string, ok bool) {
 func canonicalSnapshotCaptureID(value string) bool {
 	parsed, err := uuid.Parse(value)
 	return err == nil && parsed.String() == value
-}
-
-// checkDepDir inspects one deployment's snapshot directory and
-// returns the number of drift discrepancies observed. The depID +
-// row pair is the expected contract; the directory on disk is what
-// reality delivers. Discrepancies counted:
-//
-//   - expected file missing (no drift count if the row says size=0 —
-//     degraded-but-recorded state),
-//   - expected file present but size mismatch,
-//   - non-expected regular file (an entry in the dep dir whose name
-//     is not exactly "mem" or "vmstate"),
-//   - any non-regular entry (symlink / device / pipe / socket /
-//     irregular) — counted as drift without following or recursing.
-//
-// Directories are ignored. Errors reading the dep dir are logged and
-// counted as one drift (so the next tick catches the new state).
-func (d *DiskDrift) checkDepDir(depID string, row state.SnapshotForGC) int {
-	dir := filepath.Join(d.snapshotRoot(), depID)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		// Per-depID failure: race with imaged's GC deleting the dir,
-		// or transient permission error. Log + count one drift + move
-		// on; the next tick catches the new state.
-		d.log.Warn("disk-drift: read dep dir failed",
-			"dep_id", depID, "dir", dir, "err", err)
-		return d.recordDrift("dep-dir-unreadable", dir)
-	}
-
-	drift := 0
-	seen := make(map[string]struct{}, len(entries))
-	// expectedSizes maps the canonical file name → DB-recorded size.
-	// A row with size=0 (degraded-but-recorded state) suppresses the
-	// size-mismatch check; we still detect missing files because
-	// expectedFiles is iterated unconditionally below.
-	expectedSizes := map[string]int64{
-		"mem":     row.MemBytes,
-		"vmstate": row.DiskBytes,
-	}
-	for _, want := range expectedFiles {
-		fp := filepath.Join(dir, want)
-		info, statErr := os.Lstat(fp)
-		if statErr != nil {
-			// Expected file missing on disk.
-			drift += d.recordDrift("expected-file-missing", fp)
-			continue
-		}
-		seen[want] = struct{}{}
-		// Symlink and other non-regular entries are drift even if
-		// the name matches; spec layout is a regular file only.
-		if !info.Mode().IsRegular() {
-			drift += d.recordDrift("expected-entry-non-regular", fp)
-			continue
-		}
-		// Size mismatch only fires when the row claims bytes > 0.
-		// A row with size=0 (degraded-but-recorded state) is
-		// intentionally not flagged — it's a separate audit signal.
-		if dbSize := expectedSizes[want]; dbSize > 0 && info.Size() != dbSize {
-			drift += d.recordDrift("size-mismatch", fmt.Sprintf(
-				"%s disk=%d db=%d", fp, info.Size(), dbSize))
-		}
-	}
-
-	// Walk every other entry in the dep dir: anything that isn't
-	// "mem" or "vmstate" is drift.
-	for _, entry := range entries {
-		if _, ok := seen[entry.Name()]; ok {
-			continue
-		}
-		// Directory entries are ignored (spec says flat layout; a
-		// directory here would be a future contributor's misuse).
-		if entry.IsDir() {
-			drift += d.recordDrift("unexpected-directory",
-				filepath.Join(dir, entry.Name()))
-			continue
-		}
-		// Symlink / device / pipe / socket / irregular → drift.
-		// WalkDir does not follow symlinks; d.Type() tells us what
-		// kind of entry this is without stat'ing the target.
-		mode := entry.Type()
-		if isNonRegular(mode) {
-			drift += d.recordDrift("non-regular-entry",
-				filepath.Join(dir, entry.Name()))
-			continue
-		}
-		drift += d.recordDrift("unexpected-file",
-			filepath.Join(dir, entry.Name()))
-	}
-	return drift
-}
-
-// isNonRegular reports whether the fs.FileMode describes a non-regular
-// filesystem entry that the sweep should count as drift without
-// following. Covers the union of fs.ModeSymlink | ModeDevice |
-// ModeNamedPipe | ModeSocket | ModeIrregular — the spec layout is a
-// regular file only. ModeIrregular is the catch-all for platform-
-// specific types WalkDir surfaces that don't fit the named buckets.
-func isNonRegular(m fs.FileMode) bool {
-	return m&(fs.ModeSymlink|fs.ModeDevice|fs.ModeNamedPipe|fs.ModeSocket|fs.ModeIrregular) != 0
 }
 
 // recordDrift increments the OpsMetrics counter and returns 1 so the

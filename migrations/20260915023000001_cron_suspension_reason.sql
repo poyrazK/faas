@@ -1,11 +1,22 @@
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE crons
-    ADD COLUMN suspended_reason text NOT NULL DEFAULT '';
+    ADD COLUMN IF NOT EXISTS suspended_reason text NOT NULL DEFAULT '';
 
-ALTER TABLE crons
-    ADD CONSTRAINT crons_suspended_reason_chk
-    CHECK (suspended_reason IN ('', 'no_live_deployment'));
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'crons'::regclass
+          AND conname = 'crons_suspended_reason_chk'
+    ) THEN
+        ALTER TABLE crons
+            ADD CONSTRAINT crons_suspended_reason_chk
+            CHECK (suspended_reason IN ('', 'no_live_deployment'));
+    END IF;
+END
+$$;
 -- +goose StatementEnd
 
 -- +goose Down

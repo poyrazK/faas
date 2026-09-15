@@ -1,13 +1,11 @@
 // Phase 5 repo decomposition (PR-E): SoftDeleteAppCascade. Per the
 // user decision recorded in /Users/poyrazk/.claude/plans/inherited-soaring-yao.md
-// the cascade is *status-only*: the apps row is flipped to
-// status='deleted' and the freshly-deleted row is returned so the
-// caller (pkg/reconcile) can emit a project.workload.removed audit
-// row. Child rows (app_envs, crons, custom_domains, etc.) survive
-// the delete so an app deleted then re-created under the same slug
-// keeps its envs and secrets — the slug-reuse invariant pinned by
-// memstore_test.go:309-312. The GDPR-style hard cascade still lives
-// in DeleteAccount.
+// the app row is flipped to status='deleted' and the freshly-deleted
+// row is returned so the caller (pkg/reconcile) can emit a
+// project.workload.removed audit row. Durable app configuration survives,
+// while executable cron children are removed so a deleted app cannot keep
+// waking through the scheduler. The GDPR-style hard cascade still lives in
+// DeleteAccount.
 //
 //go:build !no_pg
 
@@ -86,12 +84,8 @@ func TestPg_SoftDeleteAppCascade_UpdatesStatus(t *testing.T) {
 	if got.Status != state.AppDeleted {
 		t.Errorf("status persisted: got %q, want %q", got.Status, state.AppDeleted)
 	}
-	gotCron, err := s.CronByID(ctx, cron.ID)
-	if err != nil {
-		t.Fatalf("CronByID post-soft-delete: %v", err)
-	}
-	if gotCron.Enabled {
-		t.Error("cron still enabled after app soft-delete")
+	if _, err := s.CronByID(ctx, cron.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("CronByID post-soft-delete: got %v, want ErrNotFound", err)
 	}
 }
 
