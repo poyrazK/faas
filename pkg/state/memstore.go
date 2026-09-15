@@ -650,10 +650,11 @@ type MemStore struct {
 	// repo_full_name) partial uniques from migration 00073 so
 	// ProjectBySlug / ProjectByRepo are O(1) lookups the same way
 	// PgStore's btrees are.
-	projects              map[string]Project
-	projectsByAccountSlug map[string]map[string]string // account_id → slug → id
-	projectsByInstallRepo map[installRepoKey]string    // install_id, repo_full_name → id
-	projectEnvironments   map[string]ProjectEnvironment
+	projects                    map[string]Project
+	projectsByAccountSlug       map[string]map[string]string // account_id → slug → id
+	projectsByInstallRepo       map[installRepoKey]string    // install_id, repo_full_name → id
+	projectEnvironments         map[string]ProjectEnvironment
+	projectEnvironmentApprovals map[string]ProjectEnvironmentApproval
 	// githubDeployBranches stores the optional branch→scope rules keyed by
 	// project ID. It mirrors github_deploy_branches in Postgres.
 	githubDeployBranches map[string]map[string]string
@@ -1039,11 +1040,12 @@ func NewMemStore() *MemStore {
 		computeNodeHeartbeats: map[string][]ComputeNodeHeartbeat{},
 		// sessions is empty here; populated by CreateSession at each
 		// dashboard login (handlers_auth*.go + handlers_mfa reissue).
-		sessions:              map[string]Session{},
-		projects:              map[string]Project{},
-		projectsByAccountSlug: map[string]map[string]string{},
-		projectsByInstallRepo: map[installRepoKey]string{},
-		projectEnvironments:   map[string]ProjectEnvironment{},
+		sessions:                    map[string]Session{},
+		projects:                    map[string]Project{},
+		projectsByAccountSlug:       map[string]map[string]string{},
+		projectsByInstallRepo:       map[installRepoKey]string{},
+		projectEnvironments:         map[string]ProjectEnvironment{},
+		projectEnvironmentApprovals: map[string]ProjectEnvironmentApproval{},
 	}
 	// Auto-seed default-local. Done after the struct literal so the
 	// seeded row carries a real id and created_at timestamp. Mirrors
@@ -2793,6 +2795,34 @@ func (m *MemStore) UpdateProjectEnvironmentProtection(_ context.Context, account
 		}
 	}
 	return ProjectEnvironment{}, ErrNotFound
+}
+
+func (m *MemStore) CreateProjectEnvironmentApproval(_ context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if approval.AccountID == "" || approval.ProjectSlug == "" || approval.EnvironmentSlug == "" || approval.PlanTokenHash == "" || approval.ApprovalTokenHash == "" {
+		return ProjectEnvironmentApproval{}, ErrNotFound
+	}
+	if approval.ID == "" {
+		approval.ID = newID()
+	}
+	if approval.CreatedAt.IsZero() {
+		approval.CreatedAt = time.Now()
+	}
+	m.projectEnvironmentApprovals[approval.ID] = approval
+	return approval, nil
+}
+
+func (m *MemStore) ProjectEnvironmentApprovalByToken(_ context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string) (ProjectEnvironmentApproval, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	for _, approval := range m.projectEnvironmentApprovals {
+		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approval.PlanTokenHash == planTokenHash && approval.ApprovalTokenHash == approvalTokenHash && approval.ExpiresAt.After(now) {
+			return approval, nil
+		}
+	}
+	return ProjectEnvironmentApproval{}, ErrNotFound
 }
 
 // ApplyProjectPlan — Phase 3 transactional seam. Mirrors the

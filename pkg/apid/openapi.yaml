@@ -10346,6 +10346,39 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/approvals:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the protected environment.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Protected environment slug to approve.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    post:
+      tags: [projects]
+      operationId: approveProjectEnvironment
+      summary: Approve one exact plan for a protected project environment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentApprovalRequest' }
+      responses:
+        '201':
+          description: Short-lived approval credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentApprovalResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/delete-preview:
     parameters:
       - name: slug
@@ -21692,6 +21725,22 @@ components:
         slug: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
         protected: { type: boolean, default: false }
 
+    CreateProjectEnvironmentApprovalRequest:
+      description: Request to approve one exact plan for a protected environment.
+      type: object
+      required: [plan_token]
+      properties:
+        plan_token: { type: string, minLength: 1, description: Exact plan token returned by the scan endpoint. }
+
+    ProjectEnvironmentApprovalResponse:
+      description: Short-lived credential for applying the approved plan. The approval token is returned only here.
+      type: object
+      required: [approval_token, environment, expires_at]
+      properties:
+        approval_token: { type: string, minLength: 1 }
+        environment: { type: string }
+        expires_at: { type: string, format: date-time }
+
     UpdateProjectEnvironmentRequest:
       description: Protection policy update for a project environment.
       type: object
@@ -22073,6 +22122,9 @@ components:
           type: string
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           description: "Environment slug applied to deployments created by this apply"
+        approval_token:
+          type: string
+          description: "Short-lived approval credential for the exact protected-environment plan"
         no_triggers:
           type: boolean
           default: false
@@ -22245,6 +22297,7 @@ components:
         project_slug: { type: string }
         repo_full_name: { type: string }
         environment: { type: string, description: "Registered project environment targeted by this plan" }
+        environment_protected: { type: boolean, description: "Whether applying this plan requires protected-environment approval" }
         scan_source:
           type: string
           enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown]

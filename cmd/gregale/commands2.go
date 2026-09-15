@@ -2683,6 +2683,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					"project deploy requires --yes when stdin or stdout is not a TTY; review the plan and rerun with --yes"))
 			}
 		}
+		approvalToken := ""
+		if plan.EnvironmentProtected {
+			approval, approvalErr := client.ApproveProjectEnvironment(ctx, *projectSlug, *environment,
+				api.CreateProjectEnvironmentApprovalRequest{PlanToken: plan.PlanToken})
+			if approvalErr != nil {
+				return printErr("Protected environment approval failed", approvalErr)
+			}
+			approvalToken = approval.ApprovalToken
+		}
 		// Re-open because the previous reader consumed the body.
 		// openCustomerFile is the same helper used in the scan call
 		// above; it's the documented path for any CLI-supplied tarball
@@ -2693,8 +2702,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		defer func() { _ = openTarball2.Close() }()
 		applyCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply"))
-		apply, err := client.ApplyProjectPlanWithBindingEnvironment(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment)
+		apply, err := client.ApplyProjectPlanWithBindingEnvironmentApproval(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken)
 		if err != nil {
 			return printErr("Apply failed", err)
 		}

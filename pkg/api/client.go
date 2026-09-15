@@ -1330,9 +1330,22 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironment(
 	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 	environment string,
 ) (ApplyResponse, error) {
+	return c.ApplyProjectPlanWithBindingEnvironmentApproval(ctx, planToken, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, environment, "")
+}
+
+// ApplyProjectPlanWithBindingEnvironmentApproval applies a plan and, when
+// needed, carries the short-lived approval for a protected environment.
+func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
+	ctx context.Context,
+	planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment, approvalToken string,
+) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -1426,6 +1439,14 @@ func (c *Client) UpdateProjectEnvironment(ctx context.Context, projectSlug, envi
 	return out, c.do(ctx, http.MethodPatch, path, req, &out)
 }
 
+// ApproveProjectEnvironment authorizes one exact plan for a protected
+// environment. The returned token is short-lived and must be passed to apply.
+func (c *Client) ApproveProjectEnvironment(ctx context.Context, projectSlug, environmentSlug string, req CreateProjectEnvironmentApprovalRequest) (ProjectEnvironmentApprovalResponse, error) {
+	var out ProjectEnvironmentApprovalResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/approvals"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
 // PreviewDeleteProject returns the state related to a project deletion.
 func (c *Client) PreviewDeleteProject(ctx context.Context, slug string) (ProjectDeletePreviewResponse, error) {
 	var out ProjectDeletePreviewResponse
@@ -1445,7 +1466,7 @@ func (c *Client) DeleteProject(ctx context.Context, slug string) error {
 func writeProjectMultipartFields(
 	w *multipart.Writer, source io.Reader, sourceName, projectSlug,
 	repoFullName, productionBranch string, installID int64, only, exclude []string,
-	persistExclude, noTriggers bool, environment ...string,
+	persistExclude, noTriggers bool, environmentAndApproval ...string,
 ) error {
 	fw, err := w.CreateFormFile("source", sourceName)
 	if err != nil {
@@ -1503,8 +1524,13 @@ func writeProjectMultipartFields(
 			return err
 		}
 	}
-	if len(environment) > 0 && strings.TrimSpace(environment[0]) != "" {
-		if err := w.WriteField("environment", strings.TrimSpace(environment[0])); err != nil {
+	if len(environmentAndApproval) > 0 && strings.TrimSpace(environmentAndApproval[0]) != "" {
+		if err := w.WriteField("environment", strings.TrimSpace(environmentAndApproval[0])); err != nil {
+			return err
+		}
+	}
+	if len(environmentAndApproval) > 1 && strings.TrimSpace(environmentAndApproval[1]) != "" {
+		if err := w.WriteField("approval_token", strings.TrimSpace(environmentAndApproval[1])); err != nil {
 			return err
 		}
 	}

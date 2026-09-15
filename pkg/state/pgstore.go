@@ -4202,6 +4202,39 @@ func scanProjectEnvironments(rows pgx.Rows) ([]ProjectEnvironment, error) {
 	return out, rows.Err()
 }
 
+func scanProjectEnvironmentApproval(row pgx.Row) (ProjectEnvironmentApproval, error) {
+	var approval ProjectEnvironmentApproval
+	if err := row.Scan(
+		&approval.ID, &approval.AccountID, &approval.ProjectSlug, &approval.EnvironmentSlug,
+		&approval.PlanTokenHash, &approval.ApprovalTokenHash, &approval.ExpiresAt, &approval.CreatedAt,
+	); err != nil {
+		return ProjectEnvironmentApproval{}, mapErr(err)
+	}
+	return approval, nil
+}
+
+func (s *PgStore) CreateProjectEnvironmentApproval(ctx context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
+	row := s.pool.QueryRow(ctx, `
+		insert into project_environment_approvals
+			(account_id, project_slug, environment_slug, plan_token_hash, approval_token_hash, expires_at)
+		values ($1, $2, $3, $4, $5, $6)
+		returning id, account_id, project_slug, environment_slug, plan_token_hash, approval_token_hash, expires_at, created_at
+	`, approval.AccountID, approval.ProjectSlug, approval.EnvironmentSlug, approval.PlanTokenHash, approval.ApprovalTokenHash, approval.ExpiresAt)
+	return scanProjectEnvironmentApproval(row)
+}
+
+func (s *PgStore) ProjectEnvironmentApprovalByToken(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string) (ProjectEnvironmentApproval, error) {
+	row := s.pool.QueryRow(ctx, `
+		select id, account_id, project_slug, environment_slug, plan_token_hash, approval_token_hash, expires_at, created_at
+		  from project_environment_approvals
+		 where account_id = $1 and project_slug = $2 and environment_slug = $3
+		   and plan_token_hash = $4 and approval_token_hash = $5 and expires_at > now()
+		 order by created_at desc
+		 limit 1
+	`, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash)
+	return scanProjectEnvironmentApproval(row)
+}
+
 // CreateProject inserts a new project row. The accounts FK is enforced
 // by Postgres; an unknown accountID surfaces as ErrFKViolation via
 // mapErr → 23503. The (account_id, slug) unique projects_account_slug_uniq

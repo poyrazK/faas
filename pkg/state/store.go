@@ -2153,6 +2153,8 @@ type Store interface {
 	ProjectEnvironmentBySlug(ctx context.Context, accountID, projectID, slug string) (ProjectEnvironment, error)
 	CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error)
 	UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error)
+	CreateProjectEnvironmentApproval(ctx context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error)
+	ProjectEnvironmentApprovalByToken(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string) (ProjectEnvironmentApproval, error)
 
 	// ApplyProjectPlan persists a project + its member apps + crons
 	// in a single transaction. Quota is checked inside the locked

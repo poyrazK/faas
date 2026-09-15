@@ -5542,6 +5542,19 @@ type ProjectEnvironment struct {
 	UpdatedAt time.Time
 }
 
+// ProjectEnvironmentApproval binds a short-lived approval credential to the
+// exact plan and environment it authorizes.
+type ProjectEnvironmentApproval struct {
+	ID                string
+	AccountID         string
+	ProjectSlug       string
+	EnvironmentSlug   string
+	PlanTokenHash     string
+	ApprovalTokenHash string
+	ExpiresAt         time.Time
+	CreatedAt         time.Time
+}
+
 // IsZero reports whether this is an unset Project (Go zero value).
 // store-layer scans can return such a value via the concrete-type
 // `Project{}` initializer that the pgx `Scan` into a value receiver

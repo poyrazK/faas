@@ -68,3 +68,17 @@ type CreateProjectEnvironmentRequest struct {
 type UpdateProjectEnvironmentRequest struct {
 	Protected *bool `json:"protected,omitempty"`
 }
+
+// CreateProjectEnvironmentApprovalRequest approves one exact plan for a
+// protected project environment.
+type CreateProjectEnvironmentApprovalRequest struct {
+	PlanToken string `json:"plan_token"`
+}
+
+// ProjectEnvironmentApprovalResponse contains a short-lived credential that
+// may be used only with the approved plan and environment.
+type ProjectEnvironmentApprovalResponse struct {
+	ApprovalToken string `json:"approval_token"`
+	Environment   string `json:"environment"`
+	ExpiresAt     string `json:"expires_at"`
+}

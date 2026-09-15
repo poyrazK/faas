@@ -300,6 +300,7 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_project_environment_approval_request import CreateProjectEnvironmentApprovalRequest
 from .create_project_environment_request import CreateProjectEnvironmentRequest
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
 from .create_tenant_surface_request_cert_kind import CreateTenantSurfaceRequestCertKind
@@ -798,6 +799,7 @@ from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagic
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
 from .project_apply_request import ProjectApplyRequest
 from .project_delete_preview_response import ProjectDeletePreviewResponse
+from .project_environment_approval_response import ProjectEnvironmentApprovalResponse
 from .project_environment_response import ProjectEnvironmentResponse
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
@@ -1370,6 +1372,7 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateProjectEnvironmentApprovalRequest",
     "CreateProjectEnvironmentRequest",
     "CreateTenantSurfaceRequest",
     "CreateTenantSurfaceRequestCertKind",
@@ -1860,6 +1863,7 @@ __all__ = (
     "ProgrammaticSignupMagicLinkResponse200Status",
     "ProjectApplyRequest",
     "ProjectDeletePreviewResponse",
+    "ProjectEnvironmentApprovalResponse",
     "ProjectEnvironmentResponse",
     "ProjectResponse",
     "ProjectScanRequest",

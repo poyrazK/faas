@@ -20,6 +20,10 @@ export type ProjectApplyRequest = {
    */
   environment?: string;
   /**
+   * Short-lived approval credential for the exact protected-environment plan
+   */
+  approval_token?: string;
+  /**
    * Leave trigger declarations and existing project trigger state unchanged for this apply.
    */
   no_triggers?: boolean;

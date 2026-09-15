@@ -4974,6 +4974,7 @@ type ProjectApplyRequest struct {
 	InstallID        int64  `json:"install_id"`
 	Only             string `json:"only"`
 	Environment      string `json:"environment,omitempty"`
+	ApprovalToken    string `json:"approval_token,omitempty"`
 	NoTriggers       bool   `json:"no_triggers"`
 }
 
@@ -5166,22 +5167,23 @@ type QuotaBlock struct {
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
 type PlanResponse struct {
-	ProjectSlug     string         `json:"project_slug"`
-	RepoFullName    string         `json:"repo_full_name,omitempty"`
-	Environment     string         `json:"environment,omitempty"`
-	ScanSource      string         `json:"scan_source"`
-	Tier            string         `json:"tier"`
-	Workloads       []PlanWorkload `json:"workloads"`
-	Managed         []PlanManaged  `json:"managed"`
-	Crons           []PlanCron     `json:"crons"`
-	Warnings        []string       `json:"warnings,omitempty"`
-	ObservedApps    int            `json:"observed_apps"`
-	ObservedCrons   int            `json:"observed_crons"`
-	LimitApps       int            `json:"limit_apps"`
-	LimitCrons      int            `json:"limit_crons"`
-	CanApply        bool           `json:"can_apply"`
-	CronsNotAllowed bool           `json:"crons_not_allowed,omitempty"`
-	PlanToken       string         `json:"plan_token"`
+	ProjectSlug          string         `json:"project_slug"`
+	RepoFullName         string         `json:"repo_full_name,omitempty"`
+	Environment          string         `json:"environment,omitempty"`
+	EnvironmentProtected bool           `json:"environment_protected,omitempty"`
+	ScanSource           string         `json:"scan_source"`
+	Tier                 string         `json:"tier"`
+	Workloads            []PlanWorkload `json:"workloads"`
+	Managed              []PlanManaged  `json:"managed"`
+	Crons                []PlanCron     `json:"crons"`
+	Warnings             []string       `json:"warnings,omitempty"`
+	ObservedApps         int            `json:"observed_apps"`
+	ObservedCrons        int            `json:"observed_crons"`
+	LimitApps            int            `json:"limit_apps"`
+	LimitCrons           int            `json:"limit_crons"`
+	CanApply             bool           `json:"can_apply"`
+	CronsNotAllowed      bool           `json:"crons_not_allowed,omitempty"`
+	PlanToken            string         `json:"plan_token"`
 	// ADR-124 can_apply rescue signal. PreExclude is the gate
 	// evaluated on the full scan (pre-`--only`/pre-`--exclude`).
 	// Rescued is true when --exclude flipped a blocked gate to

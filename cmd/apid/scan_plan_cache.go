@@ -303,7 +303,7 @@ func decodePlanToken(planToken string) (planTokenWire, error) {
 // scan service defaults production_branch to "main" and
 // install_id to 0 (the apply handler treats 0 as "no install
 // binding", issue #313).
-func buildCachedSourceRequest(cachedSourcePath, projectSlug string, exclude []string) (*http.Request, error) {
+func buildCachedSourceRequest(cachedSourcePath, projectSlug string, exclude []string, approvalToken ...string) (*http.Request, error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	// File part. The filename is informational — the v1 /scan
@@ -345,6 +345,11 @@ func buildCachedSourceRequest(cachedSourcePath, projectSlug string, exclude []st
 			continue
 		}
 		if err := mw.WriteField("exclude", slug); err != nil {
+			return nil, err
+		}
+	}
+	if len(approvalToken) > 0 && strings.TrimSpace(approvalToken[0]) != "" {
+		if err := mw.WriteField("approval_token", strings.TrimSpace(approvalToken[0])); err != nil {
 			return nil, err
 		}
 	}

@@ -100,8 +100,9 @@ type scanPlanRequest struct {
 	// NoTriggers makes trigger declarations observational only for this
 	// scan/apply pair. It is bound into the plan token so apply cannot change
 	// the suppression decision made during preview.
-	NoTriggers  bool
-	Environment string // registered project environment; resolved to deployment scope
+	NoTriggers    bool
+	Environment   string // registered project environment; resolved to deployment scope
+	ApprovalToken string // exact-plan approval credential for protected applies
 }
 
 func validProjectRepoFullName(repo string) bool {
@@ -132,14 +133,15 @@ func validProjectRepoFullName(repo string) bool {
 // `plan.workloads[i].tier` serialize as "compose" instead of
 // `8`. The conversion lives in toPlanWorkload below.
 type scanPlanResponse struct {
-	ProjectSlug  string                  `json:"project_slug"`
-	RepoFullName string                  `json:"repo_full_name,omitempty"`
-	Environment  string                  `json:"environment,omitempty"`
-	ScanSource   state.ProjectScanSource `json:"scan_source"`
-	Tier         string                  `json:"tier"`
-	Workloads    []api.PlanWorkload      `json:"workloads"`
-	Managed      []api.PlanManaged       `json:"managed"`
-	Crons        []planCron              `json:"crons"`
+	ProjectSlug          string                  `json:"project_slug"`
+	RepoFullName         string                  `json:"repo_full_name,omitempty"`
+	Environment          string                  `json:"environment,omitempty"`
+	EnvironmentProtected bool                    `json:"environment_protected,omitempty"`
+	ScanSource           state.ProjectScanSource `json:"scan_source"`
+	Tier                 string                  `json:"tier"`
+	Workloads            []api.PlanWorkload      `json:"workloads"`
+	Managed              []api.PlanManaged       `json:"managed"`
+	Crons                []planCron              `json:"crons"`
 	// CronNames parallels Crons: when /apply runs, the apply handler
 	// uses CronNames[i] to look up the freshly inserted app_id from
 	// insertedApps (matched by Slug == WorkloadName). Not exposed
@@ -1073,6 +1075,21 @@ func (s *server) scanService(
 	if prob := s.validateProjectDeploymentEnvironment(r.Context(), acct, req.ProjectSlug, req.Environment); prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
+	environmentProtected, prob := s.projectDeploymentEnvironmentProtection(r.Context(), acct, req.ProjectSlug, req.Environment)
+	if prob != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, prob
+	}
+	if apply && environmentProtected {
+		if planToken == "" || req.ApprovalToken == "" {
+			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalRequired,
+				"Protected environment approval required", "approve the exact plan before applying to this protected environment")
+		}
+		if _, err := s.store.ProjectEnvironmentApprovalByToken(r.Context(), acct.ID, req.ProjectSlug, req.Environment,
+			hashProjectEnvironmentApprovalMaterial(planToken), hashProjectEnvironmentApprovalMaterial(req.ApprovalToken)); err != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+				"Invalid environment approval", "the approval is expired or does not match this exact plan and environment")
+		}
+	}
 	// ADR-124 follow-up #3 — apply-time persisted-exclude fallback.
 	// When the apply path runs without an explicit --exclude AND a
 	// project row already exists (i.e. this is a re-deploy, not a
@@ -1561,21 +1578,22 @@ func (s *server) scanService(
 		respManaged[i] = toPlanManaged(m)
 	}
 	resp := &scanPlanResponse{
-		ProjectSlug:   req.ProjectSlug,
-		RepoFullName:  req.RepoFullName,
-		Environment:   req.Environment,
-		ScanSource:    reconcile.DeriveScanSource(filteredW),
-		Tier:          result.Tier.String(),
-		Workloads:     respWorkloads,
-		Managed:       respManaged,
-		Crons:         crons,
-		Warnings:      warnings,
-		ObservedApps:  projectedApps,
-		ObservedCrons: projectedCrons,
-		LimitApps:     limits.DeployedApps,
-		LimitCrons:    limits.CronLimitPerAccount,
-		CanApply:      canApply,
-		NotAllowed:    notAllowed,
+		ProjectSlug:          req.ProjectSlug,
+		RepoFullName:         req.RepoFullName,
+		Environment:          req.Environment,
+		EnvironmentProtected: environmentProtected,
+		ScanSource:           reconcile.DeriveScanSource(filteredW),
+		Tier:                 result.Tier.String(),
+		Workloads:            respWorkloads,
+		Managed:              respManaged,
+		Crons:                crons,
+		Warnings:             warnings,
+		ObservedApps:         projectedApps,
+		ObservedCrons:        projectedCrons,
+		LimitApps:            limits.DeployedApps,
+		LimitCrons:           limits.CronLimitPerAccount,
+		CanApply:             canApply,
+		NotAllowed:           notAllowed,
 		// ADR-124 can_apply rescue signal. PreExclude + Rescued
 		// are the operator-facing knobs the dashboard renders in
 		// the gate card; CanApplyReasons is the human-readable
@@ -2004,6 +2022,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		persistExclude bool
 		noTriggers     bool
 		environment    string
+		approvalToken  string
 		projectSlugSet bool
 	)
 	for {
@@ -2104,6 +2123,12 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 				return nil, api.ErrSourceInvalid("environment is too long")
 			}
 			environment = strings.TrimSpace(string(b))
+		case "approval_token":
+			b, readErr := io.ReadAll(io.LimitReader(part, 512))
+			if readErr != nil {
+				return nil, api.ErrSourceInvalid("could not read approval_token")
+			}
+			approvalToken = strings.TrimSpace(string(b))
 		default:
 			_, _ = io.Copy(io.Discard, part)
 		}
@@ -2161,6 +2186,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		PersistExclude: persistExclude,
 		NoTriggers:     noTriggers,
 		Environment:    environment,
+		ApprovalToken:  approvalToken,
 	}, nil
 }
 

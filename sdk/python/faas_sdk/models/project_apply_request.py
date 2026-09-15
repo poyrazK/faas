@@ -29,6 +29,8 @@ class ProjectApplyRequest:
     only: str | Unset = UNSET
     environment: str | Unset = UNSET
     """Environment slug applied to deployments created by this apply"""
+    approval_token: str | Unset = UNSET
+    """Short-lived approval credential for the exact protected-environment plan"""
     no_triggers: bool | Unset = False
     """Leave trigger declarations and existing project trigger state unchanged for this apply."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -47,6 +49,8 @@ class ProjectApplyRequest:
         only = self.only
 
         environment = self.environment
+
+        approval_token = self.approval_token
 
         no_triggers = self.no_triggers
 
@@ -69,6 +73,8 @@ class ProjectApplyRequest:
             field_dict["only"] = only
         if environment is not UNSET:
             field_dict["environment"] = environment
+        if approval_token is not UNSET:
+            field_dict["approval_token"] = approval_token
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
 
@@ -97,6 +103,9 @@ class ProjectApplyRequest:
         if not isinstance(self.environment, Unset):
             files.append(("environment", (None, str(self.environment).encode(), "text/plain")))
 
+        if not isinstance(self.approval_token, Unset):
+            files.append(("approval_token", (None, str(self.approval_token).encode(), "text/plain")))
+
         if not isinstance(self.no_triggers, Unset):
             files.append(("no_triggers", (None, str(self.no_triggers).encode(), "text/plain")))
 
@@ -122,6 +131,8 @@ class ProjectApplyRequest:
 
         environment = d.pop("environment", UNSET)
 
+        approval_token = d.pop("approval_token", UNSET)
+
         no_triggers = d.pop("no_triggers", UNSET)
 
         project_apply_request = cls(
@@ -132,6 +143,7 @@ class ProjectApplyRequest:
             install_id=install_id,
             only=only,
             environment=environment,
+            approval_token=approval_token,
             no_triggers=no_triggers,
         )
 

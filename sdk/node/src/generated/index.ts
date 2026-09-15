@@ -160,6 +160,7 @@ export type { CreateObjectStorageComputeBindingRequest } from './models/CreateOb
 export type { CreateObjectUploadRouteRequest } from './models/CreateObjectUploadRouteRequest.js';
 export type { CreateOrgAPIKeyRequest } from './models/CreateOrgAPIKeyRequest.js';
 export type { CreateOrgRequest } from './models/CreateOrgRequest.js';
+export type { CreateProjectEnvironmentApprovalRequest } from './models/CreateProjectEnvironmentApprovalRequest.js';
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
 export type { CreateTenantSurfaceRequest } from './models/CreateTenantSurfaceRequest.js';
 export type { CreateTriggerBatchRequest } from './models/CreateTriggerBatchRequest.js';
@@ -419,6 +420,7 @@ export type { ProgrammaticAPIKey } from './models/ProgrammaticAPIKey.js';
 export type { ProgrammaticAuthResponse } from './models/ProgrammaticAuthResponse.js';
 export type { ProjectApplyRequest } from './models/ProjectApplyRequest.js';
 export type { ProjectDeletePreviewResponse } from './models/ProjectDeletePreviewResponse.js';
+export type { ProjectEnvironmentApprovalResponse } from './models/ProjectEnvironmentApprovalResponse.js';
 export type { ProjectEnvironmentResponse } from './models/ProjectEnvironmentResponse.js';
 export type { ProjectResponse } from './models/ProjectResponse.js';
 export type { ProjectScanRequest } from './models/ProjectScanRequest.js';
