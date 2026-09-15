@@ -21,7 +21,6 @@
 //
 // Future surface (out of scope for this PR; file as follow-ups):
 //   - `rotate <slug> <name>` — explicit rotation log entry
-//   - `--format=json`        — machine-readable list output
 package main
 
 import (
@@ -183,7 +182,7 @@ func cmdTrustedPublishersList(args []string) int {
 		return jsonOut(writeNDJSON(out.Signers))
 	}
 	if len(out.Signers) == 0 {
-		PrintOK(os.Stdout, "no trusted signers configured for app %q\n", slug)
+		PrintOK(osStdout, "no trusted signers configured for app %q", slug)
 		return 0
 	}
 	for _, s := range out.Signers {
@@ -196,7 +195,7 @@ func cmdTrustedPublishersList(args []string) int {
 		if len(short) > 12 {
 			short = short[:12] + "…"
 		}
-		PrintOK(os.Stdout, "  %s  %s  added_at=%s\n", s.Name, short, s.AddedAt.Format("2006-01-02T15:04:05Z07:00"))
+		PrintOK(osStdout, "  %s  %s  added_at=%s", s.Name, short, s.AddedAt.Format("2006-01-02T15:04:05Z07:00"))
 	}
 	return 0
 }
