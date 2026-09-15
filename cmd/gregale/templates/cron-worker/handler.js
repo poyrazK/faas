@@ -101,14 +101,6 @@ export async function handler(event, ctx) {
     );
   }
 
-  // Parse the body (QStash publishes JSON by default).
-  let payload = {};
-  try {
-    payload = rawBody ? JSON.parse(rawBody) : {};
-  } catch {
-    payload = { raw: rawBody };
-  }
-
   // Bump a single counter so a customer's "how many times has my
   // cron fired" is a single Redis GET on `cron-worker:fired`. The
   // counter survives cold boots (park + wake), which is the whole
@@ -118,7 +110,7 @@ export async function handler(event, ctx) {
   ctx.log.info("cron-worker fired", {
     invocation_id: ctx.invocation_id,
     count,
-    payload,
+    payload_bytes: Buffer.byteLength(rawBody, "utf8"),
     fired_at: new Date().toISOString(),
   });
 
@@ -129,7 +121,6 @@ export async function handler(event, ctx) {
       ok: true,
       invocation_id: ctx.invocation_id,
       count,
-      received: payload,
     }),
   };
 }

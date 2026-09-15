@@ -478,6 +478,29 @@ func TestTemplates_CategoryForCoversAllNames(t *testing.T) {
 	}
 }
 
+func TestRequestHandlingTemplatesDoNotEchoOrLogRequestSecrets(t *testing.T) {
+	checks := map[string][]string{
+		"function-node/handler.js":      {"{ event,", "JSON.stringify(event)", "body_preview"},
+		"function-node24/handler.js":    {"{ event,", "JSON.stringify(event)", "body_preview"},
+		"function-python/handler.py":    {"extra={\"event\"", "json.dumps(event)", "body_preview"},
+		"function-python313/handler.py": {"extra={\"event\"", "json.dumps(event)", "body_preview"},
+		"function-go/handler.go":        {"json.Marshal(env)", "BodyB64: env.BodyB64", "Headers: env.Headers"},
+		"webhook-receiver/handler.js":   {"Object.entries(req.headers)", "body_preview", "headers,"},
+		"cron-worker/handler.js":        {"payload,", "received: payload", "raw: rawBody"},
+	}
+	for name, forbidden := range checks {
+		body, err := templates.FS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, needle := range forbidden {
+			if strings.Contains(string(body), needle) {
+				t.Errorf("%s contains unsafe full-request pattern %q", name, needle)
+			}
+		}
+	}
+}
+
 func TestTemplateDocsMatchTemplatePurpose(t *testing.T) {
 	wants := map[string]string{
 		"function-node": functionsDocsURL,

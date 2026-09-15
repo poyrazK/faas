@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 )
@@ -53,6 +54,29 @@ func TestVerifierFailureDoesNotPersistBody(t *testing.T) {
 	}
 	if got.Status != SmokeFailed || got.ErrorCode != "smoke_http_status" || got.Error != "health probe returned HTTP 502" {
 		t.Fatalf("unexpected smoke result: %#v", got)
+	}
+}
+
+func TestVerifierRetriesGatewayRoutePropagation(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests < 3 {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("X-Request-ID", "candidate-request")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	got, err := (Verifier{
+		BaseURL: srv.URL, Timeout: time.Second, RetryInterval: time.Millisecond,
+	}).Verify(context.Background(), "demo", "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != SmokeVerified || got.RequestID != "candidate-request" || requests != 3 {
+		t.Fatalf("result=%+v requests=%d", got, requests)
 	}
 }
 

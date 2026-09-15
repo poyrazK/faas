@@ -173,7 +173,7 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 			name:     "wake p95",
 			query:    statusWakeP95Query,
 			fallback: "",
-			guard:    "sum(increase(gateway_platform_wake_latency_seconds_count[15m])) >= 20",
+			guard:    "sum(increase(gateway_platform_wake_latency_seconds_count[30m])) >= 20",
 		},
 		{
 			name:     "build success",
@@ -185,7 +185,7 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 	if strings.Contains(statusWakeP95Query, "gateway_wake_latency_seconds") {
 		t.Fatalf("platform 350ms status gate reads legacy end-to-end histogram: %q", statusWakeP95Query)
 	}
-	if !strings.Contains(statusWakeP95Query, "gateway_platform_wake_latency_seconds_bucket[15m]") {
+	if !strings.Contains(statusWakeP95Query, "gateway_platform_wake_latency_seconds_bucket[30m]") {
 		t.Fatalf("wake status query is not aligned with the platform SLO window: %q", statusWakeP95Query)
 	}
 	for _, tt := range tests {
@@ -613,6 +613,65 @@ func TestStatusDegradedQueryExcludesNonServiceAlerts(t *testing.T) {
 	}
 	if !strings.Contains(alertQuery, `public_status!="internal"`) {
 		t.Fatalf("alert query does not exclude internal operator alerts: %s", alertQuery)
+	}
+}
+
+func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	// A build may run longer than the status window. The aggregate is based on
+	// when the deployment reached its terminal state, not when it was queued.
+	queuedAt := time.Now().Add(-time.Hour)
+	acct, _ := store.CreateAccount(ctx, "deployment-status@example.com", api.PlanPro)
+	app, _ := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "deployment-status", RAMMB: 256,
+		IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	succeeded, _ := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, CreatedAt: queuedAt,
+	})
+	if err := store.MarkDeploymentLive(ctx, succeeded.ID); err != nil {
+		t.Fatal(err)
+	}
+	failed, _ := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, CreatedAt: queuedAt,
+	})
+	if _, err := store.SetDeploymentFailed(ctx, failed.ID, api.CodeDeploymentSmokeFailed, "platform route returned 404"); err != nil {
+		t.Fatal(err)
+	}
+	userFailed, _ := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, CreatedAt: queuedAt,
+	})
+	userBuild, err := store.CreateBuild(ctx, userFailed.ID, state.DeploymentKindTarball, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimQueuedBuild(ctx, userBuild.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FailBuild(ctx, claim, state.FailureUserError, "customer source did not compile"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+	}))
+	defer srv.Close()
+
+	snap, err := newStatusCacheWithStore(srv.URL, store, slog.Default()).Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.BuildSuccessPct != 50 || !snap.Degraded {
+		t.Fatalf("status = %+v, want 50%% and degraded", snap)
+	}
+	if !strings.Contains(snap.Source, "recent platform deployment failures") {
+		t.Fatalf("source = %q", snap.Source)
 	}
 }
 

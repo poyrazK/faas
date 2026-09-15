@@ -1199,7 +1199,7 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the follow alias)
 
-`gregale logs <slug> [--follow] [--deployment <ID>] [--grep <SUBSTR>] [--since <RFC3339>] [--level <LEVEL>] [--explain]`
+`gregale logs <slug> [--follow] [--deployment <ID>] [--grep <SUBSTR>] [--since <RFC3339>] [--level <LEVEL>] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1209,6 +1209,9 @@ Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the fo
 | `--since <RFC3339>` | only show lines at or after this RFC3339 timestamp |  |
 | `--level <LEVEL>` | only show lines at this level | one of `info` · `warn` · `error` |
 | `--explain` | summarize the last failure and common error patterns |  |
+| `--archive` | read durable logs for one instance and UTC day |  |
+| `--instance <ID>` | instance id for --archive |  |
+| `--date <YYYY-MM-DD>` | UTC day for --archive |  |
 
 
 ## metrics

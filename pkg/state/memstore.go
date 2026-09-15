@@ -3496,6 +3496,50 @@ func (m *MemStore) ListAllDeployments(_ context.Context) ([]Deployment, error) {
 	return out, nil
 }
 
+// CountDeploymentOutcomesSince mirrors the production aggregate without
+// widening Store. Status evaluators discover it through a narrow optional
+// interface, keeping existing test stores source-compatible.
+func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out DeploymentOutcomeCounts
+	for _, d := range m.deployments {
+		if app, ok := m.apps[d.AppID]; !ok || app.Status == AppDeleted {
+			continue
+		}
+		switch d.Status {
+		case DeployLive, DeploySuperseded:
+			terminalAt := d.CreatedAt
+			if d.RolloutCompletedAt != nil {
+				terminalAt = *d.RolloutCompletedAt
+			}
+			if terminalAt.Before(since) {
+				continue
+			}
+			out.Succeeded++
+		case DeployFailed:
+			terminalAt := d.CreatedAt
+			if d.RolloutAbortedAt != nil {
+				terminalAt = *d.RolloutAbortedAt
+			}
+			if terminalAt.Before(since) {
+				continue
+			}
+			userError := false
+			for _, build := range m.builds {
+				if build.DeploymentID == d.ID && build.FailureClass == FailureUserError {
+					userError = true
+					break
+				}
+			}
+			if !userError {
+				out.Failed++
+			}
+		}
+	}
+	return out, nil
+}
+
 // ListDeploymentsByNodeID mirrors PgStore.ListDeploymentsByNodeID.
 // Same JOIN-through-apps predicate as the SQL version.
 func (m *MemStore) ListDeploymentsByNodeID(_ context.Context, nodeID string) ([]Deployment, error) {

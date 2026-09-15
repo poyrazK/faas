@@ -3772,13 +3772,14 @@ type StatusPage struct {
 	// APIAvailabilityPct is the rolling 5-minute 2xx rate over
 	// gateway_requests_total, expressed 0..100.
 	APIAvailabilityPct float64 `json:"api_availability_pct"`
-	// WakeP95MS is the p95 of gateway_wake_latency_seconds over the
-	// last 5 minutes, in milliseconds. It is null when no wake was
+	// WakeP95MS is the p95 of gateway_platform_wake_latency_seconds over the
+	// last 30 minutes, in milliseconds. It is null when fewer than 20 wakes were
 	// observed, so consumers cannot mistake missing data for a 0 ms wake.
 	WakeP95MS *float64 `json:"wake_p95_ms"`
-	// BuildSuccessPct is the rolling 5-minute success rate of
-	// builderd builds (completed/success ÷ (completed/success +
-	// completed/failure)).
+	// BuildSuccessPct retains its legacy wire name but represents terminal
+	// deployment success over the last 15 minutes. Platform-attributable build,
+	// scan, snapshot, and readiness failures are included; build rows classified
+	// as user_error are excluded.
 	BuildSuccessPct float64 `json:"build_success_pct"`
 	// Uptime30dPct is the time-weighted availability of complete five-minute
 	// platform observations over the last 30 calendar days. Customer workload

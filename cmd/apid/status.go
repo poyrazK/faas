@@ -50,8 +50,8 @@ const (
 		and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
 	) or vector(100)`
 	statusWakeP95Query = `(
-		(histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[15m])) by (le)) * 1000)
-		and sum(increase(gateway_platform_wake_latency_seconds_count[15m])) >= 20
+		(histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[30m])) by (le)) * 1000)
+		and sum(increase(gateway_platform_wake_latency_seconds_count[30m])) >= 20
 	)`
 	statusBuildSuccessQuery = `(
 		(sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m])) / sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) * 100)
@@ -155,6 +155,12 @@ type statusEvaluation struct {
 	updatedAt          time.Time
 	telemetryAvailable bool
 }
+
+type deploymentOutcomeCounter interface {
+	CountDeploymentOutcomesSince(context.Context, time.Time) (state.DeploymentOutcomeCounts, error)
+}
+
+const statusDeploymentOutcomeWindow = 15 * time.Minute
 
 // newStatusCache builds a cache. promURL is the local Prometheus base
 // (e.g. "http://10.0.0.1:9090"); empty string disables the cache and
@@ -307,20 +313,43 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 		}
 	}
 
-	// 3. Build success rate over last 5m. Spec §12 defines success as
-	// non-user_error: an app that fails to build because of the customer's
-	// own code is not a platform failure. Sourced from builderd's real
-	// build counter (ADR-030) — NOT the old vmmd cold-boot proxy, which
-	// measured a different thing entirely (wake success, not build).
+	// 3. Deployment success over the authoritative recent database window.
+	// The legacy field name remains build_success_pct for wire compatibility,
+	// but the numerator covers deployments that reached live and the
+	// denominator also covers platform-attributable build, scan, snapshot,
+	// and readiness failures. User-code build failures are excluded by the
+	// store aggregate. Prometheus remains the compatibility fallback for
+	// embedders without the aggregate and for an idle database window.
+	buildAvailable := false
 	if pct, err := c.client.QueryScalar(ctx, statusBuildSuccessQuery); err == nil {
 		snap.legacy.BuildSuccessPct = pct
-		snap.indicatorAvailable["build_success"] = true
-		okCount++
+		buildAvailable = true
 	} else {
 		c.log.Warn("status: build_success query failed", "err", err)
 		if firstErr == nil {
 			firstErr = err
 		}
+	}
+	if counter, ok := c.store.(deploymentOutcomeCounter); ok {
+		counts, countErr := counter.CountDeploymentOutcomesSince(ctx, now.Add(-statusDeploymentOutcomeWindow))
+		if countErr != nil {
+			c.log.Warn("status: deployment outcome aggregate failed", "err", countErr)
+			buildAvailable = false
+			if firstErr == nil {
+				firstErr = countErr
+			}
+		} else if total := counts.Succeeded + counts.Failed; total > 0 {
+			snap.legacy.BuildSuccessPct = float64(counts.Succeeded) / float64(total) * 100
+			buildAvailable = true
+			if counts.Failed > 0 {
+				snap.legacy.Degraded = true
+				snap.legacy.Source = appmetrics.SourceDegradedPrefix + "recent platform deployment failures"
+			}
+		}
+	}
+	if buildAvailable {
+		snap.indicatorAvailable["build_success"] = true
+		okCount++
 	}
 
 	// 4. Degraded flag: at least one customer-impacting platform warn- or
@@ -561,7 +590,7 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 		Indicators: []api.PublicStatusIndicator{
 			statusIndicator("api_availability", "API availability", float64Ptr(evaluation.legacy.APIAvailabilityPct), evaluation.indicatorAvailable["api_availability"], "%", 99.9, "gte"),
 			statusIndicator("wake_p95", "Platform wake p95", evaluation.legacy.WakeP95MS, evaluation.indicatorAvailable["wake_p95"], "ms", 350, "lte"),
-			statusIndicator("build_success", "Build success", float64Ptr(evaluation.legacy.BuildSuccessPct), evaluation.indicatorAvailable["build_success"], "%", 99, "gte"),
+			statusIndicator("build_success", "Deployment success", float64Ptr(evaluation.legacy.BuildSuccessPct), evaluation.indicatorAvailable["build_success"], "%", 99, "gte"),
 		},
 		ActiveEvents: publicStatusEvents(active), UpcomingMaintenance: publicStatusEvents(upcoming), ResolvedIncidents: publicStatusEvents(resolved),
 	}

@@ -18,10 +18,11 @@ const (
 // gateway's public origin; AppsDomain is used to construct the tenant Host
 // header when the origin is shared by many apps.
 type Verifier struct {
-	Client     *http.Client
-	BaseURL    string
-	AppsDomain string
-	Timeout    time.Duration
+	Client        *http.Client
+	BaseURL       string
+	AppsDomain    string
+	Timeout       time.Duration
+	RetryInterval time.Duration
 	// Required makes an unset BaseURL a failed verification rather than a
 	// compatibility skip. Public-beta compute nodes set this so a missing
 	// verifier cannot promote a deployment with an unverified public route.
@@ -51,22 +52,46 @@ func (v Verifier) Verify(ctx context.Context, slug, path string) (SmokeResult, e
 		copy.Timeout = v.Timeout
 		client = &copy
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(v.BaseURL, "/")+path, nil)
+	verifyCtx := ctx
+	cancel := func() {}
+	if v.Timeout > 0 {
+		verifyCtx, cancel = context.WithTimeout(ctx, v.Timeout)
+	}
+	defer cancel()
+	started := time.Now()
+	for {
+		result = verifyOnce(verifyCtx, client, v.BaseURL, v.AppsDomain, slug, path)
+		result.LatencyMS = time.Since(started).Milliseconds()
+		if result.Status == SmokeVerified || v.Timeout <= 0 || !retryableSmoke(result) {
+			return result, nil
+		}
+		interval := v.RetryInterval
+		if interval <= 0 {
+			interval = 100 * time.Millisecond
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-verifyCtx.Done():
+			timer.Stop()
+			return result, nil
+		case <-timer.C:
+		}
+	}
+}
+
+func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, slug, path string) SmokeResult {
+	result := SmokeResult{Status: SmokeSkipped, Path: path}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+path, nil)
 	if err != nil {
-		return failedSmoke(path, "smoke_request_failed", err), nil
+		return failedSmoke(path, "smoke_request_failed", err)
 	}
 	req.Header.Set("X-Gregale-Platform-Smoke", "1")
-	if host := smokeHost(slug, v.AppsDomain); host != "" {
+	if host := smokeHost(slug, appsDomain); host != "" {
 		req.Host = host
 	}
-	started := time.Now()
 	resp, err := client.Do(req)
-	result.LatencyMS = time.Since(started).Milliseconds()
 	if err != nil {
-		result.Status = SmokeFailed
-		result.ErrorCode = "smoke_request_failed"
-		result.Error = safeError(err)
-		return result, nil
+		return failedSmoke(path, "smoke_request_failed", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
@@ -77,12 +102,24 @@ func (v Verifier) Verify(ctx context.Context, slug, path string) (SmokeResult, e
 	}
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		result.Status = SmokeVerified
-		return result, nil
+		return result
 	}
 	result.Status = SmokeFailed
 	result.ErrorCode = "smoke_http_status"
 	result.Error = fmt.Sprintf("health probe returned HTTP %d", resp.StatusCode)
-	return result, nil
+	return result
+}
+
+func retryableSmoke(result SmokeResult) bool {
+	if result.ErrorCode == "smoke_request_failed" {
+		return true
+	}
+	switch result.StatusCode {
+	case http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizePath(path string) string {

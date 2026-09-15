@@ -1553,12 +1553,18 @@ func retryStateMutation(ctx context.Context, op func() error) error {
 	return err
 }
 
-// emitBuildLog appends a line to the build log file (lazily opened) and fans
-// out a build_log notification so any SSE subscriber sees it (UX spec §2.4).
-// Best-effort: a failure here is logged but never blocks the build.
+// emitBuildLog persists a line in the control-plane database, mirrors it to
+// the node-local bounded file, and fans out a notification for live SSE
+// subscribers. The database row is the durable cross-host source of truth;
+// builderd and apid do not share a filesystem in production.
 func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
+	if build, err := b.store.BuildByID(ctx, buildID); err != nil {
+		b.log.Warn("builderd: resolve durable build log", "build", buildID, "err", err)
+	} else if _, err := b.store.AppendDeploymentLog(ctx, build.DeploymentID, "build", line); err != nil {
+		b.log.Warn("builderd: persist build log", "build", buildID, "deployment", build.DeploymentID, "err", err)
+	}
 	if err := appendLogBounded(ctx, b.store, buildID, line, b.cfg.SourceSpoolDir, b.cfg.BuildLogMaxBytes); err != nil {
-		b.log.Warn("builderd: append log", "build", buildID, "err", err)
+		b.log.Warn("builderd: append node-local log", "build", buildID, "err", err)
 	}
 	if b.notif == nil {
 		return

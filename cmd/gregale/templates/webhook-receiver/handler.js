@@ -10,9 +10,8 @@
 // The body is captured RAW (express.raw) so providers that send
 // non-JSON payloads (form-encoded, plain text, signed JWT bodies)
 // pass through unparsed. Successful receipt is acknowledged with a
-// small JSON envelope echoing the relevant headers and a truncated
-// body preview so the customer's first `gregale logs <slug>` shows what
-// arrived.
+// small metadata-only JSON receipt. Request headers and bodies are never
+// echoed or logged by the starter because they commonly contain secrets.
 //
 // Required env vars (set via `gregale secrets set --app <slug> ...`):
 //
@@ -91,10 +90,9 @@ function verifySecret(req, res) {
 }
 
 // Accept POSTs to any path under /, subject to the path allowlist.
-// Other verbs return 405. The handler echoes back a JSON envelope
-// with a body preview (capped at 1 KiB) so the customer's first
-// `gregale logs <slug>` shows what arrived without flooding the log
-// stream on a 1 MiB POST.
+// Other verbs return 405. The receipt contains only bounded routing metadata;
+// customers can explicitly select application fields after provider-specific
+// signature verification when their use case requires it.
 app.post(/.*/, (req, res) => {
   if (!verifySecret(req, res)) {
     return;
@@ -103,25 +101,18 @@ app.post(/.*/, (req, res) => {
     return res.status(404).json({ ok: false, error: "path not in WEBHOOK_ALLOWED_PATHS" });
   }
   const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
-  const preview = raw.length > 1024 ? raw.subarray(0, 1024).toString("utf8") + "…" : raw.toString("utf8");
-  const headers = {};
-  for (const [k, v] of Object.entries(req.headers)) {
-    if (typeof v === "string" && v.length <= 256) {
-      headers[k] = v;
-    }
-  }
+  const receiptId = crypto.randomUUID();
   console.log(
-    `webhook-receiver: method=${req.method} path=${req.path} bytes=${raw.length} ct=${req.get("content-type") || "?"}`,
+    `webhook-receiver: receipt_id=${receiptId} method=${req.method} path=${req.path} bytes=${raw.length}`,
   );
   return res.status(200).json({
     ok: true,
+    receipt_id: receiptId,
     received: {
       method: req.method,
       path: req.path,
       bytes: raw.length,
       content_type: req.get("content-type") || "",
-      headers,
-      body_preview: preview,
     },
   });
 });

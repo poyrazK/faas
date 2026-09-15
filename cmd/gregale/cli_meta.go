@@ -994,6 +994,9 @@ var cliCommands = []cliCommand{
 			{Name: "since", Short: "only show lines at or after this RFC3339 timestamp", Value: "RFC3339"},
 			{Name: "level", Short: "only show lines at this level", Value: "LEVEL", ClosedSet: []string{"info", "warn", "error"}},
 			{Name: "explain", Short: "summarize the last failure and common error patterns"},
+			{Name: "archive", Short: "read durable logs for one instance and UTC day"},
+			{Name: "instance", Short: "instance id for --archive", Value: "ID"},
+			{Name: "date", Short: "UTC day for --archive", Value: "YYYY-MM-DD"},
 		},
 	},
 	{

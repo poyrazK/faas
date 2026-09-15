@@ -105,6 +105,7 @@ func (f failingPuller) PullLayers(_ context.Context, _ string) (oci.PullLayersRe
 // paths, and layer plumbing. Set buildErr to make Build return an error.
 type fakeBuilder struct {
 	calls            []rootfs.BuildInput
+	fullRootfsCalls  []rootfs.BuildFullRootfsInput
 	bytesOut         int64
 	buildErr         error
 	runnerDigest     string
@@ -198,6 +199,7 @@ func (b *fakeBuilder) BuildBaseFromStaging(ctx context.Context, _ string, in roo
 // small placeholder via Storage.Put so dispatchFullRootfs /
 // buildFullRootfsLayer tests stay KVM-free.
 func (b *fakeBuilder) BuildFullRootfs(ctx context.Context, in rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error) {
+	b.fullRootfsCalls = append(b.fullRootfsCalls, in)
 	b.calls = append(b.calls, rootfs.BuildInput{Plan: in.Plan})
 	if in.Storage != nil && in.StorageKey != "" {
 		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4 full-rootfs")); err != nil {
@@ -391,9 +393,11 @@ func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
 	})
 	_ = store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, "")
 
-	var sawLive bool
-	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
+	var sawLive, sawRouteNotification bool
+	notif := &fakeNotifier{}
+	h := New(store, notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
 		func(ctx context.Context, _ state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			sawRouteNotification = findNotify(notif, db.NotifyDeploymentChanged) != nil
 			got, err := store.DeploymentByID(ctx, dep.ID)
 			if err == nil {
 				sawLive = got.Status == state.DeployLive
@@ -420,6 +424,9 @@ func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
 	}
 	if !sawLive {
 		t.Fatal("hosting smoke ran before deployment became live")
+	}
+	if !sawRouteNotification {
+		t.Fatal("hosting smoke ran before the gateway route notification")
 	}
 	if got.Status != state.DeployLive {
 		t.Fatalf("status = %s, want live", got.Status)

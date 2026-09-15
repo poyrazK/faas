@@ -50,6 +50,36 @@
 # root is a no-op on a converged box; the asserts are read-only.
 # Re-running produces zero `changed`.
 
+# GCE production uses the attached service account, so this envelope contains
+# routing metadata only. Converging it here keeps apid, vmmd, and the archive
+# read path on one source of truth and repairs an old two-byte placeholder.
+- name: log_archive — create archive credential directory for metadata auth
+  ansible.builtin.file:
+    path: /etc/faas/secrets/storage-box
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: faas_log_archive_bucket | trim | length > 0
+
+- name: log_archive — converge keyless archive metadata envelope
+  ansible.builtin.copy:
+    dest: /etc/faas/secrets/storage-box/archive-creds.json
+    owner: root
+    group: root
+    mode: "0400"
+    content: >-
+      {{ {
+        'endpoint': faas_log_archive_endpoint,
+        'region': faas_log_archive_region,
+        'bucket': faas_log_archive_bucket,
+        'auth_mode': faas_log_archive_auth_mode
+      } | to_nice_json }}
+  when: faas_log_archive_bucket | trim | length > 0
+  notify:
+    - daemon-reload log_archive
+    - activate log archive configuration
+
 # Fail-closed assert: the archive creds envelope MUST be 0400
 # root:root. PID 1 reads this source and systemd stages a
 # service-scoped copy under `$CREDENTIALS_DIRECTORY` for each
@@ -181,11 +211,9 @@
     state: absent
   notify: daemon-reload log_archive
 
-# daemon-reload so the gatewayd-internal unit picks up the
-# new LoadCredential= on the next restart. We don't restart
-# the daemon here — `systemctl restart faas-gatewayd-internal`
-# is an operator action (deployed boxes have a customer SLO
-# and the role never silently bounces the edge).
+# Reload systemd for credential projection. A changed metadata envelope also
+# queues the activation handler above, which try-restarts active consumers at
+# the end of the play after optional_credentials has rendered its drop-ins.
 - name: log_archive — daemon-reload
   ansible.builtin.systemd:
     daemon_reload: true

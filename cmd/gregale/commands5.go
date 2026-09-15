@@ -190,7 +190,7 @@ func cmdStatus(args []string) int {
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
 	}
-	_, _ = fmt.Fprintf(osStdout, "builds ok:    %.2f%%\n", page.BuildSuccessPct)
+	_, _ = fmt.Fprintf(osStdout, "deployments ok: %.2f%%\n", page.BuildSuccessPct)
 	_, _ = fmt.Fprintf(osStdout, "as of:        %s\n", page.AsOf.Format("2006-01-02 15:04:05 UTC"))
 	_, _ = fmt.Fprintf(osStdout, "source:       %s\n", page.Source)
 	return 0

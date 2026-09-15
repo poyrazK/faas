@@ -2,3 +2,11 @@
 # Production fleets promise archive retention in every plan. Set false only
 # for local development inventories that intentionally omit object storage.
 faas_log_archive_required: false
+
+# Keyless GCS production fleets can materialize a non-secret credential
+# envelope from inventory. Leave bucket empty for S3/HMAC installations that
+# provision archive-creds.json out of band.
+faas_log_archive_bucket: ""
+faas_log_archive_endpoint: "https://storage.googleapis.com"
+faas_log_archive_region: "auto"
+faas_log_archive_auth_mode: "gcp_metadata"

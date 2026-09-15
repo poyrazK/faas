@@ -19,7 +19,9 @@ package main
 //     doubling as the server.
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"mime"
@@ -51,6 +53,8 @@ type decomposeSink struct {
 	capturedMultipart      []byte
 	capturedScanMultipart  []byte
 	capturedApplyMultipart []byte
+	scanContentType        string
+	applyContentType       string
 	projectSlug            string
 	scanCalls              int
 	sourceRefScanCalls     int
@@ -69,6 +73,7 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		s.capturedMultipart = body
 		s.capturedScanMultipart = append([]byte(nil), body...)
+		s.scanContentType = r.Header.Get("Content-Type")
 		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.URL.Path == "/v1/projects" && r.Method == http.MethodPost:
@@ -76,6 +81,7 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		s.capturedMultipart = body
 		s.capturedApplyMultipart = append([]byte(nil), body...)
+		s.applyContentType = r.Header.Get("Content-Type")
 		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.applyStatus, s.applyBody)
 	case strings.HasPrefix(r.URL.Path, "/v1/deployments/") && r.Method == http.MethodGet:
@@ -142,6 +148,48 @@ func multipartField(body []byte, contentType, name string) string {
 		_ = part.Close()
 		if readErr == nil && part.FormName() == name {
 			return string(value)
+		}
+	}
+}
+
+func multipartFile(body []byte, contentType, name string) []byte {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		return nil
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	for {
+		part, nextErr := reader.NextPart()
+		if nextErr != nil {
+			return nil
+		}
+		value, readErr := io.ReadAll(part)
+		_ = part.Close()
+		if readErr == nil && part.FormName() == name {
+			return value
+		}
+	}
+}
+
+func tarGzNames(t *testing.T, raw []byte) []string {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("open uploaded project archive: %v", err)
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	var names []string
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return names
+		}
+		if err != nil {
+			t.Fatalf("read uploaded project archive: %v", err)
+		}
+		if hdr.FileInfo().Mode().IsRegular() {
+			names = append(names, hdr.Name)
 		}
 	}
 }
@@ -519,6 +567,101 @@ func TestCmdDeployTarball_YesFlagSkeleton(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Created project") {
 		t.Errorf("expected success line, got %q", stdout.String())
 	}
+}
+
+func writeNestedProjectFixture(t *testing.T, root string) {
+	t.Helper()
+	for name, body := range map[string]string{
+		"pnpm-workspace.yaml":          "packages:\n  - services/*\n  - packages/*\n",
+		"pnpm-lock.yaml":               "lockfileVersion: '9.0'\n",
+		"services/api/package.json":    `{"name":"api","scripts":{"start":"node server.js"},"dependencies":{"@acme/shared":"workspace:*"}}`,
+		"services/api/server.js":       "require('@acme/shared')\n",
+		"packages/shared/package.json": `{"name":"@acme/shared","version":"1.0.0"}`,
+		"packages/shared/index.js":     "module.exports = {}\n",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertUploadedProjectWorkspace(t *testing.T, sink *decomposeSink) {
+	t.Helper()
+	names := tarGzNames(t, multipartFile(sink.capturedScanMultipart, sink.scanContentType, "source"))
+	for _, suffix := range []string{
+		"pnpm-workspace.yaml", "pnpm-lock.yaml", "services/api/package.json",
+		"packages/shared/package.json",
+	} {
+		found := false
+		for _, name := range names {
+			if strings.HasSuffix(name, suffix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("uploaded project archive missing %q: %v", suffix, names)
+		}
+	}
+}
+
+func TestCmdDeployProjectPathAllowsNestedOnlyWorkloads(t *testing.T) {
+	root := t.TempDir()
+	writeNestedProjectFixture(t, root)
+
+	sink := &decomposeSink{
+		scanStatus: http.StatusOK, scanBody: goldenPlan,
+		applyStatus: http.StatusOK, applyBody: goldenApply,
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Chdir(t.TempDir())
+
+	if code := cmdDeployTarball([]string{
+		"--path", root, "--project", "--project-slug", "fixture",
+		"--yes", "--no-doctor", "--no-triggers",
+	}); code != 0 {
+		t.Fatalf("nested-only project path exit = %d, want 0", code)
+	}
+	if sink.scanCalls != 1 || sink.applyCalls != 1 {
+		t.Fatalf("planner calls = scan:%d apply:%d, want 1/1", sink.scanCalls, sink.applyCalls)
+	}
+	assertUploadedProjectWorkspace(t, sink)
+}
+
+func TestCmdDeployProjectGitArchiveAllowsNestedOnlyWorkloads(t *testing.T) {
+	root := initTestRepo(t)
+	writeNestedProjectFixture(t, root)
+	mustGit(t, root, "add", ".")
+	mustGit(t, root, "commit", "-q", "-m", "workspace")
+	mustGit(t, root, "remote", "add", "origin", "git@github.com:acme/workspace.git")
+
+	sink := &decomposeSink{
+		scanStatus: http.StatusOK, scanBody: goldenPlan,
+		applyStatus: http.StatusOK, applyBody: goldenApply,
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Chdir(t.TempDir())
+
+	if code := cmdDeployTarball([]string{
+		"--path", root, "--project", "--project-slug", "fixture",
+		"--yes", "--no-doctor", "--no-triggers",
+	}); code != 0 {
+		t.Fatalf("nested-only committed project exit = %d, want 0", code)
+	}
+	if sink.scanCalls != 1 || sink.applyCalls != 1 {
+		t.Fatalf("planner calls = scan:%d apply:%d, want 1/1", sink.scanCalls, sink.applyCalls)
+	}
+	assertUploadedProjectWorkspace(t, sink)
 }
 
 // TestCmdDeployTarball_NonTTYRequiresExplicitApproval pins the destructive

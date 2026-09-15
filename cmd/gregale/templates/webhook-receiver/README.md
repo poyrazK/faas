@@ -7,9 +7,10 @@ most webhook providers sign their payloads differently, so the
 template ships ONE auth mechanism (a shared `X-Webhook-Secret`
 header) and lets you bolt provider-specific HMAC checks on top.
 
-This is a SCAFFOLD, not a production receiver — it echoes back a
-preview of every accepted request so the customer's first smoke
-test can confirm what arrived without writing custom logging.
+The default response and log contain only a receipt ID, method, path, byte
+count, and content type. Headers and body values are kept out because webhook
+signatures, authorization fields, cookies, credentials, and customer data are
+commonly present there.
 
 ## Auth
 
@@ -90,14 +91,14 @@ curl -X POST \
 
 ## Adding provider-specific verification
 
-Drop a HMAC verifier before the `console.log` in `handler.js`.
+Drop a HMAC verifier before the metadata-only `console.log` in `handler.js`.
 Stripe example:
 
 ```js
 import Stripe from "stripe";
 const stripe = new Stripe(process.env.STRIPE_WEBHOOK_SECRET);
 
-// inside the handler, before the echo:
+// inside the handler, before acknowledging the receipt:
 const sig = req.get("Stripe-Signature");
 let event;
 try {
@@ -110,6 +111,10 @@ try {
 The `req.body` is a Buffer at that point because we set
 `express.raw` upstream — the Stripe SDK expects the raw bytes for
 its signature check.
+
+If you need request data in logs, select individual non-secret fields only
+after verification. Avoid logging the full header map, raw body, or parsed
+event object.
 
 ## Re-deploy after edits
 

@@ -2345,7 +2345,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			cancel()
 		}
 		if gitArchivePath != "" {
-			if !deployFunction && !deployApp {
+			// Project deploys deliberately have no single root workload. The
+			// server-side planner scans the complete repository and selects each
+			// workload independently, so asking the single-app detector to classify
+			// the repository root rejects valid monorepos whose markers only live in
+			// nested members.
+			if !projectRequested && !deployFunction && !deployApp {
 				detected, rt, hnd, detectErr := detectGitArchiveShape(gitArchivePath, sourceRoot)
 				if detectErr != nil {
 					return printErr("Could not detect committed deploy source", detectErr)
@@ -2391,6 +2396,27 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// Run the source-directory auto-detect + auto-pack switch when
 		// no Git archive was selected. This covers the existing
 		// non-git/non-origin fallback and the explicit --worktree mode.
+		if *tarball == "" && projectRequested {
+			// Preserve the complete selected repository for ScanProject. A project
+			// root is allowed to contain only nested workload markers; framework
+			// detection belongs to the planner, not this single-app CLI path.
+			overrides, scanFindings, scanErr := scanAndRedactEnvFiles(sourceDir, secretScanMode)
+			if scanErr != nil {
+				return printErr("Secret scan failed", scanErr)
+			}
+			path, _, n, packErr := autoPackSource(sourceDir, sourceDir, false, planCapMB, overrides, execution.extraSourceExcludes...)
+			if packErr != nil {
+				return printErr("Could not pack project source", packErr)
+			}
+			if n == 0 {
+				_ = os.Remove(path)
+				return printErr("No project source found in "+filepath.Base(sourceDir), errors.New("the selected directory contains no regular source files after deploy exclusions"))
+			}
+			defer func() { _ = os.Remove(path) }()
+			renderSecretScanWarnings(scanFindings, osStderr)
+			PrintProgress(os.Stderr, "packing %d project file(s) from %s", n, filepath.Base(sourceDir))
+			*tarball = path
+		}
 		if *tarball == "" {
 			detected, rt, hnd, err := resolveDeployShape(sourceDir, deployFunction, deployApp, jsonOutput, deployRuntime, deployHandler)
 			if err != nil {
@@ -4283,6 +4309,9 @@ func cmdLogs(args []string) int {
 	grep := fs.String("grep", "", "only show lines matching this substring")
 	since := fs.String("since", "", "only show lines at or after this RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")
+	archive := fs.Bool("archive", false, "read durable logs for one instance and UTC day")
+	archiveInstance := fs.String("instance", "", "instance id for --archive")
+	archiveDate := fs.String("date", "", "UTC day for --archive (YYYY-MM-DD)")
 	// Error-explanations cluster (spec §6.4 amendment 1): when the
 	// stream ends, print a 3-line summary covering the last failure
 	// (lifted from the deployment's persisted error_code), the count
@@ -4292,12 +4321,30 @@ func cmdLogs(args []string) int {
 	// whole stream to know which error fired.
 	explain := fs.Bool("explain", false, "on stream end, print a 3-line summary (failure, error count, top patterns)")
 	if err := parseAppLogFlags(fs, args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale logs <slug> [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain]", "logs")
+		PrintUsage(os.Stderr, "usage: gregale logs <slug> [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain] [--archive --instance ID --date YYYY-MM-DD]", "logs")
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale logs <slug> [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain]", "logs")
+		PrintUsage(os.Stderr, "usage: gregale logs <slug> [--follow] [--deployment ID] [--grep SUBSTR] [--since RFC3339] [--level info|warn|error] [--explain] [--archive --instance ID --date YYYY-MM-DD]", "logs")
 		return 1
+	}
+	archiveRequested := *archive || *archiveInstance != "" || *archiveDate != ""
+	var archiveSelector *api.ArchiveLogSelector
+	if archiveRequested {
+		if !*archive || *archiveInstance == "" || *archiveDate == "" {
+			PrintUsage(os.Stderr, "--archive, --instance ID, and --date YYYY-MM-DD must be used together", "logs")
+			return 2
+		}
+		if *follow || *deployment != "" || *grep != "" || *since != "" || *level != "" {
+			PrintUsage(os.Stderr, "--archive cannot be combined with --follow, --deployment, --grep, --since, or --level", "logs")
+			return 2
+		}
+		parsedDate, err := time.Parse("2006-01-02", *archiveDate)
+		if err != nil || parsedDate.Format("2006-01-02") != *archiveDate {
+			PrintUsage(os.Stderr, "--date must use YYYY-MM-DD (for example, 2026-09-14)", "logs")
+			return 2
+		}
+		archiveSelector = &api.ArchiveLogSelector{InstanceID: *archiveInstance, Date: *archiveDate}
 	}
 	// Validate --level early so a typo costs the customer a network
 	// round-trip; --since is validated next so the SDK never sees a
@@ -4320,7 +4367,7 @@ func cmdLogs(args []string) int {
 		Grep:  *grep,
 		Since: *since,
 		Level: *level,
-	}, *follow, *explain)
+	}, archiveSelector, *follow, *explain)
 }
 
 // cmdLogsTail implements `gregale logs tail <slug>` — issue #315
@@ -4365,7 +4412,7 @@ func cmdLogsTail(args []string) int {
 		Grep:  *grep,
 		Since: *since,
 		Level: *level,
-	}, true, false)
+	}, nil, true, false)
 }
 
 // runLogs is the shared SSE pump behind `gregale logs` and `gregale
@@ -4377,14 +4424,19 @@ func cmdLogsTail(args []string) int {
 // Exits with 130 on Ctrl-C (shell SIGINT convention), 0 on a clean
 // `event: end` or io.EOF, and surfaces a renderAPIError / printErr
 // path on the auth or attach errors that precede the SSE loop.
-func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter, follow bool, explain bool) int {
+func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter, archive *api.ArchiveLogSelector, follow bool, explain bool) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	body, err := client.StreamAppLogs(ctx, slug, deployment, follow, filter)
+	var body io.ReadCloser
+	if archive != nil {
+		body, err = client.StreamAppArchivedLogs(ctx, slug, *archive)
+	} else {
+		body, err = client.StreamAppLogs(ctx, slug, deployment, follow, filter)
+	}
 	if err != nil {
 		var ae *APIError
 		if errors.As(err, &ae) {

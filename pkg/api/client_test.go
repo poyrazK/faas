@@ -1201,6 +1201,31 @@ func TestStreamAppLogs_URLEscape(t *testing.T) {
 	}
 }
 
+func TestStreamAppArchivedLogs_RequestShape(t *testing.T) {
+	var seenPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: end\ndata: {\"reason\":\"archive_complete\"}\n\n")
+	}))
+	defer srv.Close()
+
+	body, err := NewClient(srv.URL, "fp_test").StreamAppArchivedLogs(context.Background(), "my app", ArchiveLogSelector{
+		InstanceID: "inst-abc",
+		Date:       "2026-09-14",
+	})
+	if err != nil {
+		t.Fatalf("StreamAppArchivedLogs: %v", err)
+	}
+	defer func() { _ = body.Close() }()
+	_, _ = io.Copy(io.Discard, body)
+
+	want := "/v1/apps/my%20app/logs?archive=1&date=2026-09-14&instance=inst-abc"
+	if seenPath != want {
+		t.Fatalf("URL path mismatch:\n got: %s\nwant: %s", seenPath, want)
+	}
+}
+
 // TestClient_RejectsCookieOnlyPaths pins the cookie-only-route guard.
 // The guard short-circuits any path matching the cookie-only route set
 // before the HTTP request is issued, returning

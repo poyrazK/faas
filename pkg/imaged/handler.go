@@ -2755,6 +2755,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	if err := h.store.MarkDeploymentLive(ctx, dep.ID); err != nil {
 		return fmt.Errorf("imaged: mark live: %w", err)
 	}
+	// The public gateway keeps deployment weights in memory. Publish the
+	// candidate route before the smoke request; waiting until the end of this
+	// function leaves first deployments invisible and makes the gateway return
+	// its own 404 even though the workload is ready.
+	h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployLive)
 	restorePrevious := func(reason string) {
 		if previousLiveID == "" {
 			return
@@ -2799,6 +2804,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				restorePrevious("post-readiness smoke failed")
 				_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "post-readiness smoke failed: "+smokeErr.Error())
 				_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "post-readiness smoke failed")
+				h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 				return fmt.Errorf("imaged: post-readiness smoke: %w", smokeErr)
 			}
 		}
@@ -2810,6 +2816,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			restorePrevious("post-readiness smoke verifier not configured")
 			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, smoke.Error)
 			_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), smoke.Error)
+			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 			return fmt.Errorf("imaged: post-readiness smoke: %s", smoke.Error)
 		}
 		if err := h.persistHostingReceipt(ctx, hostingApp, dep, smoke); err != nil {
@@ -2819,6 +2826,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			restorePrevious("hosting receipt persistence failed")
 			_, _ = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeDeploymentSmokeFailed, "hosting receipt persistence failed: "+err.Error())
 			_, _ = h.store.MarkDeploymentStageFailed(ctx, dep.ID, time.Now(), "hosting receipt persistence failed")
+			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 			return fmt.Errorf("imaged: hosting receipt: %w", err)
 		}
 		if h.ops != nil {
@@ -2894,17 +2902,26 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			h.ops.ObserveAPIHostingPhase(wire.APIHostingFlowDev, "route_switch", wire.APIHostingOutcomeComplete, 0)
 		}
 	}
-	// Fan out so audit / dashboard SSE see the terminal transition.
+	// Fan out so audit / dashboard SSE see the terminal transition. The earlier
+	// route notification is intentionally repeated here after the stage and
+	// receipt writes so every consumer observes the complete terminal row.
+	h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployLive)
+	return nil
+}
+
+func (h *Handler) notifyDeploymentState(ctx context.Context, appID, deploymentID string, status state.DeploymentStatus) {
+	if h.notif == nil {
+		return
+	}
 	payload, _ := json.Marshal(struct {
 		AppID        string `json:"app_id"`
 		DeploymentID string `json:"deployment_id"`
 		To           string `json:"to"`
 		Status       string `json:"status"`
-	}{AppID: dep.AppID, DeploymentID: dep.ID, To: dep.ID, Status: string(state.DeployLive)})
+	}{AppID: appID, DeploymentID: deploymentID, To: deploymentID, Status: string(status)})
 	if err := h.notif.Notify(ctx, db.NotifyDeploymentChanged, string(payload)); err != nil {
-		h.log.Warn("imaged: notify live", "err", err)
+		h.log.Warn("imaged: notify deployment state", "deployment_id", deploymentID, "status", status, "err", err)
 	}
-	return nil
 }
 
 // handleSnapshotBoot is the canonical builderd-driven path (F4). builderd
@@ -4065,6 +4082,15 @@ func (h *Handler) buildFullRootfsLayer(
 		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)
 	}
 	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	sbomKey := h.sbomStorageKeyForDeployment(ctx, dep.ID)
+	sbomRun := h.syftRun
+	// Direct OCI deployments have no source build row and therefore no
+	// build-scoped SBOM storage key. Vulnerability and secret scans still run
+	// on the resulting filesystem; skip only the source-build SBOM emission
+	// instead of passing an impossible half-configured pair to rootfs.Builder.
+	if sbomKey == "" {
+		sbomRun = nil
+	}
 
 	res, err := h.builder.BuildFullRootfs(ctx, rootfs.BuildFullRootfsInput{
 		Layers:         readers,
@@ -4073,8 +4099,8 @@ func (h *Handler) buildFullRootfsLayer(
 		Plan:           acct.Plan,
 		Storage:        be,
 		StorageKey:     appsKey,
-		SBOMRun:        h.syftRun,
-		SBOMStorageKey: h.sbomStorageKeyForDeployment(ctx, dep.ID),
+		SBOMRun:        sbomRun,
+		SBOMStorageKey: sbomKey,
 		// BuildFullRootfs derives the image's merged /etc/passwd resolver
 		// while applying the pulled layers; no host-side passwd data is used.
 		Resolver: nil,

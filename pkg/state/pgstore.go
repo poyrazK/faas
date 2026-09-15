@@ -6237,6 +6237,35 @@ func (s *PgStore) ListAllDeployments(ctx context.Context) ([]Deployment, error) 
 	return scanDeployments(rows)
 }
 
+// CountDeploymentOutcomesSince returns one bounded fleet aggregate for the
+// public status page. Successful deployments are live or superseded rows;
+// failed rows backed by a user_error build are explicitly excluded. Failures
+// after a successful build (scan, snapshot, readiness) have no user_error
+// build and therefore remain visible as platform failures.
+func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
+	var out DeploymentOutcomeCounts
+	err := s.pool.QueryRow(ctx, `
+		select
+			count(*) filter (where d.status in ('live', 'superseded')),
+			count(*) filter (
+				where d.status = 'failed'
+				  and not exists (
+					select 1 from builds b
+					 where b.deployment_id = d.id
+					   and b.failure_class = 'user_error'
+				  )
+			)
+		  from deployments d
+		  join apps a on a.id = d.app_id
+		 where a.status <> 'deleted'
+		   and (
+			(d.status in ('live', 'superseded') and coalesce(d.rollout_completed_at, d.created_at) >= $1)
+			or
+			(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
+		   )`, since.UTC()).Scan(&out.Succeeded, &out.Failed)
+	return out, err
+}
+
 // ListDeploymentsByNodeID returns every deployment whose parent
 // app's owner_node is the given compute_nodes.id. Phase 2 / Gate A
 // / issue #557 closure — the floor trigger's owner-shard walk.

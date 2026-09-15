@@ -36,6 +36,37 @@ type notifyCall struct {
 	channel, payload string
 }
 
+func TestEmitBuildLogPersistsWhenNodeLocalSpoolIsUnavailable(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "logs@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "durable-build-logs", RAMMB: 256,
+		IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball,
+		LogPath: filepath.Join(t.TempDir(), "control-plane-only", "build.log"),
+	})
+	build, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 1, dep.LogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A different root models builderd running on a compute node where the
+	// control-plane absolute log path is unavailable and rejected by the
+	// source boundary check.
+	b := New(store, &fakeNotifier{}, nil, NewCache(t.TempDir()), NewDetector(), nil,
+		Config{SourceSpoolDir: t.TempDir()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.emitBuildLog(context.Background(), build.ID, "railpack: dependency install failed\n")
+
+	rows, _, err := store.ListDeploymentLogs(context.Background(), dep.ID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Stream != "build" || !strings.Contains(rows[0].Line, "dependency install failed") {
+		t.Fatalf("durable build logs = %#v", rows)
+	}
+}
+
 func (f *fakeNotifier) Notify(_ context.Context, channel, payload string) error {
 	f.calls = append(f.calls, notifyCall{channel, payload})
 	return nil

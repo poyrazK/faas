@@ -348,7 +348,12 @@ func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 
 	b := &fakeBuilder{}
 	notif := &fakeNotifier{}
-	h := New(store, notif, mp, b, "/tmp/guest-init", t.TempDir(), silentLogger())
+	h := New(store, notif, mp, b, "/tmp/guest-init", t.TempDir(), silentLogger()).WithSyftRun(
+		func(context.Context, string) ([]byte, error) {
+			t.Fatal("source-build SBOM runner called for direct OCI deployment")
+			return nil, nil
+		},
+	)
 	h.HandleNotification(context.Background(), db.Notification{
 		Channel: db.NotifyDeploymentChanged,
 		Payload: `{"app_id":"` + app.ID + `","to":"` + dep.ID + `","kind":"image","image_digest":"ghcr.io/org/app:v1"}`,
@@ -367,6 +372,13 @@ func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 	}
 	if findNotify(notif, db.NotifySnapshotPrime) == nil {
 		t.Fatal("expected snapshot_prime notification")
+	}
+	if len(b.fullRootfsCalls) != 1 {
+		t.Fatalf("full-rootfs calls = %d, want 1", len(b.fullRootfsCalls))
+	}
+	if b.fullRootfsCalls[0].SBOMRun != nil || b.fullRootfsCalls[0].SBOMStorageKey != "" {
+		t.Fatalf("direct image passed source-build SBOM config: run=%v key=%q",
+			b.fullRootfsCalls[0].SBOMRun != nil, b.fullRootfsCalls[0].SBOMStorageKey)
 	}
 }
 

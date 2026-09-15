@@ -118,6 +118,15 @@ const (
 // DeploymentStatus tracks a deployment through the pipeline (spec §5, §9).
 type DeploymentStatus string
 
+// DeploymentOutcomeCounts is the fleet-wide authoritative status-window
+// aggregate used by the public status evaluator. User-code build failures are
+// excluded from both fields; Failed represents platform-attributable terminal
+// deployments across build, scan, snapshot, and readiness stages.
+type DeploymentOutcomeCounts struct {
+	Succeeded int
+	Failed    int
+}
+
 const (
 	DeployPending      DeploymentStatus = "pending"
 	DeployBuilding     DeploymentStatus = "building"
