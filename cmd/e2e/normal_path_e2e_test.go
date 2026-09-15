@@ -1523,6 +1523,10 @@ func (s *normalPathVMMD) Heartbeat(context.Context, *vmmdpb.HeartbeatRequest) (*
 	return &vmmdpb.HeartbeatResponse{}, nil
 }
 
+func (s *normalPathVMMD) Ping(context.Context, *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
+	return &vmmdpb.PingResponse{}, nil
+}
+
 func (s *normalPathVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamServer) error {
 	request, err := stream.Recv()
 	if err != nil {

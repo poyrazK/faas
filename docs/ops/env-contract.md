@@ -110,6 +110,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DUNNING_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_E2E_API_HOSTING_SMOKE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_E2E_BIN_DIR` | shared | `dev-only` |  |  | `` | test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host |
+| `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_EGRESS_SOCKET` | shared | `dropin` |  |  | `` |  |
 | `FAAS_ENVIRONMENT` | shared | `default` |  |  | `` | optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value |
