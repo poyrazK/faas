@@ -29,6 +29,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -36,11 +37,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // dispatchObs is the top-level `obs` command name. Matches the
@@ -62,6 +65,8 @@ const subObsOverview = "overview"
 
 const subObsCapacity = "capacity"
 
+var operatorObsIncidentDedupeShape = regexp.MustCompile(`^[a-z0-9][a-z0-9:_-]{0,254}$`)
+
 // defaultAPIDURL is the loopback default for the apid listen
 // addr. Matches cmd/apid/main.go::resolveListenAddr default of
 // :8080 on loopback. Operators running apid behind a public
@@ -77,7 +82,7 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents|overview|capacity")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|incidents [ack|resolve]|overview|capacity")
 		return 2
 	}
 	switch args[0] {
@@ -222,6 +227,9 @@ func cmdObsHealth(args []string) int {
 // admin bearer and apid resolution with `obs health`, while exposing filters
 // that keep routine triage focused on one signal family or severity.
 func cmdObsIncidents(args []string) int {
+	if len(args) > 0 && (args[0] == "ack" || args[0] == "resolve") {
+		return cmdObsIncidentTriage(args[0], args[1:])
+	}
 	fs := flag.NewFlagSet(subObsIncidents, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout")
@@ -310,6 +318,90 @@ func cmdObsIncidents(args []string) int {
 	}
 	writeObsIncidentsHuman(os.Stdout, response)
 	return 0
+}
+
+// cmdObsIncidentTriage records operator workflow metadata through the
+// authenticated session API. It deliberately does not accept an admin bearer:
+// mutations require the strict MFA step-up policy enforced by apid.
+func cmdObsIncidentTriage(action string, args []string) int {
+	fs := flag.NewFlagSet("incidents "+action, flag.ContinueOnError)
+	fs.SetOutput(osStderr)
+	dedupeKey := fs.String("dedupe-key", "", "incident inbox dedupe key")
+	owner := fs.String("owner", "", "operator owner (defaults to the session operator)")
+	note := fs.String("note", "", "bounded operator note (maximum 1024 characters)")
+	reason := fs.String("reason", "", "durable audit reason slug ([a-z0-9_]{1,64})")
+	traceIDFlag := fs.String("trace-id", "", "OTel 32-char-hex trace id (auto-generated when empty)")
+	jsonOut := fs.Bool("json", false, "emit structured JSON")
+	yes := fs.Bool("yes", false, "acknowledge changing incident triage state")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl obs incidents %s: positional arguments are not accepted\n", action)
+		return 2
+	}
+	key := strings.TrimSpace(*dedupeKey)
+	if key == "" || len(key) > 255 || !operatorObsIncidentDedupeShape.MatchString(key) {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs incidents "+action+": --dedupe-key is required and must match [a-z0-9][a-z0-9:_-]{0,254}")
+		return 2
+	}
+	cleanReason := strings.TrimSpace(*reason)
+	if !operatorJobReasonShape.MatchString(cleanReason) {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs incidents "+action+": --reason is required and must match [a-z0-9_]{1,64}")
+		return 2
+	}
+	if len(*owner) > 128 || len(*note) > 1024 {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs incidents "+action+": --owner is limited to 128 characters and --note to 1024 characters")
+		return 2
+	}
+	if !*yes {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs incidents "+action+": --yes required")
+		return 2
+	}
+	traceID := strings.TrimSpace(*traceIDFlag)
+	if traceID == "" {
+		traceID = wire.NewTraceID()
+	}
+	if !operatorJobTraceIDShape.MatchString(traceID) {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs incidents "+action+": --trace-id must be 32 lowercase hex characters")
+		return 2
+	}
+	status := apiStatusForObsIncidentAction(action)
+	input := api.ObsIncidentTriageRequest{Status: status, Owner: strings.TrimSpace(*owner), Note: strings.TrimSpace(*note), Reason: cleanReason}
+	path := "/v1/admin/obs/incidents/" + url.PathEscape(key) + "/triage"
+	headers := make(http.Header)
+	headers.Set(operatorTraceIDHeader, traceID)
+	var response api.ObsIncidentTriageResponse
+	sess, err := loadOperatorSession()
+	if err != nil {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs incidents "+action+":", err)
+		return 1
+	}
+	if err := newOperatorHTTPClient(&sess).doJSONWithHeaders(context.Background(), http.MethodPut, path, input, &response, true, nil, headers); err != nil {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs incidents "+action+":", err)
+		return 1
+	}
+	output := struct {
+		api.ObsIncidentTriageResponse
+		TraceID string `json:"trace_id"`
+	}{ObsIncidentTriageResponse: response, TraceID: traceID}
+	if *jsonOut || jsonOutput {
+		return emitOperatorJSON(output)
+	}
+	updatedAt := ""
+	if response.Triage.UpdatedAt != nil {
+		updatedAt = response.Triage.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	_, _ = fmt.Fprintf(osStdout, "triage_updated dedupe_key=%s status=%s owner=%s updated_at=%s trace_id=%s\n",
+		response.Triage.DedupeKey, response.Triage.Status, response.Triage.Owner, updatedAt, traceID)
+	return 0
+}
+
+func apiStatusForObsIncidentAction(action string) string {
+	if action == "resolve" {
+		return "resolved"
+	}
+	return "acknowledged"
 }
 
 // cmdObsOverview fetches the existing bounded operator KPI projection. It is
@@ -424,9 +516,15 @@ func writeObsIncidentsHuman(w io.Writer, response api.ObsIncidentListResponse) {
 		len(response.Items), response.Since.UTC().Format(time.RFC3339), response.Type, response.Severity,
 		response.Limit, response.SinceClamped)
 	for _, item := range response.Items {
-		_, _ = fmt.Fprintf(w, "incident_id=%s type=%s severity=%s status=%s observed_at=%s resource_id=%s resource_name=%s summary=%q",
-			item.ID, item.Type, item.Severity, item.Status, item.ObservedAt.UTC().Format(time.RFC3339),
-			item.ResourceID, item.ResourceName, item.Summary)
+		_, _ = fmt.Fprintf(w, "incident_id=%s dedupe_key=%s type=%s severity=%s status=%s observed_at=%s resource_id=%s resource_name=%s summary=%q triage_status=%s",
+			item.ID, item.DedupeKey, item.Type, item.Severity, item.Status, item.ObservedAt.UTC().Format(time.RFC3339),
+			item.ResourceID, item.ResourceName, item.Summary, item.Triage.Status)
+		if item.Triage.Owner != "" {
+			_, _ = fmt.Fprintf(w, " triage_owner=%s", item.Triage.Owner)
+		}
+		if item.Triage.Note != "" {
+			_, _ = fmt.Fprintf(w, " triage_note=%q", item.Triage.Note)
+		}
 		if item.ActionPath != "" {
 			_, _ = fmt.Fprintf(w, " action_path=%s", item.ActionPath)
 		}
