@@ -300,6 +300,7 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_project_environment_request import CreateProjectEnvironmentRequest
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
 from .create_tenant_surface_request_cert_kind import CreateTenantSurfaceRequestCertKind
 from .create_trigger_batch_request import CreateTriggerBatchRequest
@@ -797,6 +798,7 @@ from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagic
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
 from .project_apply_request import ProjectApplyRequest
 from .project_delete_preview_response import ProjectDeletePreviewResponse
+from .project_environment_response import ProjectEnvironmentResponse
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
@@ -1017,6 +1019,7 @@ from .update_job_request_status import UpdateJobRequestStatus
 from .update_managed_realtime_endpoint_request import UpdateManagedRealtimeEndpointRequest
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
+from .update_project_environment_request import UpdateProjectEnvironmentRequest
 from .update_project_request import UpdateProjectRequest
 from .update_trigger_request import UpdateTriggerRequest
 from .update_trigger_request_broker_poison_strategy_type_1 import UpdateTriggerRequestBrokerPoisonStrategyType1
@@ -1367,6 +1370,7 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateProjectEnvironmentRequest",
     "CreateTenantSurfaceRequest",
     "CreateTenantSurfaceRequestCertKind",
     "CreateTriggerBatchRequest",
@@ -1856,6 +1860,7 @@ __all__ = (
     "ProgrammaticSignupMagicLinkResponse200Status",
     "ProjectApplyRequest",
     "ProjectDeletePreviewResponse",
+    "ProjectEnvironmentResponse",
     "ProjectResponse",
     "ProjectScanRequest",
     "ProjectSourceRefScanRequest",
@@ -2074,6 +2079,7 @@ __all__ = (
     "UpdateManagedRealtimeEndpointRequest",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
+    "UpdateProjectEnvironmentRequest",
     "UpdateProjectRequest",
     "UpdateTriggerRequest",
     "UpdateTriggerRequestBrokerPoisonStrategyType1",

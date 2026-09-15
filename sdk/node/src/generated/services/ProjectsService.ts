@@ -3,13 +3,16 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApplyResponse } from '../models/ApplyResponse.js';
+import type { CreateProjectEnvironmentRequest } from '../models/CreateProjectEnvironmentRequest.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePreviewResponse.js';
+import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
 import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
 import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
+import type { UpdateProjectEnvironmentRequest } from '../models/UpdateProjectEnvironmentRequest.js';
 import type { UpdateProjectRequest } from '../models/UpdateProjectRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -252,6 +255,145 @@ export class ProjectsService {
         'slug': slug,
       },
       errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List durable environments for a project.
+   * @returns ProjectEnvironmentResponse Account-scoped project environments.
+   * @throws ApiError
+   */
+  public static listProjectEnvironments({
+    slug,
+  }: {
+    /**
+     * Project slug whose environment registry is addressed.
+     */
+    slug: string,
+  }): CancelablePromise<Array<ProjectEnvironmentResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Create a durable project environment.
+   * @returns ProjectEnvironmentResponse Project environment created.
+   * @throws ApiError
+   */
+  public static createProjectEnvironment({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Project slug whose environment registry is addressed.
+     */
+    slug: string,
+    requestBody: CreateProjectEnvironmentRequest,
+  }): CancelablePromise<ProjectEnvironmentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect one project environment.
+   * @returns ProjectEnvironmentResponse Project environment.
+   * @throws ApiError
+   */
+  public static getProjectEnvironment({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project slug owning the environment.
+     */
+    slug: string,
+    /**
+     * Environment slug.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Update a project's environment protection policy.
+   * @returns ProjectEnvironmentResponse Updated project environment.
+   * @throws ApiError
+   */
+  public static updateProjectEnvironment({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project slug owning the environment.
+     */
+    slug: string,
+    /**
+     * Environment slug.
+     */
+    environment: string,
+    requestBody: UpdateProjectEnvironmentRequest,
+  }): CancelablePromise<ProjectEnvironmentResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/projects/{slug}/environments/{environment}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429. Two response shapes:
