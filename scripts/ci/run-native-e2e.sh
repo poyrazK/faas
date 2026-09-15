@@ -450,7 +450,12 @@ if [[ -n "${phase}" ]]; then
   # wedges now fails its own step instead of consuming the run's remaining
   # time. build is the outlier — real builder microVMs, 10 min each.
   case "${phase}" in
-    build) phase_timeout=40m ;;
+    # Six subtests, each granted the platform's own build budget
+    # (api.BuildTimeoutSeconds = 900 s) plus headroom. Only the first is
+    # genuinely cold — it pulls the Railpack frontend — and the rest hit the
+    # buildctl cache, so the realistic wall is well under this. The ceiling
+    # exists so a wedged builder fails THIS step rather than the whole run.
+    build) phase_timeout=60m ;;
     twonode | deploy | streaming) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac

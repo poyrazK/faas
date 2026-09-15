@@ -207,7 +207,19 @@ func TestBuildMetal(t *testing.T) {
 func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug, _ string, sourceTar []byte, isDockerfile bool) buildResult {
 	t.Helper()
 	store := state.NewPgStore(pool)
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	// Derived from the platform's own budget, never a smaller constant. The
+	// build VM is granted api.BuildTimeoutSeconds (900 s, "cold rootless
+	// Railpack export needs headroom"), so a test that gives up at 6 minutes
+	// fails builds that are entirely within spec. It did: on a cold acceptance
+	// node every go124 subtest died at exactly 360.00 s with the deployment
+	// still `building`, while the guest console showed buildkit healthy and
+	// pulling the Railpack frontend from ghcr.io.
+	//
+	// The poll must outlast the platform cap so the BUILD's own timeout fires
+	// first — then the failure is reported as a failed build with its log,
+	// rather than as a test deadline with no diagnosis.
+	buildPoll := api.BuildTimeoutSeconds*time.Second + time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), buildPoll+5*time.Minute)
 	defer cancel()
 
 	public := false
@@ -223,13 +235,13 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, 
 	depID, buildID := parseQueuedDeployment(t, depBody)
 
 	// build_queued -> builderd picks up -> vm.Spawn -> in-VM build ->
-	// OCI image produced -> UpdateBuildStatus(succeeded). The whole round
-	// trip is ~60-180 s on Lima (buildctl cold cache; the dockerfile path
-	// is faster because FROM busybox is in the builder VM). 6 min is the
-	// outer deadline; the poll loop uses 5 min so a hung daemon still
-	// leaves us room to report the last build state cleanly.
+	// OCI image produced -> UpdateBuildStatus(succeeded). ~60-180 s on Lima
+	// with a warm buildctl cache; a genuinely cold node pulling the Railpack
+	// frontend takes far longer, which is what api.BuildTimeoutSeconds budgets
+	// for. The outer ctx adds headroom on top so a hung daemon still leaves
+	// room to report the last build state cleanly.
 	build, err := e2etest.WaitForBuildStatus(ctx, t, pool, buildID,
-		state.BuildSucceeded, 5*time.Minute)
+		state.BuildSucceeded, buildPoll)
 	if err != nil {
 		// Best-effort dump of the build row + log so a CI failure has
 		// the in-VM buildctl/railpack stderr inline. The log file lives
