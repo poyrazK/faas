@@ -104,6 +104,13 @@ type Result struct {
 	Stderr          []byte              `json:"-"`
 }
 
+// OutputReceiver observes one bounded stdout/stderr frame as it arrives from
+// the guest. The receiver runs on the protocol reader goroutine, so returning
+// an error stops the exchange and lets the caller tear down the disposable VM.
+// Stream is one of "stdout" or "stderr" and chunk is owned by the caller only
+// for the duration of the callback.
+type OutputReceiver func(ctx context.Context, stream string, chunk []byte) error
+
 // RequestFromResolvedExecution is the narrow mapping used by vmmd adapters.
 // The scheduler should pass the remaining host deadline as TimeoutMS when the
 // request is built; this helper uses the admitted limit as the initial value
@@ -226,6 +233,15 @@ func NewClient(conn net.Conn) (*Client, error) {
 // result arrives. Cancellation closes the stream so a stuck guest cannot keep
 // the host goroutine or VM alive beyond the caller's deadline.
 func (c *Client) Execute(ctx context.Context, req Request) (Result, error) {
+	return c.ExecuteWithOutput(ctx, req, nil)
+}
+
+// ExecuteWithOutput is Execute with an optional callback for live stdout and
+// stderr frames. The callback is invoked after the frame has passed the
+// combined output-budget check and before the next frame is read. A callback
+// error aborts the exchange; this is the backpressure and cancellation seam
+// used by vmmd's server-streaming execution RPC.
+func (c *Client) ExecuteWithOutput(ctx context.Context, req Request, receive OutputReceiver) (Result, error) {
 	var zero Result
 	if c == nil || c.conn == nil {
 		return zero, fmt.Errorf("%w: nil client", ErrInvalidRequest)
@@ -267,11 +283,21 @@ func (c *Client) Execute(ctx context.Context, req Request) (Result, error) {
 				return zero, ErrOutputLimitExceeded
 			}
 			out.Stdout = append(out.Stdout, frameBody...)
+			if receive != nil {
+				if err := receive(ctx, "stdout", frameBody); err != nil {
+					return zero, err
+				}
+			}
 		case FrameStderr:
 			if len(out.Stdout)+len(out.Stderr)+len(frameBody) > req.MaxOutput {
 				return zero, ErrOutputLimitExceeded
 			}
 			out.Stderr = append(out.Stderr, frameBody...)
+			if receive != nil {
+				if err := receive(ctx, "stderr", frameBody); err != nil {
+					return zero, err
+				}
+			}
 		case FrameResult:
 			if err := json.Unmarshal(frameBody, &out); err != nil {
 				return zero, fmt.Errorf("%w: decode result: %w", ErrInvalidResult, err)

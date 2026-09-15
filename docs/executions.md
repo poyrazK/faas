@@ -39,6 +39,14 @@ The event stream is backed by a bounded control-plane replay log. It does not
 provide a persistent guest workspace: each run still uses a fresh microVM and
 its ephemeral scratch filesystem is destroyed before terminal acknowledgement.
 
+Output is persisted into that replay log while the guest is still running.
+Schedulers negotiate the additive vmmd streaming transport when it is
+available, append each bounded stdout/stderr chunk before forwarding the next
+one, and finish with a metadata-only terminal event. Older vmmd nodes use the
+unary exchange and retain the original terminal-output behavior, so a mixed
+version fleet remains compatible. The stream is back-pressured by the event
+store and inherits the execution deadline; it never requires a customer disk.
+
 The v1 runtime set is `node22`, `node24`, `python312`, and `python313`.
 `network.mode` is always `none`; dependency installation, secrets, environment
 injection, and persistent volumes are intentionally not supported. Source

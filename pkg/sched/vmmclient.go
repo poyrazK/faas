@@ -16,6 +16,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"time"
 
@@ -168,6 +169,13 @@ type VMM interface {
 // compatible while the capability is rolled out independently.
 type ExecutionVMM interface {
 	ExecuteExecution(context.Context, string, executionproto.Request) (executionproto.Result, error)
+}
+
+// ExecutionOutputVMM is the optional live-output capability. It is kept
+// separate from ExecutionVMM so mixed-version nodes can continue using the
+// unary execution path.
+type ExecutionOutputVMM interface {
+	ExecuteExecutionWithOutput(context.Context, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
 }
 
 // ExecutionRestoreVMM is the optional capability that creates a fresh,
@@ -676,25 +684,100 @@ func (c *VMMClient) ExecuteExecution(ctx context.Context, instance string, req e
 	if err != nil {
 		return zero, liftErr(err)
 	}
-	result := executionproto.Result{
-		Status:          api.ExecutionStatus(resp.GetStatus()),
-		Result:          append([]byte(nil), resp.GetResult()...),
-		OutputTruncated: resp.GetOutputTruncated(),
-		FailureCode:     resp.GetFailureCode(),
-		FailureMessage:  resp.GetFailureMessage(),
-		Stdout:          append([]byte(nil), resp.GetStdout()...),
-		Stderr:          append([]byte(nil), resp.GetStderr()...),
-		Usage: api.ExecutionUsage{
-			WallTimeMS:   resp.GetWallTimeMs(),
-			CPUTimeMS:    resp.GetCpuTimeMs(),
-			PeakMemoryMB: int(resp.GetPeakMemoryMb()),
-		},
+	return executionResultFromResponse(resp), nil
+}
+
+// ExecuteExecutionWithOutput sends one request over vmmd's additive
+// server-streaming RPC and forwards each bounded output chunk to receive.
+// Older vmmd nodes return Unimplemented; callers can fall back to the unary
+// ExecuteExecution method without changing the execution contract.
+func (c *VMMClient) ExecuteExecutionWithOutput(ctx context.Context, instance string, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	var zero executionproto.Result
+	if c == nil || c.cli == nil {
+		return zero, errors.New("sched: nil vmmd execution client")
+	}
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	stream, err := c.cli.ExecuteExecutionStream(ctx, &vmmdpb.ExecuteExecutionRequest{
+		Instance:       instance,
+		Version:        uint32(req.Version),
+		ExecutionId:    req.ExecutionID,
+		Runtime:        string(req.Runtime),
+		Source:         req.Source,
+		Input:          append([]byte(nil), req.Input...),
+		TimeoutMs:      int32(req.TimeoutMS),
+		MaxOutputBytes: int32(req.MaxOutput),
+		NetworkMode:    string(req.NetworkMode),
+	})
+	if err != nil {
+		return zero, liftErr(err)
+	}
+	var result executionproto.Result
+	for {
+		event, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			return zero, errors.New("sched: execution stream ended before terminal result")
+		}
+		if recvErr != nil {
+			return zero, liftErr(recvErr)
+		}
+		if event == nil {
+			return zero, errors.New("sched: execution stream returned a nil event")
+		}
+		if output := event.GetOutput(); output != nil {
+			streamName := output.GetStream()
+			if streamName != "stdout" && streamName != "stderr" {
+				return zero, errors.New("sched: execution stream returned an invalid output stream")
+			}
+			chunk := output.GetChunk()
+			if len(result.Stdout)+len(result.Stderr)+len(chunk) > req.MaxOutput {
+				return zero, executionproto.ErrOutputLimitExceeded
+			}
+			if streamName == "stdout" {
+				result.Stdout = append(result.Stdout, chunk...)
+			} else {
+				result.Stderr = append(result.Stderr, chunk...)
+			}
+			if receive != nil {
+				if err := receive(ctx, streamName, chunk); err != nil {
+					return zero, err
+				}
+			}
+			continue
+		}
+		if terminal := event.GetTerminal(); terminal != nil {
+			result = mergeExecutionResponse(result, terminal)
+			if err := result.Validate(req.MaxOutput); err != nil {
+				return zero, err
+			}
+			return result, nil
+		}
+		return zero, errors.New("sched: execution stream returned an empty event")
+	}
+}
+
+func executionResultFromResponse(resp *vmmdpb.ExecuteExecutionResponse) executionproto.Result {
+	return mergeExecutionResponse(executionproto.Result{}, resp)
+}
+
+func mergeExecutionResponse(result executionproto.Result, resp *vmmdpb.ExecuteExecutionResponse) executionproto.Result {
+	result.Status = api.ExecutionStatus(resp.GetStatus())
+	result.Result = append([]byte(nil), resp.GetResult()...)
+	result.OutputTruncated = resp.GetOutputTruncated()
+	result.FailureCode = resp.GetFailureCode()
+	result.FailureMessage = resp.GetFailureMessage()
+	result.Stdout = append(result.Stdout, resp.GetStdout()...)
+	result.Stderr = append(result.Stderr, resp.GetStderr()...)
+	result.Usage = api.ExecutionUsage{
+		WallTimeMS:   resp.GetWallTimeMs(),
+		CPUTimeMS:    resp.GetCpuTimeMs(),
+		PeakMemoryMB: int(resp.GetPeakMemoryMb()),
 	}
 	if exitCode := resp.GetExitCode(); exitCode != nil {
 		value := int(exitCode.GetValue())
 		result.ExitCode = &value
 	}
-	return result, nil
+	return result
 }
 
 // WaitJobExit waits for the guest supervisor's terminal receipt. The caller

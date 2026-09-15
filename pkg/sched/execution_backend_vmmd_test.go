@@ -90,6 +90,42 @@ func TestVmmdExecutionSessionClampsGuestTimeoutToRemainingDeadline(t *testing.T)
 	}
 }
 
+func TestVmmdExecutionSessionFallsBackToUnaryWhenStreamingIsUnavailable(t *testing.T) {
+	transport := &fallbackExecutionTransport{result: executionproto.Result{
+		Status: api.ExecutionStatusSucceeded,
+		Result: json.RawMessage("null"),
+	}}
+	backend := NewVmmdExecutionBackend(func(context.Context, ExecutionRestoreRequest) (VmmdExecutionTransport, error) {
+		return transport, nil
+	}, func(context.Context, []byte, string) (string, json.RawMessage, error) {
+		return "return true", json.RawMessage("null"), nil
+	})
+	session, err := backend.Restore(context.Background(), ExecutionRestoreRequest{
+		ID: "exec-fallback", Runtime: api.ExecutionRuntimeNode22,
+		NetworkMode: api.ExecutionNetworkNone,
+		Limits:      api.ResolvedExecutionLimits{TimeoutMS: 1000, MaxOutputBytes: 1024},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received int
+	outcome, err := session.(interface {
+		ExecuteWithOutput(context.Context, ExecutionPayload, executionproto.OutputReceiver) (ExecutionOutcome, error)
+	}).ExecuteWithOutput(context.Background(), ExecutionPayload{Sealed: []byte("sealed")}, func(context.Context, string, []byte) error {
+		received++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ExecuteWithOutput: %v", err)
+	}
+	if received != 0 || transport.streamCalls != 1 || transport.unaryCalls != 1 {
+		t.Fatalf("calls = stream %d, unary %d, received %d; want streaming probe then unary fallback", transport.streamCalls, transport.unaryCalls, received)
+	}
+	if outcome.Status != api.ExecutionStatusSucceeded {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
 func TestOutcomeFromProtocolResultDoesNotExposeGuestFailureText(t *testing.T) {
 	outcome := outcomeFromProtocolResult(executionproto.Result{
 		Status:         api.ExecutionStatusFailed,
@@ -143,6 +179,24 @@ type recordingExecutionTransport struct {
 	result       executionproto.Result
 	destroyCalls int
 }
+
+type fallbackExecutionTransport struct {
+	result      executionproto.Result
+	streamCalls int
+	unaryCalls  int
+}
+
+func (t *fallbackExecutionTransport) Execute(_ context.Context, request executionproto.Request) (executionproto.Result, error) {
+	t.unaryCalls++
+	return t.result, nil
+}
+
+func (t *fallbackExecutionTransport) ExecuteWithOutput(context.Context, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error) {
+	t.streamCalls++
+	return executionproto.Result{}, api.NewProblem(501, api.CodeNotImplemented, "Execution streaming unavailable", "legacy vmmd")
+}
+
+func (t *fallbackExecutionTransport) Destroy(context.Context) error { return nil }
 
 type recordingRoutedExecutionVMM struct {
 	restoreNode, executeNode, destroyNode, instance string

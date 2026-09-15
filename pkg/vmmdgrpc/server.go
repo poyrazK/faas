@@ -172,6 +172,13 @@ type ExecutionVMMAPI interface {
 	ExecuteExecution(context.Context, string, executionproto.Request) (executionproto.Result, error)
 }
 
+// ExecutionOutputVMMAPI is the optional live-output capability. It is kept
+// separate from ExecutionVMMAPI so older vmmd fakes and mixed-version nodes
+// can continue serving the unary execution RPC.
+type ExecutionOutputVMMAPI interface {
+	ExecuteExecutionWithOutput(context.Context, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
+}
+
 // ExecutionRestoreVMMAPI is the dedicated pre-dispatch capability. It is
 // separate from ExecuteExecution so a node cannot receive caller source until
 // it has returned a fresh execution-only VM.

@@ -351,15 +351,17 @@ func (s *PgStore) CompleteExecution(ctx context.Context, params CompleteExecutio
 		return Execution{}, fmt.Errorf("complete execution: %w", err)
 	}
 	projected := executionFromSQL(row)
-	var eventErr error
-	forEachExecutionOutputEvent(projected, func(eventType ExecutionEventType, payload json.RawMessage) {
+	if !params.OutputEventsPersisted {
+		var eventErr error
+		forEachExecutionOutputEvent(projected, func(eventType ExecutionEventType, payload json.RawMessage) {
+			if eventErr != nil {
+				return
+			}
+			_, eventErr = appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, eventType, payload, params.FinishedAt)
+		})
 		if eventErr != nil {
-			return
+			return Execution{}, fmt.Errorf("complete execution: append output event: %w", eventErr)
 		}
-		_, eventErr = appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, eventType, payload, params.FinishedAt)
-	})
-	if eventErr != nil {
-		return Execution{}, fmt.Errorf("complete execution: append output event: %w", eventErr)
 	}
 	if _, err := appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, ExecutionEventTerminal, executionTerminalPayload(projected), params.FinishedAt); err != nil {
 		return Execution{}, err

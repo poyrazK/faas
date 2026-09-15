@@ -302,7 +302,9 @@ func (m *MemStore) CompleteExecution(_ context.Context, params CompleteExecution
 	row.UpdatedAt = finishedAt
 	m.executions[row.ID] = row
 	m.recordExecutionUsageLocked(row)
-	appendExecutionOutputEventsLocked(m, row, finishedAt)
+	if !params.OutputEventsPersisted {
+		appendExecutionOutputEventsLocked(m, row, finishedAt)
+	}
 	m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), finishedAt)
 	delete(m.executionPayloads, row.ID)
 	return cloneExecution(row), nil

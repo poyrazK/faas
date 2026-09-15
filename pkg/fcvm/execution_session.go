@@ -46,6 +46,13 @@ func NewExecutionSession(conn net.Conn, destroyVM ...func(context.Context) error
 // Execute sends one request to the guest. A session cannot be reused after a
 // successful, failed, or cancelled exchange.
 func (s *ExecutionSession) Execute(ctx context.Context, req executionproto.Request) (executionproto.Result, error) {
+	return s.ExecuteWithOutput(ctx, req, nil)
+}
+
+// ExecuteWithOutput is Execute with an optional receiver for live guest
+// stdout/stderr frames. Keeping this on the concrete vmmd-side session lets
+// older scheduler transports continue using Execute unchanged.
+func (s *ExecutionSession) ExecuteWithOutput(ctx context.Context, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
 	var zero executionproto.Result
 	if s == nil || s.client == nil {
 		return zero, fmt.Errorf("fcvm: nil execution session")
@@ -56,7 +63,7 @@ func (s *ExecutionSession) Execute(ctx context.Context, req executionproto.Reque
 	if destroyed {
 		return zero, fmt.Errorf("fcvm: execution session destroyed")
 	}
-	return s.client.Execute(ctx, req)
+	return s.client.ExecuteWithOutput(ctx, req, receive)
 }
 
 // Destroy is idempotent and closes the vsock stream immediately. VM process

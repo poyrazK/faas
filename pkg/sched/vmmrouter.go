@@ -409,6 +409,10 @@ type executionVMMClient interface {
 	ExecuteExecution(context.Context, string, executionproto.Request) (executionproto.Result, error)
 }
 
+type executionOutputVMMClient interface {
+	ExecuteExecutionWithOutput(context.Context, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
+}
+
 type executionRestoreVMMClient interface {
 	RestoreExecution(context.Context, ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error)
 }
@@ -428,6 +432,22 @@ func (r *VMMRouter) ExecuteExecution(ctx context.Context, nodeID, instance strin
 			"Execution unavailable", "vmmd client does not support disposable executions")
 	}
 	return executionClient.ExecuteExecution(ctx, instance, req)
+}
+
+// ExecuteExecutionWithOutput routes the live-output exchange to the node
+// owning the disposable VM. Older nodes may not implement the additive stream
+// and return an Unimplemented problem for the caller to fall back to unary.
+func (r *VMMRouter) ExecuteExecutionWithOutput(ctx context.Context, nodeID, instance string, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return executionproto.Result{}, err
+	}
+	executionClient, ok := cli.(executionOutputVMMClient)
+	if !ok {
+		return executionproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Execution streaming unavailable", "vmmd client does not support live disposable execution output")
+	}
+	return executionClient.ExecuteExecutionWithOutput(ctx, instance, req, receive)
 }
 
 // RestoreExecution routes the payload-free disposable-VM constructor. The

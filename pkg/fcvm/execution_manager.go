@@ -29,6 +29,14 @@ const executionDestroyTimeout = 5 * time.Second
 // Keeping this on Manager (rather than exposing live leases to gRPC) makes
 // the instance lookup and cleanup atomic from the caller's point of view.
 func (m *Manager) ExecuteExecution(ctx context.Context, instance string, req executionproto.Request) (executionproto.Result, error) {
+	return m.ExecuteExecutionWithOutput(ctx, instance, req, nil)
+}
+
+// ExecuteExecutionWithOutput is the live-output variant of
+// ExecuteExecution. The callback runs for each bounded stdout/stderr frame
+// while the guest is still running; returning an error aborts the exchange and
+// still triggers the normal disposable teardown.
+func (m *Manager) ExecuteExecutionWithOutput(ctx context.Context, instance string, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
 	var zero executionproto.Result
 	if err := req.Validate(); err != nil {
 		return zero, err
@@ -77,7 +85,7 @@ func (m *Manager) ExecuteExecution(ctx context.Context, instance string, req exe
 		return zero, nilSessionErr
 	}
 
-	result, executeErr := session.Execute(requestCtx, req)
+	result, executeErr := session.ExecuteWithOutput(requestCtx, req, receive)
 	destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionDestroyTimeout)
 	sessionDestroyErr := session.Destroy(destroyCtx)
 	// ExecutionSession's destroy hook tears down Firecracker, while Manager

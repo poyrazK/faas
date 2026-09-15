@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -93,6 +94,10 @@ type ExecutionOutcome struct {
 	FailureCode     string
 	FailureMessage  string
 	Usage           api.ExecutionUsage
+	// OutputEventsPersisted tells the store that stdout/stderr were already
+	// appended by the live event sink and must not be emitted again during
+	// terminalization.
+	OutputEventsPersisted bool
 }
 
 // ExecutionSession is one restored-or-cold-booted disposable microVM.
@@ -338,7 +343,27 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 		Sealed: append([]byte(nil), claim.SealedPayload...), KID: claim.PayloadKID,
 	}
 	executeStarted := c.now()
-	outcome, executeErr := session.Execute(workCtx, payload)
+	var outputSink *executionOutputEventSink
+	if eventStore, ok := c.store.(state.ExecutionEventStore); ok {
+		outputSink = newExecutionOutputEventSink(eventStore, claim.AccountID, claim.ID, c.now)
+	}
+	var outputReceiver executionproto.OutputReceiver
+	if outputSink != nil {
+		outputReceiver = outputSink.Receive
+	}
+	var outcome ExecutionOutcome
+	var executeErr error
+	if outputReceiver != nil {
+		if streamingSession, ok := session.(interface {
+			ExecuteWithOutput(context.Context, ExecutionPayload, executionproto.OutputReceiver) (ExecutionOutcome, error)
+		}); ok {
+			outcome, executeErr = streamingSession.ExecuteWithOutput(workCtx, payload, outputReceiver)
+		} else {
+			outcome, executeErr = session.Execute(workCtx, payload)
+		}
+	} else {
+		outcome, executeErr = session.Execute(workCtx, payload)
+	}
 	c.observeExecutionPhase(claim.Runtime, "execute", executeStarted)
 	if executeErr != nil {
 		c.recordExecutionFailure(claim.Runtime, "execute")
@@ -355,6 +380,9 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 	if executeErr != nil {
 		c.log.Warn("schedd: execution transport failed", "execution_id", claim.ID, "error_class", executionErrorClass(executeErr))
 		outcome = executionFailure("execution_transport_failed", "execution result channel closed unexpectedly")
+	}
+	if outputSink != nil && outputSink.Persisted() {
+		outcome.OutputEventsPersisted = true
 	}
 	outcome = normalizeExecutionOutcome(outcome, claim.Limits.MaxOutputBytes)
 	switch outcome.FailureCode {
@@ -484,6 +512,7 @@ func completionParams(claim state.ExecutionClaim, outcome ExecutionOutcome, fini
 		Result: append(json.RawMessage(nil), outcome.Result...), Stdout: outcome.Stdout, Stderr: outcome.Stderr,
 		OutputTruncated: outcome.OutputTruncated, ExitCode: outcome.ExitCode,
 		FailureCode: failureCode, FailureMessage: failureMessage, Usage: outcome.Usage, FinishedAt: finishedAt,
+		OutputEventsPersisted: outcome.OutputEventsPersisted,
 	}
 }
 

@@ -112,6 +112,10 @@ type CompleteExecutionParams struct {
 	FailureMessage  *string
 	Usage           api.ExecutionUsage
 	FinishedAt      time.Time
+	// OutputEventsPersisted is true when stdout/stderr were appended by the
+	// live execution stream. Terminalization must not append the same bytes a
+	// second time; false preserves the unary execution behavior.
+	OutputEventsPersisted bool
 }
 
 // ExecutionSweepResult reports the recovery work completed in one bounded

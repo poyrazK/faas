@@ -76,6 +76,17 @@ func (t *routedVmmdExecutionTransport) Execute(ctx context.Context, req executio
 	return t.router.ExecuteExecution(ctx, t.nodeID, t.instance, req)
 }
 
+func (t *routedVmmdExecutionTransport) ExecuteWithOutput(ctx context.Context, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	streaming, ok := t.router.(interface {
+		ExecuteExecutionWithOutput(context.Context, string, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
+	})
+	if !ok {
+		return executionproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Execution streaming unavailable", "vmmd router does not support live disposable execution output")
+	}
+	return streaming.ExecuteExecutionWithOutput(ctx, t.nodeID, t.instance, req, receive)
+}
+
 func (t *routedVmmdExecutionTransport) Destroy(ctx context.Context) error {
 	return t.router.Destroy(ctx, t.nodeID, t.instance)
 }
@@ -165,7 +176,23 @@ type vmmdExecutionSession struct {
 	destroyed bool
 }
 
+type streamingVmmdExecutionTransport interface {
+	VmmdExecutionTransport
+	ExecuteWithOutput(context.Context, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
+}
+
 func (s *vmmdExecutionSession) Execute(ctx context.Context, payload ExecutionPayload) (ExecutionOutcome, error) {
+	return s.execute(ctx, payload, nil)
+}
+
+// ExecuteWithOutput is the optional live-output scheduler seam. If the
+// routed vmmd client does not support the additive stream, it falls back to
+// the existing unary exchange so mixed-version clusters remain usable.
+func (s *vmmdExecutionSession) ExecuteWithOutput(ctx context.Context, payload ExecutionPayload, receive executionproto.OutputReceiver) (ExecutionOutcome, error) {
+	return s.execute(ctx, payload, receive)
+}
+
+func (s *vmmdExecutionSession) execute(ctx context.Context, payload ExecutionPayload, receive executionproto.OutputReceiver) (ExecutionOutcome, error) {
 	if s == nil || s.transport == nil || s.decode == nil {
 		return ExecutionOutcome{}, ErrExecutionCoordinatorNotWired
 	}
@@ -207,11 +234,28 @@ func (s *vmmdExecutionSession) Execute(ctx context.Context, payload ExecutionPay
 		return ExecutionOutcome{}, errors.New("sched: execution request failed validation")
 	}
 
-	result, err := s.transport.Execute(ctx, wireRequest)
+	var result executionproto.Result
+	if receive != nil {
+		if streaming, ok := s.transport.(streamingVmmdExecutionTransport); ok {
+			result, err = streaming.ExecuteWithOutput(ctx, wireRequest, receive)
+			if err != nil && executionOutputUnavailable(err) {
+				result, err = s.transport.Execute(ctx, wireRequest)
+			}
+		} else {
+			result, err = s.transport.Execute(ctx, wireRequest)
+		}
+	} else {
+		result, err = s.transport.Execute(ctx, wireRequest)
+	}
 	if err != nil {
 		return ExecutionOutcome{}, fmt.Errorf("sched: guest execution exchange: %w", err)
 	}
 	return outcomeFromProtocolResult(result), nil
+}
+
+func executionOutputUnavailable(err error) bool {
+	problem := api.AsProblem(err)
+	return problem != nil && problem.Code == api.CodeNotImplemented
 }
 
 func (s *vmmdExecutionSession) Destroy(ctx context.Context) error {
