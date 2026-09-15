@@ -129,6 +129,56 @@
           args:
             executable: /bin/bash
 
+    # imaged refuses to start without the build-attestation signing key:
+    #
+    #   imaged: sign key "/etc/faas/secrets/sign.key": ...
+    #     (run `faas sign-keys init` to provision)
+    #
+    # and a dead imaged means nothing advances a deployment from `building` to
+    # `live`. Every TestBuildMetal subtest then burned its full 4-minute
+    # deployment deadline — six of them, which is most of a 30-minute build
+    # phase — while the builds themselves had succeeded. The symptom was a slow
+    # build phase; the cause was a daemon that never came up.
+    #
+    # ECDSA P-256, PKCS8 PEM: pkg/cosign.GenerateKeyPair's on-disk shape.
+    # Perms match a fleet-provisioned host (0440 root:faas so imaged and the
+    # faas group can read; the public half 0444).
+    #
+    # Node-local and absent-only, for the same reason as fleet.age: rotating
+    # would invalidate every attestation already signed with the old key.
+    - name: native acceptance — look for an existing attestation signing key
+      ansible.builtin.stat:
+        path: /etc/faas/secrets/sign.key
+      register: nah_sign_key
+
+    - name: native acceptance — generate the attestation signing key
+      when: not nah_sign_key.stat.exists
+      block:
+        - name: native acceptance — write sign.key (ECDSA P-256, PKCS8 PEM)
+          ansible.builtin.command:
+            cmd: >-
+              openssl genpkey -algorithm EC
+              -pkeyopt ec_paramgen_curve:P-256
+              -out /etc/faas/secrets/sign.key
+            creates: /etc/faas/secrets/sign.key
+
+        - name: native acceptance — derive sign-pub.pem
+          ansible.builtin.command:
+            cmd: >-
+              openssl pkey -in /etc/faas/secrets/sign.key
+              -pubout -out /etc/faas/secrets/sign-pub.pem
+            creates: /etc/faas/secrets/sign-pub.pem
+
+    - name: native acceptance — pin attestation key permissions
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: root
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /etc/faas/secrets/sign.key, group: faas, mode: "0440"}
+        - {path: /etc/faas/secrets/sign-pub.pem, group: root, mode: "0444"}
+
     # vmmd writes each microVM's serial console to
     # /var/log/faas/vm-<instance>.console. That file is the ONLY view inside a
     # guest — it is what identified "guest-init: build failed: registry DNS
