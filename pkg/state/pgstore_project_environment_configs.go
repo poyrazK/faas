@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,7 +19,11 @@ func scanProjectEnvironmentConfig(row pgx.Row) (ProjectEnvironmentConfig, error)
 	); err != nil {
 		return ProjectEnvironmentConfig{}, mapErr(err)
 	}
-	config.Values = append(json.RawMessage(nil), values...)
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, values); err != nil {
+		return ProjectEnvironmentConfig{}, fmt.Errorf("state: compact project environment config: %w", err)
+	}
+	config.Values = append(json.RawMessage(nil), compact.Bytes()...)
 	return config, nil
 }
 
