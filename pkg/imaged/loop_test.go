@@ -382,11 +382,12 @@ func TestFCSweep_ExpiredStaleSnapshotRemovesArtifacts(t *testing.T) {
 
 	appsRoot := t.TempDir()
 	be, _ := storage.NewLocalStorageBackend(appsRoot)
-	keys := []string{
+	snapshotKeys := []string{
 		state.SnapMemKey(dep.ID),
 		sched.SnapshotVMStateKey(dep.ID),
-		sched.AppLayerKey(app.Slug, dep.ID),
 	}
+	layerKey := sched.AppLayerKey(app.Slug, dep.ID)
+	keys := append(append([]string{}, snapshotKeys...), layerKey)
 	for _, key := range keys {
 		if err := be.Put(context.Background(), key, strings.NewReader("artifact")); err != nil {
 			t.Fatalf("seed %s: %v", key, err)
@@ -405,11 +406,16 @@ func TestFCSweep_ExpiredStaleSnapshotRemovesArtifacts(t *testing.T) {
 	if ok := loop.runFCSweep(context.Background()); !ok {
 		t.Fatal("runFCSweep returned false")
 	}
-	for _, key := range keys {
+	for _, key := range snapshotKeys {
 		if rc, err := be.Get(context.Background(), key); err == nil {
 			_ = rc.Close()
 			t.Errorf("expired artifact %s survived stale retention", key)
 		}
+	}
+	if rc, err := be.Get(context.Background(), layerKey); err != nil {
+		t.Fatalf("live deployment layer was deleted with stale snapshot: %v", err)
+	} else {
+		_ = rc.Close()
 	}
 	rows, err := store.ListSnapshotsStaleOlderThan(context.Background(), api.SnapshotStaleRetention)
 	if err != nil {

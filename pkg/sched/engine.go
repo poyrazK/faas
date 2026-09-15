@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel/attribute"
@@ -2913,6 +2914,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				e.ledger.Release(bootInput.insID)
 				return WakeResult{}, err
 			}
+			if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrInvalidKey) {
+				problem := e.markRuntimeArtifactMissing(ctx, dep.ID, spec.LayerKey, err)
+				e.log.Error("wake: live deployment artifact is unavailable",
+					"app", appID, "deployment", dep.ID, "layer", spec.LayerKey, "err", err)
+				e.transitionWithKind(ctx, bootInput.insID, appID, state.StateFailed, "wake_boot_error", "artifact_missing")
+				e.ledger.Release(bootInput.insID)
+				return WakeResult{}, errors.Join(ErrPermanentWake, problem)
+			}
 			// Transient I/O — fail the boot but don't mark the
 			// layer compromised. Same shape as the vmmd
 			// round-trip failure path below: transition + release.
@@ -3332,6 +3341,32 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 
 	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount}, nil
+}
+
+// markRuntimeArtifactMissing closes a live deployment that cannot ever boot
+// because its immutable rootfs or signature key is absent. Retrying the same
+// content-addressed key cannot heal it; a redeploy is the customer action.
+// The write is detached from a cancelled request and bounded so the durable
+// state does not depend on the caller keeping its HTTP connection open.
+func (e *Engine) markRuntimeArtifactMissing(ctx context.Context, deploymentID, layer string, cause error) *api.Problem {
+	problem := api.NewProblem(503, api.CodeDeployFailed,
+		"Deployment artifact unavailable",
+		fmt.Sprintf("the live deployment artifact %q is missing from platform storage", layer))
+	problem.Hint = "Redeploy the app to publish a new immutable runtime artifact."
+	problem.Why = "The deployment still referenced content that no longer exists in the platform artifact store."
+	problem.Fix = "Run gregale deploy again from the app source or image."
+
+	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	message := problem.Detail
+	if cause != nil {
+		message += ": " + cause.Error()
+	}
+	if _, err := e.store.SetDeploymentFailedEx(markCtx, deploymentID, problem.Code, message,
+		problem.Hint, problem.Why, problem.Fix, nil); err != nil {
+		e.log.Error("wake: mark missing-artifact deployment failed", "deployment", deploymentID, "err", err)
+	}
+	return problem
 }
 
 // bootInput is the immutable bundle of values needed across the

@@ -33,18 +33,42 @@
   register: faas_hardening_authkeys
   when: faas_hardening_sshd | bool
 
+# GCP OS Login intentionally does not populate ~/.ssh/authorized_keys. Its
+# sshd AuthorizedKeysCommand is the authenticated key source, so prove that
+# the configured helper can currently resolve at least one key for the exact
+# Ansible user before accepting it as a lockout-safe path.
+- name: host_hardening — verify the connecting user's GCP OS Login key path
+  ansible.builtin.shell: |
+    set -euo pipefail
+    user="{{ ansible_env.SUDO_USER | default('root') }}"
+    command="$(sshd -T -C "user=${user},host=$(hostname),addr=127.0.0.1" | awk '$1 == "authorizedkeyscommand" {print $2; exit}')"
+    test "$command" = /usr/bin/google_authorized_keys
+    test -x "$command"
+    keys="$($command "$user")"
+    test -n "$keys"
+  args:
+    executable: /bin/bash
+  register: faas_hardening_oslogin_key
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: faas_hardening_sshd | bool
+
 - name: host_hardening — refuse to disable password auth without a key on the box
   ansible.builtin.assert:
     that:
       - not (faas_hardening_sshd_password_auth | bool == false) or
-        (faas_hardening_authkeys.stat.exists and faas_hardening_authkeys.stat.size > 0)
+        (faas_hardening_authkeys.stat.exists and faas_hardening_authkeys.stat.size > 0) or
+        faas_hardening_oslogin_key.rc == 0
       - faas_hardening_sshd_permit_root_login != 'no' or
         (ansible_env.SUDO_USER | default('root')) != 'root'
     fail_msg: >-
       The requested SSH posture would lock out the current connection. A
-      password-disabled user needs an authorized key, and PermitRootLogin=no
-      requires Ansible to connect as a named sudo-capable administrator. Test
-      OS Login/IAP first; this role will not remove its own access path.
+      password-disabled user needs a non-empty local authorized_keys file or a
+      verified GCP OS Login AuthorizedKeysCommand result, and
+      PermitRootLogin=no requires Ansible to connect as a named sudo-capable
+      administrator. Test OS Login/IAP first; this role will not remove its
+      own access path.
   when: faas_hardening_sshd | bool
 
 - name: host_hardening — render the sshd hardening drop-in

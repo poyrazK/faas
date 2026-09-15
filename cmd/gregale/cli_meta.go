@@ -672,7 +672,7 @@ var cliCommands = []cliCommand{
 			// but operators running the CLI directly with a known
 			// PR number need an discoverable way to stamp it.
 			{Name: "reason", Short: "free-text deploy reason (≤280 chars)", Value: "text"},
-			{Name: "tag", Short: "annotation tag", Value: "TAG", ClosedSet: DeploymentAnnotationTags},
+			{Name: "tag", Short: "annotation tag (" + strings.Join(DeploymentAnnotationTags, "|") + ")", Value: "TAG", ClosedSet: DeploymentAnnotationTags},
 			{Name: "deployed-by", Short: "operator label (auto-resolved from git config user.name)", Value: "NAME"},
 			{Name: "pr-number", Short: "GitHub PR number (positive int; 0 = absent). CI paths stamp via the GitHub Action.", Value: "N"},
 			// ADR-124 follow-up #1: --exclude + --show-affected

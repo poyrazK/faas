@@ -35,7 +35,7 @@
     - name: Stop inherited local PostgreSQL services before compute adoption
       ansible.builtin.shell: |
         set -euo pipefail
-        units="$(systemctl list-unit-files --type=service --no-legend 'postgresql*' 2>/dev/null | awk '{print $1}')"
+        units="$(systemctl list-unit-files --type=service --no-legend 'postgresql*' 2>/dev/null | awk '{print $1}' || true)"
         for unit in $units; do
           systemctl disable --now "$unit" >/dev/null 2>&1 || true
         done
@@ -89,6 +89,10 @@
           test -c /dev/kvm
           test -d /srv/fc
           mountpoint -q /srv/fc
+          mountpoint -q /var/lib/faas/cache
+          test "$(stat -c %d /var/lib/faas/cache)" = "$(stat -c %d /srv/fc)"
+          test "$(findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache)" = xfs
+          xfs_info /srv/fc | grep -Eq '(^|[[:space:]])reflink=1($|[[:space:]])'
           test -L /opt/faas/current
           test -d "$(readlink -f /opt/faas/current)"
           test -x /usr/local/bin/gregalectl
@@ -556,6 +560,17 @@
   serial: 1
   max_fail_percentage: 0
   tasks:
+    - name: Refuse activation when the OCI cache is outside fast storage
+      ansible.builtin.shell: |
+        set -euo pipefail
+        mountpoint -q /var/lib/faas/cache
+        test "$(stat -c %d /var/lib/faas/cache)" = "$(stat -c %d /srv/fc)"
+        test "$(findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache)" = xfs
+        xfs_info /srv/fc | grep -Eq '(^|[[:space:]])reflink=1($|[[:space:]])'
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Detect the legacy imaged environment file
       ansible.builtin.stat:
         path: /etc/faas/oci-e2e.env

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -3305,6 +3307,36 @@ func TestEngineWake_RejectsTransientVerifierIO(t *testing.T) {
 	// the wire via api.WriteProblem).
 	if got := p.HasHeader("Retry-After"); len(got) != 1 || got[0] != "5" {
 		t.Errorf("HasHeader(Retry-After) = %v, want [\"5\"]", got)
+	}
+}
+
+func TestEngineWake_MissingLiveArtifactFailsDeploymentPermanently(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	e.WithVerifier(&staleVerifier{reject: fmt.Errorf("registry manifest lookup: %w", storage.ErrNotFound)})
+
+	_, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err == nil || !errors.Is(err, ErrPermanentWake) {
+		t.Fatalf("Wake error = %v, want ErrPermanentWake", err)
+	}
+	var problem *api.Problem
+	if !errors.As(err, &problem) || problem.Status != 503 || problem.Code != api.CodeDeployFailed {
+		t.Fatalf("Wake problem = %+v, want 503/%s", problem, api.CodeDeployFailed)
+	}
+	failed, getErr := store.DeploymentByID(context.Background(), dep.ID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if failed.Status != state.DeployFailed || failed.TrafficPercent != 0 || failed.ErrorCode != api.CodeDeployFailed {
+		t.Fatalf("missing-artifact deployment = %+v, want failed with zero traffic", failed)
+	}
+	if vmm.coldBoots != 0 || vmm.restores != 0 {
+		t.Fatalf("vmm invoked for missing artifact: cold=%d restore=%d", vmm.coldBoots, vmm.restores)
+	}
+	if got := e.Ledger().ResidentRAM(); got != 0 {
+		t.Fatalf("resident RAM after missing artifact = %d, want 0", got)
 	}
 }
 

@@ -52,3 +52,29 @@ func TestCDComputeWorkflowUsesInfrastructureHealthHost(t *testing.T) {
 		t.Fatal("cd-compute metrics probe must not require the removed gatewayd_ops_total family")
 	}
 }
+
+func TestCDComputeWorkflowVerifiesFastCacheAfterActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatalf("read cd-compute workflow: %v", err)
+	}
+	workflow := string(body)
+	join := strings.Index(workflow, `"$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"`)
+	cacheGate := strings.Index(workflow, "Verify compute OCI cache uses fast storage after activation")
+	gatewayGate := strings.Index(workflow, "Verify private compute gateway reachability")
+	if join < 0 || cacheGate < 0 || gatewayGate < 0 || !(join < cacheGate && cacheGate < gatewayGate) {
+		t.Fatalf("fast-cache post gate order is invalid: join=%d cache=%d gateway=%d", join, cacheGate, gatewayGate)
+	}
+	for _, want := range []string{
+		"mountpoint -q /var/lib/faas/cache",
+		"stat -c %d /var/lib/faas/cache",
+		"stat -c %d /srv/fc",
+		"findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache",
+		"xfs_info /srv/fc",
+		"reflink=1",
+	} {
+		if !strings.Contains(workflow[cacheGate:gatewayGate], want) {
+			t.Errorf("fast-cache post gate is missing %q", want)
+		}
+	}
+}

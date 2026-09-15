@@ -762,6 +762,16 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 				"snapshot", t.ID, "deployment", deploymentID)
 			continue
 		}
+		// A stale Firecracker snapshot may be incompatible with the current
+		// runtime, but the live deployment's ext4 layer is still the source
+		// for a cold boot. Deleting it makes an otherwise recoverable live
+		// deployment permanently unwakeable. Superseded and terminal
+		// generations remain eligible for normal rollback-window cleanup.
+		if t.DeploymentStatus == state.DeployLive {
+			l.log.Info("imaged: gc retained live deployment layer after snapshot eviction",
+				"deployment", deploymentID, "layer", sched.AppLayerKey(t.AppSlug, deploymentID))
+			continue
+		}
 		if err := be.Delete(ctx, sched.AppLayerKey(t.AppSlug, deploymentID)); err != nil {
 			l.log.Warn("imaged: gc remove ext4", "deployment", deploymentID, "err", err)
 		}

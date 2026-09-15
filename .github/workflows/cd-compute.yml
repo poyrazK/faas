@@ -840,6 +840,17 @@ jobs:
           fi
           "$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"
 
+      - name: Verify compute OCI cache uses fast storage after activation
+        run: |
+          set -euo pipefail
+          ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ARTIFACT_DIR/compute-known-hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "sudo -n bash -ceu 'mountpoint -q /var/lib/faas/cache; test \"\$(stat -c %d /var/lib/faas/cache)\" = \"\$(stat -c %d /srv/fc)\"; test \"\$(findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache)\" = xfs; xfs_info /srv/fc | grep -Eq \"(^|[[:space:]])reflink=1(\$|[[:space:]])\"'"
+
       - name: Verify private compute gateway reachability
         run: |
           set -euo pipefail

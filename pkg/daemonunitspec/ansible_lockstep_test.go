@@ -1,9 +1,13 @@
 package daemonunitspec
 
 import (
+	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -120,5 +124,162 @@ func TestComputeOnlyScheddUsesRemoteDatabaseUnit(t *testing.T) {
 		!strings.Contains(string(tasks), "mask inherited PostgreSQL units") ||
 		!strings.Contains(string(tasks), "/var/lib/postgresql.disabled") {
 		t.Fatalf("compute-only role must stop, mask, and archive inherited local PostgreSQL before daemon activation")
+	}
+}
+
+func TestComputeBootstrapAcceptsEmptyPostgresAndRequiresFastOCICache(t *testing.T) {
+	root := repoRoot(t)
+	joinPath := filepath.Join(root, "deploy", "ansible", "node_join.yml")
+	body, err := os.ReadFile(joinPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	join := string(body)
+	for _, want := range []string{
+		`awk '{print $1}' || true`,
+		"mountpoint -q /var/lib/faas/cache",
+		`stat -c %d /var/lib/faas/cache`,
+		`findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache`,
+		"xfs_info /srv/fc",
+		"reflink=1",
+		"Refuse activation when the OCI cache is outside fast storage",
+	} {
+		if !strings.Contains(join, want) {
+			t.Errorf("node_join compute contract is missing %q", want)
+		}
+	}
+
+	storagePath := filepath.Join(root, "deploy", "ansible", "roles", "storage", "tasks", "main.yml")
+	storage, err := os.ReadFile(storagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storageText := string(storage)
+	for _, want := range []string{
+		"stop compute cache writers before migration",
+		"rsync",
+		"bind,x-systemd.requires-mounts-for={{ faas_storage_mount }}/cache",
+		`stat -c %d "{{ faas_storage_cache_mount }}"`,
+	} {
+		if !strings.Contains(storageText, want) {
+			t.Errorf("storage role is missing fast-cache migration contract %q", want)
+		}
+	}
+}
+
+func TestComputePostgresDiscoveryHandlesEmptyAndPopulatedUnitSets(t *testing.T) {
+	root := repoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, "deploy", "ansible", "node_join.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := ansibleTaskShell(t, body, "Stop inherited local PostgreSQL services before compute adoption")
+
+	for _, tc := range []struct {
+		name string
+		mode string
+		want []string
+	}{
+		{name: "empty", mode: "empty"},
+		{name: "populated", mode: "populated", want: []string{"postgresql.service", "postgresql@.service"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			logPath := filepath.Join(t.TempDir(), "systemctl.log")
+			fake := `#!/bin/sh
+case "$1" in
+  list-unit-files)
+    if [ "$POSTGRES_TEST_MODE" = empty ]; then exit 1; fi
+    printf 'postgresql.service enabled\npostgresql@.service disabled\n'
+    ;;
+  disable)
+    printf '%s\n' "$3" >> "$SYSTEMCTL_LOG"
+    ;;
+  *) exit 64 ;;
+esac
+`
+			if err := os.WriteFile(filepath.Join(binDir, "systemctl"), []byte(fake), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-c", shell)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+":"+os.Getenv("PATH"),
+				"POSTGRES_TEST_MODE="+tc.mode,
+				"SYSTEMCTL_LOG="+logPath,
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("discovery shell failed: %v\n%s", err, out)
+			}
+			got, err := os.ReadFile(logPath)
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if fields := strings.Fields(string(got)); !slices.Equal(fields, tc.want) {
+				t.Fatalf("disabled units = %v, want %v", fields, tc.want)
+			}
+		})
+	}
+}
+
+func ansibleTaskShell(t *testing.T, body []byte, taskName string) string {
+	t.Helper()
+	decoder := yaml.NewDecoder(strings.NewReader(string(body)))
+	for {
+		var doc yaml.Node
+		if err := decoder.Decode(&doc); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			t.Fatal(err)
+		}
+		if shell := findAnsibleTaskShell(&doc, taskName); shell != "" {
+			return shell
+		}
+	}
+	t.Fatalf("Ansible task %q has no shell body", taskName)
+	return ""
+}
+
+func findAnsibleTaskShell(node *yaml.Node, taskName string) string {
+	if node.Kind == yaml.MappingNode {
+		name := ""
+		shell := ""
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			switch node.Content[i].Value {
+			case "name":
+				name = node.Content[i+1].Value
+			case "ansible.builtin.shell":
+				shell = node.Content[i+1].Value
+			}
+		}
+		if name == taskName {
+			return shell
+		}
+	}
+	for _, child := range node.Content {
+		if shell := findAnsibleTaskShell(child, taskName); shell != "" {
+			return shell
+		}
+	}
+	return ""
+}
+
+func TestHostHardeningAcceptsOnlyProvenLocalOrGCPOSLoginKeys(t *testing.T) {
+	root := repoRoot(t)
+	tasksPath := filepath.Join(root, "deploy", "ansible", "roles", "host_hardening", "tasks", "main.yml")
+	body, err := os.ReadFile(tasksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := string(body)
+	for _, want := range []string{
+		"/usr/bin/google_authorized_keys",
+		`keys="$($command "$user")"`,
+		"faas_hardening_oslogin_key.rc == 0",
+		"faas_hardening_authkeys.stat.size > 0",
+	} {
+		if !strings.Contains(tasks, want) {
+			t.Errorf("host hardening lockout guard is missing %q", want)
+		}
 	}
 }

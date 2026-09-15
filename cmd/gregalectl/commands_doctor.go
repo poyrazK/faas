@@ -14,7 +14,7 @@
 //	1  usage error (bad flag, mutually-exclusive flag combo)
 //	3  drift detected (per UX §3.2 platform/infra)
 //
-// The six checks run in order:
+// The core checks run in order, followed by additional host and deep checks:
 //
 //	symlink         /opt/faas/current read; missing / broken / stale
 //	bundle          manifest on disk + Verify against bin/
@@ -23,8 +23,8 @@
 //	bundle-orphans  unapplied release_bundles rows whose bin/ is gone
 //	node-hashes     --deep only: per-node re-hash against the bundle
 //
-// The DB is optional for checks 1-3 (omitted database DSN emits a
-// warn finding and skips checks 4-5). --deep requires the DB.
+// The DB is optional for the host-local checks. Omitted database DSN emits a
+// warning and skips checks that compare cluster state. --deep requires the DB.
 
 package main
 
@@ -40,6 +40,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/releasebundle"
@@ -49,7 +50,7 @@ import (
 // doctorFindingsCap caps the number of findings emitted per run.
 // Anything beyond is dropped and replaced with a single error
 // finding telling the operator to narrow the filter. Loose
-// upper bound — a fleet of 50 boxes with 6 checks each produces
+// upper bound — a fleet of 50 boxes with the current check set produces
 // well under 100, but a misconfigured PR-3 install could
 // trivially fan out 10× that.
 const doctorFindingsCap = 1000
@@ -93,6 +94,7 @@ const (
 	// FAAS_BUILDER_BASE_PATH (mirroring cmd/imaged/main.go:403); empty
 	// keeps the canonical /srv/fc/base/runner-builder-<arch>.ext4.
 	doctorCheckBuilderBaseExt4 = "builder-base-ext4"
+	doctorCheckFastCache       = "fast-cache"
 )
 
 // doctor severity constants. Match the wire shape so JSON consumers
@@ -334,7 +336,7 @@ Examples:
 	_, _ = fmt.Fprintf(w, "  Docs: %sdoctor\n", docsURLBase)
 }
 
-// runDoctorChecks drives the six checks in order and gathers
+// runDoctorChecks drives the checks in order and gathers
 // findings + per-check summaries. Order matters: checkSymlink
 // populates deps.currentGitSHA for checkBundle.
 func runDoctorChecks(ctx context.Context, deps *doctorDeps) doctorReport {
@@ -419,6 +421,9 @@ func runDoctorChecks(ctx context.Context, deps *doctorDeps) doctorReport {
 	// authoritative source for "what did we run", so a skipped
 	// check must be absent, not present-with-zero-findings.
 	if deps.deep {
+		runCheck(doctorCheckFastCache, func() ([]doctorFinding, error) {
+			return checkFastCache(ctx)
+		})
 		runCheck(doctorCheckNodeHashes, func() ([]doctorFinding, error) {
 			return checkNodeHashes(ctx, deps)
 		})
@@ -1503,7 +1508,77 @@ var (
 		cmd := exec.CommandContext(ctx, debugfs, "-R", "stat "+target, ext4)
 		return cmd.CombinedOutput()
 	}
+	fastCacheProbeHook = func(ctx context.Context) (string, error) {
+		storageRoot := os.Getenv("FAAS_STORAGE_ROOT")
+		if storageRoot == "" {
+			storageRoot = "/srv/fc"
+		}
+		cacheRoot := "/var/lib/faas/cache"
+		cmd := exec.CommandContext(ctx, "findmnt", "--noheadings", "--output", "FSTYPE,SOURCE", "--mountpoint", cacheRoot)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("%s is not a dedicated mountpoint: %s", cacheRoot, strings.TrimSpace(string(out)))
+		}
+		fields := strings.Fields(string(out))
+		if len(fields) < 2 || fields[0] != "xfs" {
+			return "", fmt.Errorf("%s must be an XFS mountpoint, got %q", cacheRoot, strings.TrimSpace(string(out)))
+		}
+		storageInfo, err := os.Stat(storageRoot)
+		if err != nil {
+			return "", fmt.Errorf("stat %s: %w", storageRoot, err)
+		}
+		cacheInfo, err := os.Stat(cacheRoot)
+		if err != nil {
+			return "", fmt.Errorf("stat %s: %w", cacheRoot, err)
+		}
+		storageStat, storageOK := storageInfo.Sys().(*syscall.Stat_t)
+		cacheStat, cacheOK := cacheInfo.Sys().(*syscall.Stat_t)
+		if !storageOK || !cacheOK {
+			return "", errors.New("filesystem device identifiers are unavailable")
+		}
+		if storageStat.Dev != cacheStat.Dev {
+			return "", fmt.Errorf("%s device %d differs from %s device %d", cacheRoot, cacheStat.Dev, storageRoot, storageStat.Dev)
+		}
+		xfsInfo, err := exec.CommandContext(ctx, "xfs_info", storageRoot).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("inspect XFS features for %s: %s", storageRoot, strings.TrimSpace(string(xfsInfo)))
+		}
+		if !xfsInfoHasReflink(string(xfsInfo)) {
+			return "", fmt.Errorf("%s does not expose XFS reflink=1", storageRoot)
+		}
+		return fmt.Sprintf("%s is an XFS reflink mount on the %s device (%s)", cacheRoot, storageRoot, fields[1]), nil
+	}
 )
+
+func xfsInfoHasReflink(output string) bool {
+	for _, field := range strings.Fields(output) {
+		if field == "reflink=1" {
+			return true
+		}
+	}
+	return false
+}
+
+func checkFastCache(ctx context.Context) ([]doctorFinding, error) {
+	if !builderBaseRequiredHook(ctx) {
+		return []doctorFinding{{
+			Check: doctorCheckFastCache, Severity: doctorSeverityOK,
+			Message: "fast OCI cache check not applicable on this box",
+		}}, nil
+	}
+	detail, err := fastCacheProbeHook(ctx)
+	if err != nil {
+		//nolint:nilerr // probe failure is represented as a structured doctor finding.
+		return []doctorFinding{{
+			Check: doctorCheckFastCache, Severity: doctorSeverityError,
+			Message: "OCI cache is outside the fast storage contract", Detail: err.Error(),
+		}}, nil
+	}
+	return []doctorFinding{{
+		Check: doctorCheckFastCache, Severity: doctorSeverityOK,
+		Message: "OCI cache uses fast XFS reflink storage", Detail: detail,
+	}}, nil
+}
 
 // builderBaseRequired determines whether this host's active deployment owns
 // the compute-side builder base. A controller-managed deployment has an
