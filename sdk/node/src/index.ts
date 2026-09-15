@@ -36,6 +36,7 @@ export { KeysService } from './generated/services/KeysService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
 export { QueuesService } from './generated/services/QueuesService.js';
+export { RunsService } from './generated/services/RunsService.js';
 export { SecretsService } from './generated/services/SecretsService.js';
 export { UsageService } from './generated/services/UsageService.js';
 
@@ -71,7 +72,12 @@ export {
   type IdempotencyKey,
 } from './idempotency.js';
 
-// SSE streaming (the OpenAPI spec has no SSE endpoints today, but
-// `/v1/logs/{app_id}/tail` and friends are out-of-spec SSE streams
-// the SDK supports via `streamSse`).
+// SSE streaming helpers.
 export { streamSse, parseFrame, type SseEvent } from './sse.js';
+export {
+  watchExecution,
+  type ExecutionEvent,
+  type ExecutionEventData,
+  type ExecutionEventType,
+  type WatchExecutionOptions,
+} from './executions.js';

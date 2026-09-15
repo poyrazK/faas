@@ -1,6 +1,28 @@
 # faas_sdk
 A client library for accessing one-box FaaS REST API
 
+## Agent execution streams
+
+The `FaaSClient` façade includes a typed, resumable iterator for disposable
+executions. It reconnects with the latest SSE cursor after a transient
+disconnect:
+
+```python
+from faas_sdk import FaaSClient
+
+with FaaSClient(base_url="https://api.example.com", token="...") as client:
+    for event in client.watch_execution(execution_id):
+        if event.type in {"stdout", "stderr"}:
+            print(event.chunk or "", end="")
+        if event.type == "terminal":
+            print(event.status)
+```
+
+Use `async for` with `client.awatch_execution(execution_id)` when running in
+an async application. The generated
+`faas_sdk.api.runs.stream_execution_events` endpoint remains available for
+callers that need the raw response body.
+
 ## Usage
 First, create a client:
 

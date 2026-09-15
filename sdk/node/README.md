@@ -94,6 +94,7 @@ generated services. The canonical mapping:
 | `meta` | `MetaService` |
 | `mfa` | `MfaService` |
 | `queues` | `QueuesService` |
+| `runs` | `RunsService` |
 | `secrets` | `SecretsService` |
 | `usage` | `UsageService` |
 
@@ -132,11 +133,28 @@ in PR 5. A future AsyncLocalStorage-based per-call key (PR 11 if
 docs customers request it) would layer on top without breaking the
 existing contract.
 
+## Execution streaming
+
+Disposable executions expose a typed, resumable iterator. It consumes output
+as it is emitted and reconnects with the latest event cursor if the SSE
+connection drops:
+
+```ts
+for await (const event of client.watchExecution(execution.id)) {
+  if (event.type === 'stdout' || event.type === 'stderr') {
+    process.stdout.write(event.data.chunk ?? '');
+  }
+  if (event.type === 'terminal') console.log(event.data.status);
+}
+```
+
+`RunsService.streamExecutionEvents()` remains available when a raw SSE body
+is needed. `watchExecution` is the recommended agent-runtime path.
+
 ## SSE streaming
 
-The OpenAPI spec has no SSE endpoints today, but `/v1/logs/{app_id}/tail`
-(and a few other out-of-spec streams) expose `text/event-stream`. Use
-`streamSse`:
+`/v1/logs/{app_id}/tail` (and a few other out-of-spec streams) expose
+`text/event-stream`. Use `streamSse` for those raw streams:
 
 ```ts
 import { streamSse } from '@gregale/sdk-node';
