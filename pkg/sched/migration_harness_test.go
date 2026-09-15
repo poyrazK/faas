@@ -28,6 +28,8 @@
 
 package sched
 
+// adr: 066
+
 import (
 	"context"
 	"errors"
