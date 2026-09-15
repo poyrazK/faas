@@ -308,6 +308,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/domains/{domain}/retry":            "RetryDomainVerification",
 	"GET /v1/executions":                         "ListExecutions",
 	"GET /v1/executions/{id}":                    "GetExecution",
+	"GET /v1/executions/{id}/events":             "StreamExecution",
 	"DELETE /v1/executions/{id}":                 "CancelExecution",
 	"POST /v1/account/restore":                   "RestoreAccount",
 	"POST /v1/account/overage-cap":               "RaiseOverageCap", // issue #561 spend cap

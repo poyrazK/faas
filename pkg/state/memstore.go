@@ -400,6 +400,10 @@ type MemStore struct {
 	// execution ID so terminalization and recovery can be replayed without
 	// double-counting usage.
 	executionUsageLedger map[string]executionUsageLedgerRow
+	// executionEvents is the bounded control-plane replay log for the agent
+	// runtime stream. It is deliberately separate from guest scratch storage.
+	executionEvents      map[string][]ExecutionEvent
+	nextExecutionEventID int64
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
@@ -930,6 +934,7 @@ func NewMemStore() *MemStore {
 		executions:              map[string]Execution{},
 		executionPayloads:       map[string]executionPayload{},
 		executionUsageLedger:    map[string]executionUsageLedgerRow{},
+		executionEvents:         map[string][]ExecutionEvent{},
 		runtimeSnapshots:        map[string]RuntimeSnapshotRecord{},
 		accountAsyncQuota:       map[string]accountAsyncQuotaRow{},
 		instances:               map[string]Instance{},

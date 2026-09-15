@@ -2,9 +2,22 @@ package api
 
 import (
 	"context"
+	"io"
 	"net/url"
 	"strconv"
 )
+
+// StreamExecution opens the resumable SSE stream for one execution. The
+// server sends ordered status/stdout/stderr/terminal events and closes after
+// the terminal event. Pass after=0 to start at the beginning; callers may
+// reconnect with the last event id they observed.
+func (c *Client) StreamExecution(ctx context.Context, id string, after int64) (io.ReadCloser, error) {
+	path := "/v1/executions/" + url.PathEscape(id) + "/events"
+	if after > 0 {
+		path += "?after=" + strconv.FormatInt(after, 10)
+	}
+	return c.stream(ctx, path)
+}
 
 // CreateExecution submits source and JSON input for one disposable, isolated
 // run. The server seals the payload before it reaches the scheduler and

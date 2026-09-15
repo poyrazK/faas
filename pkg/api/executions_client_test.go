@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -51,5 +52,32 @@ func TestExecutionClientLifecycle(t *testing.T) {
 		if methods[i] != want[i] {
 			t.Errorf("methods[%d] = %q, want %q", i, methods[i], want[i])
 		}
+	}
+}
+
+func TestStreamExecutionUsesCursorAndSSEAccept(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/executions/exec-1/events" || r.URL.Query().Get("after") != "7" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("Accept") != "text/event-stream" || r.Header.Get("Authorization") != "Bearer token" {
+			t.Fatalf("headers = %v", r.Header)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "id: 8\nevent: terminal\ndata: {\"status\":\"succeeded\"}\n\n")
+	}))
+	defer srv.Close()
+
+	body, err := NewClient(srv.URL, "token").StreamExecution(context.Background(), "exec-1", 7)
+	if err != nil {
+		t.Fatalf("StreamExecution: %v", err)
+	}
+	defer body.Close()
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	if string(data) != "id: 8\nevent: terminal\ndata: {\"status\":\"succeeded\"}\n\n" {
+		t.Fatalf("stream = %q", data)
 	}
 }

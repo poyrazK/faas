@@ -161,4 +161,60 @@ export class RunsService {
       },
     });
   }
+  /**
+   * Stream disposable execution events.
+   * Opens a resumable Server-Sent Events stream for one execution. Event
+   * ids are monotonically increasing control-plane cursors; reconnect with
+   * `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
+   * stderr, and terminal events and closes after the terminal event.
+   * Source, input, host paths, and VM internals are never included.
+   *
+   * @returns string Resumable execution event stream.
+   * @throws ApiError
+   */
+  public static streamExecutionEvents({
+    id,
+    after,
+    limit = 100,
+    lastEventId,
+  }: {
+    /**
+     * Canonical UUID for a disposable execution.
+     */
+    id: string,
+    /**
+     * Resume after this event id (exclusive).
+     */
+    after?: number,
+    /**
+     * Maximum number of events returned per replay batch.
+     */
+    limit?: number,
+    /**
+     * Standard SSE reconnect cursor; `after` takes precedence.
+     */
+    lastEventId?: number,
+  }): CancelablePromise<string> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/executions/{id}/events',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Last-Event-ID': lastEventId,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
 }

@@ -11,6 +11,38 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// ExecutionEventType is the bounded event vocabulary exposed by the
+// resumable execution stream. Events never contain source or input.
+type ExecutionEventType string
+
+const (
+	ExecutionEventStatus   ExecutionEventType = "status"
+	ExecutionEventStdout   ExecutionEventType = "stdout"
+	ExecutionEventStderr   ExecutionEventType = "stderr"
+	ExecutionEventTerminal ExecutionEventType = "terminal"
+	ExecutionEventMaxBytes                    = 64 * 1024
+)
+
+// ExecutionEvent is a control-plane event for one disposable execution.
+// Sequence is globally monotonic so clients can reconnect with the value of
+// the last SSE id they received. Payload is already JSON encoded and bounded.
+type ExecutionEvent struct {
+	ExecutionID string
+	AccountID   string
+	Sequence    int64
+	Type        ExecutionEventType
+	Payload     json.RawMessage
+	CreatedAt   time.Time
+}
+
+// ExecutionEventStore is optional so older Store test doubles remain source
+// compatible. Production PgStore and MemStore implement it; callers must
+// type-assert before using the event stream.
+type ExecutionEventStore interface {
+	AppendExecutionEvent(ctx context.Context, accountID, executionID string, eventType ExecutionEventType, payload json.RawMessage, at time.Time) (ExecutionEvent, error)
+	ListExecutionEvents(ctx context.Context, accountID, executionID string, afterSequence int64, limit int) ([]ExecutionEvent, error)
+}
+
 // Execution is the durable, payload-free projection of one disposable
 // one-shot execution. Source and input deliberately live in ExecutionClaim
 // only, after a scheduler has acquired the row's lease.

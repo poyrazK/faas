@@ -32,7 +32,12 @@ The API is account-scoped and requires a Bearer API key:
 * `POST /v1/executions` — admit a run and return a queued receipt.
 * `GET /v1/executions` — list account-scoped receipts with `limit`, `offset`, and optional `status` filters.
 * `GET /v1/executions/{id}` — read the current or terminal receipt.
+* `GET /v1/executions/{id}/events` — stream ordered status/output events over SSE; reconnect with `after` or `Last-Event-ID`.
 * `DELETE /v1/executions/{id}` — request idempotent cancellation.
+
+The event stream is backed by a bounded control-plane replay log. It does not
+provide a persistent guest workspace: each run still uses a fresh microVM and
+its ephemeral scratch filesystem is destroyed before terminal acknowledgement.
 
 The v1 runtime set is `node22`, `node24`, `python312`, and `python313`.
 `network.mode` is always `none`; dependency installation, secrets, environment

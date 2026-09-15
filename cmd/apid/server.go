@@ -1142,6 +1142,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listExecutions))))
 	mux.HandleFunc("POST /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createExecution)))))
 	mux.HandleFunc("GET /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getExecution))))
+	mux.HandleFunc("GET /v1/executions/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.streamExecutionEvents))))
 	mux.HandleFunc("DELETE /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelExecution)))))
 	mux.HandleFunc("POST /v1/admin/object-storage/usage-reports", s.authLimited(s.requireAdminMutation(s.recordObjectStorageUsage)))
 	// IAM-6 (issue #190 / ADR-061, PR 4): active-org whoami. The

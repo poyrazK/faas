@@ -119,6 +119,7 @@ func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionPara
 		sealed: append([]byte(nil), params.SealedPayload...), kid: params.PayloadKID,
 		createdAt: params.AdmittedAt.UTC(),
 	}
+	m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventStatus, executionStatusPayload(row.Status), params.AdmittedAt)
 	return cloneExecution(row), nil
 }
 
@@ -204,6 +205,7 @@ func (m *MemStore) ClaimExecution(_ context.Context, owner string, claimedAt tim
 	candidate.LeaseExpiresAt = &expiresAt
 	candidate.UpdatedAt = claimedAt
 	m.executions[candidate.ID] = *candidate
+	m.appendExecutionEventLocked(candidate.AccountID, candidate.ID, ExecutionEventStatus, executionStatusPayload(candidate.Status), claimedAt)
 	return ExecutionClaim{
 		Execution: cloneExecution(*candidate), SealedPayload: append([]byte(nil), payload.sealed...), PayloadKID: payload.kid,
 	}, nil
@@ -226,6 +228,7 @@ func (m *MemStore) MarkExecutionRunning(_ context.Context, executionID, leaseTok
 	row.StartedAt = &startedAt
 	row.UpdatedAt = startedAt
 	m.executions[row.ID] = row
+	m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventStatus, executionStatusPayload(row.Status), startedAt)
 	return cloneExecution(row), nil
 }
 
@@ -299,6 +302,8 @@ func (m *MemStore) CompleteExecution(_ context.Context, params CompleteExecution
 	row.UpdatedAt = finishedAt
 	m.executions[row.ID] = row
 	m.recordExecutionUsageLocked(row)
+	appendExecutionOutputEventsLocked(m, row, finishedAt)
+	m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), finishedAt)
 	delete(m.executionPayloads, row.ID)
 	return cloneExecution(row), nil
 }
@@ -410,6 +415,7 @@ func (m *MemStore) RequestExecutionCancellation(_ context.Context, accountID, ex
 		row.Status = api.ExecutionStatusCancelled
 		row.FinishedAt = &requestedAt
 		m.recordExecutionUsageLocked(row)
+		m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), requestedAt)
 		delete(m.executionPayloads, row.ID)
 	}
 	m.executions[row.ID] = row
@@ -468,6 +474,7 @@ func (m *MemStore) SweepExecutions(_ context.Context, at time.Time, limit int) (
 		finishExecutionForSweep(&row, api.ExecutionStatusTimedOut, at, "deadline_exceeded", "execution deadline elapsed before dispatch")
 		m.executions[id] = row
 		m.recordExecutionUsageLocked(row)
+		m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), at)
 		if _, ok := m.executionPayloads[id]; ok {
 			delete(m.executionPayloads, id)
 			result.PayloadsDeleted++
@@ -487,6 +494,7 @@ func (m *MemStore) SweepExecutions(_ context.Context, at time.Time, limit int) (
 		finishExecutionForSweep(&row, status, at, code, message)
 		m.executions[id] = row
 		m.recordExecutionUsageLocked(row)
+		m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), at)
 		if _, ok := m.executionPayloads[id]; ok {
 			delete(m.executionPayloads, id)
 			result.PayloadsDeleted++
@@ -526,6 +534,7 @@ func (m *MemStore) SweepExecutions(_ context.Context, at time.Time, limit int) (
 		finishExecutionForSweep(&row, status, at, code, message)
 		m.executions[id] = row
 		m.recordExecutionUsageLocked(row)
+		m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), at)
 		if _, ok := m.executionPayloads[id]; ok {
 			delete(m.executionPayloads, id)
 			result.PayloadsDeleted++

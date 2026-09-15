@@ -119,6 +119,55 @@ func TestCreateExecutionFailsClosedWithoutHostRecipient(t *testing.T) {
 	}
 }
 
+func TestStreamExecutionEventsReplaysAndClosesAtTerminal(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	enableExecutionAPIForTest(t, &e)
+	created := e.do(t, http.MethodPost, "/v1/executions", executionRequest(), nil)
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("create = %d: %s", created.Code, created.Body)
+	}
+	var receipt api.ExecutionResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &receipt); err != nil {
+		t.Fatalf("decode receipt: %v", err)
+	}
+	cancelled := e.do(t, http.MethodDelete, "/v1/executions/"+receipt.ID, nil, nil)
+	if cancelled.Code != http.StatusAccepted {
+		t.Fatalf("cancel = %d: %s", cancelled.Code, cancelled.Body)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/executions/"+receipt.ID+"/events", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stream = %d: %s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: status") || !strings.Contains(body, "event: terminal") || !strings.Contains(body, `"status":"cancelled"`) {
+		t.Fatalf("stream body = %q, want queued/status and terminal cancellation", body)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("content type = %q, want text/event-stream", rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestStreamExecutionEventsRejectsBadCursor(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	enableExecutionAPIForTest(t, &e)
+	created := e.do(t, http.MethodPost, "/v1/executions", executionRequest(), nil)
+	var receipt api.ExecutionResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &receipt); err != nil {
+		t.Fatalf("decode receipt: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/executions/"+receipt.ID+"/events?after=-1", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad cursor = %d: %s", rec.Code, rec.Body)
+	}
+}
+
 func TestExecutionStatusAndCancellationAreAccountScoped(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	enableExecutionAPIForTest(t, &e)

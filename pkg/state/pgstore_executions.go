@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -159,6 +160,9 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 	}); err != nil {
 		return Execution{}, mapErr(err)
 	}
+	if _, err := appendExecutionEvent(ctx, tx, params.AccountID, pgUUIDString(row.ID), ExecutionEventStatus, executionStatusPayload(api.ExecutionStatusQueued), params.AdmittedAt); err != nil {
+		return Execution{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Execution{}, fmt.Errorf("create execution: commit: %w", err)
 	}
@@ -235,6 +239,9 @@ func (s *PgStore) ClaimExecution(ctx context.Context, owner string, claimedAt ti
 	if err := tx.Commit(ctx); err != nil {
 		return ExecutionClaim{}, fmt.Errorf("claim execution: commit: %w", err)
 	}
+	// The event is best-effort after the claim commit. The durable row remains
+	// authoritative if a transient event-log write fails.
+	_, _ = appendExecutionEvent(ctx, s.pool, pgUUIDString(row.AccountID), pgUUIDString(row.ID), ExecutionEventStatus, executionStatusPayload(api.ExecutionStatusRestoring), claimedAt)
 	return ExecutionClaim{
 		Execution:     executionFromSQL(row),
 		SealedPayload: append([]byte(nil), payload.SealedPayload...),
@@ -255,6 +262,9 @@ func (s *PgStore) MarkExecutionRunning(ctx context.Context, executionID, leaseTo
 	if err != nil {
 		return Execution{}, mapErr(err)
 	}
+	// MarkExecutionRunning intentionally remains a single CAS query. Recording
+	// the lifecycle event after the CAS keeps the lease fence unchanged.
+	_, _ = appendExecutionEvent(ctx, s.pool, pgUUIDString(row.AccountID), pgUUIDString(row.ID), ExecutionEventStatus, executionStatusPayload(api.ExecutionStatusRunning), startedAt)
 	return executionFromSQL(row), nil
 }
 
@@ -340,6 +350,20 @@ func (s *PgStore) CompleteExecution(ctx context.Context, params CompleteExecutio
 	if err := recordExecutionUsage(ctx, q, tx, row.ID); err != nil {
 		return Execution{}, fmt.Errorf("complete execution: %w", err)
 	}
+	projected := executionFromSQL(row)
+	var eventErr error
+	forEachExecutionOutputEvent(projected, func(eventType ExecutionEventType, payload json.RawMessage) {
+		if eventErr != nil {
+			return
+		}
+		_, eventErr = appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, eventType, payload, params.FinishedAt)
+	})
+	if eventErr != nil {
+		return Execution{}, fmt.Errorf("complete execution: append output event: %w", eventErr)
+	}
+	if _, err := appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, ExecutionEventTerminal, executionTerminalPayload(projected), params.FinishedAt); err != nil {
+		return Execution{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Execution{}, fmt.Errorf("complete execution: commit: %w", err)
 	}
@@ -388,6 +412,10 @@ func (s *PgStore) RequestExecutionCancellation(ctx context.Context, accountID, e
 	if api.ExecutionStatus(row.Status).Terminal() {
 		if err := recordExecutionUsage(ctx, q, tx, row.ID); err != nil {
 			return Execution{}, fmt.Errorf("cancel execution: %w", err)
+		}
+		projected := executionFromSQL(row)
+		if _, err := appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, ExecutionEventTerminal, executionTerminalPayload(projected), requestedAt); err != nil {
+			return Execution{}, fmt.Errorf("cancel execution: append event: %w", err)
 		}
 		if _, err := q.ExecutionPayloadDelete(ctx, tx, row.ID); err != nil {
 			return Execution{}, fmt.Errorf("cancel execution: delete payload: %w", err)
@@ -439,9 +467,29 @@ func (s *PgStore) SweepExecutions(ctx context.Context, at time.Time, limit int) 
 	terminalRows = append(terminalRows, expired...)
 	terminalRows = append(terminalRows, finishedRestores...)
 	terminalRows = append(terminalRows, finishedRuns...)
+	for _, row := range requeued {
+		projected := executionFromSQL(row)
+		if _, err := appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, ExecutionEventStatus, executionStatusPayload(api.ExecutionStatusQueued), at); err != nil {
+			return ExecutionSweepResult{}, fmt.Errorf("sweep executions: append requeue event: %w", err)
+		}
+	}
 	ids := make([]pgtype.UUID, 0, len(terminalRows))
 	for _, row := range terminalRows {
 		ids = append(ids, row.ID)
+		projected := executionFromSQL(row)
+		var eventErr error
+		forEachExecutionOutputEvent(projected, func(eventType ExecutionEventType, payload json.RawMessage) {
+			if eventErr != nil {
+				return
+			}
+			_, eventErr = appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, eventType, payload, at)
+		})
+		if eventErr != nil {
+			return ExecutionSweepResult{}, fmt.Errorf("sweep executions: append output event: %w", eventErr)
+		}
+		if _, err := appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, ExecutionEventTerminal, executionTerminalPayload(projected), at); err != nil {
+			return ExecutionSweepResult{}, fmt.Errorf("sweep executions: append terminal event: %w", err)
+		}
 	}
 	var deleted int64
 	if len(ids) > 0 {

@@ -1712,6 +1712,48 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
+  /v1/executions/{id}/events:
+    parameters:
+      - $ref: '#/components/parameters/ExecutionID'
+    get:
+      tags: [runs]
+      operationId: streamExecutionEvents
+      summary: Stream disposable execution events.
+      description: |
+        Opens a resumable Server-Sent Events stream for one execution. Event
+        ids are monotonically increasing control-plane cursors; reconnect with
+        `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
+        stderr, and terminal events and closes after the terminal event.
+        Source, input, host paths, and VM internals are never included.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: after
+          in: query
+          required: false
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+          description: Resume after this event id (exclusive).
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+          description: Maximum number of events returned per replay batch.
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Standard SSE reconnect cursor; `after` takes precedence.
+      responses:
+        '200':
+          description: Resumable execution event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/account:
     get:
       tags: [account]
