@@ -5555,6 +5555,20 @@ type ProjectEnvironmentApproval struct {
 	CreatedAt         time.Time
 }
 
+// ProjectEnvironmentConfig is one immutable, canonical non-secret
+// configuration snapshot for a project environment. Version zero represents
+// the implicit empty configuration before the first write and is not stored.
+type ProjectEnvironmentConfig struct {
+	ID              string
+	AccountID       string
+	ProjectID       string
+	EnvironmentSlug string
+	Version         int64
+	ConfigHash      string
+	Values          json.RawMessage
+	CreatedAt       time.Time
+}
+
 // IsZero reports whether this is an unset Project (Go zero value).
 // store-layer scans can return such a value via the concrete-type
 // `Project{}` initializer that the pgx `Scan` into a value receiver

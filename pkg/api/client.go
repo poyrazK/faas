@@ -1439,6 +1439,52 @@ func (c *Client) UpdateProjectEnvironment(ctx context.Context, projectSlug, envi
 	return out, c.do(ctx, http.MethodPatch, path, req, &out)
 }
 
+// GetProjectEnvironmentConfig returns the latest non-secret configuration
+// snapshot for one project environment. An unconfigured environment returns
+// version zero with an empty object and its canonical empty hash.
+func (c *Client) GetProjectEnvironmentConfig(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentConfigResponse, error) {
+	var out ProjectEnvironmentConfigResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/config"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// UpdateProjectEnvironmentConfig appends an immutable non-secret
+// configuration version for one project environment.
+func (c *Client) UpdateProjectEnvironmentConfig(ctx context.Context, projectSlug, environmentSlug string, req UpdateProjectEnvironmentConfigRequest) (ProjectEnvironmentConfigResponse, error) {
+	var out ProjectEnvironmentConfigResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/config"
+	return out, c.do(ctx, http.MethodPut, path, req, &out)
+}
+
+// GetProjectEnvironmentConfigDiff compares the latest snapshots in the
+// source environment and the requested target environment.
+func (c *Client) GetProjectEnvironmentConfigDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentConfigDiffResponse, error) {
+	var out ProjectEnvironmentConfigDiffResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/config/diff?from=" + url.QueryEscape(sourceEnvironment)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectsSlugEnvironmentsEnvironmentConfig is the route-shaped alias
+// used by the SDK coverage contract. Prefer GetProjectEnvironmentConfig for
+// new Go callers.
+func (c *Client) GetProjectsSlugEnvironmentsEnvironmentConfig(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentConfigResponse, error) {
+	return c.GetProjectEnvironmentConfig(ctx, projectSlug, environmentSlug)
+}
+
+// PutProjectsSlugEnvironmentsEnvironmentConfig is the route-shaped alias used
+// by the SDK coverage contract. Prefer UpdateProjectEnvironmentConfig for new
+// Go callers.
+func (c *Client) PutProjectsSlugEnvironmentsEnvironmentConfig(ctx context.Context, projectSlug, environmentSlug string, req UpdateProjectEnvironmentConfigRequest) (ProjectEnvironmentConfigResponse, error) {
+	return c.UpdateProjectEnvironmentConfig(ctx, projectSlug, environmentSlug, req)
+}
+
+// GetProjectsSlugEnvironmentsEnvironmentConfigDiff is the route-shaped alias
+// used by the SDK coverage contract. Prefer GetProjectEnvironmentConfigDiff
+// for new Go callers.
+func (c *Client) GetProjectsSlugEnvironmentsEnvironmentConfigDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentConfigDiffResponse, error) {
+	return c.GetProjectEnvironmentConfigDiff(ctx, projectSlug, targetEnvironment, sourceEnvironment)
+}
+
 // ApproveProjectEnvironment authorizes one exact plan for a protected
 // environment. The returned token is short-lived and must be passed to apply.
 func (c *Client) ApproveProjectEnvironment(ctx context.Context, projectSlug, environmentSlug string, req CreateProjectEnvironmentApprovalRequest) (ProjectEnvironmentApprovalResponse, error) {

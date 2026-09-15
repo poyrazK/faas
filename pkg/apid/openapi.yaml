@@ -10346,6 +10346,84 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/config:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the environment configuration.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment slug whose configuration is addressed.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentConfig
+      summary: Get the latest non-secret environment configuration.
+      responses:
+        '200':
+          description: Latest immutable configuration version, or the implicit empty configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentConfigResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [projects]
+      operationId: updateProjectEnvironmentConfig
+      summary: Append a non-secret environment configuration version.
+      description: Secret-shaped keys are rejected; sensitive values belong in the secrets surface.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentConfigRequest' }
+      responses:
+        '200':
+          description: Stored immutable configuration version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentConfigResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/config/diff:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment configurations are compared.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Target environment receiving the configuration comparison.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: from
+        in: query
+        required: true
+        description: Source environment to compare against the target.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentConfigDiff
+      summary: Compare two environment configuration snapshots.
+      responses:
+        '200':
+          description: Stable key-level configuration diff ordered by key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentConfigDiffResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/approvals:
     parameters:
       - name: slug
@@ -21717,6 +21795,57 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
+    UpdateProjectEnvironmentConfigRequest:
+      description: Non-secret JSON configuration to append as a new environment version.
+      type: object
+      required: [values]
+      additionalProperties: false
+      properties:
+        values:
+          type: object
+          additionalProperties: true
+          maxProperties: 256
+
+    ProjectEnvironmentConfigResponse:
+      description: Latest immutable non-secret configuration snapshot for a project environment.
+      type: object
+      required: [project_slug, environment, version, config_hash, values]
+      properties:
+        project_slug: { type: string }
+        environment: { type: string }
+        version: { type: integer, format: int64, minimum: 0 }
+        config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        values:
+          type: object
+          additionalProperties: true
+        updated_at: { type: string, format: date-time }
+
+    ProjectEnvironmentConfigChange:
+      description: One key-level change between two environment configuration snapshots.
+      type: object
+      required: [key, kind]
+      properties:
+        key: { type: string }
+        kind: { type: string, enum: [added, removed, changed] }
+        before: {}
+        after: {}
+
+    ProjectEnvironmentConfigDiffResponse:
+      description: Stable key-level diff between two project environment configuration snapshots.
+      type: object
+      required: [project_slug, from_environment, to_environment, from_version, to_version, from_hash, to_hash, changes]
+      properties:
+        project_slug: { type: string }
+        from_environment: { type: string }
+        to_environment: { type: string }
+        from_version: { type: integer, format: int64, minimum: 0 }
+        to_version: { type: integer, format: int64, minimum: 0 }
+        from_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        to_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentConfigChange' }
+
     CreateProjectEnvironmentRequest:
       description: Request to register a named project environment.
       type: object
@@ -22298,6 +22427,7 @@ components:
         repo_full_name: { type: string }
         environment: { type: string, description: "Registered project environment targeted by this plan" }
         environment_protected: { type: boolean, description: "Whether applying this plan requires protected-environment approval" }
+        environment_config_hash: { type: string, pattern: '^[a-f0-9]{64}$', description: "Hash of the non-secret environment configuration bound into this plan" }
         scan_source:
           type: string
           enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown]

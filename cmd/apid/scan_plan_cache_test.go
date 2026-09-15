@@ -22,6 +22,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // withPlanCacheRoot sets a per-test cache root and resets the
@@ -146,6 +148,8 @@ func TestDecodePlanToken_RoundTrip(t *testing.T) {
 		ProductionBranch: "release",
 		InstallID:        42,
 		NoTriggers:       true,
+		Environment:      "staging",
+		ConfigHash:       api.EmptyProjectEnvironmentConfigHash(),
 		TSUnix:           1700000000,
 	}
 	b, _ := json.Marshal(pt)
@@ -156,7 +160,8 @@ func TestDecodePlanToken_RoundTrip(t *testing.T) {
 	}
 	if got.AccountID != pt.AccountID || got.Hash != pt.Hash || got.Slug != pt.Slug ||
 		got.RepoFullName != pt.RepoFullName || got.ProductionBranch != pt.ProductionBranch ||
-		got.InstallID != pt.InstallID || got.NoTriggers != pt.NoTriggers {
+		got.InstallID != pt.InstallID || got.NoTriggers != pt.NoTriggers ||
+		got.Environment != pt.Environment || got.ConfigHash != pt.ConfigHash {
 		t.Fatalf("round-trip mismatch: %+v vs %+v", got, pt)
 	}
 }

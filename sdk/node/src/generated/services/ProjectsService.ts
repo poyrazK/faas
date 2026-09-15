@@ -9,11 +9,14 @@ import type { PlanResponse } from '../models/PlanResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePreviewResponse.js';
 import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnvironmentApprovalResponse.js';
+import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
+import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
 import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
 import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
+import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
 import type { UpdateProjectEnvironmentRequest } from '../models/UpdateProjectEnvironmentRequest.js';
 import type { UpdateProjectRequest } from '../models/UpdateProjectRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -394,6 +397,126 @@ export class ProjectsService {
       },
       body: requestBody,
       mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Get the latest non-secret environment configuration.
+   * @returns ProjectEnvironmentConfigResponse Latest immutable configuration version, or the implicit empty configuration.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentConfig({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project slug owning the environment configuration.
+     */
+    slug: string,
+    /**
+     * Environment slug whose configuration is addressed.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentConfigResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/config',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Append a non-secret environment configuration version.
+   * Secret-shaped keys are rejected; sensitive values belong in the secrets surface.
+   * @returns ProjectEnvironmentConfigResponse Stored immutable configuration version.
+   * @throws ApiError
+   */
+  public static updateProjectEnvironmentConfig({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project slug owning the environment configuration.
+     */
+    slug: string,
+    /**
+     * Environment slug whose configuration is addressed.
+     */
+    environment: string,
+    requestBody: UpdateProjectEnvironmentConfigRequest,
+  }): CancelablePromise<ProjectEnvironmentConfigResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/config',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Compare two environment configuration snapshots.
+   * @returns ProjectEnvironmentConfigDiffResponse Stable key-level configuration diff ordered by key.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentConfigDiff({
+    slug,
+    environment,
+    from,
+  }: {
+    /**
+     * Project slug whose environment configurations are compared.
+     */
+    slug: string,
+    /**
+     * Target environment receiving the configuration comparison.
+     */
+    environment: string,
+    /**
+     * Source environment to compare against the target.
+     */
+    from: string,
+  }): CancelablePromise<ProjectEnvironmentConfigDiffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/config/diff',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'from': from,
+      },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,

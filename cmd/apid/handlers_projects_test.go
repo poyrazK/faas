@@ -154,6 +154,68 @@ func TestProjectEnvironmentRegistryLifecycleAndOwnership(t *testing.T) {
 	}
 }
 
+func TestProjectEnvironmentConfigVersionAndDiff(t *testing.T) {
+	srv, store, acct, project, _ := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/staging/config", "shop", nil)
+	req.SetPathValue("environment", "staging")
+	srv.getProjectEnvironmentConfig(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty config status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var empty api.ProjectEnvironmentConfigResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if empty.Version != 0 || string(empty.Values) != `{}` || empty.ConfigHash != api.EmptyProjectEnvironmentConfigHash() {
+		t.Fatalf("empty config=%+v", empty)
+	}
+
+	req, rec = projectRequest(http.MethodPut, "/v1/projects/shop/environments/staging/config", "shop", []byte(`{"values":{"region":"eu","replicas":2}}`))
+	req.SetPathValue("environment", "staging")
+	srv.updateProjectEnvironmentConfig(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update config status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var updated api.ProjectEnvironmentConfigResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Version != 1 || updated.ConfigHash == "" || string(updated.Values) != `{"region":"eu","replicas":2}` {
+		t.Fatalf("updated config=%+v", updated)
+	}
+
+	req, rec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/staging/config/diff?from=production", "shop", nil)
+	req.SetPathValue("environment", "staging")
+	srv.diffProjectEnvironmentConfig(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("diff status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var diff api.ProjectEnvironmentConfigDiffResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &diff); err != nil {
+		t.Fatal(err)
+	}
+	if diff.FromEnvironment != "production" || diff.ToEnvironment != "staging" || len(diff.Changes) != 2 {
+		t.Fatalf("diff=%+v", diff)
+	}
+	if diff.Changes[0].Key != "region" || diff.Changes[0].Kind != "added" {
+		t.Fatalf("diff ordering/content=%+v", diff.Changes)
+	}
+
+	req, rec = projectRequest(http.MethodPut, "/v1/projects/shop/environments/staging/config", "shop", []byte(`{"values":{"api_token":"nope"}}`))
+	req.SetPathValue("environment", "staging")
+	srv.updateProjectEnvironmentConfig(rec, req, acct)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("secret-shaped config status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func projectDashboardPost(t *testing.T, srv *server, acct state.Account, path, slug string, values url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	token, err := middleware.IssueForAuthenticated(srv.sessions, dashboardProjectManageAction, acct.ID)
