@@ -112,10 +112,32 @@ func TestBuildMetal(t *testing.T) {
 	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
 	h := e2etest.Start(t, pool, e2etest.All)
 
-	// One account, three apps (one per framework). Each subtest mints its
-	// own app so deploys don't share state. We seed the account once at
-	// the top because SeedAccount is idempotent and ~50 ms.
-	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	// One account, one app per subtest. Each subtest mints its own app so
+	// deploys don't share state. We seed the account once at the top because
+	// SeedAccount is idempotent and ~50 ms.
+	//
+	// The plan must allow every one of those apps. Hobby's DeployedApps limit
+	// is 5 and there are 6 subtests, so the last one died on
+	//
+	//	create app goalpapp: status=403
+	//
+	// in 0.01 s — after the five real builds ahead of it had already spent
+	// ~15 minutes. It read as a build failure in the slowest phase of the
+	// gate; it was an account that had run out of app slots.
+	//
+	// The plan is not load-bearing here: every assertion is about the build
+	// pipeline reaching Live, which is plan-independent. Pro is the smallest
+	// plan that fits.
+	const buildMetalApps = 6 // keep in step with the t.Run list below
+	plan := api.PlanPro
+	if limits, ok := api.LimitsFor(plan); !ok {
+		t.Fatalf("no limits for plan %v", plan)
+	} else if limits.DeployedApps < buildMetalApps {
+		t.Fatalf("plan %v allows %d deployed apps but this test builds %d; "+
+			"the last create would 403 after the earlier builds had already run",
+			plan, limits.DeployedApps, buildMetalApps)
+	}
+	key := h.SeedAccount(context.Background(), plan)
 
 	t.Run("node-tarball", func(t *testing.T) {
 		result := runBuildSubtest(t, h, pool, key, "nodeapp", "node-app", NodeFixture(t), false)
