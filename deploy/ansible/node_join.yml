@@ -292,7 +292,6 @@
           - show
           - --node
           - "{{ faas_join_database_node }}"
-          - --json
           - --break-glass-db
       register: faas_join_existing_compute_node
       changed_when: false
@@ -302,7 +301,12 @@
       ansible.builtin.set_fact:
         faas_join_expected_cert_fingerprint: >-
           {{
-            ((faas_join_existing_compute_node.stdout | from_json).cert_fingerprint | default('', true))
+            (
+              faas_join_existing_compute_node.stdout
+              | regex_findall('(?m)^cert_fingerprint=(sha256:[0-9a-f]{64})$')
+              | first
+              | default('', true)
+            )
             if faas_join_existing_compute_node.rc == 0
             else ''
           }}

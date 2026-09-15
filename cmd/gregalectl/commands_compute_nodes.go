@@ -487,7 +487,7 @@ func cmdComputeNodesList(args []string) int {
 		fmt.Fprintf(os.Stderr, "gregalectl compute-nodes list: %v\n", err)
 		return 1
 	}
-	if *jsonOut {
+	if *jsonOut || jsonOutput {
 		return emitComputeNodesListJSON(osStdout, nodes)
 	}
 	reportComputeNodesList(osStdout, nodes, *activeOnly)
@@ -659,7 +659,7 @@ func cmdComputeNodesShow(args []string) int {
 		fmt.Fprintf(os.Stderr, "gregalectl compute-nodes show: %v\n", err)
 		return 1
 	}
-	if *jsonOut {
+	if *jsonOut || jsonOutput {
 		return emitComputeNodeShowJSON(osStdout, row, live)
 	}
 	reportComputeNodeShow(os.Stdout, row, live)

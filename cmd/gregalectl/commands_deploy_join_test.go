@@ -293,10 +293,13 @@ func TestNodeJoinCASStampsRefreshedCertificateBeforePrestage(t *testing.T) {
 		t.Fatalf("certificate convergence order invalid: inspect=%d stage=%d stamp=%d prestage=%d", inspect, stage, stamp, prestage)
 	}
 	block := playbook[inspect:prestage]
-	for _, token := range []string{"compute-nodes", "show", "--break-glass-db", "secrets", "stamp", "--expected-fingerprint"} {
+	for _, token := range []string{"compute-nodes", "show", "--break-glass-db", "cert_fingerprint=", "regex_findall", "secrets", "stamp", "--expected-fingerprint"} {
 		if !strings.Contains(block, token) {
 			t.Errorf("certificate convergence block missing %q", token)
 		}
+	}
+	if strings.Contains(block, "from_json") || strings.Contains(block, "- --json") {
+		t.Fatal("certificate convergence must parse the stable human output emitted by already-installed legacy gregalectl binaries")
 	}
 }
 
