@@ -86,3 +86,44 @@ func TestBuilderBaseRefComesFromAddImage(t *testing.T) {
 			"setting FAAS_TEST_BUILDER_BASE_REF: %s", strings.Join(bad, ", "))
 	}
 }
+
+// A metal test must not set FAAS_TEST_BUILDER_BASE_REF itself.
+//
+// Setting it unconditionally overrides the host's real builder base with a
+// one-layer stub, and imaged validates the staged ext4's contents:
+//
+//	imaged: validate base ext4 "base/runner-builder-amd64.ext4": required path
+//	/usr/local/bin/faas-guest-init missing from ...
+//
+// imaged then exits at boot and every deployment in that test times out in
+// `building`. e2etest.OverrideBuilderBase applies the stub only on a host that
+// has no builder base of its own, which is the case the override was added
+// for (Lima, credential-less CI).
+func TestMetalTestsDoNotSetTheBuilderBaseOverrideDirectly(t *testing.T) {
+	files, err := filepath.Glob("*_test.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+
+	direct := regexp.MustCompile(`Setenv\(\s*"FAAS_TEST_BUILDER_BASE_REF"`)
+
+	var bad []string
+	for _, f := range files {
+		if f == "builder_base_ref_test.go" {
+			continue
+		}
+		src, readErr := os.ReadFile(f)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", f, readErr)
+		}
+		if direct.Match(src) {
+			bad = append(bad, f)
+		}
+	}
+	if len(bad) > 0 {
+		t.Errorf("these tests set FAAS_TEST_BUILDER_BASE_REF directly, which replaces a "+
+			"real builder base with a stub imaged rejects at boot: %s\n"+
+			"Call e2etest.OverrideBuilderBase(t, ref) instead.",
+			strings.Join(bad, ", "))
+	}
+}

@@ -105,7 +105,7 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// and EXITS at boot. AddImage already returns the pinned ref; this used
 	// to discard it and hand-build a tag, so imaged died on every one of
 	// these tests and the failure surfaced later as a deploy timeout.
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", builderBaseRef)
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
 	// Opt the reference-node acceptance into the public gateway smoke. The
 	// harness passes the actual gateway origin to imaged, so this verifies the

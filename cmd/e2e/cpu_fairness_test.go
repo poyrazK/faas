@@ -144,7 +144,7 @@ func TestCpuFairnessMetal(t *testing.T) {
 	// and EXITS at boot. AddImage already returns the pinned ref; this used
 	// to discard it and hand-build a tag, so imaged died on every one of
 	// these tests and the failure surfaced later as a deploy timeout.
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", builderBaseRef)
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.Start(t, pool, e2etest.DeployWake)
