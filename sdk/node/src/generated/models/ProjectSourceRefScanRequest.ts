@@ -26,6 +26,10 @@ export type ProjectSourceRefScanRequest = {
   install_id?: number;
   only?: Array<string>;
   exclude?: Array<string>;
+  /**
+   * Environment slug applied to deployments created by this scan
+   */
+  environment?: string;
   no_triggers?: boolean;
 };
 

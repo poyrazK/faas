@@ -28,6 +28,10 @@ export type ProjectScanRequest = {
    */
   only?: string;
   /**
+   * Environment slug used to scope all discovered workloads
+   */
+  environment?: string;
+  /**
    * Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair.
    */
   no_triggers?: boolean;

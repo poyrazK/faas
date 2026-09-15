@@ -28,6 +28,8 @@ class ProjectScanRequest:
     """GitHub installation id (with --repository or --repo); 0 for unbound repos"""
     only: str | Unset = UNSET
     """CSV of workload names to include (others skipped)"""
+    environment: str | Unset = UNSET
+    """Environment slug used to scope all discovered workloads"""
     no_triggers: bool | Unset = False
     """Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -44,6 +46,8 @@ class ProjectScanRequest:
         install_id = self.install_id
 
         only = self.only
+
+        environment = self.environment
 
         no_triggers = self.no_triggers
 
@@ -64,6 +68,8 @@ class ProjectScanRequest:
             field_dict["install_id"] = install_id
         if only is not UNSET:
             field_dict["only"] = only
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
 
@@ -89,6 +95,9 @@ class ProjectScanRequest:
         if not isinstance(self.only, Unset):
             files.append(("only", (None, str(self.only).encode(), "text/plain")))
 
+        if not isinstance(self.environment, Unset):
+            files.append(("environment", (None, str(self.environment).encode(), "text/plain")))
+
         if not isinstance(self.no_triggers, Unset):
             files.append(("no_triggers", (None, str(self.no_triggers).encode(), "text/plain")))
 
@@ -112,6 +121,8 @@ class ProjectScanRequest:
 
         only = d.pop("only", UNSET)
 
+        environment = d.pop("environment", UNSET)
+
         no_triggers = d.pop("no_triggers", UNSET)
 
         project_scan_request = cls(
@@ -121,6 +132,7 @@ class ProjectScanRequest:
             production_branch=production_branch,
             install_id=install_id,
             only=only,
+            environment=environment,
             no_triggers=no_triggers,
         )
 

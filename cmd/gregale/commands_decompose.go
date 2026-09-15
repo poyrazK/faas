@@ -35,6 +35,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+func validateProjectEnvironmentFlag(environment string) error {
+	if environment == "" {
+		return nil
+	}
+	if !api.ValidProjectEnvironmentSlug(environment) {
+		return fmt.Errorf("must be a lowercase project environment slug; got %q", environment)
+	}
+	if problem := api.ValidateScope(environment); problem != nil {
+		return &api.APIError{Problem: *problem}
+	}
+	return nil
+}
+
 // cmdScan is the dry-run entry point.
 //
 //	gregale scan [--tarball X | --path Y | --repo owner/name] \
@@ -69,6 +82,7 @@ func cmdScan(args []string) int {
 	// with `deploy` so a single flag set can be reused across the
 	// scan + apply pair. The handler ignores it on the scan path.
 	persistExclude := fs.Bool("persist-exclude", false, "record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3)")
+	environment := fs.String("environment", "", "registered project environment to scan")
 	projectSlug := fs.String("project-slug", "", "kebab slug; default = repo dir basename")
 	installID := fs.Int64("install-id", 0, "optional GitHub installation id; normally resolved from the connected account")
 	prodBranch := fs.String("production-branch", "main", "production branch for the project")
@@ -91,12 +105,15 @@ func cmdScan(args []string) int {
 	if projectSlugExplicit && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
 	}
+	if err := validateProjectEnvironmentFlag(*environment); err != nil {
+		return printErr("Invalid --environment", err)
+	}
 	if *repo != "" {
 		return runConnectedRepoScan(connectedRepoScanOptions{
 			tarball: *tarball, path: *pathFlag, repo: *repo, ref: *ref,
 			projectSlug: *projectSlug, bindingRepo: *bindingRepo,
 			productionBranch: *prodBranch, installID: *installID,
-			only: *only, exclude: *exclude, showAffected: *showAffected, explain: *explain,
+			only: *only, exclude: *exclude, environment: *environment, showAffected: *showAffected, explain: *explain,
 		})
 	}
 	srcPath, sourceName, cleanup, err := resolveScanSource(*tarball, *pathFlag, *repo, *ref, *installID)
@@ -140,7 +157,7 @@ func cmdScan(args []string) int {
 		return printErr("Could not open source", err)
 	}
 	defer func() { _ = src.Close() }()
-	plan, err := client.ScanProjectWithBinding(ctx, src, sourceName, *projectSlug, *bindingRepo, *prodBranch, *installID, onlyList, excludeList, *persistExclude, false)
+	plan, err := client.ScanProjectWithBindingEnvironment(ctx, src, sourceName, *projectSlug, *bindingRepo, *prodBranch, *installID, onlyList, excludeList, *persistExclude, false, *environment)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
@@ -152,7 +169,7 @@ func cmdScan(args []string) int {
 
 type connectedRepoScanOptions struct {
 	tarball, path, repo, ref, projectSlug, bindingRepo, productionBranch string
-	only, exclude                                                        string
+	only, exclude, environment                                           string
 	installID                                                            int64
 	showAffected, explain                                                bool
 }
@@ -182,6 +199,9 @@ func runConnectedRepoScan(opts connectedRepoScanOptions) int {
 	if err := validateRepoSlug(opts.bindingRepo); err != nil {
 		return printErr("Invalid --repository", err)
 	}
+	if err := validateProjectEnvironmentFlag(opts.environment); err != nil {
+		return printErr("Invalid --environment", err)
+	}
 	return executeConnectedRepoScan(opts)
 }
 
@@ -198,6 +218,7 @@ func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
 		Repo: opts.repo, Ref: opts.ref, ProjectSlug: opts.projectSlug,
 		RepoFullName: opts.bindingRepo, ProductionBranch: opts.productionBranch,
 		InstallID: opts.installID, Only: onlyList, Exclude: excludeList,
+		Environment: opts.environment,
 	})
 	if err != nil {
 		return printErr("Scan failed", err)
@@ -227,7 +248,7 @@ func runProjectDeployPreviewWithMode(
 	client *api.Client,
 	tarball, projectSlug, bindingRepo, productionBranch, only, exclude string,
 	installID int64,
-	showAffected, emitJSON, strict, noTriggers bool,
+	showAffected, emitJSON, strict, noTriggers bool, environment string,
 ) int {
 	if tarball == "" {
 		return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
@@ -248,8 +269,8 @@ func runProjectDeployPreviewWithMode(
 	}
 	defer func() { _ = src.Close() }()
 
-	plan, err := client.ScanProjectWithBinding(ctx, src, filepath.Base(tarball), projectSlug,
-		bindingRepo, productionBranch, installID, onlyList, excludeList, false, noTriggers)
+	plan, err := client.ScanProjectWithBindingEnvironment(ctx, src, filepath.Base(tarball), projectSlug,
+		bindingRepo, productionBranch, installID, onlyList, excludeList, false, noTriggers, environment)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
@@ -458,6 +479,9 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 //nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
+	if plan.Environment != "" {
+		fmt.Fprintf(w, "Environment: %s\n", plan.Environment)
+	}
 	fmt.Fprintf(w, "Scan source: %s   tier: %s\n", plan.ScanSource, plan.Tier)
 	fmt.Fprintf(w, "Quota: %d/%d apps   %d/%d crons\n",
 		plan.ObservedApps, plan.LimitApps, plan.ObservedCrons, plan.LimitCrons)

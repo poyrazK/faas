@@ -766,7 +766,7 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--yes` | skip the apply confirmation prompt |  |
 | `--only <SLUGS>` | workloads to apply; retain unselected project workloads (comma-separated) |  |
 | `--project` | deploy all detected workloads as one project (slug defaults from --name or source) |  |
-| `--environment <SLUG>` | deploy to a registered project environment (single-app deploys only) |  |
+| `--environment <SLUG>` | deploy to a registered project environment |  |
 | `--reason <text>` | free-text deploy reason (≤280 chars) |  |
 | `--tag <TAG>` | annotation tag (incident_recovery\|hotfix\|scheduled_maintenance\|compliance_hold\|partner_request) | one of `incident_recovery` · `hotfix` · `scheduled_maintenance` · `compliance_hold` · `partner_request` |
 | `--deployed-by <NAME>` | operator label (auto-resolved from git config user.name) |  |
@@ -1480,7 +1480,7 @@ Preview or delete a project
 
 Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 
-`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--project-slug <SLUG>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
+`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--project-slug <SLUG>] [--environment <SLUG>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1491,6 +1491,7 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 | `--install-id <N>` | optional GitHub installation id; normally resolved from the connected account |  |
 | `--production-branch <BRANCH>` | production branch for the project |  |
 | `--project-slug <SLUG>` | kebab slug; default = repo dir basename |  |
+| `--environment <SLUG>` | registered project environment to scan |  |
 | `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
 | `--show-affected` | render the WillDeploy + Unaffected tables (ADR-124) |  |
 | `--explain` | show why each workload was detected (detector, marker, priority) |  |

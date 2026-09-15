@@ -55,6 +55,7 @@ func decodeProjectSourceRefScanRequest(r *http.Request) (api.ProjectSourceRefSca
 	req.ProjectSlug = strings.TrimSpace(req.ProjectSlug)
 	req.RepoFullName = strings.TrimSpace(req.RepoFullName)
 	req.ProductionBranch = strings.TrimSpace(req.ProductionBranch)
+	req.Environment = strings.TrimSpace(req.Environment)
 	if req.RepoFullName == "" {
 		req.RepoFullName = req.Repo
 	}
@@ -171,6 +172,7 @@ func writeProjectSourceRefFields(writer *multipart.Writer, req api.ProjectSource
 		"install_id":        strconv.FormatInt(installID, 10),
 		"only":              strings.Join(req.Only, ","),
 		"exclude":           strings.Join(req.Exclude, ","),
+		"environment":       req.Environment,
 		"no_triggers":       strconv.FormatBool(req.NoTriggers),
 	}
 	for name, value := range fields {

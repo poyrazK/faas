@@ -652,7 +652,7 @@ var cliCommands = []cliCommand{
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
 			{Name: "only", Short: "workloads to apply; retain unselected project workloads (comma-separated)", Value: "SLUGS"},
 			{Name: "project", Short: "deploy all detected workloads as one project (slug defaults from --name or source)"},
-			{Name: "environment", Short: "deploy to a registered project environment (single-app deploys only)", Value: "SLUG"},
+			{Name: "environment", Short: "deploy to a registered project environment", Value: "SLUG"},
 			// Issue #977 / ADR-116: deployment annotations surface.
 			// --reason is free text (≤280 chars); --tag is closed-set
 			// (see DeploymentAnnotationTags in cmd_deploy_annotations.go);
@@ -1198,6 +1198,7 @@ var cliCommands = []cliCommand{
 			{Name: "install-id", Short: "optional GitHub installation id; normally resolved from the connected account", Value: "N"},
 			{Name: "production-branch", Short: "production branch for the project", Value: "BRANCH"},
 			{Name: "project-slug", Short: "kebab slug; default = repo dir basename", Value: "SLUG"},
+			{Name: "environment", Short: "registered project environment to scan", Value: "SLUG"},
 			// ADR-124 follow-up #1: --exclude + --show-affected
 			// ship on scan as well as deploy (the partition is the
 			// preview surface, scan is the operator's first stop).

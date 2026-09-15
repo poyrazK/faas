@@ -27,6 +27,8 @@ class ProjectSourceRefScanRequest:
     """Optional connected installation id. Omit to resolve the single installation that can access repo."""
     only: list[str] | Unset = UNSET
     exclude: list[str] | Unset = UNSET
+    environment: str | Unset = UNSET
+    """Environment slug applied to deployments created by this scan"""
     no_triggers: bool | Unset = False
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -51,6 +53,8 @@ class ProjectSourceRefScanRequest:
         if not isinstance(self.exclude, Unset):
             exclude = self.exclude
 
+        environment = self.environment
+
         no_triggers = self.no_triggers
 
         field_dict: dict[str, Any] = {}
@@ -72,6 +76,8 @@ class ProjectSourceRefScanRequest:
             field_dict["only"] = only
         if exclude is not UNSET:
             field_dict["exclude"] = exclude
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
 
@@ -96,6 +102,8 @@ class ProjectSourceRefScanRequest:
 
         exclude = cast(list[str], d.pop("exclude", UNSET))
 
+        environment = d.pop("environment", UNSET)
+
         no_triggers = d.pop("no_triggers", UNSET)
 
         project_source_ref_scan_request = cls(
@@ -107,6 +115,7 @@ class ProjectSourceRefScanRequest:
             install_id=install_id,
             only=only,
             exclude=exclude,
+            environment=environment,
             no_triggers=no_triggers,
         )
 

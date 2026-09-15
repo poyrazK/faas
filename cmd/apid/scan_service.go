@@ -64,6 +64,7 @@ type planTokenWire struct {
 	ProductionBranch string `json:"production_branch,omitempty"`
 	InstallID        int64  `json:"install_id,omitempty"`
 	NoTriggers       bool   `json:"no_triggers,omitempty"`
+	Environment      string `json:"environment,omitempty"`
 	TSUnix           int64  `json:"ts_unix"`
 }
 
@@ -99,7 +100,8 @@ type scanPlanRequest struct {
 	// NoTriggers makes trigger declarations observational only for this
 	// scan/apply pair. It is bound into the plan token so apply cannot change
 	// the suppression decision made during preview.
-	NoTriggers bool
+	NoTriggers  bool
+	Environment string // registered project environment; resolved to deployment scope
 }
 
 func validProjectRepoFullName(repo string) bool {
@@ -132,6 +134,7 @@ func validProjectRepoFullName(repo string) bool {
 type scanPlanResponse struct {
 	ProjectSlug  string                  `json:"project_slug"`
 	RepoFullName string                  `json:"repo_full_name,omitempty"`
+	Environment  string                  `json:"environment,omitempty"`
 	ScanSource   state.ProjectScanSource `json:"scan_source"`
 	Tier         string                  `json:"tier"`
 	Workloads    []api.PlanWorkload      `json:"workloads"`
@@ -862,6 +865,7 @@ type appliedBuild = api.AppliedBuild
 func (s *server) applyBuildsForAddedChangedOrdered(
 	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
 	scanDir string, workloads []reposcan.Workload, managed []reposcan.Managed, added, changed []state.App,
+	environment string,
 ) []appliedBuild {
 	workloadByName := make(map[string]reposcan.Workload, len(workloads))
 	for _, workload := range workloads {
@@ -922,6 +926,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			SourcePath:      staged,
 			SourceBytes:     bytes,
 			SourceRoot:      app.RootDir,
+			Scope:           environment,
 			DockerfilePath:  app.Manifest.BuildDockerfile,
 			FunctionRuntime: functionRuntimeForApp(app),
 			LogSpool:        spoolRoot(),
@@ -1065,6 +1070,9 @@ func (s *server) scanService(
 	if prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
+	if prob := s.validateProjectDeploymentEnvironment(r.Context(), acct, req.ProjectSlug, req.Environment); prob != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, prob
+	}
 	// ADR-124 follow-up #3 — apply-time persisted-exclude fallback.
 	// When the apply path runs without an explicit --exclude AND a
 	// project row already exists (i.e. this is a re-deploy, not a
@@ -1180,7 +1188,7 @@ func (s *server) scanService(
 		}
 		if pt.Slug != req.ProjectSlug || pt.RepoFullName != req.RepoFullName ||
 			pt.ProductionBranch != req.ProdBranch || pt.InstallID != req.InstallID ||
-			pt.NoTriggers != req.NoTriggers {
+			pt.NoTriggers != req.NoTriggers || pt.Environment != req.Environment {
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 				"plan_token_stale", "plan_token does not match project binding",
 				"re-run scan and apply with the same repository, installation, and production branch")
@@ -1555,6 +1563,7 @@ func (s *server) scanService(
 	resp := &scanPlanResponse{
 		ProjectSlug:   req.ProjectSlug,
 		RepoFullName:  req.RepoFullName,
+		Environment:   req.Environment,
 		ScanSource:    reconcile.DeriveScanSource(filteredW),
 		Tier:          result.Tier.String(),
 		Workloads:     respWorkloads,
@@ -1613,7 +1622,7 @@ func (s *server) scanService(
 	// Mint a fresh plan_token unless one was supplied (apply path
 	// keeps the caller's; minting a new one would be confusing).
 	if planToken == "" {
-		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.SourceSHA256)
+		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, req.SourceSHA256)
 		if mintErr != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
 				fmt.Sprintf("mint plan_token: %v", mintErr))
@@ -1951,7 +1960,7 @@ func (s *server) scanService(
 	// is what we want. A future refactor that moves the ScanDir
 	// cleanup into this func must keep staging reads ahead of
 	// the cleanup.
-	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, rec.Added, rec.Changed)
+	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, rec.Added, rec.Changed, req.Environment)
 	// ADR-124: surface the destructive subset on the response so the
 	// apply handler can render Removed in the same blast-radius
 	// envelope the preview offered. SoftDeleteAppCascade runs
@@ -1994,6 +2003,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		installID      int64
 		persistExclude bool
 		noTriggers     bool
+		environment    string
 		projectSlugSet bool
 	)
 	for {
@@ -2088,6 +2098,12 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 					"Invalid no_triggers", "no_triggers must be true or false")
 			}
 			noTriggers = parsed
+		case "environment":
+			b, readErr := io.ReadAll(io.LimitReader(part, api.MaxEnvScopeLen+1))
+			if readErr != nil || len(b) > api.MaxEnvScopeLen {
+				return nil, api.ErrSourceInvalid("environment is too long")
+			}
+			environment = strings.TrimSpace(string(b))
 		default:
 			_, _ = io.Copy(io.Discard, part)
 		}
@@ -2144,6 +2160,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		Exclude:        excludeSet,
 		PersistExclude: persistExclude,
 		NoTriggers:     noTriggers,
+		Environment:    environment,
 	}, nil
 }
 
@@ -2169,7 +2186,7 @@ func hashFileSHA256(path string) (string, error) {
 // mintPlanToken produces the base64-JSON blob. The hash is the
 // SHA-256 of the source bytes (the apply handler re-hashes and
 // compares). AccountID prevents token-reuse across accounts.
-func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, hashHex string) (string, error) {
+func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, hashHex string) (string, error) {
 	pt := planTokenWire{
 		Hash:             hashHex,
 		AccountID:        accountID,
@@ -2178,6 +2195,7 @@ func mintPlanToken(accountID, slug, repoFullName, productionBranch string, insta
 		ProductionBranch: productionBranch,
 		InstallID:        installID,
 		NoTriggers:       noTriggers,
+		Environment:      environment,
 		TSUnix:           nowUnix(),
 	}
 	b, err := json.Marshal(pt)

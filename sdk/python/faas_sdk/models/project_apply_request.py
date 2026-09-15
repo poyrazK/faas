@@ -27,6 +27,8 @@ class ProjectApplyRequest:
     production_branch: str | Unset = UNSET
     install_id: int | Unset = UNSET
     only: str | Unset = UNSET
+    environment: str | Unset = UNSET
+    """Environment slug applied to deployments created by this apply"""
     no_triggers: bool | Unset = False
     """Leave trigger declarations and existing project trigger state unchanged for this apply."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -43,6 +45,8 @@ class ProjectApplyRequest:
         install_id = self.install_id
 
         only = self.only
+
+        environment = self.environment
 
         no_triggers = self.no_triggers
 
@@ -63,6 +67,8 @@ class ProjectApplyRequest:
             field_dict["install_id"] = install_id
         if only is not UNSET:
             field_dict["only"] = only
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
 
@@ -88,6 +94,9 @@ class ProjectApplyRequest:
         if not isinstance(self.only, Unset):
             files.append(("only", (None, str(self.only).encode(), "text/plain")))
 
+        if not isinstance(self.environment, Unset):
+            files.append(("environment", (None, str(self.environment).encode(), "text/plain")))
+
         if not isinstance(self.no_triggers, Unset):
             files.append(("no_triggers", (None, str(self.no_triggers).encode(), "text/plain")))
 
@@ -111,6 +120,8 @@ class ProjectApplyRequest:
 
         only = d.pop("only", UNSET)
 
+        environment = d.pop("environment", UNSET)
+
         no_triggers = d.pop("no_triggers", UNSET)
 
         project_apply_request = cls(
@@ -120,6 +131,7 @@ class ProjectApplyRequest:
             production_branch=production_branch,
             install_id=install_id,
             only=only,
+            environment=environment,
             no_triggers=no_triggers,
         )
 

@@ -4936,13 +4936,14 @@ type AccountSLOResponse struct {
 // schema-parity AST gate can assert field-for-field equivalence with
 // the OpenAPI spec.
 type ProjectScanRequest struct {
-	Source           string `json:"source"`            // tar.gz binary blob
-	ProjectSlug      string `json:"project_slug"`      // kebab slug
-	RepoFullName     string `json:"repo_full_name"`    // GitHub owner/name binding
-	ProductionBranch string `json:"production_branch"` // default "main"
-	InstallID        int64  `json:"install_id"`        // GitHub install id (--repo); 0 for unbound
-	Only             string `json:"only"`              // CSV of workload names
-	NoTriggers       bool   `json:"no_triggers"`       // leave declared and existing triggers unchanged
+	Source           string `json:"source"`                // tar.gz binary blob
+	ProjectSlug      string `json:"project_slug"`          // kebab slug
+	RepoFullName     string `json:"repo_full_name"`        // GitHub owner/name binding
+	ProductionBranch string `json:"production_branch"`     // default "main"
+	InstallID        int64  `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
+	Only             string `json:"only"`                  // CSV of workload names
+	Environment      string `json:"environment,omitempty"` // registered project environment
+	NoTriggers       bool   `json:"no_triggers"`           // leave declared and existing triggers unchanged
 }
 
 // ProjectSourceRefScanRequest asks the control plane to fetch a connected
@@ -4958,6 +4959,7 @@ type ProjectSourceRefScanRequest struct {
 	InstallID        int64    `json:"install_id,omitempty"`
 	Only             []string `json:"only,omitempty"`
 	Exclude          []string `json:"exclude,omitempty"`
+	Environment      string   `json:"environment,omitempty"`
 	NoTriggers       bool     `json:"no_triggers,omitempty"`
 }
 
@@ -4971,6 +4973,7 @@ type ProjectApplyRequest struct {
 	ProductionBranch string `json:"production_branch"`
 	InstallID        int64  `json:"install_id"`
 	Only             string `json:"only"`
+	Environment      string `json:"environment,omitempty"`
 	NoTriggers       bool   `json:"no_triggers"`
 }
 
@@ -5165,6 +5168,7 @@ type QuotaBlock struct {
 type PlanResponse struct {
 	ProjectSlug     string         `json:"project_slug"`
 	RepoFullName    string         `json:"repo_full_name,omitempty"`
+	Environment     string         `json:"environment,omitempty"`
 	ScanSource      string         `json:"scan_source"`
 	Tier            string         `json:"tier"`
 	Workloads       []PlanWorkload `json:"workloads"`

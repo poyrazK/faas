@@ -160,6 +160,21 @@ func TestWriteProjectMultipartFields_NoTriggers(t *testing.T) {
 	}
 }
 
+func TestWriteProjectMultipartFields_Environment(t *testing.T) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	if err := writeProjectMultipartFields(w, strings.NewReader("x"), "src.tgz",
+		"demo", "", "main", 0, nil, nil, false, false, "staging"); err != nil {
+		t.Fatalf("writeProjectMultipartFields: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("multipart close: %v", err)
+	}
+	if !strings.Contains(buf.String(), "name=\"environment\"\r\n\r\nstaging") {
+		t.Fatalf("multipart body missing environment=staging: %s", buf.String())
+	}
+}
+
 // multipartReader returns an io.Reader that re-parses the multipart
 // body for content scanning. Tests use this to assert specific
 // field names/values without depending on a real HTTP server.

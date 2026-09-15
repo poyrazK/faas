@@ -1255,9 +1255,22 @@ func (c *Client) ScanProjectWithBinding(
 	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
 	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 ) (PlanResponse, error) {
+	return c.ScanProjectWithBindingEnvironment(ctx, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, "")
+}
+
+// ScanProjectWithBindingEnvironment scans a project while selecting a
+// registered project environment. The environment is carried through the
+// plan token so apply cannot target a different environment than the scan.
+func (c *Client) ScanProjectWithBindingEnvironment(
+	ctx context.Context,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment string,
+) (PlanResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment); err != nil {
 		return PlanResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -1304,9 +1317,22 @@ func (c *Client) ApplyProjectPlanWithBinding(
 	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
 	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 ) (ApplyResponse, error) {
+	return c.ApplyProjectPlanWithBindingEnvironment(ctx, planToken, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, "")
+}
+
+// ApplyProjectPlanWithBindingEnvironment applies a scanned project to the
+// same registered environment that was used during scanning.
+func (c *Client) ApplyProjectPlanWithBindingEnvironment(
+	ctx context.Context,
+	planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment string,
+) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -1419,7 +1445,7 @@ func (c *Client) DeleteProject(ctx context.Context, slug string) error {
 func writeProjectMultipartFields(
 	w *multipart.Writer, source io.Reader, sourceName, projectSlug,
 	repoFullName, productionBranch string, installID int64, only, exclude []string,
-	persistExclude, noTriggers bool,
+	persistExclude, noTriggers bool, environment ...string,
 ) error {
 	fw, err := w.CreateFormFile("source", sourceName)
 	if err != nil {
@@ -1474,6 +1500,11 @@ func writeProjectMultipartFields(
 	}
 	if noTriggers {
 		if err := w.WriteField("no_triggers", "true"); err != nil {
+			return err
+		}
+	}
+	if len(environment) > 0 && strings.TrimSpace(environment[0]) != "" {
+		if err := w.WriteField("environment", strings.TrimSpace(environment[0])); err != nil {
 			return err
 		}
 	}

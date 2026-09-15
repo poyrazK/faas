@@ -21649,6 +21649,10 @@ components:
         only:
           type: string
           description: "CSV of workload names to include (others skipped)"
+        environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: "Environment slug used to scope all discovered workloads"
         no_triggers:
           type: boolean
           default: false
@@ -21784,6 +21788,10 @@ components:
         exclude:
           type: array
           items: { type: string }
+        environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: "Environment slug applied to deployments created by this scan"
         no_triggers:
           type: boolean
           default: false
@@ -22061,6 +22069,10 @@ components:
         production_branch: { type: string }
         install_id: { type: integer, format: int64 }
         only: { type: string }
+        environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: "Environment slug applied to deployments created by this apply"
         no_triggers:
           type: boolean
           default: false
@@ -22232,6 +22244,7 @@ components:
       properties:
         project_slug: { type: string }
         repo_full_name: { type: string }
+        environment: { type: string, description: "Registered project environment targeted by this plan" }
         scan_source:
           type: string
           enum: [compose, procfile, k8s, render, fly, serverless, workspace, convention, single, unknown]

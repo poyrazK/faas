@@ -1660,7 +1660,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// implementation while making `gregale deploy --dry-run` safe by
 	// construction.
 	*diff = preview
-	if *environment != "" && *diff {
+	if *environment != "" && *diff && !projectRequested {
 		return printErr("Invalid flags", fmt.Errorf("--environment cannot be combined with --dry-run or --diff"))
 	}
 	// --strict / --lenient mutex. Same rationale as
@@ -1821,7 +1821,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "canary-preset", "canary-stages",
-			"environment",
 			"reason", "tag", "deployed-by", "pr-number",
 			// Project plans currently infer each workload's execution
 			// configuration from the scanned source. Reject single-app
@@ -2585,7 +2584,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
 				*bindingRepo, *productionBranch, *deployOnly, *deployExclude, *installID,
 				*deployShowAffected, *diffJSON,
-				*diffStrict || !*diffLenient, *noTriggers)
+				*diffStrict || !*diffLenient, *noTriggers, *environment)
 		}
 		opts := buildDiffOptions(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
@@ -2646,8 +2645,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				"--only and --exclude share workload(s): %s",
 				strings.Join(clash, ", ")))
 		}
-		plan, err := client.ScanProjectWithBinding(ctx, openTarball, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers)
+		plan, err := client.ScanProjectWithBindingEnvironment(ctx, openTarball, filepath.Base(*tarball),
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment)
 		if err != nil {
 			return printErr("Scan failed", err)
 		}
@@ -2694,8 +2693,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		defer func() { _ = openTarball2.Close() }()
 		applyCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply"))
-		apply, err := client.ApplyProjectPlanWithBinding(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers)
+		apply, err := client.ApplyProjectPlanWithBindingEnvironment(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment)
 		if err != nil {
 			return printErr("Apply failed", err)
 		}

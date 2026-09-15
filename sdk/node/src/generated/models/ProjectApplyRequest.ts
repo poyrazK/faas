@@ -16,6 +16,10 @@ export type ProjectApplyRequest = {
   install_id?: number;
   only?: string;
   /**
+   * Environment slug applied to deployments created by this apply
+   */
+  environment?: string;
+  /**
    * Leave trigger declarations and existing project trigger state unchanged for this apply.
    */
   no_triggers?: boolean;

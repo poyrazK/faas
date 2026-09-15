@@ -42,3 +42,22 @@ func TestApplyDeploymentEnvironmentRejectsUnknownOrStandaloneTarget(t *testing.T
 		t.Fatalf("standalone environment problem = %+v, want 400", problem)
 	}
 }
+
+func TestValidateProjectDeploymentEnvironmentUsesProjectRegistry(t *testing.T) {
+	srv, store, acct, project, _ := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if problem := srv.validateProjectDeploymentEnvironment(ctx, acct, project.Slug, "staging"); problem != nil {
+		t.Fatalf("registered environment rejected: %v", problem)
+	}
+	if problem := srv.validateProjectDeploymentEnvironment(ctx, acct, project.Slug, "testing"); problem == nil || problem.Status != 404 {
+		t.Fatalf("unknown environment problem = %+v, want 404", problem)
+	}
+	if problem := srv.validateProjectDeploymentEnvironment(ctx, acct, "new-project", "production"); problem != nil {
+		t.Fatalf("seeded production environment for new project rejected: %v", problem)
+	}
+}
