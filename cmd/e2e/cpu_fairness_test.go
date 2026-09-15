@@ -141,7 +141,26 @@ func TestCpuFairnessMetal(t *testing.T) {
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.Start(t, pool, e2etest.DeployWake)
-	key := h.SeedAccount(context.Background(), api.PlanHobby)
+
+	// The acceptance criterion needs 5 quiet + 1 hot = 6 apps, and Hobby's
+	// DeployedApps limit is 5 — so the sixth create returned
+	//
+	//	create app hot-0: status=403
+	//
+	// and the test failed in 3.66 s having measured nothing. The plan is not
+	// load-bearing here: the only assertion is that a hot neighbour does not
+	// degrade a quiet app's p95 by more than 2x, which holds on any plan whose
+	// cpu.max / cpu.weight is enforced. Pro is the smallest plan that fits the
+	// required app count.
+	plan := api.PlanPro
+	if limits, ok := api.LimitsFor(plan); !ok {
+		t.Fatalf("no limits for plan %v", plan)
+	} else if want := cpuFairnessQuietCount + cpuFairnessHotCount; limits.DeployedApps < want {
+		t.Fatalf("plan %v allows %d deployed apps but this test needs %d; "+
+			"the sixth create would 403 and the test would measure nothing",
+			plan, limits.DeployedApps, want)
+	}
+	key := h.SeedAccount(context.Background(), plan)
 
 	// Deploy 5 quiet apps + 1 hot app. Same body fixture as
 	// deploy_wake_metal_test — the hot app uses the new
@@ -170,7 +189,7 @@ func TestCpuFairnessMetal(t *testing.T) {
 				t.Fatalf("app %s did not reach parked: %v", d.slug, err)
 			}
 		}
-		t.Logf("deploy-then-parked: 6 apps parked (5 quiet + 1 hot, all plan=Hobby)")
+		t.Logf("deploy-then-parked: 6 apps parked (5 quiet + 1 hot, all plan=%v)", plan)
 	})
 
 	// -- 2. baseline: wake 5 quiet apps, hit each 50× ------------------------
