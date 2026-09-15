@@ -96,6 +96,14 @@
         #   secretbox: parse host key ".../fleet.age": malformed secret key:
         #   mixed case
         #
+        # The trailing newline matters too: LoadHostKeys does NOT trim, so a
+        # file ending in \n fails with
+        #
+        #   malformed secret key: invalid character data part: s[58]=10
+        #
+        # (10 being \n). A fleet-provisioned host's file is exactly 74 bytes
+        # with no final newline; `tr -d` reproduces that shape byte-for-byte.
+        #
         # vmmd then exits at boot. Strip to the key line, matching the shape a
         # fleet-provisioned host already has.
         - name: native acceptance — write fleet.age (bare key, no comment header)
@@ -105,6 +113,7 @@
               umask 077 &&
               age-keygen 2>/dev/null
               | grep -m1 '^AGE-SECRET-KEY-'
+              | tr -d '\n'
               > /etc/faas/secrets/fleet.age
             creates: /etc/faas/secrets/fleet.age
           args:
