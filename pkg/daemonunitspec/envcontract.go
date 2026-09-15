@@ -188,6 +188,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DPA_PATH", Owners: []string{"apid"}, Source: EnvSourceUnit},
 	{Name: "FAAS_DUNNING_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_E2E_API_HOSTING_SMOKE", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
+	{Name: "FAAS_E2E_BIN_DIR", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host"},
 	{Name: "FAAS_EGRESS_ALLOW_LOOPBACK", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_ENVIRONMENT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value"},
