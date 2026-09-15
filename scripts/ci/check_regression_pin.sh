@@ -136,9 +136,13 @@ if [[ -s "$candidates" ]]; then
 
     while IFS= read -r test_name; do
       [[ -n "$test_name" ]] || continue
+      # `go test -json` may prefix structured events with ordinary compiler
+      # diagnostics when the base package does not build. The report is
+      # advisory, so malformed lines must classify the package result rather
+      # than aborting this CI step under `set -o pipefail`.
       action="$(jq -r --arg test "$test_name" \
         'select(.Test == $test and (.Action == "pass" or .Action == "fail")) | .Action' \
-        "$output_file" 2>/dev/null | tail -n 1)"
+        "$output_file" 2>/dev/null | tail -n 1 || true)"
       case "$action" in
         fail)
           printf '%s\t%s\t%s\t%s\n' expected-failure "$package" "$test_name" "base test failed" >>"$results"
