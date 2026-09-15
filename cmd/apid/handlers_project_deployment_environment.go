@@ -53,3 +53,31 @@ func (s *server) projectDeploymentEnvironmentProtection(ctx context.Context, acc
 	}
 	return env.Protected, nil
 }
+
+// projectDeploymentEnvironmentConfigHash returns the latest non-secret
+// environment configuration identity for plan binding. An unconfigured
+// environment, and the implicit production target of a new project, both use
+// an empty hash so plans remain compact until configuration is written.
+func (s *server) projectDeploymentEnvironmentConfigHash(ctx context.Context, acct state.Account, projectSlug, environment string) (string, *api.Problem) {
+	if strings.TrimSpace(environment) == "" {
+		return "", nil
+	}
+	project, err := s.store.ProjectBySlug(ctx, acct.ID, projectSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		if environment == "production" {
+			return "", nil
+		}
+		return "", projectEnvironmentNotFound(projectSlug, environment)
+	}
+	if err != nil {
+		return "", api.ErrCapacity("could not load project environment configuration")
+	}
+	config, err := s.store.ProjectEnvironmentConfigLatest(ctx, acct.ID, project.ID, environment)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", api.ErrCapacity("could not load project environment configuration")
+	}
+	return config.ConfigHash, nil
+}

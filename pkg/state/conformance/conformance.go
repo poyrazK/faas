@@ -152,6 +152,40 @@ func testProjectEnvironmentRegistry(t *testing.T, fx *Fixture) {
 	if !updated.Protected || updated.ID != staging.ID {
 		t.Fatalf("updated staging environment = %+v, want protected and stable ID", updated)
 	}
+	values, hash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"eu","replicas":2}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	versionOne, err := fx.Store.CreateProjectEnvironmentConfigVersion(fx.Ctx, state.ProjectEnvironmentConfig{
+		AccountID: fx.Account.ID, ProjectID: project.ID, EnvironmentSlug: staging.Slug,
+		ConfigHash: hash, Values: values,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectEnvironmentConfigVersion: %v", err)
+	}
+	if versionOne.Version != 1 || versionOne.ConfigHash != hash {
+		t.Fatalf("first environment config version = %+v", versionOne)
+	}
+	values, hash, err = api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"us"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.CreateProjectEnvironmentConfigVersion(fx.Ctx, state.ProjectEnvironmentConfig{
+		AccountID: fx.Account.ID, ProjectID: project.ID, EnvironmentSlug: staging.Slug,
+		ConfigHash: hash, Values: values,
+	}); err != nil {
+		t.Fatalf("CreateProjectEnvironmentConfigVersion(second): %v", err)
+	}
+	latest, err := fx.Store.ProjectEnvironmentConfigLatest(fx.Ctx, fx.Account.ID, project.ID, staging.Slug)
+	if err != nil {
+		t.Fatalf("ProjectEnvironmentConfigLatest: %v", err)
+	}
+	if latest.Version != 2 || latest.ConfigHash != hash || string(latest.Values) != `{"region":"us"}` {
+		t.Fatalf("latest environment config = %+v", latest)
+	}
+	if _, err := fx.Store.ProjectEnvironmentConfigLatest(fx.Ctx, uuid.NewString(), project.ID, staging.Slug); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account environment config err = %v, want ErrNotFound", err)
+	}
 	if _, err := fx.Store.ListProjectEnvironments(fx.Ctx, uuid.NewString(), project.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account environment list err = %v, want ErrNotFound", err)
 	}

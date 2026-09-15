@@ -1,5 +1,7 @@
 package api
 
+import "encoding/json"
+
 // ProjectSummaryResponse is the stable account-scoped project list shape.
 type ProjectSummaryResponse struct {
 	ID               string `json:"id"`
@@ -81,4 +83,44 @@ type ProjectEnvironmentApprovalResponse struct {
 	ApprovalToken string `json:"approval_token"`
 	Environment   string `json:"environment"`
 	ExpiresAt     string `json:"expires_at"`
+}
+
+// UpdateProjectEnvironmentConfigRequest replaces the non-secret configuration
+// for one project environment. Values must be a JSON object; the server
+// canonicalizes it and returns the resulting version and hash.
+type UpdateProjectEnvironmentConfigRequest struct {
+	Values json.RawMessage `json:"values"`
+}
+
+// ProjectEnvironmentConfigResponse is the latest immutable configuration
+// version for one project environment. Values never contain secret material.
+type ProjectEnvironmentConfigResponse struct {
+	ProjectSlug string          `json:"project_slug"`
+	Environment string          `json:"environment"`
+	Version     int64           `json:"version"`
+	ConfigHash  string          `json:"config_hash"`
+	Values      json.RawMessage `json:"values"`
+	UpdatedAt   string          `json:"updated_at,omitempty"`
+}
+
+// ProjectEnvironmentConfigChange is one key-level difference between two
+// environment configuration snapshots.
+type ProjectEnvironmentConfigChange struct {
+	Key    string          `json:"key"`
+	Kind   string          `json:"kind"`
+	Before json.RawMessage `json:"before,omitempty"`
+	After  json.RawMessage `json:"after,omitempty"`
+}
+
+// ProjectEnvironmentConfigDiffResponse compares the latest snapshots for two
+// environments in the same project.
+type ProjectEnvironmentConfigDiffResponse struct {
+	ProjectSlug     string                           `json:"project_slug"`
+	FromEnvironment string                           `json:"from_environment"`
+	ToEnvironment   string                           `json:"to_environment"`
+	FromVersion     int64                            `json:"from_version"`
+	ToVersion       int64                            `json:"to_version"`
+	FromHash        string                           `json:"from_hash"`
+	ToHash          string                           `json:"to_hash"`
+	Changes         []ProjectEnvironmentConfigChange `json:"changes"`
 }

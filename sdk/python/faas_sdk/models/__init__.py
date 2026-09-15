@@ -800,6 +800,11 @@ from .programmatic_signup_magic_link_response_200_status import ProgrammaticSign
 from .project_apply_request import ProjectApplyRequest
 from .project_delete_preview_response import ProjectDeletePreviewResponse
 from .project_environment_approval_response import ProjectEnvironmentApprovalResponse
+from .project_environment_config_change import ProjectEnvironmentConfigChange
+from .project_environment_config_change_kind import ProjectEnvironmentConfigChangeKind
+from .project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
+from .project_environment_config_response import ProjectEnvironmentConfigResponse
+from .project_environment_config_response_values import ProjectEnvironmentConfigResponseValues
 from .project_environment_response import ProjectEnvironmentResponse
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
@@ -1021,6 +1026,8 @@ from .update_job_request_status import UpdateJobRequestStatus
 from .update_managed_realtime_endpoint_request import UpdateManagedRealtimeEndpointRequest
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
+from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
+from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_environment_request import UpdateProjectEnvironmentRequest
 from .update_project_request import UpdateProjectRequest
 from .update_trigger_request import UpdateTriggerRequest
@@ -1864,6 +1871,11 @@ __all__ = (
     "ProjectApplyRequest",
     "ProjectDeletePreviewResponse",
     "ProjectEnvironmentApprovalResponse",
+    "ProjectEnvironmentConfigChange",
+    "ProjectEnvironmentConfigChangeKind",
+    "ProjectEnvironmentConfigDiffResponse",
+    "ProjectEnvironmentConfigResponse",
+    "ProjectEnvironmentConfigResponseValues",
     "ProjectEnvironmentResponse",
     "ProjectResponse",
     "ProjectScanRequest",
@@ -2083,6 +2095,8 @@ __all__ = (
     "UpdateManagedRealtimeEndpointRequest",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
+    "UpdateProjectEnvironmentConfigRequest",
+    "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectEnvironmentRequest",
     "UpdateProjectRequest",
     "UpdateTriggerRequest",

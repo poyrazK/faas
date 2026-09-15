@@ -65,6 +65,7 @@ type planTokenWire struct {
 	InstallID        int64  `json:"install_id,omitempty"`
 	NoTriggers       bool   `json:"no_triggers,omitempty"`
 	Environment      string `json:"environment,omitempty"`
+	ConfigHash       string `json:"config_hash,omitempty"`
 	TSUnix           int64  `json:"ts_unix"`
 }
 
@@ -133,15 +134,16 @@ func validProjectRepoFullName(repo string) bool {
 // `plan.workloads[i].tier` serialize as "compose" instead of
 // `8`. The conversion lives in toPlanWorkload below.
 type scanPlanResponse struct {
-	ProjectSlug          string                  `json:"project_slug"`
-	RepoFullName         string                  `json:"repo_full_name,omitempty"`
-	Environment          string                  `json:"environment,omitempty"`
-	EnvironmentProtected bool                    `json:"environment_protected,omitempty"`
-	ScanSource           state.ProjectScanSource `json:"scan_source"`
-	Tier                 string                  `json:"tier"`
-	Workloads            []api.PlanWorkload      `json:"workloads"`
-	Managed              []api.PlanManaged       `json:"managed"`
-	Crons                []planCron              `json:"crons"`
+	ProjectSlug           string                  `json:"project_slug"`
+	RepoFullName          string                  `json:"repo_full_name,omitempty"`
+	Environment           string                  `json:"environment,omitempty"`
+	EnvironmentProtected  bool                    `json:"environment_protected,omitempty"`
+	EnvironmentConfigHash string                  `json:"environment_config_hash,omitempty"`
+	ScanSource            state.ProjectScanSource `json:"scan_source"`
+	Tier                  string                  `json:"tier"`
+	Workloads             []api.PlanWorkload      `json:"workloads"`
+	Managed               []api.PlanManaged       `json:"managed"`
+	Crons                 []planCron              `json:"crons"`
 	// CronNames parallels Crons: when /apply runs, the apply handler
 	// uses CronNames[i] to look up the freshly inserted app_id from
 	// insertedApps (matched by Slug == WorkloadName). Not exposed
@@ -1079,6 +1081,10 @@ func (s *server) scanService(
 	if prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
+	environmentConfigHash, prob := s.projectDeploymentEnvironmentConfigHash(r.Context(), acct, req.ProjectSlug, req.Environment)
+	if prob != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, prob
+	}
 	if apply && environmentProtected {
 		if planToken == "" || req.ApprovalToken == "" {
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalRequired,
@@ -1205,7 +1211,8 @@ func (s *server) scanService(
 		}
 		if pt.Slug != req.ProjectSlug || pt.RepoFullName != req.RepoFullName ||
 			pt.ProductionBranch != req.ProdBranch || pt.InstallID != req.InstallID ||
-			pt.NoTriggers != req.NoTriggers || pt.Environment != req.Environment {
+			pt.NoTriggers != req.NoTriggers || pt.Environment != req.Environment ||
+			pt.ConfigHash != environmentConfigHash {
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 				"plan_token_stale", "plan_token does not match project binding",
 				"re-run scan and apply with the same repository, installation, and production branch")
@@ -1578,22 +1585,23 @@ func (s *server) scanService(
 		respManaged[i] = toPlanManaged(m)
 	}
 	resp := &scanPlanResponse{
-		ProjectSlug:          req.ProjectSlug,
-		RepoFullName:         req.RepoFullName,
-		Environment:          req.Environment,
-		EnvironmentProtected: environmentProtected,
-		ScanSource:           reconcile.DeriveScanSource(filteredW),
-		Tier:                 result.Tier.String(),
-		Workloads:            respWorkloads,
-		Managed:              respManaged,
-		Crons:                crons,
-		Warnings:             warnings,
-		ObservedApps:         projectedApps,
-		ObservedCrons:        projectedCrons,
-		LimitApps:            limits.DeployedApps,
-		LimitCrons:           limits.CronLimitPerAccount,
-		CanApply:             canApply,
-		NotAllowed:           notAllowed,
+		ProjectSlug:           req.ProjectSlug,
+		RepoFullName:          req.RepoFullName,
+		Environment:           req.Environment,
+		EnvironmentProtected:  environmentProtected,
+		EnvironmentConfigHash: environmentConfigHash,
+		ScanSource:            reconcile.DeriveScanSource(filteredW),
+		Tier:                  result.Tier.String(),
+		Workloads:             respWorkloads,
+		Managed:               respManaged,
+		Crons:                 crons,
+		Warnings:              warnings,
+		ObservedApps:          projectedApps,
+		ObservedCrons:         projectedCrons,
+		LimitApps:             limits.DeployedApps,
+		LimitCrons:            limits.CronLimitPerAccount,
+		CanApply:              canApply,
+		NotAllowed:            notAllowed,
 		// ADR-124 can_apply rescue signal. PreExclude + Rescued
 		// are the operator-facing knobs the dashboard renders in
 		// the gate card; CanApplyReasons is the human-readable
@@ -1640,7 +1648,7 @@ func (s *server) scanService(
 	// Mint a fresh plan_token unless one was supplied (apply path
 	// keeps the caller's; minting a new one would be confusing).
 	if planToken == "" {
-		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, req.SourceSHA256)
+		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, environmentConfigHash, req.SourceSHA256)
 		if mintErr != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
 				fmt.Sprintf("mint plan_token: %v", mintErr))
@@ -2212,7 +2220,7 @@ func hashFileSHA256(path string) (string, error) {
 // mintPlanToken produces the base64-JSON blob. The hash is the
 // SHA-256 of the source bytes (the apply handler re-hashes and
 // compares). AccountID prevents token-reuse across accounts.
-func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, hashHex string) (string, error) {
+func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, configHash, hashHex string) (string, error) {
 	pt := planTokenWire{
 		Hash:             hashHex,
 		AccountID:        accountID,
@@ -2222,6 +2230,7 @@ func mintPlanToken(accountID, slug, repoFullName, productionBranch string, insta
 		InstallID:        installID,
 		NoTriggers:       noTriggers,
 		Environment:      environment,
+		ConfigHash:       configHash,
 		TSUnix:           nowUnix(),
 	}
 	b, err := json.Marshal(pt)

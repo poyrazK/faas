@@ -655,6 +655,7 @@ type MemStore struct {
 	projectsByInstallRepo       map[installRepoKey]string    // install_id, repo_full_name → id
 	projectEnvironments         map[string]ProjectEnvironment
 	projectEnvironmentApprovals map[string]ProjectEnvironmentApproval
+	projectEnvironmentConfigs   map[string][]ProjectEnvironmentConfig
 	// githubDeployBranches stores the optional branch→scope rules keyed by
 	// project ID. It mirrors github_deploy_branches in Postgres.
 	githubDeployBranches map[string]map[string]string
@@ -1046,6 +1047,7 @@ func NewMemStore() *MemStore {
 		projectsByInstallRepo:       map[installRepoKey]string{},
 		projectEnvironments:         map[string]ProjectEnvironment{},
 		projectEnvironmentApprovals: map[string]ProjectEnvironmentApproval{},
+		projectEnvironmentConfigs:   map[string][]ProjectEnvironmentConfig{},
 	}
 	// Auto-seed default-local. Done after the struct literal so the
 	// seeded row carries a real id and created_at timestamp. Mirrors
@@ -2716,6 +2718,11 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	for environmentID, env := range m.projectEnvironments {
 		if env.ProjectID == projectID {
 			delete(m.projectEnvironments, environmentID)
+		}
+	}
+	for key := range m.projectEnvironmentConfigs {
+		if strings.HasPrefix(key, projectID+"\x00") {
+			delete(m.projectEnvironmentConfigs, key)
 		}
 	}
 	return nil

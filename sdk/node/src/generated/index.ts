@@ -421,6 +421,9 @@ export type { ProgrammaticAuthResponse } from './models/ProgrammaticAuthResponse
 export type { ProjectApplyRequest } from './models/ProjectApplyRequest.js';
 export type { ProjectDeletePreviewResponse } from './models/ProjectDeletePreviewResponse.js';
 export type { ProjectEnvironmentApprovalResponse } from './models/ProjectEnvironmentApprovalResponse.js';
+export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironmentConfigChange.js';
+export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';
+export type { ProjectEnvironmentConfigResponse } from './models/ProjectEnvironmentConfigResponse.js';
 export type { ProjectEnvironmentResponse } from './models/ProjectEnvironmentResponse.js';
 export type { ProjectResponse } from './models/ProjectResponse.js';
 export type { ProjectScanRequest } from './models/ProjectScanRequest.js';
@@ -544,6 +547,7 @@ export type { UpdateEdgeRuleRequest } from './models/UpdateEdgeRuleRequest.js';
 export type { UpdateJobRequest } from './models/UpdateJobRequest.js';
 export type { UpdateManagedRealtimeEndpointRequest } from './models/UpdateManagedRealtimeEndpointRequest.js';
 export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.js';
+export type { UpdateProjectEnvironmentConfigRequest } from './models/UpdateProjectEnvironmentConfigRequest.js';
 export type { UpdateProjectEnvironmentRequest } from './models/UpdateProjectEnvironmentRequest.js';
 export type { UpdateProjectRequest } from './models/UpdateProjectRequest.js';
 export type { UpdateTriggerRequest } from './models/UpdateTriggerRequest.js';
