@@ -881,7 +881,8 @@ func TestUsageDocSlugParity(t *testing.T) {
 		// topic is the joined parent.DocSlug + sub.Name path. Pin it
 		// as a semantic topic so the forward invariant doesn't
 		// false-positive on this CLI surface.
-		"deployments exclude": "operator escape hatch under the deployments verb (ADR-124 code-review fix #2)",
+		"deployments exclude":   "operator escape hatch under the deployments verb (ADR-124 code-review fix #2)",
+		"projects environments": "environment registry under the projects verb",
 	}
 	for k, v := range semantic {
 		accepted[k] = "semantic: " + v

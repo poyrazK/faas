@@ -61,6 +61,7 @@ func Run(t *testing.T, open Open) {
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},
+		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
@@ -101,6 +102,58 @@ func testProjectBindingUpdate(t *testing.T, fx *Fixture) {
 	}
 	if _, err := fx.Store.UpdateProjectBinding(fx.Ctx, uuid.NewString(), project.ID, "", "other", 0); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account update err = %v, want ErrNotFound", err)
+	}
+}
+
+func testProjectEnvironmentRegistry(t *testing.T, fx *Fixture) {
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "environment-" + uuid.NewString()[:8],
+		ProductionBranch: "main", ScanSource: state.ProjectScanSourceConvention,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	environments, err := fx.Store.ListProjectEnvironments(fx.Ctx, fx.Account.ID, project.ID)
+	if err != nil {
+		t.Fatalf("ListProjectEnvironments(initial): %v", err)
+	}
+	if len(environments) != 1 || environments[0].Slug != "production" || !environments[0].Protected {
+		t.Fatalf("initial environments = %+v, want protected production", environments)
+	}
+
+	staging, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "staging",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectEnvironment: %v", err)
+	}
+	if staging.Protected {
+		t.Fatalf("new staging environment = %+v, want unprotected", staging)
+	}
+	if _, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "staging",
+	}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("duplicate environment err = %v, want ErrConflict", err)
+	}
+
+	got, err := fx.Store.ProjectEnvironmentBySlug(fx.Ctx, fx.Account.ID, project.ID, "staging")
+	if err != nil {
+		t.Fatalf("ProjectEnvironmentBySlug: %v", err)
+	}
+	if got.ID != staging.ID || got.Slug != "staging" || got.Protected {
+		t.Fatalf("staging environment = %+v", got)
+	}
+
+	updated, err := fx.Store.UpdateProjectEnvironmentProtection(fx.Ctx, fx.Account.ID, project.ID, "staging", true)
+	if err != nil {
+		t.Fatalf("UpdateProjectEnvironmentProtection: %v", err)
+	}
+	if !updated.Protected || updated.ID != staging.ID {
+		t.Fatalf("updated staging environment = %+v, want protected and stable ID", updated)
+	}
+	if _, err := fx.Store.ListProjectEnvironments(fx.Ctx, uuid.NewString(), project.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account environment list err = %v, want ErrNotFound", err)
 	}
 }
 
