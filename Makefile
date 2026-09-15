@@ -408,6 +408,13 @@ e2e: ## End-to-end tests in cmd/e2e (needs Postgres reachable; metal subset via 
 	# reruns + cold-cache cold-runner edge cases.
 	$(GO) test -race -count=1 -timeout=20m ./cmd/e2e/...
 
+.PHONY: e2e-general
+e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Postgres; needs DATABASE_URL).
+	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-general needs DATABASE_URL set to a reachable Postgres" ; exit 1)
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set; set it to a reachable Postgres to run e2e-general" ; exit 1)
+	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "Postgres is not reachable; e2e-general refuses a green no-op run" ; exit 1)
+	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_NormalPath_' ./cmd/e2e/...
+
 .PHONY: e2e-sandbox
 e2e-sandbox: ## Live Paddle sandbox walk (operator-only; PR-P3). Reads secrets from secrets/.env.sandbox — NEVER committed.
 	@test -f secrets/.env.sandbox || (echo "secrets/.env.sandbox missing; create it with FAAS_PADDLE_SANDBOX_API_KEY + FAAS_PADDLE_SANDBOX_WEBHOOK_SECRET from api.sandbox.paddle.com" ; exit 1)
