@@ -338,12 +338,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		port = uint32(sidecarPort)
 	}
 	init := &vmmdpb.ForwardHTTPRequestInit{
-		Instance:    r.Header.Get("x-faas-instance"),
-		Method:      r.Method,
-		RequestUri:  r.URL.RequestURI(),
-		Port:        port,
-		Stream:      true,
-		AppProtocol: protocol,
+		Instance:           r.Header.Get("x-faas-instance"),
+		Method:             r.Method,
+		RequestUri:         r.URL.RequestURI(),
+		Port:               port,
+		Stream:             true,
+		AppProtocol:        protocol,
+		ContentLength:      max(r.ContentLength, 0),
+		ContentLengthKnown: r.ContentLength >= 0 && len(r.TransferEncoding) == 0,
 	}
 	// The gRPC client handler propagates the current span to vmmd, but
 	// the guest request is a new HTTP carrier assembled from this init

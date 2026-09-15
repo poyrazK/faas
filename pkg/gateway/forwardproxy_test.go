@@ -228,6 +228,72 @@ func noContentHTTPStream() *fakeBidiStream {
 	}
 }
 
+func TestForwardingReverseProxy_PreservesRequestContentLength(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		configure  func(*http.Request)
+		wantLength int64
+		wantKnown  bool
+	}{
+		{
+			name:       "bodyless-get-is-known-zero",
+			wantLength: 0,
+			wantKnown:  true,
+		},
+		{
+			name:       "fixed-body-keeps-length",
+			body:       "hello",
+			wantLength: 5,
+			wantKnown:  true,
+		},
+		{
+			name: "chunked-body-remains-unknown",
+			body: "hello",
+			configure: func(req *http.Request) {
+				req.ContentLength = -1
+				req.TransferEncoding = []string{"chunked"}
+			},
+			wantLength: 0,
+			wantKnown:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := noContentHTTPStream()
+			proxy := gateway.ForwardingReverseProxy(&fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}, nil)
+			var body io.Reader
+			method := http.MethodGet
+			if tc.body != "" {
+				body = strings.NewReader(tc.body)
+				method = http.MethodPost
+			}
+			req := httptest.NewRequest(method, "/content-length", body)
+			req.Header.Set("x-faas-instance", "i-test")
+			if tc.configure != nil {
+				tc.configure(req)
+			}
+			rec := httptest.NewRecorder()
+			proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want 204", rec.Code)
+			}
+			if len(stream.Sends) == 0 || stream.Sends[0].GetInit() == nil {
+				t.Fatal("forwarder did not send an init frame")
+			}
+			init := stream.Sends[0].GetInit()
+			if got := init.GetContentLengthKnown(); got != tc.wantKnown {
+				t.Errorf("content_length_known = %t, want %t", got, tc.wantKnown)
+			}
+			if got := init.GetContentLength(); got != tc.wantLength {
+				t.Errorf("content_length = %d, want %d", got, tc.wantLength)
+			}
+		})
+	}
+}
+
 func headerValue(headers []*vmmdpb.Header, name string) string {
 	for _, h := range headers {
 		if strings.EqualFold(h.GetName(), name) {

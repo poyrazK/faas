@@ -215,7 +215,7 @@ func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, gue
 	// non-http scheme surfaces as `unsupported scheme` (tested
 	// by h2c_terminator_test.go::TestHandleH2CStream_UnaryRequest).
 	outboundURL := "http://" + net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)) + uri
-	outboundReq, err := http.NewRequestWithContext(ctx, method, outboundURL, r.Body)
+	outboundReq, err := newGuestRequest(ctx, method, outboundURL, r)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("build outbound request: %v", err), http.StatusBadGateway)
 		return

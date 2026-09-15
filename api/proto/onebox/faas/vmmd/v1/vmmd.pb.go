@@ -4004,9 +4004,18 @@ type ForwardHTTPRequestInit struct {
 	// `http2|grpc` → H2C terminator on the bridge (prior-knowledge). Wire-
 	// additive per ADR-016; legacy callers (no field set → "") default to
 	// H1+chunked so behavior is preserved.
-	AppProtocol   string `protobuf:"bytes,7,opt,name=app_protocol,json=appProtocol,proto3" json:"app_protocol,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AppProtocol string `protobuf:"bytes,7,opt,name=app_protocol,json=appProtocol,proto3" json:"app_protocol,omitempty"`
+	// content_length carries the gateway's parsed request length. It is valid
+	// only when content_length_known is true. Preserving a known zero lets vmmd
+	// represent a bodyless GET as a closed HTTP/2 stream. The bridge can then
+	// pass http.NoBody to the guest HTTP/1 transport; an unknown body there is
+	// otherwise probed for up to 200 ms before the request head is sent. A
+	// positive value also preserves fixed-length framing. Streaming/chunked
+	// requests leave content_length_known false.
+	ContentLength      int64 `protobuf:"varint,8,opt,name=content_length,json=contentLength,proto3" json:"content_length,omitempty"`
+	ContentLengthKnown bool  `protobuf:"varint,9,opt,name=content_length_known,json=contentLengthKnown,proto3" json:"content_length_known,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ForwardHTTPRequestInit) Reset() {
@@ -4086,6 +4095,20 @@ func (x *ForwardHTTPRequestInit) GetAppProtocol() string {
 		return x.AppProtocol
 	}
 	return ""
+}
+
+func (x *ForwardHTTPRequestInit) GetContentLength() int64 {
+	if x != nil {
+		return x.ContentLength
+	}
+	return 0
+}
+
+func (x *ForwardHTTPRequestInit) GetContentLengthKnown() bool {
+	if x != nil {
+		return x.ContentLengthKnown
+	}
+	return false
 }
 
 // ForwardHTTPStreamResponse is one frame on the server→client
@@ -6062,7 +6085,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x04init\x18\x01 \x01(\v2+.onebox.faas.vmmd.v1.ForwardHTTPRequestInitH\x00R\x04init\x12\x1f\n" +
 	"\n" +
 	"body_chunk\x18\x02 \x01(\fH\x00R\tbodyChunkB\a\n" +
-	"\x05frame\"\xf3\x01\n" +
+	"\x05frame\"\xcc\x02\n" +
 	"\x16ForwardHTTPRequestInit\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x16\n" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +
@@ -6071,7 +6094,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\aheaders\x18\x04 \x03(\v2\x1b.onebox.faas.vmmd.v1.HeaderR\aheaders\x12\x12\n" +
 	"\x04port\x18\x05 \x01(\rR\x04port\x12\x16\n" +
 	"\x06stream\x18\x06 \x01(\bR\x06stream\x12!\n" +
-	"\fapp_protocol\x18\a \x01(\tR\vappProtocol\"\x89\x01\n" +
+	"\fapp_protocol\x18\a \x01(\tR\vappProtocol\x12%\n" +
+	"\x0econtent_length\x18\b \x01(\x03R\rcontentLength\x120\n" +
+	"\x14content_length_known\x18\t \x01(\bR\x12contentLengthKnown\"\x89\x01\n" +
 	"\x19ForwardHTTPStreamResponse\x12B\n" +
 	"\x04init\x18\x01 \x01(\v2,.onebox.faas.vmmd.v1.ForwardHTTPResponseInitH\x00R\x04init\x12\x1f\n" +
 	"\n" +

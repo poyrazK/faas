@@ -1440,6 +1440,15 @@ message ForwardHTTPRequestInit {
   // additive per ADR-016; legacy callers (no field set → "") default to
   // H1+chunked so behavior is preserved.
   string app_protocol = 7;
+  // content_length carries the gateway's parsed request length. It is valid
+  // only when content_length_known is true. Preserving a known zero lets vmmd
+  // represent a bodyless GET as a closed HTTP/2 stream. The bridge can then
+  // pass http.NoBody to the guest HTTP/1 transport; an unknown body there is
+  // otherwise probed for up to 200 ms before the request head is sent. A
+  // positive value also preserves fixed-length framing. Streaming/chunked
+  // requests leave content_length_known false.
+  int64 content_length = 8;
+  bool content_length_known = 9;
 }
 
 // ForwardHTTPStreamResponse is one frame on the server→client

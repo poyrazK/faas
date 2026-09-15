@@ -13,11 +13,82 @@
 package vmmdgrpc
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 )
+
+func TestNewForwardHTTPRequest_PreservesBodyFraming(t *testing.T) {
+	cases := []struct {
+		name       string
+		init       *vmmdpb.ForwardHTTPRequestInit
+		wantNoBody bool
+		wantLength int64
+	}{
+		{
+			name: "known-zero-uses-no-body",
+			init: &vmmdpb.ForwardHTTPRequestInit{
+				Method:             http.MethodGet,
+				RequestUri:         "/",
+				ContentLengthKnown: true,
+			},
+			wantNoBody: true,
+		},
+		{
+			name: "known-positive-keeps-pipe-and-length",
+			init: &vmmdpb.ForwardHTTPRequestInit{
+				Method:             http.MethodPost,
+				RequestUri:         "/upload",
+				ContentLengthKnown: true,
+				ContentLength:      5,
+			},
+			wantLength: 5,
+		},
+		{
+			name: "legacy-unknown-keeps-streaming-pipe",
+			init: &vmmdpb.ForwardHTTPRequestInit{
+				Method:     http.MethodGet,
+				RequestUri: "/legacy",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bodyReader, bodyWriter := io.Pipe()
+			t.Cleanup(func() {
+				_ = bodyReader.Close()
+				_ = bodyWriter.Close()
+			})
+			req, err := newForwardHTTPRequest(context.Background(), tc.init, bodyReader)
+			if err != nil {
+				t.Fatalf("newForwardHTTPRequest: %v", err)
+			}
+			if got := req.Body == http.NoBody; got != tc.wantNoBody {
+				t.Errorf("Body == http.NoBody is %t, want %t", got, tc.wantNoBody)
+			}
+			if req.ContentLength != tc.wantLength {
+				t.Errorf("ContentLength = %d, want %d", req.ContentLength, tc.wantLength)
+			}
+		})
+	}
+}
+
+func TestNewForwardHTTPRequest_RejectsNegativeKnownLength(t *testing.T) {
+	_, err := newForwardHTTPRequest(context.Background(), &vmmdpb.ForwardHTTPRequestInit{
+		Method:             http.MethodPost,
+		RequestUri:         "/",
+		ContentLengthKnown: true,
+		ContentLength:      -1,
+	}, strings.NewReader(""))
+	if err == nil {
+		t.Fatal("negative known content length was accepted")
+	}
+}
 
 // TestCurrentStreamBridgeVersion_LiveRollback verifies the per-
 // request FAAS_STREAM_BRIDGE_VERSION env lookup. Each t.Setenv
