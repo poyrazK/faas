@@ -5528,6 +5528,20 @@ type Project struct {
 	UpdatedAt        time.Time
 }
 
+// ProjectEnvironment is a durable, account-scoped environment registry entry.
+// It intentionally does not own workloads yet; that attachment is a later
+// promotion step. The registry makes environment identity and protection
+// policy explicit without changing deploy or routing behavior.
+type ProjectEnvironment struct {
+	ID        string
+	AccountID string
+	ProjectID string
+	Slug      string
+	Protected bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // IsZero reports whether this is an unset Project (Go zero value).
 // store-layer scans can return such a value via the concrete-type
 // `Project{}` initializer that the pgx `Scan` into a value receiver

@@ -1452,6 +1452,10 @@ List projects in this account
 
 Show a project and its workloads
 
+### projects environments
+
+Manage project environments (list|create|protect|unprotect)
+
 ### projects update
 
 Update repository or production branch

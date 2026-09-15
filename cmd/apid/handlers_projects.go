@@ -247,3 +247,130 @@ func projectNotFound(slug string) *api.Problem {
 	return api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 		"Project not found", "no project exists with slug "+slug)
 }
+
+func (s *server) listProjectEnvironments(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	project, ok := s.loadProject(w, r, acct)
+	if !ok {
+		return
+	}
+	environments, err := s.store.ListProjectEnvironments(r.Context(), acct.ID, project.ID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, projectNotFound(project.Slug))
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not list project environments"))
+		}
+		return
+	}
+	out := make([]api.ProjectEnvironmentResponse, 0, len(environments))
+	for _, environment := range environments {
+		out = append(out, projectEnvironmentResponse(environment))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *server) getProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	project, ok := s.loadProject(w, r, acct)
+	if !ok {
+		return
+	}
+	environment, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, project.ID, r.PathValue("environment"))
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, r.PathValue("environment")))
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not load project environment"))
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, projectEnvironmentResponse(environment))
+}
+
+func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	project, ok := s.loadProject(w, r, acct)
+	if !ok {
+		return
+	}
+	var req api.CreateProjectEnvironmentRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	req.Slug = strings.TrimSpace(req.Slug)
+	if !api.ValidProjectEnvironmentSlug(req.Slug) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid environment slug", "slug must contain 1-33 lowercase letters, numbers, or internal hyphens"))
+		return
+	}
+	protected := false
+	if req.Protected != nil {
+		protected = *req.Protected
+	}
+	environment, err := s.store.CreateProjectEnvironment(r.Context(), state.ProjectEnvironment{
+		AccountID: acct.ID, ProjectID: project.ID, Slug: req.Slug, Protected: protected,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, projectNotFound(project.Slug))
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Environment already exists", "the project already has an environment with this slug"))
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
+		}
+		return
+	}
+	s.audit.Emit(r.Context(), "project.environment.created", &acct.ID, map[string]any{
+		"project_id": project.ID, "project_slug": project.Slug,
+		"environment_id": environment.ID, "environment_slug": environment.Slug,
+		"protected": environment.Protected,
+	})
+	writeJSON(w, http.StatusCreated, projectEnvironmentResponse(environment))
+}
+
+func (s *server) updateProjectEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	project, ok := s.loadProject(w, r, acct)
+	if !ok {
+		return
+	}
+	var req api.UpdateProjectEnvironmentRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if req.Protected == nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Empty update", "protected is required"))
+		return
+	}
+	environment, err := s.store.UpdateProjectEnvironmentProtection(r.Context(), acct.ID, project.ID, r.PathValue("environment"), *req.Protected)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, r.PathValue("environment")))
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not update project environment"))
+		}
+		return
+	}
+	s.audit.Emit(r.Context(), "project.environment.updated", &acct.ID, map[string]any{
+		"project_id": project.ID, "project_slug": project.Slug,
+		"environment_id": environment.ID, "environment_slug": environment.Slug,
+		"protected": environment.Protected,
+	})
+	writeJSON(w, http.StatusOK, projectEnvironmentResponse(environment))
+}
+
+func projectEnvironmentResponse(environment state.ProjectEnvironment) api.ProjectEnvironmentResponse {
+	return api.ProjectEnvironmentResponse{
+		ID: environment.ID, ProjectID: environment.ProjectID, Slug: environment.Slug,
+		Protected: environment.Protected,
+		CreatedAt: environment.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt: environment.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func projectEnvironmentNotFound(projectSlug, environmentSlug string) *api.Problem {
+	return api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+		"Project environment not found", "no environment "+environmentSlug+" exists in project "+projectSlug)
+}

@@ -4176,6 +4176,32 @@ func scanProjects(rows pgx.Rows) ([]Project, error) {
 	return out, rows.Err()
 }
 
+func scanProjectEnvironment(row pgx.Row) (ProjectEnvironment, error) {
+	var env ProjectEnvironment
+	if err := row.Scan(
+		&env.ID, &env.AccountID, &env.ProjectID, &env.Slug, &env.Protected,
+		&env.CreatedAt, &env.UpdatedAt,
+	); err != nil {
+		return ProjectEnvironment{}, mapErr(err)
+	}
+	return env, nil
+}
+
+func scanProjectEnvironments(rows pgx.Rows) ([]ProjectEnvironment, error) {
+	out := make([]ProjectEnvironment, 0)
+	for rows.Next() {
+		var env ProjectEnvironment
+		if err := rows.Scan(
+			&env.ID, &env.AccountID, &env.ProjectID, &env.Slug, &env.Protected,
+			&env.CreatedAt, &env.UpdatedAt,
+		); err != nil {
+			return nil, mapErr(err)
+		}
+		out = append(out, env)
+	}
+	return out, rows.Err()
+}
+
 // CreateProject inserts a new project row. The accounts FK is enforced
 // by Postgres; an unknown accountID surfaces as ErrFKViolation via
 // mapErr → 23503. The (account_id, slug) unique projects_account_slug_uniq
@@ -4185,7 +4211,12 @@ func (s *PgStore) CreateProject(ctx context.Context, p Project) (Project, error)
 	if p.ScanSource == "" {
 		p.ScanSource = ProjectScanSourceUnknown
 	}
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Project{}, fmt.Errorf("state: begin create project: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx, `
 		insert into projects
 		    (account_id, slug, repo_full_name, production_branch, install_id, scan_source)
 		values ($1, $2, $3, $4, $5, $6)
@@ -4208,6 +4239,16 @@ func (s *PgStore) CreateProject(ctx context.Context, p Project) (Project, error)
 			return Project{}, fmt.Errorf("%w: %s", ErrNotFound, pgErr.ConstraintName)
 		}
 		return Project{}, mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into project_environments (account_id, project_id, slug, protected)
+		values ($1, $2, 'production', true)
+		on conflict (project_id, slug) do nothing
+	`, proj.AccountID, proj.ID); err != nil {
+		return Project{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Project{}, fmt.Errorf("state: commit create project: %w", err)
 	}
 	return proj, nil
 }
@@ -4386,6 +4427,80 @@ func (s *PgStore) DeleteProject(ctx context.Context, projectID string) error {
 	return nil
 }
 
+func (s *PgStore) ListProjectEnvironments(ctx context.Context, accountID, projectID string) ([]ProjectEnvironment, error) {
+	// A missing or cross-account project is a 404, not an empty list.
+	if _, err := s.projectByIDForAccount(ctx, accountID, projectID); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		select e.id, e.account_id, e.project_id, e.slug, e.protected,
+		       e.created_at, e.updated_at
+		  from project_environments e
+		  join projects p on p.id = e.project_id
+		 where p.account_id = $1 and e.project_id = $2
+		 order by e.slug asc
+	`, accountID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanProjectEnvironments(rows)
+}
+
+// projectByIDForAccount is the ownership probe used by environment reads. It is
+// kept private to the store surface so callers cannot accidentally widen the
+// environment query beyond the owning project.
+func (s *PgStore) projectByIDForAccount(ctx context.Context, accountID, projectID string) (Project, error) {
+	row := s.pool.QueryRow(ctx, `
+		select id, account_id, slug, coalesce(repo_full_name,''),
+		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
+		       created_at, updated_at
+		  from projects where id = $1 and account_id = $2
+	`, projectID, accountID)
+	return scanProject(row)
+}
+
+func (s *PgStore) ProjectEnvironmentBySlug(ctx context.Context, accountID, projectID, slug string) (ProjectEnvironment, error) {
+	row := s.pool.QueryRow(ctx, `
+		select e.id, e.account_id, e.project_id, e.slug, e.protected,
+		       e.created_at, e.updated_at
+		  from project_environments e
+		  join projects p on p.id = e.project_id
+		 where p.account_id = $1 and e.project_id = $2 and e.slug = $3
+	`, accountID, projectID, slug)
+	return scanProjectEnvironment(row)
+}
+
+func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
+	project, err := s.ProjectByID(ctx, env.ProjectID)
+	if err != nil || project.AccountID != env.AccountID {
+		return ProjectEnvironment{}, ErrNotFound
+	}
+	row := s.pool.QueryRow(ctx, `
+		insert into project_environments (account_id, project_id, slug, protected)
+		values ($1, $2, $3, $4)
+		returning id, account_id, project_id, slug, protected, created_at, updated_at
+	`, env.AccountID, env.ProjectID, env.Slug, env.Protected)
+	created, err := scanProjectEnvironment(row)
+	if err != nil {
+		return ProjectEnvironment{}, mapErr(err)
+	}
+	return created, nil
+}
+
+func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error) {
+	row := s.pool.QueryRow(ctx, `
+		update project_environments e
+		   set protected = $4, updated_at = now()
+		  from projects p
+		 where p.id = e.project_id and p.account_id = $1
+		   and e.project_id = $2 and e.slug = $3
+		returning e.id, e.account_id, e.project_id, e.slug, e.protected,
+		          e.created_at, e.updated_at
+	`, accountID, projectID, slug, protected)
+	return scanProjectEnvironment(row)
+}
+
 // ApplyProjectPlan persists a project + its member apps + crons in
 // one transaction. The critical section sits behind a
 // `SELECT … FOR UPDATE` on the parent accounts row so two concurrent
@@ -4513,6 +4628,12 @@ func (s *PgStore) ApplyProjectPlan(
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
 			return Project{}, nil, nil, fmt.Errorf("%w: %s", ErrNotFound, pgErr.ConstraintName)
 		}
+		return Project{}, nil, nil, mapErr(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into project_environments (account_id, project_id, slug, protected)
+		values ($1, $2, 'production', true)
+	`, insertedProject.AccountID, insertedProject.ID); err != nil {
 		return Project{}, nil, nil, mapErr(err)
 	}
 

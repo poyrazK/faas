@@ -47,3 +47,24 @@ type ProjectDeletePreviewResponse struct {
 	EnvCount    int                       `json:"env_count"`
 	CronCount   int                       `json:"cron_count"`
 }
+
+// ProjectEnvironmentResponse is one durable environment registry entry.
+type ProjectEnvironmentResponse struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	Slug      string `json:"slug"`
+	Protected bool   `json:"protected"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// CreateProjectEnvironmentRequest registers a named project environment.
+type CreateProjectEnvironmentRequest struct {
+	Slug      string `json:"slug"`
+	Protected *bool  `json:"protected,omitempty"`
+}
+
+// UpdateProjectEnvironmentRequest changes only environment protection.
+type UpdateProjectEnvironmentRequest struct {
+	Protected *bool `json:"protected,omitempty"`
+}

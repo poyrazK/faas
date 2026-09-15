@@ -10218,6 +10218,94 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment registry is addressed.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    get:
+      tags: [projects]
+      operationId: listProjectEnvironments
+      summary: List durable environments for a project.
+      responses:
+        '200':
+          description: Account-scoped project environments.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [projects]
+      operationId: createProjectEnvironment
+      summary: Create a durable project environment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentRequest' }
+      responses:
+        '201':
+          description: Project environment created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the environment.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment slug.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironment
+      summary: Inspect one project environment.
+      responses:
+        '200':
+          description: Project environment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [projects]
+      operationId: updateProjectEnvironment
+      summary: Update a project's environment protection policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectEnvironmentRequest' }
+      responses:
+        '200':
+          description: Updated project environment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/delete-preview:
     parameters:
       - name: slug
@@ -21522,6 +21610,33 @@ components:
         workload_count: { type: integer, minimum: 0 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    ProjectEnvironmentResponse:
+      description: Durable named environment target for a project.
+      type: object
+      required: [id, project_id, slug, protected, created_at, updated_at]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        project_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        slug: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+        protected: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateProjectEnvironmentRequest:
+      description: Request to register a named project environment.
+      type: object
+      required: [slug]
+      properties:
+        slug: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+        protected: { type: boolean, default: false }
+
+    UpdateProjectEnvironmentRequest:
+      description: Protection policy update for a project environment.
+      type: object
+      required: [protected]
+      properties:
+        protected: { type: boolean }
 
     ProjectWorkloadResponse:
       description: Live app attached to a durable project and its latest release state.

@@ -12,7 +12,7 @@ import (
 
 func cmdProjects(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects <list|info|update|rm>", "projects")
+		PrintUsage(os.Stderr, "usage: gregale projects <list|info|update|environments|rm>", "projects")
 		return 1
 	}
 	switch args[0] {
@@ -22,12 +22,109 @@ func cmdProjects(args []string) int {
 		return cmdProjectsInfo(args[1:])
 	case "update":
 		return cmdProjectsUpdate(args[1:])
+	case "environments", "envs":
+		return cmdProjectsEnvironments(args[1:])
 	case "rm", "delete":
 		return cmdProjectsRemove(args[1:])
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown projects subcommand %q", args[0]), "projects")
 		return 1
 	}
+}
+
+func cmdProjectsEnvironments(args []string) int {
+	if len(args) == 0 {
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect>", "projects environments")
+		return 1
+	}
+	switch args[0] {
+	case "list", "ls":
+		return cmdProjectsEnvironmentsList(args[1:])
+	case "create":
+		return cmdProjectsEnvironmentCreate(args[1:])
+	case "protect":
+		return cmdProjectsEnvironmentProtection(args[1:], true)
+	case "unprotect":
+		return cmdProjectsEnvironmentProtection(args[1:], false)
+	default:
+		PrintUsage(os.Stderr, fmt.Sprintf("unknown project environments subcommand %q", args[0]), "projects environments")
+		return 1
+	}
+}
+
+func cmdProjectsEnvironmentsList(args []string) int {
+	if len(args) != 1 || !api.ValidProjectSlug(args[0]) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments list <project-slug>", "projects environments")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	environments, err := client.ListProjectEnvironments(context.Background(), args[0])
+	if err != nil {
+		return printErr("Request failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeNDJSON(environments))
+	}
+	_, _ = fmt.Fprintf(osStdout, "%-24s %-12s %s\n", "SLUG", "PROTECTED", "UPDATED")
+	for _, environment := range environments {
+		_, _ = fmt.Fprintf(osStdout, "%-24s %-12t %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
+	}
+	return 0
+}
+
+func cmdProjectsEnvironmentCreate(args []string) int {
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("projects-environments-create", flag.ContinueOnError)
+	protected := fs.Bool("protected", false, "protect the environment from promotion")
+	if err := fs.Parse(flags); err != nil || len(positional) != 2 {
+		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--protected]", "projects environments")
+		return 1
+	}
+	if !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
+		return printErr("Invalid environment", fmt.Errorf("project and environment slugs must use lowercase letters, numbers, and internal hyphens"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	environment, err := client.CreateProjectEnvironment(context.Background(), positional[0], api.CreateProjectEnvironmentRequest{
+		Slug: positional[1], Protected: protected,
+	})
+	if err != nil {
+		return printErr("Create failed", err)
+	}
+	return renderProjectEnvironment(environment)
+}
+
+func cmdProjectsEnvironmentProtection(args []string, protected bool) int {
+	if len(args) != 2 || !api.ValidProjectSlug(args[0]) || !api.ValidProjectEnvironmentSlug(args[1]) {
+		verb := "unprotect"
+		if protected {
+			verb = "protect"
+		}
+		PrintUsage(os.Stderr, "usage: gregale projects environments "+verb+" <project-slug> <environment-slug>", "projects environments")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	environment, err := client.UpdateProjectEnvironment(context.Background(), args[0], args[1], api.UpdateProjectEnvironmentRequest{Protected: &protected})
+	if err != nil {
+		return printErr("Update failed", err)
+	}
+	return renderProjectEnvironment(environment)
+}
+
+func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
+	if jsonOutput {
+		return jsonOut(writeJSON(environment))
+	}
+	_, _ = fmt.Fprintf(osStdout, "%s\n  protected: %t\n  updated: %s\n", environment.Slug, environment.Protected, environment.UpdatedAt)
+	return 0
 }
 
 func cmdProjectsList(args []string) int {

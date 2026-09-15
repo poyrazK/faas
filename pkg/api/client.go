@@ -1369,6 +1369,37 @@ func (c *Client) UpdateProject(ctx context.Context, slug string, req UpdateProje
 	return out, c.do(ctx, http.MethodPatch, "/v1/projects/"+url.PathEscape(slug), req, &out)
 }
 
+// ListProjectEnvironments returns the durable environment registry for a
+// project.
+func (c *Client) ListProjectEnvironments(ctx context.Context, projectSlug string) ([]ProjectEnvironmentResponse, error) {
+	var out []ProjectEnvironmentResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectEnvironment returns one durable project environment.
+func (c *Client) GetProjectEnvironment(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentResponse, error) {
+	var out ProjectEnvironmentResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// CreateProjectEnvironment adds a named environment to a project.
+func (c *Client) CreateProjectEnvironment(ctx context.Context, projectSlug string, req CreateProjectEnvironmentRequest) (ProjectEnvironmentResponse, error) {
+	var out ProjectEnvironmentResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// UpdateProjectEnvironment changes only the protection policy for an
+// environment. Runtime and deployment behavior are intentionally unchanged by
+// this registry surface.
+func (c *Client) UpdateProjectEnvironment(ctx context.Context, projectSlug, environmentSlug string, req UpdateProjectEnvironmentRequest) (ProjectEnvironmentResponse, error) {
+	var out ProjectEnvironmentResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug)
+	return out, c.do(ctx, http.MethodPatch, path, req, &out)
+}
+
 // PreviewDeleteProject returns the state related to a project deletion.
 func (c *Client) PreviewDeleteProject(ctx context.Context, slug string) (ProjectDeletePreviewResponse, error) {
 	var out ProjectDeletePreviewResponse

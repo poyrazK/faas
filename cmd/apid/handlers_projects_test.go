@@ -106,6 +106,54 @@ func TestProjectLifecycleHidesOtherAccounts(t *testing.T) {
 	}
 }
 
+func TestProjectEnvironmentRegistryLifecycleAndOwnership(t *testing.T) {
+	srv, store, acct, project, _ := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+
+	environments, err := store.ListProjectEnvironments(ctx, acct.ID, project.ID)
+	if err != nil || len(environments) != 1 || environments[0].Slug != "production" || !environments[0].Protected {
+		t.Fatalf("production environment = %+v err=%v", environments, err)
+	}
+
+	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"staging","protected":true}`))
+	req.SetPathValue("environment", "staging")
+	srv.createProjectEnvironment(rec, req, acct)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req, rec = projectRequest(http.MethodPatch, "/v1/projects/shop/environments/staging", "shop", []byte(`{"protected":false}`))
+	req.SetPathValue("environment", "staging")
+	srv.updateProjectEnvironment(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var updated api.ProjectEnvironmentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil || updated.Slug != "staging" || updated.Protected {
+		t.Fatalf("updated environment=%+v err=%v", updated, err)
+	}
+
+	req, rec = projectRequest(http.MethodGet, "/v1/projects/shop/environments", "shop", nil)
+	srv.listProjectEnvironments(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var listed []api.ProjectEnvironmentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil || len(listed) != 2 {
+		t.Fatalf("listed environments=%+v err=%v", listed, err)
+	}
+
+	other, err := store.CreateAccount(ctx, "other-environment-owner@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, rec = projectRequest(http.MethodGet, "/v1/projects/shop/environments", "shop", nil)
+	srv.listProjectEnvironments(rec, req, other)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-account list status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func projectDashboardPost(t *testing.T, srv *server, acct state.Account, path, slug string, values url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	token, err := middleware.IssueForAuthenticated(srv.sessions, dashboardProjectManageAction, acct.ID)

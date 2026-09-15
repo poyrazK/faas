@@ -649,6 +649,7 @@ type MemStore struct {
 	projects              map[string]Project
 	projectsByAccountSlug map[string]map[string]string // account_id → slug → id
 	projectsByInstallRepo map[installRepoKey]string    // install_id, repo_full_name → id
+	projectEnvironments   map[string]ProjectEnvironment
 	// githubDeployBranches stores the optional branch→scope rules keyed by
 	// project ID. It mirrors github_deploy_branches in Postgres.
 	githubDeployBranches map[string]map[string]string
@@ -1037,6 +1038,7 @@ func NewMemStore() *MemStore {
 		projects:              map[string]Project{},
 		projectsByAccountSlug: map[string]map[string]string{},
 		projectsByInstallRepo: map[installRepoKey]string{},
+		projectEnvironments:   map[string]ProjectEnvironment{},
 	}
 	// Auto-seed default-local. Done after the struct literal so the
 	// seeded row carries a real id and created_at timestamp. Mirrors
@@ -2488,7 +2490,22 @@ func (m *MemStore) CreateProject(_ context.Context, p Project) (Project, error) 
 	if p.InstallID != 0 && p.RepoFullName != "" {
 		m.projectsByInstallRepo[installRepoKey{InstallID: p.InstallID, RepoFullName: p.RepoFullName}] = p.ID
 	}
+	m.seedProjectProductionEnvironmentLocked(p)
 	return p, nil
+}
+
+func (m *MemStore) seedProjectProductionEnvironmentLocked(p Project) {
+	for _, env := range m.projectEnvironments {
+		if env.ProjectID == p.ID && env.Slug == "production" {
+			return
+		}
+	}
+	now := time.Now()
+	id := newID()
+	m.projectEnvironments[id] = ProjectEnvironment{
+		ID: id, AccountID: p.AccountID, ProjectID: p.ID, Slug: "production",
+		Protected: true, CreatedAt: now, UpdatedAt: now,
+	}
 }
 
 func (m *MemStore) ProjectByID(_ context.Context, projectID string) (Project, error) {
@@ -2689,7 +2706,88 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			m.apps[appID] = a
 		}
 	}
+	for environmentID, env := range m.projectEnvironments {
+		if env.ProjectID == projectID {
+			delete(m.projectEnvironments, environmentID)
+		}
+	}
 	return nil
+}
+
+func (m *MemStore) ListProjectEnvironments(_ context.Context, accountID, projectID string) ([]ProjectEnvironment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	project, ok := m.projects[projectID]
+	if !ok || project.AccountID != accountID {
+		return nil, ErrNotFound
+	}
+	out := make([]ProjectEnvironment, 0)
+	for _, env := range m.projectEnvironments {
+		if env.ProjectID == projectID {
+			out = append(out, env)
+		}
+	}
+	slices.SortFunc(out, func(a, b ProjectEnvironment) int {
+		return strings.Compare(a.Slug, b.Slug)
+	})
+	return out, nil
+}
+
+func (m *MemStore) ProjectEnvironmentBySlug(_ context.Context, accountID, projectID, slug string) (ProjectEnvironment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	project, ok := m.projects[projectID]
+	if !ok || project.AccountID != accountID {
+		return ProjectEnvironment{}, ErrNotFound
+	}
+	for _, env := range m.projectEnvironments {
+		if env.ProjectID == projectID && env.Slug == slug {
+			return env, nil
+		}
+	}
+	return ProjectEnvironment{}, ErrNotFound
+}
+
+func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	project, ok := m.projects[env.ProjectID]
+	if !ok || project.AccountID != env.AccountID {
+		return ProjectEnvironment{}, ErrNotFound
+	}
+	for _, existing := range m.projectEnvironments {
+		if existing.ProjectID == env.ProjectID && existing.Slug == env.Slug {
+			return ProjectEnvironment{}, ErrConflict
+		}
+	}
+	if env.ID == "" {
+		env.ID = newID()
+	}
+	now := time.Now()
+	if env.CreatedAt.IsZero() {
+		env.CreatedAt = now
+	}
+	env.UpdatedAt = now
+	m.projectEnvironments[env.ID] = env
+	return env, nil
+}
+
+func (m *MemStore) UpdateProjectEnvironmentProtection(_ context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	project, ok := m.projects[projectID]
+	if !ok || project.AccountID != accountID {
+		return ProjectEnvironment{}, ErrNotFound
+	}
+	for id, env := range m.projectEnvironments {
+		if env.ProjectID == projectID && env.Slug == slug {
+			env.Protected = protected
+			env.UpdatedAt = time.Now()
+			m.projectEnvironments[id] = env
+			return env, nil
+		}
+	}
+	return ProjectEnvironment{}, ErrNotFound
 }
 
 // ApplyProjectPlan — Phase 3 transactional seam. Mirrors the
@@ -2777,6 +2875,7 @@ func (m *MemStore) ApplyProjectPlan(
 		project.ScanSource = ProjectScanSourceUnknown
 	}
 	m.projects[project.ID] = project
+	m.seedProjectProductionEnvironmentLocked(project)
 
 	// 6. Insert apps. The apply handler resolves crons[i].AppID
 	// against the just-inserted apps — callers see the same Cron

@@ -2146,6 +2146,14 @@ type Store interface {
 	UpdateProjectBinding(ctx context.Context, accountID, projectID, repoFullName, productionBranch string, installID int64) (Project, error)
 	DeleteProject(ctx context.Context, projectID string) error
 
+	// Project environments are durable named targets for a project. Reads are
+	// account-scoped and return ErrNotFound for cross-account access; duplicate
+	// slugs return ErrConflict.
+	ListProjectEnvironments(ctx context.Context, accountID, projectID string) ([]ProjectEnvironment, error)
+	ProjectEnvironmentBySlug(ctx context.Context, accountID, projectID, slug string) (ProjectEnvironment, error)
+	CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error)
+	UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error)
+
 	// ApplyProjectPlan persists a project + its member apps + crons
 	// in a single transaction. Quota is checked inside the locked
 	// critical section; an over-quota call returns *QuotaError with
