@@ -33,6 +33,14 @@ on:
     # flock, so an overrun waits rather than collides.
     - cron: "43 4 * * *"
   workflow_dispatch:
+    inputs:
+      keep_node_running:
+        description: >-
+          Leave faas-acceptance-1 running after the gate finishes, to debug on
+          the host. Costs money until someone stops it by hand — the default
+          stops the node on every exit path, including cancellation.
+        type: boolean
+        default: false
 
 concurrency:
   # Per-host group. builder-native.yml still runs on faas-compute-node-2, so
@@ -116,11 +124,9 @@ jobs:
           )"
           case "$status" in
             RUNNING)
-              echo "Acceptance node was already running; this workflow will leave it running."
-              echo "started=false" >> "$GITHUB_OUTPUT"
+              echo "Acceptance node was already running; a previous run left it up."
               ;;
             TERMINATED)
-              echo "started=true" >> "$GITHUB_OUTPUT"
               gcloud compute instances start "$GCP_INSTANCE" --quiet \
                 --project "$GCP_PROJECT" --zone "$GCP_ZONE"
               ;;
@@ -441,9 +447,26 @@ jobs:
           retention-days: 14
 
       - name: Stop the acceptance node
-        # Only when this run started it: a node that was already running
-        # belongs to whoever started it.
-        if: always() && steps.compute-node.outputs.started == 'true'
+        # Stop it whoever started it.
+        #
+        # This used to stop the node only when THIS run started it, on the
+        # reasoning that a node found already running belonged to whoever
+        # started it. That reasoning leaks: the first run to be cancelled
+        # mid-flight leaves the node up, and every run after it then observes
+        # RUNNING, sets started=false, and declines to stop it too. The node
+        # bills until a human notices. That is what happened between runs
+        # 35010949241 and 35016399564 — three consecutive runs each skipped
+        # the stop step and the node stayed up for hours.
+        #
+        # faas-acceptance-1 is a dedicated CI box with no tenants and no other
+        # owner, so "somebody else's node" is not a real case here; the gate is
+        # the only thing that ever runs on it. Stop it unconditionally instead,
+        # and give the one legitimate exception — debugging on the host — an
+        # explicit opt-in rather than an accident.
+        #
+        # always() so cancellation and failure still stop it; that is the exact
+        # path that leaked.
+        if: always() && inputs.keep_node_running != true
         run: |
           set -euo pipefail
           gcloud compute instances stop "$GCP_INSTANCE" --quiet \
