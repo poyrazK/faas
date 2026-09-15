@@ -83,15 +83,19 @@ import (
 //
 // Fields are exported for test consumption: H.APIDURL, H.GatewayURL, H.Pool.
 type Harness struct {
-	T                 *testing.T
-	Pool              *pgxpool.Pool
-	TmpDir            string
-	BinDir            string
-	SockDir           string // short-path unix-socket directory (see Start comment)
-	APIDURL           string
-	ScheddSock        string
-	VMMDPath          string
-	VMMDSock          string
+	T          *testing.T
+	Pool       *pgxpool.Pool
+	TmpDir     string
+	BinDir     string
+	SockDir    string // short-path unix-socket directory (see Start comment)
+	APIDURL    string
+	ScheddSock string
+	VMMDPath   string
+	VMMDSock   string
+	// SignKeyPath is the PRIVATE half of the cosign keypair whose public half
+	// schedd verifies with. imaged must sign with this exact key; see
+	// writeScheddSignPub.
+	SignKeyPath       string
 	GatewayURL        string
 	GatewayControlURL string // /metrics + /healthz, loopback only
 	// RecoveryHMACKeyHex is a per-test 64-char hex string (32 bytes
@@ -270,6 +274,13 @@ kernel_path = %q
 			}
 		}
 		env := imagedEnv(t, dbURL, guestInit, appsRoot, tmp)
+		// imaged must sign with the same keypair schedd verifies against
+		// (FAAS_SIGN_PUB). Without this it falls back to the host's
+		// /etc/faas/secrets/sign.key and every snapshot prime fails with
+		// sig_invalid.
+		if h.SignKeyPath != "" {
+			env = append(env, "FAAS_SIGN_KEY="+h.SignKeyPath)
+		}
 		// Optional builder-base override (Lima / CI without ghcr creds). When
 		// FAAS_TEST_BUILDER_BASE_REF is set, imaged pulls the base from there
 		// instead of the production ghcr.io/poyrazk/builder-base:latest
@@ -1151,7 +1162,7 @@ func newHostHMACKeyFile(t *testing.T, dir string) string {
 // Cleanup is automatic via h.TmpDir (t.TempDir).
 func writeScheddSignPub(t *testing.T, h *Harness) string {
 	t.Helper()
-	_, pubPEM, err := cosign.GenerateKeyPair()
+	privPEM, pubPEM, err := cosign.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("e2etest: generate cosign keypair: %v", err)
 	}
@@ -1159,6 +1170,26 @@ func writeScheddSignPub(t *testing.T, h *Harness) string {
 	if err := os.WriteFile(pubPath, pubPEM, 0o444); err != nil {
 		t.Fatalf("e2etest: write sign-pub.pem: %v", err)
 	}
+
+	// Write the PRIVATE half too, and remember it for imagedEnv.
+	//
+	// This used to discard it, so imaged kept signing with the host's
+	// /etc/faas/secrets/sign.key while schedd verified against this freshly
+	// generated public key — a different keypair. Every snapshot prime then
+	// failed with
+	//
+	//	snapshot prime failed: sig_invalid: signature does not match ext4:
+	//	ECDSA P-256 verification failed for layer
+	//
+	// and the deployment went to `failed`, so no build test could ever reach
+	// `live`. Signer and verifier must come from ONE keypair; generating one
+	// and using half of it is what made this look like a signing bug rather
+	// than a wiring bug.
+	privPath := filepath.Join(h.SockDir, "sign.key")
+	if err := os.WriteFile(privPath, privPEM, 0o400); err != nil {
+		t.Fatalf("e2etest: write sign.key: %v", err)
+	}
+	h.SignKeyPath = privPath
 	return pubPath
 }
 
