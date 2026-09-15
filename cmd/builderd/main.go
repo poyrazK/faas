@@ -578,9 +578,13 @@ func resolveBuilderBaseDigestPath(ctx context.Context, sourceStorage storage.Sto
 	}
 	rc, refreshErr := cache.Refresh(ctx, relKey)
 	if refreshErr != nil {
-		// Readiness stays false with an actionable error rather than builderd
-		// refusing to start: imaged pre-stage may still be in flight.
-		return "", nil
+		// Deliberately swallowed. imaged pre-stage may still be in flight, and
+		// builderd refusing to boot over a not-yet-published sidecar would turn
+		// a transient into an outage. The caller falls back to the sibling
+		// derivation, readBuildEnvironment then fails on the missing file, and
+		// readiness stays false with an actionable error — which is the
+		// behaviour a cold node should have.
+		return "", nil //nolint:nilerr // intentional: a cold sidecar is a readiness state, not a boot failure
 	}
 	if closeErr := rc.Close(); closeErr != nil {
 		return "", fmt.Errorf("builderd: close refreshed digest sidecar %q: %w", key, closeErr)
