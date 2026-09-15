@@ -15661,8 +15661,8 @@ components:
       required: [api_availability_pct, wake_p95_ms, build_success_pct, uptime_30d_pct, uptime_30d, incidents, degraded, as_of, source]
       properties:
         api_availability_pct: { type: number }
-        wake_p95_ms: { type: number }
-        build_success_pct: { type: number }
+        wake_p95_ms: { type: number, description: "Platform-only wake p95 over the recent sample window; null when fewer than 20 wakes qualify." }
+        build_success_pct: { type: number, description: "Legacy field name for terminal deployment success over the recent status window. Includes platform-attributable build, scan, snapshot, and readiness failures and excludes builds classified as user_error." }
         uptime_30d_pct: { type: number, minimum: 0, maximum: 100 }
         uptime_30d:
           type: array
