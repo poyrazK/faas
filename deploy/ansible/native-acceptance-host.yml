@@ -87,10 +87,28 @@
             group: root
             mode: "0710"
 
-        - name: native acceptance — write fleet.age
-          ansible.builtin.command:
-            cmd: age-keygen -o /etc/faas/secrets/fleet.age
+        # secretbox.LoadHostKeys passes the WHOLE file to
+        # age.ParseX25519Identity, so the file must contain the bare key line
+        # and nothing else. `age-keygen -o` writes a "# created:" / "# public
+        # key: age1..." header, and the lowercase header mixed with the
+        # uppercase AGE-SECRET-KEY- line makes bech32 reject it:
+        #
+        #   secretbox: parse host key ".../fleet.age": malformed secret key:
+        #   mixed case
+        #
+        # vmmd then exits at boot. Strip to the key line, matching the shape a
+        # fleet-provisioned host already has.
+        - name: native acceptance — write fleet.age (bare key, no comment header)
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail &&
+              umask 077 &&
+              age-keygen 2>/dev/null
+              | grep -m1 '^AGE-SECRET-KEY-'
+              > /etc/faas/secrets/fleet.age
             creates: /etc/faas/secrets/fleet.age
+          args:
+            executable: /bin/bash
 
         - name: native acceptance — derive fleet.age.pub
           ansible.builtin.shell:

@@ -104,6 +104,18 @@
 # Unix socket only. The gate's DSN is host={{ nah_postgres_socket_dir }}; a TCP
 # listener on a compute node would be a new attack surface for no benefit.
 # listen_addresses is PGC_POSTMASTER, hence the restart handler.
+# See nah_postgres_max_connections in defaults/main.yml: the stock 100 is
+# exhausted by 7 daemons x 16 pool connections x parallel tests, and the
+# resulting SQLSTATE 53300 surfaces as daemons that never bind their listener.
+- name: native_acceptance_host — raise max_connections for the e2e cluster
+  ansible.builtin.lineinfile:
+    path: "{{ nah_postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?max_connections\\s*="
+    line: "max_connections = {{ nah_postgres_max_connections }}"
+    create: false
+  notify: restart e2e postgresql
+  when: nah_postgres_enabled | bool
+
 - name: native_acceptance_host — bind the e2e cluster to the unix socket only
   ansible.builtin.lineinfile:
     path: "{{ nah_postgres_config_dir }}/postgresql.conf"

@@ -51,6 +51,21 @@ nah_packages:
 # last thing it needs. A test cluster also must not share a failure domain
 # with production rows.
 nah_postgres_enabled: true
+
+# The stock Ubuntu default is 100, which this suite exhausts. Each harness
+# instance boots 7 daemons and pkg/db opens a pool of up to 16 connections per
+# daemon (112), tests run with parallelism, and pgtest creates a schema per
+# test. On 2026-09-15 apid died mid-run with
+#
+#   FATAL: remaining connection slots are reserved for roles with the
+#   SUPERUSER attribute (SQLSTATE 53300)
+#
+# and 18 tests then failed with "did not accept within 30s" — apid never bound
+# its listener, which reads as a hung daemon rather than an exhausted cluster.
+# This is a dedicated single-purpose cluster on a 15 GB box, so headroom is
+# cheap and starvation is expensive.
+nah_postgres_max_connections: 400
+
 nah_postgres_packages:
   - postgresql
   - postgresql-client
