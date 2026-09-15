@@ -77,7 +77,7 @@ func TestDeployWakeMetal(t *testing.T) {
 	}
 
 	// Fake registry on loopback. Stand it up BEFORE e2etest.Start so imaged's
-	// startup-time `EnsureBaseExt4` can pull `onebox-faas/builder-base:latest`
+	// startup-time `EnsureBaseExt4` can pull `onebox-faas/builder-base` by digest
 	// from the same local registry (FAAS_OCI_INSECURE=1 lets it dial plain
 	// HTTP). This avoids the production ghcr.io endpoint, which 403s for
 	// anonymous pulls. The harness's imaged startup honors
@@ -92,10 +92,17 @@ func TestDeployWakeMetal(t *testing.T) {
 	// layer lands in `above` — exactly the two-drive shape imaged would
 	// see with a real runner base + app diff.
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", helloBody)
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
+	// Digest-pinned, not ":latest": imaged refuses a tag with
+	//
+	//	FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference
+	//
+	// and EXITS at boot. AddImage already returns the pinned ref; this used
+	// to discard it and hand-build a tag, so imaged died on every one of
+	// these tests and the failure surfaced later as a deploy timeout.
+	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", builderBaseRef)
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.Start(t, pool, e2etest.DeployWake)

@@ -127,17 +127,24 @@ func TestCpuFairnessMetal(t *testing.T) {
 	}
 
 	// Stand up the fake OCI registry. imaged's EnsureBaseExt4 needs
-	// onebox-faas/builder-base:latest; the per-deploy base uses the
+	// onebox-faas/builder-base (digest-pinned); the per-deploy base uses the
 	// shared deploy-base whose single layer's diff_id matches the
 	// app layer (so oci.LayersAboveBase filters it out as base
 	// prefix).
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", helloBody)
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
+	// Digest-pinned, not ":latest": imaged refuses a tag with
+	//
+	//	FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference
+	//
+	// and EXITS at boot. AddImage already returns the pinned ref; this used
+	// to discard it and hand-build a tag, so imaged died on every one of
+	// these tests and the failure surfaced later as a deploy timeout.
+	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", builderBaseRef)
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.Start(t, pool, e2etest.DeployWake)
