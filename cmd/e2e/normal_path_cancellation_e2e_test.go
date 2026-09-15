@@ -1,0 +1,140 @@
+package e2e_test
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+)
+
+// TestE2E_NormalPath_CancelledUploadClosesBridge catches a cleanup regression
+// where a client disconnect during a streaming request upload leaves the
+// gateway body-copy goroutine or the VMMD ForwardHTTPStream alive.
+func TestE2E_NormalPath_CancelledUploadClosesBridge(t *testing.T) {
+	f := newNormalPathFixture(t, "normal-cancel-upload")
+	if f == nil {
+		return
+	}
+	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "cancel-upload")
+	f.vmmd.SetVersion(instance.ID, "cancel-upload")
+	waitForNormalPathResponse(t, f.h, f.host, "normal-path:cancel-upload\n", 10*time.Second)
+	probe := f.vmmd.InstallCancellationProbe(instance.ID, true, false)
+
+	requestCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	bodyReader, bodyWriter := io.Pipe()
+	defer func() { _ = bodyWriter.Close() }()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, f.h.GatewayURL+"/cancel-upload", bodyReader)
+	if err != nil {
+		t.Fatalf("new cancel upload request: %v", err)
+	}
+	req.Host = f.host
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	client := *f.h.HTTPClient()
+	requestDone := make(chan error, 1)
+	go func() {
+		resp, err := client.Do(req)
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		requestDone <- err
+	}()
+
+	waitNormalPathProbe(t, probe.initSeen, "bridge init")
+	writeDone := make(chan error, 1)
+	go func() {
+		_, writeErr := bodyWriter.Write([]byte(strings.Repeat("x", 16*1024)))
+		writeDone <- writeErr
+	}()
+	waitNormalPathProbe(t, probe.firstBodySeen, "first request body chunk")
+	select {
+	case writeErr := <-writeDone:
+		if writeErr != nil {
+			t.Fatalf("write partial upload: %v", writeErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("client upload did not deliver the first body chunk")
+	}
+
+	cancel()
+	_ = bodyWriter.CloseWithError(context.Canceled)
+	select {
+	case requestErr := <-requestDone:
+		if requestErr == nil {
+			t.Fatal("cancelled upload unexpectedly returned an HTTP response")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled upload did not terminate the client request")
+	}
+	waitNormalPathProbe(t, probe.canceled, "bridge cancellation")
+}
+
+// TestE2E_NormalPath_CancelledResponseClosesBridge catches a cleanup
+// regression where a client disconnect after response headers leaves the
+// gateway receiver or VMMD stream blocked on a slow response.
+func TestE2E_NormalPath_CancelledResponseClosesBridge(t *testing.T) {
+	f := newNormalPathFixture(t, "normal-cancel-response")
+	if f == nil {
+		return
+	}
+	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "cancel-response")
+	f.vmmd.SetVersion(instance.ID, "cancel-response")
+	waitForNormalPathResponse(t, f.h, f.host, "normal-path:cancel-response\n", 10*time.Second)
+	probe := f.vmmd.InstallCancellationProbe(instance.ID, false, true)
+	f.vmmd.SetResponse(instance.ID, normalPathResponse{
+		status:  http.StatusOK,
+		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
+		body:    []byte(strings.Repeat("y", 512*1024)),
+	})
+
+	requestCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, f.h.GatewayURL+"/cancel-response", nil)
+	if err != nil {
+		t.Fatalf("new cancel response request: %v", err)
+	}
+	req.Host = f.host
+	client := *f.h.HTTPClient()
+	type responseResult struct {
+		resp *http.Response
+		err  error
+	}
+	responseDone := make(chan responseResult, 1)
+	go func() {
+		resp, requestErr := client.Do(req)
+		responseDone <- responseResult{resp: resp, err: requestErr}
+	}()
+
+	waitNormalPathProbe(t, probe.headersSent, "bridge response headers")
+	waitNormalPathProbe(t, probe.firstResponseBody, "first response body chunk")
+	var result responseResult
+	select {
+	case result = <-responseDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("response headers did not reach the client")
+	}
+	if result.err != nil {
+		t.Fatalf("response request failed before cancellation: %v", result.err)
+	}
+	if result.resp == nil || result.resp.StatusCode != http.StatusOK {
+		t.Fatalf("response before cancellation=%v, want HTTP 200", result.resp)
+	}
+
+	cancel()
+	_ = result.resp.Body.Close()
+	waitNormalPathProbe(t, probe.canceled, "bridge cancellation")
+}
+
+func waitNormalPathProbe(t *testing.T, event <-chan struct{}, name string) {
+	t.Helper()
+	select {
+	case <-event:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", name)
+	}
+}

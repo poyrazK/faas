@@ -52,6 +52,8 @@ The current contract is intentionally small and high-signal:
 | `TestE2E_NormalPath_BridgeUnavailableSurfaces503` | VMMD outage maps to a customer-visible 503 |
 | `TestE2E_NormalPath_StoppedInstanceInvalidatesRoute` | stopped instance state invalidates a previously cached route |
 | `TestE2E_NormalPath_GatewayRestartReloadsDurableRoute` | gateway restart rehydrates routing from Postgres |
+| `TestE2E_NormalPath_CancelledUploadClosesBridge` | client cancellation during upload closes the real gateway-to-VMMD stream |
+| `TestE2E_NormalPath_CancelledResponseClosesBridge` | client cancellation after response bytes begin closes the real gateway-to-VMMD stream |
 
 The tests seed a deployment after the source/build/image pipeline has produced
 its durable state. They must not become a second KVM suite. Add a scenario here
@@ -66,8 +68,6 @@ does not replace the full sharded gate.
 
 The next general-path gaps are intentionally tracked rather than hidden:
 
-- client disconnect/cancellation while a request body or response stream is
-  active, including bridge cleanup and no leaked goroutines;
 - concurrent in-flight requests with independent headers, bodies, and trace
   context, plus bounded backpressure behavior;
 - response-side RFC hop-by-hop header filtering and HTTP/2/gRPC app-protocol

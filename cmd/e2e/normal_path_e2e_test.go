@@ -1459,6 +1459,55 @@ func waitForNormalPathResponse(t *testing.T, h *e2etest.Harness, host, want stri
 	return nil
 }
 
+type normalPathCancellationProbe struct {
+	blockRequestBody  bool
+	blockResponseBody bool
+	initSeen          chan struct{}
+	firstBodySeen     chan struct{}
+	headersSent       chan struct{}
+	firstResponseBody chan struct{}
+	canceled          chan struct{}
+	release           chan struct{}
+	initOnce          sync.Once
+	firstBodyOnce     sync.Once
+	headersOnce       sync.Once
+	firstResponseOnce sync.Once
+	canceledOnce      sync.Once
+}
+
+func newNormalPathCancellationProbe(blockRequestBody, blockResponseBody bool) *normalPathCancellationProbe {
+	return &normalPathCancellationProbe{
+		blockRequestBody:  blockRequestBody,
+		blockResponseBody: blockResponseBody,
+		initSeen:          make(chan struct{}),
+		firstBodySeen:     make(chan struct{}),
+		headersSent:       make(chan struct{}),
+		firstResponseBody: make(chan struct{}),
+		canceled:          make(chan struct{}),
+		release:           make(chan struct{}),
+	}
+}
+
+func (p *normalPathCancellationProbe) markInit() {
+	p.initOnce.Do(func() { close(p.initSeen) })
+}
+
+func (p *normalPathCancellationProbe) markFirstBody() {
+	p.firstBodyOnce.Do(func() { close(p.firstBodySeen) })
+}
+
+func (p *normalPathCancellationProbe) markHeadersSent() {
+	p.headersOnce.Do(func() { close(p.headersSent) })
+}
+
+func (p *normalPathCancellationProbe) markFirstResponseBody() {
+	p.firstResponseOnce.Do(func() { close(p.firstResponseBody) })
+}
+
+func (p *normalPathCancellationProbe) markCanceled() {
+	p.canceledOnce.Do(func() { close(p.canceled) })
+}
+
 type normalPathVMMD struct {
 	vmmdpb.UnimplementedVmmdServer
 	mu               sync.Mutex
@@ -1466,6 +1515,7 @@ type normalPathVMMD struct {
 	responses        map[string]normalPathResponse
 	responseSequence map[string][]normalPathResponse
 	failNext         map[string]error
+	probes           map[string]*normalPathCancellationProbe
 	last             *vmmdpb.ForwardHTTPRequestInit
 	lastBody         []byte
 	lastBodyChunks   int
@@ -1492,6 +1542,7 @@ func startNormalPathVMMD(t *testing.T, socketPath string) *normalPathVMMD {
 		responses:        make(map[string]normalPathResponse),
 		responseSequence: make(map[string][]normalPathResponse),
 		failNext:         make(map[string]error),
+		probes:           make(map[string]*normalPathCancellationProbe),
 	}
 	vmmdpb.RegisterVmmdServer(server, vmmd)
 	go func() {
@@ -1562,6 +1613,14 @@ func (s *normalPathVMMD) ForwardCount() int {
 	return s.forwardCount
 }
 
+func (s *normalPathVMMD) InstallCancellationProbe(instanceID string, blockRequestBody, blockResponseBody bool) *normalPathCancellationProbe {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	probe := newNormalPathCancellationProbe(blockRequestBody, blockResponseBody)
+	s.probes[instanceID] = probe
+	return probe
+}
+
 func (s *normalPathVMMD) Heartbeat(context.Context, *vmmdpb.HeartbeatRequest) (*vmmdpb.HeartbeatResponse, error) {
 	return &vmmdpb.HeartbeatResponse{}, nil
 }
@@ -1579,6 +1638,17 @@ func (s *normalPathVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamS
 	if init == nil {
 		return errors.New("fake vmmd: first frame was not init")
 	}
+	s.mu.Lock()
+	probe := s.probes[init.Instance]
+	s.mu.Unlock()
+	if probe != nil {
+		defer func() {
+			if stream.Context().Err() != nil {
+				probe.markCanceled()
+			}
+		}()
+		probe.markInit()
+	}
 	var body []byte
 	bodyChunkCount := 0
 	for {
@@ -1592,6 +1662,16 @@ func (s *normalPathVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamS
 		if chunk := frame.GetBodyChunk(); chunk != nil {
 			bodyChunkCount++
 			body = append(body, chunk...)
+			if probe != nil {
+				probe.markFirstBody()
+				if probe.blockRequestBody && bodyChunkCount == 1 {
+					select {
+					case <-stream.Context().Done():
+						return stream.Context().Err()
+					case <-probe.release:
+					}
+				}
+			}
 		}
 	}
 
@@ -1639,6 +1719,9 @@ func (s *normalPathVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamS
 	}); err != nil {
 		return err
 	}
+	if probe != nil {
+		probe.markHeadersSent()
+	}
 	for _, chunk := range chunks {
 		if len(chunk) == 0 {
 			continue
@@ -1647,6 +1730,14 @@ func (s *normalPathVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamS
 			Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{BodyChunk: chunk},
 		}); err != nil {
 			return err
+		}
+		if probe != nil && probe.blockResponseBody {
+			probe.markFirstResponseBody()
+			select {
+			case <-stream.Context().Done():
+				return stream.Context().Err()
+			case <-probe.release:
+			}
 		}
 	}
 	if len(response.trailers) > 0 {
