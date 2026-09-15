@@ -40,9 +40,9 @@ import (
 func twoWorkloadFixture(t *testing.T, prefix string) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n  worker:\n    build: { context: services/worker }\n"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n"},
+		{prefix + "/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n  worker:\n    build: { context: services/worker }\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n"},
 		{prefix + "/services/worker/Dockerfile", "FROM alpine:3.19\nCMD [\"./worker\"]\n"},
 		{prefix + "/services/worker/index.js", "exports.handler = () => 2;\n"},
 	}
@@ -66,9 +66,9 @@ func twoWorkloadFixture(t *testing.T, prefix string) []byte {
 func oneWorkloadFixtureFromPrefix(t *testing.T, prefix string) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n"},
+		{prefix + "/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -90,12 +90,12 @@ func oneWorkloadFixtureFromPrefix(t *testing.T, prefix string) []byte {
 func twoWorkloadChangedFixture(t *testing.T, prefix string) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n  worker:\n    build: { context: services/worker }\n"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n  worker:\n    build: { context: services/worker }\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
 		// Note: body differs from twoWorkloadFixture's index.js
 		// (1 vs 99). The detector hashes the source tree; a
 		// different body → different hash → `~` changed.
-		{prefix + "/services/api/index.js", "exports.handler = () => 99;\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 99;\n"},
 		{prefix + "/services/worker/Dockerfile", "FROM alpine:3.19\nCMD [\"./worker\"]\n"},
 		{prefix + "/services/worker/index.js", "exports.handler = () => 2;\n"},
 	}
@@ -118,9 +118,9 @@ func twoWorkloadChangedFixture(t *testing.T, prefix string) []byte {
 func twoWorkloadMovedFixture(t *testing.T, prefix string) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: apps/api }\n  worker:\n    build: { context: services/worker }\n"},
-		{prefix + "/apps/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/apps/api/index.js", "exports.handler = () => 99;\n"},
+		{prefix + "/docker-compose.yml", "services:\n  backend:\n    build: { context: apps/backend }\n  worker:\n    build: { context: services/worker }\n"},
+		{prefix + "/apps/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/apps/backend/index.js", "exports.handler = () => 99;\n"},
 		{prefix + "/services/worker/Dockerfile", "FROM alpine:3.19\nCMD [\"./worker\"]\n"},
 		{prefix + "/services/worker/index.js", "exports.handler = () => 2;\n"},
 	}
@@ -141,7 +141,7 @@ func scheduledProjectFixture(t *testing.T, prefix, schedule string) []byte {
 	t.Helper()
 	render := "cronJobs:\n  - name: nightly\n    schedule: \"" + schedule + "\"\n    command: echo nightly\n"
 	entries := []struct{ name, body string }{
-		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n"},
+		{prefix + "/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n"},
 		{prefix + "/render.yaml", render},
 		{prefix + "/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
 	}
@@ -161,7 +161,7 @@ func scheduledProjectFixture(t *testing.T, prefix, schedule string) []byte {
 func unscheduledProjectFixture(t *testing.T, prefix string) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n  nightly:\n    build: { context: . }\n"},
+		{prefix + "/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n  nightly:\n    build: { context: . }\n"},
 		{prefix + "/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
 	}
 	var buf bytes.Buffer
@@ -342,7 +342,7 @@ func TestApplyProject_Diff_Changed(t *testing.T) {
 	}
 	var firstAPIPath, secondAPIPath string
 	for _, build := range ar1.Builds {
-		if build.Slug == "api" {
+		if build.Slug == "backend" {
 			if err := pool.QueryRow(context.Background(), `select source_path from deployments where id = $1`, build.DeploymentID).Scan(&firstAPIPath); err != nil {
 				t.Fatal(err)
 			}
@@ -357,7 +357,7 @@ func TestApplyProject_Diff_Changed(t *testing.T) {
 
 	var apiID string
 	for _, app := range ar2.Apps {
-		if app.Slug == "api" {
+		if app.Slug == "backend" {
 			apiID = app.ID
 			break
 		}
@@ -373,10 +373,10 @@ func TestApplyProject_Diff_Changed(t *testing.T) {
 	}
 
 	// Third apply: the api service keeps its durable name but moves from
-	// services/api to apps/api. It must retain its app identity and attached
+	// services/backend to apps/backend. It must retain its app identity and attached
 	// configuration while rebuilding only that workload.
 	ar3 := applyProjectMultipart(t, h, key, "diff-chg", "", twoWorkloadMovedFixture(t, "faas-chg1"))
-	if len(ar3.Builds) != 1 || ar3.Builds[0].Slug != "api" {
+	if len(ar3.Builds) != 1 || ar3.Builds[0].Slug != "backend" {
 		t.Fatalf("root move builds=%v want exactly api", ar3.Builds)
 	}
 	if len(ar3.Removed) != 0 {
@@ -384,7 +384,7 @@ func TestApplyProject_Diff_Changed(t *testing.T) {
 	}
 	var movedAPIID string
 	for _, app := range ar3.Apps {
-		if app.Slug == "api" {
+		if app.Slug == "backend" {
 			movedAPIID = app.ID
 			break
 		}
@@ -396,8 +396,8 @@ func TestApplyProject_Diff_Changed(t *testing.T) {
 	if err := pool.QueryRow(context.Background(), `select root_dir from apps where id = $1`, apiID).Scan(&rootDir); err != nil {
 		t.Fatalf("read moved api root: %v", err)
 	}
-	if rootDir != "apps/api" {
-		t.Fatalf("moved api root_dir=%q want apps/api", rootDir)
+	if rootDir != "apps/backend" {
+		t.Fatalf("moved api root_dir=%q want apps/backend", rootDir)
 	}
 	var envValue string
 	if err := pool.QueryRow(context.Background(), `
@@ -434,7 +434,7 @@ func TestApplyProject_OnlyRetainsSiblingAndCron(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second := applyProjectMultipartWithOnly(t, h, key, "only-retain", "", "api", body)
+	second := applyProjectMultipartWithOnly(t, h, key, "only-retain", "", "backend", body)
 	if len(second.Removed) != 0 || len(second.Builds) != 0 {
 		t.Fatalf("--only response removed/builds = %v/%v", second.Removed, second.Builds)
 	}
@@ -503,7 +503,7 @@ func TestApplyProject_NoTriggersPreservesExistingCron(t *testing.T) {
 	applyProjectMultipartWithOptions(t, h, key, "no-triggers", "", "", true,
 		unscheduledProjectFixture(t, "faas-no-triggers"))
 	// Selecting only the sibling API workload must not remove nightly's trigger.
-	applyProjectMultipartWithOptions(t, h, key, "no-triggers", "", "api", true,
+	applyProjectMultipartWithOptions(t, h, key, "no-triggers", "", "backend", true,
 		unscheduledProjectFixture(t, "faas-no-triggers"))
 	if err := pool.QueryRow(context.Background(), `
 		select count(*), min(c.id::text), min(c.schedule) from crons c
@@ -565,7 +565,7 @@ func TestApplyProject_Diff_CronSoftDeleted(t *testing.T) {
     command: echo nightly
 `
 	firstEntries := []struct{ name, body string }{
-		{"faas-cron-diff/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n"},
+		{"faas-cron-diff/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n"},
 		{"faas-cron-diff/render.yaml", cronYAML},
 		{"faas-cron-diff/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
 	}
@@ -591,7 +591,7 @@ func TestApplyProject_Diff_CronSoftDeleted(t *testing.T) {
 	// Second apply: SAME repo without render.yaml. The cron
 	// should soft-delete.
 	secondEntries := []struct{ name, body string }{
-		{"faas-cron-diff/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n"},
+		{"faas-cron-diff/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n"},
 		{"faas-cron-diff/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
 	}
 	var secondBuf bytes.Buffer

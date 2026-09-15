@@ -63,6 +63,10 @@ func cmdWorkflowsList(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale workflows list --app <slug> [--limit N] [--offset N] (offset >= 0)", "workflows")
 		return 1
 	}
+	if !api.ValidWorkflowRunStatus(*status) {
+		PrintUsage(os.Stderr, fmt.Sprintf("invalid workflow status %q; want pending, running, awaiting_event, succeeded, failed, or dead", *status), "workflows")
+		return 1
+	}
 
 	client, err := authedClient()
 	if err != nil {

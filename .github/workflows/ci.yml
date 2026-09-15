@@ -305,12 +305,15 @@ jobs:
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update -qq
-          sudo apt-get install -y -qq nftables
+          sudo apt-get install -y -qq nftables logrotate rsyslog
       - name: egress check (Go renderer ↔ Jinja2 + nft syntax + bridge-name guard)
         run: make egress-check
 
       - name: systemd hardening gate
         run: make systemd-hardening-check
+
+      - name: production-like rsyslog rotation gate
+        run: sudo scripts/ci/check-rsyslog-rotation.sh
 
       - name: canary artifact retention gate
         run: make canary-artifact-retention-test

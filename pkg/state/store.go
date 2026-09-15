@@ -2140,6 +2140,10 @@ type Store interface {
 	ListProjectsForAccount(ctx context.Context, accountID string) ([]Project, error)
 	AppsForProject(ctx context.Context, accountID, projectID string) ([]App, error)
 	SetProjectScanSource(ctx context.Context, projectID string, src ProjectScanSource) (Project, error)
+	// UpdateProjectBinding replaces the customer-managed repository and
+	// production branch while enforcing account ownership. Empty repository
+	// and installID zero deliberately unbind the project.
+	UpdateProjectBinding(ctx context.Context, accountID, projectID, repoFullName, productionBranch string, installID int64) (Project, error)
 	DeleteProject(ctx context.Context, projectID string) error
 
 	// ApplyProjectPlan persists a project + its member apps + crons

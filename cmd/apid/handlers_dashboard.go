@@ -318,6 +318,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderOrgDetail(w, r, log, acct, slug)
 		case path == dashboardAccountPath:
 			s.renderAccount(w, r, log, acct)
+		case path == "/dashboard/projects" || path == "/dashboard/projects/":
+			s.renderProjects(w, r, log, acct)
 		case len(path) > len("/dashboard/projects/") &&
 			path[:len("/dashboard/projects/")] == "/dashboard/projects/":
 			// ADR-124 affected-workloads preview. The dispatcher
@@ -334,6 +336,10 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// landing gets a clean seam without colliding with
 			// /dashboard/projects/{slug}/preview/apply.
 			const previewSuffix = "/preview"
+			if slug != "" && !strings.ContainsRune(slug, '/') && api.ValidProjectSlug(slug) {
+				s.renderProjectDetail(w, r, log, acct, slug)
+				return
+			}
 			if slug == "" || !strings.HasSuffix(slug, previewSuffix) {
 				http.NotFound(w, r)
 				return

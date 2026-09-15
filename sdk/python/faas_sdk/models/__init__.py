@@ -796,8 +796,12 @@ from .programmatic_auth_response_plan import ProgrammaticAuthResponsePlan
 from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagicLinkResponse200
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
 from .project_apply_request import ProjectApplyRequest
+from .project_delete_preview_response import ProjectDeletePreviewResponse
+from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
+from .project_summary_response import ProjectSummaryResponse
+from .project_workload_response import ProjectWorkloadResponse
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -1013,6 +1017,7 @@ from .update_job_request_status import UpdateJobRequestStatus
 from .update_managed_realtime_endpoint_request import UpdateManagedRealtimeEndpointRequest
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
+from .update_project_request import UpdateProjectRequest
 from .update_trigger_request import UpdateTriggerRequest
 from .update_trigger_request_broker_poison_strategy_type_1 import UpdateTriggerRequestBrokerPoisonStrategyType1
 from .update_trigger_request_broker_poison_strategy_type_2_type_1 import (
@@ -1850,8 +1855,12 @@ __all__ = (
     "ProgrammaticSignupMagicLinkResponse200",
     "ProgrammaticSignupMagicLinkResponse200Status",
     "ProjectApplyRequest",
+    "ProjectDeletePreviewResponse",
+    "ProjectResponse",
     "ProjectScanRequest",
     "ProjectSourceRefScanRequest",
+    "ProjectSummaryResponse",
+    "ProjectWorkloadResponse",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",
@@ -2065,6 +2074,7 @@ __all__ = (
     "UpdateManagedRealtimeEndpointRequest",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
+    "UpdateProjectRequest",
     "UpdateTriggerRequest",
     "UpdateTriggerRequestBrokerPoisonStrategyType1",
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",

@@ -2063,6 +2063,14 @@ func TestRenameApp_InvalidSlug(t *testing.T) {
 	assertProblem(t, rec, 400, api.CodeValidation)
 }
 
+func TestRenameApp_ReservedSlug(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "rename-reserved")
+	rec := e.do(t, "POST", "/v1/apps/rename-reserved/rename",
+		api.RenameAppRequest{NewSlug: "status"}, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
+}
+
 // TestListInstances_HappyPath seeds an instance and confirms listInstances
 // returns it.
 func TestListInstances_HappyPath(t *testing.T) {

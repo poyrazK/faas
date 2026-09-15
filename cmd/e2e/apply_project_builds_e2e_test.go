@@ -49,15 +49,15 @@ import (
 // (compose-detected api + worker) so the build-enqueue loop runs
 // the per-app path at least twice. The per-service Dockerfile +
 // index.js live at the repo root with .api/.worker suffixes so
-// the convention detector does NOT also emit (RootDir="services/api",
-// Name="api") which would collide on apps_slug_key with the
+// the convention detector does NOT also emit (RootDir="services/backend",
+// Name="backend") which would collide on apps_slug_key with the
 // compose-detected workload.
 func buildProjectFixture(t *testing.T) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{"faas-build/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n  worker:\n    build: { context: . }\n"},
-		{"faas-build/Dockerfile.api", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"faas-build/index.api.js", "exports.handler = () => 'api';\n"},
+		{"faas-build/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n  worker:\n    build: { context: . }\n"},
+		{"faas-build/Dockerfile.backend", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"faas-build/index.backend.js", "exports.handler = () => 'api';\n"},
 		{"faas-build/Dockerfile.worker", "FROM alpine:3.19\nCMD [\"./worker\"]\n"},
 		{"faas-build/index.worker.js", "exports.handler = () => 'worker';\n"},
 	}
@@ -172,9 +172,9 @@ func TestApplyProject_Builds_CustomDockerfileSelection(t *testing.T) {
 	key := h.SeedAccount(context.Background(), api.PlanPro)
 
 	entries := []struct{ name, body string }{
-		{"custom-dockerfile/compose.yaml", "services:\n  api:\n    build:\n      context: services/api\n      dockerfile: deploy/Dockerfile.production\n"},
-		{"custom-dockerfile/services/api/deploy/Dockerfile.production", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"custom-dockerfile/services/api/api", "#!/bin/sh\necho api\n"},
+		{"custom-dockerfile/compose.yaml", "services:\n  backend:\n    build:\n      context: services/backend\n      dockerfile: deploy/Dockerfile.production\n"},
+		{"custom-dockerfile/services/backend/deploy/Dockerfile.production", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"custom-dockerfile/services/backend/api", "#!/bin/sh\necho api\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -209,7 +209,7 @@ func TestApplyProject_Builds_CustomDockerfileSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deploymentKind != "dockerfile" || buildKind != "dockerfile" || sourceRoot != "services/api" ||
+	if deploymentKind != "dockerfile" || buildKind != "dockerfile" || sourceRoot != "services/backend" ||
 		appDockerfilePath != "deploy/Dockerfile.production" || deploymentDockerfilePath != appDockerfilePath {
 		t.Fatalf("custom Dockerfile round trip = kind %q/%q root %q app path %q deployment path %q", deploymentKind, buildKind, sourceRoot, appDockerfilePath, deploymentDockerfilePath)
 	}
@@ -283,9 +283,9 @@ func TestApplyProject_Builds_StagedTarballPreservesRepository(t *testing.T) {
 	// the workspace rather than rebasing one workload to archive root.
 	entries := []struct{ name, body string }{
 		{"faas-root/root-marker.txt", "this-is-the-repo-root"},
-		{"faas-root/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n"},
-		{"faas-root/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"faas-root/services/api/API_ONLY.txt", "api-only-sentinel"},
+		{"faas-root/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n"},
+		{"faas-root/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"faas-root/services/backend/API_ONLY.txt", "api-only-sentinel"},
 		{"faas-root/services/worker/Dockerfile", "FROM alpine:3.19\nCMD [\"./worker\"]\n"},
 		{"faas-root/services/worker/WORKER_ONLY.txt", "worker-only-sentinel"},
 	}
@@ -463,9 +463,9 @@ func TestApplyProject_Builds_PartialFailureLeavesOthersIntact(t *testing.T) {
 	// the compose file, so this passes scanning; the apply-time
 	// staging walk is where it breaks.
 	entries := []struct{ name, body string }{
-		{"faas-partial/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n  ghost:\n    build: { context: does-not-exist }\n"},
-		{"faas-partial/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"faas-partial/services/api/index.js", "exports.handler = () => 1;\n"},
+		{"faas-partial/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n  ghost:\n    build: { context: does-not-exist }\n"},
+		{"faas-partial/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"faas-partial/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)

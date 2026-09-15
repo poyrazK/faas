@@ -101,6 +101,17 @@ type IndexData struct {
 	Plan               string
 }
 
+// ProjectsData backs the durable project lifecycle list and detail pages.
+// The public API DTOs are reused so the dashboard presents the same recovery
+// facts as `gregale projects info`.
+type ProjectsData struct {
+	Projects      []api.ProjectSummaryResponse
+	Project       *api.ProjectResponse
+	DeletePreview *api.ProjectDeletePreviewResponse
+	CSRFToken     string
+	Flash         string
+}
+
 // AppListItem is one row on /dashboard/apps.
 type AppListItem struct {
 	Slug         string

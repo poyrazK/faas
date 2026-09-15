@@ -54,6 +54,19 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 				workload.Name, workload.Name))
 			continue
 		}
+		if api.IsReservedAppSlug(workload.Name) {
+			// Do not strand a project that already owns a reserved collision:
+			// it must remain deployable while the operator migrates it. Only a
+			// fresh allocation (or a collision outside this exact member) is
+			// rejected.
+			app, exists := bySlug[workload.Name]
+			if !exists || projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name {
+				reasons = append(reasons, fmt.Sprintf(
+					"workload %q uses app slug %q reserved for a Gregale service",
+					workload.Name, workload.Name))
+				continue
+			}
+		}
 		if firstRoot, duplicate := seen[workload.Name]; duplicate {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q produces a duplicate app slug for roots %q and %q; use distinct declared package names",

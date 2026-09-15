@@ -174,6 +174,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
 	}
+	if api.IsReservedAppSlug(req.Slug) {
+		return state.App{}, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Reserved slug", fmt.Sprintf("app slug %q is reserved for a Gregale service", req.Slug))
+	}
 	typ := state.AppType(orDefault(req.Type, string(state.AppTypeApp)))
 	if typ != state.AppTypeApp && typ != state.AppTypeFunction {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid type", "type must be app or function")

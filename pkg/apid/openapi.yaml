@@ -10088,6 +10088,20 @@ paths:
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      summary: List durable projects owned by the current account.
+      responses:
+        '200':
+          description: Account-scoped project summaries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProjectSummaryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [projects]
       operationId: applyProject
@@ -10151,6 +10165,78 @@ paths:
         '403': { $ref: '#/components/responses/PlanLimit' }
         '409': { $ref: '#/components/responses/ValidationFailed' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug to inspect, update, or delete in the authenticated account.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    get:
+      tags: [projects]
+      operationId: getProject
+      summary: Inspect a project, its workloads, exclusions, and latest status.
+      responses:
+        '200':
+          description: Project recovery and workload state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    patch:
+      tags: [projects]
+      operationId: updateProject
+      summary: Update a project's repository binding or production branch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectRequest' }
+      responses:
+        '200':
+          description: Updated project state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [projects]
+      operationId: deleteProject
+      summary: Delete a project and detach its live workloads.
+      description: The apps remain live. Their project_id is cleared by the database foreign-key action.
+      responses:
+        '204': { description: Project deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/delete-preview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose deletion impact should be previewed.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    get:
+      tags: [projects]
+      operationId: previewDeleteProject
+      summary: Preview the workloads and related state affected by project deletion.
+      responses:
+        '200':
+          description: Deletion impact. Workloads and their related resources remain live after detachment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectDeletePreviewResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/exclusions/{slug2}:
@@ -21422,6 +21508,74 @@ components:
           type: boolean
           default: false
           description: "Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair."
+
+    ProjectSummaryResponse:
+      description: Stable account-scoped project list item.
+      type: object
+      required: [id, slug, scan_source, workload_count, created_at, updated_at]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        slug: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        repo_full_name: { type: string }
+        production_branch: { type: string }
+        scan_source: { type: string }
+        workload_count: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProjectWorkloadResponse:
+      description: Live app attached to a durable project and its latest release state.
+      type: object
+      required: [slug, workload_name, status]
+      properties:
+        slug: { type: string }
+        workload_name: { type: string }
+        status: { type: string }
+        deployment_status: { type: string }
+        rollout_state: { type: string }
+        build_status: { type: string }
+
+    ProjectResponse:
+      description: Project metadata with its workloads, exclusions, and latest reconciliation state.
+      allOf:
+        - $ref: '#/components/schemas/ProjectSummaryResponse'
+        - type: object
+          required: [workloads, exclusions]
+          properties:
+            workloads:
+              type: array
+              items: { $ref: '#/components/schemas/ProjectWorkloadResponse' }
+            exclusions:
+              type: array
+              items: { type: string }
+            last_reconciliation_status: { type: string }
+            last_build_status: { type: string }
+
+    UpdateProjectRequest:
+      description: Patch for the customer-managed repository binding and production branch.
+      type: object
+      minProperties: 1
+      properties:
+        repo_full_name:
+          type: string
+          description: GitHub owner/name. An empty string removes the repository binding.
+        production_branch:
+          type: string
+          minLength: 1
+          maxLength: 255
+
+    ProjectDeletePreviewResponse:
+      description: Workloads and related resources that remain live when a project is deleted.
+      type: object
+      required: [project, workloads, domain_count, env_count, cron_count]
+      properties:
+        project: { $ref: '#/components/schemas/ProjectSummaryResponse' }
+        workloads:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectWorkloadResponse' }
+        domain_count: { type: integer, minimum: 0 }
+        env_count: { type: integer, minimum: 0 }
+        cron_count: { type: integer, minimum: 0 }
 
     ProjectSourceRefScanRequest:
       description: "Connected GitHub repository input for POST /v1/projects/scan/source-ref."

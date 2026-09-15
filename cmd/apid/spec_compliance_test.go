@@ -61,6 +61,7 @@ const (
 	managedPostgresFile   = "managed_postgres.go"
 	openapiContractFile   = "openapi_contract.go"
 	executionsFile        = "executions.go" // ADR-171 — disposable one-shot execution DTOs
+	projectsFile          = "projects.go"   // issue #2201 — durable project lifecycle and recovery DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -190,6 +191,8 @@ var routeExclude = map[string]bool{
 	// multipart envelope + CSRF posture of the cron/retry handlers.
 	"POST /dashboard/projects/{slug}/preview":       true, // ADR-124 HTML form, preview re-render
 	"POST /dashboard/projects/{slug}/preview/apply": true, // ADR-124 HTML form, apply-with-exclude
+	"POST /dashboard/projects/{slug}/update":        true, // issue #2201 HTML project recovery form
+	"POST /dashboard/projects/{slug}/delete":        true, // issue #2201 HTML project deletion form
 	"POST /v1/cli-auth/code":                        true, // CLI device-code mint
 	"POST /v1/cli-auth/exchange":                    true, // CLI device-code exchange
 	"GET /cli-auth":                                 true, // dashboard claim form
@@ -918,6 +921,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
+		filepath.Join(root, "pkg", "api", projectsFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

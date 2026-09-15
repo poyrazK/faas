@@ -158,7 +158,7 @@ func (r *testRig) seedProject(t *testing.T, repo, prodBranch string) state.Proje
 
 func happyScan() reposcan.Result {
 	return reposcan.Result{
-		Workloads: []reposcan.Workload{{Class: reposcan.ClassHTTP, Name: "api", RootDir: "."}},
+		Workloads: []reposcan.Workload{{Class: reposcan.ClassHTTP, Name: "service-api", RootDir: "."}},
 		Managed:   []reposcan.Managed{},
 		Tier:      1,
 	}
@@ -739,7 +739,7 @@ func pathFilterRig(t *testing.T, cf ChangedFilesClient, includeRootWorkload bool
 	t.Helper()
 	workloads := []reposcan.Workload{
 		{Class: reposcan.ClassHTTP, Name: "auth", RootDir: "services/auth/api", Source: "workspaces:auth"},
-		{Class: reposcan.ClassHTTP, Name: "billing", RootDir: "services/billing", Source: "workspaces:billing"},
+		{Class: reposcan.ClassHTTP, Name: "payments", RootDir: "services/billing", Source: "workspaces:billing"},
 	}
 	if includeRootWorkload {
 		workloads = append(workloads, reposcan.Workload{
@@ -787,7 +787,7 @@ func TestHandlePushRequest_PathFilter_MatchesOneApp(t *testing.T) {
 	}
 	// Two apps match: services/auth/api (path intersects) + the
 	// repo-root workload (RootDir == "" always rebuilds). Billing
-	// is the only one that gets skipped.
+	// payments is the only one that gets skipped.
 	if len(rec.calls) != 2 {
 		t.Fatalf("Enqueue calls = %d, want 2 (auth + root)", len(rec.calls))
 	}
@@ -1012,7 +1012,7 @@ func TestHandlePushRequest_PathFilter_PrefixCollisionDoesNotMatch(t *testing.T) 
 		t.Fatalf("HandlePushRequest: %v", err)
 	}
 	if len(rec.calls) != 1 {
-		t.Fatalf("Enqueue calls = %d, want 1 (root-dir workload alone; prefix collision prevents billing from matching)", len(rec.calls))
+		t.Fatalf("Enqueue calls = %d, want 1 (root-dir workload alone; prefix collision prevents payments from matching)", len(rec.calls))
 	}
 }
 

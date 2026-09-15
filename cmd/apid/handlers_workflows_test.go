@@ -150,6 +150,13 @@ func TestListWorkflowRuns_And_GetWorkflowRun(t *testing.T) {
 	}
 }
 
+func TestListWorkflowRuns_RejectsInvalidStatus(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	app := seedWorkflowApp(t, e, "list-status-app")
+	rec := e.do(t, "GET", fmt.Sprintf("/v1/apps/%s/workflows/runs?status=nonsense", app.Slug), nil, nil)
+	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+}
+
 func TestWorkflowSteps_Events_And_Cancel(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	app := seedWorkflowApp(t, e, "steps-app")

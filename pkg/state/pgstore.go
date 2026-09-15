@@ -4340,6 +4340,25 @@ func (s *PgStore) SetProjectScanSource(ctx context.Context, projectID string, sr
 	return scanProject(row)
 }
 
+func (s *PgStore) UpdateProjectBinding(ctx context.Context, accountID, projectID, repoFullName, productionBranch string, installID int64) (Project, error) {
+	row := s.pool.QueryRow(ctx, `
+		update projects
+		   set repo_full_name = nullif($3, ''),
+		       production_branch = nullif($4, ''),
+		       install_id = nullif($5, 0),
+		       updated_at = now()
+		 where id = $1 and account_id = $2
+		returning id, account_id, slug, coalesce(repo_full_name,''),
+		          coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
+		          created_at, updated_at
+	`, projectID, accountID, repoFullName, productionBranch, installID)
+	project, err := scanProject(row)
+	if err != nil {
+		return Project{}, mapErr(err)
+	}
+	return project, nil
+}
+
 // DeleteProject removes a project row by ID. The apps.project_id
 // FK is declared ON DELETE SET NULL (migration 00074:74), so apps
 // already pointing at this project have their project_id

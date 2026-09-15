@@ -2111,6 +2111,11 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"slug must be 3-40 chars, lowercase letters, digits, and hyphens"))
 		return
 	}
+	if api.IsReservedAppSlug(req.NewSlug) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Reserved slug", fmt.Sprintf("app slug %q is reserved for a Gregale service", req.NewSlug)))
+		return
+	}
 	if req.NewSlug == oldSlug {
 		// Idempotent no-op: skip the DB round-trip and return the
 		// current app shape so retries don't 4xx.

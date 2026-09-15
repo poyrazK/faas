@@ -434,6 +434,17 @@ type ListWorkflowRunsResponse struct {
 	Total int                   `json:"total"`
 }
 
+// ValidWorkflowRunStatus reports the closed set accepted by the workflow-run
+// list filter. Empty is intentionally valid and means no status filter.
+func ValidWorkflowRunStatus(status string) bool {
+	switch status {
+	case "", "pending", "running", "awaiting_event", "succeeded", "failed", "dead":
+		return true
+	default:
+		return false
+	}
+}
+
 // WorkflowStepResponse is the API wire representation of an executed step.
 type WorkflowStepResponse struct {
 	StepName   string          `json:"step_name"`

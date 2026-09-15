@@ -252,7 +252,7 @@ func TestApplyProject_Quota_CronsNotAllowed(t *testing.T) {
     command: bundle exec rake nightly
 `
 	entries := []struct{ name, body string }{
-		{"faas-cron/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n"},
+		{"faas-cron/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n"},
 		{"faas-cron/render.yaml", renderYAML},
 		{"faas-cron/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
 	}

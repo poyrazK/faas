@@ -25,7 +25,7 @@ func TestWorkloadAdmissionReasons(t *testing.T) {
 		{
 			name: "serverless requires explicit function deploy",
 			workloads: []reposcan.Workload{{
-				Name:       "api",
+				Name:       "worker-api",
 				DetectedBy: reposcan.Detection{Detector: "serverless"},
 			}},
 			want: []string{"without an execution adapter"},
@@ -33,7 +33,7 @@ func TestWorkloadAdmissionReasons(t *testing.T) {
 		{
 			name: "prebuilt image requires explicit container deploy",
 			workloads: []reposcan.Workload{{
-				Name:  "api",
+				Name:  "worker-api",
 				Image: "ghcr.io/example/api:v1",
 			}},
 			want: []string{"project apply currently supports source builds only"},
@@ -70,10 +70,15 @@ func TestWorkloadAdmissionReasons(t *testing.T) {
 		{
 			name: "duplicate identity names both roots",
 			workloads: []reposcan.Workload{
-				{Name: "api", RootDir: "frontend/api"},
-				{Name: "api", RootDir: "backend/api"},
+				{Name: "shared-api", RootDir: "frontend/api"},
+				{Name: "shared-api", RootDir: "backend/api"},
 			},
 			want: []string{`"frontend/api" and "backend/api"`, "ambiguous dependency name"},
+		},
+		{
+			name:      "platform slug is reserved",
+			workloads: []reposcan.Workload{{Name: "status", RootDir: "services/status"}},
+			want:      []string{"reserved for a Gregale service"},
 		},
 		{
 			name: "empty plan",
@@ -93,6 +98,31 @@ func TestWorkloadAdmissionReasons(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWorkloadAdmissionReservedSlugsAndNearMisses(t *testing.T) {
+	for _, slug := range []string{
+		"account", "admin", "api", "assets", "billing", "cdn", "console",
+		"dashboard", "docs", "help", "login", "logout", "mail", "operations",
+		"security", "signup", "static", "status", "support", "www",
+	} {
+		reasons := WorkloadAdmissionReasons([]reposcan.Workload{{Name: slug}}, nil, "")
+		if len(reasons) != 1 || !strings.Contains(reasons[0], "reserved for a Gregale service") {
+			t.Errorf("reserved workload %q reasons = %v", slug, reasons)
+		}
+	}
+	for _, slug := range []string{"status-page", "my-admin"} {
+		if reasons := WorkloadAdmissionReasons([]reposcan.Workload{{Name: slug}}, nil, ""); len(reasons) != 0 {
+			t.Errorf("near-miss workload %q reasons = %v", slug, reasons)
+		}
+	}
+	if reasons := WorkloadAdmissionReasons(
+		[]reposcan.Workload{{Name: "status"}},
+		[]state.App{{Slug: "status", ProjectID: "project-1", WorkloadName: "status"}},
+		"project-1",
+	); len(reasons) != 0 {
+		t.Errorf("existing reserved project member must remain deployable during migration: %v", reasons)
 	}
 }
 

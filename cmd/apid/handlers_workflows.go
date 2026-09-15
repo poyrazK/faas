@@ -174,6 +174,11 @@ func (s *server) listWorkflowRuns(w http.ResponseWriter, r *http.Request, acct s
 		Offset: 0,
 		Status: r.URL.Query().Get("status"),
 	}
+	if !api.ValidWorkflowRunStatus(opts.Status) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid workflow status", "status must be pending, running, awaiting_event, succeeded, failed, or dead"))
+		return
+	}
 
 	if limStr := r.URL.Query().Get("limit"); limStr != "" {
 		if lim, err := strconv.Atoi(limStr); err == nil && lim > 0 {

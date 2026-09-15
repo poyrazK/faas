@@ -87,7 +87,7 @@ func threeWorkloads(t *testing.T, rootDir string) reposcan.Result {
 	t.Helper()
 	return reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", RootDir: rootDir, Class: reposcan.ClassHTTP, Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", RootDir: rootDir, Class: reposcan.ClassHTTP, Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 			{Name: "worker", RootDir: rootDir, Class: reposcan.ClassWorker, Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 			{Name: "web", RootDir: rootDir, Class: reposcan.ClassHTTP, Source: "compose.yaml: web", Tier: reposcan.TierCompose},
 		},
@@ -165,7 +165,7 @@ func TestReconcile_ThreeWorkloads_NoDiff(t *testing.T) {
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	seedApp(t, store, proj, "", "api", "")
+	seedApp(t, store, proj, "", "backend", "")
 	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 	seedApp(t, store, proj, "", "web", "")
 
@@ -192,7 +192,7 @@ func TestReconcile_ThreeWorkloads_AddOne(t *testing.T) {
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	seedApp(t, store, proj, "", "api", "")
+	seedApp(t, store, proj, "", "backend", "")
 	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 
 	svc := freshService(store, aud)
@@ -217,14 +217,14 @@ func TestReconcile_ThreeWorkloads_RemoveOne(t *testing.T) {
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	seedApp(t, store, proj, "", "api", "")
+	seedApp(t, store, proj, "", "backend", "")
 	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 	seedApp(t, store, proj, "", "extrasvc", "")
 
 	// Only api + worker survive.
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 			{Name: "worker", RootDir: "", Class: reposcan.ClassWorker, Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
@@ -269,7 +269,7 @@ func TestReconcile_ExcludePreventsRemove(t *testing.T) {
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	seedApp(t, store, proj, "", "api", "")
+	seedApp(t, store, proj, "", "backend", "")
 	seedApp(t, store, proj, "", "worker", "", state.WorkloadClassWorker)
 	seedApp(t, store, proj, "", "extrasvc", "")
 
@@ -279,7 +279,7 @@ func TestReconcile_ExcludePreventsRemove(t *testing.T) {
 	// extrasvc app at all".
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 			{Name: "worker", RootDir: "", Class: reposcan.ClassWorker, Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
@@ -357,10 +357,10 @@ func TestReconcile_ThreeWorkloads_ChangeRootDir(t *testing.T) {
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	// Workload name is durable identity. A directory move and command
 	// change update the same app rather than removing and recreating it.
-	existing := seedApp(t, store, proj, "services/api", "api", "")
+	existing := seedApp(t, store, proj, "services/api", "backend", "")
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", RootDir: "apps/api", Command: []string{"python", "app.py"}, Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", RootDir: "apps/api", Command: []string{"python", "app.py"}, Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
 	}
@@ -406,7 +406,7 @@ func TestReconcile_ScanSourceDowngrade(t *testing.T) {
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", RootDir: "apps/api", Source: "convention: apps/api", Tier: reposcan.TierConvention},
+			{Name: "backend", RootDir: "apps/api", Source: "convention: apps/api", Tier: reposcan.TierConvention},
 		},
 		Tier: reposcan.TierConvention,
 	}
@@ -429,7 +429,7 @@ func TestReconcile_FeatureBranch_NoDiff(t *testing.T) {
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	seedApp(t, store, proj, "", "api", "")
+	seedApp(t, store, proj, "", "backend", "")
 
 	svc := freshService(store, aud)
 	// branch="feature/x" != project.ProductionBranch="main".
@@ -455,7 +455,7 @@ func TestReconcile_ZeroWorkloads_AlertEmitted(t *testing.T) {
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	seedApp(t, store, proj, "", "api", "")
+	seedApp(t, store, proj, "", "backend", "")
 
 	svc := freshService(store, aud)
 	scan := reposcan.Result{Workloads: nil, Tier: 0}
@@ -476,12 +476,12 @@ func TestReconcile_AuditOrdering_RemovedBeforeCascade(t *testing.T) {
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	seedApp(t, store, proj, "", "api", "")
+	seedApp(t, store, proj, "", "backend", "")
 	seedApp(t, store, proj, "", "toRemove", "")
 
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
 	}
@@ -510,7 +510,7 @@ func TestReconcile_OverQuota_CreatesSkipped(t *testing.T) {
 	store.accountPlan = api.PlanFree
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	seedApp(t, store, proj, "", "api", "")
+	seedApp(t, store, proj, "", "backend", "")
 
 	// Attempt 3 creates. Free cap = 1. proj = 1 existing + 3 = 4.
 	// projected > cap → rejected before any mutation.
@@ -602,13 +602,13 @@ func TestReconcileWithCrons_ReplacesIdempotently(t *testing.T) {
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	app := seedApp(t, store, proj, "", "api", "")
+	app := seedApp(t, store, proj, "", "backend", "")
 	if _, err := store.CreateCron(context.Background(), app.ID, "*/5 * * * *", "/", true); err != nil {
 		t.Fatalf("CreateCron: %v", err)
 	}
 	svc := freshService(store, aud)
-	scan := reposcan.Result{Workloads: []reposcan.Workload{{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yaml: api", Schedule: "0 * * * *"}}, Tier: reposcan.TierCompose}
-	cron := []CronSpec{{WorkloadName: "api", Schedule: "0 * * * *", Path: "/", Enabled: true}}
+	scan := reposcan.Result{Workloads: []reposcan.Workload{{Name: "backend", Tier: reposcan.TierCompose, Source: "compose.yaml: api", Schedule: "0 * * * *"}}, Tier: reposcan.TierCompose}
+	cron := []CronSpec{{WorkloadName: "backend", Schedule: "0 * * * *", Path: "/", Enabled: true}}
 	if _, err := svc.ReconcileWithCrons(context.Background(), proj, scan, "sha-cron-1", "main", nil, cron); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
@@ -625,7 +625,7 @@ func TestReconcileWithCrons_ReplacesIdempotently(t *testing.T) {
 	if len(crons) != 1 || crons[0].Schedule != "0 * * * *" {
 		t.Fatalf("expected one replaced cron, got %#v", crons)
 	}
-	if _, err := svc.ReconcileWithCrons(context.Background(), proj, reposcan.Result{Workloads: []reposcan.Workload{{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yaml: api"}}, Tier: reposcan.TierCompose}, "sha-cron-3", "main", nil, []CronSpec{}); err != nil {
+	if _, err := svc.ReconcileWithCrons(context.Background(), proj, reposcan.Result{Workloads: []reposcan.Workload{{Name: "backend", Tier: reposcan.TierCompose, Source: "compose.yaml: api"}}, Tier: reposcan.TierCompose}, "sha-cron-3", "main", nil, []CronSpec{}); err != nil {
 		t.Fatalf("cron removal reconcile: %v", err)
 	}
 	crons, err = store.ListCronsForApp(context.Background(), app.ID)
@@ -663,11 +663,11 @@ func TestReconcileWithCrons_PreservesMultipleSchedulesPerWorkload(t *testing.T) 
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	app := seedApp(t, store, proj, "", "api", "")
-	scan := reposcan.Result{Workloads: []reposcan.Workload{{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yaml: api"}}, Tier: reposcan.TierCompose}
+	app := seedApp(t, store, proj, "", "backend", "")
+	scan := reposcan.Result{Workloads: []reposcan.Workload{{Name: "backend", Tier: reposcan.TierCompose, Source: "compose.yaml: api"}}, Tier: reposcan.TierCompose}
 	desired := []CronSpec{
-		{WorkloadName: "api", Schedule: "*/5 * * * *", Path: "/", Enabled: true},
-		{WorkloadName: "api", Schedule: "0 12 * * *", Path: "/", Enabled: false},
+		{WorkloadName: "backend", Schedule: "*/5 * * * *", Path: "/", Enabled: true},
+		{WorkloadName: "backend", Schedule: "0 12 * * *", Path: "/", Enabled: false},
 	}
 	svc := freshService(store, aud)
 	if _, err := svc.ReconcileWithCrons(context.Background(), proj, scan, "sha-1", "main", nil, desired); err != nil {
@@ -717,14 +717,14 @@ func TestReconcile_DeriveScanSource_MirrorsApid(t *testing.T) {
 			name: "compose wins over convention",
 			workloads: []reposcan.Workload{
 				{Name: "web", Tier: reposcan.TierConvention, Source: "convention: apps/web", DetectedBy: reposcan.Detection{Detector: "other"}},
-				{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yaml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
+				{Name: "backend", Tier: reposcan.TierCompose, Source: "compose.yaml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
 			},
 			want: state.ProjectScanSourceCompose,
 		},
 		{
 			name: "compose wins over k8s when both present (priority list)",
 			workloads: []reposcan.Workload{
-				{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yaml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
+				{Name: "backend", Tier: reposcan.TierCompose, Source: "compose.yaml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
 				{Name: "web", Tier: reposcan.TierCompose, Source: "k8s/deployment.yaml: web", DetectedBy: reposcan.Detection{Detector: "k8s"}},
 			},
 			want: state.ProjectScanSourceCompose,
@@ -739,21 +739,21 @@ func TestReconcile_DeriveScanSource_MirrorsApid(t *testing.T) {
 			// monotonic-upgrade guard rejects the re-apply.
 			name: "docker-compose.yml filename is recognised as compose",
 			workloads: []reposcan.Workload{
-				{Name: "api", Tier: reposcan.TierCompose, Source: "docker-compose.yml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
+				{Name: "backend", Tier: reposcan.TierCompose, Source: "docker-compose.yml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
 			},
 			want: state.ProjectScanSourceCompose,
 		},
 		{
 			name: "compose.yml filename is recognised as compose",
 			workloads: []reposcan.Workload{
-				{Name: "api", Tier: reposcan.TierCompose, Source: "compose.yml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
+				{Name: "backend", Tier: reposcan.TierCompose, Source: "compose.yml: api", DetectedBy: reposcan.Detection{Detector: "compose"}},
 			},
 			want: state.ProjectScanSourceCompose,
 		},
 		{
 			name: "k8s is stable for multiple workloads",
 			workloads: []reposcan.Workload{
-				{Name: "api", Tier: reposcan.TierCompose, Source: "k8s/api.yaml: api", DetectedBy: reposcan.Detection{Detector: "k8s"}},
+				{Name: "backend", Tier: reposcan.TierCompose, Source: "k8s/api.yaml: api", DetectedBy: reposcan.Detection{Detector: "k8s"}},
 				{Name: "worker", Tier: reposcan.TierCompose, Source: "k8s/worker.yaml: worker", DetectedBy: reposcan.Detection{Detector: "k8s"}},
 			},
 			want: state.ProjectScanSourceK8s,
@@ -769,7 +769,7 @@ func TestReconcile_DeriveScanSource_MirrorsApid(t *testing.T) {
 		{
 			name: "workspace source comes from tier",
 			workloads: []reposcan.Workload{
-				{Name: "api", Tier: reposcan.TierWorkspace, Source: "go.work: api", DetectedBy: reposcan.Detection{Detector: "other"}},
+				{Name: "backend", Tier: reposcan.TierWorkspace, Source: "go.work: api", DetectedBy: reposcan.Detection{Detector: "other"}},
 				{Name: "worker", Tier: reposcan.TierWorkspace, Source: "go.work: worker", DetectedBy: reposcan.Detection{Detector: "other"}},
 			},
 			want: state.ProjectScanSourceWorkspace,
@@ -820,7 +820,7 @@ func TestReconcile_SourceDigestIsRetryableUntilBuildAcceptance(t *testing.T) {
 	store := newFakeStore()
 	aud := newFakeAuditor(store)
 	_, project := seedProject(t, store, state.ProjectScanSourceCompose, "main")
-	app := seedApp(t, store, project, "services/api", "api", "node server.js")
+	app := seedApp(t, store, project, "services/api", "backend", "node server.js")
 	manifest := app.Manifest
 	manifest.ProjectSourceSHA256 = "source-old"
 	app, err := store.UpdateApp(context.Background(), app.ID, state.UpdateAppParams{Manifest: &manifest})
@@ -829,7 +829,7 @@ func TestReconcile_SourceDigestIsRetryableUntilBuildAcceptance(t *testing.T) {
 	}
 
 	scan := reposcan.Result{Tier: reposcan.TierCompose, Workloads: []reposcan.Workload{{
-		Name: "api", RootDir: "services/api", Command: []string{"node", "server.js"},
+		Name: "backend", RootDir: "services/api", Command: []string{"node", "server.js"},
 		Source: "compose.yaml: api", Tier: reposcan.TierCompose, SourceSHA256: "source-new",
 	}}}
 	result, err := freshService(store, aud).Reconcile(context.Background(), project, scan, "commit", "main", nil)
@@ -930,11 +930,11 @@ func TestReconcile_AppliedIDs_IsolatesAddsFromChanged(t *testing.T) {
 	_, proj := seedProject(t, store, state.ProjectScanSourceCompose, "main")
 	// Seed the existing api app at the SAME rootDir as the scan
 	// so the diff key (rootDir, name) collides → update path.
-	seedApp(t, store, proj, "apps/api", "api", "")
+	seedApp(t, store, proj, "apps/api", "backend", "")
 
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", RootDir: "apps/api", Command: []string{"python", "app.py"}, Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", RootDir: "apps/api", Command: []string{"python", "app.py"}, Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 			{Name: "worker", RootDir: "apps/worker", Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
@@ -974,7 +974,7 @@ func TestPlan_NoMutation_ProjectsDiff(t *testing.T) {
 
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 			{Name: "web", RootDir: "", Source: "compose.yaml: web", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
@@ -1018,7 +1018,7 @@ func TestPlan_FeatureBranchIgnored(t *testing.T) {
 
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
 	}

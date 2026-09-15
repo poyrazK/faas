@@ -5,8 +5,12 @@
 import type { ApplyResponse } from '../models/ApplyResponse.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
+import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePreviewResponse.js';
+import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
 import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
+import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
+import type { UpdateProjectRequest } from '../models/UpdateProjectRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -87,6 +91,24 @@ export class ProjectsService {
     });
   }
   /**
+   * List durable projects owned by the current account.
+   * @returns ProjectSummaryResponse Account-scoped project summaries.
+   * @throws ApiError
+   */
+  public static listProjects(): CancelablePromise<Array<ProjectSummaryResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Apply a deploy plan in one transaction.
    * Accepts the same multipart body as /scan plus an optional
    * `plan_token` query parameter echoing the dry-run token. On
@@ -138,6 +160,129 @@ export class ProjectsService {
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         409: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         413: `code: source_too_large`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect a project, its workloads, exclusions, and latest status.
+   * @returns ProjectResponse Project recovery and workload state.
+   * @throws ApiError
+   */
+  public static getProject({
+    slug,
+  }: {
+    /**
+     * Project slug to inspect, update, or delete in the authenticated account.
+     */
+    slug: string,
+  }): CancelablePromise<ProjectResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Update a project's repository binding or production branch.
+   * @returns ProjectResponse Updated project state.
+   * @throws ApiError
+   */
+  public static updateProject({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Project slug to inspect, update, or delete in the authenticated account.
+     */
+    slug: string,
+    requestBody: UpdateProjectRequest,
+  }): CancelablePromise<ProjectResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/projects/{slug}',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a project and detach its live workloads.
+   * The apps remain live. Their project_id is cleared by the database foreign-key action.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteProject({
+    slug,
+  }: {
+    /**
+     * Project slug to inspect, update, or delete in the authenticated account.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/projects/{slug}',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview the workloads and related state affected by project deletion.
+   * @returns ProjectDeletePreviewResponse Deletion impact. Workloads and their related resources remain live after detachment.
+   * @throws ApiError
+   */
+  public static previewDeleteProject({
+    slug,
+  }: {
+    /**
+     * Project slug whose deletion impact should be previewed.
+     */
+    slug: string,
+  }): CancelablePromise<ProjectDeletePreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/delete-preview',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

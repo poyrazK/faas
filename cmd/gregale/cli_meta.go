@@ -124,7 +124,7 @@ func cliHelpGroup(command cliCommand) string {
 	switch command.Name {
 	case "account", "billing", "capabilities", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "upload-cache", "usage", "version", "completion", "man", "whoami":
 		return "Core"
-	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
+	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
 	case "crons", "delayed-task", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
@@ -1158,6 +1158,24 @@ var cliCommands = []cliCommand{
 			{Name: "action", Short: "recover action", ClosedSet: []string{"advance", "promote", "abort"}, Req: true},
 			{Name: "reason", Short: "operator-supplied reason (logged to deployment_audit)", Value: "text"},
 		},
+	},
+	{
+		Name:    "projects",
+		DocSlug: "projects",
+		Short:   "Inspect and recover repository projects",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List projects in this account"},
+			{Name: "info", Short: "Show a project and its workloads"},
+			{Name: "update", Short: "Update repository or production branch", Flags: []cliFlag{
+				{Name: "repo", Short: "GitHub repository owner/name; empty unbinds", Value: "OWNER/NAME"},
+				{Name: "branch", Short: "production branch", Value: "BRANCH"},
+			}},
+			{Name: "rm", Short: "Preview or delete a project", Flags: []cliFlag{
+				{Name: "dry-run", Short: "preview affected state"},
+				{Name: "yes", Short: "confirm project deletion"},
+			}},
+		},
+		Positionals: []string{"<project-slug>"},
 	},
 	{
 		Name:    "scan",

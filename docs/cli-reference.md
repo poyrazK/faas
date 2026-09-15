@@ -63,6 +63,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
 | [`rollback`](#rollback) | Re-promote the previous deployment |
 | [`rollouts`](#rollouts) | Operator manual rollout recovery (rollouts recover &lt;slug&gt; --action advance\|promote\|abort --reason &lt;text&gt;) |
+| [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
 | [`secrets`](#secrets) | Manage env secrets (secrets list\|set\|unset\|list-all\|rotate) |
 | [`github-webhook-secret`](#github-webhook-secret) | Manage legacy installation-scoped webhook secrets (admin) |
@@ -1563,6 +1564,39 @@ Operator manual rollout recovery (rollouts recover &lt;slug&gt; --action advance
 ### rollouts recover
 
 Manually advance / promote / abort a stuck rollout (operator escape hatch)
+
+
+## projects
+
+Inspect and recover repository projects
+
+`gregale projects [<subcommand>] <project-slug>`
+
+### projects list
+
+List projects in this account
+
+### projects info
+
+Show a project and its workloads
+
+### projects update
+
+Update repository or production branch
+
+| Flag | Meaning | |
+|---|---|---|
+| `--repo <OWNER/NAME>` | GitHub repository owner/name; empty unbinds |  |
+| `--branch <BRANCH>` | production branch |  |
+
+### projects rm
+
+Preview or delete a project
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview affected state |  |
+| `--yes` | confirm project deletion |  |
 
 
 ## scan

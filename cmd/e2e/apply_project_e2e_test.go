@@ -51,16 +51,16 @@ import (
 // applyProjectFixture builds the §4 multi-tier tarball (same as
 // scan_project_e2e_test.go's fixture). The compose's services use
 // `build: { context: . }` so the compose detector emits
-// (RootDir=".", Name="api") and (RootDir=".", Name="worker"). The
+// (RootDir=".", Name="backend") and (RootDir=".", Name="worker"). The
 // Dockerfile + index.js for each service live at the repo root with
 // `.api` / `.worker` suffixes so they DON'T trigger the convention
 // detector under services/{api,worker}/. Putting both there would
-// produce (RootDir="services/api", Name="api") with the same slug
+// produce (RootDir="services/backend", Name="backend") with the same slug
 // as the compose workload, tripping apps_slug_key on insert.
 func applyProjectFixture(t *testing.T) []byte {
 	t.Helper()
 	const composeYML = `services:
-  api:
+  backend:
     build:
       context: .
     ports:
@@ -75,8 +75,8 @@ func applyProjectFixture(t *testing.T) []byte {
 		name, body string
 	}{
 		{"faas-apply/docker-compose.yml", composeYML},
-		{"faas-apply/Dockerfile.api", "FROM alpine:3.19\nEXPOSE 8080\nCMD [\"./api\"]\n"},
-		{"faas-apply/index.api.js", "exports.handler = () => 1;\n"},
+		{"faas-apply/Dockerfile.backend", "FROM alpine:3.19\nEXPOSE 8080\nCMD [\"./api\"]\n"},
+		{"faas-apply/index.backend.js", "exports.handler = () => 1;\n"},
 		{"faas-apply/Dockerfile.worker", "FROM alpine:3.19\nEXPOSE 8081\nCMD [\"./worker\"]\n"},
 		{"faas-apply/index.worker.js", "exports.handler = () => 2;\n"},
 	}
@@ -203,7 +203,7 @@ func TestApplyProject_MultiWorkloadHappyPath(t *testing.T) {
 		t.Fatalf("ApplyResponse.ProjectID is empty")
 	}
 	// Six workloads in the fixture: api (compose), worker (compose),
-	// faas-apply (fly.toml if present), services/api, services/worker,
+	// faas-apply (fly.toml if present), services/backend, services/worker,
 	// cron (Procfile). The fixture above intentionally omits fly.toml
 	// and render.yaml, AND keeps the per-service Dockerfiles at the
 	// repo root (.api/.worker) so the convention detector does NOT

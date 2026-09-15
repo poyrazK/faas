@@ -12,7 +12,11 @@
 /var/log/debug
 /var/log/messages
 {
-    su syslog adm
+    # /var/log is root:syslog 0775 on GCE. Keep root privileges for
+    # ownership changes while selecting the directory-write group; using
+    # `su syslog adm` cannot create delayed-compression outputs there.
+    su root syslog
+    create 0640 syslog adm
     size {{ faas_hardening_rsyslog_max_file_size }}
     rotate {{ faas_hardening_rsyslog_rotate }}
     missingok

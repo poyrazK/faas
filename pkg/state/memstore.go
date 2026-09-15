@@ -2619,6 +2619,37 @@ func (m *MemStore) SetProjectScanSource(_ context.Context, projectID string, src
 	return p, nil
 }
 
+func (m *MemStore) UpdateProjectBinding(_ context.Context, accountID, projectID, repoFullName, productionBranch string, installID int64) (Project, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.projects[projectID]
+	if !ok || p.AccountID != accountID {
+		return Project{}, ErrNotFound
+	}
+	if installID != 0 && repoFullName != "" {
+		key := installRepoKey{InstallID: installID, RepoFullName: repoFullName}
+		if existing, exists := m.projectsByInstallRepo[key]; exists && existing != projectID {
+			return Project{}, ErrConflict
+		}
+	}
+	// Validate the new unique key before removing the old one. A conflicting
+	// update must leave the prior binding reachable, matching PostgreSQL's
+	// statement-atomic UPDATE behavior.
+	if p.InstallID != 0 && p.RepoFullName != "" {
+		delete(m.projectsByInstallRepo, installRepoKey{InstallID: p.InstallID, RepoFullName: p.RepoFullName})
+	}
+	if installID != 0 && repoFullName != "" {
+		key := installRepoKey{InstallID: installID, RepoFullName: repoFullName}
+		m.projectsByInstallRepo[key] = projectID
+	}
+	p.RepoFullName = repoFullName
+	p.ProductionBranch = productionBranch
+	p.InstallID = installID
+	p.UpdatedAt = time.Now().UTC()
+	m.projects[projectID] = p
+	return p, nil
+}
+
 // DeleteProject removes a project row by ID. Mirrors the pgstore
 // trigger: apps pointing at this project get their project_id
 // nulled (the row stays; reconcile already soft-deleted any

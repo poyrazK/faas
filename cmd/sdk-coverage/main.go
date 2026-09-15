@@ -286,8 +286,13 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{id}/summary": "GetAppDeploymentSummary",
 	"POST /v1/apps/{slug}/deployments/dev-source":  "DeployDevSource",
 	"POST /v1/apps/{slug}/deployments/source-ref":  "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
-	"GET /v1/uploads/{id}":                         "GetUploadSession",    // issue #1182; resumable session discovery after restart
-	"POST /v1/apps/{slug}/diff":                    "Diff",                // PR-1 of deploy-diff cluster; CI gate input
+	"GET /v1/projects":                             "ListProjects",
+	"GET /v1/projects/{slug}":                      "GetProject",
+	"PATCH /v1/projects/{slug}":                    "UpdateProject",
+	"GET /v1/projects/{slug}/delete-preview":       "PreviewDeleteProject",
+	"DELETE /v1/projects/{slug}":                   "DeleteProject",
+	"GET /v1/uploads/{id}":                         "GetUploadSession", // issue #1182; resumable session discovery after restart
+	"POST /v1/apps/{slug}/diff":                    "Diff",             // PR-1 of deploy-diff cluster; CI gate input
 	// Issue #961 / Mega-C PR-1 / leaf 3 — preview-destroy route.
 	// Auto-derivation would produce "PostPreviewSlugDestroy" (the
 	// Swagger-style verb+resource concat), but the SDK convention

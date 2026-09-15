@@ -108,17 +108,17 @@ func seedAccountWithAPIKey(t *testing.T, h *e2etest.Harness,
 // workload. Setup:
 //
 //   - 3 pre-seeded apps:
-//   - "matching-app"   (RootDir="services/api", Name="api") —
+//   - "matching-app"   (RootDir="services/backend", Name="backend") —
 //     scan discovers a matching workload.
 //   - "legacy-app"     (RootDir="external/legacy", Name="legacy")
 //     — scan does NOT discover a matching workload.
 //   - "side-app"       (RootDir="external/side", Name="side") —
 //     scan does NOT discover a matching workload.
-//   - Scan fixture: singleWorkloadFixture (1 workload: `api`).
+//   - Scan fixture: singleWorkloadFixture (1 workload: `backend`).
 //
 // Expected partition:
 //
-//   - WillDeploy carries `api` (Action="create") — the scan
+//   - WillDeploy carries `backend` (Action="create") — the scan
 //     workload.
 //   - Unaffected carries both `legacy-app` and `side-app` (existing
 //     apps without matching scan workloads; the scan omits them
@@ -130,7 +130,7 @@ func seedAccountWithAPIKey(t *testing.T, h *e2etest.Harness,
 //
 // Cardinality: 3 pre-seeded apps + 1 scan workload = 4 rows in
 // the partition (WillDeploy:1 + Unaffected:2 = 3 distinct apps;
-// the 4th row is the scan workload `api` which is already
+// the 4th row is the scan workload `backend` which is already
 // counted under WillDeploy.Action="create"). Removed + Skipped
 // are empty.
 func TestScanPartition_CardinalityComplete(t *testing.T) {
@@ -161,7 +161,7 @@ func TestScanPartition_CardinalityComplete(t *testing.T) {
 	}
 
 	// Seed 3 apps. Only `matching-app` shares (RootDir, Name) with
-	// the scan fixture (services/api + api). The other two have
+	// the scan fixture (services/backend + api). The other two have
 	// external root paths that the scan will not see.
 	for _, slug := range []string{"legacy-app", "side-app"} {
 		if _, err := store.CreateApp(ctx, state.App{
@@ -177,19 +177,19 @@ func TestScanPartition_CardinalityComplete(t *testing.T) {
 	matching, err := store.CreateApp(ctx, state.App{
 		AccountID:      acct.ID,
 		ProjectID:      project.ID,
-		Slug:           "api",
+		Slug:           "backend",
 		Type:           state.AppTypeApp,
 		RAMMB:          256,
 		MaxConcurrency: 1,
 		// The (RootDir, WorkloadName) MUST match the scan fixture
 		// (singleWorkloadFixture emits a workload with
-		// RootDir="services/api", Name="api"). Otherwise the
+		// RootDir="services/backend", Name="backend"). Otherwise the
 		// partition treats matching-app as Unaffected (no scan
 		// match) and WillDeploy carries the scan workload as a
 		// fresh `create` instead of an `update` against this
 		// pre-existing app row.
-		RootDir:      "services/api",
-		WorkloadName: "api",
+		RootDir:      "services/backend",
+		WorkloadName: "backend",
 	})
 	if err != nil {
 		t.Fatalf("CreateApp matching-app: %v", err)
@@ -202,7 +202,7 @@ func TestScanPartition_CardinalityComplete(t *testing.T) {
 		t.Fatalf("scan status = %d, want 200 (body=%s)", status, body)
 	}
 
-	// WillDeploy: exactly 1 row, the scan workload `api`.
+	// WillDeploy: exactly 1 row, the scan workload `backend`.
 	// Action + ID are pinned below (lines 230-240) — the scan
 	// discovers `matching-app` (same RootDir, Name) and reuses
 	// the existing row, so WillDeploy[0] carries Action="update"
@@ -214,8 +214,8 @@ func TestScanPartition_CardinalityComplete(t *testing.T) {
 	// only pins Slug + cardinality.
 	if len(plan.WillDeploy) != 1 {
 		t.Errorf("WillDeploy len = %d, want 1; got: %+v", len(plan.WillDeploy), plan.WillDeploy)
-	} else if plan.WillDeploy[0].Slug != "api" {
-		t.Errorf("WillDeploy[0].Slug = %q, want api", plan.WillDeploy[0].Slug)
+	} else if plan.WillDeploy[0].Slug != "backend" {
+		t.Errorf("WillDeploy[0].Slug = %q, want backend", plan.WillDeploy[0].Slug)
 	}
 
 	// Unaffected: exactly 2 rows, legacy-app + side-app.
@@ -233,7 +233,7 @@ func TestScanPartition_CardinalityComplete(t *testing.T) {
 	// workload, so it shows up in WillDeploy (with the existing
 	// app's id) — but only when the scan finds a workload that
 	// matches its root_dir. With singleWorkloadFixture (root_dir
-	// `services/api`), matching-app's `services/api` root DOES
+	// `services/backend`), matching-app's `services/backend` root DOES
 	// match, so the scan reuses the existing app. The WillDeploy
 	// row carries the existing app's id (Action="update" not
 	// "create"). Pin this:
@@ -276,7 +276,7 @@ func TestScanPartition_CardinalityComplete(t *testing.T) {
 //
 // Expected partition:
 //
-//   - WillDeploy: empty (scan fixture has only `api`; existing-app
+//   - WillDeploy: empty (scan fixture has only `backend`; existing-app
 //     is not in the scan set, so there is nothing to update).
 //   - Unaffected: carries `existing-app` (existing app, blast-radius
 //     view; the partition covers every non-deleted app).
@@ -343,7 +343,7 @@ func TestScanPartition_ExcludedExistingAppDualView(t *testing.T) {
 		}
 	}
 
-	// WillDeploy may carry the scan workload `api` (create) — we
+	// WillDeploy may carry the scan workload `backend` (create) — we
 	// don't constrain its size here; the cardinality invariant is
 	// the focus.
 }
@@ -352,7 +352,7 @@ func TestScanPartition_ExcludedExistingAppDualView(t *testing.T) {
 // account with zero pre-seeded apps + a single-workload scan.
 // Expected:
 //
-//   - WillDeploy carries `api` (create).
+//   - WillDeploy carries `backend` (create).
 //   - Unaffected + Skipped + Removed all empty.
 //
 // This is the partition's baseline — no operator exclude, no
@@ -393,8 +393,8 @@ func TestScanPartition_EmptyPlan(t *testing.T) {
 		t.Errorf("Removed len = %d, want 0 (no destructive subset); got: %+v",
 			len(plan.Removed), plan.Removed)
 	}
-	// WillDeploy has the scan workload `api` (create).
-	if len(plan.WillDeploy) != 1 || plan.WillDeploy[0].Slug != "api" {
-		t.Errorf("WillDeploy = %+v, want [{api create}]", plan.WillDeploy)
+	// WillDeploy has the scan workload `backend` (create).
+	if len(plan.WillDeploy) != 1 || plan.WillDeploy[0].Slug != "backend" {
+		t.Errorf("WillDeploy = %+v, want [{backend create}]", plan.WillDeploy)
 	}
 }

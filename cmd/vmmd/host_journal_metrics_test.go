@@ -263,7 +263,7 @@ func TestJournalPolicyHasFiniteBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, directive := range []string{"su syslog adm", "size {{ faas_hardening_rsyslog_max_file_size }}", "rotate {{ faas_hardening_rsyslog_rotate }}", "/usr/lib/rsyslog/rsyslog-rotate"} {
+	for _, directive := range []string{"su root syslog", "create 0640 syslog adm", "size {{ faas_hardening_rsyslog_max_file_size }}", "rotate {{ faas_hardening_rsyslog_rotate }}", "/usr/lib/rsyslog/rsyslog-rotate"} {
 		if !strings.Contains(string(rsyslogPolicy), directive) {
 			t.Errorf("rsyslog rotation policy missing %q", directive)
 		}

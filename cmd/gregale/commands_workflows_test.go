@@ -37,6 +37,18 @@ func TestCmdWorkflowsList_MissingApp(t *testing.T) {
 	}
 }
 
+func TestCmdWorkflowsList_InvalidStatus(t *testing.T) {
+	code, captured := runWithStderr(t, func() int {
+		return cmdWorkflowsList([]string{"--app", "my-app", "--status", "nonsense"})
+	})
+	if code != 1 {
+		t.Fatalf("cmdWorkflowsList(invalid status) = %d, want 1", code)
+	}
+	if !strings.Contains(captured, "invalid workflow status") {
+		t.Errorf("validation error = %q", captured)
+	}
+}
+
 func TestCmdWorkflowsRun_MissingArgs(t *testing.T) {
 	code, captured := runWithStderr(t, func() int { return cmdWorkflowsRun([]string{}) })
 	if code != 1 {

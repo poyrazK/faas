@@ -179,6 +179,8 @@ func run(args []string) (status int) {
 		// transactional apply path lives in cmdDeployTarball when
 		// --yes/--json/--only/--project-slug are set.
 		return cmdScan(args[1:])
+	case "projects":
+		return cmdProjects(args[1:])
 	case "init":
 		return cmdInit(args[1:])
 	case "connect":

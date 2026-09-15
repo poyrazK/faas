@@ -45,9 +45,9 @@ import (
 func inputsFixture(t *testing.T, prefix string) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n"},
+		{prefix + "/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -71,9 +71,9 @@ func maliciousPathTraversalFixture(t *testing.T, prefix string) []byte {
 	entries := []struct{ name, body string }{
 		// `..` escape attempt: a file that would write outside
 		// the extract root if the join is naive.
-		{prefix + "/services/api/../../../../etc/passwd", "OVERWRITE\n"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n"},
+		{prefix + "/services/backend/../../../../etc/passwd", "OVERWRITE\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -95,8 +95,8 @@ func maliciousAbsoluteFixture(t *testing.T, prefix string) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
 		{"/etc/passwd", "OVERWRITE\n"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -126,8 +126,8 @@ func maliciousSymlinkFixture(t *testing.T, prefix string) []byte {
 		// root (an absolute path). This is the standard
 		// Zip-Slip attack pattern, ported to tar.
 		{prefix + "/evil-link", "", tar.TypeSymlink, "/etc/passwd"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n", tar.TypeReg, ""},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n", tar.TypeReg, ""},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n", tar.TypeReg, ""},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n", tar.TypeReg, ""},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -157,7 +157,7 @@ func entryCountCapFixture(t *testing.T, prefix string, n int) []byte {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	// 1 real workload.
-	_ = tw.WriteHeader(&tar.Header{Name: prefix + "/services/api/Dockerfile", Mode: 0o644, Size: 17, Typeflag: tar.TypeReg})
+	_ = tw.WriteHeader(&tar.Header{Name: prefix + "/services/backend/Dockerfile", Mode: 0o644, Size: 17, Typeflag: tar.TypeReg})
 	_, _ = tw.Write([]byte("FROM alpine:3.19\n"))
 	// N empty padding entries.
 	for i := 0; i < n; i++ {
@@ -255,10 +255,10 @@ func managedServicesFixture(t *testing.T, prefix string) []byte {
     plan: starter
 `
 	entries := []struct{ name, body string }{
-		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n"},
+		{prefix + "/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n"},
 		{prefix + "/render.yaml", renderYAML},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -629,8 +629,8 @@ func TestApplyProject_Inputs_PathCanonicalised(t *testing.T) {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	for _, e := range []struct{ name, body string }{
-		{"./faas-canon/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"./faas-canon/services/api/index.js", "exports.handler = () => 1;\n"},
+		{"./faas-canon/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"./faas-canon/services/backend/index.js", "exports.handler = () => 1;\n"},
 	} {
 		hdr := &tar.Header{Name: e.name, Mode: 0o644, Size: int64(len(e.body)), Typeflag: tar.TypeReg}
 		_ = tw.WriteHeader(hdr)

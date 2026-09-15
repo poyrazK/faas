@@ -18,3 +18,23 @@ func TestValidAppSlug(t *testing.T) {
 		}
 	}
 }
+
+func TestReservedAppSlugs(t *testing.T) {
+	for _, slug := range []string{
+		"account", "admin", "api", "assets", "billing", "cdn", "console",
+		"dashboard", "docs", "help", "login", "logout", "mail",
+		"operations", "security", "signup", "static", "status", "support", "www",
+	} {
+		if !ValidAppSlug(slug) {
+			t.Errorf("reserved slug %q must remain syntactically valid for existing-row access", slug)
+		}
+		if !IsReservedAppSlug(slug) {
+			t.Errorf("IsReservedAppSlug(%q) = false", slug)
+		}
+	}
+	for _, slug := range []string{"status-page", "my-admin", "customer-api"} {
+		if IsReservedAppSlug(slug) {
+			t.Errorf("near-miss slug %q was reserved", slug)
+		}
+	}
+}

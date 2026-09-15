@@ -291,6 +291,31 @@ func TestCreateAppInvalidSlug(t *testing.T) {
 	}
 }
 
+func TestCreateAppReservedSlug(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	for _, slug := range []string{
+		"account", "admin", "api", "assets", "billing", "cdn", "console",
+		"dashboard", "docs", "help", "login", "logout", "mail", "operations",
+		"security", "signup", "static", "status", "support", "www",
+	} {
+		rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
+		assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
+		var problem api.Problem
+		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+			t.Fatalf("decode reserved-slug problem: %v", err)
+		}
+		if !strings.Contains(problem.Detail, "reserved") {
+			t.Errorf("slug %q detail = %q, want reserved reason", slug, problem.Detail)
+		}
+	}
+	for _, slug := range []string{"status-page", "my-admin"} {
+		rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("near-miss slug %q status = %d, want 201; body=%s", slug, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 // TestQuotaMatrix is the M5 acceptance: plan quotas enforced before work, across
 // every plan (RAM cap, concurrency cap, deployed-app count).
 func TestQuotaMatrix(t *testing.T) {

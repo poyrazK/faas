@@ -112,7 +112,7 @@ func TestPgReconcile_FullCycle(t *testing.T) {
 	// 3-workload scan with no existing apps → 3 creates.
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 			{Name: "web", RootDir: "", Source: "compose.yaml: web", Tier: reposcan.TierCompose},
 			{Name: "worker", RootDir: "", Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 		},
@@ -190,7 +190,7 @@ func TestPgReconcile_ScanSourceUpgrade(t *testing.T) {
 	// allowed; the alert flow is silent until downgrade.
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
 	}
@@ -213,7 +213,7 @@ func TestPgReconcile_PersistsWorkloadClassAndStartCommand(t *testing.T) {
 
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", Class: reposcan.ClassHTTP, Command: []string{"uvicorn", "app:app"}, Source: "procfile: api", Tier: reposcan.TierCompose},
+			{Name: "backend", Class: reposcan.ClassHTTP, Command: []string{"uvicorn", "app:app"}, Source: "procfile: api", Tier: reposcan.TierCompose},
 			{Name: "worker", Class: reposcan.ClassWorker, Command: []string{"node", "worker.js"}, Source: "procfile: worker", Tier: reposcan.TierCompose},
 			{Name: "job", Class: reposcan.ClassJob, Command: []string{"python", "job.py"}, Source: "procfile: job", Tier: reposcan.TierCompose},
 		},
@@ -231,9 +231,9 @@ func TestPgReconcile_PersistsWorkloadClassAndStartCommand(t *testing.T) {
 		class state.WorkloadClass
 		cmd   string
 	}{
-		"api":    {class: state.WorkloadClassHTTP, cmd: "uvicorn app:app"},
-		"worker": {class: state.WorkloadClassWorker, cmd: "node worker.js"},
-		"job":    {class: state.WorkloadClassJob, cmd: "python job.py"},
+		"backend": {class: state.WorkloadClassHTTP, cmd: "uvicorn app:app"},
+		"worker":  {class: state.WorkloadClassWorker, cmd: "node worker.js"},
+		"job":     {class: state.WorkloadClassJob, cmd: "python job.py"},
 	}
 	if len(apps) != len(want) {
 		t.Fatalf("AppsForProject returned %d apps, want %d", len(apps), len(want))
@@ -268,7 +268,7 @@ func TestPgReconcile_RemoveAndReaddRestoresIdentity(t *testing.T) {
 	store, svc, _, ctx := pgReconcileStore(t)
 	_, project := seedAccountProject(t, store, state.ProjectScanSourceCompose)
 	initial := reposcan.Result{Tier: reposcan.TierCompose, Workloads: []reposcan.Workload{
-		{Name: "api", RootDir: "services/api", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+		{Name: "backend", RootDir: "services/api", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 		{Name: "worker", RootDir: "services/worker", Class: reposcan.ClassWorker, Command: []string{"node", "worker.js"}, Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 	}}
 	first, err := svc.Reconcile(ctx, project, initial, "sha-restore-1", "main", nil)
@@ -316,7 +316,7 @@ func TestPgReconcile_DirectoryMoveUpdatesInPlace(t *testing.T) {
 	store, svc, _, ctx := pgReconcileStore(t)
 	_, project := seedAccountProject(t, store, state.ProjectScanSourceCompose)
 	initial := reposcan.Result{Tier: reposcan.TierCompose, Workloads: []reposcan.Workload{{
-		Name: "api", RootDir: "services/api", Command: []string{"node", "server.js"},
+		Name: "backend", RootDir: "services/api", Command: []string{"node", "server.js"},
 		Source: "compose.yaml: api", Tier: reposcan.TierCompose,
 	}}}
 	first, err := svc.Reconcile(ctx, project, initial, "sha-move-1", "main", nil)

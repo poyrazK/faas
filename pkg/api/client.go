@@ -1351,6 +1351,36 @@ func (c *Client) DeleteDeploymentScopeExclusion(ctx context.Context, projectSlug
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
+// ListProjects returns durable projects owned by the current account.
+func (c *Client) ListProjects(ctx context.Context) ([]ProjectSummaryResponse, error) {
+	var out []ProjectSummaryResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/projects", nil, &out)
+}
+
+// GetProject returns one project with workloads and recovery metadata.
+func (c *Client) GetProject(ctx context.Context, slug string) (ProjectResponse, error) {
+	var out ProjectResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(slug), nil, &out)
+}
+
+// UpdateProject changes a project's repository or production branch.
+func (c *Client) UpdateProject(ctx context.Context, slug string, req UpdateProjectRequest) (ProjectResponse, error) {
+	var out ProjectResponse
+	return out, c.do(ctx, http.MethodPatch, "/v1/projects/"+url.PathEscape(slug), req, &out)
+}
+
+// PreviewDeleteProject returns the state related to a project deletion.
+func (c *Client) PreviewDeleteProject(ctx context.Context, slug string) (ProjectDeletePreviewResponse, error) {
+	var out ProjectDeletePreviewResponse
+	path := "/v1/projects/" + url.PathEscape(slug) + "/delete-preview"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// DeleteProject removes the project row and detaches its live workloads.
+func (c *Client) DeleteProject(ctx context.Context, slug string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug), nil, nil)
+}
+
 // writeProjectMultipartFields serializes the multipart body shared
 // by ScanProject + ApplyProjectPlan. The fields exactly mirror the
 // OpenAPI ProjectScanRequest schema (the spec-compliance AST gate

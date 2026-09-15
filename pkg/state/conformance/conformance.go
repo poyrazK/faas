@@ -60,6 +60,7 @@ func Run(t *testing.T, open Open) {
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
+		{"project_binding_update_is_scoped", testProjectBindingUpdate},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
@@ -80,6 +81,26 @@ func Run(t *testing.T, open Open) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testProjectBindingUpdate(t *testing.T, fx *Fixture) {
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "binding-" + uuid.NewString()[:8],
+		ProductionBranch: "main", ScanSource: state.ProjectScanSourceConvention,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := fx.Store.UpdateProjectBinding(fx.Ctx, fx.Account.ID, project.ID, "", "release", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ProductionBranch != "release" || updated.RepoFullName != "" || updated.InstallID != 0 {
+		t.Fatalf("updated project = %+v", updated)
+	}
+	if _, err := fx.Store.UpdateProjectBinding(fx.Ctx, uuid.NewString(), project.ID, "", "other", 0); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account update err = %v, want ErrNotFound", err)
 	}
 }
 
