@@ -1,5 +1,7 @@
 package gateway
 
+// spec: §12
+
 import (
 	"context"
 	"fmt"
