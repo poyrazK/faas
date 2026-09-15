@@ -548,7 +548,9 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 	if err != nil {
 		return "", WakeMethodUnspecified, false, err
 	}
+	markWakeAdmissionStarted(ctx)
 	instanceID, nodeID, deploymentID, wakeID, rawMethod, port, err := sched.EnsureWake(ctx, appID, trigger)
+	markWakeSchedulerComplete(ctx)
 	if err != nil {
 		return "", WakeMethodUnspecified, false, err
 	}
@@ -562,6 +564,7 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 		Port:         port,
 		DeploymentID: deploymentID,
 	})
+	markWakeTargetPublished(ctx)
 	return wakeID, scheddWakeMethodToGateway(rawMethod), false, nil
 }
 
@@ -1063,7 +1066,9 @@ func (b *PGBackend) admitSynchronous(ctx context.Context, appID, deploymentID, s
 	// live deployment the picker landed on. Empty falls through
 	// to schedd's default (newest live deployment) — the legacy
 	// single-deployment path.
+	markWakeAdmissionStarted(ctx)
 	instanceID, nodeID, returnedDeploymentID, wakeID, rawMethod, atCapacity, port, err := sched.AdmitInstance(ctx, appID, deploymentID, scope, trigger)
+	markWakeSchedulerComplete(ctx)
 	// NOTE: ADR-098's `EnsureWake(ctx, appID)` is the new single-flight
 	// hot-path primitive on the gateway's Wake flow (pkg/gateway/pgbackend.go
 	// Wake method, issue #854 / PR #854 / 93059ff4). EnsureWake does NOT yet
@@ -1158,6 +1163,7 @@ func (b *PGBackend) recordAdmission(ctx context.Context, appID, deploymentID, in
 		DeploymentID: deploymentID,
 	})
 	b.tgtMu.Unlock()
+	markWakeTargetPublished(ctx)
 	return wakeID, method, false, nil
 }
 

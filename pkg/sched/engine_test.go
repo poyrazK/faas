@@ -1415,6 +1415,38 @@ func TestEngineWake_PropagatesWakeIDToVMM(t *testing.T) {
 	}
 }
 
+// The production gateway uses EnsureWake, whose coordinator detaches the VM
+// lifecycle from the triggering HTTP request. Detachment must retain the wire
+// correlation envelope even after the caller is cancelled.
+func TestEngineEnsureWake_PropagatesRequestIDAcrossDetachedLeader(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	requestCtx, cancel := context.WithCancel(wire.WithContext(context.Background(), wire.CorrelationFields{
+		RequestID:    "req-gateway-coordinated",
+		AppID:        app.ID,
+		DeploymentID: dep.ID,
+	}))
+	defer cancel()
+
+	out, err := e.EnsureWake(requestCtx, app.ID, TriggerGateway)
+	if err != nil {
+		t.Fatalf("EnsureWake: %v", err)
+	}
+	if out.Instance == nil {
+		t.Fatal("EnsureWake returned no instance")
+	}
+	fields, ok := wire.FromContext(vmm.lastColdBootCtx)
+	if !ok {
+		t.Fatal("vmmd-bound context has no correlation fields")
+	}
+	if fields.RequestID != "req-gateway-coordinated" {
+		t.Fatalf("RequestID = %q, want req-gateway-coordinated", fields.RequestID)
+	}
+}
+
 func TestEngineWake_Idempotent(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)

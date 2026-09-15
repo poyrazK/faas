@@ -926,6 +926,8 @@ func TestMetricsWakePhaseDurationPreinstantiated(t *testing.T) {
 	for _, phase := range []string{
 		"queue_wait", "coordinator_wait", "schedd_admit",
 		"vmmd_wake", "guest_ready", "cold_fallback_reason",
+		"pre_admission", "scheduler_wake", "target_publication",
+		"post_publication", "internal_proxy",
 	} {
 		want := fmt.Sprintf(`gateway_wake_phase_duration_seconds_count{phase=%q} 0`, phase)
 		if !strings.Contains(body, want) {

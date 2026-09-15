@@ -1017,9 +1017,9 @@ func NewMetrics() *Metrics {
 		// histogram stays byte-identical to pre-C11 buckets — that
 		// series is the §12 SLO source-of-truth (p50 ≤ 0.35 s,
 		// p95 ≤ 0.8 s). This vector adds the recovery dimension
-		// when a regression fires: phase ∈ {"queue_wait",
-		// "coordinator_wait", "schedd_admit", "vmmd_wake",
-		// "guest_ready", "cold_fallback_reason"}. Phases are
+		// when a regression fires. The request-side phases split scheduler
+		// resolution/wake, target publication, dispatch, and the proxy hop.
+		// Phases are
 		// labelled by the emit site, not the boundary, so a stalled
 		// coordinator shows up as coordinator_wait tail, not as a
 		// generic wake latency regression.
@@ -1541,6 +1541,8 @@ func NewMetrics() *Metrics {
 	for _, phase := range []string{
 		"queue_wait", "coordinator_wait", "schedd_admit",
 		"vmmd_wake", "guest_ready", "cold_fallback_reason",
+		"pre_admission", "scheduler_wake", "target_publication",
+		"post_publication", "internal_proxy",
 	} {
 		m.wakePhaseDuration.WithLabelValues(phase)
 	}
@@ -2200,7 +2202,9 @@ func (m *Metrics) ObserveWakeAdmission(plan string, err error, queued bool, wait
 
 // ObserveWakePhase records a single phase-decomposed wake boundary
 // measurement (ADR-098 C11). phase ∈ {"queue_wait", "coordinator_wait",
-// "schedd_admit", "vmmd_wake", "guest_ready", "cold_fallback_reason"}.
+// "schedd_admit", "vmmd_wake", "guest_ready", "cold_fallback_reason",
+// "pre_admission", "scheduler_wake", "target_publication",
+// "post_publication", "internal_proxy"}.
 // Closed set is pre-instantiated in NewMetrics. Nil-safe so the
 // gateway hot path doesn't branch.
 func (m *Metrics) ObserveWakePhase(phase string, d time.Duration) {

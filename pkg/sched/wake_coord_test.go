@@ -467,6 +467,31 @@ func TestEngineWakeFanoutForRefreshesExistingFromLedger(t *testing.T) {
 	}
 }
 
+type countingAppLookupStore struct {
+	state.Store
+	appByIDCalls atomic.Int32
+}
+
+func (s *countingAppLookupStore) AppByID(ctx context.Context, id string) (state.App, error) {
+	s.appByIDCalls.Add(1)
+	return s.Store.AppByID(ctx, id)
+}
+
+func TestEngineWakeFanoutForAppReusesOwnerGateLookup(t *testing.T) {
+	mem := state.NewMemStore()
+	_, app, _ := seedApp(t, mem, api.PlanScale, 1024, 20)
+	store := &countingAppLookupStore{Store: mem}
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+
+	got := e.wakeFanoutForApp(context.Background(), app.ID, &app)
+	if got.MaxInFlight != app.MaxConcurrency || got.PerVM != api.MustLimitsFor(api.PlanScale).ConcurrencyPerVMBound {
+		t.Fatalf("fanout = %#v, want app and plan limits", got)
+	}
+	if calls := store.appByIDCalls.Load(); calls != 0 {
+		t.Fatalf("AppByID calls = %d, want 0; owner-gate row should be reused", calls)
+	}
+}
+
 // TestWakeCoord_FollowersSpreadAcrossWakes pins that followers join the
 // least-loaded in-flight wake. Piling every follower onto the first one
 // would trip the per-call queue cap while its siblings sat idle, turning

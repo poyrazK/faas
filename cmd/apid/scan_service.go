@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -1199,6 +1200,11 @@ func (s *server) scanService(
 			http.StatusBadRequest, api.CodeSourceInvalid,
 			"Invalid project schedule", scheduleErr.Error())
 	}
+	if rootErr := validateScannedWorkloadRoots(os.DirFS(req.ScanDir), result.Workloads); rootErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
+			http.StatusBadRequest, api.CodeSourceInvalid,
+			"Invalid workload root", rootErr.Error())
+	}
 	if selectorProblem := validateWorkloadSelectors("only", req.Only, result.Workloads, true); selectorProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, selectorProblem
 	}
@@ -1959,6 +1965,20 @@ func (s *server) scanService(
 	// audited and idempotent — this is just the wire projection.
 	resp.Removed = removedSlugs
 	return resp, project, rec.Added, rec.Changed, removedSlugs, builds, nil
+}
+
+// validateScannedWorkloadRoots makes scan/apply structural admission match the
+// later build-staging boundary. Every detector can assign RootDir, so validate
+// the unified scan result before filters, quota evaluation, token minting, or
+// reconcile mutations. os.DirFS plus githubd.ValidateRootDir rejects escapes,
+// missing paths, and regular files while accepting the repository root.
+func validateScannedWorkloadRoots(sourceFS fs.FS, workloads []reposcan.Workload) error {
+	for _, workload := range workloads {
+		if err := githubd.ValidateRootDir(sourceFS, workload.RootDir); err != nil {
+			return fmt.Errorf("workload %q root %q: %w", workload.Name, workload.RootDir, err)
+		}
+	}
+	return nil
 }
 
 func planCanApplyReasons(gateRescuedByExclude bool, preExclude, postExclude []string) []string {

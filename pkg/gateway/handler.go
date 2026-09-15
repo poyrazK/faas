@@ -5631,6 +5631,7 @@ haveApp:
 		wakeID            string
 		wakeMethod        WakeMethod
 		platformWakeStart time.Time
+		platformWakeTrace *wakePhaseTrace
 		err               error
 	)
 
@@ -5664,6 +5665,7 @@ haveApp:
 		// scheduler admission, VM restore, and the internal first-byte hop are
 		// included.
 		platformWakeStart = time.Now()
+		platformWakeTrace = newWakePhaseTrace(platformWakeStart)
 		// Per-app fan-out admission (issue #168). The WakeGate's
 		// shouldWake predicate runs HealthyCount against the plan's
 		// effective max_concurrency, so a burst of N requests admits up to
@@ -5673,6 +5675,7 @@ haveApp:
 		// render a useful page while the WakeGate's detached leader keeps
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
+		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
 		var cancelWakePage context.CancelFunc
 		showWakePage := acceptsWakePage(r)
 		if showWakePage {
@@ -6185,6 +6188,7 @@ haveApp:
 		return
 	}
 	if h.proxyByNode != nil {
+		platformWakeTrace.markProxyStarted(time.Now())
 		// Issue #98 / ADR-028: Target.NodeID is the compute_node.id;
 		// the forwarder dials the per-node vmmd over the overlay and
 		// bridges the HTTP bytes through the instance netns via the
@@ -6221,6 +6225,7 @@ haveApp:
 		r.Header.Set("x-faas-protocol", decideProtocol(app))
 		h.proxyByNode(target).ServeHTTP(capped, r)
 	} else {
+		platformWakeTrace.markProxyStarted(time.Now())
 		// Legacy addr-based path. Target.NodeID is treated as a
 		// host:port by defaultProxy — preserved for tests and the
 		// e2e harness without a vmmd overlay.
@@ -6316,6 +6321,7 @@ haveApp:
 		h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceIDFromContext(r.Context()))
 		if !platformWakeStart.IsZero() {
 			h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceIDFromContext(r.Context()))
+			platformWakeTrace.observe(h.metrics, firstByteAt)
 		}
 		// Wake-locality classifier (PR scale-out readiness). Increment
 		// AFTER the existing first-byte observation so the 350 ms

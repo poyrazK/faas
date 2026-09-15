@@ -5,6 +5,9 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // Wake coordinator (ADR-098): per-app, demand-aware coordination for the wake
@@ -32,9 +35,10 @@ import (
 // inside the boot.
 //
 // Detached-ctx contract: the leader's ensure runs on
-// context.Background() + TTL (default 30 s, WakeQueueTTLSeconds), so a
-// cancelled triggering request cannot kill an in-flight boot that other
-// follow-on callers still depend on.
+// context.WithoutCancel(caller) + TTL (default 30 s,
+// WakeQueueTTLSeconds), so a cancelled triggering request cannot kill an
+// in-flight boot that other follow-on callers still depend on while request
+// correlation values remain available to the boot pipeline.
 //
 // Error semantics:
 //   - ErrQueueFull: every usable wake has reached its follower cap; leaders are
@@ -427,6 +431,13 @@ type wakeFanoutEntry struct {
 // the ledger so live capacity is never stale. Any resolution error returns
 // the zero WakeFanout, disabling fan-out rather than guessing a ceiling.
 func (e *Engine) wakeFanoutFor(ctx context.Context, appID string) WakeFanout {
+	return e.wakeFanoutForApp(ctx, appID, nil)
+}
+
+// wakeFanoutForApp is wakeFanoutFor with an optional app row already loaded by
+// the owner gate. Reusing it removes a duplicate AppByID round trip from the
+// first cold wake after the short policy cache expires.
+func (e *Engine) wakeFanoutForApp(ctx context.Context, appID string, loadedApp *state.App) WakeFanout {
 	if e == nil || e.store == nil {
 		return WakeFanout{}
 	}
@@ -442,9 +453,25 @@ func (e *Engine) wakeFanoutFor(ctx context.Context, appID string) WakeFanout {
 	}
 	e.wakeFanoutMu.Unlock()
 
-	app, _, limits, err := e.resolveAppForDeploy(ctx, appID)
-	if err != nil {
-		return WakeFanout{}
+	var app state.App
+	var limits api.Limits
+	if loadedApp != nil {
+		app = *loadedApp
+		acct, err := e.store.AccountByID(ctx, app.AccountID)
+		if err != nil {
+			return WakeFanout{}
+		}
+		var ok bool
+		limits, ok = api.LimitsFor(acct.Plan)
+		if !ok {
+			return WakeFanout{}
+		}
+	} else {
+		var err error
+		app, _, limits, err = e.resolveAppForDeploy(ctx, appID)
+		if err != nil {
+			return WakeFanout{}
+		}
 	}
 	fanout := WakeFanout{
 		MaxInFlight: app.MaxConcurrency,

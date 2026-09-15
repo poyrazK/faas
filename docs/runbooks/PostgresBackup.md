@@ -82,7 +82,10 @@ Pulls the newest basebackup from the off-host store, restores it
 into a throwaway PG instance under `/var/lib/pgsql/restore-test/`
 on port 5433, replays WAL via `rclone cat`, and asserts
 `count(*)` on `accounts` / `apps` / `instances` matches the live
-cluster within 5%.
+cluster within 5%. Before recovery starts, the verifier copies PostgreSQL's
+recovery-sensitive integer limits from the live primary into the throwaway
+configuration. Its exit trap stops the isolated server and removes both the
+staging and data directories after success or failure.
 
 ### Local round-trip (M8 baseline — still required)
 

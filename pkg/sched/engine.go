@@ -1849,7 +1849,11 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 			appID, app.NodeID, e.ownerNodeID,
 		)
 	}
-	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutFor(ctx, appID))
+	var loadedApp *state.App
+	if err == nil {
+		loadedApp = &app
+	}
+	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutForApp(ctx, appID, loadedApp))
 	if err != nil {
 		return CoordOutcome{}, err
 	}
@@ -1865,13 +1869,14 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	// the in-flight boot. The deferred Complete is the single
 	// decrement site for all five completion paths inside e.Wake.
 	//
-	//nolint:contextcheck // leader's ensure deliberately detaches from the
-	// caller's ctx via context.Background() + TTL — the wake must outlive
-	// the triggering request so other queued waiters get the same instance.
-	// This is the load-bearing coordinated-wake invariant (spec
-	// §4.1, ADR-098 §Decision). Mirror of pkg/gateway/gate.go Wait
-	// goroutine detach.
-	leaderCtx, cancel := context.WithTimeout(context.Background(), e.wakeCoord.TTL())
+	// Detach cancellation and the caller deadline while retaining request-scoped
+	// correlation values. Using context.Background here dropped the request ID
+	// after the gateway -> schedd gRPC hop, so queue/admit/boot events could not
+	// be joined to the customer-visible x-faas-request-id. The wake still
+	// outlives the triggering request and remains bounded by the coordinator TTL.
+	//
+	//nolint:contextcheck // detachment is the coordinated-wake invariant.
+	leaderCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), e.wakeCoord.TTL())
 	defer cancel()
 	// The coordinator deliberately detaches from the triggering request, but
 	// preserves the restart correlation id while doing so.
@@ -1881,12 +1886,7 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 		call.Complete(out)
 		e.wakeCoord.Release(appID, call)
 	}()
-	//nolint:contextcheck // leader's ensure deliberately detaches from the
-	// caller's ctx via context.Background() + TTL — the wake must outlive
-	// the triggering request so other queued waiters get the same instance.
-	// This is the load-bearing coordinated-wake invariant (spec
-	// §4.1, ADR-098 §Decision). Mirror of pkg/gateway/gate.go Wait
-	// goroutine detach.
+	//nolint:contextcheck // leader wake uses the detached, TTL-bounded context.
 	results, err := e.wakeInitialCapacity(leaderCtx, appID, trigger, desired)
 	if err != nil {
 		out.Err = err
