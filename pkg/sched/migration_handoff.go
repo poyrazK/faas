@@ -73,6 +73,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -279,20 +280,38 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 	leaseCtx, cancel := context.WithTimeout(ctx, time.Duration(h.leaseSeconds)*time.Second)
 	defer cancel()
 
+	// Resolve every restore input before pausing the source VM. Besides keeping
+	// the pause window short, the deployment ID is required to place the
+	// handoff snapshot in the OCI backend's valid capture namespace.
+	appSpec, err := h.loadAppSpecForInstance(leaseCtx, instanceID)
+	if err != nil {
+		h.metrics.LiveMigrationDecisions("peer_failure").Inc()
+		h.log.Warn("sched: migrate one: load app spec failed",
+			"instance_id", instanceID,
+			"err", err,
+		)
+		return fmt.Errorf("sched: migrate one: load app spec: %w", err)
+	}
+	if appSpec.DeploymentID == "" {
+		h.metrics.LiveMigrationDecisions("peer_failure").Inc()
+		return fmt.Errorf("sched: migrate one: load app spec: deployment id is empty")
+	}
+
 	// Phase 1: PrepareLiveMigration on the dying vmmd. The
 	// dying vmmd pauses the VM, writes the snapshot to the
 	// canonical storage backend, and returns the storage keys
 	// + a lease_token (UUIDv4 minted by the dying vmmd so the
 	// lease clock is tied to the dying vmmd's lease timer).
 	//
-	// The snapshot_storage_key is the canonical mem blob key
-	// the new owner will pull from after Phase 2. We mint it
-	// deterministically here via the same shape imaged uses
-	// (snap/<deploymentID>/mem) so the dying vmmd and the new
-	// owner agree on the namespace. The vmstate blob is the
-	// sibling key (snap/<deploymentID>/vmstate); both keys are
-	// returned by the dying vmmd at Phase 1.
-	snapshotKey := fmt.Sprintf("snap/migration-%s/mem", instanceID)
+	// The snapshot_storage_key is a unique warm capture under the
+	// deployment. This is the immutable namespace accepted by both local and
+	// OCI storage backends; a fresh capture ID prevents a retry from
+	// overwriting a complete or partially-published migration snapshot.
+	snapshotKey := state.SnapshotCaptureMemKey(
+		appSpec.DeploymentID,
+		state.SnapshotTierWarm,
+		uuid.NewString(),
+	)
 	prepared, err := h.vmm.PrepareLiveMigration(leaseCtx, fromNodeID, instanceID, snapshotKey)
 	if err != nil {
 		// Phase 1 failure: no state has changed on the dying
@@ -354,27 +373,6 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 	// wake time and the column stays), but the wire shape
 	// carries them so the new owner vmmd's logs can correlate.
 	//
-	// AppSpec is rebuilt from the local app + deployment view.
-	// For the A5 v1 PR the AppSpec shape is built from the
-	// Instance's app_id via a best-effort lookup; a future
-	// PR will thread the AppSpec through Engine.MigrateLiveInstances
-	// to avoid the lookup (the engine already has the App
-	// row in hand at the call site).
-	appSpec, err := h.loadAppSpecForInstance(leaseCtx, instanceID)
-	if err != nil {
-		// Phase 3 setup failure (AppSpec couldn't be built).
-		// Roll back Phase 2 via Store.CancelInstanceMigration
-		// (which restores state='parked' on the original owner)
-		// and Phase 4 via the dying vmmd.
-		h.metrics.LiveMigrationDecisions("peer_failure").Inc()
-		h.log.Warn("sched: migrate one: load app spec failed",
-			"instance_id", instanceID,
-			"err", err,
-		)
-		h.rollbackStore(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
-		h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
-		return fmt.Errorf("sched: migrate one: load app spec: %w", err)
-	}
 	// The snapshot's FC version is part of the restore compatibility
 	// decision. Preserve it through the typed scheduler value so the
 	// destination can use the same restore-or-cold-boot gate as a normal wake.

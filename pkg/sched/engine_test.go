@@ -37,9 +37,10 @@ type fakeVMM struct {
 	snapshots           int
 	warmSnapshots       int // PR #470-FU-A: counts WarmSnapshot calls (warm-tier capture path)
 	destroys            int
-	pings               int  // PR #114: counts Ping calls (heartbeat path)
-	frameworkReadyCount int  // PR #470-FU-B: counts FrameworkReady calls (DGRAM receipt path)
-	prepares            int  // Tier A5: counts PrepareLiveMigration calls
+	pings               int // PR #114: counts Ping calls (heartbeat path)
+	frameworkReadyCount int // PR #470-FU-B: counts FrameworkReady calls (DGRAM receipt path)
+	prepares            int // Tier A5: counts PrepareLiveMigration calls
+	prepareStorageKey   string
 	adopts              int  // Tier A5: counts AdoptMigratedInstance calls
 	acks                int  // Tier A5: counts AcknowledgeMigration calls
 	cancels             int  // Tier A5: counts CancelLiveMigration calls
@@ -323,6 +324,7 @@ func (f *fakeVMM) PrepareLiveMigration(ctx context.Context, _, instanceID, snaps
 		return LiveMigrationPrepare{}, f.prepareErr
 	}
 	f.prepares++
+	f.prepareStorageKey = snapshotStorageKey
 	vmstateKey := snapshotStorageKey
 	if len(vmstateKey) >= 4 && vmstateKey[len(vmstateKey)-4:] == "/mem" {
 		vmstateKey = vmstateKey[:len(vmstateKey)-4] + "/vmstate"

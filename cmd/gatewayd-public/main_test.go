@@ -30,6 +30,31 @@ func TestEnvOr_EmptyFallback(t *testing.T) {
 	}
 }
 
+func TestSelectInternalUpstreamMode(t *testing.T) {
+	tests := []struct {
+		name, discovery, target string
+		want                    internalUpstreamMode
+	}{
+		{name: "same box", want: internalUpstreamUnix},
+		{name: "legacy static", target: "tcp://fsn-2.gregale.dev:8080", want: internalUpstreamStatic},
+		{name: "database", discovery: "database", want: internalUpstreamDatabase},
+		{
+			name:      "database ignores stale static target",
+			discovery: " database ",
+			target:    " tcp://fsn-2.gregale.dev:8080 ",
+			want:      internalUpstreamDatabase,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := selectInternalUpstreamMode(tc.discovery, tc.target); got != tc.want {
+				t.Fatalf("selectInternalUpstreamMode(%q, %q) = %d, want %d",
+					tc.discovery, tc.target, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestHstsEnabledFromEnv_LookupEnv pins the os.LookupEnv path
 // (per the FAAS_APID_METRICS_ADDR empty=skip precedent). An
 // explicit empty value must be distinguishable from unset.

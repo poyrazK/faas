@@ -88,6 +88,28 @@ func hstsEnabledFromEnv(k string) string {
 	return ""
 }
 
+type internalUpstreamMode uint8
+
+const (
+	internalUpstreamUnix internalUpstreamMode = iota
+	internalUpstreamStatic
+	internalUpstreamDatabase
+)
+
+// selectInternalUpstreamMode makes explicit database discovery authoritative.
+// Old rollout drop-ins may retain FAAS_INTERNAL_TARGET while the unit contract
+// has already switched to database discovery; honoring the stale target would
+// pin all customer traffic to one compute node during a drain.
+func selectInternalUpstreamMode(computeDiscovery, internalTarget string) internalUpstreamMode {
+	if strings.TrimSpace(computeDiscovery) == "database" {
+		return internalUpstreamDatabase
+	}
+	if strings.TrimSpace(internalTarget) != "" {
+		return internalUpstreamStatic
+	}
+	return internalUpstreamUnix
+}
+
 const (
 	internalGatewayHealthHost = "gatewayd-internal.faas"
 	// defaultListenAddr is the loopback bind for the public listener.
@@ -289,13 +311,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// fallback so an old box can converge without an outage.
 	internalTarget := strings.TrimSpace(os.Getenv("FAAS_INTERNAL_TARGET"))
 	computeDiscovery := strings.TrimSpace(os.Getenv("FAAS_COMPUTE_GATEWAY_DISCOVERY"))
+	upstreamMode := selectInternalUpstreamMode(computeDiscovery, internalTarget)
 	internalURL := &url.URL{Scheme: "http", Host: "gatewayd-internal"}
 	var internalDialer gateway.InternalDialer
-	switch {
-	case computeDiscovery == "database" && internalTarget == "":
+	switch upstreamMode {
+	case internalUpstreamDatabase:
 		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool)
 		internalDialer = cgp
 		log.Info("gatewayd-public: database-backed compute gateway pool enabled")
+		if internalTarget != "" {
+			log.Warn("gatewayd-public: ignoring legacy FAAS_INTERNAL_TARGET because database discovery is enabled",
+				"target", internalTarget)
+		}
 		// Workstream B / issue #1184 / Task #65: subscribe to
 		// compute_node_changed pg_notify so a node drain /
 		// activation / overlay-IP change refreshes the cached
@@ -305,10 +332,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if pool != nil {
 			go cgp.WatchInvalidations(ctx, pool)
 		}
-	case internalTarget == "":
+	case internalUpstreamUnix:
 		internalSocket := envOr("FAAS_INTERNAL_SOCKET", defaultInternalSocket)
 		internalDialer = gateway.NewUnixSocketDialer(internalSocket)
-	default:
+	case internalUpstreamStatic:
 		parsedTarget, parseErr := url.Parse(internalTarget)
 		if parseErr != nil || parsedTarget.Scheme != "tcp" || parsedTarget.Host == "" || parsedTarget.Path != "" {
 			return fmt.Errorf("gatewayd-public: FAAS_INTERNAL_TARGET must be tcp://host:port, got %q", internalTarget)
@@ -321,7 +348,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// the public→internal hop. The unix SynthServer enables native H2C;
 	// the split-box TCP listener uses the ordinary HTTP/1.1 server unless
 	// an operator explicitly enables H2C after both ends are configured.
-	h2cEnabled := envBoolOr("FAAS_INTERNAL_H2C", internalTarget == "" && computeDiscovery != "database")
+	h2cEnabled := envBoolOr("FAAS_INTERNAL_H2C", upstreamMode == internalUpstreamUnix)
 	trustedIngressCIDRs, err := gateway.ParseTrustedIngressCIDRs(os.Getenv("FAAS_TRUSTED_INGRESS_CIDRS"))
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: trusted ingress config: %w", err)
@@ -335,7 +362,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.
-	if computeDiscovery == "database" && internalTarget == "" {
+	if upstreamMode == internalUpstreamDatabase {
 		if transport, ok := proxy.Transport.(*http.Transport); ok {
 			transport.DisableKeepAlives = true
 		}

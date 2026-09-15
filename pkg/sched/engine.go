@@ -4374,9 +4374,19 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: app by id: %w", err)
 	}
-	dep, err := e.store.LiveDeployment(ctx, ins.AppID)
-	if err != nil {
-		return AppSpec{}, fmt.Errorf("sched: build app spec: live deployment: %w", err)
+	var dep state.Deployment
+	if ins.DeploymentID != "" {
+		dep, err = e.store.DeploymentByID(ctx, ins.DeploymentID)
+		if err != nil {
+			return AppSpec{}, fmt.Errorf("sched: build app spec: instance deployment by id: %w", err)
+		}
+	} else {
+		// Legacy instance rows created before deployment correlation was
+		// required retain the previous best-effort live-deployment lookup.
+		dep, err = e.store.LiveDeployment(ctx, ins.AppID)
+		if err != nil {
+			return AppSpec{}, fmt.Errorf("sched: build app spec: live deployment: %w", err)
+		}
 	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
