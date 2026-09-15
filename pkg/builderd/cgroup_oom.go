@@ -10,8 +10,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const builderSliceMemoryEventsPath = "/sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/memory.events"
-
 type builderSliceOOMError struct {
 	Delta uint64
 }
@@ -24,11 +22,14 @@ func (e *builderSliceOOMError) Error() string {
 // the parser outside the metal build makes its failure and delta semantics
 // testable on ordinary CI runners.
 func readCgroupOOMKills(path string) (uint64, error) {
+	// The production caller supplies the fixed cgroup-v2 memory.events path;
+	// tests supply a private temporary fixture. Neither path is customer input.
+	//nolint:forbidigo // vetted system/fixture path; customer path guard does not apply.
 	body, err := os.Open(path)
 	if err != nil {
 		return 0, err
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())

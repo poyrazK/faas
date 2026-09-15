@@ -42,6 +42,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+const builderSliceMemoryEventsPath = "/sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/memory.events"
+
 // VMMDriver is the metal VM driver. It owns a single gRPC connection to
 // vmmd's unix socket (the same one schedd uses, ADR-014/015). Builder VMs
 // are produced by: CreateBuildDrive1 → gRPC CreateColdBoot with BuildSpec;
