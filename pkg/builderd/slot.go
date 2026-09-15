@@ -13,9 +13,9 @@ import (
 // leak OOMs the control plane, never tenants. Within that envelope:
 //
 //   - 1 guaranteed builder slot — always available, lives in faas-cp.slice.
-//   - 1 opportunistic builder slot — only when tenant residency < 60% of the
-//     admission ceiling (the gate below). The 60% threshold is the financial
-//     model's safe headroom for tenant spikes (spec §1, §4.5).
+//   - Opportunistic admission remains disabled while the production parent
+//     slice is capped at 5 GiB: two ordinary builder scopes can request more
+//     than that fence and trigger a host OOM under normal operation.
 //
 // Schedd's Ledger is the authoritative source for tenant residency. builderd
 // does NOT call schedd over its gRPC socket here — instead cmd/builderd polls
@@ -30,16 +30,15 @@ type SlotDecision struct {
 	Reason  string // populated when !Allowed
 }
 
-// slotThresholdFraction is the tenant residency fraction below which the
-// opportunistic 2nd builder slot is granted (spec §13).
+// slotThresholdFraction is retained by DecideSlot for capacity-aware callers;
+// acquireSlot currently fences local concurrency at one before consulting it.
 const slotThresholdFraction = 0.60
 
-const maxBuilderSlots = 2
+const maxBuilderSlots = 1
 
 // acquireSlot reserves one of the process-wide builder slots. The first
-// active build is always the guaranteed slot. A second build requires the
-// residency gate to return the opportunistic label. The returned release
-// function is idempotent so every caller can defer it safely.
+// active build is the guaranteed slot. The returned release function is
+// idempotent so every caller can defer it safely.
 func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 	b.slotMu.Lock()
 	defer b.slotMu.Unlock()

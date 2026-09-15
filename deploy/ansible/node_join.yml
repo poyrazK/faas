@@ -757,16 +757,23 @@
         ((faas_release_install.stdout | default('')) ~
          (faas_release_install.stderr | default('')))
 
-    - name: Initialize the per-release SBoM baseline on a new node
-      ansible.builtin.command:
-        argv:
-          - /usr/local/bin/gregalectl
-          - release
-          - kgv
-          - rotate
-          - --git-sha
-          - "{{ faas_join_release_git_sha }}"
-          - --from-zero
+    - name: Explicitly bootstrap the persistent SBoM baseline
+      ansible.builtin.shell: |
+        set -euo pipefail
+        current_release="$(readlink -f /opt/faas/current 2>/dev/null || true)"
+        if [[ -n "$current_release" && "$current_release" != "/opt/faas/releases/{{ faas_join_release_git_sha }}" && -s "$current_release/release.sbom.json" ]]; then
+          /usr/local/bin/gregalectl release kgv rotate \
+            --git-sha "$(basename "$current_release")"
+        else
+          # A brand-new host has no prior accepted state. Trust the signed,
+          # verified candidate once so the deferred install can proceed; the
+          # controller keeps the node drained and accepts it again only after
+          # the full readiness gate succeeds.
+          /usr/local/bin/gregalectl release kgv rotate \
+            --git-sha "{{ faas_join_release_git_sha }}"
+        fi
+      args:
+        executable: /bin/bash
       when: >-
         faas_release_install.rc != 0 and
         'SBoM gate requires a prior baseline' in

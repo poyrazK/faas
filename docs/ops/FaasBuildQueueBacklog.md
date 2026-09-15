@@ -73,8 +73,8 @@ code.
 5. **If the queue is STILL backed up after step 3**, the
    issue is genuine demand exceeding builder capacity.
    Check `pkg/builderd/builderd.go::ProcessNext` for
-   `ErrNoSlot` returns — this means the 1+1 ceiling
-   (1 guaranteed + 1 opportunistic) is binding.
+   `ErrNoSlot` returns — this means the single local builder
+   slot is binding.
    Consider scaling the builder fleet (out of scope
    for this runbook — see the multi-host rollout
    playbook).

@@ -860,8 +860,34 @@ groups:
           family: build_queue
         annotations:
           summary: "Build queue p95 wait > 5m"
-          description: "Builds are queueing > 300s at p95. The 2nd opportunistic builder slot may be blocked, or apid is emitting faster than builderd drains."
+          description: "Builds are queueing > 300s at p95. Builder admission is intentionally limited to one VM under the 5 GiB parent slice; check whether arrival rate exceeds that safe drain rate."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
+
+      - alert: FaasBuilderSliceOOMKill
+        expr: increase(builderd_builder_slice_oom_kills_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: page
+          component: builderd
+          family: builder_memory
+          public_status: internal
+        annotations:
+          summary: "The builder parent cgroup OOM-killed an active build"
+          description: "builderd attributed a new faas-cp-build.slice oom_kill to the active build. The build is persisted as build_oom; use the correlated builderd log to identify build, deployment, node, and VM instance."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuilderSliceOOM.md"
+
+      - alert: FaasHostOOMKill
+        expr: increase(node_vmstat_oom_kill[10m]) > 0
+        for: 1m
+        labels:
+          severity: page
+          component: node
+          family: host_memory
+          public_status: internal
+        annotations:
+          summary: "The Linux host OOM killer terminated a process on {{ $labels.node }}"
+          description: "node_vmstat_oom_kill increased. Correlate with builderd_builder_slice_oom_kills_total and system journal kernel OOM records to identify the victim."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuilderSliceOOM.md"
 
       # ─────────────────────────────────────────────────────────────────
       # Gateway wake latency p95 (gatewayd-internal)
@@ -2396,8 +2422,8 @@ groups:
       # `faas_build_queue_depth` gauge (fleet-total queued builds,
       # bumped every 30s by the apid metrics collector) sustains
       # > 50 queued for 10m. The threshold deliberately errs loose:
-      # builderd's default concurrency budget is 2 microVMs (1
-      # guaranteed + 1 opportunistic, ADR-003), so a sustained
+      # builderd's safe production concurrency budget is one microVM under
+      # the 5 GiB parent cgroup, so a sustained
       # queue > 50 means the cluster's build throughput is
       # insufficient for the wake rate. Triage: `gregalectl builds
       # list --status=queued` for the in-flight builds, the
@@ -2416,7 +2442,7 @@ groups:
           family: build_queue_stuck
         annotations:
           summary: "builderd build queue > 50 queued builds for 10m"
-          description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd's default concurrency of 2 microVMs (1 guaranteed + 1 opportunistic per ADR-003), sustained depth > 50 means builds are arriving faster than builderd can drain the queue. Triage: `gregalectl builds list --status=queued` for the in-flight builds, `/v1/admin/obs/builder-heartbeats` for live builderd liveness (a missing builder_tick signature means the writer is wedged), `gregalectl builds sweep-stuck --older-than=15m --yes` to reclaim the wedged 'running' rows. Recover per docs/ops/FaasBuildQueueBacklog.md."
+          description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
       # Issue #2418: builder VM exports are node-local, transient handoffs.

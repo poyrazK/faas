@@ -152,6 +152,15 @@ func TestOpsMetrics_ObserveBuild(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_BuilderSliceOOMKills(t *testing.T) {
+	m := wire.NewOpsMetrics("builderd")
+	m.ObserveBuilderSliceOOMKills(2)
+	body := render(t, m)
+	if !strings.Contains(body, `builderd_builder_slice_oom_kills_total 2`) {
+		t.Fatalf("missing builder slice OOM counter:\n%s", body)
+	}
+}
+
 func TestOpsMetrics_BuildCacheOutcomeClosedSet(t *testing.T) {
 	m := wire.NewOpsMetrics("builderd")
 	m.ObserveBuildCacheOutcome("hit")
@@ -205,6 +214,7 @@ func TestOpsMetrics_ObserveBuildNilSafe(t *testing.T) {
 	m.ObserveBuildQueueWait(time.Second)
 	m.ObserveBuildCacheOutcome("hit")
 	m.ObserveBuilderWarmRestore("hit")
+	m.ObserveBuilderSliceOOMKills(1)
 }
 
 func TestOpsMetrics_ObserveImagedOCIPull(t *testing.T) {

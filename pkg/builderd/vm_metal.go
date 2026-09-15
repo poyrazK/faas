@@ -273,6 +273,20 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	// 2. Cold-boot. BuildSpec carries the export dir; vmmd's Destroy will
 	//    loopback-mount drive1 and copy out /build/out/* + build-done.json.
 	buildExportDir := filepath.Join(d.exportDir, req.BuildID)
+	oomKillsAtStart, oomCounterErr := readCgroupOOMKills(builderSliceMemoryEventsPath)
+	handle := BuildHandle{
+		Instance:                    instance,
+		HostDrive1:                  drive1Path,
+		ExportDir:                   buildExportDir,
+		BuildID:                     req.BuildID,
+		TimeoutSec:                  timeoutSec,
+		StartedAt:                   time.Now(),
+		DependencyCacheKey:          req.DependencyCacheKey,
+		DependencyCacheRestored:     cacheRestored,
+		WarmScopeKey:                req.WarmScopeKey,
+		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
+		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+	}
 	resp, err := d.cli.CreateColdBoot(ctx, &vmmdpb.CreateColdBootRequest{
 		Instance: instance,
 		App: &vmmdpb.AppSpec{
@@ -297,24 +311,20 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	})
 	if err != nil {
 		os.Remove(drive1Path)
+		if delta := builderSliceOOMDelta(handle, builderSliceMemoryEventsPath); delta > 0 {
+			return handle, &builderSliceOOMError{Delta: delta}
+		}
 		return BuildHandle{}, fmt.Errorf("builderd: cold boot: %w", err)
 	}
 	if resp == nil {
 		os.Remove(drive1Path)
+		if delta := builderSliceOOMDelta(handle, builderSliceMemoryEventsPath); delta > 0 {
+			return handle, &builderSliceOOMError{Delta: delta}
+		}
 		return BuildHandle{}, fmt.Errorf("builderd: nil wake outcome")
 	}
 
-	return BuildHandle{
-		Instance:                instance,
-		HostDrive1:              drive1Path,
-		ExportDir:               buildExportDir,
-		BuildID:                 req.BuildID,
-		TimeoutSec:              timeoutSec,
-		StartedAt:               time.Now(),
-		DependencyCacheKey:      req.DependencyCacheKey,
-		DependencyCacheRestored: cacheRestored,
-		WarmScopeKey:            req.WarmScopeKey,
-	}, nil
+	return handle, nil
 }
 
 // RestoreWarmBuilder refreshes only the per-build inputs on a retained
@@ -352,6 +362,20 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 	}
 	instance := "build-" + req.BuildID
 	buildExportDir := filepath.Join(d.exportDir, req.BuildID)
+	oomKillsAtStart, oomCounterErr := readCgroupOOMKills(builderSliceMemoryEventsPath)
+	handle := BuildHandle{
+		Instance:                    instance,
+		HostDrive1:                  snapshot.LayerPath,
+		ExportDir:                   buildExportDir,
+		BuildID:                     req.BuildID,
+		TimeoutSec:                  timeoutSec,
+		StartedAt:                   time.Now(),
+		DependencyCacheKey:          req.DependencyCacheKey,
+		DependencyCacheRestored:     true,
+		WarmScopeKey:                req.WarmScopeKey,
+		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
+		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+	}
 	resp, err := d.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance: instance,
 		App: &vmmdpb.AppSpec{
@@ -373,9 +397,15 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 		AccountId: req.TenantID,
 	})
 	if err != nil {
+		if delta := builderSliceOOMDelta(handle, builderSliceMemoryEventsPath); delta > 0 {
+			return handle, &builderSliceOOMError{Delta: delta}
+		}
 		return BuildHandle{}, fmt.Errorf("builderd: warm restore: %w", err)
 	}
 	if resp == nil {
+		if delta := builderSliceOOMDelta(handle, builderSliceMemoryEventsPath); delta > 0 {
+			return handle, &builderSliceOOMError{Delta: delta}
+		}
 		return BuildHandle{}, fmt.Errorf("builderd: nil warm restore outcome")
 	}
 	if resp.GetMethod() != vmmdpb.WakeMethod_WAKE_RESTORE {
@@ -385,17 +415,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 		}
 		return BuildHandle{}, fmt.Errorf("builderd: warm restore fell back to cold boot")
 	}
-	return BuildHandle{
-		Instance:                instance,
-		HostDrive1:              snapshot.LayerPath,
-		ExportDir:               buildExportDir,
-		BuildID:                 req.BuildID,
-		TimeoutSec:              timeoutSec,
-		StartedAt:               time.Now(),
-		DependencyCacheKey:      req.DependencyCacheKey,
-		DependencyCacheRestored: true,
-		WarmScopeKey:            req.WarmScopeKey,
-	}, nil
+	return handle, nil
 }
 
 // WaitForWarmCompletion waits for the guest's successful build handoff,
@@ -412,10 +432,16 @@ func (d *VMMDriver) WaitForWarmCompletion(ctx context.Context, h BuildHandle) (B
 	readyResp, err := d.cli.WaitBuilderReady(waitCtx, &vmmdpb.WaitBuilderReadyRequest{Instance: h.Instance})
 	if err != nil {
 		cleanupErr := d.cleanupWarmBuilderStart(context.WithoutCancel(ctx), h)
+		if out, oom := builderSliceOOMOutcome(h, builderSliceMemoryEventsPath); oom {
+			return out, WarmSnapshot{}, nil
+		}
 		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: wait builder ready: %w", err), cleanupErr)
 	}
 	if readyResp == nil {
 		cleanupErr := d.cleanupWarmBuilderStart(context.WithoutCancel(ctx), h)
+		if out, oom := builderSliceOOMOutcome(h, builderSliceMemoryEventsPath); oom {
+			return out, WarmSnapshot{}, nil
+		}
 		return BuildOutcome{}, WarmSnapshot{}, errors.Join(errors.New("builderd: nil builder readiness outcome"), cleanupErr)
 	}
 	if !readyResp.GetReady() {
@@ -602,6 +628,9 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 	dctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	resp, err := d.cli.Destroy(dctx, &vmmdpb.DestroyRequest{Instance: h.Instance})
+	if out, oom := builderSliceOOMOutcome(h, builderSliceMemoryEventsPath); oom {
+		return out, nil
+	}
 	if err != nil {
 		return BuildOutcome{}, fmt.Errorf("builderd: destroy: %w", err)
 	}

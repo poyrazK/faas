@@ -419,6 +419,50 @@ func TestProcessOne_OOMExitClassified(t *testing.T) {
 	}
 }
 
+func TestProcessOne_ParentBuilderSliceOOMIsAttributed(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+	buildID, depID, _ := seedDeployment(t, store, src)
+	fvm := &fakeVM{
+		handle:   BuildHandle{Instance: "build-oom", BuildID: buildID, TimeoutSec: 30},
+		spawnErr: &builderSliceOOMError{Delta: 2},
+	}
+	ops := wire.NewOpsMetrics("builderd")
+	eventsPlatform := events.NewPlatform("builderd", store, slog.New(slog.NewTextHandler(io.Discard, nil)), wire.NewOpsMetrics("builderd-event-test"), nil)
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithOpsMetrics(ops).
+		WithEvents(eventsPlatform)
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err == nil {
+		t.Fatal("expected parent builder slice OOM error")
+	}
+	build, err := store.BuildByID(context.Background(), buildID)
+	if err != nil || build.Status != state.BuildFailed || build.FailureClass != state.FailureOOM {
+		t.Fatalf("build after parent OOM = %#v, err=%v", build, err)
+	}
+	dep, err := store.DeploymentByID(context.Background(), depID)
+	if err != nil || dep.Status != state.DeployFailed || dep.ErrorCode != api.CodeBuildOOM {
+		t.Fatalf("deployment after parent OOM = %#v, err=%v", dep, err)
+	}
+	if body := scrapeMetrics(t, ops); !strings.Contains(body, `builderd_builder_slice_oom_kills_total 2`) {
+		t.Fatalf("parent OOM counter missing:\n%s", body)
+	}
+	rows, err := store.ListEvents(context.Background(), "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range rows {
+		if row.Kind == "wake.build_failed" && strings.Contains(string(row.Data), depID) && strings.Contains(string(row.Data), "oom") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("wake.build_failed OOM event missing: %#v", rows)
+	}
+}
+
 func TestBoundedGuestBuildLogTailKeepsNewestDiagnostic(t *testing.T) {
 	raw := strings.Repeat("x", 4*1024) + "\nrailpack: script start.sh not found\n"
 	got := boundedGuestBuildLogTail(raw)

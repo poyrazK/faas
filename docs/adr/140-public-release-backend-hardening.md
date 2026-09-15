@@ -12,8 +12,8 @@
   bridge goroutines alive until a server timeout.
 - **Consequences:** Warm affinity is written and broadcast only after the
   instance row and ledger admission succeed. A residency value older than 30
-  seconds denies the opportunistic builder slot while preserving the
-  guaranteed slot. Gateway HTTP and raw-stream bodies are tied to the derived
+  seconds is rejected by the capacity-aware decision helper; production keeps
+  one memory-fenced local builder slot. Gateway HTTP and raw-stream bodies are tied to the derived
   stream context, closable bodies are actively closed on cancellation, and all
   receiver exits wait for the body copier to finish. No schema, wire, or
   deployment changes are required.

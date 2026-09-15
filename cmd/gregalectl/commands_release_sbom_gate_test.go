@@ -204,3 +204,21 @@ func TestCmdReleaseInstall_SBoMGateRejectsRegression(t *testing.T) {
 		t.Errorf("gate error missing CRITICAL marker: %q", stderr)
 	}
 }
+
+func TestCmdReleaseInstall_SBoMGateRejectsEmptyArtifact(t *testing.T) {
+	root := t.TempDir()
+	baseline := releaseinstall.KGVZero(sbomGateTestGitSHA)
+	sbomGateStageFixture(t, root, sbomGateTestGitSHA, &baseline, 0, 0, 0, 0)
+	if err := os.WriteFile(filepath.Join(releaseinstall.BundleRoot(root, sbomGateTestGitSHA), "release.sbom.json"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stderr := captureStderr(t, func() {
+		if code := cmdReleaseInstall([]string{"--git-sha=" + sbomGateTestGitSHA, "--releases-root=" + root}); code != 3 {
+			t.Errorf("cmdReleaseInstall(empty SBoM) = %d, want 3", code)
+		}
+	})
+	if !strings.Contains(stderr, "SBoM is empty") || !strings.Contains(stderr, "refusing to activate") {
+		t.Errorf("empty SBoM refusal missing from stderr: %q", stderr)
+	}
+}

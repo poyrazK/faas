@@ -88,6 +88,13 @@ type BuildHandle struct {
 	DependencyCacheKey      string    // cache generation to publish after success
 	DependencyCacheRestored bool      // a prior BuildKit cache was staged into drive1
 	WarmScopeKey            string    // scope bound to a retained warm drive
+	// BuilderSliceOOMKillsAtStart snapshots the parent builder slice's
+	// cumulative oom_kill counter before vmmd starts this operation. With the
+	// host fence limited to one admitted builder, a later delta belongs to
+	// this build and can be reported even when Firecracker dies before writing
+	// build-done.json.
+	BuilderSliceOOMKillsAtStart uint64
+	BuilderSliceOOMCounterValid bool
 }
 
 // BuildOutcome is what WaitForCompletion returns. The orchestrator at
@@ -130,4 +137,7 @@ type BuildOutcome struct {
 	// WarmSnapshotError reports a non-fatal cache-capture failure. The build
 	// artifact remains authoritative and can still complete successfully.
 	WarmSnapshotError string
+	// BuilderSliceOOMKills is the parent faas-cp-build.slice oom_kill delta
+	// observed while this build owned the single host builder slot.
+	BuilderSliceOOMKills uint64
 }

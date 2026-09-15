@@ -96,6 +96,7 @@ type joinTiming struct {
 var nodeJoinStoreOpener = openNodeJoinStore
 
 var joinControlPlaneVerifier = verifyAndActivateJoinedNode
+var joinControlPlaneDeactivator = deactivateJoinedNode
 
 func openNodeJoinStore() (nodejoin.Store, func(), error) {
 	pool, err := openPgPoolFromEnv(context.Background())
@@ -832,6 +833,18 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if verifyErr != nil {
 		return 3, fmt.Errorf("control-plane readiness gate: %w", verifyErr)
 	}
+	// The accepted SBOM baseline advances only after the controller has
+	// verified and activated the database row. If the remote write fails,
+	// immediately return the row to drained so an unaccepted release cannot
+	// remain eligible for customer admission.
+	acceptArgs := append(append([]string{}, common...), "--limit", opts.Node, filepath.Join(ansibleDir, "node_join_accept_release.yml"))
+	phaseStarted = time.Now()
+	acceptErr := ansiblePlaybookRunner(ctx, ansibleDir, acceptArgs)
+	report.Timings = append(report.Timings, joinTiming{Phase: "accept_release_baseline", DurationMS: time.Since(phaseStarted).Milliseconds()})
+	if acceptErr != nil {
+		deactivateErr := joinControlPlaneDeactivator(context.WithoutCancel(ctx), report)
+		return 3, errors.Join(fmt.Errorf("accept activated release baseline: %w", acceptErr), deactivateErr)
+	}
 	report.Applied = true
 	return 0, nil
 }
@@ -1144,6 +1157,22 @@ func verifyAndActivateJoinedNode(ctx context.Context, report *deployJoinReport, 
 		if err := store.SetComputeNodeActive(ctx, row.ID, true); err != nil {
 			return fmt.Errorf("activate row %s: %w", row.ID, err)
 		}
+	}
+	return nil
+}
+
+func deactivateJoinedNode(ctx context.Context, report *deployJoinReport) error {
+	store, closeFn, err := computeNodesStoreOpener()
+	if err != nil {
+		return fmt.Errorf("re-drain %s after baseline failure: %w", report.DatabaseNode, err)
+	}
+	defer closeFn()
+	row, err := store.ComputeNodeByName(ctx, report.DatabaseNode)
+	if err != nil {
+		return fmt.Errorf("re-drain lookup %s: %w", report.DatabaseNode, err)
+	}
+	if err := store.SetComputeNodeActive(ctx, row.ID, false); err != nil {
+		return fmt.Errorf("re-drain row %s: %w", row.ID, err)
 	}
 	return nil
 }

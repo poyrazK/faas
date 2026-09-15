@@ -1167,6 +1167,9 @@ type OpsMetrics struct {
 	buildExportCleanupTotal  *prometheus.CounterVec
 	buildExportCleanupErrors prometheus.Counter
 	buildExportBytes         prometheus.Gauge
+	// builderSliceOOMKills counts cgroup-v2 oom_kill deltas attributed to the
+	// sole admitted builder operation.
+	builderSliceOOMKills prometheus.Counter
 	// cpuStatsCollectDur: introduced for issue #279 / PR-B / ADR-039.
 	// Wall-clock duration of the CPU-rate-and-accumulator read path
 	// on the vmmd and schedd wires. Stored as prometheus.Histogram
@@ -2693,6 +2696,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_build_export_bytes",
 		Help: "Current bytes below the node-local builder export root after the latest startup or periodic sweep.",
 	})
+	builderSliceOOMKills := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_builder_slice_oom_kills_total",
+		Help: "OOM kills in faas-cp-build.slice attributed to the active builder operation. Any increase requires build and host-memory triage.",
+	})
 	buildQueueWait := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: prefix + "_build_queue_wait_seconds",
 		Help: "Seconds a build waited between enqueue (apid) and dequeue (builderd start), spec §12 target < 60 s, warn > 300 s (ADR-030).",
@@ -3395,7 +3402,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
-		buildExportCleanupTotal, buildExportCleanupErrors, buildExportBytes,
+		buildExportCleanupTotal, buildExportCleanupErrors, buildExportBytes, builderSliceOOMKills,
 		residentGBPerCustomer, billingCapExceededTotal,
 		meterdFloorAppliedTotal, meteredMBSecondsTotal,
 		// ADR-123 alert-preset signal series — PR-A (3) + PR-B (2). Each
@@ -4760,6 +4767,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		buildExportCleanupTotal:                               buildExportCleanupTotal,
 		buildExportCleanupErrors:                              buildExportCleanupErrors,
 		buildExportBytes:                                      buildExportBytes,
+		builderSliceOOMKills:                                  builderSliceOOMKills,
 		residentGBPerCustomer:                                 residentGBPerCustomer,
 		billingCapExceededTotal:                               billingCapExceededTotal,
 		meterdFloorAppliedTotal:                               meterdFloorAppliedTotal,
@@ -7040,6 +7048,17 @@ func (m *OpsMetrics) ObserveBuildExportCleanupErrors(count int) {
 		return
 	}
 	m.buildExportCleanupErrors.Add(float64(count))
+}
+
+// ObserveBuilderSliceOOMKills records cgroup-v2 oom_kill deltas attributed to
+// the active build. The host admits one builder at a time, so this counter can
+// be correlated with the structured build/deployment log without an unbounded
+// metric label.
+func (m *OpsMetrics) ObserveBuilderSliceOOMKills(count uint64) {
+	if m == nil || m.builderSliceOOMKills == nil || count == 0 {
+		return
+	}
+	m.builderSliceOOMKills.Add(float64(count))
 }
 
 // SetBuildExportBytes publishes the post-sweep size of the export tree.

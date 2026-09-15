@@ -7,8 +7,8 @@
 // produced app layer to imaged via the existing snapshot_prime handshake.
 //
 // Build slots (CLAUDE.md "Builder slots"):
-//   - 1 guaranteed slot — lives in faas-cp.slice.
-//   - 1 opportunistic slot — only when tenant residency < 60%.
+//   - 1 slot — lives in the 5 GiB faas-cp-build.slice parent fence.
+//   - Local overcommit is disabled; another compute node adds capacity.
 //
 // The VM spawn itself is `//go:build metal`; this file holds the pure-Go
 // orchestration so the slot/cache/log/detect logic is unit-tested without
@@ -42,9 +42,9 @@ type Notifier interface {
 }
 
 // ResidencyProbe reports live tenant-RAM residency. schedd's Ledger is the
-// authoritative source; builderd consults it before allocating the
-// opportunistic 2nd slot. A nil probe is treated as "no extra slot" — safer
-// default than "always allow".
+// authoritative source; builderd retains this probe for admission telemetry
+// and future capacity-aware placement. A nil probe is safe for the current
+// single-slot allocator.
 type ResidencyProbe interface {
 	ResidentMB() int
 }
@@ -61,7 +61,7 @@ type ResidencyProbe interface {
 var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in unit tests")
 
 // ErrNoSlot is returned when the slot allocator (DecideSlot) rules
-// the build out — the 1 + 1 opportunistic builder budget is fully
+// the build out — the single local builder slot is fully
 // consumed by other in-flight builds (spec §14). processClaimedBuild
 // REQUEUES the row (preserving FIFO position) before returning
 // ErrNoSlot, so the durability-net worker (cmd/builderd/main.go::workerLoop)
@@ -99,7 +99,7 @@ type Config struct {
 	// in New — the legacy instant-fail behaviour is gone.
 	SourceWaitTimeout time.Duration `toml:"source_wait_timeout"`
 	// ResidentProbeSocket is where builderd reaches schedd's residency
-	// reporting. Empty disables the opportunistic 2nd slot.
+	// reporting. Empty uses the safe no-headroom sentinel.
 	ResidentProbeSocket string `toml:"resident_probe_socket"`
 	// MetricsAddr is the bind address for /metrics. Empty disables it.
 	MetricsAddr string `toml:"metrics_addr"`
@@ -161,10 +161,9 @@ type Builderd struct {
 	// ResidencyProbe rig. nil falls back to DecideSlot(b.resid, …)
 	// inside processClaimedBuild.
 	slotDecide func(ResidencyProbe, int) SlotDecision
-	// slotMu and activeSlots enforce the process-wide 1 guaranteed +
-	// 1 opportunistic builder budget. DecideSlot only evaluates tenant
-	// residency; it cannot account for another build racing through the
-	// LISTEN path or the durable worker.
+	// slotMu and activeSlots enforce the process-wide single builder budget
+	// required by the 5 GiB production parent cgroup. DecideSlot still reports
+	// future opportunistic eligibility but cannot bypass this host fence.
 	slotMu      sync.Mutex
 	activeSlots int
 	// sourceStorage is the optional remote source handoff used by split-box
@@ -908,14 +907,18 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if warmStarted && warmResult == WarmRestoreHit {
 		handle, err = warmVM.RestoreWarmBuilder(vmCtx, vmReq, warmSnapshot)
 		if err != nil {
-			// The lifecycle found a reusable snapshot, but the transport
-			// rejected it. This build takes the cold fallback path, so the
-			// customer-visible restore outcome is a miss.
-			b.observeWarmRestore(WarmRestoreMiss)
-			b.log.Warn("builderd: warm restore failed; retrying cold", "build", build.ID, "err", err)
-			// cleanupWarmSnapshot logs failures; the cold retry remains authoritative.
-			_ = b.cleanupWarmSnapshot(ctx, warmVM, warmSnapshot)
-			handle, err = b.vm.Spawn(vmCtx, vmReq)
+			var oomErr *builderSliceOOMError
+			if !errors.As(err, &oomErr) {
+				// The lifecycle found a reusable snapshot, but the transport
+				// rejected it. This build takes the cold fallback path, so the
+				// customer-visible restore outcome is a miss. A parent-cgroup OOM
+				// is terminal: retrying immediately can cross the same fence again.
+				b.observeWarmRestore(WarmRestoreMiss)
+				b.log.Warn("builderd: warm restore failed; retrying cold", "build", build.ID, "err", err)
+				// cleanupWarmSnapshot logs failures; the cold retry remains authoritative.
+				_ = b.cleanupWarmSnapshot(ctx, warmVM, warmSnapshot)
+				handle, err = b.vm.Spawn(vmCtx, vmReq)
+			}
 		} else {
 			b.observeWarmRestore(WarmRestoreHit)
 			// A successful restore has consumed the old memory/vmstate pair.
@@ -931,6 +934,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		handle, err = b.vm.Spawn(vmCtx, vmReq)
 	}
 	if err != nil {
+		var oomErr *builderSliceOOMError
+		if errors.As(err, &oomErr) {
+			b.ops.ObserveBuilderSliceOOMKills(oomErr.Delta)
+			b.log.Error("builderd: parent builder slice OOM-killed build during spawn",
+				"build", build.ID,
+				"deployment", build.DeploymentID,
+				"node", b.builderNodeID,
+				"instance", handle.Instance,
+				"oom_kills", oomErr.Delta)
+			b.markFailedEx(ctx, build, state.FailureOOM, api.CodeBuildOOM, "", err.Error(), buildStart)
+			cancel()
+			return BuildResult{}, err
+		}
 		// Translate a context-deadline to timeout-class; everything else is infra.
 		fc := state.FailureInfra
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -1017,6 +1033,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if out.WarmSnapshotError != "" {
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
+	}
+	if out.BuilderSliceOOMKills > 0 {
+		b.ops.ObserveBuilderSliceOOMKills(out.BuilderSliceOOMKills)
+		b.log.Error("builderd: parent builder slice OOM-killed build",
+			"build", build.ID,
+			"deployment", build.DeploymentID,
+			"node", b.builderNodeID,
+			"instance", out.InstanceID,
+			"oom_kills", out.BuilderSliceOOMKills)
 	}
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil

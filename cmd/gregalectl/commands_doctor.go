@@ -981,9 +981,10 @@ func rollupError(findings []doctorFinding) int {
 // is missing — distinct from a 'verify failed' error so the
 // on-disk shape is enumerated, not just success/failure.
 //
-// Per-SHA findings are emitted so the operator can see exactly
-// which release regressed. The check-level summary stays
-// rolled-up (max severity + finding count via runCheck).
+// Every retained release still gets signature/SBoM integrity validation, but
+// only the active release is compared with the host-wide accepted baseline.
+// Comparing older rollback artifacts with the newest baseline would report
+// false regressions after a vulnerability is removed.
 func checkVerifyTarballSBOM(ctx context.Context, deps *doctorDeps) ([]doctorFinding, error) {
 	var findings []doctorFinding
 	entries, err := os.ReadDir(deps.releasesRoot)
@@ -999,6 +1000,13 @@ func checkVerifyTarballSBOM(ctx context.Context, deps *doctorDeps) ([]doctorFind
 			}}, nil
 		}
 		return nil, fmt.Errorf("read releases root: %w", err)
+	}
+	activeSHA, _ := releaseinstall.CurrentGitSHA(deps.releasesRoot)
+	validReleaseCount := 0
+	for _, entry := range entries {
+		if entry.IsDir() && releaseinstall.ValidGitSHA(entry.Name()) && (deps.releaseFilter == "" || entry.Name() == deps.releaseFilter) {
+			validReleaseCount++
+		}
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -1151,9 +1159,26 @@ func checkVerifyTarballSBOM(ctx context.Context, deps *doctorDeps) ([]doctorFind
 			continue
 		}
 		baseline, baseErr := releaseinstall.ReadBaseline(deps.releasesRoot, gitSHA)
+		isActive := activeSHA == gitSHA
+		if activeSHA == "" {
+			// Fixtures and interrupted first boots may not have a current link.
+			// The accepted SHA is authoritative; with no baseline, a sole
+			// retained release is the only actionable target.
+			isActive = (baseErr == nil && baseline.GitSHA == gitSHA) || validReleaseCount == 1
+		}
 		var baselineCounts *releaseinstall.SBOMCounts
 		switch {
-		case baseErr == nil:
+		case baseErr == nil && isActive:
+			if baseline.GitSHA != gitSHA {
+				findings = append(findings, doctorFinding{
+					Check:    doctorCheckVerifyTarballSBOM,
+					Severity: doctorSeverityError,
+					Target:   gitSHA,
+					Message:  "active release SBOM baseline not accepted",
+					Detail:   fmt.Sprintf("active=%s accepted=%s", gitSHA, baseline.GitSHA),
+				})
+				continue
+			}
 			if _, diffErr := baseline.Diff(counts); diffErr != nil {
 				findings = append(findings, doctorFinding{
 					Check:    doctorCheckVerifyTarballSBOM,
@@ -1171,14 +1196,20 @@ func checkVerifyTarballSBOM(ctx context.Context, deps *doctorDeps) ([]doctorFind
 			// numbers they rotated to, not the new SBoM's tally.
 			c := baseline.Counts
 			baselineCounts = &c
-		case errors.Is(baseErr, releaseinstall.ErrNilBaseline):
+		case baseErr == nil:
+			// Retained inactive releases are verified above but are not
+			// compared with the active release's canonical baseline.
+		case errors.Is(baseErr, releaseinstall.ErrNilBaseline) && isActive:
 			findings = append(findings, doctorFinding{
 				Check:    doctorCheckVerifyTarballSBOM,
 				Severity: doctorSeverityWarn,
 				Target:   gitSHA,
 				Message:  "SBoM baseline missing; run `gregalectl release kgv rotate --git-sha " + gitSHA + "`",
-				Detail:   releaseinstall.SBOMBaselinePath(releaseinstall.BundleRoot(deps.releasesRoot, gitSHA)),
+				Detail:   releaseinstall.AcceptedSBOMBaselinePath(deps.releasesRoot),
 			})
+		case errors.Is(baseErr, releaseinstall.ErrNilBaseline):
+			// Missing per-release mirrors on inactive legacy releases are not
+			// actionable when the active host baseline is healthy.
 		default:
 			findings = append(findings, doctorFinding{
 				Check:    doctorCheckVerifyTarballSBOM,

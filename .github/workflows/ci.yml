@@ -893,6 +893,8 @@ jobs:
         run: bash scripts/ci/run-native-metal-smoke_test.sh
       - name: native e2e invocation contract
         run: bash scripts/ci/run-native-e2e_test.sh
+      - name: GCP OS Login preflight contract
+        run: bash scripts/ci/gcp-oslogin-preflight_test.sh
       # ---- former job `capabilities-check`: product capability registry ----
       - name: product capability registry and generated matrix
         run: make capabilities-check

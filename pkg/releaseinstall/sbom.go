@@ -47,6 +47,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -91,11 +92,10 @@ type SBOMCounts struct {
 	LowN      int `json:"low"`
 }
 
-// SBOMBaseline is the host-side snapshot of CVE counts at the
-// last successful install. Stored at
-// /opt/faas/releases/<git-sha>/sbom-baseline.json alongside the
-// release-manifest; rotated via `gregalectl release KGV rotate`
-// (PR-B).
+// SBOMBaseline is the host-side snapshot of CVE counts from the last
+// successfully activated release. The canonical copy is stored at
+// <releases-root>/sbom-baseline.json so immutable release pruning cannot
+// erase the comparison point. A per-release mirror is retained for audit.
 //
 // A nil SBOMBaseline means "no prior baseline" — Diff treats
 // this as fail-closed (the first install on a fresh box MUST be
@@ -291,10 +291,10 @@ func formatRegressions(regs []CVERegression) string {
 	return b.String()
 }
 
-// WriteBaseline atomically writes a baseline to
-// /opt/faas/releases/<git-sha>/sbom-baseline.json. Same tmp-then-
-// rename pattern as Write(); the dir is the per-release bundle
-// root so the on-disk layout stays consistent.
+// WriteBaseline accepts a release as the host's known-good SBOM baseline.
+// The audit mirror is published first and the persistent canonical baseline
+// last, so an interrupted write never advances the accepted baseline without
+// its corresponding immutable-release evidence.
 func WriteBaseline(root string, b SBOMBaseline) error {
 	if b.GitSHA == "" {
 		return errors.New("releaseinstall: write baseline: empty git_sha")
@@ -304,11 +304,17 @@ func WriteBaseline(root string, b SBOMBaseline) error {
 		return fmt.Errorf("releaseinstall: marshal baseline: %w", err)
 	}
 	body = append(body, '\n')
-	dir := BundleRoot(root, b.GitSHA)
+	if err := writeBaselineFile(SBOMBaselinePath(BundleRoot(root, b.GitSHA)), body); err != nil {
+		return err
+	}
+	return writeBaselineFile(AcceptedSBOMBaselinePath(root), body)
+}
+
+func writeBaselineFile(path string, body []byte) error {
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("releaseinstall: mkdir %s: %w", dir, err)
 	}
-	path := SBOMBaselinePath(dir)
 	tmp, err := os.CreateTemp(dir, ".sbom-baseline-*.tmp")
 	if err != nil {
 		return fmt.Errorf("releaseinstall: create baseline temp: %w", err)
@@ -336,6 +342,11 @@ func WriteBaseline(root string, b SBOMBaseline) error {
 	return nil
 }
 
+// AcceptedSBOMBaselinePath is the pruning-safe, host-wide KGV path.
+func AcceptedSBOMBaselinePath(root string) string {
+	return filepath.Join(root, SBOMBaselineName)
+}
+
 // SBOMBaselinePath returns the on-disk path to the per-release
 // SBoM baseline. Exported so the doctor probe (PR-B) and the
 // KGV rotate subcommand (PR-B) can read it without duplicating
@@ -344,10 +355,10 @@ func SBOMBaselinePath(bundleRoot string) string {
 	return bundleRoot + "/" + SBOMBaselineName
 }
 
-// ReadBaseline loads + validates the on-disk SBoM baseline at
-// <root>/<git-sha>/sbom-baseline.json. Exported so the day-2
-// surfaces (PR-B KGV rotate, doctor verify-tarball-sbom probe)
-// share a single read path with WriteBaseline.
+// ReadBaseline loads the pruning-safe accepted SBoM baseline. gitSHA remains
+// an argument for source compatibility and validates that callers are
+// checking a concrete incoming release; the accepted baseline's GitSHA is
+// expected to differ while an upgrade is in progress.
 //
 // Errors:
 //   - ErrNilBaseline is returned when the file is missing. The
@@ -362,7 +373,7 @@ func ReadBaseline(root, gitSHA string) (SBOMBaseline, error) {
 	if gitSHA == "" {
 		return SBOMBaseline{}, errors.New("releaseinstall: read baseline: empty git_sha")
 	}
-	path := SBOMBaselinePath(BundleRoot(root, gitSHA))
+	path := AcceptedSBOMBaselinePath(root)
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

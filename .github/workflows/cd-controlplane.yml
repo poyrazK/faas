@@ -497,6 +497,16 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
             "${release_dir}/bin/deployctl bundle-check ${release_dir} &&
+             if test ! -s /opt/faas/releases/sbom-baseline.json; then
+               current_release=\$(readlink -f /opt/faas/current 2>/dev/null || true);
+               if test -n \"\$current_release\" && test -s \"\$current_release/release.sbom.json\"; then
+                 baseline_sha=\$(basename \"\$current_release\");
+               else
+                 baseline_sha=${RELEASE_ID};
+               fi;
+               ${release_dir}/bin/gregalectl release kgv rotate --git-sha \"\$baseline_sha\";
+             fi &&
+             ${release_dir}/bin/gregalectl release kgv verify --git-sha ${RELEASE_ID} &&
              ${release_dir}/bin/gregalectl fleet-seal migrate --fleet-key /etc/faas/secrets/fleet.age --legacy-host-dir /etc/faas/secrets --db-env /etc/faas/sealed.env --json &&
              verify_json=\$(${release_dir}/bin/gregalectl fleet-seal verify --fleet-key /etc/faas/secrets/fleet.age --host-key /etc/faas/secrets/host.age --db-env /etc/faas/sealed.env --metrics-file /var/lib/node_exporter/textfile_collector/faas_fleet_seal.prom --json) &&
              test \"\$(printf '%s' \"\$verify_json\" | jq -r .fleet_recipient)\" = \"\$(tr -d '\\r\\n' </etc/faas/secrets/fleet.age.pub)\" &&
@@ -640,5 +650,12 @@ jobs:
             done
             journalctl -u faas-s3-gatewayd.service -n 100 --no-pager >&2
             exit 1'
+
+      - name: Accept activated release SBOM baseline
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} \
+            "/opt/faas/current/bin/gregalectl release kgv rotate --git-sha '${RELEASE_ID}'"
 
       # Legacy mutable upload/restart steps removed; deployment is handled by the immutable release controller above.

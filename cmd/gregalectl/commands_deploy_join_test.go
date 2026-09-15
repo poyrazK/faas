@@ -837,6 +837,29 @@ func TestVerifyAndActivateJoinedNodeRejectsUnstampedIdentity(t *testing.T) {
 	}
 }
 
+func TestDeactivateJoinedNodeReturnsActivatedRowToDrained(t *testing.T) {
+	st := state.NewMemStore()
+	role := roleComputeOnly
+	row, err := st.UpsertComputeNodeFromOperator(context.Background(), state.ComputeNode{
+		Name:      "fsn-2.faas",
+		TargetURL: "tcp://fsn-2.gregale.dev:50051",
+		Role:      &role,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := computeNodesStoreOpener
+	t.Cleanup(func() { computeNodesStoreOpener = old })
+	computeNodesStoreOpener = func() (state.Store, func(), error) { return st, func() {}, nil }
+	if err := deactivateJoinedNode(context.Background(), &deployJoinReport{DatabaseNode: row.Name}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ComputeNodeByName(context.Background(), row.Name)
+	if err != nil || got.Active {
+		t.Fatalf("row after re-drain = %#v, err=%v", got, err)
+	}
+}
+
 func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	manifestPath := splitboxJoinManifest(t)
 	repo := t.TempDir()
@@ -1039,8 +1062,8 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}, &report); err != nil || code != 0 {
 		t.Fatalf("deployJoinApply: code=%d err=%v", code, err)
 	}
-	if len(calls) != 2 {
-		t.Fatalf("Ansible calls = %d, want control-plane convergence plus limited join", len(calls))
+	if len(calls) != 3 {
+		t.Fatalf("Ansible calls = %d, want control-plane convergence, limited join, and baseline acceptance", len(calls))
 	}
 	if rolloutOverlap != 4 {
 		t.Fatalf("faas_postgres_rollout_overlap_nodes = %v, want 4", rolloutOverlap)
@@ -1052,6 +1075,10 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	joined := strings.Join(calls[1], " ")
 	if !strings.Contains(joined, "--limit fsn-2") || !strings.Contains(joined, "node_join.yml") {
 		t.Fatalf("Ansible args missing node limit/playbook: %v", calls[1])
+	}
+	accepted := strings.Join(calls[2], " ")
+	if !strings.Contains(accepted, "--limit fsn-2") || !strings.Contains(accepted, "node_join_accept_release.yml") {
+		t.Fatalf("Ansible args missing post-activation baseline acceptance: %v", calls[2])
 	}
 	if !report.Applied {
 		t.Fatal("apply report was not marked applied")

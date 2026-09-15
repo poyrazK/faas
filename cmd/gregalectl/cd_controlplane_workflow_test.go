@@ -29,6 +29,25 @@ func TestCDControlPlanePromotesActiveReleaseCLI(t *testing.T) {
 	}
 }
 
+func TestCDControlPlaneVerifiesSBOMBeforeActivationAndAcceptsAfterHealth(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	verify := strings.Index(workflow, "release kgv verify --git-sha ${RELEASE_ID}")
+	activate := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	health := strings.Index(workflow, "Converge Prometheus config and rules")
+	acceptStep := strings.Index(workflow, "Accept activated release SBOM baseline")
+	accept := strings.Index(workflow, `release kgv rotate --git-sha '${RELEASE_ID}'`)
+	if verify < 0 || activate < 0 || health < 0 || acceptStep < 0 || accept < 0 {
+		t.Fatalf("control-plane workflow is missing KGV lifecycle: verify=%d activate=%d health=%d acceptStep=%d accept=%d", verify, activate, health, acceptStep, accept)
+	}
+	if !(verify < activate && activate < health && health < acceptStep && acceptStep < accept) {
+		t.Fatalf("KGV lifecycle must verify before activation and accept only after health: verify=%d activate=%d health=%d acceptStep=%d accept=%d", verify, activate, health, acceptStep, accept)
+	}
+}
+
 func TestCDControlPlaneReusesVerifiedImmutableRelease(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
 	if err != nil {

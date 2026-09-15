@@ -400,7 +400,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 **Owns:** the build queue and ephemeral builder microVMs. Full pipeline in §9.
 
 - Builder VM: 2 vCPU, **2048 MB**, 8 GB scratch ext4 (thrown away), 4 GB per-app cache volume (kept, quota'd), rootfs = our `builder-base` image containing BuildKit (rootless inside the VM — inside a VM it may as well be root), Railpack, git, and the OCI exporter. No inbound network; outbound via the build egress policy (§7).
-- Semaphore: **1 guaranteed slot; a 2nd opportunistic slot** granted only when tenant resident RAM < 60 % of target (schedd admission). Queue is FIFO per account with global fairness (no account holds both slots).
+- Semaphore: **1 builder slot** per 5 GiB parent cgroup. A second ordinary 2816 MiB builder can exceed that fence, and a snapshot builder can approach it alone, so local overcommit is disabled. Queue is FIFO per account with global fairness. Additional capacity comes from another eligible compute node.
 - Timeouts: 10 min build, 15 min end-to-end. On timeout/OOM (VM hits its own wall — host unaffected): kill VM, mark build `failed(reason)`, requeue once if `oom` and slot was opportunistic.
 - Source in: scratch disk pre-loaded with the tarball. Image out: OCI layout written to the cache volume, hash-addressed; host copies it out after VM exit (no live channel needed — keeps the surface tiny).
 
@@ -1389,7 +1389,7 @@ Phases, all rows on `builds`/`deployments`:
 6. **Prime snapshot**: cold-boot once (readiness gate) → pause → snapshot → destroy → `PARKED`, deployment `live`, previous deployment `superseded` (the live deployment plus two previous generations remain restoreable for fast rollback; older snapshot material is reclaimed by GC).
 7. **Failure taxonomy** → `failure_class`: `user_error` (their code/config, full log shown), `oom` (VM hit 2 GB — message suggests smaller deps or Pro), `timeout`, `infra` (ours — auto-requeue once, alert).
 
-Concurrency and RAM interaction (the R1 discipline, mechanized): builder VMs are admitted through the same headroom guard as tenant wakes, from the *headroom side* of the ledger — 1 guaranteed slot budgeted permanently in §13; the opportunistic 2nd slot exists only when tenant residency < 60 %. Builds can therefore never push tenant admission into refusal: tenants evict builds, never vice versa.
+Concurrency and RAM interaction (the R1 discipline, mechanized): each compute node admits one builder VM within the 5 GiB `faas-cp-build.slice` fence. Two ordinary child scopes request more than that parent budget, so local overcommit is disabled. Builder capacity scales by adding eligible compute nodes; tenant wake admission retains priority.
 
 ---
 
@@ -1778,7 +1778,7 @@ request therefore does not create an instance transition or resident usage.
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
 | `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 256 · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,304 → **1 guaranteed builder VM (2,048 + 8) lives here** |
 | `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits only to 47,600 MB** (85 % of the model's 56 GB budget) |
-| headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | spike absorption; opportunistic 2nd builder VM may borrow ≤ 2 GB of it only below 60 % tenant residency |
+| headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
 `memory.max` on each slice makes the ledger real: a control-plane leak OOMs the control plane, never tenants — and vice versa.
 

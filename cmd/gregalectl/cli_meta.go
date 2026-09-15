@@ -57,7 +57,7 @@ type cliFlag struct {
 //
 // Operator-side surface (PR-6.5):
 //   - manifest        (validate | render | ansible)
-//   - release         (bundle | install | kgv rotate | kgv init [alias] | reconcile)
+//   - release         (bundle | install | kgv verify | kgv rotate | kgv init [alias] | reconcile)
 //   - doctor          (read-only cluster diagnostic)
 //   - host-age        (init | rotate | status | prune-previous)
 //   - pki             (init | status | rotate | list)
@@ -751,10 +751,11 @@ var cliCommands = []cliCommand{
 				// fail-closed SBoM CVE-baseline gate. The KGV is the
 				// "known good version" baseline the install path compares
 				// against; rotate re-stamps it from the on-disk release
-				// SBoM (or KGVZero with --from-zero). The KGV is
-				// operator-confirmed, never auto-rotated.
+				// SBoM (or KGVZero with --from-zero). CD verifies the
+				// candidate before activation and accepts it only after
+				// all host health gates pass.
 				Name:  subReleaseKGV,
-				Short: "Refresh sbom-baseline.json (release kgv rotate --git-sha SHA [--from-zero]); operator escape hatch from ADR-113's fail-closed SBoM gate",
+				Short: "Verify a candidate SBoM against the canonical accepted baseline, or accept an activated release with release kgv rotate",
 				Flags: []cliFlag{
 					{Name: "git-sha", Short: "40-char lowercase hex git SHA (required)", Req: true},
 					{Name: "releases-root", Short: "releases root (default /opt/faas/releases)"},
