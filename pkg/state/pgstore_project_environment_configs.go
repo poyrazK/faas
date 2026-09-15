@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -52,7 +53,7 @@ func (s *PgStore) CreateProjectEnvironmentConfigVersion(ctx context.Context, con
 		 where p.id = $1 and p.account_id = $2 and e.slug = $3
 		 for update
 	`, config.ProjectID, config.AccountID, config.EnvironmentSlug).Scan(&projectID); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ProjectEnvironmentConfig{}, ErrNotFound
 		}
 		return ProjectEnvironmentConfig{}, mapErr(err)
