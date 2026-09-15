@@ -31,6 +31,10 @@ export type SourceRefDeployRequest = {
    */
   format?: 'tarball';
   /**
+   * Registered project environment to target for this source-ref deployment.
+   */
+  environment?: string;
+  /**
    * Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed.
    */
   no_triggers?: boolean;

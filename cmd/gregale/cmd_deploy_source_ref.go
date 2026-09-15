@@ -107,6 +107,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx context.Con
 		Repo:           repo,
 		Ref:            ref,
 		Format:         "tarball",
+		Environment:    ann.Environment,
 		Reason:         ann.Reason,
 		Tag:            ann.Tag,
 		DeployedBy:     ann.DeployedBy,

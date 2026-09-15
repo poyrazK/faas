@@ -19,6 +19,10 @@ export type UploadDeployOptions = {
    * Lowercase hexadecimal Git commit identifier.
    */
   commit_sha?: string;
+  /**
+   * Registered project environment to resolve at upload commit.
+   */
+  environment?: string;
   reason?: string;
   tag?: string;
   deployed_by?: string;

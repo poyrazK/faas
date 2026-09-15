@@ -473,6 +473,10 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, &req); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if len(req.Workflows) > 0 {
 		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
 			api.WriteProblem(w, p)

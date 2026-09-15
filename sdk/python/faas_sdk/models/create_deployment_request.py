@@ -63,6 +63,9 @@ class CreateDeploymentRequest:
     scope: None | str | Unset = UNSET
     """Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no
     leading/trailing dash. nil/omitted = `default`."""
+    environment: str | Unset = UNSET
+    """Registered project environment to resolve to the deployment scope. Requires the app to belong to the
+    project; omitted preserves legacy scope behavior."""
     reason: None | str | Unset = UNSET
     """Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280."""
     tag: (
@@ -135,6 +138,8 @@ class CreateDeploymentRequest:
         else:
             scope = self.scope
 
+        environment = self.environment
+
         reason: None | str | Unset
         if isinstance(self.reason, Unset):
             reason = UNSET
@@ -202,6 +207,8 @@ class CreateDeploymentRequest:
             field_dict["traffic_percent"] = traffic_percent
         if scope is not UNSET:
             field_dict["scope"] = scope
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if reason is not UNSET:
             field_dict["reason"] = reason
         if tag is not UNSET:
@@ -290,6 +297,8 @@ class CreateDeploymentRequest:
             return cast(None | str | Unset, data)
 
         scope = _parse_scope(d.pop("scope", UNSET))
+
+        environment = d.pop("environment", UNSET)
 
         def _parse_reason(data: object) -> None | str | Unset:
             if data is None:
@@ -409,6 +418,7 @@ class CreateDeploymentRequest:
             workflows=workflows,
             traffic_percent=traffic_percent,
             scope=scope,
+            environment=environment,
             reason=reason,
             tag=tag,
             deployed_by=deployed_by,

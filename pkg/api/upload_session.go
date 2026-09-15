@@ -26,13 +26,14 @@ type UploadDeployOptions struct {
 	// resumable session boundary. The values are informational only; the
 	// uploaded archive remains the source of truth and apid never fetches
 	// SourceURL during commit.
-	SourceURL  string         `json:"source_url,omitempty"`
-	CommitSHA  string         `json:"commit_sha,omitempty"`
-	Reason     string         `json:"reason,omitempty"`
-	Tag        string         `json:"tag,omitempty"`
-	DeployedBy string         `json:"deployed_by,omitempty"`
-	PRNumber   int            `json:"pr_number,omitempty"`
-	Workflows  []WorkflowSpec `json:"workflows,omitempty"`
+	SourceURL   string         `json:"source_url,omitempty"`
+	CommitSHA   string         `json:"commit_sha,omitempty"`
+	Environment string         `json:"environment,omitempty"`
+	Reason      string         `json:"reason,omitempty"`
+	Tag         string         `json:"tag,omitempty"`
+	DeployedBy  string         `json:"deployed_by,omitempty"`
+	PRNumber    int            `json:"pr_number,omitempty"`
+	Workflows   []WorkflowSpec `json:"workflows,omitempty"`
 }
 
 // UploadStartRequest is the JSON body of POST /v1/uploads. total_size

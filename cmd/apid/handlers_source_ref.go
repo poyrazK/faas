@@ -87,7 +87,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			"Unsupported format", "format must be '"+fieldNameTarball+"' (PR-A)"))
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{TrafficPercent: req.TrafficPercent, Canary: req.Canary}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary}
+	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -228,6 +232,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		SourceRoot:      app.RootDir,
 		SourceURL:       fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
 		CommitSHA:       resolvedSHA,
+		Scope:           rollout.Scope,
 		FunctionRuntime: functionRuntimeForApp(app),
 		LogSpool:        spoolRoot(),
 		Log:             s.log,

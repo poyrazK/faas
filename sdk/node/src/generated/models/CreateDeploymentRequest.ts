@@ -39,6 +39,10 @@ export type CreateDeploymentRequest = {
    */
   scope?: string | null;
   /**
+   * Registered project environment to resolve to the deployment scope. Requires the app to belong to the project; omitted preserves legacy scope behavior.
+   */
+  environment?: string;
+  /**
    * Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280.
    */
   reason?: string | null;

@@ -652,6 +652,7 @@ var cliCommands = []cliCommand{
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
 			{Name: "only", Short: "workloads to apply; retain unselected project workloads (comma-separated)", Value: "SLUGS"},
 			{Name: "project", Short: "deploy all detected workloads as one project (slug defaults from --name or source)"},
+			{Name: "environment", Short: "deploy to a registered project environment (single-app deploys only)", Value: "SLUG"},
 			// Issue #977 / ADR-116: deployment annotations surface.
 			// --reason is free text (≤280 chars); --tag is closed-set
 			// (see DeploymentAnnotationTags in cmd_deploy_annotations.go);

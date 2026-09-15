@@ -122,6 +122,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		sourceRoot     string
 		sourceURL      string
 		commitSHA      string
+		environment    string
 		kind           state.DeploymentKind
 		sourceAccepted bool
 		workflows      []api.WorkflowSpec
@@ -200,6 +201,13 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			commitSHA = strings.TrimSpace(string(b))
+		case "environment":
+			b, readErr := io.ReadAll(io.LimitReader(part, api.MaxEnvScopeLen+1))
+			if readErr != nil || len(b) > api.MaxEnvScopeLen {
+				api.WriteProblem(w, api.ErrSourceInvalid("environment is too long"))
+				return
+			}
+			environment = strings.TrimSpace(string(b))
 		case "workflows":
 			b, readErr := io.ReadAll(io.LimitReader(part, 1<<20))
 			if readErr != nil || !json.Valid(b) {
@@ -272,7 +280,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{TrafficPercent: trafficPercent, Canary: canarySpec}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec}
+	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -391,6 +403,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			SourceRoot:             sourceRoot,
 			SourceURL:              sourceURL,
 			CommitSHA:              commitSHA,
+			Scope:                  rollout.Scope,
 			Handler:                handler,
 			FunctionRuntime:        functionRuntimeForApp(app),
 			LogSpool:               spoolRoot(),

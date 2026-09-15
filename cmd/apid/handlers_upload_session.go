@@ -559,6 +559,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: opts.Environment}
+	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateSourceProvenance(opts.SourceURL, opts.CommitSHA); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -642,6 +647,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		FunctionRuntime:  functionRuntimeForApp(app),
 		SourceURL:        sourceURL,
 		CommitSHA:        opts.CommitSHA,
+		Scope:            rolloutReq.Scope,
 		Source:           "upload-session:" + uploadID,
 		LogSpool:         spoolRoot(),
 		Log:              s.log,

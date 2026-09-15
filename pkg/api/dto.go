@@ -1320,6 +1320,10 @@ type CreateDeploymentRequest struct {
 	// api.ValidateScope before storing. A duplicate live row on
 	// (app_id, scope) → 400 deployment_scope_collision.
 	Scope string `json:"scope,omitempty"`
+	// Environment selects a registered project environment. The apid handler
+	// resolves it to Scope before creating the deployment; leaving it empty
+	// preserves the legacy default-scope behavior.
+	Environment string `json:"environment,omitempty"`
 	// Annotation fields (issue #977 / ADR-116). All four are
 	// optional; nil/empty on the wire = no annotation. The CLI
 	// surfaces --reason / --tag / --deployed-by; the githubd
@@ -4989,6 +4993,9 @@ type SourceRefDeployRequest struct {
 	Repo   string `json:"repo"`
 	Ref    string `json:"ref"`
 	Format string `json:"format,omitempty"`
+	// Environment selects a registered project environment. The server
+	// resolves it to the deployment's env scope before enqueueing the build.
+	Environment string `json:"environment,omitempty"`
 	// NoTriggers skips applying trigger declarations found in the fetched
 	// gregale.yaml. Workflow definitions remain part of the deployment.
 	NoTriggers bool `json:"no_triggers,omitempty"`
@@ -5016,6 +5023,8 @@ type SourceRefDeployRequest struct {
 type SourceTarballDeployRequest struct {
 	Repo string `json:"repo,omitempty"`
 	Ref  string `json:"ref,omitempty"`
+	// Environment selects a registered project environment for this upload.
+	Environment string `json:"environment,omitempty"`
 	// Annotation fields (issue #977 / ADR-116). All four are
 	// optional; the CLI's zero-config path auto-captures
 	// DeployedBy from `git config user.name` when in a repo (see

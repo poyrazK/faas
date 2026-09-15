@@ -1486,6 +1486,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployPersistExclude := fs.Bool("persist-exclude", false, "record --exclude slugs into deployment_scope_exclusions for future deploys (ADR-124 follow-up #3)")
 	projectDeploy := fs.Bool("project", false, "deploy all detected workloads as one project (slug defaults from --name or source)")
 	projectSlug := fs.String("project-slug", "", "kebab slug for the project (triggers one-key provision)")
+	// --environment targets a registered project environment. The server
+	// resolves the name to the deployment scope after checking the app's
+	// project registry; omitted preserves the legacy default scope.
+	environment := fs.String("environment", "", "registered project environment to deploy to (for example staging)")
 	// SAFE-RELEASES production-leveling Stream F: canary ladder
 	// selectors. --canary-preset picks a catalog entry
 	// (none/slow/balanced/aggressive/1-10-50-100) or "custom";
@@ -1656,6 +1660,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// implementation while making `gregale deploy --dry-run` safe by
 	// construction.
 	*diff = preview
+	if *environment != "" && *diff {
+		return printErr("Invalid flags", fmt.Errorf("--environment cannot be combined with --dry-run or --diff"))
+	}
 	// --strict / --lenient mutex. Same rationale as
 	// --require-authn / --no-require-authn above.
 	if *diffStrict && *diffLenient {
@@ -1673,6 +1680,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *createOnly {
 		if incompatible := incompatibleCreateOnlyFlags(explicit); len(incompatible) > 0 {
 			return printErr("Invalid flags", fmt.Errorf("--create-only cannot be combined with deployment-only options: %s", strings.Join(incompatible, ", ")))
+		}
+	}
+	if *environment != "" {
+		if !api.ValidProjectEnvironmentSlug(*environment) {
+			return printErr("Invalid --environment", fmt.Errorf("must be a lowercase project environment slug; got %q", *environment))
+		}
+		if problem := api.ValidateScope(*environment); problem != nil {
+			return printErr("Invalid --environment", &api.APIError{Problem: *problem})
 		}
 	}
 	// Issue #560: flag-pair mutex check (mirrors cmdApp /
@@ -1806,6 +1821,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "canary-preset", "canary-stages",
+			"environment",
 			"reason", "tag", "deployed-by", "pr-number",
 			// Project plans currently infer each workload's execution
 			// configuration from the scanned source. Reject single-app
@@ -1953,7 +1969,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Slug: slug, Repo: *repo, Ref: *ref, Reason: *reason, Tag: *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-			CanaryStages: *canaryStages,
+			CanaryStages: *canaryStages, Environment: *environment,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -1962,6 +1978,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		code := cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx, slug, *repo, *ref, api.DeployAnnotations{
 			Reason:         *reason,
 			Tag:            *tag,
+			Environment:    *environment,
 			DeployedBy:     resolveDeployedBy(*deployedBy),
 			PRNumber:       *prNumber,
 			TrafficPercent: optTrafficPercent(*trafficPercent),
@@ -2534,6 +2551,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 		CanaryStages: *canaryStages, NoTriggers: *noTriggers,
+		Environment: *environment,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
@@ -2798,6 +2816,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		ann := api.DeployAnnotations{
 			SourceURL:      sourceURL,
 			CommitSHA:      commitSHA,
+			Environment:    *environment,
 			Reason:         *reason,
 			Tag:            *tag,
 			DeployedBy:     resolveDeployedBy(*deployedBy),
@@ -2831,7 +2850,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
 				SourceRoot: sourceRoot, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
-				Reason: ann.Reason, Tag: ann.Tag,
+				Environment: ann.Environment,
+				Reason:      ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs,
 			}
 			var progress resumableUploadProgress
@@ -2941,6 +2961,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "json"))
 	dep, err := client.Deploy(deployCtx, slug, api.CreateDeploymentRequest{
 		Image:          *image,
+		Environment:    *environment,
 		Workflows:      workflowDefs,
 		TrafficPercent: optTrafficPercent(*trafficPercent),
 		Reason:         annPtr(*reason),

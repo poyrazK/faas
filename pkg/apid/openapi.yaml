@@ -18812,6 +18812,8 @@ components:
           { type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by apid." }
         commit_sha:
           { type: string, minLength: 7, maxLength: 64, pattern: '^[0-9a-f]+$', description: "Lowercase hexadecimal Git commit identifier." }
+        environment:
+          { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$', description: "Registered project environment to resolve at upload commit." }
         reason: { type: string, maxLength: 280 }
         tag: { type: string }
         deployed_by: { type: string }
@@ -19163,6 +19165,10 @@ components:
           type: [string, "null"]
           pattern: '^[a-f0-9]{40}$'
           description: "40-char lowercase SHA from `git rev-parse HEAD`. Informational only; the build pipeline does NOT pin to this SHA."
+        environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: "Registered project environment to target for this local tarball deployment."
         # Issue #977 / ADR-116 — deployment annotation echo. The four
         # columns stamped at create time are surfaced verbatim so the
         # dashboard, CLI history, and SDK consumers can render the
@@ -20026,6 +20032,10 @@ components:
           pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'
           description: "Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no leading/trailing dash. nil/omitted = `default`."
           example: "prod"
+        environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: "Registered project environment to resolve to the deployment scope. Requires the app to belong to the project; omitted preserves legacy scope behavior."
         # Issue #977 / ADR-116 — deployment annotation fields. The
         # githubd bridge + GitHub Action auto-capture DeployedBy +
         # PRNumber; the CLI captures DeployedBy from `git config
@@ -21768,6 +21778,10 @@ components:
           enum: [tarball]
           default: tarball
           description: "Forward-compat field. PR-A only supports `tarball`."
+        environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+          description: "Registered project environment to target for this source-ref deployment."
         no_triggers:
           type: boolean
           default: false
