@@ -1033,6 +1033,61 @@ type manifestCronClient interface {
 	Whoami(ctx context.Context) (api.AccountResponse, error)
 }
 
+// manifestScalingClient is the narrow surface used to apply the app-level
+// scaling declaration after a deployment is accepted. Keeping it separate
+// from the cron seam makes the manifest helpers easy to exercise with small
+// fakes and avoids coupling trigger tests to app PATCH behavior.
+type manifestScalingClient interface {
+	GetApp(ctx context.Context, slug string) (api.AppResponse, error)
+	UpdateApp(ctx context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error)
+}
+
+func scalingPolicyEqual(a, b *api.ScalingPolicy) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if a.MinInstances != b.MinInstances || a.MaxInstances != b.MaxInstances ||
+		a.ScaleOutCooldownS != b.ScaleOutCooldownS || a.ScaleInCooldownS != b.ScaleInCooldownS {
+		return false
+	}
+	if a.Target == nil || b.Target == nil {
+		return a.Target == nil && b.Target == nil
+	}
+	return a.Target.Metric == b.Target.Metric && a.Target.Value == b.Target.Value
+}
+
+// applyManifestScalingPolicy reads and applies the optional scaling block.
+// It runs after the deployment has been accepted so a failed build/upload
+// cannot leave app configuration changed. The API remains authoritative for
+// plan gates and workload-class compatibility.
+func applyManifestScalingPolicy(ctx context.Context, client manifestScalingClient, slug, cwd string) error {
+	if cwd == "" {
+		return nil
+	}
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return err
+	}
+	if !ok || m == nil || m.Scaling == nil {
+		return nil
+	}
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	desired := m.Scaling.ToAPI()
+	current, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return fmt.Errorf("read app before applying scaling policy: %w", err)
+	}
+	if scalingPolicyEqual(current.ScalingPolicy, desired) {
+		return nil
+	}
+	if _, err := client.UpdateApp(ctx, slug, api.UpdateAppRequest{ScalingPolicy: desired}); err != nil {
+		return fmt.Errorf("apply scaling policy: %w", err)
+	}
+	return nil
+}
+
 const manifestTriggerCleanupTimeout = 10 * time.Second
 
 type manifestCronRollbackStep struct {
@@ -1182,6 +1237,29 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 		if trigger.Kind != gregalemanifest.TriggerKindCron {
 			return fmt.Errorf("trigger %d uses kind %q; deploy does not reconcile non-cron manifest triggers yet; pass --no-triggers and create it with `gregale triggers add` after deployment", i+1, trigger.Kind)
 		}
+	}
+	return nil
+}
+
+// validateProjectManifestConfig rejects app-only declarations that the
+// multi-workload planner cannot safely fan out. Failing explicitly is safer
+// than silently applying only triggers while ignoring a scaling block.
+func validateProjectManifestConfig(cwd string) error {
+	if cwd == "" {
+		return nil
+	}
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return err
+	}
+	if !ok || m == nil {
+		return nil
+	}
+	if err := m.Validate(); err != nil {
+		return err
+	}
+	if m.Scaling != nil {
+		return errors.New("scaling is supported on single-app deploys; configure each workload separately after project apply")
 	}
 	return nil
 }
@@ -2524,6 +2602,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid deploy manifest", manifestErr)
 		}
 	}
+	if projectRequested {
+		if manifestErr := validateProjectManifestConfig(sourceDir); manifestErr != nil {
+			return printErr("Invalid project deploy manifest", manifestErr)
+		}
+	}
 	if explicitTarball && *diff {
 		if archiveErr := validatePreviewArchivePlanLimit(ctx, client, *tarball); archiveErr != nil {
 			return printErr("Bad --tarball", archiveErr)
@@ -2818,6 +2901,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	commitManifestTriggers := func() {
 		stagedManifestTriggerTxn.commit()
 	}
+	applyManifestScaling := func() error {
+		return applyManifestScalingPolicy(ctx, client, slug, sourceDir)
+	}
 	if !*noTriggers {
 		var triggerErr error
 		stagedManifestTriggerTxn, triggerErr = deployManifestTriggersWithRollback(ctx, client, slug, sourceDir)
@@ -2928,6 +3014,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			if !jsonWait {
+				if err := applyManifestScaling(); err != nil {
+					return printErr("Manifest scaling policy failed", err)
+				}
 				code := jsonOut(writeJSON(newDeployReceipt(dep, prov, deployedAppURL(slug), sourceSHA256)))
 				if code == 0 {
 					commitManifestTriggers()
@@ -2936,6 +3025,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 		if !waitForDeploy {
+			if err := applyManifestScaling(); err != nil {
+				return printErr("Manifest scaling policy failed", err)
+			}
 			commitManifestTriggers()
 			PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 			return 0
@@ -2943,6 +3035,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if jsonWait {
 			code := writeWaitedDeploymentReceiptUntil(ctx, client, dep, prov, deployedAppURL(slug), sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second)
 			if code == 0 {
+				if err := applyManifestScaling(); err != nil {
+					return printErr("Manifest scaling policy failed", err)
+				}
 				commitManifestTriggers()
 			}
 			return code
@@ -2956,6 +3051,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 		})
 		if code == 0 {
+			if err := applyManifestScaling(); err != nil {
+				return printErr("Manifest scaling policy failed", err)
+			}
 			commitManifestTriggers()
 		}
 		return code
@@ -3005,6 +3103,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// the CLI-known slug (not the 32-hex AppID — the
 		// gateway routes on slug, so the receipt's URL has to
 		// be slug-shaped to actually resolve).
+		if err := applyManifestScaling(); err != nil {
+			return printErr("Manifest scaling policy failed", err)
+		}
 		code := jsonOut(writeJSON(newDeployReceipt(dep, nil, deployedAppURL(slug), "")))
 		if code == 0 {
 			commitManifestTriggers()
@@ -3012,6 +3113,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return code
 	}
 	if !waitForDeploy {
+		if err := applyManifestScaling(); err != nil {
+			return printErr("Manifest scaling policy failed", err)
+		}
 		commitManifestTriggers()
 		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, deployedAppURL(slug))
 		return 0
@@ -3019,6 +3123,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if jsonWait {
 		code := writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", slug, time.Duration(*waitTimeoutSeconds)*time.Second)
 		if code == 0 {
+			if err := applyManifestScaling(); err != nil {
+				return printErr("Manifest scaling policy failed", err)
+			}
 			commitManifestTriggers()
 		}
 		return code
@@ -3032,6 +3139,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 	})
 	if code == 0 {
+		if err := applyManifestScaling(); err != nil {
+			return printErr("Manifest scaling policy failed", err)
+		}
 		commitManifestTriggers()
 	}
 	return code

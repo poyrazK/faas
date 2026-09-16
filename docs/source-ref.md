@@ -93,6 +93,11 @@ the build is accepted; `workflows:` is stored on the deployment. Pass
 `--no-triggers` when a release should deploy code and workflows without
 reconciling trigger declarations.
 
+The app-level `scaling:` declaration is currently rejected on this transport
+because the source-ref handler cannot safely update app policy transactionally
+with the remote build. Apply scaling separately (for example with a local
+single-app deploy) when using `--repo`.
+
 Repository deploys accept deployment annotations, rollout controls,
 `--no-triggers`, wait controls, and an idempotency key. App-shape and local
 source controls such as `--app`, `--function`, `--runtime`, `--handler`,

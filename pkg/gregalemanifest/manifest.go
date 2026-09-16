@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -382,16 +383,109 @@ type QueueConfig struct {
 	Mode string `json:"mode"`
 }
 
+// ScalingTarget is the manifest form of api.ScalingTarget. It uses explicit
+// YAML tags because the API DTO intentionally only carries JSON tags.
+type ScalingTarget struct {
+	Metric string  `yaml:"metric"`
+	Value  float64 `yaml:"value"`
+}
+
+// ScalingConfig declares the app-level autoscaling policy. Pointers preserve
+// the distinction between an omitted field (use the platform default) and an
+// explicit zero (for example, min_instances: 0 means scale to zero).
+// Cooldowns default to the platform's documented safe values when omitted.
+type ScalingConfig struct {
+	MinInstances      *int           `yaml:"min_instances,omitempty"`
+	MaxInstances      *int           `yaml:"max_instances,omitempty"`
+	Target            *ScalingTarget `yaml:"target,omitempty"`
+	ScaleOutCooldownS *int           `yaml:"scale_out_cooldown_s,omitempty"`
+	ScaleInCooldownS  *int           `yaml:"scale_in_cooldown_s,omitempty"`
+}
+
+const (
+	defaultScaleOutCooldownS = 5
+	defaultScaleInCooldownS  = 60
+)
+
+// Validate checks manifest-local shape. Plan gates and workload-class rules
+// remain authoritative in apid, where the account and app are available.
+func (s *ScalingConfig) Validate() error {
+	if s == nil {
+		return nil
+	}
+	if s.MinInstances != nil && *s.MinInstances < 0 {
+		return fmt.Errorf("scaling: min_instances must be >= 0; got %d", *s.MinInstances)
+	}
+	if s.MaxInstances != nil && *s.MaxInstances < 0 {
+		return fmt.Errorf("scaling: max_instances must be >= 0; got %d", *s.MaxInstances)
+	}
+	if s.MinInstances != nil && s.MaxInstances != nil &&
+		*s.MaxInstances > 0 && *s.MaxInstances < *s.MinInstances {
+		return fmt.Errorf("scaling: max_instances (%d) must be >= min_instances (%d)", *s.MaxInstances, *s.MinInstances)
+	}
+	if s.ScaleOutCooldownS != nil && (*s.ScaleOutCooldownS < api.MinScaleOutCooldownS || *s.ScaleOutCooldownS > api.MaxScaleOutCooldownS) {
+		return fmt.Errorf("scaling: scale_out_cooldown_s must be in [%d, %d]; got %d", api.MinScaleOutCooldownS, api.MaxScaleOutCooldownS, *s.ScaleOutCooldownS)
+	}
+	if s.ScaleInCooldownS != nil && (*s.ScaleInCooldownS < api.MinScaleInCooldownS || *s.ScaleInCooldownS > api.MaxScaleInCooldownS) {
+		return fmt.Errorf("scaling: scale_in_cooldown_s must be in [%d, %d]; got %d", api.MinScaleInCooldownS, api.MaxScaleInCooldownS, *s.ScaleInCooldownS)
+	}
+	if s.Target != nil {
+		switch s.Target.Metric {
+		case "rps", "concurrent_requests", "p99_latency_ms":
+		default:
+			return fmt.Errorf("scaling: target.metric %q is invalid; use rps, concurrent_requests, or p99_latency_ms", s.Target.Metric)
+		}
+		if s.Target.Value < 0 || math.IsNaN(s.Target.Value) || math.IsInf(s.Target.Value, 0) {
+			return fmt.Errorf("scaling: target.value must be >= 0; got %v", s.Target.Value)
+		}
+	}
+	return nil
+}
+
+// ToAPI converts the manifest declaration to the public PATCH shape. The
+// API currently requires concrete cooldown values, so omitted cooldowns use
+// the safe defaults above while omitted min/max retain their zero semantics.
+func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
+	if s == nil {
+		return nil
+	}
+	out := &api.ScalingPolicy{
+		ScaleOutCooldownS: defaultScaleOutCooldownS,
+		ScaleInCooldownS:  defaultScaleInCooldownS,
+	}
+	if s.MinInstances != nil {
+		out.MinInstances = *s.MinInstances
+	}
+	if s.MaxInstances != nil {
+		out.MaxInstances = *s.MaxInstances
+	}
+	if s.ScaleOutCooldownS != nil {
+		out.ScaleOutCooldownS = *s.ScaleOutCooldownS
+	}
+	if s.ScaleInCooldownS != nil {
+		out.ScaleInCooldownS = *s.ScaleInCooldownS
+	}
+	if s.Target != nil {
+		out.Target = &api.ScalingTarget{Metric: s.Target.Metric, Value: s.Target.Value}
+	}
+	return out
+}
+
 // Manifest is the parsed `gregale.yaml` root. The supported top-level
-// declarations are `hosting`, `triggers`, and `workflows`; other keys are
+// declarations are `schema_version`, `hosting`, `function`, `scaling`,
+// `triggers`, and `workflows`; other keys are
 // validated strictly (yaml.Decoder.KnownFields(true)) so a typo like
 // `trigger:` (singular) surfaces as a load-time error rather than silently
 // shipping a no-op deploy.
 type Manifest struct {
-	Hosting   *hostingconfig.Config `yaml:"hosting,omitempty"`
-	Function  *FunctionConfig       `yaml:"function,omitempty"`
-	Triggers  []Trigger             `yaml:"triggers"`
-	Workflows []api.WorkflowSpec    `yaml:"workflows,omitempty"`
+	// SchemaVersion is optional for backward compatibility. New manifests may
+	// set it to 1; a future incompatible manifest requires a new version.
+	SchemaVersion int                   `yaml:"schema_version,omitempty"`
+	Hosting       *hostingconfig.Config `yaml:"hosting,omitempty"`
+	Function      *FunctionConfig       `yaml:"function,omitempty"`
+	Scaling       *ScalingConfig        `yaml:"scaling,omitempty"`
+	Triggers      []Trigger             `yaml:"triggers"`
+	Workflows     []api.WorkflowSpec    `yaml:"workflows,omitempty"`
 }
 
 // FunctionConfig records the deploy shape selected by a function scaffold.
@@ -496,9 +590,17 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m == nil {
 		return nil
 	}
+	if m.SchemaVersion != 0 && m.SchemaVersion != 1 {
+		return fmt.Errorf("schema_version: unsupported version %d; supported versions: 1", m.SchemaVersion)
+	}
 	if m.Hosting != nil {
 		if err := m.Hosting.Validate(); err != nil {
 			return fmt.Errorf("hosting: %w", err)
+		}
+	}
+	if m.Scaling != nil {
+		if err := m.Scaling.Validate(); err != nil {
+			return err
 		}
 	}
 	if m.Function != nil {

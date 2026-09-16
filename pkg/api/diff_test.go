@@ -75,6 +75,29 @@ func TestDiffRequest_Roundtrip(t *testing.T) {
 	}
 }
 
+func TestDiffRequest_ScalingPolicyRoundtrip(t *testing.T) {
+	req := DiffRequest{AppConfig: &DiffAppConfigPatch{ScalingPolicy: &ScalingPolicy{
+		MinInstances: 1, MaxInstances: 4,
+		Target:            &ScalingTarget{Metric: "rps", Value: 10},
+		ScaleOutCooldownS: 5, ScaleInCooldownS: 60,
+	}}}
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got DiffRequest
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.AppConfig == nil || got.AppConfig.ScalingPolicy == nil || got.AppConfig.ScalingPolicy.Target == nil {
+		t.Fatalf("scaling policy lost: %s", b)
+	}
+	if got.AppConfig.ScalingPolicy.MinInstances != 1 || got.AppConfig.ScalingPolicy.MaxInstances != 4 ||
+		got.AppConfig.ScalingPolicy.Target.Metric != "rps" || got.AppConfig.ScalingPolicy.Target.Value != 10 {
+		t.Fatalf("scaling policy = %+v, want round-tripped nested values", got.AppConfig.ScalingPolicy)
+	}
+}
+
 // TestDiffRequest_NilPointerOmits — pointer fields that are nil
 // must round-trip as JSON-absent (omitempty), not JSON-null. The
 // engine reads pointer fields on the way in; nil-vs-explicit-zero

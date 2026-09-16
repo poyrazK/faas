@@ -90,6 +90,33 @@ The CLI validates the block before creating the app; the same values are
 applied to the server-side profile captured from the exact uploaded source.
 Omitting the block leaves the normal framework profile unchanged.
 
+## Declarative scaling
+
+The same manifest can declare the app's autoscaling policy. The block is
+applied after the deployment is accepted, and is idempotent on repeat deploys:
+
+```yaml
+schema_version: 1
+scaling:
+  min_instances: 0
+  max_instances: 5
+  target:
+    metric: concurrent_requests # rps, concurrent_requests, or p99_latency_ms
+    value: 2
+  scale_out_cooldown_s: 5
+  scale_in_cooldown_s: 60
+```
+
+`min_instances` and `max_instances` use the platform's plan limits; `0`
+means scale to zero (and a zero `max_instances` means the plan maximum).
+Cooldowns default to 5 seconds for scale-out and 60 seconds for scale-in when
+omitted. The API remains the final authority for plan gates and workload-class
+compatibility. A project (`--project`) deploy currently rejects the top-level
+block because scaling is app-scoped; configure each workload separately after
+project apply. Source-ref (`--repo`) deploys currently reject the block; apply
+the policy separately after the remote source deploy. A local single-app deploy
+reads the block from the uploaded source.
+
 For a decomposed monorepo deploy (one CLI invocation, N apps), opt into
 project apply with `--project`. The project slug defaults to `--name`, the
 selected `--path`, the tarball basename, or the current directory (in that

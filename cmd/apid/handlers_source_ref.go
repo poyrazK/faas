@@ -190,6 +190,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
+	if manifest != nil && manifest.Scaling != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Unsupported manifest declaration", "scaling is supported on local single-app deploys; source-ref deployments must configure scaling separately"))
+		return
+	}
 	var workflowDefs []api.WorkflowSpec
 	if manifest != nil {
 		workflowDefs = manifest.Workflows

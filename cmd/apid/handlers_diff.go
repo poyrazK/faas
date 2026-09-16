@@ -46,6 +46,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/deploydiff"
@@ -59,6 +60,11 @@ func (s *server) diffApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	var req api.DiffRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if req.AppConfig != nil && req.AppConfig.ScalingPolicy != nil && req.AppConfig.ScalingPolicy.HasUnknownFields() {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid scaling policy", "unknown field(s): "+strings.Join(req.AppConfig.ScalingPolicy.UnknownFields(), ", ")))
 		return
 	}
 
@@ -309,6 +315,7 @@ func diffPendingFromRequest(req *api.DiffRequest) deploydiff.Pending {
 			RequireAuthn:        req.AppConfig.RequireAuthn,
 			EvictionPriority:    req.AppConfig.EvictionPriority,
 			AppProtocol:         req.AppConfig.AppProtocol,
+			ScalingPolicy:       req.AppConfig.ScalingPolicy,
 		}
 	}
 	p.Manifest = req.Manifest

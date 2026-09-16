@@ -63,6 +63,37 @@ func TestCompute_PointerAwareAppConfig(t *testing.T) {
 	})
 }
 
+func TestCompute_ScalingPolicyDiff(t *testing.T) {
+	pending := &api.ScalingPolicy{
+		MinInstances: 1, MaxInstances: 4,
+		Target:            &api.ScalingTarget{Metric: "rps", Value: 10},
+		ScaleOutCooldownS: 5, ScaleInCooldownS: 60,
+	}
+
+	t.Run("add on fresh app", func(t *testing.T) {
+		got := Compute("api", api.PlanHobby, Baseline{}, Pending{AppConfig: AppConfigPatch{ScalingPolicy: pending}})
+		if len(got.Changes) != 1 || got.Changes[0].Field != "scaling_policy" || got.Changes[0].Kind != ChangeAdd {
+			t.Fatalf("changes = %+v, want one scaling_policy add", got.Changes)
+		}
+	})
+
+	t.Run("modify existing policy", func(t *testing.T) {
+		base := &api.AppResponse{ScalingPolicy: &api.ScalingPolicy{MinInstances: 0, MaxInstances: 4, ScaleOutCooldownS: 5, ScaleInCooldownS: 60}}
+		got := Compute("api", api.PlanHobby, Baseline{App: base}, Pending{AppConfig: AppConfigPatch{ScalingPolicy: pending}})
+		if len(got.Changes) != 1 || got.Changes[0].Kind != ChangeModify {
+			t.Fatalf("changes = %+v, want one scaling_policy modify", got.Changes)
+		}
+	})
+
+	t.Run("equal policy is omitted", func(t *testing.T) {
+		base := &api.AppResponse{ScalingPolicy: pending}
+		got := Compute("api", api.PlanHobby, Baseline{App: base}, Pending{AppConfig: AppConfigPatch{ScalingPolicy: pending}})
+		if len(got.Changes) != 0 {
+			t.Fatalf("changes = %+v, want none", got.Changes)
+		}
+	})
+}
+
 // TestCompute_FreshApp — every non-nil Pending field is a new-value
 // Change when the app does not exist yet.
 func TestCompute_FreshApp(t *testing.T) {

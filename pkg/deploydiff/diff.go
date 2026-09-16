@@ -172,10 +172,9 @@ type AppConfigPatch struct {
 	// api.UpdateAppRequest.AppProtocol so the engine does not
 	// depend on the wire DTO shape.
 	AppProtocol *string
-	// ScalingPolicy is intentionally omitted: the wire shape is a
-	// *ScalingPolicy whose nil-vs-empty distinction is brittle, and
-	// the diff would need a separate deep-equality path. Future
-	// work, not PR-0.
+	// ScalingPolicy is the declarative app-level autoscaling policy.
+	// Nil means "don't touch"; a non-nil value replaces the policy.
+	ScalingPolicy *api.ScalingPolicy
 }
 
 // PendingEnv is one row of the per-scope env write. Key is the env

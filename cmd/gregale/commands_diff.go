@@ -134,7 +134,19 @@ func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string
 			opts.AppConfig.CPUMillicores = &cpu
 		}
 	}
+	opts.AppConfig.ScalingPolicy = previewScalingPolicyFromManifest(cwd)
 	return opts
+}
+
+func previewScalingPolicyFromManifest(cwd string) *api.ScalingPolicy {
+	if cwd == "" {
+		return nil
+	}
+	m, ok, err := gregalemanifest.Load(cwd)
+	if err != nil || !ok || m == nil || m.Scaling == nil {
+		return nil
+	}
+	return m.Scaling.ToAPI()
 }
 
 // buildPreviewBuildPlan projects the same source signals used by the deploy
@@ -364,6 +376,9 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 		TrafficPercent: opts.TrafficPercent, Canary: opts.Canary,
 		Workflows: opts.Workflows,
 	}
+	if policy := previewScalingPolicyFromManifest(opts.Cwd); policy != nil {
+		p.AppConfig.ScalingPolicy = policy
+	}
 	// Manifest: PR-0 synthesises a placeholder from the CLI flags
 	// (image / handler). Real manifest extraction from the tarball
 	// is the imaged contract — PR-0 keeps the diff text-only so
@@ -575,6 +590,7 @@ func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPa
 		RequireAuthn:        p.RequireAuthn,
 		EvictionPriority:    p.EvictionPriority,
 		AppProtocol:         p.AppProtocol,
+		ScalingPolicy:       p.ScalingPolicy,
 	}
 	if patch.RAMMB == nil && patch.VCPU == nil && patch.CPUMillicores == nil &&
 		patch.IdleTimeoutS == nil && patch.MaxConcurrency == nil &&
@@ -583,7 +599,7 @@ func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPa
 		patch.StreamingEnabled == nil && patch.WebSocketEnabled == nil &&
 		patch.RequireSigned == nil && patch.WarmSnapshotEnabled == nil &&
 		patch.RequireAuthn == nil && patch.EvictionPriority == nil &&
-		patch.AppProtocol == nil {
+		patch.AppProtocol == nil && patch.ScalingPolicy == nil {
 		return nil
 	}
 	return patch

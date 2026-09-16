@@ -70,6 +70,24 @@ func TestQuota_StreamingGate_Free(t *testing.T) {
 	}
 }
 
+func TestQuota_ScalingPolicyGates(t *testing.T) {
+	policy := &api.ScalingPolicy{MinInstances: 1, MaxInstances: 2, ScaleOutCooldownS: 5, ScaleInCooldownS: 60}
+	got := Quota(api.PlanFree, Baseline{}, Pending{AppConfig: AppConfigPatch{ScalingPolicy: policy}}, QuotaConfig{Limits: api.MustLimitsFor(api.PlanFree)})
+	if !hasCode(got, api.CodePlanMinInstancesNotAllowed) || !hasCode(got, api.CodePlanMaxInstancesNotAllowed) {
+		t.Fatalf("Free nested scaling policy should fire both plan gates: %+v", got)
+	}
+}
+
+func TestQuota_ScalingPolicyBounds(t *testing.T) {
+	policy := &api.ScalingPolicy{MinInstances: 2, MaxInstances: 1, ScaleOutCooldownS: 0, ScaleInCooldownS: 1}
+	got := Quota(api.PlanHobby, Baseline{}, Pending{AppConfig: AppConfigPatch{ScalingPolicy: policy}}, QuotaConfig{Limits: api.MustLimitsFor(api.PlanHobby)})
+	for _, code := range []string{api.CodeInvalidMaxInstances, api.CodeInvalidCooldown} {
+		if !hasCode(got, code) {
+			t.Errorf("missing %s break: %+v", code, got)
+		}
+	}
+}
+
 // TestQuota_CronsPerApp_Free — Free = crons disabled entirely.
 func TestQuota_CronsPerApp_Free(t *testing.T) {
 	limits := api.MustLimitsFor(api.PlanFree)

@@ -22537,8 +22537,8 @@ components:
         Per-app scalar patch. Pointer-aware: nil = "don't touch";
         explicit zero / explicit value = "set to this". Matches
         [UpdateAppRequest] semantics but exposes only the fields
-        the engine computes against (no ScalingPolicy /
-        PublicAuth / OverflowNode).
+        the engine computes against (no PublicAuth /
+        OverflowNode).
       type: object
       properties:
         ram_mb: { type: integer, minimum: 128, maximum: 10240 }
@@ -22563,6 +22563,11 @@ components:
           type: [string, "null"]
           enum: [http1, http2, grpc]
           example: http1
+        scaling_policy:
+          description: "Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the app scaling policy."
+          oneOf:
+            - type: "null"
+            - $ref: '#/components/schemas/ScalingPolicy'
 
     DiffEnvRow:
       description: |

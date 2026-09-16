@@ -12,8 +12,10 @@
 // CreateDeploymentRequest (decision locked in plan):
 //
 //  1. UpdateAppRequest has fields the engine does not compute
-//     against (PublicAuth, WarmSnapshotMinRequests, ScalingPolicy,
-//     OverflowNode) — embedding them invites phantom diffs.
+//     against (PublicAuth, WarmSnapshotMinRequests, OverflowNode)
+//     — embedding them invites phantom diffs. ScalingPolicy is the
+//     one nested app field deliberately included because it is now
+//     declarative in gregale.yaml.
 //  2. CreateDeploymentRequest has write-only fields (Scope,
 //     Sidecars, TrafficPercent, RequireSigned) that would 400
 //     strict-decode against a diff body.
@@ -112,6 +114,9 @@ type DiffAppConfigPatch struct {
 	// deploydiff/quota.go::quotaCheckAppProtocol which mirrors
 	// the per-plan gate (grpc Hobby+/Pro/Scale only).
 	AppProtocol *string `json:"app_protocol,omitempty"`
+	// ScalingPolicy replaces the app-level autoscaling policy when present.
+	// Nil preserves the existing policy during a preview.
+	ScalingPolicy *ScalingPolicy `json:"scaling_policy,omitempty"`
 }
 
 // DiffEnvRow is one would-write env var. Value carries the plaintext

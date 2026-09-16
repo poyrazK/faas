@@ -346,6 +346,11 @@ func diffScopeMismatch(out *Diff, baseScope, pendingScope string) {
 // field: nil Pending → no diff; non-nil differing from baseline →
 // Change{Field, Before, After}; non-nil equal to baseline → no diff.
 func diffAppConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
+	var baseScaling *api.ScalingPolicy
+	if base != nil {
+		baseScaling = base.ScalingPolicy
+	}
+	diffScalingPolicy(out, baseScaling, p.ScalingPolicy)
 	if base == nil {
 		// Fresh app: every non-nil Pending field is a new-value
 		// Change. We still emit them so the customer sees what
@@ -547,6 +552,27 @@ func diffAppConfig(out *Diff, base *api.AppResponse, p AppConfigPatch) {
 			Before: AsAny(base.EgressAllowlist), After: AsAny(*p.EgressAllowlist),
 		})
 	}
+}
+
+// diffScalingPolicy compares the nested policy as one atomic app-level
+// change. The API replaces the JSONB policy in one PATCH, so exposing one
+// row keeps preview/apply semantics aligned and avoids misleading per-field
+// partial updates.
+func diffScalingPolicy(out *Diff, base, pending *api.ScalingPolicy) {
+	if pending == nil || reflect.DeepEqual(base, pending) {
+		return
+	}
+	if base == nil {
+		out.Changes = append(out.Changes, Change{
+			Field: "scaling_policy", Kind: ChangeAdd,
+			After: AsAny(*pending),
+		})
+		return
+	}
+	out.Changes = append(out.Changes, Change{
+		Field: "scaling_policy", Kind: ChangeModify,
+		Before: AsAny(*base), After: AsAny(*pending),
+	})
 }
 
 // diffEnvByScope walks Pending.EnvByScope vs Baseline.EnvByScope.

@@ -160,6 +160,78 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 			Limit:    AsAny(0),
 		})
 	}
+	// Declarative nested scaling policy. The PATCH handler applies these
+	// checks atomically; mirroring them here makes --diff useful in CI while
+	// keeping the server authoritative at apply time.
+	if sp := pending.AppConfig.ScalingPolicy; sp != nil {
+		if sp.MinInstances < 0 || sp.MinInstances > limits.MaxConcurrency {
+			out = append(out, Break{
+				Code: api.CodeInvalidMinInstances, Severity: SeverityError,
+				Reason: "scaling_policy.min_instances must be within the plan concurrency bounds",
+				Field:  "scaling_policy.min_instances", Observed: AsAny(sp.MinInstances), Limit: AsAny(limits.MaxConcurrency),
+			})
+		}
+		if sp.MinInstances > limits.MaxMinInstances {
+			out = append(out, Break{
+				Code: api.CodeMaxMinInstancesExceeded, Severity: SeverityError,
+				Reason: "scaling_policy.min_instances exceeds plan cap",
+				Field:  "scaling_policy.min_instances", Observed: AsAny(sp.MinInstances), Limit: AsAny(limits.MaxMinInstances),
+			})
+		}
+		if sp.MinInstances > 0 && !limits.MinInstancesAllowed {
+			out = append(out, Break{
+				Code: api.CodePlanMinInstancesNotAllowed, Severity: SeverityError,
+				Reason: "scaling_policy.min_instances is not enabled on this plan",
+				Field:  "scaling_policy.min_instances", Observed: AsAny(sp.MinInstances), Limit: AsAny(0),
+			})
+		}
+		if sp.MaxInstances > 0 && !limits.MaxInstancesAllowed {
+			out = append(out, Break{
+				Code: api.CodePlanMaxInstancesNotAllowed, Severity: SeverityError,
+				Reason: "scaling_policy.max_instances is not enabled on this plan",
+				Field:  "scaling_policy.max_instances", Observed: AsAny(sp.MaxInstances),
+			})
+		}
+		if sp.MaxInstances < 0 || (sp.MaxInstances > 0 && sp.MaxInstances > limits.MaxConcurrency) || (sp.MaxInstances > 0 && sp.MaxInstances < sp.MinInstances) {
+			out = append(out, Break{
+				Code: api.CodeInvalidMaxInstances, Severity: SeverityError,
+				Reason: "scaling_policy.max_instances must be zero or within min_instances and plan max_concurrency",
+				Field:  "scaling_policy.max_instances", Observed: AsAny(sp.MaxInstances), Limit: AsAny(limits.MaxConcurrency),
+			})
+		}
+		if sp.ScaleOutCooldownS < api.MinScaleOutCooldownS || sp.ScaleOutCooldownS > api.MaxScaleOutCooldownS {
+			out = append(out, Break{
+				Code: api.CodeInvalidCooldown, Severity: SeverityError,
+				Reason: "scaling_policy.scale_out_cooldown_s is outside the allowed range",
+				Field:  "scaling_policy.scale_out_cooldown_s", Observed: AsAny(sp.ScaleOutCooldownS), Limit: AsAny(api.MaxScaleOutCooldownS),
+			})
+		}
+		if sp.ScaleInCooldownS < api.MinScaleInCooldownS || sp.ScaleInCooldownS > api.MaxScaleInCooldownS {
+			out = append(out, Break{
+				Code: api.CodeInvalidCooldown, Severity: SeverityError,
+				Reason: "scaling_policy.scale_in_cooldown_s is outside the allowed range",
+				Field:  "scaling_policy.scale_in_cooldown_s", Observed: AsAny(sp.ScaleInCooldownS), Limit: AsAny(api.MaxScaleInCooldownS),
+			})
+		}
+		if sp.Target != nil {
+			switch sp.Target.Metric {
+			case "", "rps", "concurrent_requests", "p99_latency_ms":
+			default:
+				out = append(out, Break{
+					Code: api.CodeValidation, Severity: SeverityError,
+					Reason: "scaling_policy.target.metric is not supported",
+					Field:  "scaling_policy.target.metric", Observed: AsAny(sp.Target.Metric),
+				})
+			}
+			if sp.Target.Value < 0 {
+				out = append(out, Break{
+					Code: api.CodeValidation, Severity: SeverityError,
+					Reason: "scaling_policy.target.value must be >= 0",
+					Field:  "scaling_policy.target.value", Observed: AsAny(sp.Target.Value),
+				})
+			}
+		}
+	}
 	// Streaming gate.
 	if pending.AppConfig.StreamingEnabled != nil && *pending.AppConfig.StreamingEnabled && !limits.StreamingEnabled {
 		out = append(out, Break{

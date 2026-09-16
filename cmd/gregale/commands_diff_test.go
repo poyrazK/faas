@@ -137,6 +137,14 @@ func TestDiffRequestFromCLI_PreservesResourceAndProtocolPatch(t *testing.T) {
 	}
 }
 
+func TestDiffRequestFromCLI_PreservesScalingPolicy(t *testing.T) {
+	policy := &api.ScalingPolicy{MinInstances: 1, MaxInstances: 3, ScaleOutCooldownS: 5, ScaleInCooldownS: 60}
+	req := diffRequestFromCLI(diffCLIOptions{AppConfig: deploydiff.AppConfigPatch{ScalingPolicy: policy}})
+	if req.AppConfig == nil || req.AppConfig.ScalingPolicy != policy {
+		t.Fatalf("scaling_policy = %#v, want original pointer %#v", req.AppConfig, policy)
+	}
+}
+
 func TestBuildPending_CarriesBuildPlan(t *testing.T) {
 	want := &api.BuildPlan{Framework: "python", Runtime: "python312", Class: "function", Handler: "handler.handler"}
 	pending := buildPending(nil, nil, diffCLIOptions{Slug: "fresh", BuildPlan: want}, deploydiff.EmptyBaseline())
@@ -173,6 +181,23 @@ func TestPreviewCronsFromManifest_IsSharedByPreviewModes(t *testing.T) {
 	pending := buildPending(nil, nil, opts, deploydiff.EmptyBaseline())
 	if len(pending.Crons) != len(crons) || pending.Crons[0].Path != crons[0].Path {
 		t.Fatalf("local pending crons = %+v, want server request projection %+v", pending.Crons, crons)
+	}
+}
+
+func TestBuildPending_ProjectsManifestScaling(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, `scaling:
+  min_instances: 1
+  target:
+    metric: rps
+    value: 5
+`)
+	pending := buildPending(nil, nil, diffCLIOptions{Cwd: dir, Slug: "fresh"}, deploydiff.EmptyBaseline())
+	if pending.AppConfig.ScalingPolicy == nil || pending.AppConfig.ScalingPolicy.MinInstances != 1 || pending.AppConfig.ScalingPolicy.Target == nil {
+		t.Fatalf("pending scaling policy = %+v, want projected manifest policy", pending.AppConfig.ScalingPolicy)
+	}
+	if pending.AppConfig.ScalingPolicy.ScaleOutCooldownS != 5 || pending.AppConfig.ScalingPolicy.ScaleInCooldownS != 60 {
+		t.Fatalf("pending cooldowns = %d/%d, want defaults 5/60", pending.AppConfig.ScalingPolicy.ScaleOutCooldownS, pending.AppConfig.ScalingPolicy.ScaleInCooldownS)
 	}
 }
 

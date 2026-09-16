@@ -119,6 +119,61 @@ func TestLoad_HostingOverridesAreStrict(t *testing.T) {
 	}
 }
 
+func TestLoad_ScalingPolicy(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(`schema_version: 1
+scaling:
+  min_instances: 1
+  max_instances: 4
+  target:
+    metric: concurrent_requests
+    value: 2
+  scale_in_cooldown_s: 90
+`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	m, ok, err := Load(dir)
+	if err != nil || !ok || m.Scaling == nil {
+		t.Fatalf("Load = manifest=%+v ok=%v err=%v, want scaling block", m, ok, err)
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	policy := m.Scaling.ToAPI()
+	if policy.MinInstances != 1 || policy.MaxInstances != 4 || policy.Target == nil ||
+		policy.Target.Metric != "concurrent_requests" || policy.Target.Value != 2 ||
+		policy.ScaleOutCooldownS != defaultScaleOutCooldownS || policy.ScaleInCooldownS != 90 {
+		t.Fatalf("policy = %+v, want manifest values plus default scale-out cooldown", policy)
+	}
+}
+
+func TestScalingConfigValidation(t *testing.T) {
+	min, max, cooldown := -1, 1, 0
+	cases := []struct {
+		name string
+		cfg  *ScalingConfig
+		want string
+	}{
+		{"negative min", &ScalingConfig{MinInstances: &min}, "min_instances"},
+		{"max below min", &ScalingConfig{MinInstances: manifestIntPtr(2), MaxInstances: &max}, "max_instances"},
+		{"bad metric", &ScalingConfig{Target: &ScalingTarget{Metric: "cpu"}}, "target.metric"},
+		{"bad cooldown", &ScalingConfig{ScaleOutCooldownS: &cooldown}, "scale_out_cooldown_s"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.cfg.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate = %v, want %q error", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateForPlan_UnsupportedSchemaVersion(t *testing.T) {
+	if err := (&Manifest{SchemaVersion: 2}).Validate(); err == nil || !strings.Contains(err.Error(), "schema_version") {
+		t.Fatalf("Validate = %v, want unsupported schema version error", err)
+	}
+}
+
 func TestValidateForPlan_WorkflowsArePaidOnly(t *testing.T) {
 	m := &Manifest{Workflows: []api.WorkflowSpec{{
 		Name:  "free-workflow",
@@ -783,3 +838,5 @@ func TestValidate_FilterCriteria_CronKindSkips(t *testing.T) {
 // jsonRaw is a tiny helper that returns a json.RawMessage from a
 // literal. Keeps the table-driven fixtures readable.
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }
+
+func manifestIntPtr(v int) *int { return &v }

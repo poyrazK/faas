@@ -88,6 +88,14 @@ func TestDiffPendingFromRequest_PreservesAppProtocol(t *testing.T) {
 	}
 }
 
+func TestDiffPendingFromRequest_PreservesScalingPolicy(t *testing.T) {
+	policy := &api.ScalingPolicy{MinInstances: 1, MaxInstances: 3, ScaleOutCooldownS: 5, ScaleInCooldownS: 60}
+	got := diffPendingFromRequest(&api.DiffRequest{AppConfig: &api.DiffAppConfigPatch{ScalingPolicy: policy}})
+	if got.AppConfig.ScalingPolicy != policy {
+		t.Fatalf("scaling_policy = %#v, want %#v", got.AppConfig.ScalingPolicy, policy)
+	}
+}
+
 // TestDiffApp_MissingSlug_Returns200WithPreview is the regression
 // test for code-review finding #1. Pre-fix: loadApp wrote a 404
 // and the CI consumer lost the diff entirely. Post-fix: the
