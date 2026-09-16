@@ -126,7 +126,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "crons", "delayed-task", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "add", "crons", "delayed-task", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
 		return "Delivery"
@@ -256,6 +256,27 @@ var cliCommands = []cliCommand{
 			{Name: "status", Short: "Show account status"},
 			{Name: "dpa", Short: "Show DPA metadata"},
 			{Name: "slo", Short: "Account-wide SLO panel"},
+		},
+	},
+	{
+		Name:    "add",
+		DocSlug: "add",
+		Short:   "Provision and bind managed resources to an app",
+		Subcommands: []cliSub{
+			{Name: "postgres", Short: "Provision or attach PostgreSQL and inject DATABASE_URL", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "env", Short: "environment scope", Req: true, Value: "SCOPE"},
+				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
+				{Name: "database", Short: "existing database ID or name", Value: "REF"},
+				{Name: "region", Short: "provider-neutral region when creating", Value: "REGION"},
+				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
+				{Name: "class", Short: "service class", Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},
+				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
+				{Name: "scale-to-zero", Short: "suspend compute when idle"},
+				{Name: "environment-key", Short: "connection environment variable", Value: "KEY"},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only"}},
+				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
+			}},
 		},
 	},
 	{

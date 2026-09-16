@@ -170,6 +170,8 @@ func run(args []string) (status int) {
 			return 1
 		}
 		return cmdWhoami()
+	case "add":
+		return cmdAdd(args[1:])
 	case "deploy":
 		return cmdDeployTarball(args[1:])
 	case "dev":

@@ -294,6 +294,23 @@ gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
 ```
 
+For the App Platform-style happy path, `gregale add postgres` composes the
+same lifecycle and binding APIs. It reuses a matching account database when
+one exists, otherwise creates one, waits for readiness, and binds the sealed
+`DATABASE_URL` value to the app environment. The command never prints the
+credential or connection URL:
+
+```sh
+gregale add postgres --app api --env production --region eu
+gregale add postgres orders --app api --env production --region eu
+gregale add postgres --database orders --app api --env production
+```
+
+`--database` accepts either the database ID or logical name. `NAME` is
+optional when creating and defaults to `<app>-postgres`; `--region` is only
+required when a new database must be created. The existing `gregale postgres`
+verbs remain available for lower-level lifecycle and restore operations.
+
 For application deployments, declare the dependency in `gregale.yaml` and
 `gregale deploy` creates the durable binding before uploading compute:
 
