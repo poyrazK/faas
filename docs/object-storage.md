@@ -198,6 +198,19 @@ aws --profile gregale --endpoint-url https://s3.gregale.dev \
 
 ### Bind storage to a compute workload
 
+The App Platform-style CLI path creates or reuses a bucket and injects its
+sealed S3 settings in one operation:
+
+```sh
+gregale add bucket assets --app my-api --env production
+gregale add bucket assets --app my-api --env production --permission read_write
+```
+
+The command is idempotent for the app, scope, and bucket name. It prints the
+bucket and injected secret names only; access keys and secret values are never
+written to stdout, JSON output, or logs. Use the lower-level API operations
+below when rotating or revoking a binding.
+
 Use `POST /v1/apps/{slug}/buckets/{bucket-id}/compute-bindings` when the
 workload should use the branded S3 endpoint without carrying credentials in
 deployment manifests. The request accepts the same `permission` values as a

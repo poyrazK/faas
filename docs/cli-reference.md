@@ -138,6 +138,23 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--access <MODE>` | credential access | one of `read_write` · `read_only` |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
+### add bucket
+
+Provision or attach object storage and inject sealed S3 settings
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | app slug | required |
+| `--env <SCOPE>` | environment scope | required |
+| `--scope <SCOPE>` | environment scope (alias for --env) |  |
+| `--region <REGION>` | object-storage region |  |
+| `--public` | serve objects publicly from the app host |  |
+| `--serve-at <PATH>` | public mount path |  |
+| `--permission <MODE>` | compute binding permission | one of `read` · `write` · `read_write` |
+| `--label <LABEL>` | bucket-scoped compute credential label |  |
+| `--prefix <PREFIX>` | injected storage secret prefix |  |
+| `--wait-timeout <DURATION>` | readiness timeout |  |
+
 
 ## capabilities
 

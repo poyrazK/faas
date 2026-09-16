@@ -277,6 +277,18 @@ var cliCommands = []cliCommand{
 				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only"}},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
+			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "env", Short: "environment scope", Req: true, Value: "SCOPE"},
+				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
+				{Name: "region", Short: "object-storage region", Value: "REGION"},
+				{Name: "public", Short: "serve objects publicly from the app host"},
+				{Name: "serve-at", Short: "public mount path", Value: "PATH"},
+				{Name: "permission", Short: "compute binding permission", Value: "MODE", ClosedSet: []string{"read", "write", "read_write"}},
+				{Name: "label", Short: "bucket-scoped compute credential label", Value: "LABEL"},
+				{Name: "prefix", Short: "injected storage secret prefix", Value: "PREFIX"},
+				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
+			}},
 		},
 	},
 	{

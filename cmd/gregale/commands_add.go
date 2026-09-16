@@ -13,15 +13,22 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 )
 
 const (
-	addPostgresDefaultWait = 5 * time.Minute
-	addPostgresPollEvery   = 2 * time.Second
+	addResourceDefaultWait = 5 * time.Minute
+	addResourcePollEvery   = 2 * time.Second
+)
+
+var (
+	addBucketNameRE   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	addBucketPrefixRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,47}$`)
 )
 
 type addPostgresClient interface {
@@ -40,17 +47,247 @@ type addPostgresResult struct {
 	DatabaseCreated bool                        `json:"database_created"`
 }
 
+type addBucketResult struct {
+	AppID          string                 `json:"app_id"`
+	Bucket         api.ObjectBucket       `json:"bucket"`
+	Binding        addBucketBindingResult `json:"binding"`
+	BucketCreated  bool                   `json:"bucket_created"`
+	BindingCreated bool                   `json:"binding_created"`
+}
+
+type addBucketBindingResult struct {
+	ID         string                                    `json:"id"`
+	BucketID   string                                    `json:"bucket_id"`
+	Scope      string                                    `json:"scope"`
+	Prefix     string                                    `json:"prefix"`
+	Permission string                                    `json:"permission"`
+	SecretKeys api.ObjectStorageComputeBindingSecretKeys `json:"secret_keys"`
+}
+
 func cmdAdd(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale add <postgres>", "add")
+		PrintUsage(os.Stderr, "usage: gregale add <postgres|bucket>", "add")
 		return 1
 	}
 	switch args[0] {
 	case "postgres":
 		return cmdAddPostgres(args[1:])
+	case "bucket":
+		return cmdAddBucket(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown add resource %q\n", args[0])
 		return 1
+	}
+}
+
+type addBucketClient interface {
+	GetApp(context.Context, string) (api.AppResponse, error)
+	ListObjectBuckets(context.Context, string) (api.ObjectBucketList, error)
+	CreateObjectBucket(context.Context, string, api.CreateObjectBucketRequest) (api.ObjectBucket, error)
+	ListObjectStorageComputeBindings(context.Context, string, string) (api.ObjectStorageComputeBindingList, error)
+	CreateObjectStorageComputeBinding(context.Context, string, string, api.CreateObjectStorageComputeBindingRequest) (api.ObjectStorageComputeBinding, error)
+}
+
+// cmdAddBucket creates (or reuses) an object bucket for an app and binds its
+// provider-neutral S3 settings into the app's sealed environment. The API
+// returns only secret names for compute bindings; this command deliberately
+// projects out even the non-secret access-key identifier from its result.
+func cmdAddBucket(args []string) int {
+	args = normalizePostgresArgs(args)
+	fs := newFlagSet("add bucket", flag.ContinueOnError)
+	appSlug := fs.String("app", "", "app slug (required)")
+	scope := fs.String("env", "", "environment scope (required)")
+	fs.Var(newStringAlias(scope), "scope", "environment scope (alias for --env)")
+	region := fs.String("region", "", "object-storage region (uses the account default when omitted)")
+	public := fs.Bool("public", false, "serve objects publicly from the app host")
+	serveAt := fs.String("serve-at", "", "public mount path (required with --public)")
+	permission := fs.String("permission", api.ObjectBucketPermissionReadWrite, "compute binding permission: read|write|read_write")
+	label := fs.String("label", "compute", "label for the bucket-scoped compute credential")
+	prefix := fs.String("prefix", "", "uppercase prefix for injected storage secret names")
+	waitTimeout := fs.Duration("wait-timeout", addResourceDefaultWait, "maximum time to wait for the bucket to become ready")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	usage := "usage: gregale add bucket NAME --app APP --env SCOPE [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--wait-timeout DURATION]"
+	if fs.NArg() != 1 || strings.TrimSpace(*appSlug) == "" || !api.ValidAppSlug(strings.TrimSpace(*appSlug)) ||
+		strings.TrimSpace(*scope) == "" || api.ValidateScope(strings.TrimSpace(*scope)) != nil ||
+		!addBucketNameRE.MatchString(strings.TrimSpace(fs.Arg(0))) || !objectStoragePermissionOK(*permission) ||
+		(strings.TrimSpace(*label) == "" || len(strings.TrimSpace(*label)) > 64) ||
+		(strings.TrimSpace(*prefix) != "" && !addBucketPrefixRE.MatchString(strings.TrimSpace(*prefix))) ||
+		!objectstorage.ValidPublicReadPath(*public, strings.TrimSpace(*serveAt)) || *waitTimeout < 0 {
+		PrintUsage(os.Stderr, usage, "add")
+		return 1
+	}
+
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx := context.Background()
+	app, err := client.GetApp(ctx, strings.TrimSpace(*appSlug))
+	if err != nil {
+		return printErr("Could not find app", err)
+	}
+	appName := strings.TrimSpace(app.Slug)
+	if appName == "" {
+		appName = strings.TrimSpace(*appSlug)
+	}
+	name := strings.TrimSpace(fs.Arg(0))
+	catalog, err := client.ListObjectBuckets(ctx, appName)
+	if err != nil {
+		return printErr("Could not list object-storage buckets", err)
+	}
+	bucket, found, err := findAddObjectBucket(catalog.Items, name, strings.TrimSpace(*scope))
+	if err != nil {
+		return printErr("Could not resolve object-storage bucket", err)
+	}
+	bucketCreated := false
+	if !found {
+		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("bucket", appName, name, *scope))
+		bucket, err = client.CreateObjectBucket(createCtx, appName, api.CreateObjectBucketRequest{
+			Name: name, Scope: strings.TrimSpace(*scope), Region: strings.TrimSpace(*region), Public: *public, ServeAt: strings.TrimSpace(*serveAt),
+		})
+		if err != nil {
+			return printErr("Could not create object-storage bucket", err)
+		}
+		bucketCreated = true
+	}
+	bucket, err = waitForObjectBucket(ctx, client, appName, bucket, *waitTimeout)
+	if err != nil {
+		return printErr("Object-storage bucket is not ready", err)
+	}
+
+	bindingPrefix := strings.TrimSpace(*prefix)
+	if bindingPrefix == "" {
+		bindingPrefix = defaultAddBucketBindingPrefix(bucket.Name)
+	}
+	bindings, err := client.ListObjectStorageComputeBindings(ctx, appName, bucket.ID)
+	if err != nil {
+		return printErr("Could not list object-storage bindings", err)
+	}
+	binding, bindingFound := findAddBucketBinding(bindings.Items, bucket.Scope, bindingPrefix)
+	bindingCreated := false
+	if !bindingFound {
+		bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("binding", appName, bucket.ID, bucket.Scope, bindingPrefix))
+		binding, err = client.CreateObjectStorageComputeBinding(bindingCtx, appName, bucket.ID, api.CreateObjectStorageComputeBindingRequest{
+			Label: strings.TrimSpace(*label), Permission: *permission, Prefix: bindingPrefix,
+		})
+		if err != nil {
+			return printErr("Could not attach object-storage bucket", err)
+		}
+		bindingCreated = true
+	}
+
+	result := addBucketResult{
+		AppID: app.ID, Bucket: bucket, Binding: projectAddBucketBinding(binding, *permission),
+		BucketCreated: bucketCreated, BindingCreated: bindingCreated,
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(result))
+	}
+	if bucketCreated {
+		_, _ = fmt.Fprintf(osStdout, "Provisioned object-storage bucket %s.\n", bucket.Name)
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "Using object-storage bucket %s.\n", bucket.Name)
+	}
+	_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s in %s as %s (%s).\n", bucket.Name, appName, bucket.Scope, bindingPrefix, *permission)
+	return 0
+}
+
+func findAddObjectBucket(items []api.ObjectBucket, name, scope string) (api.ObjectBucket, bool, error) {
+	var match api.ObjectBucket
+	for _, candidate := range items {
+		if candidate.State == "deleted" || candidate.Name != name || candidate.Scope != scope {
+			continue
+		}
+		if match.ID != "" && candidate.ID != match.ID {
+			return api.ObjectBucket{}, false, fmt.Errorf("bucket %q in scope %q is ambiguous; use a fresh name", name, scope)
+		}
+		match = candidate
+	}
+	return match, match.ID != "", nil
+}
+
+func findAddBucketBinding(items []api.ObjectStorageComputeBinding, scope, prefix string) (api.ObjectStorageComputeBinding, bool) {
+	for _, binding := range items {
+		if binding.Scope == scope && binding.Prefix == prefix {
+			return binding, true
+		}
+	}
+	return api.ObjectStorageComputeBinding{}, false
+}
+
+func projectAddBucketBinding(binding api.ObjectStorageComputeBinding, permission string) addBucketBindingResult {
+	if strings.TrimSpace(binding.Credential.Permission) != "" {
+		permission = binding.Credential.Permission
+	}
+	return addBucketBindingResult{
+		ID: binding.ID, BucketID: binding.BucketID, Scope: binding.Scope, Prefix: binding.Prefix,
+		Permission: permission, SecretKeys: binding.SecretKeys,
+	}
+}
+
+func objectStoragePermissionOK(permission string) bool {
+	return permission == api.ObjectBucketPermissionRead || permission == api.ObjectBucketPermissionWrite || permission == api.ObjectBucketPermissionReadWrite
+}
+
+func defaultAddBucketBindingPrefix(bucketName string) string {
+	var b strings.Builder
+	b.WriteString("GREGALE_S3_")
+	for _, r := range strings.ToUpper(bucketName) {
+		if r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	prefix := strings.TrimRight(b.String(), "_")
+	if len(prefix) > 48 {
+		prefix = strings.TrimRight(prefix[:48], "_")
+	}
+	return prefix
+}
+
+func waitForObjectBucket(ctx context.Context, client interface {
+	ListObjectBuckets(context.Context, string) (api.ObjectBucketList, error)
+}, appSlug string, bucket api.ObjectBucket, timeout time.Duration) (api.ObjectBucket, error) {
+	if bucket.State == "ready" {
+		return bucket, nil
+	}
+	if bucket.State == "failed" || bucket.State == "deleted" {
+		return bucket, fmt.Errorf("bucket is %s", bucket.State)
+	}
+	if timeout <= 0 {
+		return bucket, fmt.Errorf("bucket is %s; retry after provisioning completes", bucket.State)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(addResourcePollEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-waitCtx.Done():
+			return bucket, fmt.Errorf("bucket is %s; readiness timeout after %s", bucket.State, timeout)
+		case <-ticker.C:
+			catalog, err := client.ListObjectBuckets(waitCtx, appSlug)
+			if err != nil {
+				return bucket, err
+			}
+			current, found, err := findAddObjectBucket(catalog.Items, bucket.Name, bucket.Scope)
+			if err != nil {
+				return bucket, err
+			}
+			if !found {
+				return bucket, fmt.Errorf("bucket %q disappeared while provisioning", bucket.Name)
+			}
+			if current.State == "ready" {
+				return current, nil
+			}
+			if current.State == "failed" || current.State == "deleted" {
+				return current, fmt.Errorf("bucket is %s", current.State)
+			}
+			bucket = current
+		}
 	}
 }
 
@@ -74,7 +311,7 @@ func cmdAddPostgres(args []string) int {
 	storage := fs.Int64("storage-bytes", 0, "storage limit in bytes (0 uses plan allowance)")
 	restoreWindow := fs.Int64("restore-window-seconds", 0, "point-in-time restore window (0 uses plan allowance)")
 	access := fs.String("access", "read_write", "credential access: read_write|read_only")
-	waitTimeout := fs.Duration("wait-timeout", addPostgresDefaultWait, "maximum time to wait for the database and binding to become ready")
+	waitTimeout := fs.Duration("wait-timeout", addResourceDefaultWait, "maximum time to wait for the database and binding to become ready")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -135,7 +372,7 @@ func cmdAddPostgres(args []string) int {
 			PrintUsage(os.Stderr, usage, "add")
 			return 1
 		}
-		createCtx := api.ContextWithIdempotencyKey(ctx, addPostgresIdempotencyKey("database", appName, name, *scope, *environmentKey))
+		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("database", appName, name, *scope, *environmentKey))
 		database, err = client.CreateManagedPostgresDatabase(createCtx, api.CreateManagedPostgresDatabaseRequest{
 			Name: name, Region: strings.TrimSpace(*region), PostgresMajor: *major,
 			ServiceClass: *serviceClass, Availability: *availability, ScaleToZero: scaleToZero,
@@ -151,7 +388,7 @@ func cmdAddPostgres(args []string) int {
 	if err != nil {
 		return printErr("Managed PostgreSQL database is not ready", err)
 	}
-	bindingCtx := api.ContextWithIdempotencyKey(ctx, addPostgresIdempotencyKey("binding", app.ID, database.ID, *scope, *environmentKey))
+	bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("binding", app.ID, database.ID, *scope, *environmentKey))
 	binding, err := client.CreateManagedPostgresBinding(bindingCtx, database.ID, api.CreateManagedPostgresBindingRequest{
 		AppID: app.ID, Scope: strings.TrimSpace(*scope), EnvironmentKey: strings.TrimSpace(*environmentKey), Access: *access,
 	})
@@ -213,7 +450,7 @@ func waitForManagedPostgresDatabase(ctx context.Context, client interface {
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ticker := time.NewTicker(addPostgresPollEvery)
+	ticker := time.NewTicker(addResourcePollEvery)
 	defer ticker.Stop()
 	for {
 		select {
@@ -249,7 +486,7 @@ func waitForManagedPostgresBinding(ctx context.Context, client interface {
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ticker := time.NewTicker(addPostgresPollEvery)
+	ticker := time.NewTicker(addResourcePollEvery)
 	defer ticker.Stop()
 	for {
 		select {
@@ -278,8 +515,8 @@ func postgresLastError(code string) string {
 	return ": " + strings.TrimSpace(code)
 }
 
-func addPostgresIdempotencyKey(kind string, parts ...string) string {
+func addResourceIdempotencyKey(kind string, parts ...string) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "gregale:add:postgres:%s:%s", kind, strings.Join(parts, "\x00"))
-	return "gregale-add-postgres-" + kind + "-" + hex.EncodeToString(h.Sum(nil))
+	_, _ = fmt.Fprintf(h, "gregale:add:%s:%s", kind, strings.Join(parts, "\x00"))
+	return "gregale-add-" + kind + "-" + hex.EncodeToString(h.Sum(nil))
 }
