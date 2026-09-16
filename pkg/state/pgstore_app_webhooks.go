@@ -38,15 +38,19 @@ func (s *PgStore) CreateAppWebhook(ctx context.Context, in AppWebhook) (AppWebho
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
 	}
+	if in.DeliveryFormat == "" {
+		in.DeliveryFormat = AppWebhookDeliveryFormatJSON
+	}
 	row := s.pool.QueryRow(ctx, `
 		insert into app_webhooks
 			(app_id, account_id, target_url, secret_sealed,
-			 event_filter, retry_policy, enabled)
-		values ($1, $2, $3, $4, $5::text[], $6, $7)
+			 event_filter, retry_policy, delivery_format, enabled)
+		values ($1, $2, $3, $4, $5::text[], $6, $7, $8)
 		returning id, app_id, account_id, target_url, secret_sealed,
-		          event_filter, retry_policy, enabled, created_at, updated_at
+		          event_filter, retry_policy, delivery_format, enabled,
+		          created_at, updated_at
 	`, in.AppID, in.AccountID, in.TargetURL, in.SecretSealed,
-		filterArr, string(in.RetryPolicy), in.Enabled)
+		filterArr, string(in.RetryPolicy), string(in.DeliveryFormat), in.Enabled)
 	w, err := scanAppWebhook(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -124,15 +128,19 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 	if in.RetryPolicy == "" {
 		in.RetryPolicy = AppWebhookRetryDefault
 	}
+	if in.DeliveryFormat == "" {
+		in.DeliveryFormat = AppWebhookDeliveryFormatJSON
+	}
 	row := tx.QueryRow(ctx, `
 		insert into app_webhooks
 			(app_id, account_id, target_url, secret_sealed,
-			 event_filter, retry_policy, enabled)
-		values ($1, $2, $3, $4, $5::text[], $6, $7)
+			 event_filter, retry_policy, delivery_format, enabled)
+		values ($1, $2, $3, $4, $5::text[], $6, $7, $8)
 		returning id, app_id, account_id, target_url, secret_sealed,
-		          event_filter, retry_policy, enabled, created_at, updated_at
+		          event_filter, retry_policy, delivery_format, enabled,
+		          created_at, updated_at
 	`, in.AppID, in.AccountID, in.TargetURL, in.SecretSealed,
-		filterArr, string(in.RetryPolicy), in.Enabled)
+		filterArr, string(in.RetryPolicy), string(in.DeliveryFormat), in.Enabled)
 	w, err := scanAppWebhook(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -149,7 +157,8 @@ func (s *PgStore) CreateAppWebhookIfUnderQuota(ctx context.Context, in AppWebhoo
 func (s *PgStore) AppWebhookByID(ctx context.Context, id string) (AppWebhook, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, app_id, account_id, target_url, secret_sealed,
-		       event_filter, retry_policy, enabled, created_at, updated_at
+		       event_filter, retry_policy, delivery_format, enabled,
+		       created_at, updated_at
 		  from app_webhooks where id = $1
 	`, id)
 	w, err := scanAppWebhook(row)
@@ -181,6 +190,9 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 	if p.RetryPolicy != nil {
 		current.RetryPolicy = *p.RetryPolicy
 	}
+	if p.DeliveryFormat != nil {
+		current.DeliveryFormat = *p.DeliveryFormat
+	}
 	if p.Enabled != nil {
 		current.Enabled = *p.Enabled
 	}
@@ -191,19 +203,24 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 	if filterArr == nil {
 		filterArr = []string{}
 	}
+	if current.DeliveryFormat == "" {
+		current.DeliveryFormat = AppWebhookDeliveryFormatJSON
+	}
 	row := s.pool.QueryRow(ctx, `
 		update app_webhooks set
 			target_url = $2,
 			event_filter = $3::text[],
 			retry_policy = $4,
-			enabled = $5,
-			secret_sealed = $6,
+			delivery_format = $5,
+			enabled = $6,
+			secret_sealed = $7,
 			updated_at = now()
 		where id = $1
 		returning id, app_id, account_id, target_url, secret_sealed,
-		          event_filter, retry_policy, enabled, created_at, updated_at
+		          event_filter, retry_policy, delivery_format, enabled,
+		          created_at, updated_at
 	`, id, current.TargetURL, filterArr, string(current.RetryPolicy),
-		current.Enabled, current.SecretSealed)
+		string(current.DeliveryFormat), current.Enabled, current.SecretSealed)
 	w, err := scanAppWebhook(row)
 	if err != nil {
 		return AppWebhook{}, fmt.Errorf("state: update app_webhook: %w", err)
@@ -225,7 +242,8 @@ func (s *PgStore) DeleteAppWebhook(ctx context.Context, id string) error {
 func (s *PgStore) ListAppWebhooksForApp(ctx context.Context, appID string) ([]AppWebhook, error) {
 	rows, err := s.pool.Query(ctx, `
 		select id, app_id, account_id, target_url, secret_sealed,
-		       event_filter, retry_policy, enabled, created_at, updated_at
+		       event_filter, retry_policy, delivery_format, enabled,
+		       created_at, updated_at
 		  from app_webhooks
 		 where app_id = $1
 		 order by created_at desc
@@ -240,7 +258,8 @@ func (s *PgStore) ListAppWebhooksForApp(ctx context.Context, appID string) ([]Ap
 func (s *PgStore) ListAppWebhooksForAccount(ctx context.Context, accountID string) ([]AppWebhook, error) {
 	rows, err := s.pool.Query(ctx, `
 		select id, app_id, account_id, target_url, secret_sealed,
-		       event_filter, retry_policy, enabled, created_at, updated_at
+		       event_filter, retry_policy, delivery_format, enabled,
+		       created_at, updated_at
 		  from app_webhooks
 		 where account_id = $1
 		 order by created_at desc
@@ -561,15 +580,20 @@ func scanAppWebhook(s appWebhookScanner) (AppWebhook, error) {
 		w      AppWebhook
 		filter []string
 		retry  string
+		format string
 	)
 	err := s.Scan(
 		&w.ID, &w.AppID, &w.AccountID, &w.TargetURL, &w.SecretSealed,
-		&filter, &retry, &w.Enabled, &w.CreatedAt, &w.UpdatedAt,
+		&filter, &retry, &format, &w.Enabled, &w.CreatedAt, &w.UpdatedAt,
 	)
 	if err != nil {
 		return AppWebhook{}, err
 	}
 	w.RetryPolicy = AppWebhookRetryPolicy(retry)
+	w.DeliveryFormat = AppWebhookDeliveryFormat(format)
+	if w.DeliveryFormat == "" {
+		w.DeliveryFormat = AppWebhookDeliveryFormatJSON
+	}
 	w.EventFilter = filter
 	if w.EventFilter == nil {
 		w.EventFilter = []string{}

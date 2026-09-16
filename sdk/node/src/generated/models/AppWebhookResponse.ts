@@ -15,6 +15,7 @@ export type AppWebhookResponse = {
   webhook_secret_sealed_masked: '***';
   event_filter: Array<'app.parked' | 'app.woken' | 'usage_statement.finalized'>;
   retry_policy: 'default' | 'aggressive' | 'none';
+  delivery_format: 'json' | 'cloudevents';
   enabled: boolean;
   created_at: string;
   updated_at: string;

@@ -37,6 +37,11 @@ const AppWebhookSecretMasked = "***"
 // before persisting.
 var AllowedAppWebhookRetryPolicies = []string{"default", "aggressive", "none"}
 
+// AllowedAppWebhookDeliveryFormats is the closed set for the
+// `delivery_format` field. `json` preserves the historical Gregale envelope;
+// `cloudevents` opts a subscription into CloudEvents 1.0 structured mode.
+var AllowedAppWebhookDeliveryFormats = []string{"json", "cloudevents"}
+
 // AllowedAppWebhookEvents is the closed set for events a customer may select
 // on a new or updated subscription. Keep this list limited to events with a
 // production call to pkg/webhook.Emit; accepting a future event before its
@@ -144,11 +149,12 @@ const AppWebhookEventFilterLenMax = 32
 // entry must be a member of the closed set — the handler rejects
 // drift with 400 ErrAppWebhookInvalid.
 type CreateAppWebhookRequest struct {
-	TargetURL     string   `json:"target_url"`
-	WebhookSecret string   `json:"webhook_secret"`
-	EventFilter   []string `json:"event_filter,omitempty"`
-	RetryPolicy   string   `json:"retry_policy,omitempty"`
-	Enabled       *bool    `json:"enabled,omitempty"`
+	TargetURL      string   `json:"target_url"`
+	WebhookSecret  string   `json:"webhook_secret"`
+	EventFilter    []string `json:"event_filter,omitempty"`
+	RetryPolicy    string   `json:"retry_policy,omitempty"`
+	DeliveryFormat string   `json:"delivery_format,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
 }
 
 // UpdateAppWebhookRequest is the PATCH body. Every editable field
@@ -156,11 +162,12 @@ type CreateAppWebhookRequest struct {
 // alone) from "zero" (clear). Mirrors UpdateAlertRuleRequest and
 // state.UpdateAppWebhookParams.
 type UpdateAppWebhookRequest struct {
-	TargetURL     *string   `json:"target_url,omitempty"`
-	WebhookSecret *string   `json:"webhook_secret,omitempty"`
-	EventFilter   *[]string `json:"event_filter,omitempty"`
-	RetryPolicy   *string   `json:"retry_policy,omitempty"`
-	Enabled       *bool     `json:"enabled,omitempty"`
+	TargetURL      *string   `json:"target_url,omitempty"`
+	WebhookSecret  *string   `json:"webhook_secret,omitempty"`
+	EventFilter    *[]string `json:"event_filter,omitempty"`
+	RetryPolicy    *string   `json:"retry_policy,omitempty"`
+	DeliveryFormat *string   `json:"delivery_format,omitempty"`
+	Enabled        *bool     `json:"enabled,omitempty"`
 }
 
 // RotateAppWebhookSecretRequest is the rotate-secret body. The caller supplies
@@ -183,6 +190,7 @@ type AppWebhookResponse struct {
 	WebhookSecretSealedMasked string   `json:"webhook_secret_sealed_masked"`
 	EventFilter               []string `json:"event_filter"`
 	RetryPolicy               string   `json:"retry_policy"`
+	DeliveryFormat            string   `json:"delivery_format"`
 	Enabled                   bool     `json:"enabled"`
 	CreatedAt                 string   `json:"created_at"`
 	UpdatedAt                 string   `json:"updated_at"`
@@ -193,15 +201,16 @@ type AppWebhookResponse struct {
 // the handler at the pkg/api ↔ pkg/state boundary so the conversion
 // from typed to string stays in one place. NOT exported on the wire.
 type AppWebhookRow struct {
-	ID          string
-	AppID       string
-	AccountID   string
-	TargetURL   string
-	EventFilter []string
-	RetryPolicy string
-	Enabled     bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID             string
+	AppID          string
+	AccountID      string
+	TargetURL      string
+	EventFilter    []string
+	RetryPolicy    string
+	DeliveryFormat string
+	Enabled        bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // AppWebhookResponseFromRow maps a wire-shaped row (closed sets as
@@ -221,6 +230,7 @@ func AppWebhookResponseFromRow(r AppWebhookRow) AppWebhookResponse {
 		WebhookSecretSealedMasked: AppWebhookSecretMasked,
 		EventFilter:               r.EventFilter,
 		RetryPolicy:               r.RetryPolicy,
+		DeliveryFormat:            r.DeliveryFormat,
 		Enabled:                   r.Enabled,
 		CreatedAt:                 FormatAlertTime(r.CreatedAt),
 		UpdatedAt:                 FormatAlertTime(r.UpdatedAt),

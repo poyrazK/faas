@@ -260,6 +260,85 @@ func TestDispatcher_Delivered200OnFirstAttempt(t *testing.T) {
 	}
 }
 
+func TestDispatcher_CloudEventsDeliveryFormat(t *testing.T) {
+	m := state.NewMemStore()
+	loader, sealed := identityForSealedBlob(t)
+	appID, acctID := "app-cloud-events", "acct-cloud-events"
+	if _, err := m.CreateApp(context.Background(), state.App{ID: appID, AccountID: acctID, Slug: "cloud-events-app", Status: "ready"}); err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	var body []byte
+	var contentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentType = r.Header.Get("Content-Type")
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	w := newTestAppWebhook(t, m, appID, acctID, srv.URL, state.AppWebhookRetryDefault)
+	w.SecretSealed = sealed
+	w.DeliveryFormat = state.AppWebhookDeliveryFormatCloudEvents
+	if _, err := m.UpdateAppWebhook(context.Background(), w.ID, state.UpdateAppWebhookParams{
+		WebhookSecretSealed: &sealed,
+		DeliveryFormat:      &w.DeliveryFormat,
+	}); err != nil {
+		t.Fatalf("UpdateAppWebhook: %v", err)
+	}
+	del, err := m.RecordAppWebhookDelivery(context.Background(), state.AppWebhookDelivery{
+		WebhookID: w.ID,
+		AppID:     appID,
+		AccountID: acctID,
+		Event:     state.AppWebhookEventAppParked,
+		Payload:   json.RawMessage(`{"reason":"idle"}`),
+	})
+	if err != nil {
+		t.Fatalf("RecordAppWebhookDelivery: %v", err)
+	}
+
+	disp := NewDispatcher(m, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	disp.IdentityLoader = loader
+	disp.Sleeper = (&recordingSleeper{}).Sleep
+	disp.HTTPClient = srv.Client()
+	disp.cycle(context.Background())
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got, getErr := m.AppWebhookDeliveryByID(context.Background(), del.ID)
+		if getErr != nil {
+			t.Fatalf("AppWebhookDeliveryByID: %v", getErr)
+		}
+		if got.Status == state.AppWebhookDeliverySucceeded {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("delivery did not succeed; status=%s error=%q", got.Status, got.LastError)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if contentType != "application/cloudevents+json" {
+		t.Fatalf("content type = %q, want application/cloudevents+json", contentType)
+	}
+	var envelope struct {
+		SpecVersion string          `json:"specversion"`
+		ID          string          `json:"id"`
+		Source      string          `json:"source"`
+		Type        string          `json:"type"`
+		Subject     string          `json:"subject"`
+		Data        json.RawMessage `json:"data"`
+		AccountID   string          `json:"account_id"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode CloudEvents body: %v", err)
+	}
+	if envelope.SpecVersion != "1.0" || envelope.ID != del.ID ||
+		envelope.Source != "urn:gregale:app:"+appID || envelope.Type != "app.parked" ||
+		envelope.Subject != "apps/"+appID || envelope.AccountID != acctID ||
+		string(envelope.Data) != `{"reason":"idle"}` {
+		t.Fatalf("CloudEvents envelope = %+v", envelope)
+	}
+}
+
 // TestDispatcher_CronFiredManuallyEventRoundTrip pins the
 // cron.fired.manually audit-event allowlist (issue #791 PR-D /
 // ADR-090 §"Sub-decision 7"). The webhook dispatcher doesn't filter

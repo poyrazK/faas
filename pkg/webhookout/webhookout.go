@@ -115,6 +115,23 @@ func (h HeaderSet) headerNames() (signature, id, timestamp, attempt string) {
 	}
 }
 
+// DeliveryFormat selects the wire envelope for an outbound webhook. JSON is
+// the historical Gregale contract; CloudEvents is an opt-in structured-mode
+// envelope that keeps the same HMAC signature and retry semantics.
+type DeliveryFormat string
+
+const (
+	DeliveryFormatJSON        DeliveryFormat = "json"
+	DeliveryFormatCloudEvents DeliveryFormat = "cloudevents"
+)
+
+// ValidDeliveryFormat reports whether format is one of the supported webhook
+// wire envelopes. The empty value is accepted by callers as the legacy JSON
+// default and is normalised by NewDispatcher.
+func ValidDeliveryFormat(format DeliveryFormat) bool {
+	return format == "" || format == DeliveryFormatJSON || format == DeliveryFormatCloudEvents
+}
+
 // Legacy alert header constants. Kept as exported package consts so
 // existing customer-side verifiers and the e2e tests at
 // cmd/e2e/meterd_alerts_e2e_test.go (which assert these names) keep
@@ -222,6 +239,16 @@ type Event struct {
 	RuleName   string         `json:"rule_name"`   // alias of Rule — surfaced on the wire for downstream consumers that key dashboards off `rule_name`
 	AppID      string         `json:"app_id"`      // app slug, for the customer
 	Payload    map[string]any `json:"payload"`     // arbitrary JSON-able content
+
+	// CloudEvents metadata is populated by the app-webhook dispatcher. These
+	// fields stay out of the legacy JSON body so existing consumers receive the
+	// exact historical shape. Data is the original event payload; when empty,
+	// the CloudEvents encoder falls back to Payload.
+	Source    string          `json:"-"`
+	Type      string          `json:"-"`
+	Subject   string          `json:"-"`
+	AccountID string          `json:"-"`
+	Data      json.RawMessage `json:"-"`
 }
 
 // Result is the return value of Dispatch. Err is one of:
@@ -266,6 +293,7 @@ type DispatcherOptions struct {
 	Sleeper     func(d time.Duration)
 	Logger      *slog.Logger
 	HeaderSet   HeaderSet
+	Format      DeliveryFormat
 }
 
 // Dispatcher is the per-rule outbound webhook poster. PR 3 wires one
@@ -333,6 +361,9 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	if opts.Format == "" {
+		opts.Format = DeliveryFormatJSON
+	}
 	// Only stamp PerAttempt onto the HTTPClient when we built it
 	// ourselves (SSRF guard returns no-timeout clients). A caller-
 	// supplied *http.Client keeps its own Timeout.
@@ -394,7 +425,7 @@ func (d *Dispatcher) DispatchTest(ctx context.Context, t Target, evt Event) Resu
 // and DispatchTest. Refactored so the test path is a single line on
 // top of the production path (no logic duplication).
 func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
-	body, err := json.Marshal(evt)
+	body, err := marshalEvent(evt, d.opts.Format)
 	if err != nil {
 		// Marshalling a map[string]any with a known shape should not
 		// fail; if it does the failure is permanent.
@@ -457,6 +488,80 @@ func (d *Dispatcher) dispatch(ctx context.Context, t Target, evt Event) Result {
 	}
 }
 
+// marshalEvent returns either the historical Gregale JSON body or a
+// CloudEvents 1.0 structured-mode body. The caller signs the returned bytes,
+// so both formats retain the existing replay protection and HMAC contract.
+func marshalEvent(evt Event, format DeliveryFormat) ([]byte, error) {
+	switch format {
+	case DeliveryFormatJSON:
+		return json.Marshal(evt)
+	case DeliveryFormatCloudEvents:
+		return marshalCloudEvent(evt)
+	default:
+		return nil, fmt.Errorf("webhookout: unsupported delivery format %q", format)
+	}
+}
+
+type cloudEventEnvelope struct {
+	SpecVersion     string          `json:"specversion"`
+	ID              string          `json:"id"`
+	Source          string          `json:"source"`
+	Type            string          `json:"type"`
+	Subject         string          `json:"subject,omitempty"`
+	Time            *time.Time      `json:"time,omitempty"`
+	DataContentType string          `json:"datacontenttype"`
+	Data            json.RawMessage `json:"data"`
+	AccountID       string          `json:"account_id,omitempty"`
+}
+
+func marshalCloudEvent(evt Event) ([]byte, error) {
+	data := evt.Data
+	if len(data) == 0 {
+		var err error
+		data, err = json.Marshal(evt.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("webhookout: marshal CloudEvents data: %w", err)
+		}
+	}
+	if !json.Valid(data) {
+		return nil, errors.New("webhookout: CloudEvents data is not valid JSON")
+	}
+	source := evt.Source
+	if source == "" {
+		if evt.AppID != "" {
+			source = "urn:gregale:app:" + evt.AppID
+		} else {
+			source = "urn:gregale:platform"
+		}
+	}
+	typ := evt.Type
+	if typ == "" {
+		typ = evt.RuleName
+	}
+	if typ == "" {
+		typ = evt.Rule
+	}
+	if typ == "" {
+		return nil, errors.New("webhookout: CloudEvents type is required")
+	}
+	var occurredAt *time.Time
+	if !evt.OccurredAt.IsZero() {
+		stamp := evt.OccurredAt.UTC()
+		occurredAt = &stamp
+	}
+	return json.Marshal(cloudEventEnvelope{
+		SpecVersion:     "1.0",
+		ID:              evt.ID,
+		Source:          source,
+		Type:            typ,
+		Subject:         evt.Subject,
+		Time:            occurredAt,
+		DataContentType: "application/json",
+		Data:            data,
+		AccountID:       evt.AccountID,
+	})
+}
+
 // logExhausted emits a single closure line on the wrap path so the
 // operator can see the retry budget was consumed. The per-attempt
 // logAttempt already wrote the underlying detail; this is just the
@@ -483,6 +588,9 @@ func (d *Dispatcher) attempt(ctx context.Context, url, sig string, unix int64, d
 		return Result{StatusCode: 0, Err: fmt.Errorf("webhookout: build request: %w", err), BodyPrefix: nil}
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if d.opts.Format == DeliveryFormatCloudEvents {
+		req.Header.Set("Content-Type", "application/cloudevents+json")
+	}
 	req.Header.Set(d.headerSig, "sha256="+sig)
 	req.Header.Set(d.headerID, deliveryID)
 	req.Header.Set(d.headerTime, fmt.Sprintf("%d", unix))

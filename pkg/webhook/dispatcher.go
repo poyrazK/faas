@@ -439,6 +439,11 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		Rule:       "app.webhook",
 		RuleName:   string(row.Event),
 		AppID:      row.AppID,
+		Source:     "urn:gregale:app:" + row.AppID,
+		Type:       string(row.Event),
+		Subject:    "apps/" + row.AppID,
+		AccountID:  row.AccountID,
+		Data:       json.RawMessage(row.Payload),
 		Payload: map[string]any{
 			"event":       string(row.Event),
 			"webhook_id":  row.WebhookID,
@@ -460,6 +465,7 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		Sleeper:     d.Sleeper,
 		Logger:      d.log,
 		HeaderSet:   webhookout.HeaderSetWebhook,
+		Format:      webhookout.DeliveryFormat(hook.DeliveryFormat),
 	})
 	res := disp.Dispatch(ctx, webhookout.Target{
 		URL:    hook.TargetURL,

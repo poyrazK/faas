@@ -109,7 +109,10 @@ def sync_detailed(
     APP_WEBHOOK namespace, and is NEVER returned in plaintext
     — the response shape carries the masked constant. event_filter
     is an optional allowlist; empty subscribes to every currently
-    supported producer-backed event.
+    supported producer-backed event. delivery_format defaults to
+    `json`; selecting `cloudevents` emits CloudEvents 1.0 structured
+    mode (`application/cloudevents+json`) while retaining the existing
+    signed webhook headers.
 
     Args:
         slug (str):
@@ -117,7 +120,8 @@ def sync_detailed(
             webhook_secret is HMAC-SHA256 sealed at rest with the host
             X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
-            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'enabled': True}.
+            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'delivery_format':
+            'json', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -154,7 +158,10 @@ def sync(
     APP_WEBHOOK namespace, and is NEVER returned in plaintext
     — the response shape carries the masked constant. event_filter
     is an optional allowlist; empty subscribes to every currently
-    supported producer-backed event.
+    supported producer-backed event. delivery_format defaults to
+    `json`; selecting `cloudevents` emits CloudEvents 1.0 structured
+    mode (`application/cloudevents+json`) while retaining the existing
+    signed webhook headers.
 
     Args:
         slug (str):
@@ -162,7 +169,8 @@ def sync(
             webhook_secret is HMAC-SHA256 sealed at rest with the host
             X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
-            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'enabled': True}.
+            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'delivery_format':
+            'json', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,7 +202,10 @@ async def asyncio_detailed(
     APP_WEBHOOK namespace, and is NEVER returned in plaintext
     — the response shape carries the masked constant. event_filter
     is an optional allowlist; empty subscribes to every currently
-    supported producer-backed event.
+    supported producer-backed event. delivery_format defaults to
+    `json`; selecting `cloudevents` emits CloudEvents 1.0 structured
+    mode (`application/cloudevents+json`) while retaining the existing
+    signed webhook headers.
 
     Args:
         slug (str):
@@ -202,7 +213,8 @@ async def asyncio_detailed(
             webhook_secret is HMAC-SHA256 sealed at rest with the host
             X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
-            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'enabled': True}.
+            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'delivery_format':
+            'json', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -237,7 +249,10 @@ async def asyncio(
     APP_WEBHOOK namespace, and is NEVER returned in plaintext
     — the response shape carries the masked constant. event_filter
     is an optional allowlist; empty subscribes to every currently
-    supported producer-backed event.
+    supported producer-backed event. delivery_format defaults to
+    `json`; selecting `cloudevents` emits CloudEvents 1.0 structured
+    mode (`application/cloudevents+json`) while retaining the existing
+    signed webhook headers.
 
     Args:
         slug (str):
@@ -245,7 +260,8 @@ async def asyncio(
             webhook_secret is HMAC-SHA256 sealed at rest with the host
             X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
-            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'enabled': True}.
+            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'delivery_format':
+            'json', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

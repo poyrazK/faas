@@ -2972,6 +2972,23 @@ const (
 	AppWebhookRetryNone       AppWebhookRetryPolicy = "none"
 )
 
+// AppWebhookDeliveryFormat selects the outbound webhook envelope. JSON is
+// the historical Gregale wire contract; CloudEvents is opt-in per
+// subscription and uses CloudEvents 1.0 structured mode.
+type AppWebhookDeliveryFormat string
+
+const (
+	AppWebhookDeliveryFormatJSON        AppWebhookDeliveryFormat = "json"
+	AppWebhookDeliveryFormatCloudEvents AppWebhookDeliveryFormat = "cloudevents"
+)
+
+// ValidAppWebhookDeliveryFormat reports whether format belongs to the closed
+// storage/API vocabulary. The empty value is accepted as the legacy default
+// at write boundaries.
+func ValidAppWebhookDeliveryFormat(format AppWebhookDeliveryFormat) bool {
+	return format == "" || format == AppWebhookDeliveryFormatJSON || format == AppWebhookDeliveryFormatCloudEvents
+}
+
 // AppWebhookDeliveryStatus is the dispatcher's state machine on
 // app_webhook_deliveries. The closed set matches the migration 00141
 // status CHECK; new states land as a controller addition first.
@@ -2994,6 +3011,7 @@ type UpdateAppWebhookParams struct {
 	TargetURL           *string
 	EventFilter         *[]string // nil = don't touch; non-nil replaces
 	RetryPolicy         *AppWebhookRetryPolicy
+	DeliveryFormat      *AppWebhookDeliveryFormat
 	Enabled             *bool
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 }
@@ -3003,16 +3021,17 @@ type UpdateAppWebhookParams struct {
 // (SecretSealed, age/X25519 via pkg/secretbox) and is never surfaced
 // on a read — the apid response carries a masked constant.
 type AppWebhook struct {
-	ID           string
-	AppID        string
-	AccountID    string
-	TargetURL    string
-	SecretSealed []byte // age/X25519 ciphertext; never logged
-	EventFilter  []string
-	RetryPolicy  AppWebhookRetryPolicy
-	Enabled      bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID             string
+	AppID          string
+	AccountID      string
+	TargetURL      string
+	SecretSealed   []byte // age/X25519 ciphertext; never logged
+	EventFilter    []string
+	RetryPolicy    AppWebhookRetryPolicy
+	DeliveryFormat AppWebhookDeliveryFormat
+	Enabled        bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // ManagedRealtimeEndpoint is the durable control-plane description of one

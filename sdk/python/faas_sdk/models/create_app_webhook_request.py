@@ -6,6 +6,10 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.create_app_webhook_request_delivery_format import (
+    CreateAppWebhookRequestDeliveryFormat,
+    check_create_app_webhook_request_delivery_format,
+)
 from ..models.create_app_webhook_request_event_filter_item import (
     CreateAppWebhookRequestEventFilterItem,
     check_create_app_webhook_request_event_filter_item,
@@ -27,7 +31,7 @@ class CreateAppWebhookRequest:
 
         Example:
             {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh', 'event_filter': ['app.parked', 'app.woken'],
-                'retry_policy': 'default', 'enabled': True}
+                'retry_policy': 'default', 'delivery_format': 'json', 'enabled': True}
 
     """
 
@@ -35,6 +39,9 @@ class CreateAppWebhookRequest:
     webhook_secret: str
     event_filter: list[CreateAppWebhookRequestEventFilterItem] | Unset = UNSET
     retry_policy: CreateAppWebhookRequestRetryPolicy | Unset = "default"
+    delivery_format: CreateAppWebhookRequestDeliveryFormat | Unset = "json"
+    """Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured
+    mode."""
     enabled: bool | Unset = True
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -54,6 +61,10 @@ class CreateAppWebhookRequest:
         if not isinstance(self.retry_policy, Unset):
             retry_policy = self.retry_policy
 
+        delivery_format: str | Unset = UNSET
+        if not isinstance(self.delivery_format, Unset):
+            delivery_format = self.delivery_format
+
         enabled = self.enabled
 
         field_dict: dict[str, Any] = {}
@@ -68,6 +79,8 @@ class CreateAppWebhookRequest:
             field_dict["event_filter"] = event_filter
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
+        if delivery_format is not UNSET:
+            field_dict["delivery_format"] = delivery_format
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
 
@@ -96,6 +109,13 @@ class CreateAppWebhookRequest:
         else:
             retry_policy = check_create_app_webhook_request_retry_policy(_retry_policy)
 
+        _delivery_format = d.pop("delivery_format", UNSET)
+        delivery_format: CreateAppWebhookRequestDeliveryFormat | Unset
+        if isinstance(_delivery_format, Unset):
+            delivery_format = UNSET
+        else:
+            delivery_format = check_create_app_webhook_request_delivery_format(_delivery_format)
+
         enabled = d.pop("enabled", UNSET)
 
         create_app_webhook_request = cls(
@@ -103,6 +123,7 @@ class CreateAppWebhookRequest:
             webhook_secret=webhook_secret,
             event_filter=event_filter,
             retry_policy=retry_policy,
+            delivery_format=delivery_format,
             enabled=enabled,
         )
 

@@ -13,6 +13,10 @@ export type UpdateAppWebhookRequest = {
   webhook_secret?: string;
   event_filter?: Array<'app.parked' | 'app.woken' | 'usage_statement.finalized'>;
   retry_policy?: 'default' | 'aggressive' | 'none';
+  /**
+   * Wire envelope for future deliveries; existing delivery rows are unchanged.
+   */
+  delivery_format?: 'json' | 'cloudevents';
   enabled?: boolean;
 };
 

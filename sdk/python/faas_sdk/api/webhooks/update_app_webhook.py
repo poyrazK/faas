@@ -106,7 +106,8 @@ def sync_detailed(
         body (UpdateAppWebhookRequest): Partial update of an existing webhook subscription. Every
             field is optional — the handler merges the supplied fields
             onto the current row. omit a field to leave it unchanged.
-             Example: {'target_url': 'https://example.com/hook2', 'enabled': True}.
+             Example: {'target_url': 'https://example.com/hook2', 'delivery_format': 'cloudevents',
+            'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,7 +150,8 @@ def sync(
         body (UpdateAppWebhookRequest): Partial update of an existing webhook subscription. Every
             field is optional — the handler merges the supplied fields
             onto the current row. omit a field to leave it unchanged.
-             Example: {'target_url': 'https://example.com/hook2', 'enabled': True}.
+             Example: {'target_url': 'https://example.com/hook2', 'delivery_format': 'cloudevents',
+            'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,7 +189,8 @@ async def asyncio_detailed(
         body (UpdateAppWebhookRequest): Partial update of an existing webhook subscription. Every
             field is optional — the handler merges the supplied fields
             onto the current row. omit a field to leave it unchanged.
-             Example: {'target_url': 'https://example.com/hook2', 'enabled': True}.
+             Example: {'target_url': 'https://example.com/hook2', 'delivery_format': 'cloudevents',
+            'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -228,7 +231,8 @@ async def asyncio(
         body (UpdateAppWebhookRequest): Partial update of an existing webhook subscription. Every
             field is optional — the handler merges the supplied fields
             onto the current row. omit a field to leave it unchanged.
-             Example: {'target_url': 'https://example.com/hook2', 'enabled': True}.
+             Example: {'target_url': 'https://example.com/hook2', 'delivery_format': 'cloudevents',
+            'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

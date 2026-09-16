@@ -19,11 +19,18 @@
       "version": "1.0",
       "category": "eventing",
       "surface": "outbound webhooks, triggers, and queued events",
-      "status": "planned",
-      "scope": "Outbound webhook delivery does not yet offer a CloudEvents envelope.",
-      "limitations": "The current signed webhook body and X-Faas-Webhook-* headers remain the compatibility contract.",
+      "status": "partial",
+      "scope": "App webhook subscriptions can opt into CloudEvents 1.0 structured JSON delivery with the standard context attributes and an account_id extension.",
+      "limitations": "CloudEvents is currently outbound app-webhook delivery only; the internal event router, trigger ingestion, and binary-mode bindings remain future work. Legacy JSON delivery remains the default.",
       "docs_url": "https://cloudevents.io/",
-      "evidence": "Planned follow-up: opt-in structured CloudEvents delivery"
+      "evidence": "pkg/webhookout/webhookout.go; pkg/webhook/dispatcher.go; api/openapi.yaml delivery_format",
+      "conformance": [
+        {
+          "fixture": "cloudevents-structured-webhook",
+          "tier": "unit",
+          "target": "pkg/webhookout/webhookout_test.go::TestWebhook_Dispatch_CloudEventsStructured"
+        }
+      ]
     },
     {
       "id": "cosign-signatures",
