@@ -181,7 +181,8 @@ func TestCheckInternalGateway_RejectsUnhealthyResponse(t *testing.T) {
 
 // TestBuildServers_PublicListenerPinsKnobs — the customer-facing
 // edge installs the canonical customer-facing knob set (ADR-122
-// post-merge audit, issue #995 closure): RHT=10s + RT=60s + WT=300s
+// post-merge audit, issue #995 closure): RHT=10s + RT/WT equal to the
+// customer request envelope
 // + IT=120s (matches apid's customer-facing listener at
 // cmd/apid/main.go:452 via APIDIdleTimeoutSecondsDefault=120) +
 // MHB=1 MiB. The pre-amendment listener had IdleTimeout=0 (unlimited
@@ -191,11 +192,11 @@ func TestBuildServers_PublicListenerPinsKnobs(t *testing.T) {
 	if pub.ReadHeaderTimeout != 10*time.Second {
 		t.Errorf("public RHT = %v, want 10s", pub.ReadHeaderTimeout)
 	}
-	if pub.ReadTimeout != 60*time.Second {
-		t.Errorf("public RT = %v, want 60s", pub.ReadTimeout)
+	if pub.ReadTimeout != api.CustomerRequestEnvelopeTimeout {
+		t.Errorf("public RT = %v, want %v", pub.ReadTimeout, api.CustomerRequestEnvelopeTimeout)
 	}
-	if pub.WriteTimeout != 300*time.Second {
-		t.Errorf("public WT = %v, want 300s", pub.WriteTimeout)
+	if pub.WriteTimeout != api.CustomerRequestEnvelopeTimeout {
+		t.Errorf("public WT = %v, want %v", pub.WriteTimeout, api.CustomerRequestEnvelopeTimeout)
 	}
 	if pub.IdleTimeout != 120*time.Second {
 		t.Errorf("public IT = %v, want 120s (matches apid customer-facing listener)", pub.IdleTimeout)

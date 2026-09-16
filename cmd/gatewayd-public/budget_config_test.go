@@ -33,9 +33,9 @@ func TestForwardBudgetConfig_StampsBackstopNotPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newForwardBudgetConfig: %v", err)
 	}
-	if cfg.Default != api.RequestBudgetMax {
-		t.Errorf("Default = %s, want %s (the platform ceiling as a liveness backstop; a tighter value here caps every downstream kind=budget rule — see ADR-093 amendment)",
-			cfg.Default, api.RequestBudgetMax)
+	if cfg.Default != api.CustomerRequestEnvelopeTimeout {
+		t.Errorf("Default = %s, want %s (upload plus execution liveness envelope)",
+			cfg.Default, api.CustomerRequestEnvelopeTimeout)
 	}
 	if cfg.Default == api.RequestBudgetDefault && api.RequestBudgetDefault != api.RequestBudgetMax {
 		t.Errorf("Default is back to RequestBudgetDefault (%s) — this is the exact regression the amendment fixed", api.RequestBudgetDefault)
@@ -53,7 +53,7 @@ func TestForwardBudgetConfig_StampsBackstopNotPolicy(t *testing.T) {
 func TestChildBudgetCannotExceedParent(t *testing.T) {
 	parentTotal := 3 * time.Second
 	ctx, cancel, parent := reqbudget.WithRemaining(context.Background(),
-		parentTotal, api.RequestBudgetMax, "forward", "GET:/x")
+		parentTotal, api.CustomerRequestEnvelopeTimeout, "forward", "GET:/x")
 	defer cancel()
 
 	// gatewayd-internal's applyEdgeRuleBudget effect: a 25 s rule.

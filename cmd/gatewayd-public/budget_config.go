@@ -34,16 +34,16 @@ import (
 // match, else plan default) and owns the 504 +
 // request_budget_exceeded envelope. So the edge defers to the owner
 // and keeps only the platform ceiling as a liveness guard: a wedged
-// downstream is still cut at RequestBudgetMax, so a public
-// connection can never be pinned indefinitely.
+// downstream is still cut at CustomerRequestEnvelopeTimeout, so a public
+// connection can never be pinned indefinitely while valid large uploads fit.
 //
 // This also subsumes the previous sync-invoke DefaultFor carve-out,
 // which returned exactly this value for the same reason (apid owns
 // its own plan-aware wait), so no DefaultFor is needed.
 func newForwardBudgetConfig(metrics *reqbudget.M, log *slog.Logger) (reqbudget.MiddlewareConfig, error) {
 	return reqbudget.NewMiddlewareConfig(reqbudget.MiddlewareConfig{
-		Default: api.RequestBudgetMax,
-		Max:     api.RequestBudgetMax,
+		Default: api.CustomerRequestEnvelopeTimeout,
+		Max:     api.CustomerRequestEnvelopeTimeout,
 		Route:   "forward",
 		Metrics: metrics,
 		Log:     log,

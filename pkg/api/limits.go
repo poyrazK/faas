@@ -3406,7 +3406,7 @@ const (
 	// (matches the legacy default set at run.go:1989-1991), with
 	// tighter caps on the control / unix-socket listener where
 	// requests are smaller and shorter-lived.
-	GatewaydInternalReadTimeoutSecondsDefault         = 60 // public listener slowloris defence
+	GatewaydInternalReadTimeoutSecondsDefault         = int(CustomerRequestEnvelopeTimeout / time.Second)
 	GatewaydInternalControlReadTimeoutSecondsDefault  = 30 // control + unix-socket
 	GatewaydInternalControlWriteTimeoutSecondsDefault = 30 // control + unix-socket
 	GatewaydInternalControlIdleTimeoutSecondsDefault  = 60 // control + unix-socket keep-alive
@@ -6584,6 +6584,24 @@ const (
 // Source of truth: pkg/reqbudget re-exports these as reqbudget.*
 // so call-sites can use one import.
 const (
+	// RequestUploadTimeoutBase is fixed setup headroom added to the time
+	// required to receive a plan's maximum request body. Upload admission is
+	// deliberately separate from the guest execution budget.
+	RequestUploadTimeoutBase = 30 * time.Second
+	// RequestUploadMinBytesPerSecond is the minimum sustained upload rate the
+	// customer request path supports. A shorter idle deadline is refreshed on
+	// every chunk, so this allowance cannot be used by a stalled client.
+	RequestUploadMinBytesPerSecond int64 = 512 * 1024
+	RequestUploadIdleTimeout             = 15 * time.Second
+	// RequestUploadTimeoutMax covers Scale's 250 MiB maximum body at the
+	// supported minimum upload rate plus setup headroom.
+	RequestUploadTimeoutMax = RequestUploadTimeoutBase + 500*time.Second
+	// CustomerRequestEnvelopeTimeout is the public edge's liveness backstop.
+	// gatewayd-internal independently bounds upload, wake, burst expansion,
+	// per-VM capacity wait, and guest execution. The edge must permit their
+	// worst-case serial composition or it silently becomes the policy owner.
+	CustomerRequestEnvelopeTimeout = RequestUploadTimeoutMax + 3*GatewayWakeAdmissionPaidMaxWait + RequestBudgetMax
+
 	// RequestBudgetDefault is the per-request wall-clock budget the
 	// gateway uses for Functions when no edge-rule kind=budget matches.
 	// A misconfigured deployment that wants a tighter or looser default
@@ -6643,6 +6661,26 @@ const (
 	// enqueue / poll call. Small because these are local ops.
 	DefaultOverheadQueue = 5 * time.Millisecond
 )
+
+// RequestUploadTimeout returns the bounded wall-clock allowance for receiving
+// this plan's largest valid body. Guest execution time starts after admission.
+func (p Plan) RequestUploadTimeout() time.Duration {
+	return RequestUploadTimeoutForBytes(p.MaxRequestBodyBytes())
+}
+
+// RequestUploadTimeoutForBytes sizes the upload phase for a known body length.
+// Unknown/chunked bodies use the plan maximum through RequestUploadTimeout.
+func RequestUploadTimeoutForBytes(bodyBytes int64) time.Duration {
+	if bodyBytes < 0 {
+		bodyBytes = 0
+	}
+	seconds := (bodyBytes + RequestUploadMinBytesPerSecond - 1) / RequestUploadMinBytesPerSecond
+	d := RequestUploadTimeoutBase + time.Duration(seconds)*time.Second
+	if d > RequestUploadTimeoutMax {
+		return RequestUploadTimeoutMax
+	}
+	return d
+}
 
 // RequestBudget returns the wall-clock deadline the platform
 // installs on customer-facing requests for this plan, falling back

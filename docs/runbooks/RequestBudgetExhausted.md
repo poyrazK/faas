@@ -36,10 +36,11 @@ Per-route overrides win over per-plan defaults; per-plan defaults win
 over the type-aware platform default.
 
 **Where the budget is stamped matters** (ADR-093 amendment,
-2026-09-03). `gatewayd-public` stamps only `RequestBudgetMax` (30 s)
-as a liveness backstop — it cannot resolve the app, so it cannot see
+2026-09-03, amended for upload admission). `gatewayd-public` stamps only
+`CustomerRequestEnvelopeTimeout` as a liveness backstop — it cannot resolve the app, so it cannot see
 a `kind=budget` rule. The authoritative budget is stamped one hop
-later by `gatewayd-internal`'s `applyEdgeRuleBudget`, which is where
+later by `gatewayd-internal`'s `applyEdgeRuleBudget`, after request upload and
+wake/capacity admission. This is where
 `budget_stamped` is logged and where the rule actually applies.
 
 Before that amendment `gatewayd-public` stamped 3 s, and because

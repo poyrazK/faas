@@ -5397,19 +5397,6 @@ haveApp:
 		return
 	}
 
-	// ADR-093: stamp the per-request wall-clock budget onto
-	// r.Context() via reqbudget.WithRemaining. Runs AFTER the
-	// validate applier (which needs the inbound body read) and
-	// BEFORE the wake gate (so a slow upstream never pins
-	// listener / goroutine / socket resources for the full
-	// platform WriteTimeout — deadline fires at the budget
-	// boundary and the handler chain unwinds). The middleware
-	// observes the deadline fire and writes 504 + RFC 7807
-	// `code: request_budget_exceeded`; this applier never
-	// short-circuits (it always stamps a budget, even on
-	// miss — the plan-level default applies).
-	h.applyEdgeRuleBudget(w, r, app)
-
 	// Issue #560 / per-deployment require_authn. Runs AFTER
 	// Host→app resolution (so we know which app's
 	// require_authn to consult) and BEFORE the per-account
@@ -5632,6 +5619,15 @@ haveApp:
 	// request" which is the standard X-RateLimit-Remaining contract.
 	h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
 
+	// Receive and bound the complete request body before wake admission. The
+	// upload has a plan-sized deadline and spills large bodies to disk; it does
+	// not consume the guest's execution budget or hold a VM while the client is
+	// still sending bytes.
+	if admitRequestBody(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+
 	burstDone := h.burstPressure.begin(app.ID)
 	defer burstDone()
 	limits, _ := api.LimitsFor(app.Plan)
@@ -5721,12 +5717,10 @@ haveApp:
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
-			if !showWakePage && requestBudgetExpired(r.Context()) && h.gate.WakeInProgress(app.ID) {
-				// Function requests have a three-second default budget. A
-				// snapshot miss can legitimately fall back to a longer cold boot;
-				// keep the one detached boot alive and return an explicit async
-				// result instead of misclassifying every attached caller as fleet
-				// capacity failure.
+			if !showWakePage && errors.Is(err, ErrWakeQueueWaitTimeout) && h.gate.WakeInProgress(app.ID) {
+				// The platform wake wait has its own bounded allowance. Keep the
+				// detached boot alive and return an explicit async result without
+				// consuming or starting the guest execution budget.
 				writeWakeInProgress(w, requestIDFrom(r))
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
@@ -5761,9 +5755,11 @@ haveApp:
 	// concurrency gate bounds work on that target while siblings become ready.
 	//nolint:contextcheck // request ctx at handler boundary.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
-	waitedForBurst, burstErr := h.maybeBurstCapacity(r.Context(), app, limits.MaxConcurrency, perVMConcurrency)
+	burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), WakeAdmissionPolicyForPlan(app.Plan).MaxWait)
+	defer cancelBurstWait()
+	waitedForBurst, burstErr := h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
 	if burstErr != nil {
-		// A burst that cannot become routable within the request budget is
+		// A burst that cannot become routable within its admission policy is
 		// a controlled timeout, not an upstream 502. Client disconnects
 		// remain silent; genuine admission failures use the normal
 		// capacity problem response.
@@ -5834,10 +5830,12 @@ haveApp:
 	// Enforce the plan's per-instance request bound only after a concrete
 	// target exists. A saturated target first gives the picker a chance to
 	// place the request on another warm VM; when every routable VM is full,
-	// the request waits on the selected VM until its own budget expires.
+	// the request waits under the plan's bounded capacity-admission allowance.
 	var vmRelease func()
 	var vmWaited bool
-	capacityCtx, capacitySpan := pkgtrace.StartSpan(r.Context(), "gateway.capacity_wait",
+	capacityWaitCtx, cancelCapacityWait := context.WithTimeout(r.Context(), WakeAdmissionPolicyForPlan(app.Plan).MaxWait)
+	defer cancelCapacityWait()
+	capacityCtx, capacitySpan := pkgtrace.StartSpan(capacityWaitCtx, "gateway.capacity_wait",
 		attribute.String("app_id", app.ID),
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
@@ -5881,6 +5879,11 @@ haveApp:
 	// page: the cached target still carries the completed wake ID even though
 	// this retry did not perform admission itself.
 	r, target = h.armWakeFirstByte(r, app.ID, target, wakeID)
+
+	// Start the customer-configurable execution budget only after upload, wake,
+	// routing, and per-VM capacity admission have completed. From this point it
+	// bounds the guest forward path and all propagated downstream calls.
+	h.applyEdgeRuleBudget(w, r, app)
 
 	// Semantic bridge span. The request context is passed through the existing
 	// otelgrpc client instrumentation, so vmmd's forwarding server span and
@@ -6073,7 +6076,7 @@ haveApp:
 
 	if isStreaming {
 		writeTimeout := app.Plan.ResponseWriteTimeout()
-		// The request budget still governs admission and the first
+		// The request budget governs guest forwarding and the first
 		// response headers. The stream forwarder detaches it once those
 		// headers are committed, so the per-flush deadline remains the
 		// plan's independent write-safety bound for the session.
@@ -7008,6 +7011,10 @@ type statusRecorder struct {
 	// plain int read/write as a race.
 	mirrorStatusSink *atomic.Int32
 }
+
+// Unwrap lets http.ResponseController reach the underlying server writer for
+// per-chunk read deadlines during request-body admission.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // ProblemHTMLRequest lets the shared API problem writer negotiate the
 // browser-facing error page for gateway requests. API handlers do not use this

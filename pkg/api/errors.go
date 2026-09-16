@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api/canary"
 )
@@ -1713,8 +1714,10 @@ func StatusForCode(code string) int {
 		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
-		CodeOpenAPIPolicyConfirmationRequired:
+		CodeOpenAPIPolicyConfirmationRequired, CodeRequestBodyReadFailed:
 		return http.StatusBadRequest
+	case CodeRequestUploadTimeout:
+		return http.StatusRequestTimeout
 	case CodeWorkflowDefinitionNotFound, CodeWorkflowRunNotFound, CodeWorkflowStepNotFound,
 		CodeWorkflowEventNotFound:
 		return http.StatusNotFound
@@ -2497,6 +2500,23 @@ func ErrRequestBodyTooLarge(limit, observed int64) *Problem {
 		WithByteLimit(limit, observed).
 		WithDocs(docsBase + "/storage#signed-uploads").
 		WithHint("For larger uploads, use a bucket signed URL (gregale storage ... signed-url).")
+}
+
+// ErrRequestUploadTimeout reports a stalled or too-slow inbound upload. The
+// gateway's request ID response header remains the correlation handle.
+func ErrRequestUploadTimeout(timeout time.Duration) *Problem {
+	return NewProblem(http.StatusRequestTimeout, CodeRequestUploadTimeout,
+		"Request upload timed out",
+		fmt.Sprintf("request body was not received within the %s upload allowance", timeout)).
+		WithDocs(docsBase + "/functions/limits").
+		WithHint("Retry on a stable connection, or use a bucket signed URL for large uploads.")
+}
+
+// ErrRequestBodyReadFailed reports a malformed or prematurely terminated body.
+func ErrRequestBodyReadFailed() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeRequestBodyReadFailed,
+		"Request body could not be read", "the request body ended before it could be admitted").
+		WithDocs(docsBase + "/functions/limits")
 }
 
 // ErrSourceInvalid is returned when a tarball fails shape validation
@@ -3294,6 +3314,10 @@ const (
 	// outbound problem envelope so an SDK can branch on it
 	// without parsing prose. ADR-093 §Decision.
 	CodeRequestBudgetExceeded = "request_budget_exceeded"
+	// Upload admission precedes guest execution, so upload failures have
+	// distinct stable codes and do not masquerade as app timeouts.
+	CodeRequestUploadTimeout  = "request_upload_timeout"
+	CodeRequestBodyReadFailed = "request_body_read_failed"
 	// CodeInvalidRecoverAction (issue #976 / ADR-122 /
 	// SAFE-RELEASES-R) is the 422 the recover_rollout handler
 	// emits when the request body's `action` is outside the

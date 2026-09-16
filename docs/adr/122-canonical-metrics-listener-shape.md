@@ -264,7 +264,7 @@ adopts, and the rationale for any variant.
 
 | # | Site | Knob set adopted | Rationale |
 |---|---|---|---|
-| 1 | `cmd/gatewayd-public/main.go::buildServers` **publicSrv** (customer-facing TLS edge) | RHT=10s + RT=60s + WT=300s + **IT=120s** + MHB=1 MiB | Customer-facing variant. RT/WT match ADR-121 / customer-facing values; **IT=120s** is the new pin (was 0, unlimited keep-alive), matching apid's customer-facing listener at `cmd/apid/main.go:452` via `APIDIdleTimeoutSecondsDefault=120`. |
+| 1 | `cmd/gatewayd-public/main.go::buildServers` **publicSrv** (customer-facing TLS edge) | RHT=10s + RT/WT=`CustomerRequestEnvelopeTimeout` + **IT=120s** + MHB=1 MiB | Customer-facing variant. RT/WT permit the largest supported upload followed by guest execution; **IT=120s** bounds keep-alive time. |
 | 2 | `cmd/gatewayd-public/main.go::buildServers` **controlSrv** (loopback :9092 healthz/readyz/metrics) | RHT=10s + RT=10s + WT=10s + IT=60s + MHB=1 MiB | Canonical metrics variant. The control mux is loopback-bound and serves only /healthz /readyz /metrics — the metrics variant is the right ceiling. RHT bumped from 5s to 10s for consistency with the rest of the canonical surface. |
 | 3 | `pkg/gateway/control.go::NewControlHTTPServer` (the helper behind `RunControlServer`) | RHT=5s + RT=10s + WT=10s + IT=60s + **MHB=1 MiB** | RHT=5s stays tighter than the 10s canonical metrics variant because the control plane only serves probes / metrics — no slow-client body, no slow headers. The four timeout knobs pre-date this PR; **MHB=1 MiB is the new pin** (was 0, relying on stdlib default). Extracted from `RunControlServer` into the exported `NewControlHTTPServer` so a test can pin the struct fields without binding a real listener (mirrors the `pkg/githubd.NewWebhookHTTPServer` precedent). |
 | 4 | `pkg/gateway/synth.go::NewSynthServer` (SynthServer — internal compute loopback) | RHT=5s + RT=10s + WT=10s + IT=60s + MHB=1 MiB | Canonical metrics variant; RHT=5s kept as the pre-existing H2C negotiation guard. The four missing knobs are the audit's Site 4 closure. Standalone construction site (future callers of `synth.New()` outside the Tier A7 unified mux inherit the same envelope). |
@@ -288,4 +288,3 @@ amendment keeps the canonical-shape contract in one place. A future
 extension (e.g. pprof listener, debug listener, debug-egress
 listener) that needs a new variant should file a new ADR and link
 this one.
-

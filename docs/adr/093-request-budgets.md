@@ -162,7 +162,9 @@ Nothing crossed ~3.1 s. In the same window `gatewayd-public` logged
 
 ### Decision
 
-`gatewayd-public` stamps `api.RequestBudgetMax`. Every request it
+`gatewayd-public` stamps `api.CustomerRequestEnvelopeTimeout`. This outer
+envelope covers the largest supported upload followed by the maximum guest
+execution budget. Every request it
 forwards lands on a hop that stamps its own authoritative budget:
 
 - **App data plane** → `gatewayd-internal`, whose
@@ -172,8 +174,10 @@ forwards lands on a hop that stamps its own authoritative budget:
   `api.RequestBudgetApidDefault` (5 s).
 
 The edge therefore defers to whichever hop can actually see the
-customer's plan and rules, and keeps only the platform ceiling as a
-liveness guard. This subsumes the previous sync-invoke `DefaultFor`
+customer's plan and rules, and keeps only the multi-phase request envelope as
+a liveness guard. `gatewayd-internal` receives the body under a plan-sized
+upload timeout, performs wake/capacity admission, and only then stamps the
+guest execution budget. This subsumes the previous sync-invoke `DefaultFor`
 carve-out, which returned exactly this value for the same reason.
 
 ### Trade-off

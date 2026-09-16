@@ -73,6 +73,10 @@ type cacheWriter struct {
 	ruleAction *state.EdgeRuleCacheAction
 }
 
+// Unwrap preserves http.ResponseController access to connection deadlines
+// when request-body admission runs after a cache miss installs this writer.
+func (c *cacheWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
 // ProblemHTMLRequest preserves browser error negotiation through the cache
 // tee. Wake/admission failures can occur after this wrapper is installed.
 func (c *cacheWriter) ProblemHTMLRequest() *http.Request {

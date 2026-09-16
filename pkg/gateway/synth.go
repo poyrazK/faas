@@ -208,6 +208,12 @@ func NewSynthServer(socketPath string, dispatcher SynthDispatcher, log *slog.Log
 // the already-serving server.
 func (s *SynthServer) SetHandler(h http.Handler) {
 	s.srv.Handler = h
+	// SetHandler installs the unified production mux, whose catch-all serves
+	// customer traffic. Widen the listener's outer safety net so the largest
+	// advertised upload can reach the handler-level admission policy; the
+	// synth endpoints retain their own operation deadlines.
+	s.srv.ReadTimeout = api.CustomerRequestEnvelopeTimeout
+	s.srv.WriteTimeout = api.CustomerRequestEnvelopeTimeout
 }
 
 // Mux returns the synth-only http.ServeMux registered in NewSynthServer.

@@ -443,7 +443,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// stamps (rule match, else plan default) and owns the 504 +
 	// request_budget_exceeded envelope. So the edge defers to the
 	// owner and keeps only the platform ceiling as a liveness guard
-	// — a wedged downstream is still cut at RequestBudgetMax, so a
+	// — a wedged downstream is still cut at CustomerRequestEnvelopeTimeout, so a
 	// public connection can never be pinned indefinitely.
 	//
 	// This also subsumes the previous sync-invoke DefaultFor
@@ -746,7 +746,8 @@ func checkInternalGateway(ctx context.Context, dialer gateway.InternalDialer, ta
 //
 // Knob set (ADR-122 post-merge audit, issue #995 closure):
 //
-//   - publicSrv (customer-facing TLS edge): RHT=10s + RT=60s + WT=300s +
+//   - publicSrv (customer-facing TLS edge): RHT=10s + RT/WT sized to the
+//     maximum supported upload plus guest execution +
 //     IT=120s + MHB=1 MiB. RT/WT match the customer-facing values from
 //     ADR-121 (kept narrower than the metrics variant because
 //     customer-facing requests are larger than scrapes). IT=120s
@@ -764,8 +765,8 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 		Addr:              listenAddr,
 		Handler:           trace.HTTPHandler("gatewayd-public", publicHandler),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      300 * time.Second,
+		ReadTimeout:       api.CustomerRequestEnvelopeTimeout,
+		WriteTimeout:      api.CustomerRequestEnvelopeTimeout,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    api.DefaultMaxHeaderBytes,
 	}

@@ -231,15 +231,11 @@ func (g *WakeGate) WaitWithPolicy(
 	// orphan-detach invariant (the leader's caller-ctx doesn't kill the
 	// wake) is preserved; the abort is opt-in via shouldAbort.
 	//
-	// ADR-093 cross-reference: this detachment is intentionally NOT
-	// changed by the end-to-end request-budget work. Reusing the
-	// inbound budget here would break coalescing — a client that
-	// disconnects mid-wake must not abort the wake for the rest of
-	// the waiters. The end-to-end budget clamps only the WAITER's
-	// ctx (the ctx the follower passes to g.await), which causes
-	// the follower's own ctx to fire on budget expiry (correct).
-	// The leader's detached ctx continues to drive the wake to
-	// completion. See ADR-093 §Consequences.
+	// ADR-093 cross-reference: the guest execution budget starts after wake,
+	// so this waiter is bounded by WakeAdmissionPolicy.MaxWait instead. Reusing
+	// client cancellation for the leader would still break coalescing: a client
+	// that disconnects mid-wake must not abort the wake for other waiters. The
+	// leader's detached context continues to the gate TTL.
 	detached := context.WithoutCancel(ctx)
 	go func() {
 		ectx, cancel := context.WithTimeout(detached, g.ttl)
