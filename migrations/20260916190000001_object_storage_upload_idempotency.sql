@@ -9,11 +9,28 @@ ALTER TABLE object_upload_completions
 ALTER TABLE object_upload_completions
     ADD CONSTRAINT object_upload_completions_status_check
     CHECK (status IN ('pending','completed','rejected','failed'));
-ALTER TABLE object_upload_completions
-    ADD CONSTRAINT object_upload_completions_idempotency_key_check
-    CHECK (length(idempotency_key) <= 128),
-    ADD CONSTRAINT object_upload_completions_request_fingerprint_check
-    CHECK (length(request_fingerprint) <= 64);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_constraint
+         WHERE conname = 'object_upload_completions_idempotency_key_check'
+           AND conrelid = 'object_upload_completions'::regclass
+    ) THEN
+        ALTER TABLE object_upload_completions
+            ADD CONSTRAINT object_upload_completions_idempotency_key_check
+            CHECK (length(idempotency_key) <= 128);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_constraint
+         WHERE conname = 'object_upload_completions_request_fingerprint_check'
+           AND conrelid = 'object_upload_completions'::regclass
+    ) THEN
+        ALTER TABLE object_upload_completions
+            ADD CONSTRAINT object_upload_completions_request_fingerprint_check
+            CHECK (length(request_fingerprint) <= 64);
+    END IF;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS object_upload_completions_idempotency_idx
     ON object_upload_completions(route_id, subject_id, idempotency_key)
