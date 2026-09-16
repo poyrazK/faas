@@ -130,6 +130,7 @@ CreateAPIKeyWithExpiryAndProvenance
 CreateAccountWithPersonalOrg
 CreateAlertRule
 CreateAlertRuleIfUnderQuota
+CreateAndClaimJobInstance
 CreateAppLogDrain
 CreateAppLogDrainIfUnderQuota
 CreateAppWebhook
@@ -313,6 +314,7 @@ JobRunIncrementDeadLetter
 JobRunListByAccount
 JobRunListByJob
 JobRunRecompute
+JobRunReopenDeadLetter
 JobSoftDelete
 JobTaskCancel
 JobTaskClaimBatch
@@ -439,6 +441,7 @@ ListOrgInvitationsForOrgPage
 ListOrgMembers
 ListOrgsForAccount
 ListOrphanedApps
+ListOrphanedJobInstances
 ListOwnedCronsByNodeID
 ListPendingTenantHostnames
 ListPreviewsForAccount

@@ -18,7 +18,7 @@ consume host capacity and accrue metered RAM until a retry succeeds.
    missing owner is eligible for cleanup; do not destroy a VM owned by a
    currently claimed task.
 
-## Recovery
+## Recover
 
 Restore vmmd reachability on the recorded node. The next reaper sweep should
 destroy the VM, release the scheduler ledger reservation, and move the instance
@@ -26,3 +26,13 @@ row to `stopped`. Confirm the `cleaned` counter increases and the process,
 namespace, and jail are gone. If vmmd cannot recover, stop the verified orphan
 through the host runbook, then restart schedd so its in-memory admission ledger
 is rebuilt from durable live rows.
+
+## Confirm
+
+After repairing vmmd connectivity or the recorded compute-node route first. The scheduler
+retries orphan reconciliation every five seconds, so confirm
+`schedd_job_instance_reconcile_total{outcome="cleaned"}` advances and the
+`found`/`error` rates return to zero. If the instance remains after connectivity
+recovers, inspect its durable instance row and node ownership before issuing a
+manual destroy; do not delete the row first because it is the reconciliation
+handle.
