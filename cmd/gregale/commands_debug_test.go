@@ -160,7 +160,7 @@ func TestCmdDebugHelp(t *testing.T) {
 		t.Fatalf("cmdDebug(--help) = %d, want 0", code)
 	}
 	got := readStderr()
-	for _, want := range []string{"usage: gregale debug", "requests list", "requests evidence", "coverage", "running", "regressions", "compare"} {
+	for _, want := range []string{"usage: gregale debug", "requests list", "requests evidence", "requests trace", "coverage", "running", "regressions", "compare"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("help missing %q:\n%s", want, got)
 		}

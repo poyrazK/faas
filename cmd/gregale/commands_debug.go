@@ -12,6 +12,7 @@
 //	gregale debug requests show <slug> <req_id>
 //	gregale debug requests evidence <slug> <req_id>
 //	gregale debug requests explain <slug> <req_id>
+//	gregale debug requests trace <slug> <req_id>
 //	gregale debug requests replay <slug> <req_id> [--deployment-id UUID]
 //	gregale debug coverage <slug> [--since <dur>]
 //	gregale debug running <slug> [--since <dur>] [--limit <n>]
@@ -49,7 +50,7 @@ import (
 // commands_invocations.go's PrintUsage strings.
 const debugCmdUsage = "usage: gregale debug <requests|coverage|running|regressions|compare|bundle> ..."
 
-const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|explain|replay> ..."
+const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|explain|trace|replay> ..."
 
 // debugCmdDocsTopic is the docs topic slug for the debug
 // namespace. Resolves to cli_meta.go's "debug" cliCommand entry;
@@ -62,7 +63,7 @@ func cmdDebug(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests explain  synthesize root-cause findings and next actions\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests explain  synthesize root-cause findings and next actions\n  requests trace    show the linked OTel span tree\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -118,7 +119,7 @@ func cmdDebugRequests(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  export    export metadata-only request telemetry\n  watch     watch request telemetry for new or changed rows\n  get       show one request's metadata\n  show      show request timeline and evidence\n  evidence  show request evidence and explanation\n  explain   synthesize root-cause findings and next actions\n  replay    queue a request replay", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  export    export metadata-only request telemetry\n  watch     watch request telemetry for new or changed rows\n  get       show one request's metadata\n  show      show request timeline and evidence\n  evidence  show request evidence and explanation\n  explain   synthesize root-cause findings and next actions\n  trace     show the linked OTel span tree\n  replay    queue a request replay", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -136,6 +137,8 @@ func cmdDebugRequests(args []string) int {
 		return cmdDebugRequestsEvidence(args[1:])
 	case "explain":
 		return cmdDebugRequestsExplain(args[1:])
+	case "trace":
+		return cmdDebugRequestsTrace(args[1:])
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
 	}
