@@ -46,6 +46,10 @@ export type Problem = {
   observed_bytes?: number | null;
   docs_url?: string;
   /**
+   * Retry delay promoted from the HTTP Retry-After header by SDK clients when the header uses delta-seconds.
+   */
+  retry_after_seconds?: number;
+  /**
    * Provider-neutral hosted checkout URL on a `payment_required`
    * 402 when a paid plan upgrade requires a new subscription.
    *

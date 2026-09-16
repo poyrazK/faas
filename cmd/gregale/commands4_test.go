@@ -154,6 +154,55 @@ func TestCmdAccountExport_NoSecretsFlag(t *testing.T) {
 	}
 }
 
+func TestCmdAccountExport_RateLimitSurfacesRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Retry-After", "86400")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(api.Problem{Status: http.StatusTooManyRequests, Code: "export_rate_limited", Title: "Export rate limited", Detail: "retry after the indicated back-off"})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	t.Run("human", func(t *testing.T) {
+		oldJSON := jsonOutput
+		jsonOutput = false
+		t.Cleanup(func() { jsonOutput = oldJSON })
+		stderr, restore := captureStderr(t)
+		out := filepath_Join(t.TempDir(), "bundle.json")
+		if code := cmdAccountExport([]string{"-o", out}); code == 0 {
+			t.Fatal("rate-limited export exited successfully")
+		}
+		restore()
+		if !strings.Contains(stderr.String(), "24h0m0s (86400 seconds)") {
+			t.Fatalf("retry duration missing: %q", stderr.String())
+		}
+		if _, err := os.Stat(out); !os.IsNotExist(err) {
+			t.Fatalf("rate-limited export created output: %v", err)
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		oldJSON := jsonOutput
+		jsonOutput = true
+		t.Cleanup(func() { jsonOutput = oldJSON })
+		stderr, restore := captureStderr(t)
+		out := filepath_Join(t.TempDir(), "bundle.json")
+		if code := cmdAccountExport([]string{"-o", out}); code == 0 {
+			t.Fatal("rate-limited export exited successfully")
+		}
+		restore()
+		var problem api.Problem
+		if err := json.Unmarshal([]byte(strings.TrimSpace(stderr.String())), &problem); err != nil {
+			t.Fatalf("JSON error output: %v; raw=%q", err, stderr.String())
+		}
+		if problem.RetryAfterSeconds == nil || *problem.RetryAfterSeconds != 86400 {
+			t.Fatalf("retry_after_seconds = %v", problem.RetryAfterSeconds)
+		}
+	})
+}
+
 // TestCmdAccountDelete_ForwardsIdempotencyKey — -q skips the prompt,
 // fires DELETE, the server records the Idempotency-Key header.
 func TestCmdAccountDelete_ForwardsIdempotencyKey(t *testing.T) {

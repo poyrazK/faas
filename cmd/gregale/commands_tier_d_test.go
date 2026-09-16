@@ -193,6 +193,32 @@ func TestTierD_RegistrySet_HappyPath(t *testing.T) {
 	}
 }
 
+func TestTierD_RegistrySet_PasswordStdinDoesNotEcho(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"registry":"docker.io","username":"u","created_at":"2026-08-07T00:00:00Z","updated_at":"2026-08-07T00:00:00Z"}`
+	f := authedFakeAPI(t, body, http.StatusOK)
+	oldIn, oldOut, oldErr := osStdin, osStdout, osStderr
+	var stdout, stderr bytes.Buffer
+	osStdin = strings.NewReader("stdin-only-registry-token\n")
+	osStdout, osStderr = &stdout, &stderr
+	t.Cleanup(func() { osStdin, osStdout, osStderr = oldIn, oldOut, oldErr })
+	if code := cmdRegistrySet([]string{
+		"--app", "demo", "--registry", "docker.io", "--user", "u", "--password-stdin",
+	}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["password"] != "stdin-only-registry-token" {
+		t.Fatalf("password body was not read from stdin")
+	}
+	if strings.Contains(stdout.String()+stderr.String(), "stdin-only-registry-token") {
+		t.Fatal("registry password leaked to command output")
+	}
+}
+
 func TestTierD_RegistrySetDocumentedVerbAndHTTPSInput(t *testing.T) {
 	resetJSONOut(t)
 	body := `{"registry":"ghcr.io","username":"u","created_at":"2026-08-07T00:00:00Z","updated_at":"2026-08-07T00:00:00Z"}`

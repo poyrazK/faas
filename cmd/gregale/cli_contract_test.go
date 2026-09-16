@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,6 +104,35 @@ func TestKeysAddHelpNeverCreatesCredential(t *testing.T) {
 			}
 			if !strings.Contains(stdout.String(), "gregale keys add <label>") {
 				t.Fatalf("help output = %q", stdout.String())
+			}
+		})
+	}
+}
+
+func TestNestedHelpNeverMakesProductionRequests(t *testing.T) {
+	for _, args := range [][]string{
+		{"queue", "tail", "--help"},
+		{"jobs", "runs", "--help"},
+		{"traffic", "status", "--help"},
+		{"orgs", "members", "--help"},
+		{"cors", "rm", "--help"},
+		{"keys", "rm", "--help"},
+		{"keys", "rotate", "--help"},
+	} {
+		t.Run(strings.Join(args[:2], "-"), func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			oldOut := osStdout
+			osStdout = io.Discard
+			t.Cleanup(func() { osStdout = oldOut })
+			if code := run(args); code != 0 {
+				t.Fatalf("run(%v) = %d", args, code)
+			}
+			if calls != 0 {
+				t.Fatalf("run(%v) made %d API request(s)", args, calls)
 			}
 		})
 	}

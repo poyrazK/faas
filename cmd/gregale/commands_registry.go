@@ -27,9 +27,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -42,7 +44,7 @@ import (
 func cmdRegistry(args []string) int {
 	parent, _ := lookupCliCommand("registry")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale registry <list|set|rm> --app <slug> [--registry <h>] [--user <u>] [--password <p>]", "registry")
+		PrintUsage(os.Stderr, "usage: gregale registry <list|set|rm> --app <slug> [--registry <h>] [--user <u>] [--password-stdin]", "registry")
 		return 1
 	}
 	switch args[0] {
@@ -112,15 +114,39 @@ func cmdRegistrySet(args []string) int {
 	slug := fs.String("app", "", "app slug (required)")
 	registry := fs.String("registry", "", "registry host[:port] (required, lowercase DNS[:port])")
 	username := fs.String("user", "", "username (required)")
-	password := fs.String("password", "", "password (required, plaintext at CLI; sealed server-side)")
+	password := fs.String("password", "", "password (compatibility; visible in shell history; prefer --password-stdin)")
+	passwordStdin := fs.Bool("password-stdin", false, "read password/token from stdin")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	passwordFromArg := *password != ""
+	if *passwordStdin && *password != "" {
+		return printErr("Invalid flags", fmt.Errorf("--password and --password-stdin are mutually exclusive"))
+	}
+	if *passwordStdin {
+		body, err := io.ReadAll(io.LimitReader(osStdin, int64(api.MaxRegistryPasswordBytes)+2))
+		if err != nil {
+			return printErr("Could not read registry password", err)
+		}
+		*password = strings.TrimSuffix(strings.TrimSuffix(string(body), "\n"), "\r")
+		if len(*password) > api.MaxRegistryPasswordBytes {
+			return printErr("Invalid --password-stdin", fmt.Errorf("password exceeds %d bytes", api.MaxRegistryPasswordBytes))
+		}
+	} else if *password == "" && stdinIsTTY() {
+		value, err := readInteractivePassword(bufio.NewReader(osStdin), "Registry password/token: ")
+		if err != nil {
+			return printErr("Could not read registry password", err)
+		}
+		*password = value
+	}
 	if !validateRegistrySetFlags(slug, registry, username, password) {
 		return 1
+	}
+	if passwordFromArg {
+		PrintWarn(osStderr, "--password is visible to shell history and process inspection; prefer --password-stdin")
 	}
 	registryAPI, err := registryInputForAPI(*registry)
 	if err != nil {
@@ -187,7 +213,7 @@ func cmdRegistryRm(args []string) int {
 // Extracted to keep cmdRegistrySet under the 50-line handler cap.
 func validateRegistrySetFlags(slug, registry, username, password *string) bool {
 	if *slug == "" || *registry == "" || *username == "" || *password == "" {
-		PrintUsage(os.Stderr, "usage: gregale registry set --app <slug> --registry <h> --user <u> --password <p>", "registry")
+		PrintUsage(os.Stderr, "usage: gregale registry set --app <slug> --registry <h> --user <u> (--password-stdin|--password <p>)", "registry")
 		return false
 	}
 	if _, err := registryInputForAPI(*registry); err != nil {

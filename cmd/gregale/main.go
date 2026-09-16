@@ -107,15 +107,25 @@ func run(args []string) (status int) {
 		fmt.Print(topLevelUsage(false))
 		return 0
 	}
-	// Resolve parent-command help before dispatch. These commands otherwise
-	// interpret --help as a subcommand or resource identifier and may perform
-	// authentication or a resource lookup. Leaf help stays with the leaf parser,
-	// which can render the exact syntax; mutating parsers must intercept help
-	// before validating resource identifiers (see cmdKeys).
+	// Resolve help before dispatch at every command depth. Several positional
+	// leaves historically interpreted --help as an app, job, or key id and made
+	// an authenticated production request. The manifest is the safe local source
+	// of truth; leaf-specific parsers remain responsible for normal invocations.
 	if len(args) == 2 && hasHelpFlag(args[1:]) {
 		if command, ok := lookupCliCommand(args[0]); ok {
 			printLocalCommandHelp(osStdout, command)
 			return 0
+		}
+	}
+	if len(args) >= 3 && hasHelpFlag(args[2:]) && shouldResolveNestedHelp(args[0], args[1]) {
+		if command, ok := lookupCliCommand(args[0]); ok {
+			for _, sub := range command.Subcommands {
+				if sub.Name != args[1] {
+					continue
+				}
+				printLocalSubcommandHelp(osStdout, command, sub)
+				return 0
+			}
 		}
 	}
 	switch args[0] {
@@ -519,6 +529,20 @@ func run(args []string) (status int) {
 	}
 }
 
+func shouldResolveNestedHelp(command, subcommand string) bool {
+	unsafeLeaves := map[string]struct{}{
+		"queue tail":     {},
+		"jobs runs":      {},
+		"traffic status": {},
+		"orgs members":   {},
+		"cors rm":        {},
+		"keys rm":        {},
+		"keys rotate":    {},
+	}
+	_, ok := unsafeLeaves[command+" "+subcommand]
+	return ok
+}
+
 func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	// Release-management commands use verb-first syntax with the slug on
 	// the leaf. The generic manifest renderer cannot express that shape
@@ -555,6 +579,21 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	if len(command.Flags) > 0 {
 		_, _ = fmt.Fprintln(w, "\nFlags:")
 		for _, flag := range command.Flags {
+			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
+		}
+	}
+	_, _ = fmt.Fprintf(w, "\nDocs: %s/%s\n", docsURL, command.DocSlug)
+}
+
+func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
+	usage := "gregale " + command.Name + " " + sub.Name
+	if len(sub.Flags) > 0 {
+		usage += " [flags]"
+	}
+	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", sub.Short, usage)
+	if len(sub.Flags) > 0 {
+		_, _ = fmt.Fprintln(w, "\nFlags:")
+		for _, flag := range sub.Flags {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}

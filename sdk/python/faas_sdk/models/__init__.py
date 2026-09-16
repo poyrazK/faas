@@ -883,6 +883,7 @@ from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeCon
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
 from .rollout_transition_response import RolloutTransitionResponse
+from .rotate_alert_rule_secret_request import RotateAlertRuleSecretRequest
 from .rotate_alert_rule_secret_response import RotateAlertRuleSecretResponse
 from .rotate_app_secret_request import RotateAppSecretRequest
 from .rotate_app_secret_response import RotateAppSecretResponse
@@ -1947,6 +1948,7 @@ __all__ = (
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
     "RolloutTransitionResponse",
+    "RotateAlertRuleSecretRequest",
     "RotateAlertRuleSecretResponse",
     "RotateAppSecretRequest",
     "RotateAppSecretResponse",

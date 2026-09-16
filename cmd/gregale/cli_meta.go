@@ -288,11 +288,18 @@ var cliCommands = []cliCommand{
 			{Name: "list", Short: "List alert rules", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			}},
-			{Name: "add", Short: "Add an alert rule"},
+			{Name: "add", Short: "Add an alert rule", Flags: []cliFlag{
+				{Name: "webhook-secret-stdin", Short: "read the webhook secret from stdin"},
+			}},
 			{Name: "info", Short: "Show one alert rule"},
-			{Name: "update", Short: "Update one alert rule"},
+			{Name: "update", Short: "Update one alert rule", Flags: []cliFlag{
+				{Name: "webhook-secret-stdin", Short: "read the replacement webhook secret from stdin"},
+			}},
 			{Name: "rm", Short: "Delete one alert rule"},
-			{Name: "rotate-secret", Short: "Rotate the alert's webhook secret"},
+			{Name: "rotate-secret", Short: "Rotate the alert's webhook secret", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "from-stdin", Short: "read the replacement secret from stdin"},
+			}},
 			// Issue #1233 / ADR-123 — alert preset catalog +
 			// instantiate-from-preset. Two leaves under preset:
 			// list (no flags), enable <name> --app <slug>
@@ -1133,7 +1140,12 @@ var cliCommands = []cliCommand{
 		Short:   "Per-app private container registry credentials (registry list|set|rm --app <slug>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List registry credentials"},
-			{Name: "set", Short: "Set a registry credential"},
+			{Name: "set", Short: "Set a registry credential", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "registry", Short: "registry host", Req: true, Value: "host"},
+				{Name: "user", Short: "registry username", Req: true, Value: "user"},
+				{Name: "password-stdin", Short: "read the registry password/token from stdin"},
+			}},
 			{Name: "rm", Short: "Remove a registry credential"},
 		},
 		Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true}},

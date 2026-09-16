@@ -411,6 +411,8 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "cors-allow-credentials")
+	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
 	matchPath := fs.String("match-path", "", "new path to match")
@@ -622,6 +624,8 @@ func cmdEdgeRulesUpdate(args []string) int {
 // for CI/scripted paths (issue #312 pattern). Returns 1 if the
 // user cancels (per requireTyped semantics).
 func cmdEdgeRulesRm(args []string) int {
+	flags, positional := splitArgsForFlags(args, "quiet")
+	args = append(flags, positional...)
 	fs := newFlagSet("edge-rules rm", flag.ContinueOnError)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
 	if err := fs.Parse(args); err != nil {

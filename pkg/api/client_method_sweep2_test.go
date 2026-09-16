@@ -182,7 +182,7 @@ func TestClientSweep2_NoArgMethods(t *testing.T) {
 			return c.DeleteAlertRule(ctx, "x", "r")
 		}},
 		{"RotateAlertRuleSecret", obj.URL, func(t *testing.T, c *Client) error {
-			_, err := c.RotateAlertRuleSecret(ctx, "x", "r")
+			_, err := c.RotateAlertRuleSecret(ctx, "x", "r", RotateAlertRuleSecretRequest{WebhookSecret: "replacement"})
 			return err
 		}},
 

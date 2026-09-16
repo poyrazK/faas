@@ -70,6 +70,31 @@ func TestCmdWebhooks_Add_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCmdWebhooks_Add_AutoMintsAndRevealsSecretOnce(t *testing.T) {
+	var gotBody api.CreateAppWebhookRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(api.AppWebhookResponse{ID: webhookTestID, TargetURL: "https://example.com/hook"})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	oldOut, oldJSON := osStdout, jsonOutput
+	var stdout bytes.Buffer
+	osStdout, jsonOutput = &stdout, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+
+	if code := cmdWebhooksAdd([]string{"--app", "demo", "--target-url", "https://example.com/hook"}); code != 0 {
+		t.Fatalf("add = %d", code)
+	}
+	if gotBody.WebhookSecret == "" {
+		t.Fatal("auto-minted secret was not sent to the API")
+	}
+	if strings.Count(stdout.String(), gotBody.WebhookSecret) != 1 {
+		t.Fatalf("generated secret must be shown exactly once; output=%q", stdout.String())
+	}
+}
+
 func TestCmdWebhooks_Add_BadRetryPolicyRejected(t *testing.T) {
 	// A typo in --retry-policy surfaces locally before the round-trip
 	// (mirrors cmdApp's --eviction-priority check, PR #647).

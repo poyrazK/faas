@@ -34,8 +34,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -54,11 +52,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
-
-// alertRuleWebhookSecretBytes is the size of the random plaintext
-// minted by rotateAlertRuleSecret. 32 bytes is the HMAC-SHA256 key
-// length, which is what webhookout.Signer expects (PR 4 meterd).
-const alertRuleWebhookSecretBytes = 32
 
 // alertRuleSecretSealLabel is the namespace string passed as the
 // `key` argument to secretbox.SealOne so the age/X25519 footer is
@@ -571,19 +564,28 @@ func (s *server) deleteAlertRule(w http.ResponseWriter, r *http.Request, acct st
 
 // --- rotate-secret ----------------------------------------------------------
 
-// rotateAlertRuleSecret mints a fresh 32-byte secret via
-// crypto/rand, base64-encodes it, seals via the host age recipient,
-// and overwrites the row's webhook_secret_sealed in place. No
-// secret_version column exists (issue #396 plan) — rotation is
-// overwrite-in-place. The plaintext NEVER appears in the response,
-// audit row, or log line.
+// rotateAlertRuleSecret seals a caller-supplied replacement and overwrites the
+// row in place. Cutover is immediate with no old-key overlap, so customers can
+// install the key in their receiver first and then call this endpoint. The
+// plaintext NEVER appears in the response, audit row, or log line.
 //
-// The plaintext lives for the duration of the handler call: mint →
-// seal → overwrite → return masked constant. At no point is it
-// logged or persisted as plaintext. The 256-byte byte cap on
-// SealOne is the base64-expanded limit; the 32-byte raw secret
-// base64-encodes to 44 bytes which is comfortably under.
+// The plaintext lives for the duration of the handler call: decode → seal →
+// overwrite → return masked constant. At no point is it logged, persisted as
+// plaintext, or included in a response.
 func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	var req api.RotateAlertRuleSecretRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid("webhook_secret is required"))
+		return
+	}
+	if req.WebhookSecret == "" {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid("webhook_secret is required"))
+		return
+	}
+	if len(req.WebhookSecret) > api.AlertRuleWebhookSecretMaxBytes {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid(fmt.Sprintf("webhook_secret length %d exceeds max %d", len(req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)))
+		return
+	}
 	id := r.PathValue("id")
 	row, err := s.store.AlertRuleByID(r.Context(), id)
 	if err != nil {
@@ -601,11 +603,7 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 	}
-	plaintext, err := mintAlertRuleSecret(alertRuleWebhookSecretBytes)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not mint webhook secret"))
-		return
-	}
+	plaintext := []byte(req.WebhookSecret)
 	recipient := setSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
@@ -985,20 +983,6 @@ func resolveAndCheckEgress(c context.Context, rawURL string) *api.Problem {
 		}
 	}
 	return nil
-}
-
-// mintAlertRuleSecret returns a base64-encoded random secret of
-// the requested byte length. The plaintext lifetime is the
-// handler call; the caller is responsible for zeroing the byte
-// slice before returning.
-func mintAlertRuleSecret(byteLen int) ([]byte, error) {
-	raw := make([]byte, byteLen)
-	if _, err := rand.Read(raw); err != nil {
-		return nil, err
-	}
-	encoded := make([]byte, base64.StdEncoding.EncodedLen(byteLen))
-	base64.StdEncoding.Encode(encoded, raw)
-	return encoded, nil
 }
 
 // ptrAlertMetric / ptrAlertComparison / ptrAlertWindowSpec convert

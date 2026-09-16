@@ -572,6 +572,10 @@ func renderAPIError(w io.Writer, e *APIError) {
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
 	}
+	if p.RetryAfterSeconds != nil {
+		retryAfter := time.Duration(*p.RetryAfterSeconds) * time.Second
+		_, _ = fmt.Fprintf(w, "  Retry after: %s (%d seconds)\n", retryAfter, *p.RetryAfterSeconds)
+	}
 	// Billing hand-off URLs (402 CodePayment). The provider-neutral
 	// checkout_url wins; the portal URL is the fallback for accounts
 	// that already hold a subscription. Without these rows a customer

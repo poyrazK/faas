@@ -21,6 +21,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -139,6 +141,15 @@ func cmdWebhooksAdd(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale webhooks add --app <slug> --target-url <url> [--event <evt>]... [--retry-policy default|aggressive|none] [--secret <hmac-secret>]", "webhooks")
 		return 1
 	}
+	generatedSecret := false
+	if *secret == "" {
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			return printErr("Could not generate webhook secret", err)
+		}
+		*secret = base64.RawURLEncoding.EncodeToString(raw)
+		generatedSecret = true
+	}
 	// Closed-set drift test BEFORE the round-trip — same posture as
 	// the --eviction-priority check in cmdApp (PR #647). Surfaces a
 	// typo locally instead of letting apid return 400 app_webhook_invalid
@@ -160,17 +171,24 @@ func cmdWebhooksAdd(args []string) int {
 		EventFilter: events,
 		RetryPolicy: *policy,
 	}
-	if *secret != "" {
-		req.WebhookSecret = *secret
-	}
+	req.WebhookSecret = *secret
 	out, err := client.CreateAppWebhook(context.Background(), *slug, req)
 	if err != nil {
 		return printErr("Create failed", err)
 	}
 	if jsonOutput {
+		if generatedSecret {
+			return jsonOut(writeJSON(struct {
+				api.AppWebhookResponse
+				WebhookSecret string `json:"webhook_secret"`
+			}{AppWebhookResponse: out, WebhookSecret: *secret}))
+		}
 		return jsonOut(writeJSON(out))
 	}
 	PrintOK(osStdout, "Webhook subscribed: %s -> %s", out.ID, out.TargetURL)
+	if generatedSecret {
+		PrintProgress(osStdout, "Signing secret (shown ONCE): %s", *secret)
+	}
 	return 0
 }
 

@@ -85,6 +85,11 @@ type Problem struct {
 	ObservedBytes *int64 `json:"observed_bytes,omitempty"`
 	// DocsURL points the user at the single next action.
 	DocsURL string `json:"docs_url,omitempty"`
+	// RetryAfterSeconds is populated by SDK clients from the HTTP Retry-After
+	// header when it contains a delta in seconds. Keeping the value in the
+	// decoded Problem lets JSON-mode callers act on back-pressure without
+	// reaching into transport-specific response headers.
+	RetryAfterSeconds *int64 `json:"retry_after_seconds,omitempty"`
 	// CheckoutURL is the provider-neutral hosted checkout URL for a paid
 	// upgrade. PaddleCheckoutURL remains below for backwards compatibility
 	// with older SDKs that only know the Paddle-specific field.

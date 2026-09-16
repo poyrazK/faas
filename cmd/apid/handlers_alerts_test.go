@@ -40,6 +40,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -270,7 +271,7 @@ func TestRotateAlertRuleSecret_HappyPath(t *testing.T) {
 	e := setupAlerts(t, api.PlanPro)
 	mustSeedApp(t, e, "alerts-rot")
 	created := mustCreateAlertRule(t, e, "alerts-rot", alertRuleReq())
-	rec := e.do(t, "POST", "/v1/apps/alerts-rot/alerts/"+created.ID+"/rotate-secret", nil, nil)
+	rec := e.do(t, "POST", "/v1/apps/alerts-rot/alerts/"+created.ID+"/rotate-secret", api.RotateAlertRuleSecretRequest{WebhookSecret: "receiver-known-replacement"}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -296,6 +297,23 @@ func TestRotateAlertRuleSecret_HappyPath(t *testing.T) {
 	}
 	if len(row.WebhookSecretSealed) == 0 {
 		t.Errorf("WebhookSecretSealed is empty after rotate")
+	}
+	namespace, plaintext, err := secretbox.OpenBytes(mfaIdentities()[0], row.WebhookSecretSealed)
+	if err != nil {
+		t.Fatalf("unseal rotated secret: %v", err)
+	}
+	if namespace != alertRuleSecretSealLabel || string(plaintext) != "receiver-known-replacement" {
+		t.Fatalf("unsealed rotation = namespace %q plaintext %q", namespace, plaintext)
+	}
+}
+
+func TestRotateAlertRuleSecret_RequiresReplacement(t *testing.T) {
+	e := setupAlerts(t, api.PlanPro)
+	mustSeedApp(t, e, "alerts-rot-empty")
+	created := mustCreateAlertRule(t, e, "alerts-rot-empty", alertRuleReq())
+	rec := e.do(t, "POST", "/v1/apps/alerts-rot-empty/alerts/"+created.ID+"/rotate-secret", nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
 }
 

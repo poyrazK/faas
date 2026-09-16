@@ -10451,8 +10451,8 @@ paths:
   # ─── Alert rules (issue #396 / ADR-045 PR 3) ─────────────────────────
   # Per-app CRUD surface. Account-wide rules (app_id == "") appear in
   # the per-app list endpoint but the create/update/delete endpoints
-  # pin to a specific app. The /rotate-secret action mints a fresh
-  # server-side plaintext; the response carries the masked constant +
+  # pin to a specific app. The /rotate-secret action accepts a
+  # caller-supplied replacement; the response carries the masked constant +
   # rotated_at only.
 
   /v1/apps/{slug}/alerts:
@@ -10581,12 +10581,16 @@ paths:
     post:
       tags: [alert_rules]
       operationId: rotateAlertRuleSecret
-      summary: Mint a new webhook HMAC secret.
+      summary: Install a new webhook HMAC secret.
       description: |
-        Server-mints a 32-byte secret, base64-encodes it, and
-        overwrites the row's sealed ciphertext in place. The
-        plaintext is NEVER returned in the response — the body
-        carries the masked constant + rotated_at only.
+        Seals the caller-supplied replacement and overwrites the row in place.
+        Cutover is immediate with no old-key overlap; install the replacement
+        in the receiver before calling. The plaintext is never returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RotateAlertRuleSecretRequest' }
       responses:
         '200':
           description: Rotation succeeded.
@@ -22622,6 +22626,17 @@ components:
         rotated_at: { type: string, format: date-time, example: "2026-07-28T12:00:00Z" }
         webhook_secret_sealed_masked: { type: string, example: "***" }
 
+    RotateAlertRuleSecretRequest:
+      description: 'Caller-supplied replacement. Provision the receiver first; cutover is immediate with no old-key overlap.'
+      type: object
+      required: [webhook_secret]
+      properties:
+        webhook_secret:
+          type: string
+          minLength: 1
+          maxLength: 256
+          writeOnly: true
+
     AlertDeliveryResponse:
       description: |
         One alert_deliveries row as surfaced by
@@ -27097,6 +27112,11 @@ components:
         limit_bytes: { type: [integer, "null"], description: "Explicit byte limit for request-body and other byte-oriented errors." }
         observed_bytes: { type: [integer, "null"], description: "Observed byte count for request-body and other byte-oriented errors." }
         docs_url: { type: string, format: uri }
+        retry_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Retry delay promoted from the HTTP Retry-After header by SDK clients when the header uses delta-seconds.
         checkout_url:
           type: string
           format: uri

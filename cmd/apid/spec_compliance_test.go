@@ -286,7 +286,6 @@ var dtoExclude = map[string]bool{
 	"ExecutionSnapshotShape":       true, // internal snapshot compatibility key, not a wire DTO
 	"ResolvedExecutionRequest":     true, // sealed scheduler intent, not a public DTO
 	"AlertRuleRow":                 true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
-	"RotateAlertRuleSecretRequest": true, // PR 3 / ADR-045: server-mints the secret; request body is empty, not in spec
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
 	// pkg/api ↔ pkg/state seam. The wire DTOs are OrgResponse /
 	// OrgMemberResponse / OrgInvitationResponse; the *Row types

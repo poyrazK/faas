@@ -141,6 +141,10 @@ List alert rules
 
 Add an alert rule
 
+| Flag | Meaning | |
+|---|---|---|
+| `--webhook-secret-stdin` | read the webhook secret from stdin |  |
+
 ### alerts info
 
 Show one alert rule
@@ -149,6 +153,10 @@ Show one alert rule
 
 Update one alert rule
 
+| Flag | Meaning | |
+|---|---|---|
+| `--webhook-secret-stdin` | read the replacement webhook secret from stdin |  |
+
 ### alerts rm
 
 Delete one alert rule
@@ -156,6 +164,11 @@ Delete one alert rule
 ### alerts rotate-secret
 
 Rotate the alert&#39;s webhook secret
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--from-stdin` | read the replacement secret from stdin |  |
 
 ### alerts preset
 
@@ -1422,6 +1435,13 @@ List registry credentials
 ### registry set
 
 Set a registry credential
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--registry <host>` | registry host | required |
+| `--user <user>` | registry username | required |
+| `--password-stdin` | read the registry password/token from stdin |  |
 
 ### registry rm
 

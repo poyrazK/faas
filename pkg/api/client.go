@@ -383,6 +383,9 @@ func apiErrorFromResponse(resp *http.Response, data []byte) error {
 	}
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
 		p = *p.WithHeader("Retry-After", ra)
+		if seconds, err := strconv.ParseInt(strings.TrimSpace(ra), 10, 64); err == nil && seconds >= 0 {
+			p.RetryAfterSeconds = &seconds
+		}
 	}
 	for _, name := range []string{"RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"} {
 		if value := resp.Header.Get(name); value != "" {
@@ -2301,15 +2304,12 @@ func (c *Client) DeleteAlertRule(ctx context.Context, slug, id string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/alerts/"+id, nil, nil)
 }
 
-// RotateAlertRuleSecret server-mints a fresh 32-byte HMAC secret and
-// overwrites the row's sealed ciphertext in place. The plaintext is
-// NEVER returned in the response — only the masked constant + a
-// rotated_at timestamp. The customer must capture the new secret via
-// out-of-band mechanism if they need it on the receiving end; PR 4's
-// dashboard adds a one-time-display UX.
-func (c *Client) RotateAlertRuleSecret(ctx context.Context, slug, id string) (RotateAlertRuleSecretResponse, error) {
+// RotateAlertRuleSecret installs a caller-supplied HMAC secret immediately.
+// Customers should provision the receiver first; there is no old-key overlap.
+// The response remains masked and never echoes the plaintext.
+func (c *Client) RotateAlertRuleSecret(ctx context.Context, slug, id string, req RotateAlertRuleSecretRequest) (RotateAlertRuleSecretResponse, error) {
 	var out RotateAlertRuleSecretResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/alerts/"+id+"/rotate-secret", nil, &out)
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/alerts/"+id+"/rotate-secret", req, &out)
 }
 
 // ListAlertRuleDeliveries returns the most-recent alert_deliveries

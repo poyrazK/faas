@@ -12,8 +12,7 @@
 // Secrets plaintext / API-key plaintext / webhook secret plaintext
 // are NEVER echoed by the CLI today (spec §17 G6) — those guards
 // live in the leaf body itself, not in tests that could miss a
-// future regression. Alert-rule secret rotation retains its existing
-// server-minted, masked-only contract; app webhook rotation has a separate
+// future regression. Alert-rule and app-webhook rotation both use a
 // caller-supplied handoff contract.
 
 package main
@@ -145,6 +144,34 @@ func TestTierC_AlertsAdd_HappyPath(t *testing.T) {
 	}
 }
 
+func TestTierC_AlertsAdd_WebhookSecretStdinDoesNotEcho(t *testing.T) {
+	resetJSONOut(t)
+	body := `{"id":"0123456789abcdef0123456789abcdef","name":"r","metric":"error_rate_pct","window_spec":"5m","threshold":1.5,"comparison":"gt","enabled":true}`
+	f := authedFakeAPI(t, body, http.StatusOK)
+	oldIn, oldOut, oldErr := osStdin, osStdout, osStderr
+	var stdout, stderr bytes.Buffer
+	osStdin = strings.NewReader("stdin-only-alert-secret\n")
+	osStdout, osStderr = &stdout, &stderr
+	t.Cleanup(func() { osStdin, osStdout, osStderr = oldIn, oldOut, oldErr })
+	if code := cmdAlertAdd([]string{
+		"--app", "demo", "--name", "r", "--metric", "error_rate_pct",
+		"--comparison", "gt", "--threshold", "1.5", "--window-spec", "5m",
+		"--webhook-url", "https://x", "--webhook-secret-stdin",
+	}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	var request api.CreateAlertRuleRequest
+	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.WebhookSecret != "stdin-only-alert-secret" {
+		t.Fatalf("secret body was not read from stdin")
+	}
+	if strings.Contains(stdout.String()+stderr.String(), "stdin-only-alert-secret") {
+		t.Fatal("alert secret leaked to command output")
+	}
+}
+
 // TestTierC_AlertsUpdate_NameOnlyDoesNotResendEnabledOrCooldown pins
 // the pointer-shape fix: a rename-only update must NOT re-enable a
 // disabled rule nor reset cooldown to the default. Without this the
@@ -177,17 +204,27 @@ func TestTierC_AlertsUpdate_NameOnlyDoesNotResendEnabledOrCooldown(t *testing.T)
 	}
 }
 
-// --- alerts rotate-secret (one-shot plaintext dropped) ---
+// --- alerts rotate-secret (caller-known replacement) ---
 
 func TestTierC_AlertsRotateSecret_HappyPath(t *testing.T) {
 	resetJSONOut(t)
 	body := `{"rotated_at":"2026-08-07T12:00:00Z","webhook_secret_sealed_masked":"***"}`
 	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdAlertRotateSecret([]string{"--app", "demo", "0123456789abcdef0123456789abcdef"}); code != 0 {
+	oldIn := osStdin
+	osStdin = strings.NewReader("receiver-known-replacement\n")
+	t.Cleanup(func() { osStdin = oldIn })
+	if code := cmdAlertRotateSecret([]string{"--app", "demo", "--from-stdin", "0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	if f.sawMethod != "POST" || f.sawPath != "/v1/apps/demo/alerts/0123456789abcdef0123456789abcdef/rotate-secret" {
 		t.Errorf("route = %s %s, want POST /v1/apps/demo/alerts/.../rotate-secret", f.sawMethod, f.sawPath)
+	}
+	var request api.RotateAlertRuleSecretRequest
+	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if request.WebhookSecret != "receiver-known-replacement" {
+		t.Fatalf("webhook_secret = %q", request.WebhookSecret)
 	}
 }
 

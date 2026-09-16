@@ -472,6 +472,7 @@ export type { RollbackOperatorRuntimeConfigRequest } from './models/RollbackOper
 export type { RollbackRequest } from './models/RollbackRequest.js';
 export type { RolloutAbortedWebhookPayload } from './models/RolloutAbortedWebhookPayload.js';
 export type { RolloutTransitionResponse } from './models/RolloutTransitionResponse.js';
+export type { RotateAlertRuleSecretRequest } from './models/RotateAlertRuleSecretRequest.js';
 export type { RotateAlertRuleSecretResponse } from './models/RotateAlertRuleSecretResponse.js';
 export type { RotateAppSecretRequest } from './models/RotateAppSecretRequest.js';
 export type { RotateAppSecretResponse } from './models/RotateAppSecretResponse.js';

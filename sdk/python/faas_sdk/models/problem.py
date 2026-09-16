@@ -57,6 +57,8 @@ class Problem:
     observed_bytes: int | None | Unset = UNSET
     """Observed byte count for request-body and other byte-oriented errors."""
     docs_url: str | Unset = UNSET
+    retry_after_seconds: int | Unset = UNSET
+    """Retry delay promoted from the HTTP Retry-After header by SDK clients when the header uses delta-seconds."""
     checkout_url: str | Unset = UNSET
     """Provider-neutral hosted checkout URL on a `payment_required`
     402 when a paid plan upgrade requires a new subscription.
@@ -172,6 +174,8 @@ class Problem:
 
         docs_url = self.docs_url
 
+        retry_after_seconds = self.retry_after_seconds
+
         checkout_url = self.checkout_url
 
         billing_portal_url = self.billing_portal_url
@@ -232,6 +236,8 @@ class Problem:
             field_dict["observed_bytes"] = observed_bytes
         if docs_url is not UNSET:
             field_dict["docs_url"] = docs_url
+        if retry_after_seconds is not UNSET:
+            field_dict["retry_after_seconds"] = retry_after_seconds
         if checkout_url is not UNSET:
             field_dict["checkout_url"] = checkout_url
         if billing_portal_url is not UNSET:
@@ -312,6 +318,8 @@ class Problem:
 
         docs_url = d.pop("docs_url", UNSET)
 
+        retry_after_seconds = d.pop("retry_after_seconds", UNSET)
+
         checkout_url = d.pop("checkout_url", UNSET)
 
         billing_portal_url = d.pop("billing_portal_url", UNSET)
@@ -366,6 +374,7 @@ class Problem:
             limit_bytes=limit_bytes,
             observed_bytes=observed_bytes,
             docs_url=docs_url,
+            retry_after_seconds=retry_after_seconds,
             checkout_url=checkout_url,
             billing_portal_url=billing_portal_url,
             paddle_checkout_url=paddle_checkout_url,
