@@ -33,6 +33,7 @@ func newNormalPathDebuggerFixture(t *testing.T, slug string) *normalPathFixture 
 	t.Cleanup(func() { _ = os.RemoveAll(telemetryDir) })
 	telemetrySocket := filepath.Join(telemetryDir, "request-telemetry.sock")
 	return newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanPro,
+		"FAAS_APP_ERRORS_ENABLED=false",
 		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+telemetrySocket,
 	)

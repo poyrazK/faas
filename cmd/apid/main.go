@@ -2093,6 +2093,33 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the janitor outside that feature gate so disabling the gRPC listener in
 	// development or CI cannot strand expired preview applications.
 	go newPreviewJanitor(srv.store, srv.notif, srv.ops, log, true).Run(ctx)
+
+	// ADR-127 PR-B: gatewayd-internal → apid
+	// IncrementRequestTelemetry streaming RPC. This data-plane surface is
+	// independent from the optional customer-facing app-error writer: a
+	// deployment may disable app errors while still requiring debugger
+	// telemetry to be durable.
+	//
+	// ADR-127 PR-D code-review #3: sharedLimiter is the per-account
+	// token-bucket pool shared with runSpansWriterServer below. One limiter
+	// instance covers both IncrementRequestTelemetry and WriteSpansSummary
+	// paths so a customer's plan cap is enforced against one bucket pool.
+	sharedLimiter := peraccount.NewLimiter()
+	if deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false" {
+		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
+		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter)
+		if err != nil {
+			_ = l.Close()
+			return fmt.Errorf("apid: request telemetry server: %w", err)
+		}
+		go func() {
+			log.Info("apid request telemetry server listening")
+			if err := rtSrv.Serve(rtLis); err != nil {
+				log.Error("apid request telemetry serve", "err", err)
+			}
+		}()
+	}
+
 	if deps.getenv("FAAS_APP_ERRORS_ENABLED") != "false" { //nolint:goconst // kill-switch sentinel; the canonical "true" env literal.
 		appErrTarget := cfg.GetAppErrorsTarget(deps.getenv)
 		appErrTLS, tlsErr := cfg.LoadAppErrorsTLSWithPrefixAndVerifierAndReload(nodeVerifier, appErrRotator.Reload(nil))
@@ -2122,43 +2149,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			go wire.WatchTLSReload(ctx, log, appErrHupCh, appErrRotator, appErrReload)
 		}
 		go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
-
-		// ADR-127 PR-B: gatewayd-internal → apid
-		// IncrementRequestTelemetry streaming RPC. Wired behind
-		// FAAS_REQUEST_TELEMETRY_ENABLED so the surface is dormant
-		// in environments where the data plane isn't shipped yet.
-		// Defaults to enabled when the env var is unset; set
-		// FAAS_REQUEST_TELEMETRY_ENABLED=false to disable both the
-		// writer (apid gRPC) and the gateway-side recorder.
-		//
-		// ADR-127 PR-D code-review #3: sharedLimiter is the
-		// per-account token-bucket pool shared with
-		// runSpansWriterServer below. One *peraccount.Limiter
-		// instance covers both the PR-B IncrementRequestTelemetry
-		// and PR-D WriteSpansSummary paths so a customer's
-		// DebugTelemetryRequestsPerMinute cap is enforced
-		// against a single bucket pool, not two independent
-		// ones (the prior wiring constructed NewLimiter()
-		// inside each helper, giving the customer 2x their
-		// plan cap). The bucket cap is frozen on first Take
-		// (PR-D code-review #2) so whichever path runs first
-		// for an account sets the bucket size; subsequent
-		// calls match.
-		sharedLimiter := peraccount.NewLimiter()
-		if deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false" {
-			rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
-			rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter)
-			if err != nil {
-				_ = l.Close()
-				return fmt.Errorf("apid: request telemetry server: %w", err)
-			}
-			go func() {
-				log.Info("apid request telemetry server listening")
-				if err := rtSrv.Serve(rtLis); err != nil {
-					log.Error("apid request telemetry serve", "err", err)
-				}
-			}()
-		}
 
 		// ADR-127 PR-D: gatewayd-public → apid AuthenticateKey
 		// unary RPC. Lives on /run/faas/auth.sock; the OTel spans
