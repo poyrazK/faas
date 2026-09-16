@@ -146,9 +146,9 @@ func TestDeployHealthcheckMetal(t *testing.T) {
 	// path is better verified at schedd (covered by the unit
 	// tests in pkg/sched). The end-to-end check below is the
 	// load-bearing one: wake ready happened via the HTTP probe.
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 90*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
 	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, StateParkedForHealthcheck, 90*time.Second); err != nil {

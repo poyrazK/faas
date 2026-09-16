@@ -154,14 +154,14 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	t.Run("source-deployed-live", func(t *testing.T) {
 		defer h.DumpLogs(t)
 
-		bctx, bcancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		bctx, bcancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 		defer bcancel()
 		if _, err := e2etest.WaitForBuildStatus(bctx, t, pool, buildID, state.BuildSucceeded, 5*time.Minute); err != nil {
 			t.Fatalf("build %s did not reach succeeded: %v", buildID, err)
 		}
-		dctx, dcancel := context.WithTimeout(context.Background(), 4*time.Minute)
+		dctx, dcancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 		defer dcancel()
-		dep, err := e2etest.WaitForDeploymentLive(dctx, t, pool, depID, 4*time.Minute)
+		dep, err := e2etest.WaitForDeploymentLive(dctx, t, pool, depID, sourceDeployLiveDeadline())
 		if err != nil {
 			t.Fatalf("deployment %s did not reach live: %v", depID, err)
 		}

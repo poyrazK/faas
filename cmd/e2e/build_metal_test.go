@@ -303,7 +303,7 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, 
 	// emits a build_queued-done notify; imaged picks up the OCI image,
 	// primes a snapshot, and MarkDeploymentLive fires. The deployment
 	// row advances Building -> Live via deployment_changed.
-	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 4*time.Minute)
+	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline())
 	if err != nil {
 		// Surface the last deployment status so a CI failure shows
 		// whether we hung in 'building' or 'failed'.

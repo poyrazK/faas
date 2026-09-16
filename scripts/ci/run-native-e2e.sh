@@ -456,7 +456,13 @@ if [[ -n "${phase}" ]]; then
     # buildctl cache, so the realistic wall is well under this. The ceiling
     # exists so a wedged builder fails THIS step rather than the whole run.
     build) phase_timeout=60m ;;
-    twonode | deploy | streaming) phase_timeout=25m ;;
+    # streaming is a build phase in disguise: five of its ten tests upload
+    # SOURCE and run a real builder microVM apiece. At 25m it fit only because
+    # those deploys used to fail in seconds for unrelated reasons (a rejected
+    # base, a dead imaged). Now that they build, ~6 min each on this node makes
+    # 25m too tight, and the step would time out mid-build with no verdict.
+    streaming) phase_timeout=60m ;;
+    twonode | deploy) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac
 else
