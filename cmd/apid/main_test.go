@@ -320,6 +320,9 @@ func TestRunWithDeps_ServesUntilCancel(t *testing.T) {
 		if k == "FAAS_DEV_TOKEN" {
 			return tok
 		}
+		if k == "FAAS_REQUEST_TELEMETRY_ENABLED" {
+			return "false"
+		}
 		// Fall through to the real env for the HMAC key files so
 		// withTestHMACFiles picks up the t.Setenv overrides; the
 		// closure above used to swallow them, which broke once
