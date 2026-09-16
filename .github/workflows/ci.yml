@@ -1104,7 +1104,10 @@ jobs:
           set -euo pipefail
           pip install --quiet 'ansible-core==2.21.2'
           cd deploy/ansible
-          ansible-galaxy collection install -r requirements.yml
+          # ansible-core can retain a malformed Galaxy response cache on a
+          # hosted runner. Do not let that cache turn this repository contract
+          # into an unrelated infrastructure failure.
+          ansible-galaxy collection install --no-cache -r requirements.yml
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook
