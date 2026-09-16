@@ -36,7 +36,7 @@ class ApplyResponse:
     crons: list[PlanCron] | Unset = UNSET
     warnings: list[str] | Unset = UNSET
     detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
-    """Structured skipped/merged detector decisions available to explain-mode clients."""
+    """Structured skipped/merged detector decisions returned with the applied plan."""
     observed_apps: int | Unset = UNSET
     observed_crons: int | Unset = UNSET
     limit_apps: int | Unset = UNSET

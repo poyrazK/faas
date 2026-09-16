@@ -21,7 +21,7 @@ export type ApplyResponse = {
   crons?: Array<PlanCron>;
   warnings?: Array<string>;
   /**
-   * Structured skipped/merged detector decisions available to explain-mode clients.
+   * Structured skipped/merged detector decisions returned with the applied plan.
    */
   detection_warnings?: Array<PlanDetectionWarning>;
   observed_apps?: number;

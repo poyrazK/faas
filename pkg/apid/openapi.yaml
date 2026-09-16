@@ -23084,7 +23084,7 @@ components:
           items: { type: string }
         detection_warnings:
           type: array
-          description: "Structured skipped/merged detector decisions available to explain-mode clients."
+          description: "Structured skipped/merged detector decisions returned with the applied plan."
           items: { $ref: '#/components/schemas/PlanDetectionWarning' }
         observed_apps: { type: integer }
         observed_crons: { type: integer }
