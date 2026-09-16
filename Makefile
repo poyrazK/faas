@@ -1101,6 +1101,10 @@ standards-check: ## Verify the standards registry and generated matrix are in sy
 	@cmp -s /tmp/faas-standards.md docs/standards.md || (echo "docs/standards.md is stale; run 'make standards-md'"; diff -u docs/standards.md /tmp/faas-standards.md || true; exit 1)
 	@echo "standards-check: OK"
 
+.PHONY: standards-conformance
+standards-conformance: ## Verify standards claims resolve to executable test fixtures
+	@$(GO) run ./cmd/standards-conformance
+
 .PHONY: pricing-md
 pricing-md: ## Regenerate customer plan/pricing page from api limits
 	@$(GO) run ./cmd/pricing-md > docs/plans.md

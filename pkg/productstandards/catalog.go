@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -29,18 +30,41 @@ const (
 	StatusAlignmentDraft Status = "alignment-draft"
 )
 
+// ConformanceTier identifies the kind of executable evidence behind a
+// compatibility claim. The tier is a routing hint for CI: unit and
+// integration fixtures run in ordinary Go jobs, while e2e and metal fixtures
+// require their respective acceptance environments.
+type ConformanceTier string
+
+const (
+	ConformanceUnit        ConformanceTier = "unit"
+	ConformanceIntegration ConformanceTier = "integration"
+	ConformanceE2E         ConformanceTier = "e2e"
+	ConformanceMetal       ConformanceTier = "metal"
+)
+
+// ConformanceRef points at a test function that exercises a standard's
+// published subset. Targets are repository-relative paths in the form
+// path/to/file_test.go::TestName.
+type ConformanceRef struct {
+	Fixture string          `json:"fixture"`
+	Tier    ConformanceTier `json:"tier"`
+	Target  string          `json:"target"`
+}
+
 // Standard is one externally defined contract tracked by Gregale.
 type Standard struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	Category    string `json:"category"`
-	Surface     string `json:"surface"`
-	Status      Status `json:"status"`
-	Scope       string `json:"scope"`
-	Limitations string `json:"limitations"`
-	DocsURL     string `json:"docs_url"`
-	Evidence    string `json:"evidence"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	Version     string           `json:"version"`
+	Category    string           `json:"category"`
+	Surface     string           `json:"surface"`
+	Status      Status           `json:"status"`
+	Scope       string           `json:"scope"`
+	Limitations string           `json:"limitations"`
+	DocsURL     string           `json:"docs_url"`
+	Evidence    string           `json:"evidence"`
+	Conformance []ConformanceRef `json:"conformance,omitempty"`
 }
 
 // Catalog is the versioned on-disk standards registry.
@@ -114,6 +138,15 @@ func Validate(catalog Catalog) error {
 		if standard.Status == StatusAlignmentDraft && standard.Category != "compliance" {
 			return fmt.Errorf("standard %q uses alignment-draft outside compliance", standard.ID)
 		}
+		if requiresConformance(standard.Status) && len(standard.Conformance) == 0 {
+			return fmt.Errorf("standard %q has %q status but no conformance fixtures", standard.ID, standard.Status)
+		}
+		if standard.Status == StatusPlanned && len(standard.Conformance) > 0 {
+			return fmt.Errorf("planned standard %q must not claim conformance fixtures", standard.ID)
+		}
+		if err := validateConformanceRefs(standard.ID, standard.Conformance); err != nil {
+			return err
+		}
 		if !validDocsURL(standard.DocsURL) {
 			return fmt.Errorf("standard %q has invalid docs_url %q", standard.ID, standard.DocsURL)
 		}
@@ -131,6 +164,51 @@ func validStatus(status Status) bool {
 	default:
 		return false
 	}
+}
+
+func requiresConformance(status Status) bool {
+	return status == StatusSupported || status == StatusPartial
+}
+
+func validateConformanceRefs(standardID string, refs []ConformanceRef) error {
+	seen := make(map[string]struct{}, len(refs))
+	for i, ref := range refs {
+		if ref.Fixture == "" || !idPattern.MatchString(ref.Fixture) {
+			return fmt.Errorf("standard %q conformance[%d].fixture must be lowercase kebab-case; got %q", standardID, i, ref.Fixture)
+		}
+		if _, exists := seen[ref.Fixture]; exists {
+			return fmt.Errorf("standard %q has duplicate conformance fixture %q", standardID, ref.Fixture)
+		}
+		seen[ref.Fixture] = struct{}{}
+		if !validConformanceTier(ref.Tier) {
+			return fmt.Errorf("standard %q conformance fixture %q has invalid tier %q", standardID, ref.Fixture, ref.Tier)
+		}
+		if !validConformanceTarget(ref.Target) {
+			return fmt.Errorf("standard %q conformance fixture %q has invalid target %q", standardID, ref.Fixture, ref.Target)
+		}
+	}
+	return nil
+}
+
+func validConformanceTier(tier ConformanceTier) bool {
+	switch tier {
+	case ConformanceUnit, ConformanceIntegration, ConformanceE2E, ConformanceMetal:
+		return true
+	default:
+		return false
+	}
+}
+
+func validConformanceTarget(target string) bool {
+	targetPath, testName, ok := strings.Cut(target, "::")
+	if !ok || strings.TrimSpace(targetPath) == "" || strings.TrimSpace(testName) == "" {
+		return false
+	}
+	if strings.Contains(testName, "::") || strings.Contains(targetPath, "\\") {
+		return false
+	}
+	clean := path.Clean(strings.TrimSpace(targetPath))
+	return !strings.HasPrefix(clean, "/") && clean != "." && clean != ".." && !strings.HasPrefix(clean, "../")
 }
 
 func validDocsURL(raw string) bool {

@@ -35,7 +35,14 @@
       "scope": "Per-app trusted-publisher enforcement verifies Cosign signatures before an OCI deploy.",
       "limitations": "Enforcement is opt-in per app and Gregale does not claim full Sigstore policy-controller compatibility.",
       "docs_url": "https://docs.sigstore.dev/cosign/",
-      "evidence": "pkg/cosign/verify.go; docs/adr/058-cosign-deploy-time-enforcement.md"
+      "evidence": "pkg/cosign/verify.go; docs/adr/058-cosign-deploy-time-enforcement.md",
+      "conformance": [
+        {
+          "fixture": "cosign-image-signature",
+          "tier": "unit",
+          "target": "pkg/cosign/verify_test.go::TestVerifyImageSignature_HappyPath"
+        }
+      ]
     },
     {
       "id": "cyclonedx-1-5",
@@ -47,7 +54,14 @@
       "scope": "Successful application builds can publish a CycloneDX JSON SBOM for retrieval.",
       "limitations": "SBOM generation is best-effort; platform release bundles use SPDX 2.3 instead.",
       "docs_url": "https://cyclonedx.org/specification/overview/",
-      "evidence": "pkg/imaged/sbom.go; docs/adr/038-build-attestation.md"
+      "evidence": "pkg/imaged/sbom.go; docs/adr/038-build-attestation.md",
+      "conformance": [
+        {
+          "fixture": "cyclonedx-build-sbom",
+          "tier": "unit",
+          "target": "pkg/imaged/sbom_wire_test.go::TestUpdateBuildProvenanceSBOM_HappyPath"
+        }
+      ]
     },
     {
       "id": "gdpr-art-28",
@@ -71,7 +85,14 @@
       "scope": "Customer apps may opt into native gRPC framing; internal services use protobuf over gRPC.",
       "limitations": "Customer gRPC is plan-gated and follows the app listener/readiness contract.",
       "docs_url": "https://grpc.io/docs/what-is-grpc/core-concepts/",
-      "evidence": "docs/ci-general-path.md::TestE2E_NormalPath_AppProtocolMatrix"
+      "evidence": "docs/ci-general-path.md::TestE2E_NormalPath_AppProtocolMatrix",
+      "conformance": [
+        {
+          "fixture": "app-protocol-matrix",
+          "tier": "e2e",
+          "target": "cmd/e2e/normal_path_matrix_e2e_test.go::TestE2E_NormalPath_AppProtocolMatrix"
+        }
+      ]
     },
     {
       "id": "http-1-1",
@@ -83,7 +104,14 @@
       "scope": "The universal default protocol for deployed HTTP apps and the legacy bridge path.",
       "limitations": "The app must expose a reachable listener on the configured port; protocol upgrades are policy-controlled.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc9112",
-      "evidence": "docs/faas_implementation_spec.md §4.1; docs/ci-general-path.md"
+      "evidence": "docs/faas_implementation_spec.md §4.1; docs/ci-general-path.md",
+      "conformance": [
+        {
+          "fixture": "app-protocol-matrix",
+          "tier": "e2e",
+          "target": "cmd/e2e/normal_path_matrix_e2e_test.go::TestE2E_NormalPath_AppProtocolMatrix"
+        }
+      ]
     },
     {
       "id": "http-2",
@@ -95,7 +123,14 @@
       "scope": "Apps selecting http2 receive native HTTP/2 framing through the stream bridge.",
       "limitations": "The customer-facing selector is limited to the closed app_protocol set; HTTP/3 is not available.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc9113",
-      "evidence": "docs/faas_implementation_spec.md §4.1; docs/ops/h2c-rollback.md"
+      "evidence": "docs/faas_implementation_spec.md §4.1; docs/ops/h2c-rollback.md",
+      "conformance": [
+        {
+          "fixture": "app-protocol-matrix",
+          "tier": "e2e",
+          "target": "cmd/e2e/normal_path_matrix_e2e_test.go::TestE2E_NormalPath_AppProtocolMatrix"
+        }
+      ]
     },
     {
       "id": "http-3",
@@ -131,7 +166,14 @@
       "scope": "Gregale mints short-lived RS256 workload tokens and supports JWT edge policy rules.",
       "limitations": "Gregale is not a general-purpose OAuth authorization server; issuer and audience policy remain operator-configured.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc7519",
-      "evidence": "docs/workload-identity.md; api/openapi.yaml OIDC exchange contract"
+      "evidence": "docs/workload-identity.md; api/openapi.yaml OIDC exchange contract",
+      "conformance": [
+        {
+          "fixture": "jwt-edge-claims",
+          "tier": "unit",
+          "target": "pkg/edgejwks/verifier_test.go::TestVerify_ValidToken"
+        }
+      ]
     },
     {
       "id": "mtls",
@@ -143,7 +185,14 @@
       "scope": "Internal cross-node control-plane traffic can be authenticated with mTLS.",
       "limitations": "Customer-to-app mTLS is not a general edge feature; public TLS terminates at the platform edge.",
       "docs_url": "/docs/security",
-      "evidence": "docs/adr/052-control-plane-mtls-and-handler-peer-binding.md"
+      "evidence": "docs/adr/052-control-plane-mtls-and-handler-peer-binding.md",
+      "conformance": [
+        {
+          "fixture": "mtls-leaf-renewal",
+          "tier": "unit",
+          "target": "pkg/pki/trust_lifecycle_test.go::TestShortLivedLeafRenewalKeepsMutualTLSHealthy"
+        }
+      ]
     },
     {
       "id": "oauth-2-0",
@@ -155,7 +204,14 @@
       "scope": "Google/GitHub sign-in and OIDC-backed deploy-token exchange use OAuth-shaped bearer flows.",
       "limitations": "Gregale does not currently expose a complete standards-based authorization-server surface for customer tenants.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc6749",
-      "evidence": "docs/STATUS.md §M5; api/openapi.yaml /v1/auth/oidc/exchange"
+      "evidence": "docs/STATUS.md §M5; api/openapi.yaml /v1/auth/oidc/exchange",
+      "conformance": [
+        {
+          "fixture": "oauth-provider-config",
+          "tier": "unit",
+          "target": "pkg/auth/oauth_test.go::TestLoadSignInConfig_BothSet"
+        }
+      ]
     },
     {
       "id": "oci-distribution",
@@ -167,7 +223,14 @@
       "scope": "Gregale pulls OCI images from registries and resolves immutable digests.",
       "limitations": "Full Distribution 1.1 conformance and OCI referrer artifacts are not yet a published contract.",
       "docs_url": "https://github.com/opencontainers/distribution-spec",
-      "evidence": "pkg/storage/oci.go; docs/oci-image-preflight.md"
+      "evidence": "pkg/storage/oci.go; docs/oci-image-preflight.md",
+      "conformance": [
+        {
+          "fixture": "oci-registry-digest",
+          "tier": "unit",
+          "target": "pkg/oci/registry_test.go::TestRegistryPullDigest_TokenFlowAndHeader"
+        }
+      ]
     },
     {
       "id": "oci-image",
@@ -179,7 +242,14 @@
       "scope": "Gregale accepts digest-pinned OCI image references and converts image layers into its guest rootfs model.",
       "limitations": "The runtime contract remains a stateless app listener; OCI volumes and host mounts are not portable into a VM.",
       "docs_url": "https://github.com/opencontainers/image-spec",
-      "evidence": "docs/faas_implementation_spec.md §2 and §4.6; pkg/oci"
+      "evidence": "docs/faas_implementation_spec.md §2 and §4.6; pkg/oci",
+      "conformance": [
+        {
+          "fixture": "oci-image-manifest",
+          "tier": "unit",
+          "target": "pkg/oci/manifest_test.go::TestRegistryPullManifest_DecodesLayersAndConfig"
+        }
+      ]
     },
     {
       "id": "openid-connect",
@@ -191,7 +261,14 @@
       "scope": "Gregale verifies issuer/audience/subject claims for the OIDC deploy exchange and supports OAuth identity providers.",
       "limitations": "Tenant SSO, discovery-driven provider onboarding, and SCIM provisioning are not yet supported.",
       "docs_url": "https://openid.net/specs/openid-connect-core-1_0.html",
-      "evidence": "api/openapi.yaml /v1/auth/oidc/exchange; docs/workload-identity.md"
+      "evidence": "api/openapi.yaml /v1/auth/oidc/exchange; docs/workload-identity.md",
+      "conformance": [
+        {
+          "fixture": "oidc-claim-verification",
+          "tier": "unit",
+          "target": "pkg/oidc/verifier_test.go::TestVerify_HappyPath_RegistersOnColdCache"
+        }
+      ]
     },
     {
       "id": "opentelemetry-otlp",
@@ -203,7 +280,14 @@
       "scope": "Apps and daemons can use OTLP/HTTP, and Gregale propagates W3C trace context across the runtime boundary.",
       "limitations": "The customer contract is strongest for traces and logs; a full tenant-facing OTLP metrics pipeline is not yet promised.",
       "docs_url": "https://opentelemetry.io/docs/specs/otlp/",
-      "evidence": "docs/runtimes/trace-propagation.md; api/openapi.yaml telemetry routes"
+      "evidence": "docs/runtimes/trace-propagation.md; api/openapi.yaml telemetry routes",
+      "conformance": [
+        {
+          "fixture": "otlp-endpoint-wiring",
+          "tier": "unit",
+          "target": "pkg/wire/otelinit/otelinit_test.go::TestInit_WithEndpoint_WiresProvider"
+        }
+      ]
     },
     {
       "id": "postgresql-connection",
@@ -215,7 +299,14 @@
       "scope": "Managed PostgreSQL bindings expose standard connection URL material to workloads.",
       "limitations": "Managed PostgreSQL remains an internal capability and is not yet a generally available database service.",
       "docs_url": "/docs/managed-postgres",
-      "evidence": "docs/managed-postgres.md; pkg/managedpostgres"
+      "evidence": "docs/managed-postgres.md; pkg/managedpostgres",
+      "conformance": [
+        {
+          "fixture": "managed-postgres-lifecycle",
+          "tier": "integration",
+          "target": "pkg/managedpostgres/lifecycle_qualification_test.go::TestQualifyLifecycleExercisesControlPlaneSagaAndCleanup"
+        }
+      ]
     },
     {
       "id": "prometheus-exposition",
@@ -227,7 +318,14 @@
       "scope": "Every daemon exposes Prometheus metrics for scrape-based operations and alerting.",
       "limitations": "The platform's customer API is not a generic PromQL proxy; metric names and labels are Gregale-owned contracts.",
       "docs_url": "https://prometheus.io/docs/instrumenting/exposition_formats/",
-      "evidence": "docs/faas_implementation_spec.md §4 and §12; deploy/ansible/roles/prometheus"
+      "evidence": "docs/faas_implementation_spec.md §4 and §12; deploy/ansible/roles/prometheus",
+      "conformance": [
+        {
+          "fixture": "prometheus-metric-surface",
+          "tier": "unit",
+          "target": "pkg/wire/metrics_test.go::TestOpsMetrics_ObserveCounter"
+        }
+      ]
     },
     {
       "id": "rfc-7807-problem-details",
@@ -239,7 +337,14 @@
       "scope": "API failures use application/problem+json with stable machine-readable codes and recovery documentation.",
       "limitations": "The wire contract is still documented as RFC 7807; RFC 9457 alignment is a planned compatibility update.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc7807",
-      "evidence": "docs/errors.md; api/openapi.yaml components.schemas.Problem"
+      "evidence": "docs/errors.md; api/openapi.yaml components.schemas.Problem",
+      "conformance": [
+        {
+          "fixture": "problem-details-wire",
+          "tier": "unit",
+          "target": "pkg/api/errors_test.go::TestWriteProblem"
+        }
+      ]
     },
     {
       "id": "rfc-9116-security-txt",
@@ -251,7 +356,14 @@
       "scope": "The repository publishes a machine-readable security contact policy at /.well-known/security.txt.",
       "limitations": "The file advertises disclosure contacts; it does not itself provide vulnerability-management automation.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc9116",
-      "evidence": "docs/security.txt; .well-known/security.txt"
+      "evidence": "docs/security.txt; .well-known/security.txt",
+      "conformance": [
+        {
+          "fixture": "security-txt-document",
+          "tier": "unit",
+          "target": "pkg/securitytxt/security_test.go::TestHandlerServesRFC9116Document"
+        }
+      ]
     },
     {
       "id": "rfc-9457-problem-details",
@@ -275,7 +387,14 @@
       "scope": "The branded gateway supports common bucket, object, multipart, metadata, and signed-request operations.",
       "limitations": "Compatibility is provider-qualified and intentionally scoped; Gregale does not claim every AWS S3 operation or semantic.",
       "docs_url": "https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html",
-      "evidence": "docs/object-storage.md; pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification"
+      "evidence": "docs/object-storage.md; pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification",
+      "conformance": [
+        {
+          "fixture": "s3-protocol-surface",
+          "tier": "unit",
+          "target": "pkg/objectstorage/s3_test.go::TestS3ProtocolAndErrors"
+        }
+      ]
     },
     {
       "id": "server-sent-events",
@@ -287,7 +406,14 @@
       "scope": "Live logs and platform event streams use text/event-stream with reconnect cursors where applicable.",
       "limitations": "SSE is a server-to-client stream; bidirectional realtime workloads use the managed realtime surface.",
       "docs_url": "https://html.spec.whatwg.org/multipage/server-sent-events.html",
-      "evidence": "docs/executions.md; api/openapi.yaml SSE route contracts"
+      "evidence": "docs/executions.md; api/openapi.yaml SSE route contracts",
+      "conformance": [
+        {
+          "fixture": "sse-stream-headers",
+          "tier": "unit",
+          "target": "pkg/apislogs/sse_test.go::TestStartSSE_Headers"
+        }
+      ]
     },
     {
       "id": "soc-2-trust-services",
@@ -311,7 +437,14 @@
       "scope": "Release tarballs carry SPDX 2.3 SBOMs and the installer gates CRITICAL/HIGH CVE regressions against a known-good baseline.",
       "limitations": "The release parser is intentionally SPDX-only; application build SBOMs use CycloneDX.",
       "docs_url": "https://spdx.github.io/spdx-spec/v2.3/",
-      "evidence": "pkg/releaseinstall/sbom.go; docs/adr/113-canonical-daemon-tarball.md"
+      "evidence": "pkg/releaseinstall/sbom.go; docs/adr/113-canonical-daemon-tarball.md",
+      "conformance": [
+        {
+          "fixture": "spdx-release-sbom",
+          "tier": "unit",
+          "target": "pkg/releaseinstall/sbom_test.go::TestParseSPDXv2_3_HappyPath"
+        }
+      ]
     },
     {
       "id": "tls-1-3",
@@ -323,7 +456,14 @@
       "scope": "The upstream public edge terminates customer TLS 1.3 and supports managed certificates for Gregale and custom domains.",
       "limitations": "Certificate issuance is operator/edge-provider managed; customer client certificates are not a general edge feature.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc8446",
-      "evidence": "docs/compliance/iso27001-statement-of-applicability.md A.5.14; docs/ops/gatewayd-public-tls-cutover.md"
+      "evidence": "docs/compliance/iso27001-statement-of-applicability.md A.5.14; docs/ops/gatewayd-public-tls-cutover.md",
+      "conformance": [
+        {
+          "fixture": "tls-minimum-version",
+          "tier": "unit",
+          "target": "pkg/gateway/tls_test.go::TestMinTLSVersionIsAtLeast13"
+        }
+      ]
     },
     {
       "id": "w3c-trace-context",
@@ -335,7 +475,14 @@
       "scope": "Gregale accepts, validates, stamps, and forwards W3C trace context into customer runtimes.",
       "limitations": "Guest-boundary baggage is size/member bounded to protect the VM and gateway hot path.",
       "docs_url": "https://www.w3.org/TR/trace-context/",
-      "evidence": "docs/runtimes/trace-propagation.md; pkg/trace/middleware.go"
+      "evidence": "docs/runtimes/trace-propagation.md; pkg/trace/middleware.go",
+      "conformance": [
+        {
+          "fixture": "w3c-traceparent-forwarding",
+          "tier": "unit",
+          "target": "pkg/gateway/forwardproxy_test.go::TestForwardingReverseProxy_InjectsW3CTraceContextIntoGuestHeaders"
+        }
+      ]
     },
     {
       "id": "websocket",
@@ -347,7 +494,14 @@
       "scope": "The managed realtime service provides durable endpoint configuration for long-lived WebSocket clients.",
       "limitations": "Ordinary scale-to-zero request apps are not promised as an unbounded WebSocket host; long-lived connections affect parking and placement.",
       "docs_url": "https://www.rfc-editor.org/rfc/rfc6455",
-      "evidence": "api/openapi.yaml realtime tag; docs/ops/realtime.md"
+      "evidence": "api/openapi.yaml realtime tag; docs/ops/realtime.md",
+      "conformance": [
+        {
+          "fixture": "websocket-realtime-lifecycle",
+          "tier": "unit",
+          "target": "pkg/realtime/realtime_test.go::TestManagerConnectionLifecycleAndPublish"
+        }
+      ]
     }
   ]
 }
