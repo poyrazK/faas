@@ -578,10 +578,13 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// APID publishes a JSON envelope, while the maintenance-mode
 		// database trigger publishes a bare app ID. Decode both before
 		// touching caches; a JSON document is never an app-cache key.
-		if appID := appChangedID(n.Payload); appID != "" {
+		if appID, err := appChangedID(n.Payload); err == nil {
 			inv.ResetApp(appID)
 			inv.InvalidateResponseCacheByApp(appID)
 		} else {
+			if observer, ok := inv.(interface{ ObserveNotificationPayloadRejected() }); ok {
+				observer.ObserveNotificationPayloadRejected()
+			}
 			// Preserve the conservative fallback when no app can be
 			// identified, including malformed or incomplete envelopes.
 			inv.FlushRoutes()

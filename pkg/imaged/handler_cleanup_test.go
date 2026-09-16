@@ -146,8 +146,9 @@ func TestCleanup_DoesNotTouchLiveApp(t *testing.T) {
 		notif:    &fakeNotifier{},
 		storage:  be,
 	}
-	// Feed a non-delete app_changed event.
+	// Feed canonical and legacy non-delete app_changed events.
 	h.HandleNotification(context.Background(), notifAppChanged(appID, "updated"))
+	h.HandleNotification(context.Background(), db.Notification{Channel: db.NotifyAppChanged, Payload: appID})
 
 	// The ext4 is still in the storage backend — no cleanup fired.
 	if rc, err := be.Get(context.Background(), ext4Key); err != nil {

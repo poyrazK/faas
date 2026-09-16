@@ -195,9 +195,10 @@ func (s *targetSet) pick(_ string) (Target, bool) {
 // deployments but does not deadlock the request. PR-C ships
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
-	router Router
-	sched  Scheduler
-	log    *slog.Logger
+	router  Router
+	sched   Scheduler
+	log     *slog.Logger
+	metrics *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
 
@@ -591,6 +592,19 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 func (b *PGBackend) WithWarmHint(fn WarmHintFunc) *PGBackend {
 	b.warmHint = fn
 	return b
+}
+
+// WithMetrics attaches the gateway registry used by notification consumers.
+func (b *PGBackend) WithMetrics(metrics *Metrics) *PGBackend {
+	b.metrics = metrics
+	return b
+}
+
+// ObserveNotificationPayloadRejected is the optional invalidator metric seam.
+func (b *PGBackend) ObserveNotificationPayloadRejected() {
+	if b != nil {
+		b.metrics.ObserveNotificationPayloadRejected()
+	}
 }
 
 // compile-time assertion PGBackend satisfies the edge seam.

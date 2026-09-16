@@ -1677,13 +1677,9 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			l.log.Warn("sched: explicit app wake failed", "err", err)
 		}
 	case db.NotifyAppChanged:
-		var p struct {
-			Kind             string `json:"kind"`
-			AppID            string `json:"app_id"`
-			WakeID           string `json:"wake_id"`
-			LifecycleChanged bool   `json:"lifecycle_changed"`
-		}
-		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+		p, err := db.ParseAppChangedPayload(n.Payload)
+		if err != nil {
+			l.ops.ObserveNotificationPayloadRejected(db.NotifyAppChanged, "main")
 			l.log.Warn("sched: bad app_changed payload", "err", err)
 			return
 		}

@@ -279,16 +279,13 @@ func (f *fakeInvalidator) ResetCorsPresets(accountID string) {
 func TestHandleInvalidation(t *testing.T) {
 	f := &fakeInvalidator{}
 	log := testLogger()
+	const appID = "51f496b9-1c33-4756-8f7d-4153149cbba5"
 
 	handleInvalidation(context.Background(), f, db.Notification{Channel: db.NotifyInstanceChanged, Payload: `{"instance_id":"i-1","app_id":"app-7","state":"parked"}`}, log)
-	// ADR-091 amendment: NotifyAppChanged payload is the app_id verbatim
-	// (apps_maintenance_mode_notify emits NEW.id::text — see
-	// migrations/00221_apps_maintenance_mode.sql). The handler drops
-	// only that app from the apps LRU (ResetApp), not wholesale
-	// FlushRoutes. Old {"app_id":...} payload also still works
-	// through the same arm (see TestHandleInvalidation_LegacyAppChangedPayload
-	// below for the wholesale fallback).
-	handleInvalidation(context.Background(), f, db.Notification{Channel: db.NotifyAppChanged, Payload: "app-7"}, log)
+	// Mixed-version compatibility accepts the legacy bare app UUID while new
+	// producers emit the canonical JSON envelope. The handler drops only that
+	// app from the cache rather than flushing unrelated routes.
+	handleInvalidation(context.Background(), f, db.Notification{Channel: db.NotifyAppChanged, Payload: appID}, log)
 	handleInvalidation(context.Background(), f, db.Notification{Channel: db.NotifyDomainChanged, Payload: `{"domain":"x.io"}`}, log)
 	// Malformed instance payload → no evict, no panic.
 	handleInvalidation(context.Background(), f, db.Notification{Channel: db.NotifyInstanceChanged, Payload: `not json`}, log)
@@ -312,8 +309,8 @@ func TestHandleInvalidation(t *testing.T) {
 	if f.flushCnt != 1 {
 		t.Errorf("flush count = %d, want 1 (domain only; NotifyAppChanged uses ResetApp)", f.flushCnt)
 	}
-	if len(f.resetApps) != 1 || f.resetApps[0] != "app-7" {
-		t.Errorf("resetApps = %v, want [app-7]", f.resetApps)
+	if len(f.resetApps) != 1 || f.resetApps[0] != appID {
+		t.Errorf("resetApps = %v, want [%s]", f.resetApps, appID)
 	}
 }
 

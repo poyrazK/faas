@@ -17,8 +17,8 @@
 //     predicate `WHERE maintenance_mode = true` (mirror
 //     apps_route_metrics_enabled_idx at slot 00216).
 //  4. The trigger `apps_maintenance_mode_notify` exists AFTER
-//     UPDATE on apps. The trigger emits pg_notify('app_changed',
-//     NEW.id::text) ONLY when maintenance_mode IS DISTINCT FROM
+//     UPDATE on apps. The latest contract migration makes the trigger emit a
+//     canonical app_changed JSON envelope ONLY when maintenance_mode differs
 //     old.maintenance_mode. Pins:
 //     - Trigger exists, AFTER UPDATE, on apps
 //     - Trigger function body matches the expected pg_notify
@@ -29,7 +29,7 @@
 //  6. The trigger fires ONLY on maintenance_mode changes:
 //     - Update with maintenance_mode unchanged → no notification
 //     - Update with maintenance_mode flip → notification with payload
-//     'NEW.id::text'
+//     'json_build_object'
 //  7. Replay safety: re-running db.MigrateUp is a no-op
 //     (`ADD COLUMN IF NOT EXISTS` + `CREATE INDEX IF NOT
 //     EXISTS` + `CREATE OR REPLACE FUNCTION` + `DROP TRIGGER IF
@@ -142,7 +142,8 @@ func TestMigrations_00237_AppsMaintenanceMode(t *testing.T) {
 	for _, want := range []string{
 		"pg_notify",
 		"'app_changed'",
-		"NEW.id",
+		"json_build_object",
+		"'app_id'",
 		"maintenance_mode",
 		"IS DISTINCT FROM",
 	} {
@@ -212,8 +213,12 @@ func TestMigrations_00237_AppsMaintenanceMode(t *testing.T) {
 	// parallel-pgtest schemas' payloads (cluster-global LISTEN):
 	// only ours carries the seeded appID verbatim.
 	got := waitForMaintenanceNotification(t, notif, appID, 5*time.Second)
-	if got.Payload != appID {
-		t.Errorf("notification payload = %q, want %q (the trigger body emits NEW.id::text)", got.Payload, appID)
+	payload, err := db.ParseAppChangedPayload(got.Payload)
+	if err != nil {
+		t.Fatalf("notification payload = %q: %v", got.Payload, err)
+	}
+	if payload.AppID != appID || payload.Kind != "updated" || payload.Legacy {
+		t.Errorf("notification payload = %+v, want canonical updated app %s", payload, appID)
 	}
 
 	// Unrelated update (no maintenance_mode change) → no
@@ -245,19 +250,17 @@ func TestMigrations_00237_AppsMaintenanceMode(t *testing.T) {
 	}
 }
 
-// waitForMaintenanceNotification blocks up to d for the next entry
-// on the notification channel whose payload equals want verbatim.
-// The maintenance_mode_notify trigger emits NEW.id::text as the
-// payload (no JSON envelope). pg_notify is cluster-global, so a
-// sibling schema's maintenance_mode flip could leak in — we filter
-// by exact payload match.
+// waitForMaintenanceNotification blocks up to d for the next entry whose
+// decoded app_id equals want. pg_notify is cluster-global, so a sibling
+// schema's maintenance-mode flip could leak in.
 func waitForMaintenanceNotification(t *testing.T, ch <-chan db.Notification, want string, d time.Duration) db.Notification {
 	t.Helper()
 	deadline := time.After(d)
 	for {
 		select {
 		case n := <-ch:
-			if n.Payload == want {
+			payload, err := db.ParseAppChangedPayload(n.Payload)
+			if err == nil && payload.AppID == want {
 				return n
 			}
 			// Drop and keep waiting.

@@ -70,7 +70,9 @@ def sync_detailed(
 
      Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object
     key, enforces the byte/content-type policy, streams directly to the selected provider, and records a
-    completion receipt.
+    completion receipt. The public upload endpoint accepts an optional Idempotency-Key header (up to 128
+    bytes) to replay a completed or failed attempt without repeating provider work; conflicting request
+    metadata returns 409.
 
     Args:
         slug (str):
@@ -106,7 +108,9 @@ def sync(
 
      Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object
     key, enforces the byte/content-type policy, streams directly to the selected provider, and records a
-    completion receipt.
+    completion receipt. The public upload endpoint accepts an optional Idempotency-Key header (up to 128
+    bytes) to replay a completed or failed attempt without repeating provider work; conflicting request
+    metadata returns 409.
 
     Args:
         slug (str):
@@ -137,7 +141,9 @@ async def asyncio_detailed(
 
      Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object
     key, enforces the byte/content-type policy, streams directly to the selected provider, and records a
-    completion receipt.
+    completion receipt. The public upload endpoint accepts an optional Idempotency-Key header (up to 128
+    bytes) to replay a completed or failed attempt without repeating provider work; conflicting request
+    metadata returns 409.
 
     Args:
         slug (str):
@@ -171,7 +177,9 @@ async def asyncio(
 
      Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object
     key, enforces the byte/content-type policy, streams directly to the selected provider, and records a
-    completion receipt.
+    completion receipt. The public upload endpoint accepts an optional Idempotency-Key header (up to 128
+    bytes) to replay a completed or failed attempt without repeating provider work; conflicting request
+    metadata returns 409.
 
     Args:
         slug (str):

@@ -1142,6 +1142,9 @@ type OpsMetrics struct {
 	// (single-registry pattern); only schedd's ReportCapacity handler
 	// produces samples in production.
 	capacitySignatureRejected prometheus.Counter
+	// notificationPayloadRejected counts malformed cross-process notification
+	// envelopes by channel and bounded consumer name.
+	notificationPayloadRejected *prometheus.CounterVec
 	// buildDur / buildQueueWait: introduced in ADR-030 for builderd's
 	// build lifecycle. Distinct from the dur histogram (which tops out
 	// at 5 s — sub-millisecond control-plane sizing) because a build runs
@@ -2808,6 +2811,13 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_capacity_signature_rejected_total",
 		Help: "Count of CapacityReport streams rejected by scheddgrpc.Server.ReportCapacity because sched.VerifyNodeSignature returned ErrUnknownNodeKey, ErrEmptySignature, or ErrSignatureMismatch (ADR-053 §3). One increment per rejected stream (the handler rejects the whole stream on the first bad frame, not per-frame). A non-zero rate is the canary for a stale/rotated node key, a clock-skew-induced canonical-payload mismatch, or a hostile publisher. Unlabelled — the node_id is in the audit log via the Warn emission; cardinality is bounded by stream-rate.",
 	})
+	notificationPayloadRejected := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_notification_payload_rejected_total",
+		Help: "Count of malformed cross-process notification payloads rejected by a consumer, labelled by channel and bounded consumer name.",
+	}, []string{"channel", "consumer"})
+	for _, consumer := range []string{"main", "egress_drift", "placement_claim", "imaged", "sse"} {
+		notificationPayloadRejected.WithLabelValues("app_changed", consumer)
+	}
 
 	alertEvalSkippedDegradedTotal := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prefix + "_alert_eval_skipped_degraded_total",
@@ -3440,6 +3450,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditOrgEvent, authzDenied, authzAllowed,
 		wakeIDV4Fallback,
 		snapshotDiskDrift,
+		notificationPayloadRejected,
 		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
 		staleDeploymentOldestAge, staleDeploymentsReconciled,
 		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
@@ -4817,6 +4828,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		wakeIDV4Fallback:                                      wakeIDV4Fallback,
 		snapshotDiskDrift:                                     snapshotDiskDrift,
 		capacitySignatureRejected:                             capacitySignatureRejected,
+		notificationPayloadRejected:                           notificationPayloadRejected,
 		imagedOCIPull:                                         imagedOCIPull,
 		imagedOCIBlobCacheHits:                                imagedOCIBlobCacheHits,
 		imagedOCIBlobCacheMisses:                              imagedOCIBlobCacheMisses,
@@ -6726,6 +6738,15 @@ func (m *OpsMetrics) CapacitySignatureRejected() prometheus.Counter {
 		return nil
 	}
 	return m.capacitySignatureRejected
+}
+
+// ObserveNotificationPayloadRejected increments the bounded notification
+// contract-drift counter. Callers pass static channel and consumer names.
+func (m *OpsMetrics) ObserveNotificationPayloadRejected(channel, consumer string) {
+	if m == nil || m.notificationPayloadRejected == nil {
+		return
+	}
+	m.notificationPayloadRejected.WithLabelValues(channel, consumer).Inc()
 }
 
 // CPUStatsCollectDuration returns the histogram accessor for the

@@ -9,20 +9,21 @@ import (
 )
 
 func TestAppChangedInvalidatesDecodedApp(t *testing.T) {
+	const appID = "51f496b9-1c33-4756-8f7d-4153149cbba5"
 	for _, payload := range []string{
-		`{"kind":"updated","slug":"function","app_id":"app-7","lifecycle_changed":true}`,
-		`{"kind":"parked","app_id":"app-7"}`,
-		`{"kind":"woken","app_id":"app-7"}`,
-		"app-7",
-		"  app-7\n",
+		`{"kind":"updated","slug":"function","app_id":"` + appID + `","lifecycle_changed":true}`,
+		`{"kind":"parked","app_id":"` + appID + `"}`,
+		`{"kind":"woken","app_id":"` + appID + `"}`,
+		appID,
+		"  " + appID + "\n",
 	} {
 		t.Run(payload, func(t *testing.T) {
 			inv := &fakeInvalidator{}
 			handleInvalidation(context.Background(), inv, db.Notification{Channel: db.NotifyAppChanged, Payload: payload}, testLogger())
-			if !reflect.DeepEqual(inv.resetApps, []string{"app-7"}) {
+			if !reflect.DeepEqual(inv.resetApps, []string{appID}) {
 				t.Fatalf("app invalidations = %q", inv.resetApps)
 			}
-			if !reflect.DeepEqual(inv.responseCacheByApp, []string{"app-7"}) {
+			if !reflect.DeepEqual(inv.responseCacheByApp, []string{appID}) {
 				t.Fatalf("response invalidations = %q", inv.responseCacheByApp)
 			}
 			if inv.flushCnt != 0 || inv.responseCacheAll != 0 {

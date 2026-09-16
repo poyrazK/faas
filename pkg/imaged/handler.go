@@ -1329,8 +1329,9 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 			h.log.Warn("imaged: activate non-snapshot deployment failed", "deployment", p.DeploymentID, "mode", p.ExecutionMode, "err", err)
 		}
 	case db.NotifyAppChanged:
-		var p appChangedPayload
-		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil {
+		p, err := db.ParseAppChangedPayload(n.Payload)
+		if err != nil {
+			h.ops.ObserveNotificationPayloadRejected(db.NotifyAppChanged, "imaged")
 			h.log.Warn("imaged: bad app_changed payload", "err", err)
 			return
 		}
@@ -1370,14 +1371,6 @@ type deploymentChangedPayload struct {
 	// Status is the post-transition deployment status (e.g. "live",
 	// "superseded"). imaged uses it to detect supersede for F5 cleanup.
 	Status string `json:"status,omitempty"`
-}
-
-// appChangedPayload is the JSON shape apid emits on `app_changed`. imaged
-// only listens for soft-delete today (F5); other kinds (created, updated)
-// are no-ops.
-type appChangedPayload struct {
-	AppID string `json:"app_id"`
-	Kind  string `json:"kind"`
 }
 
 // PR-B: buildQueuedPayload and (*Handler).handleBuildQueued were

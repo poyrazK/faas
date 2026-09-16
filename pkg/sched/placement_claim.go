@@ -29,7 +29,6 @@ package sched
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 
 	"github.com/onebox-faas/faas/pkg/db"
@@ -90,14 +89,9 @@ func (s *PlacementClaimSubscriber) handle(ctx context.Context, n db.Notification
 		// payload.
 		return
 	}
-	var payload struct {
-		Kind  string `json:"kind"`
-		AppID string `json:"app_id"`
-		// Slug is informational (logs only); the claim path is
-		// keyed on apps.id.
-		Slug string `json:"slug"`
-	}
-	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
+	payload, err := db.ParseAppChangedPayload(n.Payload)
+	if err != nil {
+		s.engine.ops.ObserveNotificationPayloadRejected(db.NotifyAppChanged, "placement_claim")
 		s.log.Warn("sched: placement claim bad payload",
 			"channel", n.Channel, "payload", n.Payload, "err", err)
 		return

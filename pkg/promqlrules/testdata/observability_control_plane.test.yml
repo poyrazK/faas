@@ -20,6 +20,8 @@ tests:
         values: '0+1x30'
       - series: 'alertmanager_config_last_reload_successful'
         values: '0+0x30'
+      - series: 'apid_notification_payload_rejected_total{channel="app_changed",consumer="sse"}'
+        values: '0+1x30'
     alert_rule_test:
       - eval_time: 10m
         alertname: FaasPrometheusRuleEvaluationFailed
@@ -68,6 +70,20 @@ tests:
               summary: "Alertmanager configuration reload failed"
               description: "Alertmanager's most recent configuration reload was unsuccessful for 5m. The previous configuration may still be active, so verify routing and receiver changes before treating the notification path as healthy."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
+      - eval_time: 10m
+        alertname: FaasNotificationPayloadRejected
+        exp_alerts:
+          - exp_labels:
+              channel: app_changed
+              consumer: sse
+              severity: warn
+              component: notification_bus
+              family: notification_contract
+              public_status: internal
+            exp_annotations:
+              summary: "A platform daemon rejected an app_changed notification"
+              description: "The sse consumer rejected at least one app_changed payload during the last 10m. This usually indicates a mixed or broken producer contract and can leave lifecycle or security-policy caches stale."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNotificationPayloadRejected.md"
 
   - interval: 30s
     name: "notification queue above 80 percent pages"

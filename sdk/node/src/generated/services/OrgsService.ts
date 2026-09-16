@@ -492,8 +492,8 @@ export class OrgsService {
    * Invite a new member (returns plaintext token ONCE).
    * Mints a 32-byte plaintext token, hashes it via SHA-256 for
    * storage, and returns the plaintext ONCE in the response.
-   * The token expires after 14 days; admins can revoke earlier
-   * via `DELETE /v1/orgs/{slug}/invitations/{token}` (PR 7 owns
+   * The token expires after 14 days; admins can revoke earlier by
+   * row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (PR 7 owns
    * the accept surface too — see
    * `POST /v1/invitations/{token}/accept`). Role cannot be
    * `owner`; transfer-ownership is the only path to owner.
@@ -842,18 +842,18 @@ export class OrgsService {
    * Stamps `revoked_at` on a still-pending invitation via
    * `Store.RevokeOrgInvitation`. Owner + admin only
    * (`org.invite_members`, symmetric with the create-invite
-   * path). Already-consumed / already-revoked / unknown tokens
+   * path). Already-consumed / already-revoked / unknown IDs
    * collapse to a single `org_invitation_invalid` 410 (don't
    * leak which row state was reached). Emits
-   * `org.invitation.revoked` with an 8-char token-hash prefix
-   * (never the full hash) for dashboard correlation.
+   * `org.invitation.revoked` with the stable invitation ID for dashboard
+   * correlation. Plaintext tokens and hashes are never written to audit.
    *
    * @returns void
    * @throws ApiError
    */
   public static revokeInvitation({
     slug,
-    token,
+    invitationId,
   }: {
     /**
      * Org slug. Lowercase letters, digits, hyphens; must start
@@ -864,20 +864,19 @@ export class OrgsService {
      */
     slug: string,
     /**
-     * Plaintext or base64url-encoded invitation token. The URL
-     * is org-scoped here (vs the no-org-scoped peek at
-     * `GET /v1/invitations/{token}`), so admin/owner gate fires
-     * before the consume path resolves the hash.
+     * Stable invitation row ID returned by organization invitation list
+     * responses. The URL is org-scoped, so an ID from another organization
+     * is treated as an invalid invitation.
      *
      */
-    token: string,
+    invitationId: string,
   }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'DELETE',
-      url: '/v1/orgs/{slug}/invitations/{token}',
+      url: '/v1/orgs/{slug}/invitations/{invitation_id}',
       path: {
         'slug': slug,
-        'token': token,
+        'invitation_id': invitationId,
       },
       errors: {
         401: `code: unauthorized`,
@@ -885,7 +884,7 @@ export class OrgsService {
         Stable code \`org_role_forbidden\`.
         `,
         404: `code: not_found`,
-        410: `\`410 Gone\` — the token is unknown, already consumed,
+        410: `\`410 Gone\` — the ID is unknown, already consumed,
         or already revoked. Stable code \`org_invitation_invalid\`.
         `,
         429: `429. Two response shapes:

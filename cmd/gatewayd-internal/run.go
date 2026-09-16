@@ -1462,6 +1462,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// (certmagic, httpsec, :443/:80 ACME mux). This daemon stays
 	// plain HTTP on :8080; the resolved-TLS branch was removed in PR-A.
 	deps.metrics = gateway.NewMetrics()
+	backend.WithMetrics(deps.metrics)
 
 	// ADR-100 / issue #879: re-arm the per-surface cert-remint
 	// engine with the now-built metrics registry so

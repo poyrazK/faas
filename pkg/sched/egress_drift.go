@@ -32,7 +32,6 @@ package sched
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 
 	"github.com/onebox-faas/faas/pkg/db"
@@ -89,22 +88,9 @@ func (e *EgressDriftSubscriber) handle(ctx context.Context, n db.Notification) {
 		// on a misrouted payload.
 		return
 	}
-	var payload struct {
-		Kind string `json:"kind"`
-		// AppID is the apps.id UUID. Slug is informational
-		// (logs only).
-		AppID string `json:"app_id"`
-		Slug  string `json:"slug"`
-		// ADR-119: kind=static_egress_ip carries the new
-		// customer-supplied IPv4 (BYOIP, Scale-only). IP
-		// is the dotted-quad string; an empty string
-		// means "clear" (the DELETE wire shape). The
-		// fan-out re-reads the column on every event so
-		// the patch reflects the post-commit state — IP
-		// here is informational (logs only).
-		IP string `json:"ip"`
-	}
-	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
+	payload, err := db.ParseAppChangedPayload(n.Payload)
+	if err != nil {
+		e.engine.ops.ObserveNotificationPayloadRejected(db.NotifyAppChanged, "egress_drift")
 		e.log.Warn("schedd: egress drift bad payload",
 			"channel", n.Channel, "err", err, "payload_first_64", first64(n.Payload))
 		return

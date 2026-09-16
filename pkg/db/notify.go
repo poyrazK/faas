@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -42,6 +44,73 @@ type BuildQueuedPayload struct {
 	DeploymentID string `json:"deployment"`
 	AppID        string `json:"app"`
 	Kind         string `json:"kind"`
+}
+
+// AppChangedPayload is the shared wire contract for app_changed. New
+// producers always emit JSON. ParseAppChangedPayload also accepts the legacy
+// bare UUID emitted by older database triggers during a mixed-version rollout.
+type AppChangedPayload struct {
+	Kind             string `json:"kind"`
+	AppID            string `json:"app_id"`
+	AccountID        string `json:"account_id,omitempty"`
+	Slug             string `json:"slug,omitempty"`
+	WakeID           string `json:"wake_id,omitempty"`
+	IP               string `json:"ip,omitempty"`
+	LifecycleChanged bool   `json:"lifecycle_changed,omitempty"`
+	Legacy           bool   `json:"-"`
+}
+
+// ParseAppChangedPayload decodes the canonical JSON envelope and the legacy
+// raw UUID. It rejects anonymous JSON and arbitrary non-JSON strings so every
+// consumer makes the same routing and privacy decision.
+func ParseAppChangedPayload(raw string) (AppChangedPayload, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return AppChangedPayload{}, errors.New("db: empty app_changed payload")
+	}
+	if strings.HasPrefix(raw, "{") {
+		var payload AppChangedPayload
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			return AppChangedPayload{}, fmt.Errorf("db: decode app_changed payload: %w", err)
+		}
+		payload.AppID = strings.TrimSpace(payload.AppID)
+		if payload.AppID == "" {
+			return AppChangedPayload{}, errors.New("db: app_changed payload missing app_id")
+		}
+		payload.Kind = strings.TrimSpace(payload.Kind)
+		if payload.Kind == "" {
+			return AppChangedPayload{}, errors.New("db: app_changed payload missing kind")
+		}
+		return payload, nil
+	}
+	parsed, uuidErr := uuid.Parse(raw)
+	canonicalUUID := uuidErr == nil && len(raw) == 36 && parsed.String() == strings.ToLower(raw)
+	if !canonicalUUID && !isLowerHexID(raw) {
+		if uuidErr == nil {
+			uuidErr = errors.New("non-canonical UUID")
+		}
+		return AppChangedPayload{}, fmt.Errorf("db: invalid legacy app_changed app_id: %w", uuidErr)
+	}
+	return AppChangedPayload{Kind: "updated", AppID: raw, Legacy: true}, nil
+}
+
+func isLowerHexID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// MarshalAppChangedPayload returns the canonical JSON envelope. Legacy input
+// is normalized before it is forwarded to customer-visible event streams.
+func MarshalAppChangedPayload(payload AppChangedPayload) ([]byte, error) {
+	payload.Legacy = false
+	return json.Marshal(payload)
 }
 
 // Notify publishes a payload on the given channel. Deploy handoff channels
@@ -140,10 +209,10 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 // cmd/apid (verifier goroutine), and the producer side of every Store
 // mutation.
 //
-// Payload contracts (JSON, all optional fields may be omitted):
+// Payload contracts (JSON; required fields are called out below):
 //
-//	NotifyAppChanged        {"app_id":uuid,
-//	                         "kind":"updated|parked|woken|restart|...",
+//	NotifyAppChanged        {"app_id":uuid, // required
+//	                         "kind":"updated|parked|woken|restart|...", // required
 //	                         "wake_id":uuid           // restart correlation id
 //	                         "lifecycle_changed":bool} // lifecycle fields changed
 //	NotifyAppWake           {"app_id":uuid,"wake_id":uuid}

@@ -124,10 +124,16 @@ func (s *server) eventsHandler(log *slog.Logger) http.HandlerFunc {
 				if !ok {
 					return
 				}
-				if !eventsFrameForAccount(n, acct.ID, ownedApps) {
+				scoped, ok := normalizedEventsFrameForAccount(n, acct.ID, ownedApps)
+				if !ok {
+					if n.Channel == db.NotifyAppChanged {
+						if _, err := db.ParseAppChangedPayload(n.Payload); err != nil {
+							s.ops.ObserveNotificationPayloadRejected(db.NotifyAppChanged, "sse")
+						}
+					}
 					continue
 				}
-				writeSSEFrame(w, n)
+				writeSSEFrame(w, scoped)
 				if flusher != nil {
 					flusher.Flush()
 				}
@@ -191,6 +197,35 @@ func (s *server) buildOwnedAppCache(ctx context.Context, accountID string) map[s
 // unparseable or anonymous frame was sent to every connection,
 // which leaked cross-account notifications on a one-box.)
 func eventsFrameForAccount(n db.Notification, accountID string, apps map[string]struct{}) bool {
+	_, ok := normalizedEventsFrameForAccount(n, accountID, apps)
+	return ok
+}
+
+// normalizedEventsFrameForAccount also upgrades a legacy raw app_changed UUID
+// to the canonical JSON envelope before it reaches a customer-visible stream.
+func normalizedEventsFrameForAccount(n db.Notification, accountID string, apps map[string]struct{}) (db.Notification, bool) {
+	if n.Channel == db.NotifyAppChanged {
+		payload, err := db.ParseAppChangedPayload(n.Payload)
+		if err != nil {
+			return db.Notification{}, false
+		}
+		if payload.AccountID != "" {
+			if payload.AccountID != accountID {
+				return db.Notification{}, false
+			}
+		} else if _, ok := apps[payload.AppID]; !ok {
+			return db.Notification{}, false
+		}
+		if payload.Legacy {
+			wire, err := db.MarshalAppChangedPayload(payload)
+			if err != nil {
+				return db.Notification{}, false
+			}
+			n.Payload = string(wire)
+		}
+		return n, true
+	}
+
 	var f struct {
 		AppID     string `json:"app_id"`
 		AccountID string `json:"account_id"`
@@ -198,17 +233,17 @@ func eventsFrameForAccount(n db.Notification, accountID string, apps map[string]
 	if err := json.Unmarshal([]byte(n.Payload), &f); err != nil {
 		// Unparseable — drop. Logging is the caller's job (the SSE
 		// handler logs every frame; this filter only decides drop/deliver).
-		return false
+		return db.Notification{}, false
 	}
 	if f.AccountID != "" {
-		return f.AccountID == accountID
+		return n, f.AccountID == accountID
 	}
 	if f.AppID != "" {
 		_, ok := apps[f.AppID]
-		return ok
+		return n, ok
 	}
 	// Orphan: no app_id, no account_id. Drop — same reasoning as above.
-	return false
+	return db.Notification{}, false
 }
 
 // writeSSEFrame writes one pg_notify payload as an SSE frame. Event

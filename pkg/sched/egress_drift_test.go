@@ -261,11 +261,12 @@ func TestEgressDrift_FiltersToKindUpdated(t *testing.T) {
 		feed.Send(db.Notification{Channel: db.NotifyAppChanged, Payload: `{"kind":"` + k + `","app_id":"` + app.ID + `"}`})
 	}
 
-	// One valid payload — should fan out to node-A.
+	// Canonical and legacy producer shapes both fan out to node-A.
 	feed.Send(db.Notification{Channel: db.NotifyAppChanged, Payload: `{"kind":"updated","app_id":"` + app.ID + `","slug":"the-app"}`})
+	feed.Send(db.Notification{Channel: db.NotifyAppChanged, Payload: app.ID})
 
-	if err := waitFor(func() bool { return router.snapshotLen() == 1 }, 2*time.Second); err != nil {
-		t.Fatalf("expected exactly 1 valid call, got %d", router.snapshotLen())
+	if err := waitFor(func() bool { return router.snapshotLen() == 2 }, 2*time.Second); err != nil {
+		t.Fatalf("expected canonical and legacy calls, got %d", router.snapshotLen())
 	}
 	cancel()
 	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {

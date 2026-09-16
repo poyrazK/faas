@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from typing import Any, cast
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
@@ -12,14 +13,14 @@ from ...types import Response
 
 def _get_kwargs(
     slug: str,
-    token: str,
+    invitation_id: UUID,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "delete",
-        "url": "/v1/orgs/{slug}/invitations/{token}".format(
+        "url": "/v1/orgs/{slug}/invitations/{invitation_id}".format(
             slug=quote(str(slug), safe=""),
-            token=quote(str(token), safe=""),
+            invitation_id=quote(str(invitation_id), safe=""),
         ),
     }
 
@@ -73,7 +74,7 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 def sync_detailed(
     slug: str,
-    token: str,
+    invitation_id: UUID,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
@@ -82,15 +83,15 @@ def sync_detailed(
      Stamps `revoked_at` on a still-pending invitation via
     `Store.RevokeOrgInvitation`. Owner + admin only
     (`org.invite_members`, symmetric with the create-invite
-    path). Already-consumed / already-revoked / unknown tokens
+    path). Already-consumed / already-revoked / unknown IDs
     collapse to a single `org_invitation_invalid` 410 (don't
     leak which row state was reached). Emits
-    `org.invitation.revoked` with an 8-char token-hash prefix
-    (never the full hash) for dashboard correlation.
+    `org.invitation.revoked` with the stable invitation ID for dashboard
+    correlation. Plaintext tokens and hashes are never written to audit.
 
     Args:
         slug (str):
-        token (str):
+        invitation_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -102,7 +103,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
-        token=token,
+        invitation_id=invitation_id,
     )
 
     response = client.get_httpx_client().request(
@@ -114,7 +115,7 @@ def sync_detailed(
 
 def sync(
     slug: str,
-    token: str,
+    invitation_id: UUID,
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
@@ -123,15 +124,15 @@ def sync(
      Stamps `revoked_at` on a still-pending invitation via
     `Store.RevokeOrgInvitation`. Owner + admin only
     (`org.invite_members`, symmetric with the create-invite
-    path). Already-consumed / already-revoked / unknown tokens
+    path). Already-consumed / already-revoked / unknown IDs
     collapse to a single `org_invitation_invalid` 410 (don't
     leak which row state was reached). Emits
-    `org.invitation.revoked` with an 8-char token-hash prefix
-    (never the full hash) for dashboard correlation.
+    `org.invitation.revoked` with the stable invitation ID for dashboard
+    correlation. Plaintext tokens and hashes are never written to audit.
 
     Args:
         slug (str):
-        token (str):
+        invitation_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,14 +144,14 @@ def sync(
 
     return sync_detailed(
         slug=slug,
-        token=token,
+        invitation_id=invitation_id,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
     slug: str,
-    token: str,
+    invitation_id: UUID,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
@@ -159,15 +160,15 @@ async def asyncio_detailed(
      Stamps `revoked_at` on a still-pending invitation via
     `Store.RevokeOrgInvitation`. Owner + admin only
     (`org.invite_members`, symmetric with the create-invite
-    path). Already-consumed / already-revoked / unknown tokens
+    path). Already-consumed / already-revoked / unknown IDs
     collapse to a single `org_invitation_invalid` 410 (don't
     leak which row state was reached). Emits
-    `org.invitation.revoked` with an 8-char token-hash prefix
-    (never the full hash) for dashboard correlation.
+    `org.invitation.revoked` with the stable invitation ID for dashboard
+    correlation. Plaintext tokens and hashes are never written to audit.
 
     Args:
         slug (str):
-        token (str):
+        invitation_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -179,7 +180,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
-        token=token,
+        invitation_id=invitation_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -189,7 +190,7 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
-    token: str,
+    invitation_id: UUID,
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
@@ -198,15 +199,15 @@ async def asyncio(
      Stamps `revoked_at` on a still-pending invitation via
     `Store.RevokeOrgInvitation`. Owner + admin only
     (`org.invite_members`, symmetric with the create-invite
-    path). Already-consumed / already-revoked / unknown tokens
+    path). Already-consumed / already-revoked / unknown IDs
     collapse to a single `org_invitation_invalid` 410 (don't
     leak which row state was reached). Emits
-    `org.invitation.revoked` with an 8-char token-hash prefix
-    (never the full hash) for dashboard correlation.
+    `org.invitation.revoked` with the stable invitation ID for dashboard
+    correlation. Plaintext tokens and hashes are never written to audit.
 
     Args:
         slug (str):
-        token (str):
+        invitation_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -219,7 +220,7 @@ async def asyncio(
     return (
         await asyncio_detailed(
             slug=slug,
-            token=token,
+            invitation_id=invitation_id,
             client=client,
         )
     ).parsed
