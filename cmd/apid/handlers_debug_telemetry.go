@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"sort"
@@ -1330,25 +1331,38 @@ func (s *server) debugReplayHandler(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
 		return
 	}
-	inv, problem := s.enqueueDebugReplay(r.Context(), app, acct, r.PathValue("req_id"))
+	var req api.DebugReplayRequest
+	if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	result, problem := s.enqueueDebugReplay(r.Context(), app, acct, r.PathValue("req_id"), req.MirrorDeploymentID)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, api.DebugReplayResponse{
-		MirrorInvocationID: inv.ID,
+		MirrorInvocationID: result.Invocation.ID,
 		Status:             "queued",
+		SourceDeploymentID: result.SourceDeploymentID,
+		MirrorDeploymentID: result.MirrorDeploymentID,
 	})
+}
+
+type debugReplayEnqueueResult struct {
+	Invocation         state.Invocation
+	SourceDeploymentID string
+	MirrorDeploymentID string
 }
 
 // enqueueDebugReplay is the shared replay core for the JSON API and the
 // session-authenticated dashboard form. Keeping the ownership, retention,
 // mirror-rule, and metadata checks in one function prevents the browser
 // surface from drifting into a less restrictive replay path.
-func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct state.Account, reqID string) (state.Invocation, *api.Problem) {
+func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct state.Account, reqID, requestedMirrorDeploymentID string) (debugReplayEnqueueResult, *api.Problem) {
 	parsedID, err := uuid.Parse(reqID)
 	if err != nil {
-		return state.Invocation{}, api.ErrValidation("req_id must be a UUID")
+		return debugReplayEnqueueResult{}, api.ErrValidation("req_id must be a UUID")
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(api.MustLimitsFor(acct.Plan).DebugTelemetryRetentionDays) * 24 * time.Hour
@@ -1359,28 +1373,32 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 		ReceivedAt_2: pgtype.Timestamptz{Time: now, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return state.Invocation{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found")
+		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found")
 	}
 	if err != nil {
-		return state.Invocation{}, api.ErrCapacity("get debug replay request")
+		return debugReplayEnqueueResult{}, api.ErrCapacity("get debug replay request")
 	}
 	depID := uuidFromPg(row.DeploymentID)
-	rules, err := s.store.ListMirrorRules(ctx, app.ID)
-	if err != nil {
-		return state.Invocation{}, api.ErrCapacity("find debug replay mirror rule")
-	}
-	var rule state.MirrorRule
-	for _, candidate := range rules {
-		if candidate.Enabled && candidate.SourceDeploymentID == depID {
-			rule = candidate
-			break
+	requestedMirrorDeploymentID = strings.TrimSpace(requestedMirrorDeploymentID)
+	if requestedMirrorDeploymentID != "" {
+		if _, err := uuid.Parse(requestedMirrorDeploymentID); err != nil {
+			return debugReplayEnqueueResult{}, api.ErrValidation("mirror_deployment_id must be a UUID")
 		}
 	}
-	if rule.ID == "" {
-		return state.Invocation{}, api.NewProblem(http.StatusConflict,
+	rules, err := s.store.ListMirrorRules(ctx, app.ID)
+	if err != nil {
+		return debugReplayEnqueueResult{}, api.ErrCapacity("find debug replay mirror rule")
+	}
+	rule, found := selectDebugReplayMirrorRule(rules, depID, requestedMirrorDeploymentID)
+	if !found {
+		message := "the request's serving deployment has no enabled mirror rule; enable a mirror rule for that deployment before replaying"
+		if requestedMirrorDeploymentID != "" {
+			message = "the requested mirror deployment is not an enabled target for the request's serving deployment"
+		}
+		return debugReplayEnqueueResult{}, api.NewProblem(http.StatusConflict,
 			api.CodeDebugReplayUnsupported,
 			"Debug replay is unavailable",
-			"the request's serving deployment has no enabled mirror rule; enable a mirror rule for that deployment before replaying")
+			message)
 	}
 	metadata := map[string]string{
 		api.DebugReplayRequestIDHeader:     reqID,
@@ -1394,7 +1412,7 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 	}
 	headerBytes, err := json.Marshal(metadata)
 	if err != nil {
-		return state.Invocation{}, api.ErrCapacity("build debug replay envelope")
+		return debugReplayEnqueueResult{}, api.ErrCapacity("build debug replay envelope")
 	}
 	inv, err := s.store.EnqueueInvocation(ctx, state.Invocation{
 		AppID:     app.ID,
@@ -1407,7 +1425,24 @@ func (s *server) enqueueDebugReplay(ctx context.Context, app state.App, acct sta
 		DueAt:     now,
 	})
 	if err != nil {
-		return state.Invocation{}, api.ErrCapacity("enqueue debug replay")
+		return debugReplayEnqueueResult{}, api.ErrCapacity("enqueue debug replay")
 	}
-	return inv, nil
+	return debugReplayEnqueueResult{
+		Invocation:         inv,
+		SourceDeploymentID: depID,
+		MirrorDeploymentID: rule.MirrorDeploymentID,
+	}, nil
+}
+
+// selectDebugReplayMirrorRule keeps replay target selection constrained to an
+// enabled rule whose source is the deployment that served the retained
+// request. An empty target preserves the legacy first-match behavior.
+func selectDebugReplayMirrorRule(rules []state.MirrorRule, sourceDeploymentID, requestedMirrorDeploymentID string) (state.MirrorRule, bool) {
+	for _, rule := range rules {
+		if rule.Enabled && rule.SourceDeploymentID == sourceDeploymentID &&
+			(requestedMirrorDeploymentID == "" || rule.MirrorDeploymentID == requestedMirrorDeploymentID) {
+			return rule, true
+		}
+	}
+	return state.MirrorRule{}, false
 }

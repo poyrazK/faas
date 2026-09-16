@@ -186,6 +186,8 @@ export type { DebugRegressionActionRequest } from './DebugRegressionActionReques
 export type { DebugRegressionActionResponse } from './DebugRegressionActionResponse.js';
 export type { DebugRegressionItem } from './DebugRegressionItem.js';
 export type { DebugRegressionsResponse } from './DebugRegressionsResponse.js';
+export type { DebugReplayComparison } from './DebugReplayComparison.js';
+export type { DebugReplayRequest } from './DebugReplayRequest.js';
 export type { DebugReplayResponse } from './DebugReplayResponse.js';
 export type { DebugRequestCorrelation } from './DebugRequestCorrelation.js';
 export type { DebugRequestCorrelationStage } from './DebugRequestCorrelationStage.js';

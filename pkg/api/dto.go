@@ -8236,6 +8236,15 @@ type DebugCompareResponse struct {
 	Routes []DebugCompareRouteStats `json:"routes"`
 }
 
+// DebugReplayRequest is the optional body for POST
+// /v1/apps/{slug}/debug/requests/{req_id}/replay. An empty target preserves
+// the legacy behavior: use the enabled mirror rule for the deployment that
+// served the retained request. Supplying MirrorDeploymentID selects one of
+// the app's enabled mirror rules for that source deployment.
+type DebugReplayRequest struct {
+	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
+}
+
 // Debug replay metadata is carried through the durable invocation envelope
 // rather than persisted as raw request headers/body. Telemetry deliberately
 // excludes credentials and bodies; these platform-owned headers let schedd's
@@ -8255,6 +8264,22 @@ const (
 type DebugReplayResponse struct {
 	MirrorInvocationID string `json:"mirror_invocation_id,omitempty"`
 	Status             string `json:"status"`
+	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
+	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
+}
+
+// DebugReplayComparison is the safe, metadata-only result written into the
+// durable replay invocation. It intentionally contains no request body,
+// headers, response body, or customer span attributes.
+type DebugReplayComparison struct {
+	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
+	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
+	SourceStatusCode   int    `json:"source_status_code"`
+	MirrorStatusCode   int    `json:"mirror_status_code"`
+	SourceLatencyMS    int    `json:"source_latency_ms"`
+	MirrorLatencyMS    int    `json:"mirror_latency_ms"`
+	StatusDiff         bool   `json:"status_diff"`
+	Crashed            bool   `json:"crashed"`
 }
 
 // ---- SAFE-RELEASES-R (issue #976 / ADR-122 / Mega PR #2 commit 6) ----

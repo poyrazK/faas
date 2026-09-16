@@ -4917,6 +4917,12 @@ paths:
         and platform-owned replay metadata only. The returned invocation ID
         can be polled for the comparison result. Plan-gated by
         DebugTelemetryEnabled; requires ScopesDeployWriteSurface.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DebugReplayRequest'
       x-since: 2026-08
       responses:
         '202':
@@ -29313,6 +29319,28 @@ components:
       properties:
         mirror_invocation_id: { type: [string, 'null'], format: uuid, description: "Durable invocation ID for polling replay status and comparison results." }
         status: { type: string, enum: [queued, running, completed, failed] }
+        source_deployment_id: { type: [string, 'null'], format: uuid, description: "Deployment that served the retained request." }
+        mirror_deployment_id: { type: [string, 'null'], format: uuid, description: "Enabled mirror target selected for this replay." }
+
+    DebugReplayRequest:
+      type: object
+      additionalProperties: false
+      description: "Optional target selection for a metadata-only debugger replay. Empty body preserves the default mirror rule selected for the retained request's serving deployment."
+      properties:
+        mirror_deployment_id: { type: [string, 'null'], format: uuid, description: "Enabled mirror target deployment for the retained request's serving deployment." }
+
+    DebugReplayComparison:
+      type: object
+      description: "Safe metadata-only comparison written to a completed debugger replay invocation."
+      properties:
+        source_deployment_id: { type: [string, 'null'], format: uuid }
+        mirror_deployment_id: { type: [string, 'null'], format: uuid }
+        source_status_code: { type: integer }
+        mirror_status_code: { type: integer }
+        source_latency_ms: { type: integer }
+        mirror_latency_ms: { type: integer }
+        status_diff: { type: boolean }
+        crashed: { type: boolean }
 
 
   responses:

@@ -22,6 +22,7 @@ import type { DebugCoverageResponse } from '../models/DebugCoverageResponse.js';
 import type { DebugRegressionActionRequest } from '../models/DebugRegressionActionRequest.js';
 import type { DebugRegressionActionResponse } from '../models/DebugRegressionActionResponse.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
+import type { DebugReplayRequest } from '../models/DebugReplayRequest.js';
 import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
 import type { DebugRequestEvidenceResponse } from '../models/DebugRequestEvidenceResponse.js';
 import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
@@ -1577,6 +1578,7 @@ export class AppsService {
   public static replayAppDebugRequest({
     slug,
     reqId,
+    requestBody,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1586,6 +1588,7 @@ export class AppsService {
      * Request id from the debug requests list.
      */
     reqId: string,
+    requestBody?: DebugReplayRequest,
   }): CancelablePromise<DebugReplayResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -1594,6 +1597,8 @@ export class AppsService {
         'slug': slug,
         'req_id': reqId,
       },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,

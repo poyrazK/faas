@@ -358,6 +358,8 @@ from .debug_regression_action_response import DebugRegressionActionResponse
 from .debug_regression_item import DebugRegressionItem
 from .debug_regression_item_state import DebugRegressionItemState
 from .debug_regressions_response import DebugRegressionsResponse
+from .debug_replay_comparison import DebugReplayComparison
+from .debug_replay_request import DebugReplayRequest
 from .debug_replay_response import DebugReplayResponse
 from .debug_replay_response_status import DebugReplayResponseStatus
 from .debug_request_correlation import DebugRequestCorrelation
@@ -1477,6 +1479,8 @@ __all__ = (
     "DebugRegressionItem",
     "DebugRegressionItemState",
     "DebugRegressionsResponse",
+    "DebugReplayComparison",
+    "DebugReplayRequest",
     "DebugReplayResponse",
     "DebugReplayResponseStatus",
     "DebugRequestCorrelation",

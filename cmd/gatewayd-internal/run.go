@@ -493,14 +493,16 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	sourceLatency, _ := strconv.Atoi(metadata[api.DebugReplaySourceLatencyHeader])
 	statusDiff := sourceStatus != statusCode
 	crashed := statusCode == 0 || statusCode >= http.StatusInternalServerError
-	result := struct {
-		SourceStatusCode int  `json:"source_status_code"`
-		MirrorStatusCode int  `json:"mirror_status_code"`
-		SourceLatencyMs  int  `json:"source_latency_ms"`
-		MirrorLatencyMs  int  `json:"mirror_latency_ms"`
-		StatusDiff       bool `json:"status_diff"`
-		Crashed          bool `json:"crashed"`
-	}{sourceStatus, statusCode, sourceLatency, latencyMs, statusDiff, crashed}
+	result := api.DebugReplayComparison{
+		SourceDeploymentID: metadata[api.DebugReplayDeploymentIDHeader],
+		MirrorDeploymentID: rule.MirrorDeploymentID,
+		SourceStatusCode:   sourceStatus,
+		MirrorStatusCode:   statusCode,
+		SourceLatencyMS:    sourceLatency,
+		MirrorLatencyMS:    latencyMs,
+		StatusDiff:         statusDiff,
+		Crashed:            crashed,
+	}
 	if encoded, marshalErr := json.Marshal(result); marshalErr == nil {
 		out.Result = encoded
 	}

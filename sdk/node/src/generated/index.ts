@@ -192,6 +192,8 @@ export type { DebugRegressionActionRequest } from './models/DebugRegressionActio
 export type { DebugRegressionActionResponse } from './models/DebugRegressionActionResponse.js';
 export type { DebugRegressionItem } from './models/DebugRegressionItem.js';
 export type { DebugRegressionsResponse } from './models/DebugRegressionsResponse.js';
+export type { DebugReplayComparison } from './models/DebugReplayComparison.js';
+export type { DebugReplayRequest } from './models/DebugReplayRequest.js';
 export type { DebugReplayResponse } from './models/DebugReplayResponse.js';
 export type { DebugRequestCorrelation } from './models/DebugRequestCorrelation.js';
 export type { DebugRequestCorrelationStage } from './models/DebugRequestCorrelationStage.js';

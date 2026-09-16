@@ -329,7 +329,7 @@ func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
 		return
 	}
-	inv, problem := s.enqueueDebugReplay(r.Context(), app, acct, reqID)
+	result, problem := s.enqueueDebugReplay(r.Context(), app, acct, reqID, "")
 	values := url.Values{
 		"request_id":     []string{reqID},
 		"since":          []string{strings.TrimSpace(r.FormValue("since"))},
@@ -346,7 +346,7 @@ func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 		values.Set("error", problem.Code)
 	} else {
 		values.Set("action", "replay_queued")
-		values.Set("replay_id", inv.ID)
+		values.Set("replay_id", result.Invocation.ID)
 	}
 	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"/debug?"+values.Encode(), http.StatusSeeOther)
 }

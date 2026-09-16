@@ -7,15 +7,19 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.debug_replay_request import DebugReplayRequest
 from ...models.debug_replay_response import DebugReplayResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     req_id: UUID,
+    *,
+    body: DebugReplayRequest | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -25,6 +29,12 @@ def _get_kwargs(
         ),
     }
 
+    if not isinstance(body, Unset):
+        _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -88,6 +98,7 @@ def sync_detailed(
     req_id: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: DebugReplayRequest | Unset = UNSET,
 ) -> Response[DebugReplayResponse | Problem]:
     """Replay a retained request through its mirror rule (ADR-127).
 
@@ -101,6 +112,9 @@ def sync_detailed(
     Args:
         slug (str):
         req_id (UUID):
+        body (DebugReplayRequest | Unset): Optional target selection for a metadata-only debugger
+            replay. Empty body preserves the default mirror rule selected for the retained request's
+            serving deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -113,6 +127,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         req_id=req_id,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -127,6 +142,7 @@ def sync(
     req_id: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: DebugReplayRequest | Unset = UNSET,
 ) -> DebugReplayResponse | Problem | None:
     """Replay a retained request through its mirror rule (ADR-127).
 
@@ -140,6 +156,9 @@ def sync(
     Args:
         slug (str):
         req_id (UUID):
+        body (DebugReplayRequest | Unset): Optional target selection for a metadata-only debugger
+            replay. Empty body preserves the default mirror rule selected for the retained request's
+            serving deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -153,6 +172,7 @@ def sync(
         slug=slug,
         req_id=req_id,
         client=client,
+        body=body,
     ).parsed
 
 
@@ -161,6 +181,7 @@ async def asyncio_detailed(
     req_id: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: DebugReplayRequest | Unset = UNSET,
 ) -> Response[DebugReplayResponse | Problem]:
     """Replay a retained request through its mirror rule (ADR-127).
 
@@ -174,6 +195,9 @@ async def asyncio_detailed(
     Args:
         slug (str):
         req_id (UUID):
+        body (DebugReplayRequest | Unset): Optional target selection for a metadata-only debugger
+            replay. Empty body preserves the default mirror rule selected for the retained request's
+            serving deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -186,6 +210,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         req_id=req_id,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -198,6 +223,7 @@ async def asyncio(
     req_id: UUID,
     *,
     client: AuthenticatedClient | Client,
+    body: DebugReplayRequest | Unset = UNSET,
 ) -> DebugReplayResponse | Problem | None:
     """Replay a retained request through its mirror rule (ADR-127).
 
@@ -211,6 +237,9 @@ async def asyncio(
     Args:
         slug (str):
         req_id (UUID):
+        body (DebugReplayRequest | Unset): Optional target selection for a metadata-only debugger
+            replay. Empty body preserves the default mirror rule selected for the retained request's
+            serving deployment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -225,5 +254,6 @@ async def asyncio(
             slug=slug,
             req_id=req_id,
             client=client,
+            body=body,
         )
     ).parsed
