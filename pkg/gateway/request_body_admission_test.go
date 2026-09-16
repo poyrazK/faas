@@ -96,6 +96,29 @@ func TestAdmitRequestBodySpillsLargeBodyAndRemovesFile(t *testing.T) {
 	}
 }
 
+func TestHandlerRemovesSpoolWhenWakeFails(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("TMPDIR", tempDir)
+
+	h, backend, _ := newTestHandler(t)
+	backend.wakeErr = errors.New("scheduler unavailable")
+	payload := bytes.Repeat([]byte("x"), int(requestBodyMemoryThreshold)+1)
+	req := httptest.NewRequest(http.MethodPost, "http://"+backend.host+"/invoke", bytes.NewReader(payload))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+	if rec.Code < 500 {
+		t.Fatalf("status = %d, want wake failure", rec.Code)
+	}
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("request spool remains after wake failure: %v", entries)
+	}
+}
+
 func TestAdmitRequestBodyReturnsStableTooLargeProblem(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "http://example.test/invoke", bytes.NewBufferString("12345"))

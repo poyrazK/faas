@@ -5627,6 +5627,15 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// The handler owns the admitted replacement body. The proxy normally
+	// closes it after forwarding, but wake, burst, or capacity failures can
+	// return before a proxy exists. Keep a reference to this exact body because
+	// mirror preparation may later replace r.Body; closing it releases and
+	// unlinks any large-upload spool file on every handler exit path.
+	if r.Body != nil && r.Body != http.NoBody && !isUpgradeRequest(r) {
+		admittedBody := r.Body
+		defer func() { _ = admittedBody.Close() }()
+	}
 
 	burstDone := h.burstPressure.begin(app.ID)
 	defer burstDone()
