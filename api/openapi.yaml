@@ -10495,6 +10495,45 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/promote:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the environment promotion.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Target environment receiving the promotion.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    post:
+      tags: [projects]
+      operationId: promoteProjectEnvironment
+      summary: Execute a guarded promotion between project environments.
+      description: |
+        Revalidates the supplied promotion token against current live
+        deployments and environment configuration before promoting immutable
+        source artifacts. Protected targets also require an approval token
+        issued for that exact promotion. Target configuration and secrets are
+        never copied from the source environment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoteProjectEnvironmentRequest' }
+      responses:
+        '200':
+          description: Promotion result for each project workload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/delete-preview:
     parameters:
       - name: slug
@@ -21941,11 +21980,11 @@ components:
         protected: { type: boolean, default: false }
 
     CreateProjectEnvironmentApprovalRequest:
-      description: Request to approve one exact plan for a protected environment.
+      description: Request to approve one exact plan for a protected environment. Provide exactly one of plan_token or promotion_token.
       type: object
-      required: [plan_token]
       properties:
         plan_token: { type: string, minLength: 1, description: Exact plan token returned by the scan endpoint. }
+        promotion_token: { type: string, minLength: 1, description: Exact promotion token returned by the environment promotion preview. }
 
     ProjectEnvironmentApprovalResponse:
       description: Short-lived credential for applying the approved plan. The approval token is returned only here.
@@ -21955,6 +21994,43 @@ components:
         approval_token: { type: string, minLength: 1 }
         environment: { type: string }
         expires_at: { type: string, format: date-time }
+
+    PromoteProjectEnvironmentRequest:
+      description: Request to execute one exact environment promotion.
+      type: object
+      required: [from_environment, promotion_token]
+      properties:
+        from_environment:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
+        promotion_token: { type: string, minLength: 1, description: Exact promotion token returned by the preview endpoint. }
+        approval_token: { type: string, minLength: 1, description: Short-lived approval for a protected target environment. }
+
+    ProjectEnvironmentPromotionWorkloadResponse:
+      description: Result for one workload in an environment promotion.
+      type: object
+      required: [workload_slug, workload_name, status]
+      properties:
+        workload_slug: { type: string }
+        workload_name: { type: string }
+        status:
+          type: string
+          enum: [promoted, unchanged]
+        source_deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        target_deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+
+    ProjectEnvironmentPromotionResponse:
+      description: Result of a guarded project environment promotion.
+      type: object
+      required: [project_slug, from_environment, to_environment, promotion_hash, workloads]
+      properties:
+        project_slug: { type: string }
+        from_environment: { type: string }
+        to_environment: { type: string }
+        promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        workloads:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionWorkloadResponse' }
 
     UpdateProjectEnvironmentRequest:
       description: Protection policy update for a project environment.

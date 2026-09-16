@@ -8,48 +8,57 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="CreateProjectEnvironmentApprovalRequest")
+T = TypeVar("T", bound="PromoteProjectEnvironmentRequest")
 
 
 @_attrs_define
-class CreateProjectEnvironmentApprovalRequest:
-    """Request to approve one exact plan for a protected environment. Provide exactly one of plan_token or promotion_token."""
+class PromoteProjectEnvironmentRequest:
+    """Request to execute one exact environment promotion."""
 
-    plan_token: str | Unset = UNSET
-    """Exact plan token returned by the scan endpoint."""
-    promotion_token: str | Unset = UNSET
-    """Exact promotion token returned by the environment promotion preview."""
+    from_environment: str
+    promotion_token: str
+    """Exact promotion token returned by the preview endpoint."""
+    approval_token: str | Unset = UNSET
+    """Short-lived approval for a protected target environment."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        plan_token = self.plan_token
+        from_environment = self.from_environment
 
         promotion_token = self.promotion_token
 
+        approval_token = self.approval_token
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if plan_token is not UNSET:
-            field_dict["plan_token"] = plan_token
-        if promotion_token is not UNSET:
-            field_dict["promotion_token"] = promotion_token
+        field_dict.update(
+            {
+                "from_environment": from_environment,
+                "promotion_token": promotion_token,
+            }
+        )
+        if approval_token is not UNSET:
+            field_dict["approval_token"] = approval_token
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        plan_token = d.pop("plan_token", UNSET)
+        from_environment = d.pop("from_environment")
 
-        promotion_token = d.pop("promotion_token", UNSET)
+        promotion_token = d.pop("promotion_token")
 
-        create_project_environment_approval_request = cls(
-            plan_token=plan_token,
+        approval_token = d.pop("approval_token", UNSET)
+
+        promote_project_environment_request = cls(
+            from_environment=from_environment,
             promotion_token=promotion_token,
+            approval_token=approval_token,
         )
 
-        create_project_environment_approval_request.additional_properties = d
-        return create_project_environment_approval_request
+        promote_project_environment_request.additional_properties = d
+        return promote_project_environment_request
 
     @property
     def additional_keys(self) -> list[str]:

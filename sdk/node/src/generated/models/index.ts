@@ -421,12 +421,15 @@ export type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentC
 export type { ProjectEnvironmentConfigResponse } from './ProjectEnvironmentConfigResponse.js';
 export type { ProjectEnvironmentPromotionChange } from './ProjectEnvironmentPromotionChange.js';
 export type { ProjectEnvironmentPromotionPreviewResponse } from './ProjectEnvironmentPromotionPreviewResponse.js';
+export type { ProjectEnvironmentPromotionResponse } from './ProjectEnvironmentPromotionResponse.js';
+export type { ProjectEnvironmentPromotionWorkloadResponse } from './ProjectEnvironmentPromotionWorkloadResponse.js';
 export type { ProjectEnvironmentResponse } from './ProjectEnvironmentResponse.js';
 export type { ProjectResponse } from './ProjectResponse.js';
 export type { ProjectScanRequest } from './ProjectScanRequest.js';
 export type { ProjectSourceRefScanRequest } from './ProjectSourceRefScanRequest.js';
 export type { ProjectSummaryResponse } from './ProjectSummaryResponse.js';
 export type { ProjectWorkloadResponse } from './ProjectWorkloadResponse.js';
+export type { PromoteProjectEnvironmentRequest } from './PromoteProjectEnvironmentRequest.js';
 export type { PublicAuthBlock } from './PublicAuthBlock.js';
 export type { PublicAuthStatus } from './PublicAuthStatus.js';
 export type { PublicStatusComponent } from './PublicStatusComponent.js';

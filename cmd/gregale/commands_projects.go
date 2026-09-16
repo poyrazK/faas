@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -34,7 +35,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|preview>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|preview|promote>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -48,10 +49,91 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentProtection(args[1:], false)
 	case "preview", "promotion-preview":
 		return cmdProjectsEnvironmentPromotionPreview(args[1:])
+	case "promote":
+		return cmdProjectsEnvironmentPromote(args[1:])
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown project environments subcommand %q", args[0]), "projects environments")
 		return 1
 	}
+}
+
+func cmdProjectsEnvironmentPromote(args []string) int {
+	flags, positional := splitArgsForFlags(args, "yes")
+	fs := newFlagSet("projects-environments-promote", flag.ContinueOnError)
+	from := fs.String("from", "", "source environment")
+	to := fs.String("to", "", "target environment")
+	yes := fs.Bool("yes", false, "confirm the promotion")
+	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments promote <project-slug> --from <environment> --to <environment> [--yes]", "projects environments")
+		return 1
+	}
+	if *from == *to {
+		return printErr("Invalid environments", fmt.Errorf("--from and --to must be different"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	preview, err := client.GetProjectEnvironmentPromotionPreview(context.Background(), positional[0], *to, *from)
+	if err != nil {
+		return printErr("Promotion preview failed", err)
+	}
+	if !preview.CanPromote {
+		if jsonOutput {
+			return jsonOut(writeJSON(preview))
+		}
+		return printErr("Promotion is blocked", errors.New(strings.Join(preview.BlockingReasons, "; ")))
+	}
+	if !*yes {
+		if jsonOutput {
+			if code := jsonOut(writeJSON(preview)); code != 0 {
+				return code
+			}
+			return printErr("Confirmation required", errors.New("project environment promotion requires --yes in JSON mode"))
+		}
+		if stdoutIsTTY() && stdinIsTTY() {
+			_, _ = fmt.Fprintf(osStdout, "Promote %s: %s -> %s (%d workload changes)? [y/N] ", preview.ProjectSlug, preview.FromEnvironment, preview.ToEnvironment, promotionChangeCount(preview))
+			line, readErr := readConfirmationLine(osStdin)
+			if readErr != nil || (strings.ToLower(strings.TrimSpace(line)) != "y" && strings.ToLower(strings.TrimSpace(line)) != "yes") {
+				return printErr("Aborted by user", errors.New("promotion was not confirmed"))
+			}
+		} else {
+			return printErr("Confirmation required", errors.New("project environment promotion requires --yes when stdin or stdout is not a TTY"))
+		}
+	}
+	approvalToken := ""
+	if preview.ApprovalRequired {
+		approval, approvalErr := client.ApproveProjectEnvironment(context.Background(), positional[0], *to,
+			api.CreateProjectEnvironmentApprovalRequest{PromotionToken: preview.PromotionToken})
+		if approvalErr != nil {
+			return printErr("Protected environment approval failed", approvalErr)
+		}
+		approvalToken = approval.ApprovalToken
+	}
+	promoted, err := client.PromoteProjectEnvironment(context.Background(), positional[0], *to, api.PromoteProjectEnvironmentRequest{
+		FromEnvironment: *from, PromotionToken: preview.PromotionToken, ApprovalToken: approvalToken,
+	})
+	if err != nil {
+		return printErr("Promotion failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(promoted))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Promoted %s: %s -> %s\n", promoted.ProjectSlug, promoted.FromEnvironment, promoted.ToEnvironment)
+	for _, workload := range promoted.Workloads {
+		_, _ = fmt.Fprintf(osStdout, "  %-20s %s\n", workload.WorkloadSlug, workload.Status)
+	}
+	return 0
+}
+
+func promotionChangeCount(preview api.ProjectEnvironmentPromotionPreviewResponse) int {
+	count := 0
+	for _, change := range preview.Changes {
+		if change.Kind != "unchanged" {
+			count++
+		}
+	}
+	return count
 }
 
 func cmdProjectsEnvironmentPromotionPreview(args []string) int {

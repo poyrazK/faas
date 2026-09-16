@@ -72,9 +72,12 @@ type UpdateProjectEnvironmentRequest struct {
 }
 
 // CreateProjectEnvironmentApprovalRequest approves one exact plan for a
-// protected project environment.
+// protected project environment. Exactly one token field must be supplied:
+// plan_token for a source upload apply, or promotion_token for an environment
+// promotion.
 type CreateProjectEnvironmentApprovalRequest struct {
-	PlanToken string `json:"plan_token"`
+	PlanToken      string `json:"plan_token,omitempty"`
+	PromotionToken string `json:"promotion_token,omitempty"`
 }
 
 // ProjectEnvironmentApprovalResponse contains a short-lived credential that
@@ -156,4 +159,34 @@ type ProjectEnvironmentPromotionPreviewResponse struct {
 	Changes                []ProjectEnvironmentPromotionChange  `json:"changes"`
 	PromotionHash          string                               `json:"promotion_hash"`
 	PromotionToken         string                               `json:"promotion_token"`
+}
+
+// PromoteProjectEnvironmentRequest executes a previously previewed
+// promotion. The promotion token is revalidated against current live
+// deployments and environment configuration before any deployment changes.
+type PromoteProjectEnvironmentRequest struct {
+	FromEnvironment string `json:"from_environment"`
+	PromotionToken  string `json:"promotion_token"`
+	ApprovalToken   string `json:"approval_token,omitempty"`
+}
+
+// ProjectEnvironmentPromotionWorkloadResponse reports one workload's
+// promotion result. Promoted deployments reuse the source rootfs artifact;
+// environment configuration and secrets remain target-scoped.
+type ProjectEnvironmentPromotionWorkloadResponse struct {
+	WorkloadSlug       string `json:"workload_slug"`
+	WorkloadName       string `json:"workload_name"`
+	Status             string `json:"status"`
+	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
+	TargetDeploymentID string `json:"target_deployment_id,omitempty"`
+}
+
+// ProjectEnvironmentPromotionResponse is returned after a guarded promotion
+// has applied all changed workloads in the current preview.
+type ProjectEnvironmentPromotionResponse struct {
+	ProjectSlug     string                                        `json:"project_slug"`
+	FromEnvironment string                                        `json:"from_environment"`
+	ToEnvironment   string                                        `json:"to_environment"`
+	PromotionHash   string                                        `json:"promotion_hash"`
+	Workloads       []ProjectEnvironmentPromotionWorkloadResponse `json:"workloads"`
 }

@@ -815,12 +815,16 @@ from .project_environment_promotion_change_target_revision_kind import (
     ProjectEnvironmentPromotionChangeTargetRevisionKind,
 )
 from .project_environment_promotion_preview_response import ProjectEnvironmentPromotionPreviewResponse
+from .project_environment_promotion_response import ProjectEnvironmentPromotionResponse
+from .project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
+from .project_environment_promotion_workload_response_status import ProjectEnvironmentPromotionWorkloadResponseStatus
 from .project_environment_response import ProjectEnvironmentResponse
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
 from .project_summary_response import ProjectSummaryResponse
 from .project_workload_response import ProjectWorkloadResponse
+from .promote_project_environment_request import PromoteProjectEnvironmentRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -1893,12 +1897,16 @@ __all__ = (
     "ProjectEnvironmentPromotionChangeSourceRevisionKind",
     "ProjectEnvironmentPromotionChangeTargetRevisionKind",
     "ProjectEnvironmentPromotionPreviewResponse",
+    "ProjectEnvironmentPromotionResponse",
+    "ProjectEnvironmentPromotionWorkloadResponse",
+    "ProjectEnvironmentPromotionWorkloadResponseStatus",
     "ProjectEnvironmentResponse",
     "ProjectResponse",
     "ProjectScanRequest",
     "ProjectSourceRefScanRequest",
     "ProjectSummaryResponse",
     "ProjectWorkloadResponse",
+    "PromoteProjectEnvironmentRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",

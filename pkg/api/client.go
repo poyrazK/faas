@@ -1519,6 +1519,21 @@ func (c *Client) PostProjectsSlugEnvironmentsEnvironmentApprovals(ctx context.Co
 	return c.ApproveProjectEnvironment(ctx, projectSlug, environmentSlug, req)
 }
 
+// PromoteProjectEnvironment executes a previously previewed promotion after
+// revalidating the promotion token against current live releases and config.
+func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
+	var out ProjectEnvironmentPromotionResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// PostProjectsSlugEnvironmentsEnvironmentPromote is the route-shaped SDK
+// alias used by SDK coverage. Prefer PromoteProjectEnvironment for new Go
+// callers.
+func (c *Client) PostProjectsSlugEnvironmentsEnvironmentPromote(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
+	return c.PromoteProjectEnvironment(ctx, projectSlug, targetEnvironment, req)
+}
+
 // PreviewDeleteProject returns the state related to a project deletion.
 func (c *Client) PreviewDeleteProject(ctx context.Context, slug string) (ProjectDeletePreviewResponse, error) {
 	var out ProjectDeletePreviewResponse

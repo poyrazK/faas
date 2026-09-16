@@ -6,9 +6,9 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.create_project_environment_approval_request import CreateProjectEnvironmentApprovalRequest
 from ...models.problem import Problem
-from ...models.project_environment_approval_response import ProjectEnvironmentApprovalResponse
+from ...models.project_environment_promotion_response import ProjectEnvironmentPromotionResponse
+from ...models.promote_project_environment_request import PromoteProjectEnvironmentRequest
 from ...types import Response
 
 
@@ -16,13 +16,13 @@ def _get_kwargs(
     slug: str,
     environment: str,
     *,
-    body: CreateProjectEnvironmentApprovalRequest,
+    body: PromoteProjectEnvironmentRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/projects/{slug}/environments/{environment}/approvals".format(
+        "url": "/v1/projects/{slug}/environments/{environment}/promote".format(
             slug=quote(str(slug), safe=""),
             environment=quote(str(environment), safe=""),
         ),
@@ -38,11 +38,11 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Problem | ProjectEnvironmentApprovalResponse | None:
-    if response.status_code == 201:
-        response_201 = ProjectEnvironmentApprovalResponse.from_dict(response.json())
+) -> Problem | ProjectEnvironmentPromotionResponse | None:
+    if response.status_code == 200:
+        response_200 = ProjectEnvironmentPromotionResponse.from_dict(response.json())
 
-        return response_201
+        return response_200
 
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
@@ -77,7 +77,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Problem | ProjectEnvironmentApprovalResponse]:
+) -> Response[Problem | ProjectEnvironmentPromotionResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -91,22 +91,28 @@ def sync_detailed(
     environment: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateProjectEnvironmentApprovalRequest,
-) -> Response[Problem | ProjectEnvironmentApprovalResponse]:
-    """Approve one exact plan for a protected project environment.
+    body: PromoteProjectEnvironmentRequest,
+) -> Response[Problem | ProjectEnvironmentPromotionResponse]:
+    """Execute a guarded promotion between project environments.
+
+     Revalidates the supplied promotion token against current live
+    deployments and environment configuration before promoting immutable
+    source artifacts. Protected targets also require an approval token
+    issued for that exact promotion. Target configuration and secrets are
+    never copied from the source environment.
 
     Args:
         slug (str):
         environment (str):
-        body (CreateProjectEnvironmentApprovalRequest): Request to approve one exact plan for a
-            protected environment. Provide exactly one of plan_token or promotion_token.
+        body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
+            promotion.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | ProjectEnvironmentApprovalResponse]
+        Response[Problem | ProjectEnvironmentPromotionResponse]
     """
 
     kwargs = _get_kwargs(
@@ -127,22 +133,28 @@ def sync(
     environment: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateProjectEnvironmentApprovalRequest,
-) -> Problem | ProjectEnvironmentApprovalResponse | None:
-    """Approve one exact plan for a protected project environment.
+    body: PromoteProjectEnvironmentRequest,
+) -> Problem | ProjectEnvironmentPromotionResponse | None:
+    """Execute a guarded promotion between project environments.
+
+     Revalidates the supplied promotion token against current live
+    deployments and environment configuration before promoting immutable
+    source artifacts. Protected targets also require an approval token
+    issued for that exact promotion. Target configuration and secrets are
+    never copied from the source environment.
 
     Args:
         slug (str):
         environment (str):
-        body (CreateProjectEnvironmentApprovalRequest): Request to approve one exact plan for a
-            protected environment. Provide exactly one of plan_token or promotion_token.
+        body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
+            promotion.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | ProjectEnvironmentApprovalResponse
+        Problem | ProjectEnvironmentPromotionResponse
     """
 
     return sync_detailed(
@@ -158,22 +170,28 @@ async def asyncio_detailed(
     environment: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateProjectEnvironmentApprovalRequest,
-) -> Response[Problem | ProjectEnvironmentApprovalResponse]:
-    """Approve one exact plan for a protected project environment.
+    body: PromoteProjectEnvironmentRequest,
+) -> Response[Problem | ProjectEnvironmentPromotionResponse]:
+    """Execute a guarded promotion between project environments.
+
+     Revalidates the supplied promotion token against current live
+    deployments and environment configuration before promoting immutable
+    source artifacts. Protected targets also require an approval token
+    issued for that exact promotion. Target configuration and secrets are
+    never copied from the source environment.
 
     Args:
         slug (str):
         environment (str):
-        body (CreateProjectEnvironmentApprovalRequest): Request to approve one exact plan for a
-            protected environment. Provide exactly one of plan_token or promotion_token.
+        body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
+            promotion.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | ProjectEnvironmentApprovalResponse]
+        Response[Problem | ProjectEnvironmentPromotionResponse]
     """
 
     kwargs = _get_kwargs(
@@ -192,22 +210,28 @@ async def asyncio(
     environment: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateProjectEnvironmentApprovalRequest,
-) -> Problem | ProjectEnvironmentApprovalResponse | None:
-    """Approve one exact plan for a protected project environment.
+    body: PromoteProjectEnvironmentRequest,
+) -> Problem | ProjectEnvironmentPromotionResponse | None:
+    """Execute a guarded promotion between project environments.
+
+     Revalidates the supplied promotion token against current live
+    deployments and environment configuration before promoting immutable
+    source artifacts. Protected targets also require an approval token
+    issued for that exact promotion. Target configuration and secrets are
+    never copied from the source environment.
 
     Args:
         slug (str):
         environment (str):
-        body (CreateProjectEnvironmentApprovalRequest): Request to approve one exact plan for a
-            protected environment. Provide exactly one of plan_token or promotion_token.
+        body (PromoteProjectEnvironmentRequest): Request to execute one exact environment
+            promotion.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | ProjectEnvironmentApprovalResponse
+        Problem | ProjectEnvironmentPromotionResponse
     """
 
     return (
