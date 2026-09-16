@@ -91,6 +91,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -98,14 +99,15 @@ import (
 )
 
 type normalPathFixture struct {
-	h      *e2etest.Harness
-	vmmd   *normalPathVMMD
-	store  *state.PgStore
-	app    api.AppResponse
-	key    string
-	nodeID string
-	host   string
-	ctx    context.Context
+	h         *e2etest.Harness
+	vmmd      *normalPathVMMD
+	store     *state.PgStore
+	app       api.AppResponse
+	key       string
+	nodeID    string
+	host      string
+	ctx       context.Context
+	artifacts storage.StorageBackend
 }
 
 func newNormalPathFixture(t *testing.T, slug string) *normalPathFixture {

@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 func newNormalPathDebuggerFixture(t *testing.T, slug string) *normalPathFixture {
@@ -32,11 +34,26 @@ func newNormalPathDebuggerFixture(t *testing.T, slug string) *normalPathFixture 
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(telemetryDir) })
 	telemetrySocket := filepath.Join(telemetryDir, "request-telemetry.sock")
-	return newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanPro,
+	artifactDir, err := os.MkdirTemp("", "faas-e2e-debugger-artifacts-*")
+	if err != nil {
+		t.Fatalf("create debugger artifact dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(artifactDir) })
+	artifacts, err := storage.NewLocalStorageBackend(artifactDir)
+	if err != nil {
+		t.Fatalf("create debugger artifact store: %v", err)
+	}
+	f := newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanPro,
 		"FAAS_APP_ERRORS_ENABLED=false",
 		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+telemetrySocket,
+		"FAAS_STORAGE_BACKEND=local",
+		"FAAS_STORAGE_ROOT="+artifactDir,
 	)
+	if f != nil {
+		f.artifacts = artifacts
+	}
+	return f
 }
 
 // TestE2E_NormalPath_DebuggerTelemetryAndReplay pins the missing cross-
@@ -148,6 +165,26 @@ func TestE2E_NormalPath_DebuggerTelemetryAndReplay(t *testing.T) {
 		t.Fatalf("create debugger mirror instance: %v", err)
 	}
 	f.vmmd.SetVersion(mirrorInstance.ID, "debugger-replay")
+	f.vmmd.SetDefaultVersion("debugger-replay")
+	if f.artifacts == nil {
+		t.Fatal("debugger artifact store is not configured")
+	}
+	mirrorLayerKey := "layers/" + mirrorDeployment.ID + ".ext4"
+	mirrorLayer := []byte("gregale debugger replay fixture artifact\n")
+	if err := f.artifacts.Put(f.ctx, mirrorLayerKey, strings.NewReader(string(mirrorLayer))); err != nil {
+		t.Fatalf("publish debugger mirror layer: %v", err)
+	}
+	signer, err := cosign.NewLocalSigner(f.h.SignKeyPath, f.artifacts, nil)
+	if err != nil {
+		t.Fatalf("create debugger artifact signer: %v", err)
+	}
+	if err := signer.Sign(f.ctx, mirrorLayerKey, cosign.SigKeyFor(mirrorLayerKey)); err != nil {
+		t.Fatalf("sign debugger mirror layer: %v", err)
+	}
+	if err := f.store.SetDeploymentRootfs(f.ctx, mirrorDeployment.ID, mirrorLayerKey,
+		mirrorLayerKey, int64(len(mirrorLayer))); err != nil {
+		t.Fatalf("publish debugger mirror rootfs metadata: %v", err)
+	}
 
 	body, statusCode = doReq(t, f.h, f.key, http.MethodPost,
 		"/v1/apps/normal-debugger/mirrors", api.CreateMirrorRuleRequest{
