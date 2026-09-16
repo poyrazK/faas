@@ -74,6 +74,31 @@ func (s *RecoveryService) RetryCheckUpdate(ctx context.Context, deploymentID str
 	return s.checks.RetryCheckUpdate(ctx, deploymentID)
 }
 
+// RetryAppActivity requeues recent dead activity for one account-owned app.
+// The underlying stores enforce the tenant join and return counts only.
+func (s *RecoveryService) RetryAppActivity(ctx context.Context, accountID, appID string, limit int) (githubdgrpc.AppActivityRetryResult, error) {
+	deliveries, ok := s.deliveries.(WebhookActivityRecoveryStore)
+	if !ok {
+		return githubdgrpc.AppActivityRetryResult{}, fmt.Errorf("githubd: app webhook recovery is not configured")
+	}
+	checks, ok := s.checks.(CheckActivityRecoveryStore)
+	if !ok {
+		return githubdgrpc.AppActivityRetryResult{}, fmt.Errorf("githubd: app check recovery is not configured")
+	}
+	retriedWebhooks, err := deliveries.RetryWebhookDeliveriesForApp(ctx, accountID, appID, limit)
+	if err != nil {
+		return githubdgrpc.AppActivityRetryResult{}, err
+	}
+	retriedChecks, err := checks.RetryCheckUpdatesForApp(ctx, accountID, appID, limit)
+	if err != nil {
+		return githubdgrpc.AppActivityRetryResult{}, err
+	}
+	return githubdgrpc.AppActivityRetryResult{
+		RetriedWebhooks: retriedWebhooks,
+		RetriedChecks:   retriedChecks,
+	}, nil
+}
+
 func (s *RecoveryService) GetAppActivity(ctx context.Context, accountID, appID string, limit int) (githubdgrpc.AppActivity, error) {
 	deliveries, ok := s.deliveries.(WebhookActivityStore)
 	if !ok {

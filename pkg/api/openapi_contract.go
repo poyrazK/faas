@@ -63,6 +63,15 @@ type GitHubCheckActivity struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
+// GitHubActivityRetryResponse confirms that customer-visible recovery work
+// was queued. It intentionally reports aggregate counts instead of queue IDs.
+type GitHubActivityRetryResponse struct {
+	OK              bool   `json:"ok"`
+	RetriedWebhooks int    `json:"retried_webhooks"`
+	RetriedChecks   int    `json:"retried_checks"`
+	Status          string `json:"status"`
+}
+
 // GitHubDeploymentPolicy is the customer-owned project-level policy applied
 // by githubd to source staging and PR-preview leases.
 type GitHubDeploymentPolicy struct {

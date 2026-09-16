@@ -9,8 +9,11 @@ import (
 )
 
 type recoveryDeliveryStoreFake struct {
-	items   []WebhookDeliveryRecord
-	retried string
+	items             []WebhookDeliveryRecord
+	retried           string
+	appRetryAccountID string
+	appRetryID        string
+	appRetryLimit     int
 }
 
 func (f *recoveryDeliveryStoreFake) ListWebhookDeliveries(context.Context, string, int) ([]WebhookDeliveryRecord, error) {
@@ -22,9 +25,17 @@ func (f *recoveryDeliveryStoreFake) RetryWebhookDelivery(_ context.Context, id s
 	return true, nil
 }
 
+func (f *recoveryDeliveryStoreFake) RetryWebhookDeliveriesForApp(_ context.Context, accountID, appID string, limit int) (int, error) {
+	f.appRetryAccountID, f.appRetryID, f.appRetryLimit = accountID, appID, limit
+	return 2, nil
+}
+
 type recoveryCheckStoreFake struct {
-	items   []CheckUpdateRecord
-	retried string
+	items             []CheckUpdateRecord
+	retried           string
+	appRetryAccountID string
+	appRetryID        string
+	appRetryLimit     int
 }
 
 func (f *recoveryCheckStoreFake) ListCheckUpdates(context.Context, string, int) ([]CheckUpdateRecord, error) {
@@ -34,6 +45,11 @@ func (f *recoveryCheckStoreFake) ListCheckUpdates(context.Context, string, int) 
 func (f *recoveryCheckStoreFake) RetryCheckUpdate(_ context.Context, id string) (bool, error) {
 	f.retried = id
 	return true, nil
+}
+
+func (f *recoveryCheckStoreFake) RetryCheckUpdatesForApp(_ context.Context, accountID, appID string, limit int) (int, error) {
+	f.appRetryAccountID, f.appRetryID, f.appRetryLimit = accountID, appID, limit
+	return 3, nil
 }
 
 func TestRecoveryServiceProjectsAndRetriesQueues(t *testing.T) {
@@ -56,5 +72,25 @@ func TestRecoveryServiceProjectsAndRetriesQueues(t *testing.T) {
 	}
 	if deliveries.retried != "delivery-1" || checks.retried != "deployment-1" {
 		t.Fatalf("retry targets = %q, %q", deliveries.retried, checks.retried)
+	}
+}
+
+func TestRecoveryServiceRetriesAppActivity(t *testing.T) {
+	deliveries := &recoveryDeliveryStoreFake{}
+	checks := &recoveryCheckStoreFake{}
+	svc := NewRecoveryService(githubdgrpc.UnimplementedService{}, deliveries, checks)
+
+	result, err := svc.RetryAppActivity(context.Background(), "account-1", "app-1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RetriedWebhooks != 2 || result.RetriedChecks != 3 {
+		t.Fatalf("result = %+v", result)
+	}
+	if deliveries.appRetryAccountID != "account-1" || deliveries.appRetryID != "app-1" || deliveries.appRetryLimit != 10 {
+		t.Fatalf("webhook retry scope = %q, %q, %d", deliveries.appRetryAccountID, deliveries.appRetryID, deliveries.appRetryLimit)
+	}
+	if checks.appRetryAccountID != "account-1" || checks.appRetryID != "app-1" || checks.appRetryLimit != 10 {
+		t.Fatalf("check retry scope = %q, %q, %d", checks.appRetryAccountID, checks.appRetryID, checks.appRetryLimit)
 	}
 }

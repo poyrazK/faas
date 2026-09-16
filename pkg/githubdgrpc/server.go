@@ -85,6 +85,13 @@ type AppActivityService interface {
 	GetAppActivity(ctx context.Context, accountID, appID string, limit int) (AppActivity, error)
 }
 
+// AppActivityRecoveryService is an optional customer-facing extension for
+// requeuing recent failed activity. Keeping it outside Service preserves the
+// compatibility of older/test githubd implementations.
+type AppActivityRecoveryService interface {
+	RetryAppActivity(ctx context.Context, accountID, appID string, limit int) (AppActivityRetryResult, error)
+}
+
 // Server implements githubdpb.GithubdServer. It wraps a Service so
 // unit tests can pass a fake (see bufconn_test.go). Slice 1 returns
 // Unimplemented everywhere; slice 7 wires CreateDeploymentFromPush +
@@ -241,6 +248,29 @@ func (s *Server) GetAppActivity(ctx context.Context, req *githubdpb.GetAppActivi
 		return nil, toStatusErr(err)
 	}
 	return appActivityToProto(activity), nil
+}
+
+// RetryAppActivity requeues recent dead activity for one account-owned app.
+// The response contains counts only; queue identifiers and payloads remain
+// inside githubd.
+func (s *Server) RetryAppActivity(ctx context.Context, req *githubdpb.RetryAppActivityRequest) (*githubdpb.RetryAppActivityResponse, error) {
+	const op = "RetryAppActivity"
+	start := time.Now()
+	recoverySvc, ok := s.svc.(AppActivityRecoveryService)
+	if !ok {
+		err := status.Error(codes.Unimplemented, "githubd: app activity recovery not wired")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
+	}
+	result, err := recoverySvc.RetryAppActivity(ctx, req.GetAccountId(), req.GetAppId(), int(req.GetLimit()))
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, toStatusErr(err)
+	}
+	return &githubdpb.RetryAppActivityResponse{
+		RetriedWebhooks: int32(result.RetriedWebhooks),
+		RetriedChecks:   int32(result.RetriedChecks),
+	}, nil
 }
 
 // CreateDeploymentFromPush passes through to Service.CreateDeploymentFromPush.
@@ -549,6 +579,10 @@ func (UnimplementedService) GetAppBinding(string, string) (AppBinding, error) {
 
 func (UnimplementedService) GetAppActivity(context.Context, string, string, int) (AppActivity, error) {
 	return AppActivity{}, status.Error(codes.Unimplemented, "githubd: app activity not wired")
+}
+
+func (UnimplementedService) RetryAppActivity(context.Context, string, string, int) (AppActivityRetryResult, error) {
+	return AppActivityRetryResult{}, status.Error(codes.Unimplemented, "githubd: app activity recovery not wired")
 }
 
 // CreateDeploymentFromPush returns Unimplemented. Slice 7 replaces this.

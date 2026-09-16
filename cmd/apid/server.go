@@ -2714,6 +2714,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.getGitHubInstallStatus))))
 	mux.Handle("DELETE /v1/apps/{slug}/install/bind", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.unbindGitHubApp))))
 	mux.Handle("POST /v1/apps/{slug}/install/sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.syncGitHubApp))))
+	mux.Handle("POST /v1/apps/{slug}/install/activity/retry", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.retryGitHubActivity))))
 	// Customer automation surface. These aliases deliberately use a
 	// dedicated bearer scope and reject session cookies, so CLI/CI callers
 	// can manage a connection without weakening the browser CSRF contract.
@@ -2723,12 +2724,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/apps/{slug}/github/deployment-policy", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.patchGitHubDeployPolicy)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/github/bind", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.bindGitHubConnection))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/github/sync", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.syncGitHubConnection))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/github/activity/retry", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.retryGitHubConnectionActivity))))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/github", s.authLimited(s.requireMFA(s.requireBearer(s.requireScope(api.ScopesGithubManageSurface...)(s.idempotent(s.disconnectGitHubConnection))))))
 	// Server-rendered dashboard forms for the same customer-scoped
 	// connection actions. These redirect back with a flash instead of
 	// leaving a browser on a JSON response.
 	mux.Handle("POST /dashboard/apps/{slug}/github/sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubSync))))
 	mux.Handle("POST /dashboard/apps/{slug}/github/disconnect", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubDisconnect))))
+	mux.Handle("POST /dashboard/apps/{slug}/github/activity/retry", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubRetry))))
 	// Issue #961 / Mega-B PR-3 — GET /v1/templates is the dashboard's
 	// source of truth for the template catalog (handlers_templates.go).
 	// Mirrors cmd/gregale/templates.Names without importing the CLI's

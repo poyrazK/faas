@@ -1071,6 +1071,7 @@ type GitHubConnectionView struct {
 type GitHubActivityView struct {
 	WebhookDeliveries []GitHubWebhookActivityView
 	CheckUpdates      []GitHubCheckActivityView
+	CanRetry          bool
 }
 
 type GitHubWebhookActivityView struct {

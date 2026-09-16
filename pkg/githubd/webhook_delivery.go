@@ -77,6 +77,12 @@ type WebhookActivityStore interface {
 	ListWebhookDeliveriesForApp(ctx context.Context, accountID, appID string, limit int) ([]WebhookActivityRecord, error)
 }
 
+// WebhookActivityRecoveryStore is the customer-safe write seam for retrying
+// dead deliveries belonging to one account-owned app.
+type WebhookActivityRecoveryStore interface {
+	RetryWebhookDeliveriesForApp(ctx context.Context, accountID, appID string, limit int) (int, error)
+}
+
 type PGWebhookStore struct{ pool *pgxpool.Pool }
 
 func NewPGWebhookDeliveryStore(pool *pgxpool.Pool) *PGWebhookStore {
@@ -245,6 +251,36 @@ func (s *PGWebhookStore) RetryWebhookDelivery(ctx context.Context, deliveryID st
 		return false, fmt.Errorf("githubd: retry webhook delivery: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// RetryWebhookDeliveriesForApp requeues a bounded set of recent dead
+// deliveries whose installation and repository still match the app's
+// account-scoped binding. The CTE selects before the update so the limit is
+// deterministic and the update remains a single atomic operation.
+func (s *PGWebhookStore) RetryWebhookDeliveriesForApp(ctx context.Context, accountID, appID string, limit int) (int, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	tag, err := s.pool.Exec(ctx, `
+		with targets as (
+			select d.delivery_id
+			from github_webhook_deliveries d
+			join apps a on a.id = $2 and a.account_id = $1
+			where d.status = 'dead'
+			  and d.installation_id = a.github_install_id
+			  and d.repo_full_name = a.github_repo_full_name
+			order by d.updated_at desc
+			limit $3
+		)
+		update github_webhook_deliveries d
+		set status = 'pending', attempts = 0, next_attempt_at = now(),
+		    last_error = '', processed_at = null, updated_at = now()
+		from targets
+		where d.delivery_id = targets.delivery_id`, accountID, appID, limit)
+	if err != nil {
+		return 0, fmt.Errorf("githubd: retry app webhook deliveries: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func (s *PGWebhookStore) CheckRunID(ctx context.Context, repoFullName, commitSHA, checkName string) (int64, error) {

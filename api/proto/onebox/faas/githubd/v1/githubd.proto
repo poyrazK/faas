@@ -168,6 +168,11 @@ service Githubd {
   // already-retried items return retried=false and are left untouched.
   rpc RetryWebhookDelivery(RetryWebhookDeliveryRequest) returns (RetryRecoveryItemResponse);
   rpc RetryCheckUpdate(RetryCheckUpdateRequest) returns (RetryRecoveryItemResponse);
+
+  // RetryAppActivity requeues recent dead webhook deliveries and Check Run
+  // updates for one account-owned app. The customer-facing action returns
+  // counts only; queue identifiers, payloads, and worker errors stay private.
+  rpc RetryAppActivity(RetryAppActivityRequest) returns (RetryAppActivityResponse);
 }
 
 message ListRecoveryQueueItemsRequest {
@@ -233,6 +238,17 @@ message CheckActivity {
 message GetAppActivityResponse {
   repeated WebhookActivity webhooks = 1;
   repeated CheckActivity checks = 2;
+}
+
+message RetryAppActivityRequest {
+  string account_id = 1;
+  string app_id = 2;
+  int32 limit = 3;
+}
+
+message RetryAppActivityResponse {
+  int32 retried_webhooks = 1;
+  int32 retried_checks = 2;
 }
 
 message VerifyInstallationRequest {

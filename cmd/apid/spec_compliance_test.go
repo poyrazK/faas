@@ -156,6 +156,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/new":                                   true, // dashboard-only create + GitHub bind form adapter
 	"POST /dashboard/apps/{slug}/github/sync":                    true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":              true, // GitHub connection disconnect form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/activity/retry":          true, // GitHub activity recovery form; session-cookie + CSRF-only
 	"GET /dashboard":                                             true, // HTML dashboard
 	"GET /dashboard/":                                            true, // HTML dashboard
 	"POST /dashboard/account/delete":                             true, // HTML form

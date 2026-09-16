@@ -32,6 +32,13 @@ func (c *Client) SyncGitHubConnection(ctx context.Context, slug string) (GitHubI
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/github/sync", nil, &out)
 }
 
+// RetryGitHubActivity requeues recent failed webhook and Check Run activity
+// for an app. The response contains aggregate counts, not queue identifiers.
+func (c *Client) RetryGitHubActivity(ctx context.Context, slug string) (GitHubActivityRetryResponse, error) {
+	var out GitHubActivityRetryResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/github/activity/retry", nil, &out)
+}
+
 // DisconnectGitHubConnection removes the app's repository binding while
 // leaving the account-level GitHub installation available for a later bind.
 func (c *Client) DisconnectGitHubConnection(ctx context.Context, slug string) (GitHubInstallStatus, error) {

@@ -21,6 +21,7 @@ const (
 	githubInstallManageAction     = "github_install_manage"
 	githubInstallManageCSRFCookie = "faas_csrf_github_install"
 	githubActivityLimit           = 10
+	githubActivityRetryLimit      = githubActivityLimit
 )
 
 // githubInstallStatusResponse intentionally excludes sealed credentials. It
@@ -112,6 +113,101 @@ func (s *server) getGitHubConnection(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+// retryGitHubActivity requeues recent dead activity for the session-auth
+// surface. githubd owns the queue writes and rechecks the account/app scope;
+// this handler only returns aggregate counts and never exposes queue IDs.
+func (s *server) retryGitHubActivity(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+			"Unauthorized", "sign in to retry GitHub activity"))
+		return
+	}
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, githubInstallManageAction, acct.ID, githubInstallManageCSRFCookie); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid CSRF token", "please reload the page and try again"))
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	result, err := s.retryGitHubActivityForAccount(r.Context(), app.ID, acct.ID)
+	if err != nil {
+		writeGitHubActivityRetryProblem(w, err)
+		return
+	}
+	s.emitGitHubActivityRetryAudit(r.Context(), acct.ID, app.ID, result, "browser")
+	writeJSON(w, http.StatusOK, githubActivityRetryResponse(result))
+}
+
+// retryGitHubConnectionActivity is the bearer/API-key equivalent of
+// retryGitHubActivity. The route's github:manage scope replaces browser CSRF.
+func (s *server) retryGitHubConnectionActivity(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	result, err := s.retryGitHubActivityForAccount(r.Context(), app.ID, acct.ID)
+	if err != nil {
+		writeGitHubActivityRetryProblem(w, err)
+		return
+	}
+	s.emitGitHubActivityRetryAudit(r.Context(), acct.ID, app.ID, result, "api")
+	writeJSON(w, http.StatusOK, githubActivityRetryResponse(result))
+}
+
+func (s *server) retryGitHubActivityForAccount(ctx context.Context, appID, accountID string) (githubdgrpc.AppActivityRetryResult, error) {
+	if _, err := s.store.GetGithubInstallBindingForApp(ctx, appID, accountID); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return githubdgrpc.AppActivityRetryResult{}, api.NewProblem(http.StatusConflict, "github_not_bound",
+				"GitHub is not connected to this app", "bind a repository before retrying GitHub activity")
+		}
+		return githubdgrpc.AppActivityRetryResult{}, api.ErrCapacity("could not read GitHub connection")
+	}
+	client, ok := s.githubd.(githubdActivityRecoveryClient)
+	if !ok {
+		return githubdgrpc.AppActivityRetryResult{}, api.ErrCapacity("GitHub activity recovery is temporarily unavailable")
+	}
+	result, err := client.RetryAppActivity(ctx, accountID, appID, githubActivityRetryLimit)
+	if err != nil {
+		var problem *api.Problem
+		if errors.As(err, &problem) {
+			return githubdgrpc.AppActivityRetryResult{}, problem
+		}
+		return githubdgrpc.AppActivityRetryResult{}, api.ErrCapacity("could not queue GitHub activity recovery")
+	}
+	return result, nil
+}
+
+func githubActivityRetryResponse(result githubdgrpc.AppActivityRetryResult) api.GitHubActivityRetryResponse {
+	return api.GitHubActivityRetryResponse{
+		OK:              true,
+		RetriedWebhooks: result.RetriedWebhooks,
+		RetriedChecks:   result.RetriedChecks,
+		Status:          "pending",
+	}
+}
+
+func writeGitHubActivityRetryProblem(w http.ResponseWriter, err error) {
+	var problem *api.Problem
+	if errors.As(err, &problem) {
+		api.WriteProblem(w, problem)
+		return
+	}
+	api.WriteProblem(w, api.ErrCapacity("could not queue GitHub activity recovery"))
+}
+
+func (s *server) emitGitHubActivityRetryAudit(ctx context.Context, accountID, appID string, result githubdgrpc.AppActivityRetryResult, surface string) {
+	acctID := accountID
+	s.audit.Emit(ctx, "auth.install.activity_retried", &acctID, map[string]any{
+		"app_id":           appID,
+		"retried_webhooks": result.RetriedWebhooks,
+		"retried_checks":   result.RetriedChecks,
+		"surface":          surface,
+	})
 }
 
 // issueGitHubInstallManageCSRF mints the named form envelope shared by the

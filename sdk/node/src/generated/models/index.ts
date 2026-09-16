@@ -261,6 +261,7 @@ export type { FilterCriteriaOp } from './FilterCriteriaOp.js';
 export type { FireCronRequestResponse } from './FireCronRequestResponse.js';
 export type { FireCronResponse } from './FireCronResponse.js';
 export type { GdprAuditExportResponse } from './GdprAuditExportResponse.js';
+export type { GitHubActivityRetryResponse } from './GitHubActivityRetryResponse.js';
 export type { GitHubCheckActivity } from './GitHubCheckActivity.js';
 export type { GitHubDeploymentPolicy } from './GitHubDeploymentPolicy.js';
 export type { GitHubDeploymentPolicyPatch } from './GitHubDeploymentPolicyPatch.js';

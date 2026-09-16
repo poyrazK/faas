@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { GitHubActivityRetryResponse } from '../models/GitHubActivityRetryResponse.js';
 import type { GitHubDeploymentPolicy } from '../models/GitHubDeploymentPolicy.js';
 import type { GitHubDeploymentPolicyPatch } from '../models/GitHubDeploymentPolicyPatch.js';
 import type { GitHubInstallMutationRequest } from '../models/GitHubInstallMutationRequest.js';
@@ -314,6 +315,54 @@ export class GithubService {
     });
   }
   /**
+   * Retry recent failed GitHub activity for an app.
+   * Bearer API-key surface for customer automation. Requires
+   * `github:manage`; requeues up to 10 recent dead webhook deliveries
+   * and Check Run updates belonging to this account-owned app. The
+   * response contains aggregate counts only and never exposes queue
+   * identifiers, webhook payloads, or worker errors. Safe to retry with
+   * an idempotency key.
+   *
+   * @returns GitHubActivityRetryResponse Recent failed GitHub activity was queued for recovery.
+   * @throws ApiError
+   */
+  public static retryGitHubActivity({
+    slug,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<GitHubActivityRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/github/activity/retry',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Inspect the app's GitHub repository binding.
    * Cookie-session-authenticated (NOT API-key). Returns the durable
    * GitHub installation metadata and the app's repository binding without
@@ -492,6 +541,45 @@ export class GithubService {
         409: `code: github_not_bound or github_install_not_found — the app or installation must be connected first.`,
         502: `code: github_unreachable — GitHub could not be queried.`,
         503: `code: capacity — the connection state could not be reconciled.`,
+      },
+    });
+  }
+  /**
+   * Retry failed GitHub activity from the signed-in dashboard session.
+   * This cookie-session action is CSRF-protected and requeues up to 10
+   * recent dead webhook deliveries and Check Run updates belonging to
+   * the signed-in account's app. It returns aggregate counts only;
+   * queue identifiers, webhook payloads, and worker errors remain private.
+   *
+   * @returns GitHubActivityRetryResponse Browser recovery request accepted; aggregate retry counts are returned.
+   * @throws ApiError
+   */
+  public static retryGitHubInstallActivity({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: GitHubInstallMutationRequest,
+  }): CancelablePromise<GitHubActivityRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/install/activity/retry',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation — a valid CSRF token is required for GitHub activity retry.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }

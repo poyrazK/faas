@@ -84,6 +84,13 @@ type AppActivity struct {
 	Checks   []CheckActivity
 }
 
+// AppActivityRetryResult reports how many recent dead activity records were
+// requeued for one account-owned app. It intentionally contains no queue IDs.
+type AppActivityRetryResult struct {
+	RetriedWebhooks int
+	RetriedChecks   int
+}
+
 type WebhookActivity struct {
 	EventType   string
 	Status      string

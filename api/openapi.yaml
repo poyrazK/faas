@@ -6505,6 +6505,36 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/github/activity/retry:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [github]
+      operationId: retryGitHubActivity
+      summary: Retry recent failed GitHub activity for an app.
+      description: |
+        Bearer API-key surface for customer automation. Requires
+        `github:manage`; requeues up to 10 recent dead webhook deliveries
+        and Check Run updates belonging to this account-owned app. The
+        response contains aggregate counts only and never exposes queue
+        identifiers, webhook payloads, or worker errors. Safe to retry with
+        an idempotency key.
+      security:
+        - bearerAuth: [github:manage]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Recent failed GitHub activity was queued for recovery.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubActivityRetryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/install/bind:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -6681,6 +6711,38 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/install/activity/retry:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [github]
+      operationId: retryGitHubInstallActivity
+      summary: Retry failed GitHub activity from the signed-in dashboard session.
+      description: |
+        This cookie-session action is CSRF-protected and requeues up to 10
+        recent dead webhook deliveries and Check Run updates belonging to
+        the signed-in account's app. It returns aggregate counts only;
+        queue identifiers, webhook payloads, and worker errors remain private.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubInstallMutationRequest' }
+      responses:
+        '200':
+          description: Browser recovery request accepted; aggregate retry counts are returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubActivityRetryResponse' }
+        '400':
+          description: 'code: validation — a valid CSRF token is required for GitHub activity retry.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/apps/{slug}/instances:
     parameters:
@@ -16998,6 +17060,16 @@ components:
         commit_sha: { type: string }
         processed_at: { type: [string, "null"], format: date-time }
         updated_at: { type: string, format: date-time }
+
+    GitHubActivityRetryResponse:
+      description: Customer-safe confirmation that recent failed GitHub activity was queued.
+      type: object
+      required: [ok, retried_webhooks, retried_checks, status]
+      properties:
+        ok: { type: boolean, const: true }
+        retried_webhooks: { type: integer, minimum: 0, maximum: 10 }
+        retried_checks: { type: integer, minimum: 0, maximum: 10 }
+        status: { type: string, const: pending }
 
     RepoResponse:
       description: |
