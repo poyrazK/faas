@@ -123,7 +123,7 @@ export class StorageService {
   }
   /**
    * Create or update an authenticated upload route
-   * Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object key, enforces the byte/content-type policy, streams directly to the selected provider, and records a completion receipt.
+   * Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object key, enforces the byte/content-type policy, streams directly to the selected provider, and records a completion receipt. The public upload endpoint accepts an optional Idempotency-Key header (up to 128 bytes) to replay a completed or failed attempt without repeating provider work; conflicting request metadata returns 409.
    * @returns ObjectUploadRoute Existing upload route updated
    * @returns Problem Invalid policy, bucket unavailable, access denied, or provider unavailable
    * @throws ApiError
