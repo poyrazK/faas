@@ -13,3 +13,10 @@ faas-*.service systemd units, the deploy script filenames, and the
 referenced across bootstrap, ansible, and operator runbooks in a way
 that requires an atomic rename. Until that pass lands, the script
 names stay stable.
+
+`deployment-preview-release-smoke.sh` fetches the exact URL returned by
+`GET /v1/deployments/{id}/url`, verifies that it is covered by the platform's
+one-label wildcard contract, performs a trusted public TLS request, and checks
+content unique to the intended deployment. Set `GREGALE_API_KEY`,
+`GREGALE_DEPLOYMENT_ID`, and `GREGALE_PREVIEW_EXPECT`; optionally set
+`GREGALE_PREVIEW_PATH` and `GREGALE_API_URL`.

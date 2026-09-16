@@ -30,7 +30,7 @@ class DeploymentPreviewURL:
     snapshotting, live} (the same predicate as state.Deployment.DeploymentPreviewActive the cert allowlist
     consults)."""
     host: str | Unset = UNSET
-    """Per-deployment preview hostname (`deploy-{N}.{slug}.gregale.dev`). Empty when alive=false OR when
+    """Per-deployment preview hostname (`deploy-{N}-{slug}.gregale.dev`). Empty when alive=false OR when
     wire.DeployWildcardSuffix is "" (zone disabled)."""
     url: str | Unset = UNSET
     """Full request URL (`https://<host>`). Empty when host is empty."""

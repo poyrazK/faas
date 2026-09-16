@@ -5,7 +5,7 @@
 //
 //   - Happy path (live deployment): handler resolves the deployment,
 //     looks up the parent app, computes the ordinal, and returns
-//     a populated Host + URL field of `deploy-{N}.{slug}.gregale.dev`
+//     a populated Host + URL field of `deploy-{N}-{slug}.gregale.dev`
 //     form. Alive=true.
 //   - Happy path (building deployment): same envelope as live — any
 //     "preview-active" status yields a populated URL.
@@ -36,8 +36,8 @@ import (
 // one deployment, status='live', parent app with slug "url-happy"
 // → first deployment → ordinal 1 →
 //
-//	expect: Host="deploy-1.url-happy.gregale.dev"
-//	expect: URL="https://deploy-1.url-happy.gregale.dev"
+//	expect: Host="deploy-1-url-happy.gregale.dev"
+//	expect: URL="https://deploy-1-url-happy.gregale.dev"
 //	expect: Alive=true.
 //	expect: DeploymentID + AppID echoed on the response.
 func TestGetDeploymentURL_HappyPath(t *testing.T) {
@@ -62,7 +62,7 @@ func TestGetDeploymentURL_HappyPath(t *testing.T) {
 	if !got.Alive {
 		t.Errorf("Alive = false on a live deployment; want true")
 	}
-	wantHost := "deploy-1.url-happy.gregale.dev"
+	wantHost := "deploy-1-url-happy.gregale.dev"
 	if got.Host != wantHost {
 		t.Errorf("Host = %q, want %q (deployment ordinal must resolve to 1 for the first app deployment)", got.Host, wantHost)
 	}
@@ -102,7 +102,7 @@ func TestGetDeploymentURL_BuildingStatusIsAlive(t *testing.T) {
 		t.Errorf("Alive = false on status=building; want true")
 	}
 	if got.Host == "" {
-		t.Errorf("Host empty on status=building; want deploy-1.url-building.gregale.dev")
+		t.Errorf("Host empty on status=building; want deploy-1-url-building.gregale.dev")
 	}
 }
 
@@ -219,8 +219,8 @@ func TestGetDeploymentURL_SecondDeploymentOrdinalIsTwo(t *testing.T) {
 	}
 	var got api.DeploymentPreviewURL
 	_ = json.Unmarshal(rec.Body.Bytes(), &got)
-	if got.Host != "deploy-2.url-ord.gregale.dev" {
-		t.Errorf("Host = %q, want deploy-2.url-ord.gregale.dev (second deployment must mint ordinal 2)", got.Host)
+	if got.Host != "deploy-2-url-ord.gregale.dev" {
+		t.Errorf("Host = %q, want deploy-2-url-ord.gregale.dev (second deployment must mint ordinal 2)", got.Host)
 	}
 	// Sanity: the first deployment still resolves to ordinal 1.
 	rec1 := e.do(t, "GET", "/v1/deployments/"+first.ID+"/url", nil, nil)
@@ -229,7 +229,7 @@ func TestGetDeploymentURL_SecondDeploymentOrdinalIsTwo(t *testing.T) {
 	}
 	var got1 api.DeploymentPreviewURL
 	_ = json.Unmarshal(rec1.Body.Bytes(), &got1)
-	if got1.Host != "deploy-1.url-ord.gregale.dev" {
-		t.Errorf("first Host = %q, want deploy-1.url-ord.gregale.dev", got1.Host)
+	if got1.Host != "deploy-1-url-ord.gregale.dev" {
+		t.Errorf("first Host = %q, want deploy-1-url-ord.gregale.dev", got1.Host)
 	}
 }

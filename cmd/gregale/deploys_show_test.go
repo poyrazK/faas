@@ -523,7 +523,7 @@ func showURLServer(t *testing.T, payload []byte, ok map[string]bool) *httptest.S
 // (`$EDITOR`, `xargs`, `kubectl port-forward` style chains)
 // rely on this guarantee.
 func TestCmdDeploysShow_URLFlag(t *testing.T) {
-	payload := []byte(`{"deployment_id":"0123456789abcdef0123456789abcdef","app_id":"app1","host":"deploy-3.url-live.gregale.dev","url":"https://deploy-3.url-live.gregale.dev","alive":true}`)
+	payload := []byte(`{"deployment_id":"0123456789abcdef0123456789abcdef","app_id":"app1","host":"deploy-3-url-live.gregale.dev","url":"https://deploy-3-url-live.gregale.dev","alive":true}`)
 	srv := showURLServer(t, payload, map[string]bool{
 		"/v1/deployments/" + showTestID + "/url": true,
 	})
@@ -537,7 +537,7 @@ func TestCmdDeploysShow_URLFlag(t *testing.T) {
 		t.Fatalf("cmdDeploysShow --url = %d, want 0", code)
 	}
 	got := strings.TrimSpace(stdout.String())
-	want := "https://deploy-3.url-live.gregale.dev"
+	want := "https://deploy-3-url-live.gregale.dev"
 	if got != want {
 		t.Errorf("--url stdout = %q, want %q (no extras, no envelope)", got, want)
 	}

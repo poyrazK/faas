@@ -15,4 +15,3 @@ FRONTEND_HOSTNAME = "gregale.dev"
 #   gregale.dev/*
 #   api.gregale.dev/*
 #   *.gregale.dev/*
-#   *.apps.gregale.dev/*

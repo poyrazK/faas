@@ -301,7 +301,7 @@ func TestCreateAppReservedSlug(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	for _, slug := range []string{
 		"account", "admin", "api", "assets", "billing", "cdn", "console",
-		"dashboard", "docs", "help", "login", "logout", "mail", "operations",
+		"dashboard", "docs", "help", "login", "logout", "mail", "ns", "operations",
 		"security", "signup", "static", "status", "support", "www",
 	} {
 		rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)

@@ -7,7 +7,7 @@
 // deployment-preview branch (pkg/gateway/allowlist.go).
 //
 // Wire shape: api.DeploymentPreviewURL (pkg/api/dto.go).
-//   - Host / URL: derived from {deploy-{N}.{slug}.gregale.dev} via
+//   - Host / URL: derived from {deploy-{N}-{slug}.gregale.dev} via
 //     pkg/gateway.BuildDeploymentPreviewURL. N is the per-app ordinal
 //     from state.PgStore.DeploymentOrdinal — the (created_at, id)
 //     ordering is stable even after later deploys land.

@@ -5,11 +5,14 @@
 // at the production router.
 //
 // Issue #272 / ADR-095 = PreviewScopeFromHost (pr-{N}.{slug}.{suffix}).
-// Issue #976 / ADR-122 = DeploymentScopeFromHost (deploy-{N}.{slug}.{suffix}).
+// Issue #976 / ADR-122 = DeploymentScopeFromHost (deploy-{N}-{slug}.{suffix}).
 
 package gateway
 
-import "testing"
+import (
+	"crypto/x509"
+	"testing"
+)
 
 // TestPreviewScopeFromHost is the original PR-preview parser test
 // (issue #272 / ADR-095 PR-B). Kept in pkg/gateway because the parser
@@ -78,7 +81,7 @@ func TestPreviewScopeFromHost(t *testing.T) {
 
 // TestDeploymentScopeFromHost (issue #976 / ADR-122 / SAFE-RELEASES-C)
 // pins the deployment-preview parser. The shape is
-// `deploy-{N}.{slug}.{suffix}` where suffix is `.gregale.dev` (the
+// `deploy-{N}-{slug}.{suffix}` where suffix is `.gregale.dev` (the
 // in-flight cert-wildcard target, NOT legacy `.apps.gregale.dev`).
 //
 // Mirrors TestPreviewScopeFromHost's shape so future maintainers see
@@ -132,5 +135,37 @@ func TestDeploymentScopeFromHost(t *testing.T) {
 				t.Errorf("slug = %q, want %q", slug, tc.wantSlug)
 			}
 		})
+	}
+}
+
+func TestBuildDeploymentPreviewURLRoundTripsAndMatchesWildcard(t *testing.T) {
+	const suffix = ".gregale.dev"
+	host := BuildDeploymentPreviewURL(suffix, 42, "orders-api")
+	if want := "deploy-42-orders-api.gregale.dev"; host != want {
+		t.Fatalf("host = %q, want %q", host, want)
+	}
+	ordinal, slug, ok := DeploymentScopeFromHost(suffix, host)
+	if !ok || ordinal != 42 || slug != "orders-api" {
+		t.Fatalf("round trip = (%d, %q, %v)", ordinal, slug, ok)
+	}
+
+	// Production serves *.gregale.dev. x509's hostname verifier is the
+	// certificate contract: a single preview label is covered, while the old
+	// deploy-42.orders-api.gregale.dev shape is not.
+	cert := &x509.Certificate{DNSNames: []string{"*.gregale.dev"}}
+	if err := cert.VerifyHostname(host); err != nil {
+		t.Fatalf("preview host is not covered by production wildcard: %v", err)
+	}
+	if err := cert.VerifyHostname("deploy-42.orders-api.gregale.dev"); err == nil {
+		t.Fatal("two-label preview unexpectedly matched one-label wildcard")
+	}
+	for name, got := range map[string]string{
+		"missing leading dot": BuildDeploymentPreviewURL("gregale.dev", 42, "orders-api"),
+		"embedded dot":        BuildDeploymentPreviewURL(suffix, 42, "orders.api"),
+		"uppercase":           BuildDeploymentPreviewURL(suffix, 42, "Orders"),
+	} {
+		if got != "" {
+			t.Errorf("%s produced unsafe host %q", name, got)
+		}
 	}
 }

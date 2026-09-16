@@ -1021,8 +1021,8 @@ func TestRender_DeploymentDetail_PreviewURLCopyChip(t *testing.T) {
 					CreatedAt: "2026-08-19T18:00:00Z",
 				},
 				PreviewURL: &dashboard.DeploymentPreviewURL{
-					Host:  "deploy-3.url-copy.gregale.dev",
-					URL:   "https://deploy-3.url-copy.gregale.dev",
+					Host:  "deploy-3-url-copy.gregale.dev",
+					URL:   "https://deploy-3-url-copy.gregale.dev",
 					Alive: true,
 				},
 			},
@@ -1033,7 +1033,7 @@ func TestRender_DeploymentDetail_PreviewURLCopyChip(t *testing.T) {
 		body := rec.Body.String()
 		for _, want := range []string{
 			`<span class="badge preview-live">preview</span>`,
-			"deploy-3.url-copy.gregale.dev",
+			"deploy-3-url-copy.gregale.dev",
 			`class="preview-copy"`,
 			`>copy<`,
 		} {

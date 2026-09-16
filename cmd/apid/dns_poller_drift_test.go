@@ -113,6 +113,12 @@ func TestDNSPoller_CustomDomainDriftRevokesVerificationOnce(t *testing.T) {
 		t.Fatalf("matching TXT with wrong CNAME restored domain: verified=%v cert_status=%q", got.Verified(), got.CertStatus)
 	}
 	cnameLookupFunc = func(_ context.Context, _ string) (string, error) { return "edge.gregale.dev.", nil }
+	// The failed probe above advanced the bounded backoff. A customer retry
+	// makes the repaired record eligible immediately without extending the
+	// seven-day ownership window.
+	if err := store.RetryCustomDomainVerification(ctx, domain.Domain); err != nil {
+		t.Fatal(err)
+	}
 	srv.runVerifyOnce(ctx, log)
 	got, err = store.DomainByName(ctx, domain.Domain)
 	if err != nil {

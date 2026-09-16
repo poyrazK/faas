@@ -104,7 +104,7 @@ func TestWorkloadAdmissionReasons(t *testing.T) {
 func TestWorkloadAdmissionReservedSlugsAndNearMisses(t *testing.T) {
 	for _, slug := range []string{
 		"account", "admin", "api", "assets", "billing", "cdn", "console",
-		"dashboard", "docs", "help", "login", "logout", "mail", "operations",
+		"dashboard", "docs", "help", "login", "logout", "mail", "ns", "operations",
 		"security", "signup", "static", "status", "support", "www",
 	} {
 		reasons := WorkloadAdmissionReasons([]reposcan.Workload{{Name: slug}}, nil, "")

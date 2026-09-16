@@ -87,7 +87,7 @@ func PreviewScopeFromHost(appsSuffix, host string) (number int, slug string, ok 
 }
 
 // DeploymentScopeFromHost peels a deployment-preview hostname shape
-// `deploy-{N}.{slug}.{deploySuffix}` into (deployment ordinal, slug).
+// `deploy-{N}-{slug}.{deploySuffix}` into (deployment ordinal, slug).
 // deploySuffix is the leading-dot form (".gregale.dev"); empty suffix
 // refuses everything. The function returns ok=false for any deviation
 // from the locked shape — prod hosts, uppercase, leading zeros,
@@ -130,18 +130,16 @@ func DeploymentScopeFromHost(deploySuffix, host string) (ordinal int, slug strin
 	tail := label[7:]
 	// No inner dots: the slug must not contain a separator (the
 	// platform slug charset already excludes dots; this guard
-	// rejects pathological scans like `deploy-42.foo.gregale.dev`
-	// whose label is "deploy-42.foo" and would otherwise split as
+	// rejects pathological scans like `deploy-42-foo.bar.gregale.dev`
+	// whose label is "deploy-42-foo.bar" and would otherwise split as
 	// slug="42.foo").
 	if strings.Contains(tail, ".") {
 		return 0, "", false
 	}
-	// Slug comes first, ordinal comes after — opposite of the PR
-	// preview shape (which is pr-{N}-{slug}). The deployment
-	// preview shape is {slug}.deploy-{N} only as a documentation
-	// typo; the locked shape is deploy-{N}.{slug}, same as PR
-	// preview. Cut on the FIRST '-' after the digits so a slug
-	// containing '-' is honored verbatim.
+	// Deployment previews use the same one-label grammar as PR previews:
+	// deploy-{N}-{slug}. Cut on the FIRST '-' after the digits so a
+	// slug containing '-' is honored verbatim. Keeping the whole preview
+	// name in one label is required for the platform *.gregale.dev cert.
 	dash := strings.IndexByte(tail, '-')
 	if dash <= 0 || dash == len(tail)-1 {
 		return 0, "", false
@@ -175,7 +173,7 @@ func DeploymentScopeFromHost(deploySuffix, host string) (ordinal int, slug strin
 
 // BuildDeploymentPreviewURL is the writer counterpart to
 // DeploymentScopeFromHost: it stamps the deployment-preview URL
-// shape `deploy-{N}.{slug}{deploySuffix}` from the (ordinal,
+// shape `deploy-{N}-{slug}{deploySuffix}` from the (ordinal,
 // slug) pair the apid read-path resolves. Mirrors the round-trip
 // that the cert allowlist issues — every URL it returns MUST
 // re-peel through DeploymentScopeFromHost to (ordinal, slug) by
@@ -200,11 +198,16 @@ func DeploymentScopeFromHost(deploySuffix, host string) (ordinal int, slug strin
 //
 // Issue #976 / ADR-122 / SAFE-RELEASES-C.
 func BuildDeploymentPreviewURL(deploySuffix string, ordinal int, slug string) string {
-	if deploySuffix == "" {
+	if deploySuffix == "" || !strings.HasPrefix(deploySuffix, ".") {
 		return ""
 	}
 	if ordinal <= 0 || slug == "" {
 		return ""
 	}
-	return "deploy-" + strconv.Itoa(ordinal) + "." + slug + deploySuffix
+	host := "deploy-" + strconv.Itoa(ordinal) + "-" + slug + deploySuffix
+	parsedOrdinal, parsedSlug, ok := DeploymentScopeFromHost(deploySuffix, host)
+	if !ok || parsedOrdinal != ordinal || parsedSlug != slug {
+		return ""
+	}
+	return host
 }

@@ -8524,7 +8524,7 @@ paths:
       summary: Get per-deployment preview URL (SAFE-RELEASES-C.2).
       description: |
         Returns the per-deployment preview URL shape
-        `deploy-{N}.{slug}.gregale.dev` that the cert allowlist will
+        `deploy-{N}-{slug}.gregale.dev` that the cert allowlist will
         mint under for a single deployment (issue #976 / ADR-122).
         `N` is the per-app 1-based ordinal of the deployment row,
         resolved from state.DeploymentOrdinal — the order is
@@ -21029,12 +21029,12 @@ components:
           description: Resolved parent app id.
         host:
           type: string
-          description: 'Per-deployment preview hostname (`deploy-{N}.{slug}.gregale.dev`). Empty when alive=false OR when wire.DeployWildcardSuffix is "" (zone disabled).'
-          example: deploy-3.url-happy.gregale.dev
+          description: 'Per-deployment preview hostname (`deploy-{N}-{slug}.gregale.dev`). Empty when alive=false OR when wire.DeployWildcardSuffix is "" (zone disabled).'
+          example: deploy-3-url-happy.gregale.dev
         url:
           type: string
           description: Full request URL (`https://<host>`). Empty when host is empty.
-          example: https://deploy-3.url-happy.gregale.dev
+          example: https://deploy-3-url-happy.gregale.dev
         alive:
           type: boolean
           description: 'True iff the deployment exists, belongs to the caller, and has a status in {pending, building, imaging, snapshotting, live} (the same predicate as state.Deployment.DeploymentPreviewActive the cert allowlist consults).'

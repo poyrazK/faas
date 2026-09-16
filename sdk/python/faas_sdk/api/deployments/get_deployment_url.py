@@ -73,7 +73,7 @@ def sync_detailed(
     r"""Get per-deployment preview URL (SAFE-RELEASES-C.2).
 
      Returns the per-deployment preview URL shape
-    `deploy-{N}.{slug}.gregale.dev` that the cert allowlist will
+    `deploy-{N}-{slug}.gregale.dev` that the cert allowlist will
     mint under for a single deployment (issue #976 / ADR-122).
     `N` is the per-app 1-based ordinal of the deployment row,
     resolved from state.DeploymentOrdinal — the order is
@@ -126,7 +126,7 @@ def sync(
     r"""Get per-deployment preview URL (SAFE-RELEASES-C.2).
 
      Returns the per-deployment preview URL shape
-    `deploy-{N}.{slug}.gregale.dev` that the cert allowlist will
+    `deploy-{N}-{slug}.gregale.dev` that the cert allowlist will
     mint under for a single deployment (issue #976 / ADR-122).
     `N` is the per-app 1-based ordinal of the deployment row,
     resolved from state.DeploymentOrdinal — the order is
@@ -174,7 +174,7 @@ async def asyncio_detailed(
     r"""Get per-deployment preview URL (SAFE-RELEASES-C.2).
 
      Returns the per-deployment preview URL shape
-    `deploy-{N}.{slug}.gregale.dev` that the cert allowlist will
+    `deploy-{N}-{slug}.gregale.dev` that the cert allowlist will
     mint under for a single deployment (issue #976 / ADR-122).
     `N` is the per-app 1-based ordinal of the deployment row,
     resolved from state.DeploymentOrdinal — the order is
@@ -225,7 +225,7 @@ async def asyncio(
     r"""Get per-deployment preview URL (SAFE-RELEASES-C.2).
 
      Returns the per-deployment preview URL shape
-    `deploy-{N}.{slug}.gregale.dev` that the cert allowlist will
+    `deploy-{N}-{slug}.gregale.dev` that the cert allowlist will
     mint under for a single deployment (issue #976 / ADR-122).
     `N` is the per-app 1-based ordinal of the deployment row,
     resolved from state.DeploymentOrdinal — the order is

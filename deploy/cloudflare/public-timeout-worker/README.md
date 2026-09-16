@@ -27,8 +27,7 @@ and removes the marker before returning the response to the customer.
    ```
 
 4. Attach the Worker to the customer-facing routes (`gregale.dev/*`,
-   `api.gregale.dev/*`, `*.gregale.dev/*`, and any enabled
-   `*.apps.gregale.dev/*` route). On the apex frontend route the Worker keeps
+   `api.gregale.dev/*`, and `*.gregale.dev/*`). On the apex frontend route the Worker keeps
    the Pages origin and adds the browser security policy to every HTML
    response, including SPA fallbacks. API and application routes retain the
    configured origin override and timeout normalization.

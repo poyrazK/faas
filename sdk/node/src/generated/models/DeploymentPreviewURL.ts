@@ -18,7 +18,7 @@ export type DeploymentPreviewURL = {
    */
   app_id: string;
   /**
-   * Per-deployment preview hostname (`deploy-{N}.{slug}.gregale.dev`). Empty when alive=false OR when wire.DeployWildcardSuffix is "" (zone disabled).
+   * Per-deployment preview hostname (`deploy-{N}-{slug}.gregale.dev`). Empty when alive=false OR when wire.DeployWildcardSuffix is "" (zone disabled).
    */
   host?: string;
   /**

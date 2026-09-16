@@ -2249,7 +2249,7 @@ type DeploymentPreviewURL struct {
 	// AppID is the resolved parent app — echoed so the dashboard
 	// can fetch the parent without a second round-trip.
 	AppID string `json:"app_id"`
-	// Host is the per-deployment preview hostname (`deploy-{N}.{slug}.gregale.dev`).
+	// Host is the per-deployment preview hostname (`deploy-{N}-{slug}.gregale.dev`).
 	// Empty when alive=false or the deployment-preview zone is disabled.
 	Host string `json:"host,omitempty"`
 	// URL is the full request URL (https + host) — empty when host is empty.

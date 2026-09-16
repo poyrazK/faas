@@ -26,7 +26,7 @@ the first client address source:
 	}
 }
 
-api.gregale.dev, *.gregale.dev, *.apps.gregale.dev, gregale.dev {
+api.gregale.dev, *.gregale.dev, gregale.dev {
 	tls /etc/caddy/certs/gregale.pem /etc/caddy/certs/gregale.key
 	reverse_proxy 127.0.0.1:8080 {
 		header_up X-Forwarded-For {client_ip}

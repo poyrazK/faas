@@ -57,7 +57,10 @@ func (s *PgStore) MarkCustomDomainDNSDrifted(ctx context.Context, domain string,
 		       cert_last_error = $2,
 		       dns_last_checked_at = $3,
 		       cert_failed_at = null,
-		       last_cert_issuance_failed_email_at = null
+		       last_cert_issuance_failed_email_at = null,
+		       verification_next_check_at = now(),
+		       verification_attempts = 0,
+		       verification_expires_at = now() + interval '7 days'
 		 where domain = $1
 		   and verified_at is not null`,
 		domain, nullableStr(reason), nullableTime(checkedAt))
@@ -88,6 +91,9 @@ func (m *MemStore) MarkCustomDomainDNSDrifted(_ context.Context, domain string, 
 	d.DNSLastCheckedAt = checkedAt
 	d.CertFailedAt = time.Time{}
 	d.CertFailureEmailAt = time.Time{}
+	d.VerificationNextCheckAt = time.Now()
+	d.VerificationAttempts = 0
+	d.VerificationExpiresAt = d.VerificationNextCheckAt.Add(7 * 24 * time.Hour)
 	m.domains[domain] = d
 	return transitioned, nil
 }

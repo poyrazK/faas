@@ -2330,7 +2330,7 @@ type Store interface {
 	// even after later deploys land (the latest deploy is Nth,
 	// the one before it is (N-1)th, etc.). Used by the
 	// deployment-preview URL surface to stamp the
-	// `deploy-{N}.{slug}.gregale.dev` host — N MUST be stable
+	// `deploy-{N}-{slug}.gregale.dev` host — N MUST be stable
 	// for an existing row across runs so a previously-issued
 	// URL doesn't silently rot when the customer deploys a
 	// fresh row.

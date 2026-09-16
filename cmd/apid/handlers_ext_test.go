@@ -2287,6 +2287,29 @@ func TestCreateDomain_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateDomain_PerIPChallengeRateLimit(t *testing.T) {
+	e := setup(t, api.PlanScale)
+	appID := mustSeedApp(t, e, "domain-rate-limit")
+	for i := 0; i < 10; i++ {
+		rec := e.do(t, http.MethodPost, "/v1/domains", api.CreateCustomDomainRequest{
+			Domain: fmt.Sprintf("rate-%d.example.com", i), AppID: appID,
+		}, nil)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("request %d status=%d body=%s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	rec := e.do(t, http.MethodPost, "/v1/domains", api.CreateCustomDomainRequest{
+		Domain: "rate-blocked.example.com", AppID: appID,
+	}, nil)
+	assertProblem(t, rec, http.StatusTooManyRequests, api.CodeQuotaExhausted)
+	if got := rec.Header().Get("Retry-After"); got != "60" {
+		t.Fatalf("Retry-After = %q, want 60", got)
+	}
+	if _, err := e.store.DomainByName(context.Background(), "rate-blocked.example.com"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("blocked request created a pending claim: %v", err)
+	}
+}
+
 // TestCreateDomain_AcceptsOwnedAppSlug pins the CLI's documented --app
 // contract. The request carries a slug while the stored domain keeps the
 // canonical app UUID.

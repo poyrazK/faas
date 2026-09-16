@@ -9,7 +9,7 @@
   `revisions` table — every deployment is its own revision). Canary
   presets are gated on Pro+ plans (already gated on traffic-split,
   ADR-084). Audit + diff retention is 90 days. The per-deployment
-  preview URL shape is `deploy-{N}.{slug}.{root_domain}` where the
+  preview URL shape is `deploy-{N}-{slug}.{root_domain}` where the
   suffix is `*.gregale.dev` (the in-flight cert-wildcard target,
   NOT the legacy `*.apps.gregale.dev`).
 
@@ -48,7 +48,7 @@
      auto-promoted to 0%"). Closing this requires a structured
      `deployment_audit` row per deployment-event.
   2. **Preview is `app --pr N` only.** A deploying developer
-     cannot share `deploy-{N}.{slug}.gregale.dev` with a teammate
+     cannot share `deploy-{N}-{slug}.gregale.dev` with a teammate
      or a customer-success check without going through the GitHub
      PR preview seam (ADR-095). Closing this requires a
      deployment-scoped preview URL on the deployment itself.
@@ -112,7 +112,7 @@
     the spec §4.7 GB-h billing math uses 90-day customer
     retention as the floor; aligning the audit retention
     avoids two GC goroutines at different cadences.
-  - **Preview URL shape `deploy-{N}.{slug}.{root_domain}`**
+  - **Preview URL shape `deploy-{N}-{slug}.{root_domain}`**
     where `root_domain='gregale.dev'` (the in-flight cert-wildcard
     target, NOT legacy `apps.gregale.dev`). The new helper
     `pkg/gateway/preview_parser.go::DeploymentScopeFromHost`

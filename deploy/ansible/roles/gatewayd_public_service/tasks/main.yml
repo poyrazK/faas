@@ -8,8 +8,8 @@
 # token — those concerns live with the upstream Caddy.
 #
 # What's NOT here (operator-provisioned):
-#   - the Caddy upstream config (out of this role; reverse-proxy to
-#     http://127.0.0.1:8080)
+#   - the full Caddy upstream config (this role only removes retired hostnames;
+#     the operator still owns certificates, trusted proxies, and the upstream)
 #   - enable the unit (`systemctl enable --now faas-gatewayd-public`)
 #   - run the daemon (Caddy reverse-proxy upstream is the trigger)
 
@@ -96,6 +96,32 @@
     group: root
     mode: "0644"
   notify: restart faas-gatewayd-public
+
+# Issue #2700: *.apps.gregale.dev was retired when app hosts moved to the
+# apex wildcard. Leaving it in an existing Caddy site makes Caddy retry a
+# DNS-01-only wildcard with the HTTP/TLS-ALPN issuers every six hours. Keep
+# this as a narrow convergence edit because the rest of the Caddyfile remains
+# operator-owned.
+- name: gatewayd_public_service — inspect operator Caddyfile
+  ansible.builtin.stat:
+    path: /etc/caddy/Caddyfile
+  register: gatewayd_public_caddyfile
+
+- name: gatewayd_public_service — inspect Caddy validator
+  ansible.builtin.stat:
+    path: /usr/bin/caddy
+  register: gatewayd_public_caddy_binary
+
+- name: gatewayd_public_service — remove retired apps wildcard from Caddy
+  ansible.builtin.replace:
+    path: /etc/caddy/Caddyfile
+    regexp: ',[ \t]*\*\.apps\.gregale\.dev'
+    replace: ''
+    validate: /usr/bin/caddy validate --adapter caddyfile --config %s
+  when:
+    - gatewayd_public_caddyfile.stat.exists
+    - gatewayd_public_caddy_binary.stat.exists
+  notify: reload caddy
 
 - name: gatewayd_public_service — inspect existing gateway enablement  # noqa: command-instead-of-module (read-only query / no module equivalent)
   ansible.builtin.command: systemctl is-enabled faas-gatewayd-public.service

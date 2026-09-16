@@ -7,7 +7,7 @@ var appSlugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 var reservedAppSlugs = map[string]struct{}{
 	"account": {}, "admin": {}, "api": {}, "assets": {}, "billing": {},
 	"cdn": {}, "console": {}, "dashboard": {}, "docs": {}, "help": {},
-	"login": {}, "logout": {}, "mail": {}, "operations": {},
+	"login": {}, "logout": {}, "mail": {}, "ns": {}, "operations": {},
 	"security": {}, "signup": {}, "static": {}, "status": {}, "support": {},
 	"www": {},
 }

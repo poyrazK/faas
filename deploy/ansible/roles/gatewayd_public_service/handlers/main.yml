@@ -17,3 +17,10 @@
   changed_when: true
   listen: restart faas-gatewayd-public
   when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: gatewayd_public_service — reload validated Caddy configuration
+  ansible.builtin.systemd_service:
+    name: caddy.service
+    state: reloaded
+  listen: reload caddy
+  when: not (faas_join_defer_service_handlers | default(false) | bool)

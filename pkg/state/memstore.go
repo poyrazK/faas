@@ -9126,10 +9126,17 @@ func (m *MemStore) RequeueBuildIfClaim(_ context.Context, claim Build) error {
 func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token string) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, dup := m.domains[domain]; dup {
-		return CustomDomain{}, fmt.Errorf("state: domain %q already exists", domain)
+	now := time.Now()
+	if current, dup := m.domains[domain]; dup {
+		if current.Verified() || current.VerificationExpiresAt.IsZero() || current.VerificationExpiresAt.After(now) {
+			return CustomDomain{}, fmt.Errorf("%w: domain %q already exists", ErrConflict, domain)
+		}
 	}
-	d := CustomDomain{Domain: domain, AppID: appID, ChallengeToken: token, CertStatus: CustomDomainCertPending}
+	d := CustomDomain{
+		Domain: domain, AppID: appID, ChallengeToken: token,
+		CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now,
+		VerificationExpiresAt: now.Add(7 * 24 * time.Hour),
+	}
 	m.domains[domain] = d
 	return d, nil
 }
@@ -9206,6 +9213,23 @@ func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
 	d.VerifiedAt = time.Now()
 	m.domains[domain] = d
 	return nil
+}
+
+// MarkDomainVerifiedIfChallenge mirrors PgStore's compare-and-set so an old
+// verifier cannot mark a newly reclaimed claim as verified.
+func (m *MemStore) MarkDomainVerifiedIfChallenge(_ context.Context, domain, token string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.domains[domain]
+	if !ok {
+		return false, nil
+	}
+	if d.Verified() || d.ChallengeToken != token || d.VerificationExpiresAt.IsZero() || !d.VerificationExpiresAt.After(time.Now()) {
+		return false, nil
+	}
+	d.VerifiedAt = time.Now()
+	m.domains[domain] = d
+	return true, nil
 }
 
 func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {

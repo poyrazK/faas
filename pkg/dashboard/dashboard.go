@@ -1147,7 +1147,7 @@ type WorkflowStepItem struct {
 //
 // PreviewURL (issue #976 / ADR-122 / SAFE-RELEASES-C.3) is the
 // read seam for the per-deployment preview URL
-// `deploy-{N}.{slug}.gregale.dev`. Populated by the dashboard
+// `deploy-{N}-{slug}.gregale.dev`. Populated by the dashboard
 // handler via the same Store call chain the apid
 // getDeploymentURL handler uses; nil when the deployment is
 // NOT preview-active (failed/superseded) so the template

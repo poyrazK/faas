@@ -201,6 +201,11 @@ type server struct {
 	// turns the existing per-IP failure limiter into a generic
 	// per-IP rate limiter without dragging in x/time/rate.
 	dashboardExportLimiter *middleware.Limiter
+	// domainCreateLimiter caps pending DNS challenges per client IP. The
+	// durable store separately enforces per-account outstanding-claim quotas;
+	// this edge bucket prevents one source from cycling accounts to create an
+	// unbounded verification workload.
+	domainCreateLimiter *middleware.Limiter
 	// adminAllowlist is the email allowlist gating /v1/compute-nodes
 	// (issue #98 / ADR-028). nil = no admin access (every route
 	// 403s); populated by WithAdminAllowlist from FAAS_ADMIN_EMAILS.
@@ -948,6 +953,12 @@ func newServerWithDeps(
 		MaxFailures:   3,
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	})
+	domainCreateLimiter := middleware.NewLimiter(middleware.AuthLimitConfig{
+		Log:           log,
+		Window:        time.Minute,
+		MaxFailures:   10,
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	})
 	// IAM-4 (ADR-035): the auth audit seam. Wired here so handlers
 	// can call s.audit.Emit(...) without a per-request nil check.
 	// ops is passed in via WithOpsMetrics after this returns; until
@@ -981,6 +992,7 @@ func newServerWithDeps(
 		cliAuthLimiter:         cliAuthLimiter,
 		cliAuthSubmitLimiter:   cliAuthSubmitLimiter,
 		dashboardExportLimiter: dashboardExportLimiter,
+		domainCreateLimiter:    domainCreateLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),
 		// Unit tests exercise the workflow engine by default. Production
@@ -1707,7 +1719,7 @@ func (s *server) handler() http.Handler {
 
 	// Custom domains.
 	mux.HandleFunc("GET /v1/domains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDomains))))
-	mux.HandleFunc("POST /v1/domains", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDomain)))))
+	mux.Handle("POST /v1/domains", s.domainCreateLimited(s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDomain))))))
 	mux.HandleFunc("DELETE /v1/domains/{domain}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteDomain))))
 	// Issue #961 / Mega-A PR-3: per-domain verify + show surfaces for
 	// `gregale domains verify | show`. GET /v1/domains/{domain} returns
@@ -3407,6 +3419,26 @@ func principalHasScope(p principal, allowed []string) bool {
 // idempotent replays a stored response for a repeated Idempotency-Key, or runs
 // the handler and stores its response (spec §4.2: kept 24 h). Without the header
 // it is a passthrough.
+func (s *server) domainCreateLimited(next http.Handler) http.Handler {
+	if s.domainCreateLimiter == nil {
+		s.domainCreateLimiter = middleware.NewLimiter(middleware.AuthLimitConfig{
+			Log: s.log, Window: time.Minute, MaxFailures: 10,
+			CountStatuses: []int{middleware.CountEveryAttempt},
+		})
+	}
+	return middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
+		Log:           s.log,
+		CountStatuses: []int{middleware.CountEveryAttempt},
+		OnLimited: func(w http.ResponseWriter, _ *http.Request) {
+			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests,
+				api.CodeQuotaExhausted,
+				"Domain verification rate limited",
+				"At most 10 custom-domain challenge requests are allowed per minute from one IP address.").
+				WithHeader("Retry-After", "60"))
+		},
+	}, s.domainCreateLimiter)(next)
+}
+
 func (s *server) idempotent(next accountHandler) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		key := r.Header.Get("Idempotency-Key")

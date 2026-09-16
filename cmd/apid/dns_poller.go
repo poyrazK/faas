@@ -109,8 +109,20 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 					continue
 				}
 			}
-			if err := s.store.MarkDomainVerified(ctx, d.Domain); err != nil {
+			verifier, ok := s.store.(state.CustomDomainChallengeVerifier)
+			if !ok {
+				log.Warn("dns_poller: challenge-bound verification unavailable", "domain", d.Domain)
+				continue
+			}
+			matched, err := verifier.MarkDomainVerifiedIfChallenge(ctx, d.Domain, d.ChallengeToken)
+			if err != nil {
 				log.Warn("dns_poller: mark verified failed", "domain", d.Domain, "err", err)
+				continue
+			}
+			if !matched {
+				// The row expired or was reclaimed while DNS was in flight. Never
+				// apply an old account's proof to the replacement challenge.
+				log.Info("dns_poller: stale domain challenge ignored", "domain", d.Domain)
 				continue
 			}
 			if err := s.store.UpdateCustomDomainCertStatus(ctx, d.Domain, state.CustomDomainCertPending, time.Time{}, "", checkedAt); err != nil && !errors.Is(err, state.ErrNotFound) {

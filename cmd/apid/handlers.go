@@ -170,13 +170,13 @@ func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 // buildApp applies defaults and validates a create request, returning the App to
 // persist or a *Problem describing the first violation.
 func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits api.Limits) (state.App, *api.Problem) {
-	if !validSlug(req.Slug) {
-		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
-	}
 	if api.IsReservedAppSlug(req.Slug) {
 		return state.App{}, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Reserved slug", fmt.Sprintf("app slug %q is reserved for a Gregale service", req.Slug))
+	}
+	if !validSlug(req.Slug) {
+		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
 	}
 	typ := state.AppType(orDefault(req.Type, string(state.AppTypeApp)))
 	if typ != state.AppTypeApp && typ != state.AppTypeFunction {

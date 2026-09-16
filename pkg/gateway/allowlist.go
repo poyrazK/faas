@@ -163,7 +163,7 @@ var ErrNotFound = errors.New("gateway: domain not found in allowlist")
 // deploymentLookup + deploySuffix (issue #976 / ADR-122 /
 // SAFE-RELEASES-C) extend the allowlist with a deployment-preview
 // branch. Hostnames whose shape matches
-// `deploy-{N}.{slug}.{deploySuffix}` are peeled by
+// `deploy-{N}-{slug}.{deploySuffix}` are peeled by
 // DeploymentScopeFromHost, the closure loads the deployment row,
 // and the row's DeploymentPreviewActive() must return true for the
 // allowlist to admit the host. nil deploymentLookup or empty
@@ -298,7 +298,7 @@ func newPGAllowlist(
 
 		// Deployment-preview path (issue #976 / ADR-122 / SAFE-RELEASES-C).
 		// Only fires for hostnames whose shape matches
-		// deploy-{N}.{slug}.{deploySuffix} — anything else (custom
+		// deploy-{N}-{slug}.{deploySuffix} — anything else (custom
 		// domains, surface hostnames, prod, malformed scans) is refused.
 		// deploymentLookup==nil OR empty deploySuffix disables the branch
 		// entirely (e.g. tests + staging paths that don't mint

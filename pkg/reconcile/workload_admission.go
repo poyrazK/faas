@@ -48,12 +48,6 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 				"workload %q uses prebuilt image %q; project apply currently supports source builds only; add a Dockerfile/build context or deploy the image as a container app",
 				workload.Name, workload.Image))
 		}
-		if !api.ValidAppSlug(workload.Name) {
-			reasons = append(reasons, fmt.Sprintf(
-				"workload %q has invalid app slug %q; use 3-40 lowercase letters, digits, or hyphens",
-				workload.Name, workload.Name))
-			continue
-		}
 		if api.IsReservedAppSlug(workload.Name) {
 			// Do not strand a project that already owns a reserved collision:
 			// it must remain deployable while the operator migrates it. Only a
@@ -66,6 +60,12 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 					workload.Name, workload.Name))
 				continue
 			}
+		}
+		if !api.ValidAppSlug(workload.Name) {
+			reasons = append(reasons, fmt.Sprintf(
+				"workload %q has invalid app slug %q; use 3-40 lowercase letters, digits, or hyphens",
+				workload.Name, workload.Name))
+			continue
 		}
 		if firstRoot, duplicate := seen[workload.Name]; duplicate {
 			reasons = append(reasons, fmt.Sprintf(
