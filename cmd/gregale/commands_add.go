@@ -31,15 +31,6 @@ var (
 	addBucketPrefixRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,47}$`)
 )
 
-type addPostgresClient interface {
-	GetApp(context.Context, string) (api.AppResponse, error)
-	ListManagedPostgresDatabases(context.Context) (api.ManagedPostgresDatabaseList, error)
-	CreateManagedPostgresDatabase(context.Context, api.CreateManagedPostgresDatabaseRequest) (api.ManagedPostgresDatabase, error)
-	GetManagedPostgresDatabase(context.Context, string) (api.ManagedPostgresDatabase, error)
-	CreateManagedPostgresBinding(context.Context, string, api.CreateManagedPostgresBindingRequest) (api.ManagedPostgresBinding, error)
-	GetManagedPostgresBinding(context.Context, string) (api.ManagedPostgresBinding, error)
-}
-
 type addPostgresResult struct {
 	AppID           string                      `json:"app_id"`
 	Database        api.ManagedPostgresDatabase `json:"database"`
@@ -78,14 +69,6 @@ func cmdAdd(args []string) int {
 		fmt.Fprintf(os.Stderr, "unknown add resource %q\n", args[0])
 		return 1
 	}
-}
-
-type addBucketClient interface {
-	GetApp(context.Context, string) (api.AppResponse, error)
-	ListObjectBuckets(context.Context, string) (api.ObjectBucketList, error)
-	CreateObjectBucket(context.Context, string, api.CreateObjectBucketRequest) (api.ObjectBucket, error)
-	ListObjectStorageComputeBindings(context.Context, string, string) (api.ObjectStorageComputeBindingList, error)
-	CreateObjectStorageComputeBinding(context.Context, string, string, api.CreateObjectStorageComputeBindingRequest) (api.ObjectStorageComputeBinding, error)
 }
 
 // cmdAddBucket creates (or reuses) an object bucket for an app and binds its
