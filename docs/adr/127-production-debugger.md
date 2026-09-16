@@ -140,9 +140,15 @@ This is what makes the example "PostgreSQL queries 82ms → 191ms" breakdown der
 New `POST /v1/apps/{slug}/debug/requests/{req_id}/replay`:
 
 - Captures (status, route, method, deployment_id, trace_id) from the persisted `request_telemetry` row.
+- Accepts an optional `mirror_deployment_id` so the customer can select a
+  specific enabled mirror target for the request's serving deployment. An
+  empty body preserves the default first-match behavior.
 - Re-issues via the existing ADR-125 mirror rule machinery: `schedd` invokes the customer's request against the chosen target deployment, returns `{source: latency_ms, mirror: latency_ms}`.
 - No new capture-store primitive needed (PR-A reject alternative §1).
 - The mirror result lands in the existing `mirror_invocation_results` table (`migrations/00386_mirror_invocation_results.sql:41-117`), already 7-day retained.
+- The queued response echoes the selected source and target deployment IDs;
+  the completed invocation result exposes only status, latency, status-diff,
+  and crash metadata—never request bodies or credentials.
 
 ### 7. Customer-visible surfaces
 
@@ -153,8 +159,9 @@ New `POST /v1/apps/{slug}/debug/requests/{req_id}/replay`:
 | apid | `GET /v1/apps/{slug}/debug/regressions` | RequestTelemetryRegression — active regressions since last deploy |
 | apid | `POST /v1/apps/{slug}/debug/compare` | Per-route p50/p95/p99 split between two deployments |
 | apid | `POST /v1/apps/{slug}/debug/requests/{req_id}/replay` | §6 |
+| apid | `GET /v1/apps/{slug}/debug/requests/{req_id}/evidence` | Bounded root-cause synthesis from redacted evidence |
 | apid | `POST /v1/otel/v1/traces` | §5 |
-| CLI | `gregale debug requests {list,get,replay}` | `cmd/gregale/commands_debug.go` |
+| CLI | `gregale debug requests {list,get,evidence,explain,replay}` | `cmd/gregale/commands_debug.go` |
 | CLI | `gregale debug regressions <slug>` | |
 | CLI | `gregale debug compare <slug> --source v80 --mirror v81` | |
 | Dashboard | `/dashboard/apps/{slug}/debug` | `pkg/dashboard/templates/app_debug.html` |
@@ -166,6 +173,18 @@ The request list accepts exact server-side filters for `deployment_id`,
 the opaque cursor pins them with the retention window and route; changing any
 filter while reusing a cursor is rejected. This keeps incident links and
 dashboard pagination on one deterministic result set.
+
+### 7.1 Root-cause synthesis
+
+The evidence endpoint returns a structured `explanation` in addition to the
+existing headline. `pkg/debugger` applies bounded rules to the request
+outcome, guest result, cold-boot signal, regression observation, correlation
+stages, and slowest retained spans. The result contains a diagnosis,
+confidence, evidence-backed findings, stable evidence references, and safe
+next actions. It is generated as `rules-v1`; no request body, header, raw log,
+or raw span attribute is passed to the synthesis layer. A future prose model
+can consume this same redacted envelope without changing the customer-facing
+contract.
 
 ## Why now
 

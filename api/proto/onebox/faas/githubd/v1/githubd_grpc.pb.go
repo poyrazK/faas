@@ -48,6 +48,7 @@ const (
 	Githubd_ListRecoveryQueueItems_FullMethodName   = "/onebox.faas.githubd.v1.Githubd/ListRecoveryQueueItems"
 	Githubd_RetryWebhookDelivery_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/RetryWebhookDelivery"
 	Githubd_RetryCheckUpdate_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/RetryCheckUpdate"
+	Githubd_RetryAppActivity_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/RetryAppActivity"
 )
 
 // GithubdClient is the client API for Githubd service.
@@ -189,6 +190,10 @@ type GithubdClient interface {
 	// already-retried items return retried=false and are left untouched.
 	RetryWebhookDelivery(ctx context.Context, in *RetryWebhookDeliveryRequest, opts ...grpc.CallOption) (*RetryRecoveryItemResponse, error)
 	RetryCheckUpdate(ctx context.Context, in *RetryCheckUpdateRequest, opts ...grpc.CallOption) (*RetryRecoveryItemResponse, error)
+	// RetryAppActivity requeues recent dead webhook deliveries and Check Run
+	// updates for one account-owned app. The customer-facing action returns
+	// counts only; queue identifiers, payloads, and worker errors stay private.
+	RetryAppActivity(ctx context.Context, in *RetryAppActivityRequest, opts ...grpc.CallOption) (*RetryAppActivityResponse, error)
 }
 
 type githubdClient struct {
@@ -368,6 +373,16 @@ func (c *githubdClient) RetryCheckUpdate(ctx context.Context, in *RetryCheckUpda
 	return out, nil
 }
 
+func (c *githubdClient) RetryAppActivity(ctx context.Context, in *RetryAppActivityRequest, opts ...grpc.CallOption) (*RetryAppActivityResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetryAppActivityResponse)
+	err := c.cc.Invoke(ctx, Githubd_RetryAppActivity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GithubdServer is the server API for Githubd service.
 // All implementations must embed UnimplementedGithubdServer
 // for forward compatibility.
@@ -507,6 +522,10 @@ type GithubdServer interface {
 	// already-retried items return retried=false and are left untouched.
 	RetryWebhookDelivery(context.Context, *RetryWebhookDeliveryRequest) (*RetryRecoveryItemResponse, error)
 	RetryCheckUpdate(context.Context, *RetryCheckUpdateRequest) (*RetryRecoveryItemResponse, error)
+	// RetryAppActivity requeues recent dead webhook deliveries and Check Run
+	// updates for one account-owned app. The customer-facing action returns
+	// counts only; queue identifiers, payloads, and worker errors stay private.
+	RetryAppActivity(context.Context, *RetryAppActivityRequest) (*RetryAppActivityResponse, error)
 	mustEmbedUnimplementedGithubdServer()
 }
 
@@ -564,6 +583,9 @@ func (UnimplementedGithubdServer) RetryWebhookDelivery(context.Context, *RetryWe
 }
 func (UnimplementedGithubdServer) RetryCheckUpdate(context.Context, *RetryCheckUpdateRequest) (*RetryRecoveryItemResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetryCheckUpdate not implemented")
+}
+func (UnimplementedGithubdServer) RetryAppActivity(context.Context, *RetryAppActivityRequest) (*RetryAppActivityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetryAppActivity not implemented")
 }
 func (UnimplementedGithubdServer) mustEmbedUnimplementedGithubdServer() {}
 func (UnimplementedGithubdServer) testEmbeddedByValue()                 {}
@@ -867,6 +889,24 @@ func _Githubd_RetryCheckUpdate_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Githubd_RetryAppActivity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetryAppActivityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).RetryAppActivity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_RetryAppActivity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).RetryAppActivity(ctx, req.(*RetryAppActivityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Githubd_ServiceDesc is the grpc.ServiceDesc for Githubd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -933,6 +973,10 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RetryCheckUpdate",
 			Handler:    _Githubd_RetryCheckUpdate_Handler,
+		},
+		{
+			MethodName: "RetryAppActivity",
+			Handler:    _Githubd_RetryAppActivity_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

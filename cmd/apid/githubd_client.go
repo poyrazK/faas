@@ -81,6 +81,12 @@ type githubdActivityClient interface {
 	GetAppActivity(context.Context, string, string, int) (githubdgrpc.AppActivity, error)
 }
 
+// githubdActivityRecoveryClient is optional so older githubd clients can
+// continue serving connection status while customer recovery rolls out.
+type githubdActivityRecoveryClient interface {
+	RetryAppActivity(context.Context, string, string, int) (githubdgrpc.AppActivityRetryResult, error)
+}
+
 // StreamSourceRefResult mirrors pkg/githubdgrpc.StreamSourceRefResult
 // so handler tests can construct it without importing the gRPC
 // package. Stay field-for-field compatible with the wire
@@ -269,6 +275,11 @@ func (l *liveClient) GetAppBinding(ctx context.Context, appID, accountID string)
 // GetAppActivity passes through to githubdgrpc.Client.GetAppActivity.
 func (l *liveClient) GetAppActivity(ctx context.Context, accountID, appID string, limit int) (githubdgrpc.AppActivity, error) {
 	return l.c.GetAppActivity(ctx, accountID, appID, limit)
+}
+
+// RetryAppActivity passes through to githubdgrpc.Client.RetryAppActivity.
+func (l *liveClient) RetryAppActivity(ctx context.Context, accountID, appID string, limit int) (githubdgrpc.AppActivityRetryResult, error) {
+	return l.c.RetryAppActivity(ctx, accountID, appID, limit)
 }
 
 // CreateDeploymentFromPush passes through to githubdgrpc.Client.CreateDeploymentFromPush.

@@ -122,6 +122,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		sourceRoot     string
 		sourceURL      string
 		commitSHA      string
+		scope          string
 		environment    string
 		kind           state.DeploymentKind
 		sourceAccepted bool
@@ -202,6 +203,13 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			commitSHA = strings.TrimSpace(string(b))
+		case "scope":
+			b, readErr := io.ReadAll(io.LimitReader(part, 64))
+			if readErr != nil {
+				api.WriteProblem(w, api.ErrValidation("scope could not be read"))
+				return
+			}
+			scope = strings.TrimSpace(string(b))
 		case "environment":
 			b, readErr := io.ReadAll(io.LimitReader(part, api.MaxEnvScopeLen+1))
 			if readErr != nil || len(b) > api.MaxEnvScopeLen {
@@ -284,10 +292,16 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
+	}
+	if scope != "" {
+		if prob := api.ValidateScope(scope); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)

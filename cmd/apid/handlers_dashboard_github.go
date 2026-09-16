@@ -30,6 +30,10 @@ func githubDashboardFlash(r *http.Request) string {
 		return "GitHub access could not be synced. Try again in a minute."
 	case "disconnect-error":
 		return "GitHub could not be disconnected. Try again."
+	case "retried":
+		return "GitHub recovery work was queued. Refresh in a moment to see the result."
+	case "retry-error":
+		return "GitHub recovery could not be queued. Try syncing GitHub access first."
 	case "bind-error":
 		return "The app was created, but the GitHub repository could not be connected. Retry from this page or reconnect GitHub."
 	case "forbidden":
@@ -72,6 +76,9 @@ func projectDashboardGitHubActivity(activity *githubActivityResponse, repoFullNa
 		CheckUpdates:      make([]dashboard.GitHubCheckActivityView, 0, len(activity.CheckUpdates)),
 	}
 	for _, item := range activity.WebhookDeliveries {
+		if item.Status == "dead" {
+			out.CanRetry = true
+		}
 		status, class, guidance := dashboardGitHubWebhookStatus(item.Status)
 		_, commitURL, _, _, commitShort := githubDeploymentLinks(
 			"github://"+repoFullName+"@"+item.CommitSHA, item.CommitSHA)
@@ -81,6 +88,9 @@ func projectDashboardGitHubActivity(activity *githubActivityResponse, repoFullNa
 		})
 	}
 	for _, item := range activity.CheckUpdates {
+		if item.Status == "dead" {
+			out.CanRetry = true
+		}
 		status, class, guidance := dashboardGitHubCheckStatus(item.Status)
 		_, _, _, _, commitShort := githubDeploymentLinks(
 			"github://"+repoFullName+"@"+item.CommitSHA, item.CommitSHA)
@@ -222,4 +232,35 @@ func (s *server) dashboardGitHubDisconnect(w http.ResponseWriter, r *http.Reques
 		"surface":        "dashboard",
 	})
 	dashboardGitHubRedirect(w, r, slug, "disconnected")
+}
+
+func (s *server) dashboardGitHubRetry(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !validSlug(slug) {
+		http.NotFound(w, r)
+		return
+	}
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, githubInstallManageAction, acct.ID, githubInstallManageCSRFCookie); err != nil {
+		dashboardGitHubRedirect(w, r, slug, "forbidden")
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, slug)
+	if !ok {
+		return
+	}
+	result, err := s.retryGitHubActivityForAccount(r.Context(), app.ID, acct.ID)
+	if err != nil {
+		if api.AsProblem(err) == nil {
+			s.log.Warn("dashboard GitHub connection: retry activity", "account_id", acct.ID, "app_id", app.ID, "err", err)
+		}
+		dashboardGitHubRedirect(w, r, slug, "retry-error")
+		return
+	}
+	s.emitGitHubActivityRetryAudit(r.Context(), acct.ID, app.ID, result, "dashboard")
+	dashboardGitHubRedirect(w, r, slug, "retried")
 }

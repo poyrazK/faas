@@ -1124,6 +1124,12 @@ type AppRestartResponse struct {
 	WakeID string `json:"wake_id"`
 }
 
+// AppWakeResponse is returned when an explicit pre-warm request has been
+// durably queued for the scheduler.
+type AppWakeResponse struct {
+	WakeID string `json:"wake_id"`
+}
+
 // ParkedDeploymentRef is the reference shape returned in
 // AppResponse.ParkedDeployment (issue #554 / ADR-079 follow-up).
 // Lives in pkg/api/dto.go per pkg-api-cannot-import-pkg-state so
@@ -4545,16 +4551,16 @@ type AppMetricsResponse struct {
 	Wakes24h int64 `json:"wakes_24h,omitempty"`
 
 	// CacheHitRatePct is the share of cache-eligible requests served
-	// from gateway_response_cache (ADR-122) over the window. It is
-	// omitted until the response-cache consumer-facing metric lands;
+	// from gateway_response_cache (ADR-122) over the selected window.
+	// It is absent when the app has no cache telemetry in the window;
 	// an absent value is intentionally distinct from an observed 0%.
 	CacheHitRatePct *float64 `json:"cache_hit_rate_pct,omitempty"`
 
 	// ErrorBudgetPct is the remaining API-availability error budget
-	// as a percentage (0 = exhausted, 100 = full). It is omitted
-	// until the per-plan SLO target and trailing-window query are
-	// wired; an absent value is intentionally distinct from an
-	// observed exhausted budget.
+	// as a percentage (0 = exhausted, 100 = full) over the selected
+	// window. It is absent when the app has no requests in the window;
+	// an absent value is intentionally distinct from an observed
+	// exhausted budget. The current API-availability target is 99.5%.
 	ErrorBudgetPct *float64 `json:"error_budget_pct,omitempty"`
 }
 
@@ -7947,12 +7953,48 @@ type DebugTelemetrySpan struct {
 	DBStatement   string `json:"db_statement,omitempty"`
 }
 
-// DebugEvidenceExplanation is a deterministic explanation for a request's
-// evidence. LLM synthesis can build on this stable, redacted structure later.
+// DebugEvidenceExplanation is a bounded root-cause synthesis for a request's
+// evidence. The synthesis is generated only from the already-redacted
+// debugger envelope; it never receives request bodies, headers, raw logs, or
+// raw span attributes.
 type DebugEvidenceExplanation struct {
-	Status      string              `json:"status"`
-	Headline    string              `json:"headline"`
-	PrimarySpan *DebugTelemetrySpan `json:"primary_span,omitempty"`
+	Status          string                        `json:"status"`
+	Headline        string                        `json:"headline"`
+	Diagnosis       string                        `json:"diagnosis,omitempty"`
+	Confidence      string                        `json:"confidence,omitempty"`
+	PrimarySpan     *DebugTelemetrySpan           `json:"primary_span,omitempty"`
+	Findings        []DebugEvidenceFinding        `json:"findings,omitempty"`
+	Recommendations []DebugEvidenceRecommendation `json:"recommendations,omitempty"`
+	EvidenceRefs    []DebugEvidenceRef            `json:"evidence_refs,omitempty"`
+	GeneratedBy     string                        `json:"generated_by,omitempty"`
+}
+
+// DebugEvidenceFinding is one bounded, evidence-backed observation in a
+// debugger synthesis. EvidenceRefs contains stable labels such as "request",
+// "guest", "correlation:queue", "regression", or "span:0"; it never embeds
+// raw telemetry payloads.
+type DebugEvidenceFinding struct {
+	Code         string   `json:"code"`
+	Title        string   `json:"title"`
+	Detail       string   `json:"detail"`
+	Confidence   string   `json:"confidence"`
+	EvidenceRefs []string `json:"evidence_refs,omitempty"`
+}
+
+// DebugEvidenceRecommendation is a safe next action for an operator. Action
+// and Detail are intentionally closed, short strings so a future prose model
+// cannot turn this surface into an instruction-injection channel.
+type DebugEvidenceRecommendation struct {
+	Action string `json:"action"`
+	Detail string `json:"detail"`
+}
+
+// DebugEvidenceRef identifies the bounded debugger signal supporting a
+// synthesis. Value is an opaque local label, never a raw customer value.
+type DebugEvidenceRef struct {
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+	Value string `json:"value"`
 }
 
 // DebugTimelineEvent is one deterministic causal marker for a request. Wake
@@ -8200,6 +8242,15 @@ type DebugCompareResponse struct {
 	Routes []DebugCompareRouteStats `json:"routes"`
 }
 
+// DebugReplayRequest is the optional body for POST
+// /v1/apps/{slug}/debug/requests/{req_id}/replay. An empty target preserves
+// the legacy behavior: use the enabled mirror rule for the deployment that
+// served the retained request. Supplying MirrorDeploymentID selects one of
+// the app's enabled mirror rules for that source deployment.
+type DebugReplayRequest struct {
+	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
+}
+
 // Debug replay metadata is carried through the durable invocation envelope
 // rather than persisted as raw request headers/body. Telemetry deliberately
 // excludes credentials and bodies; these platform-owned headers let schedd's
@@ -8219,6 +8270,22 @@ const (
 type DebugReplayResponse struct {
 	MirrorInvocationID string `json:"mirror_invocation_id,omitempty"`
 	Status             string `json:"status"`
+	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
+	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
+}
+
+// DebugReplayComparison is the safe, metadata-only result written into the
+// durable replay invocation. It intentionally contains no request body,
+// headers, response body, or customer span attributes.
+type DebugReplayComparison struct {
+	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
+	MirrorDeploymentID string `json:"mirror_deployment_id,omitempty"`
+	SourceStatusCode   int    `json:"source_status_code"`
+	MirrorStatusCode   int    `json:"mirror_status_code"`
+	SourceLatencyMS    int    `json:"source_latency_ms"`
+	MirrorLatencyMS    int    `json:"mirror_latency_ms"`
+	StatusDiff         bool   `json:"status_diff"`
+	Crashed            bool   `json:"crashed"`
 }
 
 // ---- SAFE-RELEASES-R (issue #976 / ADR-122 / Mega PR #2 commit 6) ----

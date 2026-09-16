@@ -218,6 +218,24 @@ func (c *Client) GetAppActivity(ctx context.Context, accountID, appID string, li
 	return out, nil
 }
 
+// RetryAppActivity requeues recent dead activity for one account-owned app.
+// The response contains counts only and never exposes queue identifiers.
+func (c *Client) RetryAppActivity(ctx context.Context, accountID, appID string, limit int) (AppActivityRetryResult, error) {
+	if limit < math.MinInt32 || limit > math.MaxInt32 {
+		return AppActivityRetryResult{}, fmt.Errorf("githubdgrpc: activity retry limit %d is outside int32 range", limit)
+	}
+	resp, err := c.cli.RetryAppActivity(ctx, &githubdpb.RetryAppActivityRequest{
+		AccountId: accountID, AppId: appID, Limit: int32(limit),
+	})
+	if err != nil {
+		return AppActivityRetryResult{}, liftErr(err)
+	}
+	return AppActivityRetryResult{
+		RetriedWebhooks: int(resp.GetRetriedWebhooks()),
+		RetriedChecks:   int(resp.GetRetriedChecks()),
+	}, nil
+}
+
 // CreateDeploymentFromPush is the webhook-triggered path: githubd
 // turns a verified GitHub push into a deployment row in apid. Returns
 // ("", "", nil) when no app is bound to the repo.

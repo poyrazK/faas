@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -111,6 +113,9 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	if status.Status != "succeeded" || len(status.Workloads) != 1 || status.Workloads[0].Status != "promoted" {
 		t.Fatalf("promotion status response=%+v", status)
 	}
+	if status.VerificationStatus != "verified" || len(status.Workloads) != 1 || status.Workloads[0].VerificationStatus != "verified" {
+		t.Fatalf("promotion verification response=%+v", status)
+	}
 	// A replay with the same idempotency key returns the durable result even
 	// though the original target now points at the promoted deployment.
 	replayReq, replayRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
@@ -156,6 +161,76 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	srv.rollbackProjectEnvironmentPromotion(replayRollbackRec, replayRollbackReq, acct)
 	if replayRollbackRec.Code != http.StatusOK || replayRollbackRec.Body.String() != rollbackRec.Body.String() {
 		t.Fatalf("rollback replay status=%d body=%s want=%s", replayRollbackRec.Code, replayRollbackRec.Body.String(), rollbackRec.Body.String())
+	}
+}
+
+type corruptProjectEnvironmentPromotionVerificationStore struct {
+	state.Store
+}
+
+func (s *corruptProjectEnvironmentPromotionVerificationStore) UpdateProjectEnvironmentPromotionVerification(ctx context.Context, accountID, id, status, errorMessage string, startedAt, completedAt *time.Time) (state.ProjectEnvironmentPromotion, error) {
+	promotion, err := s.Store.UpdateProjectEnvironmentPromotionVerification(ctx, accountID, id, status, errorMessage, startedAt, completedAt)
+	if err != nil || status != "verifying" {
+		return promotion, err
+	}
+	_, workloads, err := s.Store.ProjectEnvironmentPromotionByID(ctx, accountID, promotion.ProjectSlug, promotion.ToEnvironment, id)
+	if err != nil || len(workloads) == 0 || workloads[0].TargetDeploymentID == "" {
+		return promotion, err
+	}
+	return promotion, s.Store.UpdateDeploymentStatus(ctx, workloads[0].TargetDeploymentID, state.DeployFailed, "verification test corruption")
+}
+
+func TestProjectEnvironmentPromotionVerificationAutomaticallyRollsBack(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", SourceSHA256: "source-staging", Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentRootfs(ctx, source.ID, "/rootfs/source", "apps/source.ext4", 42); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	previewReq.SetPathValue("environment", "production")
+	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+	if previewRec.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%s", previewRec.Code, previewRec.Body.String())
+	}
+	var preview api.ProjectEnvironmentPromotionPreviewResponse
+	if err := json.Unmarshal(previewRec.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	approvalToken, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
+	if problem != nil {
+		t.Fatalf("issue promotion approval: %v", problem)
+	}
+	srv.store = &corruptProjectEnvironmentPromotionVerificationStore{Store: store}
+	body, err := json.Marshal(api.PromoteProjectEnvironmentRequest{FromEnvironment: "staging", PromotionToken: preview.PromotionToken, ApprovalToken: approvalToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
+	req.SetPathValue("environment", "production")
+	req.Header.Set("Idempotency-Key", "promotion-verification-failure")
+	srv.promoteProjectEnvironment(rec, req, acct)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "automatically rolled back") {
+		t.Fatalf("promotion failure status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	promotion, workloads, err := store.ProjectEnvironmentPromotionByIdempotencyKey(ctx, acct.ID, project.Slug, "promotion-verification-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if promotion.VerificationStatus != "failed" || promotion.RollbackStatus != "rolled_back" || len(workloads) != 1 || workloads[0].RollbackStatus != "cleared" {
+		t.Fatalf("automatic rollback state=%+v workloads=%+v", promotion, workloads)
+	}
+	if _, err := store.LiveDeploymentForScope(ctx, app.ID, "production"); err == nil {
+		t.Fatal("failed promotion target remained live after automatic rollback")
 	}
 }
 

@@ -44,7 +44,7 @@ type NotificationOutboxItem struct {
 // are advisory cache invalidations and do not need durable delivery.
 func IsDurableNotificationChannel(channel string) bool {
 	switch channel {
-	case NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady:
+	case NotifyAppWake, NotifySnapshotPrime, NotifySnapshotBoot, NotifySnapshotWritten, NotifyDeploymentReady:
 		return true
 	default:
 		return false
@@ -225,11 +225,10 @@ func PruneNotifications(ctx context.Context, pool *pgxpool.Pool, before time.Tim
 	return result.RowsAffected(), nil
 }
 
-// DrainNotificationOutboxOnce replays one bounded batch. The handler is
-// deliberately void-returning because the existing daemon notification APIs
-// already own their retry/idempotency decisions; database claim/lease errors
-// still surface to the caller.
-func DrainNotificationOutboxOnce(ctx context.Context, pool *pgxpool.Pool, consumer string, channels []string, handler func(context.Context, Notification), log *slog.Logger) (int, error) {
+// DrainNotificationOutboxOnce replays one bounded batch. Handler failures leave
+// the row pending with the normal outbox backoff so accepted scheduler work is
+// never acknowledged before it has completed.
+func DrainNotificationOutboxOnce(ctx context.Context, pool *pgxpool.Pool, consumer string, channels []string, handler func(context.Context, Notification) error, log *slog.Logger) (int, error) {
 	delivered := 0
 	for i := 0; i < notificationOutboxBatch; i++ {
 		item, err := ClaimNotification(ctx, pool, consumer, channels, notificationOutboxLease)
@@ -240,7 +239,16 @@ func DrainNotificationOutboxOnce(ctx context.Context, pool *pgxpool.Pool, consum
 			return delivered, err
 		}
 		if handler != nil {
-			handler(ctx, Notification{Channel: item.Channel, Payload: item.Payload, OutboxID: item.ID})
+			if err := handler(ctx, Notification{Channel: item.Channel, Payload: item.Payload, OutboxID: item.ID}); err != nil {
+				if failErr := FailNotification(ctx, pool, item.ID, consumer, err); failErr != nil {
+					return delivered, errors.Join(err, failErr)
+				}
+				if log != nil {
+					log.Warn("db: durable notification delivery failed; queued for retry",
+						"consumer", consumer, "channel", item.Channel, "id", item.ID, "err", err)
+				}
+				continue
+			}
 		}
 		if err := CompleteNotification(ctx, pool, item.ID, consumer); err != nil {
 			return delivered, err
@@ -253,7 +261,7 @@ func DrainNotificationOutboxOnce(ctx context.Context, pool *pgxpool.Pool, consum
 // RunNotificationOutbox runs the bounded replay loop used by schedd and
 // imaged. It intentionally waits for the first poll interval so the ordinary
 // LISTEN delivery can acknowledge freshly-created rows before replay begins.
-func RunNotificationOutbox(ctx context.Context, pool *pgxpool.Pool, consumer string, channels []string, handler func(context.Context, Notification), log *slog.Logger) error {
+func RunNotificationOutbox(ctx context.Context, pool *pgxpool.Pool, consumer string, channels []string, handler func(context.Context, Notification) error, log *slog.Logger) error {
 	if pool == nil {
 		return errors.New("db: run notification outbox: nil pool")
 	}

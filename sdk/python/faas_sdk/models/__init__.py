@@ -152,6 +152,7 @@ from .app_streaming_status_status import AppStreamingStatusStatus
 from .app_trusted_signer_list_response import AppTrustedSignerListResponse
 from .app_usage_summary_response import AppUsageSummaryResponse
 from .app_usage_summary_response_source import AppUsageSummaryResponseSource
+from .app_wake_response import AppWakeResponse
 from .app_wake_timeline_response import AppWakeTimelineResponse
 from .app_wake_timeline_response_trigger_class_histogram import AppWakeTimelineResponseTriggerClassHistogram
 from .app_wake_timeline_response_trigger_histogram import AppWakeTimelineResponseTriggerHistogram
@@ -340,7 +341,14 @@ from .debug_compare_route_stats import DebugCompareRouteStats
 from .debug_coverage_response import DebugCoverageResponse
 from .debug_coverage_signal import DebugCoverageSignal
 from .debug_evidence_explanation import DebugEvidenceExplanation
+from .debug_evidence_explanation_confidence import DebugEvidenceExplanationConfidence
+from .debug_evidence_explanation_diagnosis import DebugEvidenceExplanationDiagnosis
+from .debug_evidence_explanation_generated_by import DebugEvidenceExplanationGeneratedBy
 from .debug_evidence_explanation_status import DebugEvidenceExplanationStatus
+from .debug_evidence_finding import DebugEvidenceFinding
+from .debug_evidence_finding_confidence import DebugEvidenceFindingConfidence
+from .debug_evidence_recommendation import DebugEvidenceRecommendation
+from .debug_evidence_ref import DebugEvidenceRef
 from .debug_guest_execution_evidence import DebugGuestExecutionEvidence
 from .debug_guest_execution_evidence_error_class import DebugGuestExecutionEvidenceErrorClass
 from .debug_guest_execution_evidence_outcome import DebugGuestExecutionEvidenceOutcome
@@ -351,6 +359,8 @@ from .debug_regression_action_response import DebugRegressionActionResponse
 from .debug_regression_item import DebugRegressionItem
 from .debug_regression_item_state import DebugRegressionItemState
 from .debug_regressions_response import DebugRegressionsResponse
+from .debug_replay_comparison import DebugReplayComparison
+from .debug_replay_request import DebugReplayRequest
 from .debug_replay_response import DebugReplayResponse
 from .debug_replay_response_status import DebugReplayResponseStatus
 from .debug_request_correlation import DebugRequestCorrelation
@@ -526,6 +536,7 @@ from .get_deployment_stages_response_200_history_item_status import GetDeploymen
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .git_hub_activity_retry_response import GitHubActivityRetryResponse
 from .git_hub_check_activity import GitHubCheckActivity
 from .git_hub_check_activity_status import GitHubCheckActivityStatus
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
@@ -830,12 +841,18 @@ from .project_environment_promotion_status_response_rollback_status import (
     ProjectEnvironmentPromotionStatusResponseRollbackStatus,
 )
 from .project_environment_promotion_status_response_status import ProjectEnvironmentPromotionStatusResponseStatus
+from .project_environment_promotion_status_response_verification_status import (
+    ProjectEnvironmentPromotionStatusResponseVerificationStatus,
+)
 from .project_environment_promotion_status_workload_response import ProjectEnvironmentPromotionStatusWorkloadResponse
 from .project_environment_promotion_status_workload_response_rollback_status import (
     ProjectEnvironmentPromotionStatusWorkloadResponseRollbackStatus,
 )
 from .project_environment_promotion_status_workload_response_status import (
     ProjectEnvironmentPromotionStatusWorkloadResponseStatus,
+)
+from .project_environment_promotion_status_workload_response_verification_status import (
+    ProjectEnvironmentPromotionStatusWorkloadResponseVerificationStatus,
 )
 from .project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
 from .project_environment_promotion_workload_response_status import ProjectEnvironmentPromotionWorkloadResponseStatus
@@ -1275,6 +1292,7 @@ __all__ = (
     "AppTrustedSignerListResponse",
     "AppUsageSummaryResponse",
     "AppUsageSummaryResponseSource",
+    "AppWakeResponse",
     "AppWakeTimelineResponse",
     "AppWakeTimelineResponseTriggerClassHistogram",
     "AppWakeTimelineResponseTriggerHistogram",
@@ -1452,7 +1470,14 @@ __all__ = (
     "DebugCoverageResponse",
     "DebugCoverageSignal",
     "DebugEvidenceExplanation",
+    "DebugEvidenceExplanationConfidence",
+    "DebugEvidenceExplanationDiagnosis",
+    "DebugEvidenceExplanationGeneratedBy",
     "DebugEvidenceExplanationStatus",
+    "DebugEvidenceFinding",
+    "DebugEvidenceFindingConfidence",
+    "DebugEvidenceRecommendation",
+    "DebugEvidenceRef",
     "DebugGuestExecutionEvidence",
     "DebugGuestExecutionEvidenceErrorClass",
     "DebugGuestExecutionEvidenceOutcome",
@@ -1463,6 +1488,8 @@ __all__ = (
     "DebugRegressionItem",
     "DebugRegressionItemState",
     "DebugRegressionsResponse",
+    "DebugReplayComparison",
+    "DebugReplayRequest",
     "DebugReplayResponse",
     "DebugReplayResponseStatus",
     "DebugRequestCorrelation",
@@ -1638,6 +1665,7 @@ __all__ = (
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
+    "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
     "GitHubCheckActivityStatus",
     "GithubCheckUpdateRecord",
@@ -1932,9 +1960,11 @@ __all__ = (
     "ProjectEnvironmentPromotionStatusResponse",
     "ProjectEnvironmentPromotionStatusResponseRollbackStatus",
     "ProjectEnvironmentPromotionStatusResponseStatus",
+    "ProjectEnvironmentPromotionStatusResponseVerificationStatus",
     "ProjectEnvironmentPromotionStatusWorkloadResponse",
     "ProjectEnvironmentPromotionStatusWorkloadResponseRollbackStatus",
     "ProjectEnvironmentPromotionStatusWorkloadResponseStatus",
+    "ProjectEnvironmentPromotionStatusWorkloadResponseVerificationStatus",
     "ProjectEnvironmentPromotionWorkloadResponse",
     "ProjectEnvironmentPromotionWorkloadResponseStatus",
     "ProjectEnvironmentResponse",

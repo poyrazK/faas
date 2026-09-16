@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -133,12 +135,16 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 	case "suspend":
 		err = s.store.UpdateAccountStatus(r.Context(), targetID, state.AccountSuspended)
 		if err == nil {
+			s.notifyAccountLifecycle(r.Context(), targetID, "account_suspended")
 			// uuid.Nil is an impossible session id and therefore makes the
 			// operator action revoke every active session for the target.
 			revokedSessions, err = s.store.RevokeAllSessions(r.Context(), targetID, uuid.Nil.String())
 		}
 	case "restore":
 		err = s.store.UpdateAccountStatus(r.Context(), targetID, state.AccountActive)
+		if err == nil {
+			s.notifyAccountLifecycle(r.Context(), targetID, "account_reactivated")
+		}
 	case "revoke-sessions":
 		revokedSessions, err = s.store.RevokeAllSessions(r.Context(), targetID, uuid.Nil.String())
 	default:
@@ -171,6 +177,26 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 		Action:          action,
 		RevokedSessions: revokedSessions,
 	})
+}
+
+// notifyAccountLifecycle invalidates every gateway route cache entry for the
+// account and gives schedd an immediate suspension drain hint. The scheduler's
+// periodic account-status reconciliation is the durable fallback if a
+// notification is missed.
+func (s *server) notifyAccountLifecycle(ctx context.Context, accountID, kind string) {
+	apps, err := s.store.ListApps(ctx, accountID)
+	if err != nil {
+		s.log.Warn("operator account lifecycle: list apps", "account", accountID, "kind", kind, "err", err)
+		return
+	}
+	for _, app := range apps {
+		payload, _ := json.Marshal(map[string]string{
+			"kind": kind, "account_id": accountID, "app_id": app.ID,
+		})
+		if err := s.notif.Notify(ctx, db.NotifyAppChanged, string(payload)); err != nil {
+			s.log.Warn("operator account lifecycle: notify app", "account", accountID, "app", app.ID, "kind", kind, "err", err)
+		}
+	}
 }
 
 func (s *server) obsAppDetail(w http.ResponseWriter, r *http.Request, acct state.Account) {

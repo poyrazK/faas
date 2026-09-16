@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 )
 
@@ -241,6 +242,10 @@ func mustSeedDeployment(t *testing.T, e testEnv, slug string) state.Deployment {
 	if err != nil {
 		t.Fatalf("seed deployment: %v", err)
 	}
+	if err := e.store.SetDeploymentRootfs(context.Background(), d.ID, "/srv/fc/apps/"+slug+"/"+d.ID+".ext4", "apps/"+slug+"/"+d.ID+".ext4", 1); err != nil {
+		t.Fatalf("seed deployment rootfs: %v", err)
+	}
+	d, _ = e.store.DeploymentByID(context.Background(), d.ID)
 	return d
 }
 
@@ -1473,14 +1478,9 @@ func TestGetBuildProvenance_OtherAccountIDOR(t *testing.T) {
 	assertProblem(t, rec, 404, api.CodeNotFound)
 }
 
-// TestRollbackApp_HappyPath seeds two deployments (one live, one
-// superseded), then rolls back. Confirms the response shape (it carries
-// the previously-superseded deployment's id) AND that the underlying
-// row was flipped to live AND that the response itself reports the
-// post-promotion status. The third assertion (response status) is the
-// F3 fix-up: the handler used to snapshot the target BEFORE calling
-// MarkDeploymentLive and return status="superseded" — the test now
-// pins the correct post-promotion state in the API response.
+// TestRollbackApp_HappyPath proves rollback is accepted into a readiness gate
+// while the current deployment stays live. Promotion happens only after
+// schedd cold-boots the target and imaged completes its activation checks.
 func TestRollbackApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	dep1 := mustSeedDeployment(t, e, "rb-app")
@@ -1517,9 +1517,76 @@ func TestRollbackApp_HappyPath(t *testing.T) {
 	if out.ID != dep1.ID {
 		t.Errorf("rollback returned id=%s, want %s (the superseded target)", out.ID, dep1.ID)
 	}
-	if out.Status != string(state.DeployLive) {
-		t.Errorf("rollback response status = %q, want %q (post-promotion; was %q pre-F3 fix)",
-			out.Status, state.DeployLive, state.DeploySuperseded)
+	if out.Status != string(state.DeploySnapshotting) {
+		t.Errorf("rollback response status = %q, want readiness-gated %q", out.Status, state.DeploySnapshotting)
+	}
+	current, err := e.store.DeploymentByID(context.Background(), dep2.ID)
+	if err != nil || current.Status != state.DeployLive {
+		t.Fatalf("current deployment changed before rollback readiness: %+v err=%v", current, err)
+	}
+}
+
+func TestRollbackApp_MissingArtifactPreservesCurrentLive(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	target := mustSeedDeployment(t, e, "rb-missing-artifact")
+	if err := e.store.MarkDeploymentLive(context.Background(), target.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, _ := e.store.AppBySlug(context.Background(), "rb-missing-artifact")
+	current, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("d", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployBuilding, CreatedAt: time.Now().UTC().Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(context.Background(), current.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.s.rollbackArtifactVerifier = stubRollbackArtifactVerifier{err: fmt.Errorf("registry lookup: %w", storage.ErrNotFound)}
+
+	body := api.RollbackRequest{TargetDeploymentID: &target.ID}
+	rec := e.do(t, http.MethodPost, "/v1/apps/rb-missing-artifact/rollback", body, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeRollbackTargetUnavailable)
+	gotCurrent, _ := e.store.DeploymentByID(context.Background(), current.ID)
+	gotTarget, _ := e.store.DeploymentByID(context.Background(), target.ID)
+	if gotCurrent.Status != state.DeployLive || gotTarget.Status != state.DeploySuperseded {
+		t.Fatalf("missing artifact changed release state: current=%s target=%s", gotCurrent.Status, gotTarget.Status)
+	}
+}
+
+func TestRollbackApp_ExplicitTargetRecoversZeroLiveApp(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	target := mustSeedDeployment(t, e, "rb-zero-live")
+	if err := e.store.MarkDeploymentLive(context.Background(), target.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, _ := e.store.AppBySlug(context.Background(), "rb-zero-live")
+	failed, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + repeat("e", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployBuilding, CreatedAt: time.Now().UTC().Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(context.Background(), failed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.UpdateDeploymentStatus(context.Background(), failed.ID, state.DeployFailed, "wake failed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.LiveDeployment(context.Background(), app.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("LiveDeployment before recovery: %v", err)
+	}
+
+	body := api.RollbackRequest{TargetDeploymentID: &target.ID}
+	rec := e.do(t, http.MethodPost, "/v1/apps/rb-zero-live/rollback", body, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	prepared, _ := e.store.DeploymentByID(context.Background(), target.ID)
+	if prepared.Status != state.DeploySnapshotting || prepared.TrafficPercent != 0 {
+		t.Fatalf("recovery target = %+v", prepared)
 	}
 }
 
@@ -1593,13 +1660,13 @@ func TestRollbackApp_ExplicitTarget_Specific(t *testing.T) {
 	if out.ID != dep1.ID {
 		t.Errorf("rollback returned id=%s, want %s (explicit target, skipped intermediate)", out.ID, dep1.ID)
 	}
-	if out.Status != string(state.DeployLive) {
-		t.Errorf("post-rollback status = %q, want %q", out.Status, state.DeployLive)
+	if out.Status != string(state.DeploySnapshotting) {
+		t.Errorf("post-rollback status = %q, want %q", out.Status, state.DeploySnapshotting)
 	}
-	// dep3 must be superseded (was the current live one).
+	// dep3 remains live until the target passes a real prime/readiness gate.
 	fresh, _ := e.store.DeploymentByID(context.Background(), dep3.ID)
-	if fresh.Status != state.DeploySuperseded {
-		t.Errorf("dep3 status = %q, want %q (the previously-live row was not retired)", fresh.Status, state.DeploySuperseded)
+	if fresh.Status != state.DeployLive {
+		t.Errorf("dep3 status = %q, want %q while rollback validates", fresh.Status, state.DeployLive)
 	}
 }
 
@@ -1617,6 +1684,7 @@ func TestRollbackApp_ExplicitTarget_UsesCurrentLiveDeployment(t *testing.T) {
 		AppID:       app.ID,
 		ImageDigest: "sha256:" + repeat("b", 64),
 		Kind:        state.DeploymentKindImage,
+		RootfsKey:   "apps/rb-current-live/target.ext4",
 		Status:      state.DeployBuilding,
 		CreatedAt:   time.Now().UTC().Add(time.Second),
 	})
@@ -1643,7 +1711,7 @@ func TestRollbackApp_ExplicitTarget_UsesCurrentLiveDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := mustAuditEvent(t, findEventByKind(events, "app.rolled_back"), "missing app.rolled_back event")
+	event := mustAuditEvent(t, findEventByKind(events, "app.rollback_requested"), "missing app.rollback_requested event")
 	var eventData map[string]any
 	if err := json.Unmarshal(event.Data, &eventData); err != nil {
 		t.Fatal(err)
@@ -1667,31 +1735,23 @@ func TestRollbackApp_ExplicitTarget_UsesCurrentLiveDeployment(t *testing.T) {
 		t.Fatalf("deployment audit transition = %#v, want from=%s to=%s mode=explicit", deploymentData, depA.ID, depB.ID)
 	}
 
-	calls := notif.byChannel(db.NotifyDeploymentChanged)
-	if len(calls) != 2 {
-		t.Fatalf("deployment notifications = %d, want 2: %#v", len(calls), calls)
+	calls := notif.byChannel(db.NotifySnapshotPrime)
+	if len(calls) != 1 {
+		t.Fatalf("snapshot-prime notifications = %d, want 1: %#v", len(calls), calls)
 	}
-	statuses := map[string]string{}
-	for _, call := range calls {
-		var payload struct {
-			Status       string `json:"status"`
-			DeploymentID string `json:"deployment_id"`
-			From         string `json:"from"`
-			To           string `json:"to"`
-		}
-		if err := json.Unmarshal([]byte(call.payload), &payload); err != nil {
-			t.Fatal(err)
-		}
-		if previous := statuses[payload.DeploymentID]; previous != "" && previous != payload.Status {
-			t.Fatalf("deployment %s emitted both %s and %s", payload.DeploymentID, previous, payload.Status)
-		}
-		statuses[payload.DeploymentID] = payload.Status
-		if payload.To != depB.ID {
-			t.Errorf("notification to = %s, want %s: %s", payload.To, depB.ID, call.payload)
-		}
+	var prime struct {
+		AppID        string `json:"app_id"`
+		DeploymentID string `json:"deployment_id"`
 	}
-	if statuses[depA.ID] != "superseded" || statuses[depB.ID] != "live" {
-		t.Fatalf("notification statuses = %#v, want A superseded and B live", statuses)
+	if err := json.Unmarshal([]byte(calls[0].payload), &prime); err != nil {
+		t.Fatal(err)
+	}
+	if prime.AppID != app.ID || prime.DeploymentID != depB.ID {
+		t.Fatalf("snapshot-prime payload = %+v", prime)
+	}
+	current, err := e.store.DeploymentByID(context.Background(), depA.ID)
+	if err != nil || current.Status != state.DeployLive {
+		t.Fatalf("current deployment changed before target readiness: %+v err=%v", current, err)
 	}
 }
 
@@ -1900,13 +1960,19 @@ func TestWaitForAppInstancesDrainedTimesOut(t *testing.T) {
 	}
 }
 
-// TestWakeApp_HappyPath parks, then wakes — exercises the inverse path.
+// TestWakeApp_HappyPath queues a durable scheduler wake. The API owns the
+// command receipt; schedd owns the parked -> active transition and emits the
+// completed app.woken event only after an instance is ready.
 func TestWakeApp_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e, notif := newTestServerWithCapturingNotifier(t, api.PlanPro)
 	dep := mustSeedDeployment(t, e, "wake-me")
 	appID := dep.AppID
 	if err := e.store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
 		t.Fatalf("mark deployment live: %v", err)
+	}
+	parked := state.AppEvictedCold
+	if _, err := e.store.UpdateApp(t.Context(), appID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatalf("park app: %v", err)
 	}
 	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{
 		AccountID: e.acct.ID, AppID: appID, TargetURL: "https://example.com/woken",
@@ -1916,29 +1982,97 @@ func TestWakeApp_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.do(t, "POST", "/v1/apps/wake-me/park", nil, nil)
 	rec := e.do(t, "POST", "/v1/apps/wake-me/wake", nil, nil)
-	if rec.Code != 204 {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
-	app, _ := e.store.AppBySlug(context.Background(), "wake-me")
-	if app.Status != state.AppActive {
-		t.Errorf("status = %s, want active", app.Status)
+	var response api.AppWakeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode wake response: %v", err)
 	}
-	assertLifecycleAudit(t, e, "app.woken", appID, "")
+	if response.WakeID == "" {
+		t.Fatal("wake response omitted wake_id")
+	}
+	app, _ := e.store.AppBySlug(context.Background(), "wake-me")
+	if app.Status != state.AppEvictedCold {
+		t.Errorf("status = %s, want scheduler-owned evicted_cold until capacity is ready", app.Status)
+	}
+	assertLifecycleAudit(t, e, "app.wake_requested", appID, response.WakeID)
+	assertLifecycleAuditCount(t, e, "app.woken", 0)
+	notif.mu.Lock()
+	var wakeNotices []capturedNotification
+	for _, emitted := range notif.emitted {
+		if emitted.Channel == db.NotifyAppWake {
+			wakeNotices = append(wakeNotices, emitted)
+		}
+	}
+	notif.mu.Unlock()
+	if len(wakeNotices) != 1 {
+		t.Fatalf("app_wake notifications = %d, want 1: %+v", len(wakeNotices), wakeNotices)
+	}
+	var wakePayload struct {
+		AppID  string `json:"app_id"`
+		WakeID string `json:"wake_id"`
+	}
+	if err := json.Unmarshal([]byte(wakeNotices[0].Payload), &wakePayload); err != nil {
+		t.Fatalf("decode app_wake payload: %v", err)
+	}
+	if wakePayload.AppID != appID || wakePayload.WakeID != response.WakeID {
+		t.Fatalf("app_wake payload = %+v, want app=%s wake=%s", wakePayload, appID, response.WakeID)
+	}
 	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), appID, hook.ID, 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppWoken || deliveries[0].Status != state.AppWebhookDeliveryPending {
-		t.Fatalf("wake deliveries = %+v, want one pending app.woken row", deliveries)
+	if len(deliveries) != 0 {
+		t.Fatalf("wake deliveries = %+v, want none before scheduler completion", deliveries)
+	}
+}
+
+func TestWakeApp_SuspendedAccountRejectedBeforeQueue(t *testing.T) {
+	e, notif := newTestServerWithCapturingNotifier(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "wake-suspended")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.UpdateAccountStatus(t.Context(), e.acct.ID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
 	}
 
-	rec = e.do(t, "POST", "/v1/apps/wake-me/wake", nil, nil)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("idempotent wake status %d: %s", rec.Code, rec.Body)
+	rec := e.do(t, http.MethodPost, "/v1/apps/wake-suspended/wake", nil, nil)
+	assertProblem(t, rec, http.StatusPaymentRequired, api.CodeBillingPastDue)
+	notif.mu.Lock()
+	defer notif.mu.Unlock()
+	for _, emitted := range notif.emitted {
+		if emitted.Channel == db.NotifyAppWake {
+			t.Fatalf("suspended account queued app wake: %+v", emitted)
+		}
 	}
-	assertLifecycleAudit(t, e, "app.woken", appID, "")
+}
+
+func TestWakeApp_NotifierFailureDoesNotClaimLifecycleOrReportSuccess(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "wake-notify-failure")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	parked := state.AppEvictedCold
+	if _, err := e.store.UpdateApp(t.Context(), dep.AppID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.notif = &failingNotifier{err: errors.New("notification outbox unavailable")}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/wake-notify-failure/wake", nil, nil)
+	assertProblem(t, rec, http.StatusServiceUnavailable, api.CodeCapacity)
+	current, err := e.store.AppByID(t.Context(), dep.AppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != state.AppEvictedCold {
+		t.Fatalf("app status = %q, want evicted_cold", current.Status)
+	}
+	assertLifecycleAuditCount(t, e, "app.wake_requested", 0)
+	assertLifecycleAuditCount(t, e, "app.woken", 0)
 }
 
 func TestWakeApp_RejectsAppWithoutLiveDeployment(t *testing.T) {

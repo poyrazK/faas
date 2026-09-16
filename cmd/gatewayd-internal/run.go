@@ -493,14 +493,16 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	sourceLatency, _ := strconv.Atoi(metadata[api.DebugReplaySourceLatencyHeader])
 	statusDiff := sourceStatus != statusCode
 	crashed := statusCode == 0 || statusCode >= http.StatusInternalServerError
-	result := struct {
-		SourceStatusCode int  `json:"source_status_code"`
-		MirrorStatusCode int  `json:"mirror_status_code"`
-		SourceLatencyMs  int  `json:"source_latency_ms"`
-		MirrorLatencyMs  int  `json:"mirror_latency_ms"`
-		StatusDiff       bool `json:"status_diff"`
-		Crashed          bool `json:"crashed"`
-	}{sourceStatus, statusCode, sourceLatency, latencyMs, statusDiff, crashed}
+	result := api.DebugReplayComparison{
+		SourceDeploymentID: metadata[api.DebugReplayDeploymentIDHeader],
+		MirrorDeploymentID: rule.MirrorDeploymentID,
+		SourceStatusCode:   sourceStatus,
+		MirrorStatusCode:   statusCode,
+		SourceLatencyMS:    sourceLatency,
+		MirrorLatencyMS:    latencyMs,
+		StatusDiff:         statusDiff,
+		Crashed:            crashed,
+	}
 	if encoded, marshalErr := json.Marshal(result); marshalErr == nil {
 		out.Result = encoded
 	}
@@ -1166,7 +1168,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return gateway.App{}, false, err
 			}
 			favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
-			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the

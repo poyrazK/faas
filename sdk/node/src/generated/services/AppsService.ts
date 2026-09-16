@@ -13,6 +13,7 @@ import type { AppSLOResponse } from '../models/AppSLOResponse.js';
 import type { AppsMetricsResponse } from '../models/AppsMetricsResponse.js';
 import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
 import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.js';
+import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
@@ -22,6 +23,7 @@ import type { DebugCoverageResponse } from '../models/DebugCoverageResponse.js';
 import type { DebugRegressionActionRequest } from '../models/DebugRegressionActionRequest.js';
 import type { DebugRegressionActionResponse } from '../models/DebugRegressionActionResponse.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
+import type { DebugReplayRequest } from '../models/DebugReplayRequest.js';
 import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
 import type { DebugRequestEvidenceResponse } from '../models/DebugRequestEvidenceResponse.js';
 import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
@@ -1577,6 +1579,7 @@ export class AppsService {
   public static replayAppDebugRequest({
     slug,
     reqId,
+    requestBody,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1586,6 +1589,7 @@ export class AppsService {
      * Request id from the debug requests list.
      */
     reqId: string,
+    requestBody?: DebugReplayRequest,
   }): CancelablePromise<DebugReplayResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -1594,6 +1598,8 @@ export class AppsService {
         'slug': slug,
         'req_id': reqId,
       },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
@@ -1641,8 +1647,8 @@ export class AppsService {
     });
   }
   /**
-   * Manually wake an instance.
-   * @returns void
+   * Queue a durable instance pre-warm.
+   * @returns AppWakeResponse Wake accepted and correlated.
    * @throws ApiError
    */
   public static wakeApp({
@@ -1652,7 +1658,7 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<AppWakeResponse> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/wake',

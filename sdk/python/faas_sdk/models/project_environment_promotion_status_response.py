@@ -15,6 +15,10 @@ from ..models.project_environment_promotion_status_response_status import (
     ProjectEnvironmentPromotionStatusResponseStatus,
     check_project_environment_promotion_status_response_status,
 )
+from ..models.project_environment_promotion_status_response_verification_status import (
+    ProjectEnvironmentPromotionStatusResponseVerificationStatus,
+    check_project_environment_promotion_status_response_verification_status,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -45,6 +49,10 @@ class ProjectEnvironmentPromotionStatusResponse:
     rollback_error: str | Unset = UNSET
     rollback_started_at: datetime.datetime | Unset = UNSET
     rollback_completed_at: datetime.datetime | Unset = UNSET
+    verification_status: ProjectEnvironmentPromotionStatusResponseVerificationStatus | Unset = UNSET
+    verification_error: str | Unset = UNSET
+    verification_started_at: datetime.datetime | Unset = UNSET
+    verification_completed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -89,6 +97,20 @@ class ProjectEnvironmentPromotionStatusResponse:
         if not isinstance(self.rollback_completed_at, Unset):
             rollback_completed_at = self.rollback_completed_at.isoformat()
 
+        verification_status: str | Unset = UNSET
+        if not isinstance(self.verification_status, Unset):
+            verification_status = self.verification_status
+
+        verification_error = self.verification_error
+
+        verification_started_at: str | Unset = UNSET
+        if not isinstance(self.verification_started_at, Unset):
+            verification_started_at = self.verification_started_at.isoformat()
+
+        verification_completed_at: str | Unset = UNSET
+        if not isinstance(self.verification_completed_at, Unset):
+            verification_completed_at = self.verification_completed_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -116,6 +138,14 @@ class ProjectEnvironmentPromotionStatusResponse:
             field_dict["rollback_started_at"] = rollback_started_at
         if rollback_completed_at is not UNSET:
             field_dict["rollback_completed_at"] = rollback_completed_at
+        if verification_status is not UNSET:
+            field_dict["verification_status"] = verification_status
+        if verification_error is not UNSET:
+            field_dict["verification_error"] = verification_error
+        if verification_started_at is not UNSET:
+            field_dict["verification_started_at"] = verification_started_at
+        if verification_completed_at is not UNSET:
+            field_dict["verification_completed_at"] = verification_completed_at
 
         return field_dict
 
@@ -181,6 +211,31 @@ class ProjectEnvironmentPromotionStatusResponse:
         else:
             rollback_completed_at = datetime.datetime.fromisoformat(_rollback_completed_at)
 
+        _verification_status = d.pop("verification_status", UNSET)
+        verification_status: ProjectEnvironmentPromotionStatusResponseVerificationStatus | Unset
+        if isinstance(_verification_status, Unset):
+            verification_status = UNSET
+        else:
+            verification_status = check_project_environment_promotion_status_response_verification_status(
+                _verification_status
+            )
+
+        verification_error = d.pop("verification_error", UNSET)
+
+        _verification_started_at = d.pop("verification_started_at", UNSET)
+        verification_started_at: datetime.datetime | Unset
+        if isinstance(_verification_started_at, Unset):
+            verification_started_at = UNSET
+        else:
+            verification_started_at = datetime.datetime.fromisoformat(_verification_started_at)
+
+        _verification_completed_at = d.pop("verification_completed_at", UNSET)
+        verification_completed_at: datetime.datetime | Unset
+        if isinstance(_verification_completed_at, Unset):
+            verification_completed_at = UNSET
+        else:
+            verification_completed_at = datetime.datetime.fromisoformat(_verification_completed_at)
+
         project_environment_promotion_status_response = cls(
             promotion_id=promotion_id,
             project_slug=project_slug,
@@ -197,6 +252,10 @@ class ProjectEnvironmentPromotionStatusResponse:
             rollback_error=rollback_error,
             rollback_started_at=rollback_started_at,
             rollback_completed_at=rollback_completed_at,
+            verification_status=verification_status,
+            verification_error=verification_error,
+            verification_started_at=verification_started_at,
+            verification_completed_at=verification_completed_at,
         )
 
         project_environment_promotion_status_response.additional_properties = d

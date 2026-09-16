@@ -146,6 +146,8 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                         "kind":"updated|parked|woken|restart|...",
 //	                         "wake_id":uuid           // restart correlation id
 //	                         "lifecycle_changed":bool} // lifecycle fields changed
+//	NotifyAppWake           {"app_id":uuid,"wake_id":uuid}
+//	                         apid → schedd: durable explicit pre-warm request.
 //	NotifyDeploymentChanged {"kind":"image|tarball|dockerfile|function|
 //	                         rollback|superseded",
 //	                         "app_id":uuid, "deployment_id":uuid,
@@ -288,6 +290,7 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 //	                             400). Only imaged subscribes.
 const (
 	NotifyAppChanged        = "app_changed"
+	NotifyAppWake           = "app_wake"
 	NotifyDeploymentChanged = "deployment_changed"
 	// NotifyDeploymentSmokeChallenge carries a short-lived, random challenge
 	// from imaged to every public gateway. It is deliberately separate from

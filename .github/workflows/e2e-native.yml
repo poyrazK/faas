@@ -76,7 +76,13 @@ jobs:
     # real cold boots, builder microVM builds and the 100-cycle wake loop. The
     # remote unit caps itself at 120 min; this leaves room for transfer and
     # cleanup so a hung test fails here rather than by GitHub's 6 h default.
-    timeout-minutes: 150
+    # Must outlast the SUM of every phase's RuntimeMaxSec plus staging and
+    # cleanup. A job that hits this limit is killed outright — GitHub skips the
+    # remaining steps, always() included — so neither the Verdict nor "Stop the
+    # acceptance node" runs. Run 35115616655 hit the previous 150m against
+    # 325m of phase caps: no verdict, and the node stayed up billing until the
+    # next dispatch found it. TestJobTimeoutCoversEveryPhaseCap pins the sum.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7
         with:

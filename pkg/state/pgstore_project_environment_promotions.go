@@ -17,6 +17,8 @@ func scanProjectEnvironmentPromotion(row pgx.Row) (ProjectEnvironmentPromotion, 
 		&promotion.CreatedAt, &promotion.UpdatedAt, &promotion.CompletedAt,
 		&promotion.RollbackStatus, &promotion.RollbackIdempotencyKey, &promotion.RollbackError,
 		&promotion.RollbackStartedAt, &promotion.RollbackCompletedAt,
+		&promotion.VerificationStatus, &promotion.VerificationError,
+		&promotion.VerificationStartedAt, &promotion.VerificationCompletedAt,
 	); err != nil {
 		return ProjectEnvironmentPromotion{}, mapErr(err)
 	}
@@ -30,6 +32,7 @@ func scanProjectEnvironmentPromotionWorkload(row pgx.Row) (ProjectEnvironmentPro
 		&workload.SourceDeploymentID, &workload.PreviousTargetDeploymentID,
 		&workload.TargetDeploymentID, &workload.Status, &workload.Error,
 		&workload.RollbackStatus, &workload.RestoredTargetDeploymentID, &workload.RollbackError,
+		&workload.VerificationStatus, &workload.VerificationError,
 		&workload.CreatedAt, &workload.UpdatedAt,
 	); err != nil {
 		return ProjectEnvironmentPromotionWorkload{}, mapErr(err)
@@ -47,16 +50,17 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 	row := tx.QueryRow(ctx, `
 		insert into project_environment_promotions
 			(account_id, project_id, project_slug, from_environment, to_environment,
-			 promotion_hash, idempotency_key, status, error)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			 promotion_hash, idempotency_key, status, error, verification_status)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		returning id, account_id, project_id, project_slug, from_environment,
 		          to_environment, promotion_hash, idempotency_key, status, error,
 		          created_at, updated_at, completed_at, rollback_status,
 		          rollback_idempotency_key, rollback_error, rollback_started_at,
-		          rollback_completed_at
+		          rollback_completed_at, verification_status, verification_error,
+		          verification_started_at, verification_completed_at
 	`, promotion.AccountID, promotion.ProjectID, promotion.ProjectSlug,
 		promotion.FromEnvironment, promotion.ToEnvironment, promotion.PromotionHash,
-		promotion.IdempotencyKey, promotion.Status, promotion.Error)
+		promotion.IdempotencyKey, promotion.Status, promotion.Error, promotion.VerificationStatus)
 	created, err := scanProjectEnvironmentPromotion(row)
 	if err != nil {
 		return ProjectEnvironmentPromotion{}, nil, err
@@ -71,8 +75,9 @@ func (s *PgStore) CreateProjectEnvironmentPromotion(ctx context.Context, promoti
 			values ($1, $2, $3, $4, $5, $6, $7, $8)
 			returning id, promotion_id, workload_slug, workload_name, source_deployment_id,
 			          previous_target_deployment_id, target_deployment_id, status, error,
-			          rollback_status, restored_target_deployment_id, rollback_error,
-			          created_at, updated_at
+				          rollback_status, restored_target_deployment_id, rollback_error,
+				          verification_status, verification_error,
+				          created_at, updated_at
 		`, created.ID, workload.WorkloadSlug, workload.WorkloadName,
 			workload.SourceDeploymentID, workload.PreviousTargetDeploymentID,
 			workload.TargetDeploymentID, workload.Status, workload.Error)
@@ -93,7 +98,8 @@ func (s *PgStore) ProjectEnvironmentPromotionByID(ctx context.Context, accountID
 		select id, account_id, project_id, project_slug, from_environment, to_environment,
 		       promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
 		       rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
-		       rollback_completed_at
+		       rollback_completed_at, verification_status, verification_error,
+		       verification_started_at, verification_completed_at
 		  from project_environment_promotions
 		 where id = $1 and account_id = $2 and project_slug = $3 and to_environment = $4
 	`, id, accountID, projectSlug, targetEnvironment))
@@ -112,7 +118,8 @@ func (s *PgStore) ProjectEnvironmentPromotionByIdempotencyKey(ctx context.Contex
 		select id, account_id, project_id, project_slug, from_environment, to_environment,
 		       promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
 		       rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
-		       rollback_completed_at
+		       rollback_completed_at, verification_status, verification_error,
+		       verification_started_at, verification_completed_at
 		  from project_environment_promotions
 		 where account_id = $1 and project_slug = $2 and idempotency_key = $3
 	`, accountID, projectSlug, idempotencyKey))
@@ -131,6 +138,7 @@ func (s *PgStore) listProjectEnvironmentPromotionWorkloads(ctx context.Context, 
 		select id, promotion_id, workload_slug, workload_name, source_deployment_id,
 		       previous_target_deployment_id, target_deployment_id, status, error,
 		       rollback_status, restored_target_deployment_id, rollback_error,
+		       verification_status, verification_error,
 		       created_at, updated_at
 		  from project_environment_promotion_workloads
 		 where promotion_id = $1
@@ -162,7 +170,8 @@ func (s *PgStore) UpdateProjectEnvironmentPromotion(ctx context.Context, account
 		returning id, account_id, project_id, project_slug, from_environment, to_environment,
 		          promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
 		          rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
-		          rollback_completed_at
+		          rollback_completed_at, verification_status, verification_error,
+		          verification_started_at, verification_completed_at
 	`, id, accountID, status, errorMessage, completedAt))
 }
 
@@ -177,7 +186,8 @@ func (s *PgStore) StartProjectEnvironmentPromotionRollback(ctx context.Context, 
 		select id, account_id, project_id, project_slug, from_environment, to_environment,
 		       promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
 		       rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
-		       rollback_completed_at
+		       rollback_completed_at, verification_status, verification_error,
+		       verification_started_at, verification_completed_at
 		  from project_environment_promotions
 		 where id = $1 and account_id = $2
 		 for update
@@ -206,7 +216,8 @@ func (s *PgStore) StartProjectEnvironmentPromotionRollback(ctx context.Context, 
 		returning id, account_id, project_id, project_slug, from_environment, to_environment,
 		          promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
 		          rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
-		          rollback_completed_at
+		          rollback_completed_at, verification_status, verification_error,
+		          verification_started_at, verification_completed_at
 	`, id, accountID, idempotencyKey)
 	updated, err := scanProjectEnvironmentPromotion(returning)
 	if err != nil {
@@ -226,7 +237,8 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionRollback(ctx context.Context,
 		returning id, account_id, project_id, project_slug, from_environment, to_environment,
 		          promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
 		          rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
-		          rollback_completed_at
+		          rollback_completed_at, verification_status, verification_error,
+		          verification_started_at, verification_completed_at
 	`, id, accountID, status, errorMessage, completedAt))
 }
 
@@ -243,6 +255,7 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionWorkload(ctx context.Context,
 		          w.source_deployment_id, w.previous_target_deployment_id,
 		          w.target_deployment_id, w.status, w.error,
 		          w.rollback_status, w.restored_target_deployment_id, w.rollback_error,
+		          w.verification_status, w.verification_error,
 		          w.created_at, w.updated_at
 	`, workloadID, promotionID, accountID, status, targetDeploymentID, errorMessage))
 }
@@ -261,6 +274,40 @@ func (s *PgStore) UpdateProjectEnvironmentPromotionRollbackWorkload(ctx context.
 		          w.source_deployment_id, w.previous_target_deployment_id,
 		          w.target_deployment_id, w.status, w.error,
 		          w.rollback_status, w.restored_target_deployment_id, w.rollback_error,
+		          w.verification_status, w.verification_error,
 		          w.created_at, w.updated_at
 	`, workloadID, promotionID, accountID, status, restoredTargetDeploymentID, errorMessage))
+}
+
+func (s *PgStore) UpdateProjectEnvironmentPromotionVerification(ctx context.Context, accountID, id, status, errorMessage string, startedAt, completedAt *time.Time) (ProjectEnvironmentPromotion, error) {
+	return scanProjectEnvironmentPromotion(s.pool.QueryRow(ctx, `
+		update project_environment_promotions
+		   set verification_status = $3, verification_error = $4,
+		       verification_started_at = coalesce($5, verification_started_at),
+		       verification_completed_at = $6, updated_at = now()
+		 where id = $1 and account_id = $2
+		returning id, account_id, project_id, project_slug, from_environment, to_environment,
+		          promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
+		          rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
+		          rollback_completed_at, verification_status, verification_error,
+		          verification_started_at, verification_completed_at
+	`, id, accountID, status, errorMessage, startedAt, completedAt))
+}
+
+func (s *PgStore) UpdateProjectEnvironmentPromotionVerificationWorkload(ctx context.Context, accountID, promotionID, workloadID, status, errorMessage string) (ProjectEnvironmentPromotionWorkload, error) {
+	return scanProjectEnvironmentPromotionWorkload(s.pool.QueryRow(ctx, `
+		update project_environment_promotion_workloads w
+		   set verification_status = $4, verification_error = $5, updated_at = now()
+		 where w.id = $1 and w.promotion_id = $2
+		   and exists (
+				select 1 from project_environment_promotions p
+				 where p.id = w.promotion_id and p.account_id = $3
+		   )
+		returning w.id, w.promotion_id, w.workload_slug, w.workload_name,
+		          w.source_deployment_id, w.previous_target_deployment_id,
+		          w.target_deployment_id, w.status, w.error,
+		          w.rollback_status, w.restored_target_deployment_id, w.rollback_error,
+		          w.verification_status, w.verification_error,
+		          w.created_at, w.updated_at
+	`, workloadID, promotionID, accountID, status, errorMessage))
 }

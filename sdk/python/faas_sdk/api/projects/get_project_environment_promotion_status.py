@@ -78,7 +78,8 @@ def sync_detailed(
 ) -> Response[Problem | ProjectEnvironmentPromotionStatusResponse]:
     """Get durable project environment promotion status.
 
-     Returns the operation status and non-secret per-workload checkpoints for a promotion.
+     Returns the operation status, post-cutover verification result, and non-secret per-workload
+    checkpoints for a promotion.
 
     Args:
         slug (str):
@@ -115,7 +116,8 @@ def sync(
 ) -> Problem | ProjectEnvironmentPromotionStatusResponse | None:
     """Get durable project environment promotion status.
 
-     Returns the operation status and non-secret per-workload checkpoints for a promotion.
+     Returns the operation status, post-cutover verification result, and non-secret per-workload
+    checkpoints for a promotion.
 
     Args:
         slug (str):
@@ -147,7 +149,8 @@ async def asyncio_detailed(
 ) -> Response[Problem | ProjectEnvironmentPromotionStatusResponse]:
     """Get durable project environment promotion status.
 
-     Returns the operation status and non-secret per-workload checkpoints for a promotion.
+     Returns the operation status, post-cutover verification result, and non-secret per-workload
+    checkpoints for a promotion.
 
     Args:
         slug (str):
@@ -182,7 +185,8 @@ async def asyncio(
 ) -> Problem | ProjectEnvironmentPromotionStatusResponse | None:
     """Get durable project environment promotion status.
 
-     Returns the operation status and non-secret per-workload checkpoints for a promotion.
+     Returns the operation status, post-cutover verification result, and non-secret per-workload
+    checkpoints for a promotion.
 
     Args:
         slug (str):

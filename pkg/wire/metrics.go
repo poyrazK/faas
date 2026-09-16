@@ -1868,6 +1868,10 @@ type OpsMetrics struct {
 	uploadSessionExpiredTotal           prometheus.Counter
 	uploadSessionReaperRowsDeletedTotal prometheus.Counter
 	uploadSessionReaperFailedTotal      prometheus.Counter
+	// accountLifecycleViolations counts live instances discovered after their
+	// owning account became non-active. The scheduler repairs the instance in
+	// the same path; this counter preserves an alertable record of the breach.
+	accountLifecycleViolations prometheus.Counter
 }
 
 // NewOpsMetrics builds an OpsMetrics keyed on the per-daemon prefix — e.g.
@@ -4214,12 +4218,17 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_upload_session_reaper_failed_total",
 		Help: "Count of reaper iterations that errored (DB query, os.Remove, ctx cancellation). Unlabelled — reaper has one failure shape. Alertable: a sustained non-zero rate means the reaper goroutine is wedged and the spool at /var/spool/faas/builds will leak.",
 	})
+	accountLifecycleViolations := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prefix + "_account_lifecycle_violations_total",
+		Help: "Count of live or waking instances reconciled after their owning account became suspended or deletion-pending.",
+	})
 	commonCollectors = append(commonCollectors,
 		uploadSessionCreatedTotal,
 		uploadSessionCommittedTotal,
 		uploadSessionExpiredTotal,
 		uploadSessionReaperRowsDeletedTotal,
 		uploadSessionReaperFailedTotal,
+		accountLifecycleViolations,
 	)
 	// Pre-instantiate {plan} closed-set series so /metrics surfaces
 	// zero values from boot. Plan enum mirrors the four-value
@@ -4872,7 +4881,17 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		uploadSessionExpiredTotal:                           uploadSessionExpiredTotal,
 		uploadSessionReaperRowsDeletedTotal:                 uploadSessionReaperRowsDeletedTotal,
 		uploadSessionReaperFailedTotal:                      uploadSessionReaperFailedTotal,
+		accountLifecycleViolations:                          accountLifecycleViolations,
 	}
+}
+
+// ObserveAccountLifecycleViolations records invariant breaches repaired by
+// the scheduler. It is nil-safe because unit tests may omit ops metrics.
+func (m *OpsMetrics) ObserveAccountLifecycleViolations(count int) {
+	if m == nil || count <= 0 {
+		return
+	}
+	m.accountLifecycleViolations.Add(float64(count))
 }
 
 // WatchdogKills returns the per-(from_state, to_state) counter the

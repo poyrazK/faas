@@ -13,12 +13,13 @@ package main
 // (`prom_retention_days: 15` in deploy/ansible/roles/prometheus/
 // defaults/main.yml): see pkg/appmetrics.Ranges / IsValidRange.
 //
-// Prometheus unreachable (s.promqlClient == nil, or a query failed)
+// Prometheus unreachable (s.promqlClient == nil, or a core query failed)
 // → HTTP 200 with zeroed fields and Source="degraded: <reason>",
 // matching the public /status/slo.json contract so the dashboard
-// has one empty-state path. The PromQL builders + NaN/Inf guards
-// live in pkg/appmetrics (extracted for issue #396 / ADR-045 PR 2
-// so the meterd evaluator in PR 4 can share the same fetch path).
+// has one empty-state path. Optional customer enrichments remain
+// absent when their telemetry is unavailable. The PromQL builders +
+// NaN/Inf guards live in pkg/appmetrics (extracted for issue #396 /
+// ADR-045 PR 2 so the meterd evaluator in PR 4 can share the same fetch path).
 
 import (
 	"fmt"
@@ -97,9 +98,9 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 	resp.Source = src
 
 	// Best-effort enrichment of Wakes24h is sourced from the durable events
-	// table. The cache-hit and error-budget fields remain absent until their
-	// respective metric contracts are available; emitting zero would make an
-	// unavailable signal look like an observed 0% value.
+	// table. Cache-hit and error-budget availability is represented by the
+	// optional pointers populated by appmetrics.Fetch; emitting zero for an
+	// unavailable signal would make it look observed.
 
 	// Wakes24h: count of wake.boot_started events in the trailing
 	// 24 hours, sourced from the events table. The (data->>'app_id')
@@ -119,26 +120,6 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 			"err", err.Error())
 	}
 
-	// CacheHitRatePct: ADR-122 response-cache hit ratio. The
-	// PromQL query against gateway_response_cache_total{app_id,
-	// outcome=hit/miss} is out of scope for this PR; the field
-	// stays 0 until the response-cache consumer-facing metric
-	// lands. The DTO is non-omitempty (this field is ALWAYS on
-	// the wire) so the dashboard can rely on the documented
-	// schema. Feature-off vs. feature-on-zero-traffic is
-	// distinguished by the `Routes` block presence, not by
-	// this field's absence.
-	_ = app.RouteMetricsEnabled // opt-in flag consulted at fetch time in a future PR
-
-	// ErrorBudgetPct: trailing-30d API-availability error budget
-	// remaining. Computed against the plan's API-availability
-	// SLO target (99.5% per spec §12). The per-plan SLO target
-	// is not yet exposed on the Limits struct (issue TBD); the
-	// field stays 0 until that lands. The dashboard renders 0
-	// with no traffic as "—" rather than a misleading "budget
-	// exhausted" message.
-	// TODO: wire against apid_request_total{account_id, code}
-	// once the per-plan SLO target lands on Limits.
 	if resp.AsOf == "" {
 		resp.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
 	}

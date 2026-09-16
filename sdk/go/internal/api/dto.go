@@ -37,6 +37,10 @@ type AppRestartResponse struct {
 	WakeID string `json:"wake_id"`
 }
 
+type AppWakeResponse struct {
+	WakeID string `json:"wake_id"`
+}
+
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
 	Slug            string `json:"slug"`

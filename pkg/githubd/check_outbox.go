@@ -51,6 +51,12 @@ type CheckActivityStore interface {
 	ListCheckUpdatesForApp(ctx context.Context, accountID, appID string, limit int) ([]CheckActivityRecord, error)
 }
 
+// CheckActivityRecoveryStore is the customer-safe write seam for retrying
+// dead Check Run updates belonging to one account-owned app.
+type CheckActivityRecoveryStore interface {
+	RetryCheckUpdatesForApp(ctx context.Context, accountID, appID string, limit int) (int, error)
+}
+
 type CheckUpdateStore interface {
 	Claim(ctx context.Context) (CheckUpdate, error)
 	Complete(ctx context.Context, update CheckUpdate) error
@@ -192,6 +198,36 @@ func (s *PGCheckUpdateStore) RetryCheckUpdate(ctx context.Context, deploymentID 
 		return false, fmt.Errorf("githubd: retry check update: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// RetryCheckUpdatesForApp requeues a bounded set of recent dead Check Run
+// updates for deployments owned by the requested account and app. Bumping
+// generation invalidates any stale worker completion from the prior attempt.
+func (s *PGCheckUpdateStore) RetryCheckUpdatesForApp(ctx context.Context, accountID, appID string, limit int) (int, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	tag, err := s.pool.Exec(ctx, `
+		with targets as (
+			select u.deployment_id
+			from github_check_updates u
+			join deployments d on d.id = u.deployment_id
+			join apps a on a.id = d.app_id and a.id = $2 and a.account_id = $1
+			where u.status = 'dead'
+			  and d.kind in ('github', 'preview')
+			order by u.updated_at desc
+			limit $3
+		)
+		update github_check_updates u
+		set generation = generation + 1, status = 'pending', attempts = 0,
+		    next_attempt_at = now(), last_error = '', processed_at = null,
+		    updated_at = now()
+		from targets
+		where u.deployment_id = targets.deployment_id`, accountID, appID, limit)
+	if err != nil {
+		return 0, fmt.Errorf("githubd: retry app check updates: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // RunCheckUpdateWorker drains Check Run projections until ctx is cancelled.

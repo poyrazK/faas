@@ -72,4 +72,8 @@ const (
 	// restart parks the current instance(s), captures a fresh snapshot, and
 	// wakes one replacement instance.
 	TriggerAppRestart = "app.restart"
+
+	// TriggerAppWake is an explicit customer pre-warm request from the API or
+	// dashboard. It is distinct from request-driven gateway recovery.
+	TriggerAppWake = "app.wake"
 )

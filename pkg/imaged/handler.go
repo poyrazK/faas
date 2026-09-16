@@ -2699,6 +2699,27 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				}
 			}
 		}
+
+		// Warm snapshots are a scale-in optimization for a deployment that is
+		// already serving. Recording the artifact is the entire state
+		// transition: promotion, public smoke, rollout stages, and traffic were
+		// completed by the original init snapshot. Re-entering those gates here
+		// lets an ordinary idle park demote a healthy deployment long after its
+		// release. The early return is also multi-subscriber safe because
+		// CreateSnapshot collapses duplicate publications above.
+		if stored.Tier == state.SnapshotTierWarm {
+			h.log.Debug("imaged: recorded warm snapshot without deployment activation",
+				"deployment_id", dep.ID, "snapshot_id", stored.ID)
+			return nil
+		}
+
+		// snapshot_written is durably replayed. Once the init notification has
+		// already activated this deployment, a redelivery must not rerun smoke,
+		// rewrite its hosting receipt, or republish terminal lifecycle events.
+		if dep.Status == state.DeployLive {
+			h.log.Debug("imaged: snapshot activation already complete", "deployment_id", dep.ID)
+			return nil
+		}
 	}
 
 	// The public smoke needs the deployment to be routable, so mark it live

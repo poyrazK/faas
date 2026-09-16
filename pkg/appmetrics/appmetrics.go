@@ -5,8 +5,10 @@
 // behaviour change for the apid caller; the public surface is the
 // function signatures and the closed-set range vocabulary.
 //
-// The seven PromQL builders + percentile loop + degraded-source
-// helpers were lifted verbatim from cmd/apid/handlers_metrics.go.
+// The seven core PromQL builders + percentile loop + degraded-source
+// helpers were lifted verbatim from cmd/apid/handlers_metrics.go. A
+// traffic-gated optional cache query enriches the customer response without
+// making cache instrumentation a dependency for the core metrics path.
 // The CodeQL go/log-injection sanitiser pattern (two-call
 // strings.ReplaceAll for CR then LF, inline at the log call site)
 // is preserved per the precedent at handlers_metrics.go:189-193
@@ -185,6 +187,31 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	} else {
 		return degradedFromErr(resp, err, log, "error_rate")
 	}
+	// 5b. Remaining API-availability error budget. This is derived from the
+	// same bounded request population as ErrorRatePct, so it adds no query or
+	// source-drift risk. No traffic is represented by an absent pointer rather
+	// than a misleading 100% budget remaining value.
+	if resp.RequestCount > 0 {
+		remaining := ErrorBudgetRemainingPct(resp.ErrorRatePct)
+		resp.ErrorBudgetPct = &remaining
+	}
+
+	// 5c. Per-app response-cache hit rate. The historical global cache counter
+	// remains available to operators; the additive app-labelled counter is the
+	// customer-safe source for this field. Cache telemetry is optional, so a
+	// missing series or query failure leaves the field absent without degrading
+	// the otherwise healthy metrics response.
+	if resp.RequestCount > 0 {
+		cacheQ := PercentRatioQuery(
+			fmt.Sprintf(`sum(rate(gateway_response_cache_app_total{app=%q,outcome="hit"}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_response_cache_app_total{app=%q,outcome=~"hit|miss"}[%s]))`, appID, rng))
+		if v, err := fetcher.QueryScalar(ctx, cacheQ); err == nil {
+			value := SafePercent(v)
+			resp.CacheHitRatePct = &value
+		} else {
+			log.Warn("appmetrics: cache_hit_rate query unavailable", "app_id", appID)
+		}
+	}
 
 	// 6. Cold start %.
 	coldQ := PercentRatioQuery(
@@ -358,6 +385,16 @@ func SafePercent(v float64) float64 {
 		x = 100
 	}
 	return x
+}
+
+// ErrorBudgetRemainingPct converts an observed [45]xx percentage into the
+// remaining share of the API-availability error budget. The public SLO is
+// 99.5%, so an observed 0.0% error rate reports 100% remaining and an
+// observed 0.5% error rate reports 0%. Values beyond the budget are clamped
+// to zero; invalid values are handled by SafePercent.
+func ErrorBudgetRemainingPct(errorRatePct float64) float64 {
+	budgetPct := (100 - errorRatePct - APIAvailabilitySLO*100) / ((1 - APIAvailabilitySLO) * 100) * 100
+	return SafePercent(budgetPct)
 }
 
 // SafeRoundNonNeg is SafeFloat under a name that documents intent:

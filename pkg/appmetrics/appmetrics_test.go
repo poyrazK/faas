@@ -1,11 +1,13 @@
 package appmetrics_test
 
+// adr: 045
 // Issue #396 / ADR-045 PR 2 — pkg/appmetrics tests.
 //
 // Coverage matrix (mirrors the TestAppMetrics_* naming convention
 // from cmd/apid/handlers_metrics_test.go so future readers find
 // corresponding tests by name):
-//   - happy path: all 7 PromQL queries land in the response
+//   - happy path: all 7 core PromQL queries land in the response
+//   - customer completeness: cache hit rate and error budget are populated
 //   - degraded fallback: one query errors → zeroed fields + "degraded:" Source
 //   - NaN guard: histogram_quantile over an empty window returns NaN → coerced to 0
 //   - nil-client path: Fetch with nil PromQL → "degraded: prometheus not configured"
@@ -99,6 +101,66 @@ func TestAppMetrics_Fetch_HappyPath(t *testing.T) {
 	}
 	if resp.WakeP95MS != 42 {
 		t.Errorf("WakeP95MS = %v, want 42", resp.WakeP95MS)
+	}
+}
+
+func TestAppMetrics_FetchCustomerCompleteness(t *testing.T) {
+	stub := &stubPromQL{fn: func(query string) (float64, error) {
+		switch {
+		case strings.Contains(query, "increase("):
+			return 100, nil
+		case strings.Contains(query, "class=~\"[45]xx\""):
+			return 0.25, nil
+		case strings.Contains(query, "gateway_response_cache_app_total"):
+			return 50, nil
+		default:
+			return 1, nil
+		}
+	}}
+
+	resp, source := appmetrics.Fetch(context.Background(), stub, slog.Default(), "app-1", "1h")
+	if source != appmetrics.SourcePrometheus {
+		t.Fatalf("source = %q, want %q", source, appmetrics.SourcePrometheus)
+	}
+	if resp.CacheHitRatePct == nil || *resp.CacheHitRatePct != 50 {
+		t.Fatalf("cache_hit_rate_pct = %v, want 50", resp.CacheHitRatePct)
+	}
+	if resp.ErrorBudgetPct == nil || *resp.ErrorBudgetPct != 50 {
+		t.Fatalf("error_budget_pct = %v, want 50", resp.ErrorBudgetPct)
+	}
+}
+
+func TestAppMetrics_FetchCacheTelemetryIsBestEffort(t *testing.T) {
+	stub := &stubPromQL{fn: func(query string) (float64, error) {
+		if strings.Contains(query, "gateway_response_cache_app_total") {
+			return 0, errors.New("cache metric not scraped")
+		}
+		return 1, nil
+	}}
+
+	resp, source := appmetrics.Fetch(context.Background(), stub, slog.Default(), "app-1", "5m")
+	if source != appmetrics.SourcePrometheus {
+		t.Fatalf("source = %q, want %q", source, appmetrics.SourcePrometheus)
+	}
+	if resp.CacheHitRatePct != nil {
+		t.Fatalf("cache_hit_rate_pct = %v, want nil when cache telemetry is unavailable", *resp.CacheHitRatePct)
+	}
+}
+
+func TestErrorBudgetRemainingPct(t *testing.T) {
+	tests := []struct {
+		errorRate float64
+		want      float64
+	}{
+		{errorRate: 0, want: 100},
+		{errorRate: 0.25, want: 50},
+		{errorRate: 0.5, want: 0},
+		{errorRate: 5, want: 0},
+	}
+	for _, tt := range tests {
+		if got := appmetrics.ErrorBudgetRemainingPct(tt.errorRate); got != tt.want {
+			t.Errorf("ErrorBudgetRemainingPct(%v) = %v, want %v", tt.errorRate, got, tt.want)
+		}
 	}
 }
 

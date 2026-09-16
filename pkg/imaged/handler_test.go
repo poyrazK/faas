@@ -596,14 +596,11 @@ func TestHandleSnapshotWritten_RequiredSmokeRejectsSkippedVerifier(t *testing.T)
 	}
 }
 
-// TestHandleSnapshotWritten_Tier (issue #470 / PR #470-FU-B)
-// exercises the warm-tier payload path: when schedd's
-// captureWarmSnapshot emits a snapshot_written with tier="warm",
-// imaged stamps tier="warm" on the row. The MemStore test
-// doubles as the wire-shape regression — a future payload-shape
-// change that drops the tier field would slip back to "init"
-// and trip this assertion.
-func TestHandleSnapshotWritten_Tier(t *testing.T) {
+// TestHandleSnapshotWritten_WarmSnapshotDoesNotReactivate (issue #2705)
+// exercises the multi-subscriber warm-tier path. Both handlers may receive
+// the durable publication, but they may only converge on the snapshot row;
+// the established deployment lifecycle and hosting evidence are immutable.
+func TestHandleSnapshotWritten_WarmSnapshotDoesNotReactivate(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@example.com", "pro")
 	app, _ := store.CreateApp(context.Background(), state.App{
@@ -611,12 +608,16 @@ func TestHandleSnapshotWritten_Tier(t *testing.T) {
 	})
 	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:warm", Kind: state.DeploymentKindImage,
+		Status: state.DeployLive, TrafficPercent: 100,
+		APIHostingReceipt: json.RawMessage(`{"schema_version":1,"deployment_id":"established"}`),
 	})
-	_ = store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, "")
-	notif := &fakeNotifier{}
-	h := New(store, notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+	before, _ := store.DeploymentByID(context.Background(), dep.ID)
+	notifA := &fakeNotifier{}
+	notifB := &fakeNotifier{}
+	hA := New(store, notifA, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+	hB := New(store, notifB, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
 
-	h.HandleNotification(context.Background(), db.Notification{
+	n := db.Notification{
 		Channel: db.NotifySnapshotWritten,
 		Payload: `{"deployment_id":"` + dep.ID + `",` +
 			`"vmstate_path":"/srv/fc/snap/` + dep.ID + `/vmstate",` +
@@ -624,7 +625,9 @@ func TestHandleSnapshotWritten_Tier(t *testing.T) {
 			`"mem_bytes":536870912,` +
 			`"vmstate_bytes":40960,"fc_version":"firecracker-1.10",` +
 			`"tier":"warm"}`,
-	})
+	}
+	hA.HandleNotification(context.Background(), n)
+	hB.HandleNotification(context.Background(), n)
 
 	snap, err := store.LatestSnapshot(context.Background(), dep.ID)
 	if err != nil {
@@ -633,8 +636,18 @@ func TestHandleSnapshotWritten_Tier(t *testing.T) {
 	if snap.Tier != state.SnapshotTierWarm {
 		t.Errorf("Tier = %q, want %q (warm payload)", snap.Tier, state.SnapshotTierWarm)
 	}
-	if findNotify(notif, db.NotifyDeploymentChanged) == nil {
-		t.Error("expected a deployment_changed live fan-out")
+	after, err := store.DeploymentByID(context.Background(), dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	if after.Status != state.DeployLive || after.TrafficPercent != before.TrafficPercent {
+		t.Fatalf("deployment lifecycle changed: before=%+v after=%+v", before, after)
+	}
+	if string(after.APIHostingReceipt) != string(before.APIHostingReceipt) {
+		t.Fatalf("hosting receipt changed: before=%s after=%s", before.APIHostingReceipt, after.APIHostingReceipt)
+	}
+	if findNotify(notifA, db.NotifyDeploymentChanged) != nil || findNotify(notifB, db.NotifyDeploymentChanged) != nil {
+		t.Fatal("warm snapshot re-published deployment lifecycle")
 	}
 }
 

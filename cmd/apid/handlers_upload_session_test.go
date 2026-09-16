@@ -208,7 +208,7 @@ func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 	body, err := json.Marshal(startUploadRequest{
 		AppSlug: "metadata", TotalSize: 4096,
 		DeployOptions: &api.UploadDeployOptions{
-			SourceRoot: "apps/api", Dockerfile: true, Reason: "release",
+			SourceRoot: "apps/api", Scope: "production", Dockerfile: true, Reason: "release",
 			SourceURL:     "github://acme/metadata@0123456789abcdef0123456789abcdef01234567",
 			CommitSHA:     "0123456789abcdef0123456789abcdef01234567",
 			RollbackOn5xx: &rollback,
@@ -230,7 +230,7 @@ func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	row, err := e.store.GetUploadSession(t.Context(), started.UploadID)
-	if err != nil || !bytes.Contains(row.DeployOptions, []byte(`"source_root":"apps/api"`)) {
+	if err != nil || !bytes.Contains(row.DeployOptions, []byte(`"source_root":"apps/api"`)) || !bytes.Contains(row.DeployOptions, []byte(`"scope":"production"`)) {
 		t.Fatalf("persisted options = %s, err=%v", row.DeployOptions, err)
 	}
 	if !bytes.Contains(row.DeployOptions, []byte(`"source_url":"github://acme/metadata@0123456789abcdef0123456789abcdef01234567"`)) ||
@@ -267,7 +267,7 @@ func TestUploadSession_CommitPreservesSourceProvenance(t *testing.T) {
 	const commitSHA = "0123456789abcdef0123456789abcdef01234567"
 	body, err := json.Marshal(startUploadRequest{
 		AppSlug: "provenance", TotalSize: int64(len(raw)),
-		DeployOptions: &api.UploadDeployOptions{SourceURL: sourceURL, CommitSHA: commitSHA},
+		DeployOptions: &api.UploadDeployOptions{SourceURL: sourceURL, CommitSHA: commitSHA, Scope: "production"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -300,6 +300,9 @@ func TestUploadSession_CommitPreservesSourceProvenance(t *testing.T) {
 	}
 	if out.SourceURL != sourceURL || out.CommitSHA != commitSHA {
 		t.Fatalf("response provenance = source_url %q commit_sha %q", out.SourceURL, out.CommitSHA)
+	}
+	if out.Scope != "production" {
+		t.Fatalf("response scope = %q, want production", out.Scope)
 	}
 	dep, err := e.store.LatestDeployment(t.Context(), out.AppID)
 	if err != nil {

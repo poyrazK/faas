@@ -83,6 +83,10 @@ func wakeResponseValue(cold bool, method WakeMethod) string {
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// AccountStatus is the joined account lifecycle. Empty preserves legacy
+	// test fixtures as active; production always populates it. Suspended and
+	// deleted_pending accounts fail at the gateway before auth, wake, or proxy.
+	AccountStatus string
 	// Type is populated from apps.type. Empty is treated as the legacy
 	// Function/default budget posture by limits.RequestBudgetForType.
 	Type AppType
@@ -5133,6 +5137,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	if app.AccountStatus == "suspended" || app.AccountStatus == "deleted_pending" {
+		api.WriteProblem(w, api.ErrAccountSuspended())
+		h.observe(r, rec.status, app.ID, "", false, Target{})
+		return
+	}
 	// Preserve the customer-facing route identity before any edge rewrite.
 	// Declared-route matching is against the public OpenAPI contract, not the
 	// internal path a rewrite rule may later produce.
@@ -5510,7 +5519,7 @@ haveApp:
 				// (predicate veto) — a follow-on ADR can
 				// widen the counter with a `reason` label
 				// if operators need finer breakdown.
-				h.metricsIncCacheOutcome("store_skipped")
+				h.metricsIncCacheOutcome(app.ID, "store_skipped")
 			}
 			// Refresh the occupancy gauges regardless of the
 			// store outcome — the gauge is a snapshot, not a

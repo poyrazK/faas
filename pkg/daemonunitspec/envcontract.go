@@ -401,7 +401,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SCHEDD_SOCKET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin},
 	{Name: "FAAS_SESSION_KEY", Owners: []string{"apid", "gatewayd-internal", "shared"}, Source: EnvSourceUnit, Note: "LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service"},
 	{Name: "FAAS_SIGN_KEY", Owners: []string{"imaged"}, Source: EnvSourceDefault},
-	{Name: "FAAS_SIGN_PUB", Owners: []string{"schedd"}, Source: EnvSourceUnit},
+	{Name: "FAAS_SIGN_PUB", Owners: []string{"apid", "schedd"}, Source: EnvSourceUnit},
 	{Name: "FAAS_SKIP_PG_TESTS", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_SKIP_SOCKET_GROUP", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_SNAPSHOT_FANOUT_INTERVAL", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments"},

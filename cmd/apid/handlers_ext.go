@@ -1788,15 +1788,16 @@ func planMaxFor(acct state.Account) int {
 }
 
 // rollbackApp re-primes the most recent superseded deployment per spec §9.
-// Implemented as a synchronous status swap; imaged/schedd react via
-// pg_notify and re-prime on their side. The previous "live" deployment is
-// marked superseded; the rolled-back one moves from superseded → live.
+// The request starts an asynchronous readiness gate: the target is verified
+// and queued for a real cold boot while the current release remains live.
+// Imaged performs the eventual atomic cutover only after readiness and the
+// public hosting smoke succeed.
 //
 // SAFE-RELEASES-G (issue #976) adds an optional request body field
 // target_deployment_id. When set, the handler validates that the named
 // deployment (a) belongs to this app and (b) has status='superseded', then
-// promotes it. When omitted, the behaviour is unchanged — rollback to the
-// most-recent superseded deployment. The audit emit carries a `mode` field
+// prepares it. When omitted, the platform chooses the most-recent superseded
+// deployment. The audit emit carries a `mode` field
 // so the dashboard can render "latest" vs "specific" differently.
 func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
@@ -1863,9 +1864,13 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 			return state.Deployment{}, api.ErrNoRollbackTarget()
 		}
 	}
-	current, err := s.store.LiveDeployment(ctx, app.ID)
-	if err != nil {
-		return state.Deployment{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no deployments")
+	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
+		return state.Deployment{}, problem
+	}
+	var current state.Deployment
+	current, err = s.store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return state.Deployment{}, api.ErrCapacity(fmt.Sprintf("lookup current deployment: %v", err))
 	}
 	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
 		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
@@ -1877,25 +1882,38 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 			return state.Deployment{}, problem
 		}
 	}
-	if err := s.store.MarkDeploymentLive(ctx, target.ID); err != nil {
-		return state.Deployment{}, api.ErrCapacity("could not activate rollback target")
+	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
+	if err != nil {
+		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
+			return state.Deployment{}, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
+		}
+		return state.Deployment{}, api.ErrCapacity("could not prepare rollback target")
 	}
-	if fresh, readErr := s.store.DeploymentByID(ctx, target.ID); readErr == nil {
-		target = fresh
-	}
-	_ = s.notif.Notify(ctx, db.NotifyDeploymentChanged,
-		fmt.Sprintf(`{"kind":"rollback","status":"live","app_id":"%s","deployment_id":"%s","from":"%s","to":"%s"}`,
-			app.ID, target.ID, current.ID, target.ID))
-	_ = s.notif.Notify(ctx, db.NotifyDeploymentChanged,
-		fmt.Sprintf(`{"kind":"superseded","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`,
-			app.ID, current.ID, target.ID))
-	s.log.Info("app rolled back", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID, "mode", mode)
-	s.audit.Emit(ctx, "app.rolled_back", &acct.ID, map[string]any{
-		"app_id": app.ID, "from": current.ID, "to": target.ID, "mode": mode,
+	primePayload, marshalErr := json.Marshal(map[string]string{
+		"app_id": app.ID, "deployment_id": target.ID,
 	})
-	depUUID, parseErr := uuid.Parse(current.ID)
+	if marshalErr != nil {
+		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, state.DeploySuperseded, "")
+		return state.Deployment{}, api.ErrCapacity("could not encode rollback readiness request")
+	}
+	if err := s.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
+		// NotifySnapshotPrime is durable in production, so an error means no
+		// handoff committed. Restore eligibility while leaving the current live
+		// deployment untouched.
+		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, state.DeploySuperseded, "")
+		return state.Deployment{}, api.ErrCapacity("could not queue rollback readiness check")
+	}
+	s.log.Info("app rollback readiness requested", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID, "mode", mode)
+	s.audit.Emit(ctx, "app.rollback_requested", &acct.ID, map[string]any{
+		"app_id": app.ID, "from": current.ID, "to": target.ID, "mode": mode, "status": target.Status,
+	})
+	auditDeploymentID := current.ID
+	if auditDeploymentID == "" {
+		auditDeploymentID = target.ID
+	}
+	depUUID, parseErr := uuid.Parse(auditDeploymentID)
 	if parseErr != nil {
-		s.log.Warn("rollback: parse current deployment_id failed", "deployment", current.ID, "err", parseErr.Error())
+		s.log.Warn("rollback: parse audit deployment_id failed", "deployment", auditDeploymentID, "err", parseErr.Error())
 		depUUID = uuid.Nil
 	}
 	var acctUUID *uuid.UUID
@@ -1905,7 +1923,7 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 	auditEntry := state.DeploymentAudit{
 		DeploymentID: depUUID, AccountID: acctUUID, Kind: state.DeployRolledBack,
 		Actor: "apid:rollback", At: time.Now().UTC(),
-		Data: json.RawMessage(fmt.Sprintf(`{"from":%q,"to":%q,"mode":%q}`, current.ID, target.ID, mode)),
+		Data: json.RawMessage(fmt.Sprintf(`{"from":%q,"to":%q,"mode":%q,"phase":"readiness_requested"}`, current.ID, target.ID, mode)),
 	}
 	if alertRuleID != uuid.Nil {
 		auditEntry.AlertRuleID = &alertRuleID
@@ -1914,6 +1932,24 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 		s.log.Warn("rollback: append deployment_audit failed", "app", app.ID, "deployment", target.ID, "err", err.Error())
 	}
 	return target, nil
+}
+
+func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.Deployment) *api.Problem {
+	if strings.TrimSpace(target.RootfsKey) == "" {
+		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q has no immutable rootfs artifact key", target.ID))
+	}
+	if s.rollbackArtifactVerifier == nil {
+		return api.ErrCapacity("rollback artifact verification is not configured")
+	}
+	err := s.rollbackArtifactVerifier.Verify(ctx, target.RootfsKey, "sigs/"+target.RootfsKey+".sig")
+	if err == nil {
+		return nil
+	}
+	var problem *api.Problem
+	if artifactstorage.IsNotFound(err) || (errors.As(err, &problem) && problem.Code == api.CodeSigInvalid) {
+		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q does not have an accessible, attested cold-boot rootfs", target.ID))
+	}
+	return api.ErrCapacity("could not verify rollback target artifact")
 }
 
 // parkApp marks the app evicted_cold; schedd reacts and tears down live
@@ -1965,57 +2001,65 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 
 // wakeApp unparks an evicted_cold app.
 func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !acct.Active() {
+		api.WriteProblem(w, api.ErrAccountSuspended())
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-				"App has no live deployment", "deploy the app before requesting a wake"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not resolve the app's live deployment"))
+	if problem := s.validateExplicitAppWake(r.Context(), app); problem != nil {
+		api.WriteProblem(w, problem)
 		return
+	}
+	wakeID, err := s.enqueueExplicitAppWake(r.Context(), acct, app)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not queue app wake"))
+		return
+	}
+	writeJSON(w, http.StatusAccepted, api.AppWakeResponse{WakeID: wakeID})
+}
+
+func (s *server) validateExplicitAppWake(ctx context.Context, app state.App) *api.Problem {
+	if _, err := s.store.LiveDeployment(ctx, app.ID); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"App has no live deployment", "deploy the app before requesting a wake")
+		}
+		return api.ErrCapacity("could not resolve the app's live deployment")
 	}
 	if app.Status == state.AppEvictedCold {
-		if err := waitForAppInstancesDrained(r.Context(), s.store, app.ID, 0, 0); err != nil {
+		if err := waitForAppInstancesDrained(ctx, s.store, app.ID, 0, 0); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-					"App is still draining", "wait for the preceding park operation to finish before requesting a wake"))
-				return
+				return api.NewProblem(http.StatusConflict, api.CodeConflict,
+					"App is still draining", "wait for the preceding park operation to finish before requesting a wake")
 			}
-			api.WriteProblem(w, api.ErrCapacity("could not verify app instance drain"))
-			return
+			return api.ErrCapacity("could not verify app instance drain")
 		}
 	}
-	st := state.AppActive
-	claimed, err := transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	return nil
+}
+
+func (s *server) enqueueExplicitAppWake(ctx context.Context, acct state.Account, app state.App) (string, error) {
+	wakeUUID, err := uuid.NewV7()
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not wake app"))
-		return
+		wakeUUID = uuid.New()
+		s.log.Warn("app wake: uuid.NewV7 failed, fell back to v4", "app", app.ID, "err", err)
 	}
-	if !claimed {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"App lifecycle transition in progress", "retry after the current park or wake operation completes"))
-		return
+	wakeID := wakeUUID.String()
+	payload, err := json.Marshal(map[string]string{"app_id": app.ID, "wake_id": wakeID})
+	if err != nil {
+		return "", fmt.Errorf("marshal app wake: %w", err)
 	}
-	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		fmt.Sprintf(`{"kind":"woken","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
-	if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventAppWoken, map[string]any{
-		"app_id": app.ID, "slug": app.Slug, "status": st, "occurred_at": time.Now().UTC(),
-	}); err != nil {
-		s.log.WarnContext(r.Context(), "enqueue app.woken webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+	if err := s.notif.Notify(ctx, db.NotifyAppWake, string(payload)); err != nil {
+		return "", err
 	}
-	if app.Status != state.AppActive {
-		s.audit.Emit(r.Context(), "app.woken", &acct.ID, map[string]any{
-			"app_id": app.ID,
-			"slug":   app.Slug,
-			"status": st,
-		})
-	}
-	s.log.Info("app woken", "app", app.ID, "account", acct.ID)
-	w.WriteHeader(http.StatusNoContent)
+	s.audit.Emit(ctx, "app.wake_requested", &acct.ID, map[string]any{
+		"app_id": app.ID, "slug": app.Slug, "wake_id": wakeID,
+	})
+	s.log.Info("app wake requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID)
+	return wakeID, nil
 }
 
 // restartApp queues a park followed by a fresh wake from the newly captured

@@ -255,3 +255,65 @@ func TestCmdDebugRequestsShow_RendersTimelineAndSpans(t *testing.T) {
 		}
 	}
 }
+
+func TestCmdDebugRequestsReplay_SelectsTargetDeployment(t *testing.T) {
+	var got http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = *r.Clone(r.Context())
+		var body api.DebugReplayRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode replay body: %v", err)
+		}
+		if body.MirrorDeploymentID != "target-1" {
+			t.Fatalf("mirror_deployment_id = %q, want target-1", body.MirrorDeploymentID)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.DebugReplayResponse{
+			MirrorInvocationID: "inv-1", Status: "queued",
+			SourceDeploymentID: "source-1", MirrorDeploymentID: "target-1",
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test")
+
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	oldJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = oldJSON }()
+
+	if code := cmdDebugRequestsReplay([]string{
+		"my-app", "request-1", "--deployment-id", "target-1",
+	}); code != 0 {
+		t.Fatalf("cmdDebugRequestsReplay() = %d, want 0", code)
+	}
+	if got.URL.Path != "/v1/apps/my-app/debug/requests/request-1/replay" {
+		t.Fatalf("request path = %q", got.URL.Path)
+	}
+	if !strings.Contains(stdout.String(), "Target:        target-1") {
+		t.Fatalf("human output missing selected target:\n%s", stdout.String())
+	}
+}
+
+func TestRenderDebugReplayComparison(t *testing.T) {
+	var out strings.Builder
+	renderDebugReplayComparison(&out, api.DebugReplayComparison{
+		SourceDeploymentID: "source-1", MirrorDeploymentID: "target-1",
+		SourceStatusCode: 200, MirrorStatusCode: 503,
+		SourceLatencyMS: 42, MirrorLatencyMS: 118,
+		StatusDiff: true, Crashed: true,
+	})
+	got := out.String()
+	for _, want := range []string{
+		"Source: source-1 · HTTP 200 · 42 ms",
+		"Target: target-1 · HTTP 503 · 118 ms",
+		"Latency delta: +76 ms",
+		"Status changed: true",
+		"Target crashed: true",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("comparison output missing %q:\n%s", want, got)
+		}
+	}
+}

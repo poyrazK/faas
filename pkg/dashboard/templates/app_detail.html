@@ -246,6 +246,13 @@
           <section class="github-activity" aria-label="GitHub activity">
             <h3>Recent GitHub events</h3>
             <p class="muted">This confirms whether GitHub reached Gregale and whether deployment status was sent back.</p>
+            {{if .Data.GitHubConnection.Activity.CanRetry}}
+              <form method="POST" action="/dashboard/apps/{{.Data.App.Slug}}/github/activity/retry" style="display:inline-block">
+                <input type="hidden" name="csrf_token" value="{{.Data.GitHubConnection.CSRFToken}}">
+                <button type="submit">Retry failed GitHub activity</button>
+              </form>
+              <p class="muted">Retries up to 10 recent failed webhook and Check Run updates.</p>
+            {{end}}
             {{if .Data.GitHubConnection.Activity.WebhookDeliveries}}
               <table aria-label="Recent GitHub webhook processing">
                 <thead><tr><th>Received</th><th>Event</th><th>Processing</th><th>Commit</th><th>Guidance</th></tr></thead>
@@ -529,6 +536,12 @@
               <dt>Error rate</dt><dd>{{printf "%.1f" .Data.Metrics.ErrorRatePct}}%</dd>
               <dt>Cold-start share</dt><dd>{{printf "%.1f" .Data.Metrics.ColdStartPct}}%</dd>
               <dt>Wake latency p95 <small style="color:#888">(fleet)</small></dt><dd>{{printf "%.1f" .Data.Metrics.WakeP95MS}} ms</dd>
+              {{if .Data.Metrics.CacheHitRateAvailable}}
+                <dt>Response-cache hit rate</dt><dd>{{printf "%.1f" .Data.Metrics.CacheHitRatePct}}%</dd>
+              {{end}}
+              {{if .Data.Metrics.ErrorBudgetAvailable}}
+                <dt>Error budget remaining</dt><dd>{{printf "%.1f" .Data.Metrics.ErrorBudgetPct}}%</dd>
+              {{end}}
             </dl>
           {{end}}
         </section>

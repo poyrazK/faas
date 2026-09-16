@@ -1,9 +1,9 @@
 # Managed PostgreSQL operator preview
 
-> Managed PostgreSQL is not available to public-beta customers. The CLI keeps
-> its command callable for qualified operator canaries, but hides it from the
-> default customer help and completion surfaces until a provider is qualified
-> and the capability leaves internal maturity.
+> Managed PostgreSQL remains gated to qualified accounts while the provider
+> qualification is completed. Its provider-neutral commands are nevertheless
+> exposed through the customer-facing `gregale` CLI so eligible workloads use
+> the same workflow in development and production.
 
 Managed PostgreSQL now has a customer-facing, provider-neutral API while
 remaining an opt-in operator preview. The API exposes account-scoped database
@@ -290,8 +290,29 @@ gregale postgres get DATABASE_ID
 gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z
 gregale postgres bindings create DATABASE_ID --app APP_ID --scope production --environment-key DATABASE_URL
 gregale postgres bindings list DATABASE_ID
+gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
 ```
+
+For application deployments, declare the dependency in `gregale.yaml` and
+`gregale deploy` creates the durable binding before uploading compute:
+
+```yaml
+databases:
+  - database: orders       # logical database name or ID
+    scope: production      # defaults to default
+    env: DATABASE_URL      # defaults to DATABASE_URL
+    access: read_write     # or read_only
+```
+
+The `app` field can be supplied for a multi-app project manifest; when it is
+omitted, the declaration applies to the app currently being deployed. The CLI
+resolves the database name/ID, requires a ready binding response, and then
+relies on the existing sealed app-secret injection path. A binding that is
+still provisioning blocks the deployment with a retryable error; credentials
+are never written to the manifest or printed by the CLI. All dependencies for
+one deployment must use the same scope; that scope is carried onto the
+deployment so compute and the sealed database secret resolve together.
 
 Pass `--json` to any read or write command for automation. JSON responses use
 the same DTOs as the public API and deliberately contain no password, endpoint,

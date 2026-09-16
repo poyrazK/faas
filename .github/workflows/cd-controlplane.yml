@@ -414,6 +414,8 @@ jobs:
           [Service]
           LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
           LoadCredential=cd_host_age_recipient:/etc/faas/secrets/host.age.pub
+          LoadCredential=cd_sign_pub:/etc/faas/secrets/sign-pub.pem
+          Environment=FAAS_SIGN_PUB=%d/cd_sign_pub
           EnvironmentFile=/etc/faas/apid-age-recipients.env
           CREDENTIALS
           chmod 0644 /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf

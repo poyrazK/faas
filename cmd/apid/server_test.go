@@ -30,6 +30,10 @@ type testEnv struct {
 	ops   *wire.OpsMetrics
 }
 
+type stubRollbackArtifactVerifier struct{ err error }
+
+func (v stubRollbackArtifactVerifier) Verify(context.Context, string, string) error { return v.err }
+
 func setup(t *testing.T, plan api.Plan) testEnv {
 	t.Helper()
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", t.TempDir())
@@ -43,7 +47,9 @@ func setup(t *testing.T, plan api.Plan) testEnv {
 		t.Fatal(err)
 	}
 	ops := wire.NewOpsMetrics("apid_test")
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), ops)
+	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+		WithOpsMetrics(context.Background(), ops).
+		WithRollbackArtifactVerifier(stubRollbackArtifactVerifier{})
 	return testEnv{h: srv.handler(), s: srv, store: store, key: pt, acct: acct, ops: ops}
 }
 

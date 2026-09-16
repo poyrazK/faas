@@ -590,7 +590,9 @@ var cliCommands = []cliCommand{
 			{Name: "summary", Short: "Show the release diff and rollback target", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "SLUG"},
 			}},
-			{Name: "wait", Short: "Wait until a deployment is live", Flags: []cliFlag{
+			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Flags: []cliFlag{
+				{Name: "rollout", Short: "wait for safe rollout to reach 100% traffic"},
+				{Name: "progress", Short: "print rollout transitions while waiting (human output only)"},
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
 			}},
 			{Name: "set-min-instances", Short: "Set the per-deployment cold-wake floor"},
@@ -703,6 +705,7 @@ var cliCommands = []cliCommand{
 			{Name: "project-slug", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
 			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
 			{Name: "canary-stages", Short: "custom percent@duration canary stages", Value: "STAGES"},
+			{Name: "safe", Short: "deploy with the balanced health-gated rollout (Pro/Scale only)"},
 			{Name: "require-authn", Short: "require bearer auth on every request"},
 			{Name: "no-require-authn", Short: "drop the token requirement"},
 			{Name: "app-protocol", Short: "wire protocol selector", Value: "PROTOCOL", ClosedSet: []string{"http1", "http2", "grpc"}},
@@ -935,7 +938,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "debug",
 		Short:   "Production debugger (ADR-127)",
 		Subcommands: []cliSub{
-			{Name: "requests", Short: "Per-request telemetry (list/export/watch/get/evidence/replay)"},
+			{Name: "requests", Short: "Per-request telemetry and root-cause synthesis (list/export/watch/get/evidence/explain/replay)"},
 			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
 			{Name: "running", Short: "Explain why an app is still running, with request evidence when available (running <slug> [--since D] [--limit N])"},
 			{Name: "regressions", Short: "Regressions (live watch, lifecycle actions, per-app/--all, rollback)"},
@@ -1109,6 +1112,11 @@ var cliCommands = []cliCommand{
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
 			}},
 			{Name: "bindings", Short: "Manage app database bindings"},
+			{Name: "attach", Short: "Attach a database to an app", Flags: []cliFlag{
+				{Name: "scope", Short: "environment scope", Value: "SCOPE"},
+				{Name: "env", Short: "connection environment variable", Value: "KEY"},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only"}},
+			}},
 		},
 	},
 	{

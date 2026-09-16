@@ -196,7 +196,7 @@ hits, so a degraded origin never inflates the advertised hit rate.
 
 ### D6 — Saved cost counts only genuinely avoided wakes
 
-`gateway_response_cache_wakes_avoided_total{app_id}` increments
+`gateway_response_cache_wakes_avoided_total{app}` increments
 **only** when a hit lands on an app with zero healthy instances
 (`backend.HealthyCount(appID) == 0`). A hit against an already-warm
 app saves latency but saves no compute — the instance is running
@@ -208,6 +208,14 @@ reporting layer from `pkg/api/limits.go` plan RAM; the counters are
 telemetry-only and do not enter the Stripe/Paddle push. The
 `gb_ram_hour` SKU is unchanged — this mirrors the existing posture
 where `usage_minutes.tx_bytes` is telemetry, not billing.
+
+The operator outcome counter keeps its historical global shape as
+`gateway_response_cache_total{outcome}`. Customer-facing per-app
+analytics use the additive
+`gateway_response_cache_app_total{app,outcome}` counter, with the
+same closed outcome vocabulary. The customer hit rate is strictly
+`hit / (hit + miss)`; bypass and stale outcomes remain visible but do
+not inflate the numerator or denominator.
 
 ### D7 — In-process store, per `gatewayd-internal`
 

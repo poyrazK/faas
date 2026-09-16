@@ -73,7 +73,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	// the closed cacheable-method vocab before consulting the
 	// cache.
 	if rule.Methods != nil && !rule.Methods[method] {
-		h.metricsIncCacheOutcome("bypass_uncacheable")
+		h.metricsIncCacheOutcome(app.ID, "bypass_uncacheable")
 		return false, nil
 	}
 	// Pre-flight on credentialed requests — runs AFTER the
@@ -83,7 +83,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	// property (authed requests are NEVER cached) is enforced
 	// by the absence of a storage path here, not by the counter.
 	if r.Header.Get("Authorization") != "" || hasSessionCookie(r) {
-		h.metricsIncCacheOutcome("bypass_authed")
+		h.metricsIncCacheOutcome(app.ID, "bypass_authed")
 		return false, nil
 	}
 	// Build the cache key. DeploymentID is empty in v1 because
@@ -114,7 +114,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// response correctly without the platform emitting
 		// Vary. Operators that need Vary on cached responses
 		// can add it via kind=headers.
-		h.metricsIncCacheOutcome("hit")
+		h.metricsIncCacheOutcome(app.ID, "hit")
 		w.Header().Del(wire.WakeHeader)
 		for k, vs := range entry.header {
 			// Skip hop-by-hop headers that don't survive
@@ -163,14 +163,14 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// responsibility of commit 13's
 		// applyEdgeRuleCacheStaleOnError wrapper (called
 		// from the gate-failure branch).
-		h.metricsIncCacheOutcome("miss")
+		h.metricsIncCacheOutcome(app.ID, "miss")
 		return false, rule
 	case "":
 		// Miss. Fall through to the wake gate.
-		h.metricsIncCacheOutcome("miss")
+		h.metricsIncCacheOutcome(app.ID, "miss")
 		return false, rule
 	}
-	h.metricsIncCacheOutcome("miss")
+	h.metricsIncCacheOutcome(app.ID, "miss")
 	return false, rule
 }
 
@@ -178,11 +178,11 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 // helper the applier + writer use to bump a closed-set
 // outcome label. nil-safe: a handler with no metrics (the
 // pre-metrics test corpus) is a no-op.
-func (h *Handler) metricsIncCacheOutcome(outcome string) {
+func (h *Handler) metricsIncCacheOutcome(appID, outcome string) {
 	if h == nil || h.metrics == nil {
 		return
 	}
-	h.metrics.responseCache.WithLabelValues(outcome).Inc()
+	h.metrics.ObserveResponseCacheOutcome(appID, outcome)
 }
 
 // hasSessionCookie reports whether the request carries a session

@@ -65,6 +65,45 @@ wait returns a non-zero exit code but retains the accepted deployment ID in
 `--json` output, along with an exact `resume_command`; resume it with
 `gregale deployment wait <deployment-id> --timeout ...`.
 
+## Safe production rollouts
+
+For a health-gated production release, use the opt-in safe path:
+
+```bash
+gregale deploy --safe
+```
+
+`--safe` selects Gregale's balanced 1% → 10% → 50% → 100% rollout and
+waits for the rollout to reach 100% traffic before returning success. The
+server's smoke verification, configured health gates, and rollback behavior
+remain the source of truth. Safe rollouts require a Pro or Scale plan.
+
+Preview the safe-release plan before uploading:
+
+```bash
+gregale deploy --safe --dry-run
+gregale deploy --safe --dry-run --json | jq '.diff.safe_release'
+```
+
+The preview shows the next rollout step, the actionable alert-gate status,
+and the previous deployment that would be the rollback target. If no enabled
+`rollback` or `demote` alert rule exists, the preview warns that the rollout
+has no actionable health gate.
+
+The existing deploy default remains unchanged. For an explicitly configured
+canary, a normal deploy returns once the candidate is live; inspect or wait
+for the full rollout with:
+
+```bash
+gregale deployment wait <deployment-id> --rollout
+gregale deployment wait <deployment-id> --rollout --progress
+```
+
+With `--progress`, the CLI prints one line for each lifecycle or rollout
+transition, such as `1% traffic · step 1/4` followed by `10% traffic · step
+2/4`. JSON output remains a single deployment record. If the wait times out,
+the JSON receipt includes the exact resume command.
+
 Every deploy also has a stable retry key derived from the app, source digest,
 and deploy intent. Pass `--idempotency-key KEY` when an external CI workflow
 needs to reuse one logical key across separate invocations. The CLI scopes the

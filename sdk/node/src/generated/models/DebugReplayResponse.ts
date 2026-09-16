@@ -11,5 +11,13 @@ export type DebugReplayResponse = {
    */
   mirror_invocation_id?: string | null;
   status: 'queued' | 'running' | 'completed' | 'failed';
+  /**
+   * Deployment that served the retained request.
+   */
+  source_deployment_id?: string | null;
+  /**
+   * Enabled mirror target selected for this replay.
+   */
+  mirror_deployment_id?: string | null;
 };
 

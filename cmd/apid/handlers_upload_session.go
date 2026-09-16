@@ -566,10 +566,16 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: opts.Environment}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
+	}
+	if opts.Scope != "" {
+		if prob := api.ValidateScope(opts.Scope); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 	}
 	if prob := validateSourceProvenance(opts.SourceURL, opts.CommitSHA); prob != nil {
 		api.WriteProblem(w, prob)
@@ -596,6 +602,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			}
 			return
 		}
+	}
+	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	if app.Type == state.AppTypeFunction {
 		if opts.Dockerfile {
@@ -659,7 +669,6 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		FunctionRuntime:  functionRuntimeForApp(app),
 		SourceURL:        sourceURL,
 		CommitSHA:        opts.CommitSHA,
-		Scope:            rolloutReq.Scope,
 		Source:           "upload-session:" + uploadID,
 		LogSpool:         spoolRoot(),
 		Log:              s.log,
@@ -673,6 +682,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		PRNumber:         opts.PRNumber,
 		RollbackOn5xx:    opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
 		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
+		Scope:            rolloutReq.Scope,
 		HostingObserver:  s.ops,
 		HostingFlow:      "first_deploy",
 		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,

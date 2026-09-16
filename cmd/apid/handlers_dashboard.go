@@ -996,6 +996,14 @@ func (s *server) fetchDashboardMetrics(ctx context.Context, log *slog.Logger, ap
 		ColdStartPct: resp.ColdStartPct,
 		WakeP95MS:    resp.WakeP95MS,
 	}
+	if resp.CacheHitRatePct != nil {
+		view.CacheHitRatePct = *resp.CacheHitRatePct
+		view.CacheHitRateAvailable = true
+	}
+	if resp.ErrorBudgetPct != nil {
+		view.ErrorBudgetPct = *resp.ErrorBudgetPct
+		view.ErrorBudgetAvailable = true
+	}
 	if src != appmetrics.SourcePrometheus && log != nil {
 		log.Warn("dashboard renderAppDetail: metrics fetch degraded", "app_id", appID, "source", src)
 	}

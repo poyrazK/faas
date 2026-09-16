@@ -48,6 +48,7 @@ func Run(t *testing.T, open Open) {
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"vmmd_upsert_preserves_operator_state", testVmmdUpsertPreservesOperatorState},
 		{"deployment_live_pointer_swaps_atomically", testDeploymentLivePointer},
+		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
@@ -1478,6 +1479,40 @@ func testDeploymentLivePointer(t *testing.T, fx *Fixture) {
 	}
 	if old.Status != state.DeploySuperseded {
 		t.Errorf("old deployment status = %q, want %q", old.Status, state.DeploySuperseded)
+	}
+}
+
+func testPrepareDeploymentRollback(t *testing.T, fx *Fixture) {
+	current, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID:       fx.App.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:rollback-current",
+		Status:      state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(current): %v", err)
+	}
+	if err := fx.Store.MarkDeploymentLive(fx.Ctx, current.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(current): %v", err)
+	}
+
+	prepared, err := fx.Store.PrepareDeploymentRollback(fx.Ctx, fx.App.ID, fx.Deployment.ID)
+	if err != nil {
+		t.Fatalf("PrepareDeploymentRollback: %v", err)
+	}
+	if prepared.Status != state.DeploySnapshotting || prepared.TrafficPercent != 0 ||
+		prepared.RolloutState != "pending" || prepared.CanaryPreset != "none" {
+		t.Fatalf("prepared rollback target = %+v", prepared)
+	}
+	live, err := fx.Store.LiveDeployment(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("LiveDeployment: %v", err)
+	}
+	if live.ID != current.ID || live.Status != state.DeployLive {
+		t.Fatalf("current release changed during rollback preparation: %+v", live)
+	}
+	if _, err := fx.Store.PrepareDeploymentRollback(fx.Ctx, fx.App.ID, current.ID); !errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
+		t.Fatalf("PrepareDeploymentRollback(live target) = %v, want ErrRollbackTargetAlreadyLive", err)
 	}
 }
 

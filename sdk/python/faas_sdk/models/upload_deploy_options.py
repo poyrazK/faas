@@ -22,6 +22,8 @@ class UploadDeployOptions:
     handler: str | Unset = UNSET
     dockerfile: bool | Unset = UNSET
     source_root: str | Unset = UNSET
+    scope: str | Unset = UNSET
+    """Named environment scope applied when the upload is committed; omitted uses default."""
     source_url: str | Unset = UNSET
     """Informational repository provenance URL; never fetched by apid."""
     commit_sha: str | Unset = UNSET
@@ -45,6 +47,8 @@ class UploadDeployOptions:
         dockerfile = self.dockerfile
 
         source_root = self.source_root
+
+        scope = self.scope
 
         source_url = self.source_url
 
@@ -84,6 +88,8 @@ class UploadDeployOptions:
             field_dict["dockerfile"] = dockerfile
         if source_root is not UNSET:
             field_dict["source_root"] = source_root
+        if scope is not UNSET:
+            field_dict["scope"] = scope
         if source_url is not UNSET:
             field_dict["source_url"] = source_url
         if commit_sha is not UNSET:
@@ -117,6 +123,8 @@ class UploadDeployOptions:
         dockerfile = d.pop("dockerfile", UNSET)
 
         source_root = d.pop("source_root", UNSET)
+
+        scope = d.pop("scope", UNSET)
 
         source_url = d.pop("source_url", UNSET)
 
@@ -155,6 +163,7 @@ class UploadDeployOptions:
             handler=handler,
             dockerfile=dockerfile,
             source_root=source_root,
+            scope=scope,
             source_url=source_url,
             commit_sha=commit_sha,
             environment=environment,

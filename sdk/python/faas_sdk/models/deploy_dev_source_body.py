@@ -28,6 +28,8 @@ class DeployDevSourceBody:
     runtime: DeployDevSourceBodyRuntime | Unset = UNSET
     handler: str | Unset = UNSET
     source_root: str | Unset = UNSET
+    scope: str | Unset = UNSET
+    """Named environment scope read by the deployment; omitted uses default."""
     workflows: str | Unset = UNSET
     """Optional JSON workflow-definition array attached to this developer deployment."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -51,6 +53,8 @@ class DeployDevSourceBody:
 
         source_root = self.source_root
 
+        scope = self.scope
+
         workflows = self.workflows
 
         field_dict: dict[str, Any] = {}
@@ -73,6 +77,8 @@ class DeployDevSourceBody:
             field_dict["handler"] = handler
         if source_root is not UNSET:
             field_dict["source_root"] = source_root
+        if scope is not UNSET:
+            field_dict["scope"] = scope
         if workflows is not UNSET:
             field_dict["workflows"] = workflows
 
@@ -102,6 +108,9 @@ class DeployDevSourceBody:
 
         if not isinstance(self.source_root, Unset):
             files.append(("source_root", (None, str(self.source_root).encode(), "text/plain")))
+
+        if not isinstance(self.scope, Unset):
+            files.append(("scope", (None, str(self.scope).encode(), "text/plain")))
 
         if not isinstance(self.workflows, Unset):
             files.append(("workflows", (None, str(self.workflows).encode(), "text/plain")))
@@ -135,6 +144,8 @@ class DeployDevSourceBody:
 
         source_root = d.pop("source_root", UNSET)
 
+        scope = d.pop("scope", UNSET)
+
         workflows = d.pop("workflows", UNSET)
 
         deploy_dev_source_body = cls(
@@ -146,6 +157,7 @@ class DeployDevSourceBody:
             runtime=runtime,
             handler=handler,
             source_root=source_root,
+            scope=scope,
             workflows=workflows,
         )
 

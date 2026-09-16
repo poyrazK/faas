@@ -302,7 +302,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	// stale_if_error_served separately so operators see
 	// when their cache is being relied on as a fallback
 	// rather than as a primary serve path.
-	h.metricsIncCacheOutcome("stale_if_error_served")
+	h.metricsIncCacheOutcome(app.ID, "stale_if_error_served")
 	h.observe(r, entry.statusCode, app.ID, string(app.Plan), false, Target{})
 	return true, "stale_if_error_served"
 }

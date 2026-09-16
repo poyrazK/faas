@@ -153,7 +153,7 @@ func TestDo_MutatingCallsCarryIdempotencyKey(t *testing.T) {
 		{"RenameApp", func(c *Client) error { _, err := c.RenameApp(context.Background(), "x", "y"); return err }},
 		{"Rollback", func(c *Client) error { _, err := c.Rollback(context.Background(), "x"); return err }},
 		{"Park", func(c *Client) error { return c.Park(context.Background(), "x") }},
-		{"Wake", func(c *Client) error { return c.Wake(context.Background(), "x") }},
+		{"Wake", func(c *Client) error { _, err := c.Wake(context.Background(), "x"); return err }},
 		{"RestartApp", func(c *Client) error { _, err := c.RestartApp(context.Background(), "x"); return err }},
 		{"RestoreAccount", func(c *Client) error { _, err := c.RestoreAccount(context.Background()); return err }},
 		{"ChangePlan", func(c *Client) error { _, err := c.ChangePlan(context.Background(), "hobby"); return err }},

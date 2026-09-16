@@ -185,6 +185,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 				d.p.Log.Warn("meter: dunning suspend", "account", acct.ID, "err", err)
 				continue
 			}
+			notifyAccountAppLifecycle(ctx, d.p.Store, d.p.Notif, acct.ID, "account_suspended", d.p.Log)
 			d.parkAll(ctx, acct.ID)
 			payload, _ := json.Marshal(dunningPayload{AccountID: acct.ID, At: now.UTC().Format(time.RFC3339Nano)})
 			if err := d.p.Notif.Notify(ctx, db.NotifyBillingPastDue, string(payload)); err != nil {
@@ -206,6 +207,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 				d.p.Log.Warn("meter: dunning delete_pending", "account", acct.ID, "err", err)
 				continue
 			}
+			notifyAccountAppLifecycle(ctx, d.p.Store, d.p.Notif, acct.ID, "account_deleted_pending", d.p.Log)
 			payload, _ := json.Marshal(dunningPayload{AccountID: acct.ID, At: now.UTC().Format(time.RFC3339Nano)})
 			if err := d.p.Notif.Notify(ctx, db.NotifyAccountDeletionPending, string(payload)); err != nil {
 				d.p.Log.Warn("meter: dunning notify account_deletion_pending", "account", acct.ID, "err", err)

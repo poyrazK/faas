@@ -7490,7 +7490,7 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		if id == currentDeploymentID {
 			continue
 		}
-		if d.AppID != appID || d.Status != DeploySuperseded {
+		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || d.Status != DeploySuperseded {
 			continue
 		}
 		if latestCreated.IsZero() || d.CreatedAt.After(latestCreated) {
@@ -7502,10 +7502,39 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		// No rollback target — succeed as a no-op (mirrors PG path).
 		return "", nil
 	}
-	cur.Status = DeploySuperseded
+	now := time.Now().UTC()
+	for id, d := range m.deployments {
+		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || d.Status != DeployLive {
+			continue
+		}
+		d.Status = DeploySuperseded
+		d.TrafficPercent = 0
+		d.RolloutState = "aborted"
+		d.RolloutCompletedAt = nil
+		if d.RolloutAbortedAt == nil {
+			d.RolloutAbortedAt = &now
+		}
+		if d.RolloutAbortedReason == "" {
+			d.RolloutAbortedReason = "automatic rollback"
+		}
+		m.deployments[id] = d
+	}
+	cur = m.deployments[currentDeploymentID]
 	target := m.deployments[targetID]
 	target.Status = DeployLive
-	now := time.Now().UTC()
+	target.Error = ""
+	target.TrafficPercent = 100
+	target.CanaryStep = target.CanaryTotalSteps
+	if target.CanaryTotalSteps > 0 {
+		target.CanaryStepStartedAt = &now
+	}
+	target.RolloutState = "complete"
+	if target.RolloutStartedAt == nil {
+		target.RolloutStartedAt = &now
+	}
+	target.RolloutCompletedAt = &now
+	target.RolloutAbortedAt = nil
+	target.RolloutAbortedReason = ""
 	if cur.LastAutoRollbackAt == nil {
 		cur.LastAutoRollbackAt = &now
 	}
@@ -7515,6 +7544,54 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 	m.deployments[currentDeploymentID] = cur
 	m.deployments[targetID] = target
 	return targetID, nil
+}
+
+// PrepareDeploymentRollback mirrors PgStore.PrepareDeploymentRollback under
+// the MemStore mutex.
+func (m *MemStore) PrepareDeploymentRollback(_ context.Context, appID, targetDeploymentID string) (Deployment, error) {
+	if appID == "" || targetDeploymentID == "" {
+		return Deployment{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, ok := m.deployments[targetDeploymentID]
+	if !ok || target.AppID != appID {
+		return Deployment{}, ErrNoRollbackTarget
+	}
+	if target.Status != DeploySuperseded {
+		return Deployment{}, ErrRollbackTargetAlreadyLive
+	}
+	now := time.Now().UTC()
+	var prior StageState
+	if len(target.StageState) > 0 {
+		_ = json.Unmarshal(target.StageState, &prior)
+	}
+	stage, err := json.Marshal(StageState{
+		Current:          StageSnapshotPrepare,
+		CurrentStartedAt: &now,
+		History:          prior.History,
+	})
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: prepare rollback stage: %w", err)
+	}
+	target.Status = DeploySnapshotting
+	target.Error = ""
+	target.ErrorCode = ""
+	target.TrafficPercent = 0
+	target.TrafficPercentExplicit = false
+	target.CanaryPreset = "none"
+	target.CanaryStep = 0
+	target.CanaryTotalSteps = 0
+	target.CanaryStepStartedAt = &now
+	target.CanaryStages = nil
+	target.RolloutState = "pending"
+	target.RolloutStartedAt = nil
+	target.RolloutCompletedAt = nil
+	target.RolloutAbortedAt = nil
+	target.RolloutAbortedReason = ""
+	target.StageState = stage
+	m.deployments[targetDeploymentID] = target
+	return target, nil
 }
 
 func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, bytes int64) error {

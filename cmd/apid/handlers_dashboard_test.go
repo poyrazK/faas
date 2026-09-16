@@ -70,7 +70,8 @@ func newAuthedDashboardServerFull(t *testing.T) (http.Handler, *http.Cookie, *st
 		t.Fatalf("issue session: %v", err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr, nil, 15*60_000_000_000, "")
+	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr, nil, 15*60_000_000_000, "").
+		WithRollbackArtifactVerifier(stubRollbackArtifactVerifier{})
 	return srv.handler(), &http.Cookie{Name: sessionCookie, Value: cookie}, store, mgr
 }
 

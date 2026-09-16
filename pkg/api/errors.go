@@ -44,6 +44,10 @@ import (
 // pkg/api for api.Plans, creating a cycle).
 const docsBase = "https://gregale.dev/docs"
 
+// dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
+// import pkg/wire without creating an import cycle.
+const dashboardBillingURL = "https://gregale.dev/dashboard/billing"
+
 // AsProblem walks err's chain and returns the first *Problem. Returns nil
 // if none of the wrapped errors is a *Problem. Used by gRPC handlers in
 // pkg/vmmdgrpc to lift a Manager-emitted error without leaking internal
@@ -740,6 +744,10 @@ const (
 	// target exists but is cancelled, failed, or still progressing. Only a
 	// superseded deployment is a valid historical rollback target.
 	CodeRollbackTargetIneligible = "rollback_target_ineligible"
+	// CodeRollbackTargetUnavailable means the historical release exists in
+	// state, but its immutable cold-boot artifact or attestation cannot be
+	// verified. The current serving deployment is left untouched.
+	CodeRollbackTargetUnavailable = "rollback_target_unavailable"
 	// CodeDeploySignatureInvalid is returned by apid when the
 	// customer's OCI image deploy is rejected at the accept-time
 	// signature-enforcement gate (issue #472 / ADR-054). Three
@@ -2386,6 +2394,16 @@ func ErrAdmissionRefused(observedCents, capCents int64) *Problem {
 			observedCents, capCents)).
 		WithLimit(capCents, observedCents).
 		WithDocs(docsBase + "/billing#spend-cap")
+}
+
+// ErrAccountSuspended is the shared execution-boundary response for an
+// account whose lifecycle forbids new or existing workload capacity. Past-due
+// accounts remain active during their grace period; callers use Account.Active
+// before returning this problem.
+func ErrAccountSuspended() *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodeBillingPastDue,
+		"Account suspended", "resolve billing to continue: "+dashboardBillingURL).
+		WithDocs(docsBase + "/billing")
 }
 
 // ErrExportRateLimited is returned by GET /v1/account/export when
@@ -4126,6 +4144,13 @@ func ErrRollbackTargetAlreadyLive(detail string) *Problem {
 func ErrRollbackTargetIneligible(detail string) *Problem {
 	return NewProblem(http.StatusConflict, CodeRollbackTargetIneligible,
 		"Rollback target is not eligible",
+		detail).
+		WithDocs(docsBase + "/deploys#rollback")
+}
+
+func ErrRollbackTargetUnavailable(detail string) *Problem {
+	return NewProblem(http.StatusConflict, CodeRollbackTargetUnavailable,
+		"Rollback target is unavailable",
 		detail).
 		WithDocs(docsBase + "/deploys#rollback")
 }

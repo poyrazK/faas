@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -18,6 +19,10 @@ func TestJSONMutations_ParkAndWake(t *testing.T) {
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.Method+" "+r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/wake") {
+			writeJSONTest(w, api.AppWakeResponse{WakeID: "wake-1"})
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -50,11 +55,58 @@ func TestJSONMutations_ParkAndWake(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &waking); err != nil {
 		t.Fatalf("wake output is not JSON: %v\n%s", err, stdout.String())
 	}
-	if waking["slug"] != "demo" || waking["status"] != "waking" {
+	if waking["slug"] != "demo" || waking["status"] != "waking" || waking["wake_id"] != "wake-1" {
 		t.Fatalf("wake receipt = %#v", waking)
 	}
 	if len(paths) != 2 || paths[0] != "POST /v1/apps/demo/park" || paths[1] != "POST /v1/apps/demo/wake" {
 		t.Fatalf("mutation paths = %#v", paths)
+	}
+}
+
+func TestJSONMutations_WakeWaitsForCorrelatedRunningInstance(t *testing.T) {
+	const wakeID = "01995d7a-6c55-7e82-8cc8-9bd68041b5d8"
+	instanceReads := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/wake":
+			writeJSONTest(w, api.AppWakeResponse{WakeID: wakeID})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo/instances":
+			if r.URL.Query().Get("history") != "true" {
+				t.Fatalf("history query = %q, want true", r.URL.Query().Get("history"))
+			}
+			instanceReads++
+			if instanceReads == 1 {
+				writeJSONTest(w, []api.InstanceResponse{})
+				return
+			}
+			writeJSONTest(w, []api.InstanceResponse{{ID: "instance-1", State: "running", WakeID: wakeID}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+	resetJSONOut(t)
+	jsonOutput = true
+
+	if code := cmdWake([]string{"--wait", "--poll-interval", "100ms", "--timeout", "2s", "demo"}); code != 0 {
+		t.Fatalf("wake --wait = %d, want 0", code)
+	}
+	var receipt map[string]string
+	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
+		t.Fatalf("wake --wait output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if receipt["slug"] != "demo" || receipt["status"] != "running" || receipt["wake_id"] != wakeID || receipt["instance_id"] != "instance-1" {
+		t.Fatalf("wake --wait receipt = %#v", receipt)
+	}
+	if instanceReads < 2 {
+		t.Fatalf("instance reads = %d, want at least 2", instanceReads)
 	}
 }
 

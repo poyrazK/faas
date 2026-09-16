@@ -14,6 +14,10 @@ from ..models.project_environment_promotion_status_workload_response_status impo
     ProjectEnvironmentPromotionStatusWorkloadResponseStatus,
     check_project_environment_promotion_status_workload_response_status,
 )
+from ..models.project_environment_promotion_status_workload_response_verification_status import (
+    ProjectEnvironmentPromotionStatusWorkloadResponseVerificationStatus,
+    check_project_environment_promotion_status_workload_response_verification_status,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ProjectEnvironmentPromotionStatusWorkloadResponse")
@@ -33,6 +37,8 @@ class ProjectEnvironmentPromotionStatusWorkloadResponse:
     rollback_status: ProjectEnvironmentPromotionStatusWorkloadResponseRollbackStatus | Unset = UNSET
     restored_target_deployment_id: str | Unset = UNSET
     rollback_error: str | Unset = UNSET
+    verification_status: ProjectEnvironmentPromotionStatusWorkloadResponseVerificationStatus | Unset = UNSET
+    verification_error: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +64,12 @@ class ProjectEnvironmentPromotionStatusWorkloadResponse:
 
         rollback_error = self.rollback_error
 
+        verification_status: str | Unset = UNSET
+        if not isinstance(self.verification_status, Unset):
+            verification_status = self.verification_status
+
+        verification_error = self.verification_error
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -81,6 +93,10 @@ class ProjectEnvironmentPromotionStatusWorkloadResponse:
             field_dict["restored_target_deployment_id"] = restored_target_deployment_id
         if rollback_error is not UNSET:
             field_dict["rollback_error"] = rollback_error
+        if verification_status is not UNSET:
+            field_dict["verification_status"] = verification_status
+        if verification_error is not UNSET:
+            field_dict["verification_error"] = verification_error
 
         return field_dict
 
@@ -114,6 +130,17 @@ class ProjectEnvironmentPromotionStatusWorkloadResponse:
 
         rollback_error = d.pop("rollback_error", UNSET)
 
+        _verification_status = d.pop("verification_status", UNSET)
+        verification_status: ProjectEnvironmentPromotionStatusWorkloadResponseVerificationStatus | Unset
+        if isinstance(_verification_status, Unset):
+            verification_status = UNSET
+        else:
+            verification_status = check_project_environment_promotion_status_workload_response_verification_status(
+                _verification_status
+            )
+
+        verification_error = d.pop("verification_error", UNSET)
+
         project_environment_promotion_status_workload_response = cls(
             workload_slug=workload_slug,
             workload_name=workload_name,
@@ -125,6 +152,8 @@ class ProjectEnvironmentPromotionStatusWorkloadResponse:
             rollback_status=rollback_status,
             restored_target_deployment_id=restored_target_deployment_id,
             rollback_error=rollback_error,
+            verification_status=verification_status,
+            verification_error=verification_error,
         )
 
         project_environment_promotion_status_workload_response.additional_properties = d

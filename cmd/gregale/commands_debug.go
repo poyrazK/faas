@@ -11,7 +11,8 @@
 //	gregale debug requests get <slug> <req_id>
 //	gregale debug requests show <slug> <req_id>
 //	gregale debug requests evidence <slug> <req_id>
-//	gregale debug requests replay <slug> <req_id>
+//	gregale debug requests explain <slug> <req_id>
+//	gregale debug requests replay <slug> <req_id> [--deployment-id UUID]
 //	gregale debug coverage <slug> [--since <dur>]
 //	gregale debug running <slug> [--since <dur>] [--limit <n>]
 //	gregale debug bundle <slug> <req_id> [--since <dur>] [--source <id> --mirror <id>] [--output PATH]
@@ -31,6 +32,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -47,7 +49,7 @@ import (
 // commands_invocations.go's PrintUsage strings.
 const debugCmdUsage = "usage: gregale debug <requests|coverage|running|regressions|compare|bundle> ..."
 
-const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|replay> ..."
+const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|explain|replay> ..."
 
 // debugCmdDocsTopic is the docs topic slug for the debug
 // namespace. Resolves to cli_meta.go's "debug" cliCommand entry;
@@ -60,7 +62,7 @@ func cmdDebug(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests explain  synthesize root-cause findings and next actions\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -116,7 +118,7 @@ func cmdDebugRequests(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  export    export metadata-only request telemetry\n  watch     watch request telemetry for new or changed rows\n  get       show one request's metadata\n  show      show request timeline and evidence\n  evidence  show request evidence and explanation\n  replay    queue a request replay", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  export    export metadata-only request telemetry\n  watch     watch request telemetry for new or changed rows\n  get       show one request's metadata\n  show      show request timeline and evidence\n  evidence  show request evidence and explanation\n  explain   synthesize root-cause findings and next actions\n  replay    queue a request replay", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -132,11 +134,35 @@ func cmdDebugRequests(args []string) int {
 		return cmdDebugRequestsEvidence(args[1:])
 	case "evidence":
 		return cmdDebugRequestsEvidence(args[1:])
+	case "explain":
+		return cmdDebugRequestsExplain(args[1:])
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
 	return 1
+}
+
+// cmdDebugRequestsExplain renders the structured root-cause synthesis from
+// the same bounded evidence endpoint used by `show` and `evidence`.
+func cmdDebugRequestsExplain(args []string) int {
+	if len(args) != 2 {
+		PrintUsage(os.Stderr, "usage: gregale debug requests explain <slug> <req_id>", debugCmdDocsTopic)
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.GetAppDebugRequestEvidence(context.Background(), args[0], args[1])
+	if err != nil {
+		return printErr("Could not synthesize debug explanation", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp.Explanation))
+	}
+	renderDebugRequestExplanation(osStdout, resp.Explanation)
+	return 0
 }
 
 // cmdDebugRequestsEvidence renders bounded span evidence and the server's
@@ -342,17 +368,21 @@ func cmdDebugRequestsGet(args []string) int {
 // enabled mirror rule. The response includes the durable invocation ID.
 func cmdDebugRequestsReplay(args []string) int {
 	fs := newFlagSet("debug requests replay", flag.ContinueOnError)
+	deploymentID := fs.String("deployment-id", "", "enabled mirror target deployment UUID")
+	// --deployment is a short alias for the same customer-facing concept.
+	fs.StringVar(deploymentID, "deployment", "", "alias for --deployment-id")
 	wait := fs.Bool("wait", false, "wait for the replay invocation to reach a terminal state")
 	timeout := fs.Duration("timeout", time.Minute, "maximum wait time (1s..1h)")
 	interval := fs.Duration("interval", time.Second, "poll interval (250ms..1m)")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
+		"deployment-id": true, "deployment": true,
 		"wait": false, "timeout": true, "interval": true,
 	})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if len(positional) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests replay [--wait] [--timeout D] [--interval D] <slug> <req_id>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests replay [--deployment-id UUID] [--wait] [--timeout D] [--interval D] <slug> <req_id>", debugCmdDocsTopic)
 		return 1
 	}
 	if *timeout < time.Second || *timeout > time.Hour {
@@ -366,7 +396,7 @@ func cmdDebugRequestsReplay(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ReplayAppDebugRequest(context.Background(), slug, reqID)
+	resp, err := client.ReplayAppDebugRequestWithTarget(context.Background(), slug, reqID, *deploymentID)
 	if err != nil {
 		return printErr("Could not queue replay", err)
 	}
@@ -392,6 +422,10 @@ func cmdDebugRequestsReplay(args []string) int {
 	renderDebugReplayQueued(osStdout, resp)
 	_, _ = fmt.Fprintln(osStdout)
 	renderInvocation(osStdout, invocation)
+	if comparison, ok := decodeDebugReplayComparison(invocation.Result); ok {
+		_, _ = fmt.Fprintln(osStdout)
+		renderDebugReplayComparison(osStdout, comparison)
+	}
 	if invocation.State == "failed" || invocation.State == "dead_letter" {
 		return 3
 	}
@@ -404,7 +438,38 @@ func cmdDebugRequestsReplay(args []string) int {
 func renderDebugReplayQueued(w io.Writer, resp api.DebugReplayResponse) {
 	_, _ = fmt.Fprintf(w, "Replay queued: %s\n", resp.MirrorInvocationID)
 	_, _ = fmt.Fprintf(w, "Status:        %s\n", resp.Status)
+	if resp.SourceDeploymentID != "" {
+		_, _ = fmt.Fprintf(w, "Source:        %s\n", resp.SourceDeploymentID)
+	}
+	if resp.MirrorDeploymentID != "" {
+		_, _ = fmt.Fprintf(w, "Target:        %s\n", resp.MirrorDeploymentID)
+	}
 	_, _ = fmt.Fprintf(w, "Poll with:     gregale invocations get %s\n", resp.MirrorInvocationID)
+}
+
+func decodeDebugReplayComparison(raw []byte) (api.DebugReplayComparison, bool) {
+	var comparison api.DebugReplayComparison
+	if len(raw) == 0 || json.Unmarshal(raw, &comparison) != nil || comparison.SourceStatusCode == 0 {
+		return api.DebugReplayComparison{}, false
+	}
+	return comparison, true
+}
+
+func renderDebugReplayComparison(w io.Writer, comparison api.DebugReplayComparison) {
+	_, _ = fmt.Fprintln(w, "Replay comparison:")
+	if comparison.SourceDeploymentID != "" {
+		_, _ = fmt.Fprintf(w, "  Source: %s · HTTP %d · %d ms\n", comparison.SourceDeploymentID, comparison.SourceStatusCode, comparison.SourceLatencyMS)
+	} else {
+		_, _ = fmt.Fprintf(w, "  Source: HTTP %d · %d ms\n", comparison.SourceStatusCode, comparison.SourceLatencyMS)
+	}
+	if comparison.MirrorDeploymentID != "" {
+		_, _ = fmt.Fprintf(w, "  Target: %s · HTTP %d · %d ms\n", comparison.MirrorDeploymentID, comparison.MirrorStatusCode, comparison.MirrorLatencyMS)
+	} else {
+		_, _ = fmt.Fprintf(w, "  Target: HTTP %d · %d ms\n", comparison.MirrorStatusCode, comparison.MirrorLatencyMS)
+	}
+	_, _ = fmt.Fprintf(w, "  Latency delta: %+d ms\n", comparison.MirrorLatencyMS-comparison.SourceLatencyMS)
+	_, _ = fmt.Fprintf(w, "  Status changed: %t\n", comparison.StatusDiff)
+	_, _ = fmt.Fprintf(w, "  Target crashed: %t\n", comparison.Crashed)
 }
 
 func waitForDebugReplay(ctx context.Context, client *api.Client, id string, timeout, interval time.Duration) (api.Invocation, error) {
@@ -736,9 +801,7 @@ func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceRespon
 		}
 		_, _ = fmt.Fprintln(w)
 	}
-	if headline := strings.TrimSpace(resp.Explanation.Headline); headline != "" {
-		_, _ = fmt.Fprintf(w, "explanation: %s\n", headline)
-	}
+	renderDebugRequestExplanation(w, resp.Explanation)
 
 	if len(resp.Timeline) == 0 {
 		_, _ = fmt.Fprintln(w, "timeline: no retained markers")
@@ -815,6 +878,31 @@ func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceRespon
 	}
 	if resp.GeneratedAt != "" {
 		_, _ = fmt.Fprintf(w, "evidence generated %s\n", resp.GeneratedAt)
+	}
+}
+
+func renderDebugRequestExplanation(w io.Writer, explanation api.DebugEvidenceExplanation) {
+	if headline := strings.TrimSpace(explanation.Headline); headline != "" {
+		_, _ = fmt.Fprintf(w, "explanation: %s\n", headline)
+	}
+	if explanation.Diagnosis != "" || explanation.Confidence != "" {
+		_, _ = fmt.Fprintf(w, "diagnosis: %s", explanation.Diagnosis)
+		if explanation.Confidence != "" {
+			_, _ = fmt.Fprintf(w, " (%s confidence)", explanation.Confidence)
+		}
+		_, _ = fmt.Fprintln(w)
+	}
+	if len(explanation.Findings) > 0 {
+		_, _ = fmt.Fprintln(w, "FINDINGS")
+		for _, finding := range explanation.Findings {
+			_, _ = fmt.Fprintf(w, "- %s [%s] %s\n", finding.Title, finding.Confidence, finding.Detail)
+		}
+	}
+	if len(explanation.Recommendations) > 0 {
+		_, _ = fmt.Fprintln(w, "NEXT ACTIONS")
+		for _, recommendation := range explanation.Recommendations {
+			_, _ = fmt.Fprintf(w, "- %s: %s\n", recommendation.Action, recommendation.Detail)
+		}
 	}
 }
 

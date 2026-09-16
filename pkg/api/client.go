@@ -1858,8 +1858,9 @@ func (c *Client) RecoverRolloutAndIdempotencyKey(ctx context.Context, slug, acti
 func (c *Client) Park(ctx context.Context, slug string) error {
 	return c.do(ctx, "POST", "/v1/apps/"+slug+"/park", nil, nil)
 }
-func (c *Client) Wake(ctx context.Context, slug string) error {
-	return c.do(ctx, "POST", "/v1/apps/"+slug+"/wake", nil, nil)
+func (c *Client) Wake(ctx context.Context, slug string) (AppWakeResponse, error) {
+	var out AppWakeResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/wake", nil, &out)
 }
 
 // RestartApp queues a fresh snapshot restart and returns its wake correlation
@@ -5262,9 +5263,21 @@ func (c *Client) CompareAppDebugDeployments(ctx context.Context, slug, source, m
 // enabled mirror rule (ADR-127). The returned mirror invocation ID can be
 // used to poll the invocation and its comparison result.
 func (c *Client) ReplayAppDebugRequest(ctx context.Context, slug, reqID string) (DebugReplayResponse, error) {
+	return c.ReplayAppDebugRequestWithTarget(ctx, slug, reqID, "")
+}
+
+// ReplayAppDebugRequestWithTarget queues a retained request through an
+// explicitly selected enabled mirror rule. An empty mirrorDeploymentID keeps
+// the default behavior of selecting the first enabled rule for the serving
+// deployment.
+func (c *Client) ReplayAppDebugRequestWithTarget(ctx context.Context, slug, reqID, mirrorDeploymentID string) (DebugReplayResponse, error) {
 	var out DebugReplayResponse
 	path := "/v1/apps/" + slug + "/debug/requests/" + reqID + "/replay"
-	return out, c.do(ctx, "POST", path, nil, &out)
+	var body any
+	if strings.TrimSpace(mirrorDeploymentID) != "" {
+		body = DebugReplayRequest{MirrorDeploymentID: strings.TrimSpace(mirrorDeploymentID)}
+	}
+	return out, c.do(ctx, "POST", path, body, &out)
 }
 
 // --- Traffic mirroring (issue #72 / ADR-125 PR-A2) ---------------------

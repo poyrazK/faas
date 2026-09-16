@@ -64,6 +64,7 @@ type diffCLIOptions struct {
 	Workflows      []api.WorkflowSpec
 	PRNumber       int
 	NoTriggers     bool
+	Safe           bool
 	// Crons is the post-deploy cron list (full-replacement).
 	// Populated from the gregale.yaml triggers fan-out so the diff
 	// shows "would create cron X" rows.
@@ -235,6 +236,7 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	// supplies QuotaConfig.
 	d := deploydiff.Compute(opts.Slug, plan, baseline, pending)
 	appendDeployPreviewAnnotationIntent(&d, opts)
+	addSafeReleasePreview(ctx, client, opts, baseline, &d)
 	if baselineErr != nil {
 		// Lenient mode may still show the partial projection, but it must
 		// be explicit that the result is incomplete. Keeping this as a
@@ -519,6 +521,10 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 	// through a synthetic Diff so the same renderers work.
 	synthetic := syntheticDiffFromResponse(resp)
 	appendDeployPreviewAnnotationIntent(&synthetic, opts)
+	if opts.Safe {
+		baseline, _ := buildBaseline(ctx, client, opts.Slug)
+		addSafeReleasePreview(ctx, client, opts, baseline, &synthetic)
+	}
 	if opts.JSON {
 		if err := deploydiff.RenderJSON(osStdout, synthetic); err != nil {
 			return printErr("Could not encode diff", err)

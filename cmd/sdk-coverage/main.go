@@ -162,14 +162,16 @@ var routeExclude = map[string]bool{
 	// is GitHub-side state — programmatic consumers shouldn't bind
 	// apps via API. Mirrors the "browser-only dashboard routes"
 	// exclusion above.
-	"POST /v1/install/repos/list":                   true, // bind picker hydrates from this; browser-only
-	"POST /v1/apps/{slug}/install/bind":             true, // bind picker writes through this; browser-only
-	"GET /v1/apps/{slug}/install/bind":              true, // dashboard connection status; session-cookie-only
-	"GET /v1/apps/{slug}/install":                   true, // canonical dashboard connection status; session-cookie-only
-	"DELETE /v1/apps/{slug}/install/bind":           true, // dashboard disconnect; session-cookie + CSRF-only
-	"POST /v1/apps/{slug}/install/sync":             true, // dashboard repair action; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/sync":       true, // dashboard repair form; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/disconnect": true, // dashboard disconnect form; session-cookie + CSRF-only
+	"POST /v1/install/repos/list":                       true, // bind picker hydrates from this; browser-only
+	"POST /v1/apps/{slug}/install/bind":                 true, // bind picker writes through this; browser-only
+	"GET /v1/apps/{slug}/install/bind":                  true, // dashboard connection status; session-cookie-only
+	"GET /v1/apps/{slug}/install":                       true, // canonical dashboard connection status; session-cookie-only
+	"DELETE /v1/apps/{slug}/install/bind":               true, // dashboard disconnect; session-cookie + CSRF-only
+	"POST /v1/apps/{slug}/install/sync":                 true, // dashboard repair action; session-cookie + CSRF-only
+	"POST /v1/apps/{slug}/install/activity/retry":       true, // dashboard activity recovery action; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/sync":           true, // dashboard repair form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/disconnect":     true, // dashboard disconnect form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/activity/retry": true, // dashboard activity recovery form; session-cookie + CSRF-only
 
 	// Issue #961 / Mega-B PR-3 / ADR-116. The dashboard's
 	// /dashboard/apps/new wizard renders GET /v1/templates as the
@@ -951,6 +953,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/domains/{domain}":                        "GetDomain",
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
+
+	"POST /v1/apps/{slug}/github/activity/retry": "RetryGitHubActivity",
 }
 
 func main() {

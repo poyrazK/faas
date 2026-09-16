@@ -47,19 +47,79 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
+	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 )
+
+type rollbackArtifactFixture struct {
+	backend artifactstorage.StorageBackend
+	signer  cosign.Signer
+}
+
+func startRollbackHarness(t *testing.T, pool *pgxpool.Pool) (*e2etest.Harness, *rollbackArtifactFixture) {
+	t.Helper()
+	root := t.TempDir()
+	privPEM, pubPEM, err := cosign.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate rollback signing key: %v", err)
+	}
+	privPath := filepath.Join(root, "sign.key")
+	pubPath := filepath.Join(root, "sign-pub.pem")
+	if err := os.WriteFile(privPath, privPEM, 0o400); err != nil {
+		t.Fatalf("write rollback private key: %v", err)
+	}
+	if err := os.WriteFile(pubPath, pubPEM, 0o444); err != nil {
+		t.Fatalf("write rollback public key: %v", err)
+	}
+	backend, err := artifactstorage.NewLocalStorageBackend(root)
+	if err != nil {
+		t.Fatalf("create rollback artifact backend: %v", err)
+	}
+	signer, err := cosign.NewLocalSigner(privPath, backend, nil)
+	if err != nil {
+		t.Fatalf("create rollback signer: %v", err)
+	}
+	h := e2etest.StartWithEnv(t, pool, e2etest.APID, []string{
+		"FAAS_STORAGE_BACKEND=local",
+		"FAAS_STORAGE_ROOT=" + root,
+		"FAAS_APPS_ROOT=" + root,
+		"FAAS_STORAGE_CACHE_DIR=",
+		"FAAS_SIGN_PUB=" + pubPath,
+	})
+	return h, &rollbackArtifactFixture{backend: backend, signer: signer}
+}
+
+func (f *rollbackArtifactFixture) stamp(t *testing.T, store *state.PgStore, slug string, dep state.Deployment) {
+	t.Helper()
+	ctx := context.Background()
+	key := fmt.Sprintf("apps/%s/%s.ext4", slug, dep.ID)
+	payload := []byte("signed rollback fixture " + dep.ID)
+	if err := f.backend.Put(ctx, key, bytes.NewReader(payload)); err != nil {
+		t.Fatalf("write rollback artifact: %v", err)
+	}
+	if err := f.signer.Sign(ctx, key, cosign.SigKeyFor(key)); err != nil {
+		t.Fatalf("sign rollback artifact: %v", err)
+	}
+	if err := store.SetDeploymentRootfs(ctx, dep.ID, filepath.Join("/e2e", key), key, int64(len(payload))); err != nil {
+		t.Fatalf("stamp rollback artifact metadata: %v", err)
+	}
+}
 
 // TestRollbackSpecific_E2E exercises the wire surface for the SAFE-
 // RELEASES-G change.
@@ -99,7 +159,7 @@ func TestRollbackSpecific_E2E(t *testing.T) {
 	// APID-only is sufficient: rollback handler reads from + writes
 	// to the deployments table; the schedd / vmmd / meterd daemons
 	// don't need to be up for the wire surface or store contract.
-	h := e2etest.StartWithEnv(t, pool, e2etest.APID, nil)
+	h, artifacts := startRollbackHarness(t, pool)
 	key := h.SeedAccount(context.Background(), api.PlanPro)
 
 	slug := "rb-specific-e2e"
@@ -144,6 +204,7 @@ func TestRollbackSpecific_E2E(t *testing.T) {
 		if err != nil {
 			t.Fatalf("seed deployment #%d: %v", i+1, err)
 		}
+		artifacts.stamp(t, store, slug, d)
 		// Flip the just-created row from 'pending' → 'live'.
 		// CreateDeployment already auto-superseded any prior
 		// live/pending row in the same tx, so we're the only live
@@ -168,7 +229,7 @@ func TestRollbackSpecific_E2E(t *testing.T) {
 	// --- Wire call: legacy body-less rollback rolls back to v2
 	// (newest superseded). From seed: v1 superseded, v2 superseded,
 	// v3 live. After this wire call: v1 superseded (untouched),
-	// v2 live, v3 superseded.
+	// v2 enters the readiness gate while v3 remains live.
 	// nolint:contextcheck // doReq uses context.Background() internally; threading ctx through the shared helper would touch 19 e2e files.
 	rec, status := doReq(t, h, key, http.MethodPost,
 		"/v1/apps/"+slug+"/rollback", nil)
@@ -183,15 +244,15 @@ func TestRollbackSpecific_E2E(t *testing.T) {
 		t.Errorf("legacy rollback returned id=%s, want v2 id=%s (newest superseded)",
 			out.ID, deps[1].ID)
 	}
-	if out.Status != string(state.DeployLive) {
-		t.Errorf("legacy rollback response status = %q, want %q (post-promotion)",
-			out.Status, state.DeployLive)
+	if out.Status != string(state.DeploySnapshotting) {
+		t.Errorf("legacy rollback response status = %q, want %q (readiness gate)",
+			out.Status, state.DeploySnapshotting)
 	}
-	if got := mustDeploymentStatus(t, store, ctx, deps[1].ID); got != state.DeployLive {
-		t.Errorf("post-legacy-rollback v2 status = %q, want live", got)
+	if got := mustDeploymentStatus(t, store, ctx, deps[1].ID); got != state.DeploySnapshotting {
+		t.Errorf("post-legacy-rollback v2 status = %q, want snapshotting", got)
 	}
-	if got := mustDeploymentStatus(t, store, ctx, deps[2].ID); got != state.DeploySuperseded {
-		t.Errorf("post-legacy-rollback v3 status = %q, want superseded", got)
+	if got := mustDeploymentStatus(t, store, ctx, deps[2].ID); got != state.DeployLive {
+		t.Errorf("post-legacy-rollback v3 status = %q, want live until readiness", got)
 	}
 	if got := mustDeploymentStatus(t, store, ctx, deps[0].ID); got != state.DeploySuperseded {
 		t.Errorf("post-legacy-rollback v1 status = %q, want superseded (untouched oldest)", got)
@@ -211,7 +272,7 @@ func TestRollbackSpecific_LegacyEmptyBodyStillSucceeds(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	h := e2etest.StartWithEnv(t, pool, e2etest.APID, nil)
+	h, artifacts := startRollbackHarness(t, pool)
 	key := h.SeedAccount(context.Background(), api.PlanPro)
 
 	slug := "rb-legacy-empty"
@@ -248,6 +309,7 @@ func TestRollbackSpecific_LegacyEmptyBodyStillSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed v1: %v", err)
 	}
+	artifacts.stamp(t, store, slug, v1)
 	if err := store.MarkDeploymentLive(ctx, v1.ID); err != nil {
 		t.Fatalf("promote v1 to live: %v", err)
 	}
@@ -260,6 +322,7 @@ func TestRollbackSpecific_LegacyEmptyBodyStillSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed v2: %v", err)
 	}
+	artifacts.stamp(t, store, slug, v2)
 	if err := store.MarkDeploymentLive(ctx, v2.ID); err != nil {
 		t.Fatalf("promote v2 to live (v1 auto-superseded by CreateDeployment): %v", err)
 	}
@@ -278,6 +341,9 @@ func TestRollbackSpecific_LegacyEmptyBodyStillSucceeds(t *testing.T) {
 	}
 	if out.ID != v1.ID {
 		t.Errorf("legacy rollback id = %s, want v1 id %s", out.ID, v1.ID)
+	}
+	if out.Status != string(state.DeploySnapshotting) {
+		t.Errorf("legacy rollback status = %q, want %q", out.Status, state.DeploySnapshotting)
 	}
 }
 

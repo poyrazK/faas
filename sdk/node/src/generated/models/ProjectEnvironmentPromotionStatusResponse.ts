@@ -21,6 +21,10 @@ export type ProjectEnvironmentPromotionStatusResponse = {
   rollback_error?: string;
   rollback_started_at?: string;
   rollback_completed_at?: string;
+  verification_status?: 'pending' | 'verifying' | 'verified' | 'failed';
+  verification_error?: string;
+  verification_started_at?: string;
+  verification_completed_at?: string;
   workloads: Array<ProjectEnvironmentPromotionStatusWorkloadResponse>;
 };
 
