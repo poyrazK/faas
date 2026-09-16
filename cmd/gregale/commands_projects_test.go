@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -90,6 +92,76 @@ func TestProjectsEnvironmentConfigAndDiffUseEnvironmentRoutes(t *testing.T) {
 			t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
 		}
 	})
+}
+
+func TestProjectsEnvironmentConfigSetPreviewsAndWrites(t *testing.T) {
+	resetJSONOut(t)
+	_, currentHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"MODE":"staging"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextValues, nextHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"MODE":"production","REGION":"eu"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var methods []string
+	var putBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		if r.Method == http.MethodPut {
+			putBody, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{"project_slug":"shop","environment":"staging","version":2,"config_hash":"` + nextHash + `","values":{"MODE":"production","REGION":"eu"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"project_slug":"shop","environment":"staging","version":1,"config_hash":"` + currentHash + `","values":{"MODE":"staging"}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	oldStdin, oldStdout := osStdin, osStdout
+	t.Cleanup(func() { osStdin, osStdout = oldStdin, oldStdout })
+
+	var preview bytes.Buffer
+	osStdin = strings.NewReader(string(nextValues))
+	osStdout = &preview
+	if code := cmdProjectsEnvironmentConfig([]string{"set", "shop", "staging", "--stdin", "--dry-run"}); code != 0 {
+		t.Fatalf("dry-run exit = %d", code)
+	}
+	if len(methods) != 1 || methods[0] != http.MethodGet {
+		t.Fatalf("dry-run methods = %v, want one GET", methods)
+	}
+	if !strings.Contains(preview.String(), nextHash) {
+		t.Fatalf("preview = %q, missing next hash", preview.String())
+	}
+
+	var applied bytes.Buffer
+	osStdin = strings.NewReader(string(nextValues))
+	osStdout = &applied
+	if code := cmdProjectsEnvironmentConfig([]string{"set", "shop", "staging", "--stdin", "--yes", "--if-hash", currentHash}); code != 0 {
+		t.Fatalf("apply exit = %d", code)
+	}
+	if len(methods) != 3 || methods[1] != http.MethodGet || methods[2] != http.MethodPut {
+		t.Fatalf("apply methods = %v, want GET, GET, PUT", methods)
+	}
+	if !strings.Contains(string(putBody), `"values":{"MODE":"production","REGION":"eu"}`) {
+		t.Fatalf("PUT body = %s", putBody)
+	}
+}
+
+func TestProjectsEnvironmentConfigSetRejectsStaleHash(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"project_slug":"shop","environment":"staging","version":1,"config_hash":"current","values":{"MODE":"staging"}}`, http.StatusOK)
+	oldStdin := osStdin
+	t.Cleanup(func() { osStdin = oldStdin })
+	osStdin = strings.NewReader(`{"MODE":"production"}`)
+	if code := cmdProjectsEnvironmentConfig([]string{"set", "shop", "staging", "--stdin", "--yes", "--if-hash", "stale"}); code != 1 {
+		t.Fatalf("stale hash exit = %d, want 1", code)
+	}
+	if f.sawMethod != http.MethodGet {
+		t.Fatalf("stale hash route = %s %s, want GET only", f.sawMethod, f.sawPath)
+	}
 }
 
 func TestProjectsUpdateCarriesExplicitFields(t *testing.T) {
