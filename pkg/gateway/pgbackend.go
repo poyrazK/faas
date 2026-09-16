@@ -594,10 +594,23 @@ func (b *PGBackend) WithWarmHint(fn WarmHintFunc) *PGBackend {
 	return b
 }
 
-// WithMetrics attaches the gateway registry used by notification consumers.
+// WithMetrics attaches the gateway registry used by notification consumers
+// and app-series priming.
 func (b *PGBackend) WithMetrics(metrics *Metrics) *PGBackend {
-	b.metrics = metrics
+	if b != nil {
+		b.metrics = metrics
+	}
 	return b
+}
+
+// PreInstantiateAppMetrics publishes the aggregate app/class histogram rows at
+// zero. app_changed calls this before invalidating routing so a newly created
+// app is visible to Prometheus before its first request completes.
+func (b *PGBackend) PreInstantiateAppMetrics(appID string) {
+	if b == nil || b.metrics == nil || appID == "" {
+		return
+	}
+	b.metrics.PreInstantiateApp(appID)
 }
 
 // ObserveNotificationPayloadRejected is the optional invalidator metric seam.

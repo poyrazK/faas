@@ -1,4 +1,4 @@
-// Bounded admission for the gateway_request_duration_seconds
+// Bounded admission for the gateway_request_duration_by_deployment_seconds
 // histogram's deployment_id label (ADR-127 §Decision 4, Debugger
 // UX v1). The dashboard's per-deployment latency drill-down
 // (issue #273 / ADR-042) needs the deployment id as a label, but

@@ -579,6 +579,9 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// database trigger publishes a bare app ID. Decode both before
 		// touching caches; a JSON document is never an app-cache key.
 		if appID, err := appChangedID(n.Payload); err == nil {
+			if primer, ok := inv.(interface{ PreInstantiateAppMetrics(string) }); ok {
+				primer.PreInstantiateAppMetrics(appID)
+			}
 			inv.ResetApp(appID)
 			inv.InvalidateResponseCacheByApp(appID)
 		} else {

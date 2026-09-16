@@ -1463,6 +1463,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// plain HTTP on :8080; the resolved-TLS branch was removed in PR-A.
 	deps.metrics = gateway.NewMetrics()
 	backend.WithMetrics(deps.metrics)
+	apps, err := pgStore.ListAllApps(ctx)
+	if err != nil {
+		return fmt.Errorf("pre-instantiate app request metrics: %w", err)
+	}
+	for _, app := range apps {
+		deps.metrics.PreInstantiateApp(app.ID)
+	}
 
 	// ADR-100 / issue #879: re-arm the per-surface cert-remint
 	// engine with the now-built metrics registry so

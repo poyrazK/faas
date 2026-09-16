@@ -465,18 +465,17 @@ type Metrics struct {
 	// SLO-clustered buckets (0.35/0.8s): this histogram must resolve
 	// sub-100ms warm responses AND multi-second slow ones.
 	//
-	// Debugger UX v1 (ADR-127 §Decision 4) adds the `deployment` label
-	// for the per-deployment latency drill-down. The label is bounded
-	// per-app by deploymentLabelSet using each customer's plan cap
-	// (pkg/api/limits.go:DebugTelemetryDeploymentsPerApp: Free=0,
-	// Hobby=10, Pro=50, Scale=200); over-cap deployment ids collapse
-	// to the literal "__other__" sentinel without consuming capacity.
-	// Adding a label is a Prometheus breaking change for series-keyed
-	// selectors that didn't expect it; existing {app, class} selectors
-	// keep matching (Prometheus treats missing labels as no-match —
-	// the label is always populated, so the new key just adds a third
-	// dimension, not a relabel).
+	// The stable aggregate intentionally stays {app,class}. ADR-127's
+	// deployment drill-down is a separate histogram below, avoiding a
+	// series reset whenever a deployment changes.
 	requestDuration *prometheus.HistogramVec
+	// requestDurationByDeployment is the bounded debugger drill-down. Keep it
+	// separate from requestDuration so the customer aggregate retains its
+	// documented {app,class} schema and can be pre-instantiated before the
+	// first deployment-specific observation. Mixing the deployment label into
+	// the aggregate caused Prometheus increase() to discard the first request
+	// for every newly seen deployment.
+	requestDurationByDeployment *prometheus.HistogramVec
 	// requestsByRoute backs the per-route observability counter
 	// (ADR-093 / issue #273 — opt-in follow-up to ADR-042 §1).
 	// Labels: app, plan, route, code. The `route` label admits
@@ -1147,7 +1146,14 @@ func NewMetrics() *Metrics {
 		// p50/p95 reading.
 		requestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "gateway_request_duration_seconds",
-			Help: "Per-app full request duration (request received to handler return), labelled by HTTP status class (2xx/3xx/4xx/5xx) and bounded-admission deployment_id. Issue #273 / ADR-042; ADR-127 Debugger UX v1 adds the bounded deployment label.",
+			Help: "Per-app full request duration (request received to handler return), labelled by HTTP status class (2xx/3xx/4xx/5xx). Issue #273 / ADR-042.",
+			Buckets: []float64{
+				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10,
+			},
+		}, []string{"app", "class"}),
+		requestDurationByDeployment: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "gateway_request_duration_by_deployment_seconds",
+			Help: "Per-deployment request duration drill-down with bounded deployment admission (ADR-127).",
 			Buckets: []float64{
 				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10,
 			},
@@ -1579,7 +1585,7 @@ func NewMetrics() *Metrics {
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache")
-	reg.MustRegister(m.requests, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -1883,12 +1889,9 @@ func (m *Metrics) ObserveStreamEnd(appID, plan string) {
 // to prometheus's default behaviour (a new label tuple surfaces in
 // /metrics). Issue #273 / ADR-042.
 //
-// Debugger UX v1: the histogram gained a third label (`deployment`)
-// per ADR-127 §Decision 4. Empty-string targets (legacy
-// single-targetSet behaviour, pre-PR-B apps) and over-cap
-// deployments collapse to the literal "" or "__other__" sentinels
-// via deploymentLabelSet so the per-app series count stays bounded
-// by the customer's plan cap.
+// ADR-127's deployment-specific drill-down is observed alongside this stable
+// aggregate. Empty-string targets and over-cap deployments remain bounded by
+// deploymentLabelSet on that additive metric.
 //
 // Nil-receiver safe (follows the ObserveWakeQueueWait precedent) so
 // the Handler hot path doesn't need to nil-guard on every request.
@@ -1930,7 +1933,8 @@ func (m *Metrics) ObserveRequestDurationByDeploymentWithTrace(appID, class, depl
 	if m == nil {
 		return
 	}
-	observeWithTraceExemplar(m.requestDuration.WithLabelValues(appID, class, deployment), d.Seconds(), traceID)
+	observeWithTraceExemplar(m.requestDuration.WithLabelValues(appID, class), d.Seconds(), traceID)
+	observeWithTraceExemplar(m.requestDurationByDeployment.WithLabelValues(appID, class, deployment), d.Seconds(), traceID)
 }
 
 // PreInstantiateApp writes zero-valued series for the closed (class)
@@ -1953,7 +1957,8 @@ func (m *Metrics) PreInstantiateApp(appID string) {
 		return
 	}
 	for _, class := range []string{"2xx", "3xx", "4xx", "5xx"} {
-		m.requestDuration.WithLabelValues(appID, class, emptyDeploymentLabel)
+		m.requestDuration.WithLabelValues(appID, class)
+		m.requestDurationByDeployment.WithLabelValues(appID, class, emptyDeploymentLabel)
 	}
 }
 

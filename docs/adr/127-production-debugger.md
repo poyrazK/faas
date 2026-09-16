@@ -3,7 +3,7 @@
 - **Status:** proposed
 - **Date:** 2026-08-23
 - **Issue / PR:** TBD (PR-A of a 3-PR cluster; PR-A ships the data plane, PR-B the cron + alerting, PR-C the LLM synthesis layer)
-- **Decision:** Persist one row per gateway-served request in a new `request_telemetry` table keyed on `trace_id`; extend `gateway_request_duration_seconds` with a `deployment` label bounded by a `deploymentLabelSet` cardinality cap (overflow → `__other__`); expose `POST /v1/otel/v1/traces` so customer apps can ingest their own OTel spans linked by `trace_id` to the persisted row; add `POST /v1/apps/{slug}/debug/requests/{req_id}/replay` that re-issues the captured request through an ADR-125 mirror rule. PR-A ships the data plane; PR-B adds cron-based regression detection; PR-C adds LLM prose synthesis on top.
+- **Decision:** Persist one row per gateway-served request in a new `request_telemetry` table keyed on `trace_id`; add `gateway_request_duration_by_deployment_seconds` with a `deployment` label bounded by a `deploymentLabelSet` cardinality cap (overflow → `__other__`) while preserving the aggregate histogram; expose `POST /v1/otel/v1/traces` so customer apps can ingest their own OTel spans linked by `trace_id` to the persisted row; add `POST /v1/apps/{slug}/debug/requests/{req_id}/replay` that re-issues the captured request through an ADR-125 mirror rule. PR-A ships the data plane; PR-B adds cron-based regression detection; PR-C adds LLM prose synthesis on top.
 
 ## Context
 
@@ -99,13 +99,13 @@ INSERT INTO public.request_telemetry (
 
 Regenerate via `make sqlc generate`. Add typed methods to `Store` interface at `pkg/state/store.go` near `IncrementAppError`.
 
-### 4. Extend `gateway_request_duration_seconds` with `deployment` label
+### 4. Add `gateway_request_duration_by_deployment_seconds`
 
 `pkg/gateway/metrics.go:811-817`:
 
 ```go
 dur := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-    Name:    "gateway_request_duration_seconds",
+    Name:    "gateway_request_duration_by_deployment_seconds",
     Help:    "Per-request gateway duration, sliced by deployment.",
     Buckets: prometheus.DefBuckets,
 }, []string{"app", "deployment", "class"})
@@ -117,7 +117,7 @@ dur := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 - Overflow → `__other__` (closed enum discipline).
 - Asserted by extending `pkg/gateway/metrics_cardinality_test.go`.
 
-`PreInstantiateApp` (`pkg/gateway/metrics.go:1383`) extended to pre-instantiate closed `(app, deployment, class)` triplets at app-create time so panels surface from request 1, mirroring the existing `accountLabelSet` discipline.
+`gateway_request_duration_seconds{app,class}` remains the stable aggregate and is pre-instantiated without a deployment label. The deployment-specific histogram is populated alongside it. Startup app enumeration and `app_changed` notification handling prime the aggregate series before the first request, so Prometheus `increase()` does not discard the first successful sample of a new deployment.
 
 ### 5. Customer OTel ingest
 
@@ -193,11 +193,11 @@ Issue #517 closed the wake timeline. Issue #477 closed consumer_keys. The mirror
 ## Consequences
 
 - **Positive**: the example insight is fully derivable end-to-end. Operators stop correlating disjoint signals by hand. Hobby-tier SLA investigations become one query. Cloud-Run parity for request traces + regressions.
-- **Positive**: supersedes the `gateway_request_duration_seconds{app}` blind spot for any future per-deployment histogram (`gateway_wake_latency_seconds`, queue depth, etc.) — the `deploymentLabelSet` pattern is reusable.
+- **Positive**: supersedes the aggregate histogram's deployment blind spot without changing its public label contract; the `deploymentLabelSet` pattern is reusable.
 - **Negative**: per-request write amplification. At 1k RPS sustained, ~86M rows/day before partitioning; monthly partitions keep index size bounded, but Postgres IOPS grows. Mitigated by the per-account rate cap (`DebugTelemetryRequestsPerMinute`).
 - **Negative**: latency percentiles are quantized to bounded bucket representatives (10ms through 1s, widening for slow outliers). This introduces a conservative error bounded by the selected bucket width, but avoids the materially worse per-minute-maximum bias of the original collapse.
 - **Negative**: customer OTel ingest opens a new auth surface (`/v1/otel/v1/traces`). Mitigated by `api_keys` validation via loopback RPC; per-account rate limit; span count cap.
-- **Compatibility**: additive — no existing endpoint, table, or wire field changes. The recorder hot path is one extra call at `Handler.observe`; the histogram label set widens (Prometheus rollups for `{app, class}` continue to work as `deployment="*"` aggregates).
+- **Compatibility**: additive — no existing endpoint, table, metric label set, or wire field changes. The recorder hot path observes both the stable aggregate histogram and the new deployment-specific histogram.
 - **Migration**: one new table (`00427_request_telemetry.sql`), replay-safe. Slot 387 confirmed unowned (only PR #1024 and PR #1049 hold reservations at that slot; reservations carve-out per `scripts/ci/check_migration_slots.sh`).
 - **Tests**: recorder unit tests (`pkg/gateway/request_telemetry_test.go`); apid handler tests (`cmd/apid/handlers_debug_telemetry_test.go`) using `state.MemStore` per `handlers_invocations_test.go:42-72`; cardinality invariant test (`metrics_cardinality_test.go` extension); sqlc partition pruning test.
 
