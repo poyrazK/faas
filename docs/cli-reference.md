@@ -1481,30 +1481,6 @@ Show a project and its workloads
 
 Manage project environments (list|create|protect|unprotect|releases|history|config|diff|preview|promote|status|rollback)
 
-### projects environments releases
-
-Show the current non-secret release inventory for every workload in an environment
-
-`gregale projects environments releases <project-slug> <environment-slug>`
-
-### projects environments history
-
-List cursor-paginated promotion history for an environment
-
-`gregale projects environments history <project-slug> <environment-slug> [--from <ENV>] [--status running|succeeded|failed] [--before <CURSOR>] [--limit <N>]`
-
-### projects environments config
-
-Show the latest non-secret configuration snapshot for an environment
-
-`gregale projects environments config <project-slug> <environment-slug>`
-
-### projects environments diff
-
-Compare the latest non-secret configuration snapshots between environments
-
-`gregale projects environments diff <project-slug> --from <environment> --to <environment>`
-
 ### projects update
 
 Update repository or production branch
@@ -1914,3 +1890,4 @@ Print the powershell completion snippet
 Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg)
 
 `gregale man <command>`
+
