@@ -57,6 +57,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -109,6 +111,7 @@ func triggerResponse(t sqlc.Trigger) api.Trigger {
 		BatchSizeMax:         int(t.BatchSizeMax),
 		BatchWindowMs:        int(t.BatchWindowMs),
 		MaxAttempts:          int(t.MaxAttempts),
+		RetryPolicy:          retryPolicyFromTriggerConfig(t.Config),
 		PayloadMaxBytes:      int(t.PayloadMaxBytes),
 		BrokerPoisonStrategy: t.BrokerPoisonStrategy,
 		CreatedAt:            t.CreatedAt.Time,
@@ -196,6 +199,10 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	if p := validateCreateTriggerRequest(&req); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if p := applyTriggerRetryPolicy(&req); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
@@ -471,6 +478,96 @@ func enforceUpdateTriggerCaps(req *api.UpdateTriggerRequest, kind api.TriggerKin
 	return problem
 }
 
+// applyTriggerRetryPolicy validates and persists the optional retry policy
+// inside the trigger's config object. Keeping the policy in the existing
+// JSONB blob avoids a schema/sqlc migration while making it available to
+// both API clients and the scheduler. Trigger.MaxAttempts remains the
+// authoritative attempt cap; RetryPolicy.MaxAttempts is accepted as a
+// convenience alias on create when the top-level cap is omitted.
+func applyTriggerRetryPolicy(req *api.CreateTriggerRequest) *api.Problem {
+	if req.RetryPolicy == nil {
+		return nil
+	}
+	if problem := validateTriggerRetryPolicy(req.RetryPolicy); problem != nil {
+		return problem
+	}
+	if req.MaxAttempts == nil && req.RetryPolicy.MaxAttempts > 0 {
+		v := req.RetryPolicy.MaxAttempts
+		req.MaxAttempts = &v
+	}
+	return setRetryPolicyInConfig(&req.Config, req.RetryPolicy)
+}
+
+func applyUpdateTriggerRetryPolicy(config *json.RawMessage, policy *api.RetryPolicyDTO) *api.Problem {
+	if policy == nil {
+		return nil
+	}
+	if problem := validateTriggerRetryPolicy(policy); problem != nil {
+		return problem
+	}
+	return setRetryPolicyInConfig(config, policy)
+}
+
+func validateTriggerRetryPolicy(policy *api.RetryPolicyDTO) *api.Problem {
+	if policy == nil {
+		return nil
+	}
+	if policy.MaxAttempts < 0 || policy.MaxAttempts > 25 {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeTriggerInvalidRetryPolicy, "Invalid retry policy", "max_attempts must be between 1 and 25 when set")
+	}
+	if policy.BaseSeconds < 0 || math.IsNaN(policy.BaseSeconds) || math.IsInf(policy.BaseSeconds, 0) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeTriggerInvalidRetryPolicy, "Invalid retry policy", "base_seconds must be finite and non-negative")
+	}
+	if policy.MaxSeconds < 0 || math.IsNaN(policy.MaxSeconds) || math.IsInf(policy.MaxSeconds, 0) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeTriggerInvalidRetryPolicy, "Invalid retry policy", "max_seconds must be finite and non-negative")
+	}
+	if policy.MaxSeconds > 0 && policy.BaseSeconds > 0 && policy.MaxSeconds < policy.BaseSeconds {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeTriggerInvalidRetryPolicy, "Invalid retry policy", "max_seconds must be at least base_seconds")
+	}
+	if policy.JitterSeconds < 0 || policy.JitterSeconds > 1 || math.IsNaN(policy.JitterSeconds) || math.IsInf(policy.JitterSeconds, 0) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeTriggerInvalidRetryPolicy, "Invalid retry policy", "jitter_seconds must be between 0 and 1")
+	}
+	return nil
+}
+
+func setRetryPolicyInConfig(config *json.RawMessage, policy *api.RetryPolicyDTO) *api.Problem {
+	if config == nil || len(*config) == 0 {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeTriggerInvalidRetryPolicy, "Invalid retry policy", "config must be a JSON object")
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(*config, &top); err != nil || top == nil {
+		detail := "config must be a JSON object"
+		if err != nil {
+			detail = fmt.Sprintf("config must be a JSON object: %v", err)
+		}
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeTriggerInvalidRetryPolicy, "Invalid retry policy", detail)
+	}
+	b, err := json.Marshal(policy)
+	if err != nil {
+		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", err.Error())
+	}
+	top["retry_policy"] = b
+	merged, err := json.Marshal(top)
+	if err != nil {
+		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", err.Error())
+	}
+	*config = merged
+	return nil
+}
+
+func retryPolicyFromTriggerConfig(config []byte) *api.RetryPolicyDTO {
+	var envelope struct {
+		RetryPolicy *api.RetryPolicyDTO `json:"retry_policy"`
+	}
+	if len(config) == 0 || json.Unmarshal(config, &envelope) != nil || envelope.RetryPolicy == nil {
+		return nil
+	}
+	if envelope.RetryPolicy.MaxAttempts == 0 && envelope.RetryPolicy.BaseSeconds == 0 && envelope.RetryPolicy.MaxSeconds == 0 && envelope.RetryPolicy.JitterSeconds == 0 {
+		return nil
+	}
+	return envelope.RetryPolicy
+}
+
 func positiveIntPointer(value int) *int {
 	if value <= 0 {
 		return nil
@@ -483,6 +580,18 @@ func nonEmptyStringPointer(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func retryPolicyDTOFromManifest(policy *gregalemanifest.RetryPolicyConfig) *api.RetryPolicyDTO {
+	if policy == nil {
+		return nil
+	}
+	return &api.RetryPolicyDTO{
+		MaxAttempts:   policy.MaxAttempts,
+		BaseSeconds:   policy.BaseSeconds,
+		MaxSeconds:    policy.MaxSeconds,
+		JitterSeconds: policy.JitterSeconds,
+	}
 }
 
 // --- listTriggers ----------------------------------------------------------
@@ -613,6 +722,11 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 			"schedule/path patches are only valid for kind=cron triggers"))
 		return
 	}
+	if req.RetryPolicy != nil && t.Kind == string(api.TriggerKindCron) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request",
+			"retry_policy is only valid for non-cron triggers"))
+		return
+	}
 	if req.Schedule != nil && !validCron(*req.Schedule) {
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
 		return
@@ -631,17 +745,28 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	var configBytes []byte
 	var mergedConfig json.RawMessage
-	if req.Config != nil && t.Kind != string(api.TriggerKindCron) {
-		merged, problem := mergeTriggerConfigForUpdate(api.TriggerKind(t.Kind), t.Config, req.Config)
-		if problem != nil {
+	if t.Kind != string(api.TriggerKindCron) && (req.Config != nil || req.RetryPolicy != nil) {
+		mergedConfig = append(json.RawMessage(nil), t.Config...)
+		if req.Config != nil {
+			merged, problem := mergeTriggerConfigForUpdate(api.TriggerKind(t.Kind), t.Config, req.Config)
+			if problem != nil {
+				api.WriteProblem(w, problem)
+				return
+			}
+			mergedConfig = merged
+		}
+		if problem := applyUpdateTriggerRetryPolicy(&mergedConfig, req.RetryPolicy); problem != nil {
 			api.WriteProblem(w, problem)
 			return
 		}
-		if err := validateTriggerConfig(api.TriggerKind(t.Kind), merged); err != nil {
+		if err := validateTriggerConfig(api.TriggerKind(t.Kind), mergedConfig); err != nil {
 			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger config", err.Error()))
 			return
 		}
-		mergedConfig = merged
+		if req.RetryPolicy != nil && req.MaxAttempts == nil && req.RetryPolicy.MaxAttempts > 0 {
+			v := req.RetryPolicy.MaxAttempts
+			req.MaxAttempts = &v
+		}
 	}
 	if problem := enforceUpdateTriggerCaps(&req, api.TriggerKind(t.Kind), acct.Plan, limits, mergedConfig); problem != nil {
 		api.WriteProblem(w, problem)
@@ -1035,12 +1160,18 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 		createReq := api.CreateTriggerRequest{
 			Kind:                 kind,
 			Config:               config,
+			RetryPolicy:          retryPolicyDTOFromManifest(t.RetryPolicy),
 			BatchSizeMax:         positiveIntPointer(t.BatchSizeMax),
 			BatchWindowMs:        positiveIntPointer(t.BatchWindowMs),
 			MaxAttempts:          positiveIntPointer(t.MaxAttempts),
 			PayloadMaxBytes:      positiveIntPointer(t.PayloadMaxBytes),
 			BrokerPoisonStrategy: nonEmptyStringPointer(t.BrokerPoisonStrategy),
 		}
+		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
+			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
+			continue
+		}
+		config = createReq.Config
 		bsm, bwm, ma, pmb, bps, problem := enforceCreateTriggerCaps(&createReq, acct.Plan, limits)
 		if problem != nil {
 			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
@@ -1210,6 +1341,17 @@ func intFrom(p *int) int {
 // and return the wrapped error if non-nil. The package's
 // per-kind validator is otherwise unexported (validateKindConfig).
 func validateTriggerConfig(kind api.TriggerKind, raw json.RawMessage) error {
+	var envelope struct {
+		RetryPolicy *api.RetryPolicyDTO `json:"retry_policy"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return err
+		}
+		if problem := validateTriggerRetryPolicy(envelope.RetryPolicy); problem != nil {
+			return errors.New(problem.Detail)
+		}
+	}
 	probe := &gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{{
 		Kind: gregalemanifest.TriggerKind(kind),
 		App:  "probe-app",

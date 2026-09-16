@@ -9,7 +9,7 @@ import (
 // (1-indexed: attempt=1 is the first retry after the initial
 // dispatch; attempt=0 is treated as 1). The curve is:
 //
-//	base      = min(2^(attempt-1), p.MaxSeconds)
+//	base      = min(p.BaseSeconds * 2^(attempt-1), p.MaxSeconds)
 //	jitter    = ±(p.JitterSeconds * base)        // symmetric, fraction of base
 //	return base + jitter
 //
@@ -52,7 +52,11 @@ func (p RetryPolicy) Backoff(attempt int) time.Duration {
 		exp = 9
 	}
 
-	baseSeconds := float64(uint64(1) << exp) // 2^exp
+	baseSeconds := p.BaseSeconds
+	if baseSeconds <= 0 {
+		baseSeconds = 1
+	}
+	baseSeconds *= float64(uint64(1) << exp)
 	if max := p.MaxSeconds; max > 0 && baseSeconds > max {
 		baseSeconds = max
 	}

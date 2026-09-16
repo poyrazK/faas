@@ -277,6 +277,17 @@ func TestComputeRetryBackoff_NegativeTreatedAsOne(t *testing.T) {
 	}
 }
 
+func TestComputeTriggerRetryBackoffUsesConfiguredPolicy(t *testing.T) {
+	configured := sqlc.Trigger{Config: []byte(`{"retry_policy":{"base_seconds":2,"max_seconds":10}}`)}
+	if got := computeTriggerRetryBackoff(configured, 1); got != 2*time.Second {
+		t.Fatalf("configured retry backoff = %v, want 2s", got)
+	}
+	legacy := sqlc.Trigger{Config: []byte(`{"mode":"queue"}`)}
+	if got := computeTriggerRetryBackoff(legacy, 1); got < 800*time.Millisecond || got > 1200*time.Millisecond {
+		t.Fatalf("legacy retry backoff = %v, want historical [800ms,1200ms]", got)
+	}
+}
+
 // --- shardKeyFor --------------------------------------------------
 
 func TestShardKeyFor_KafkaPartition(t *testing.T) {

@@ -254,11 +254,15 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		}
 		createReq := api.CreateTriggerRequest{
 			Kind: kind, Slug: declaration.Slug, Config: marshalConfig(declaration.Config),
+			RetryPolicy:          retryPolicyDTOFromManifest(declaration.RetryPolicy),
 			BatchSizeMax:         positiveIntPointer(declaration.BatchSizeMax),
 			BatchWindowMs:        positiveIntPointer(declaration.BatchWindowMs),
 			MaxAttempts:          positiveIntPointer(declaration.MaxAttempts),
 			PayloadMaxBytes:      positiveIntPointer(declaration.PayloadMaxBytes),
 			BrokerPoisonStrategy: nonEmptyStringPointer(declaration.BrokerPoisonStrategy),
+		}
+		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
+			return staged, problem
 		}
 		bsm, bwm, attempts, payload, poison, capProblem := enforceCreateTriggerCaps(&createReq, acct.Plan, limits)
 		if capProblem != nil {

@@ -3145,6 +3145,10 @@ const CodeTriggerBatchWindowTooLarge = "trigger_batch_window_too_large"
 // Added for PR #993 / issue #757 review MED-4.
 const CodeTriggerTLSSkipVerifyNotAllowed = "trigger_tls_skip_verify_not_allowed"
 
+// CodeTriggerInvalidRetryPolicy identifies a malformed per-trigger retry
+// curve (negative/NaN values, an invalid cap, or jitter outside 0..1).
+const CodeTriggerInvalidRetryPolicy = "trigger_invalid_retry_policy"
+
 // CodePlanLogArchiveNotAllowed is the 402 the customer sees when
 // they request ?archive=1 against an app on a plan whose
 // LogArchiveEnabled() returns false (issue #562).

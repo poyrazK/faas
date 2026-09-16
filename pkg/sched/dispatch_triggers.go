@@ -645,7 +645,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			attempts := retryAttempts[i]
 			// Review finding #9: exponential backoff + ±20%
 			// jitter replaces the prior hardcoded 2s.
-			backoff := computeRetryBackoff(attempts)
+			backoff := computeTriggerRetryBackoff(t, attempts)
 			nextFireAt := time.Now().Add(backoff)
 			if err := store.MarkTriggerRecordRetry(ctx, id, "", nextFireAt); err != nil {
 				l.log.Warn("sched trigger tick: mark retry",
@@ -1034,6 +1034,33 @@ func computeRetryBackoff(attempts int32) time.Duration {
 	// the dispatch tick absorbs. math/rand/v2 is correct here.
 	jitter := time.Duration(float64(base) * (0.8 + 0.01*float64(rand.Uint64()%41)))
 	return jitter
+}
+
+// computeTriggerRetryBackoff selects a trigger's configured retry curve,
+// falling back to the historical inline curve for rows created before
+// retry_policy was introduced. The policy lives in the trigger config JSONB
+// so this path remains compatible with existing sqlc models and migrations.
+func computeTriggerRetryBackoff(t sqlc.Trigger, attempts int32) time.Duration {
+	var envelope struct {
+		RetryPolicy struct {
+			MaxAttempts   int     `json:"max_attempts"`
+			BaseSeconds   float64 `json:"base_seconds"`
+			MaxSeconds    float64 `json:"max_seconds"`
+			JitterSeconds float64 `json:"jitter_seconds"`
+		} `json:"retry_policy"`
+	}
+	if len(t.Config) > 0 && json.Unmarshal(t.Config, &envelope) == nil {
+		policy := dispatch.RetryPolicy{
+			MaxAttempts:   envelope.RetryPolicy.MaxAttempts,
+			BaseSeconds:   envelope.RetryPolicy.BaseSeconds,
+			MaxSeconds:    envelope.RetryPolicy.MaxSeconds,
+			JitterSeconds: envelope.RetryPolicy.JitterSeconds,
+		}
+		if !policy.Zero() {
+			return policy.Backoff(int(attempts))
+		}
+	}
+	return computeRetryBackoff(attempts)
 }
 
 // Compile-time guarantee the helpers we use are wired.

@@ -21830,6 +21830,10 @@ components:
           minimum: 1
           maximum: 25
           description: "Omitted create values use min(5, the account plan cap)."
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          description: "Optional per-trigger retry delay/jitter curve. max_attempts remains the trigger attempt cap."
         payload_max_bytes:
           type: integer
           minimum: 1024
@@ -21903,6 +21907,11 @@ components:
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          nullable: true
+          description: "Optional per-trigger retry delay/jitter curve. max_attempts remains the trigger attempt cap."
         payload_max_bytes: { type: [integer, "null"], minimum: 1024, maximum: 67108864 }
         broker_poison_strategy:
           type: [string, "null"]
@@ -21936,6 +21945,11 @@ components:
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          nullable: true
+          description: "Optional per-trigger retry delay/jitter curve. Set {} to clear the curve."
         payload_max_bytes: { type: [integer, "null"], minimum: 1024, maximum: 67108864 }
         broker_poison_strategy:
           type: [string, "null"]
