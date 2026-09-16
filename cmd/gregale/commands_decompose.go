@@ -329,7 +329,7 @@ func resolveScanSource(
 			return "", "", func() {}, err
 		}
 		_ = n
-		return path, filepath.Base(filepath.Clean(pathFlag)) + ".tar.gz", func() { _ = os.Remove(path) }, nil
+		return path, sourceNameForPath(pathFlag) + ".tar.gz", func() { _ = os.Remove(path) }, nil
 	}
 	if repo != "" {
 		return "", "", func() {}, errors.New("--repo must use the connected repository scan endpoint")
@@ -375,6 +375,19 @@ func defaultProjectSlug(p string) string {
 	}
 	base = strings.TrimSuffix(base, filepath.Ext(base))
 	return sanitizeProjectSlug(base)
+}
+
+// sourceNameForPath returns the stable source identity used as the multipart
+// filename and, by default, as the project slug. Resolving relative paths is
+// important for the common `gregale scan --path .` form: filepath.Base(".")
+// is ".", which sanitized to the generic "project" slug and disconnected
+// the scan from the directory the user actually selected.
+func sourceNameForPath(p string) string {
+	clean := filepath.Clean(p)
+	if absolute, err := filepath.Abs(clean); err == nil {
+		clean = absolute
+	}
+	return filepath.Base(clean)
 }
 
 func sanitizeProjectSlug(value string) string {

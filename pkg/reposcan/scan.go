@@ -9,6 +9,9 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
+	"github.com/onebox-faas/faas/pkg/markers"
 )
 
 // Tier is the rank of the source that produced a workload. Higher
@@ -324,12 +327,7 @@ func Scan(fsys fs.FS) (Result, error) {
 	// synthetic root workload would otherwise create a real app from a
 	// README-only or malformed source archive.
 	if len(seeds) == 0 && hasRootFloorMarker(fsys) {
-		seeds = append(seeds, workloadSeed{
-			name:    keyApp,
-			rootDir: "",
-			tier:    TierSingle,
-			source:  "root-floor",
-		})
+		seeds = append(seeds, rootFloorSeed(fsys))
 		highestTier = TierSingle
 	}
 
@@ -426,6 +424,38 @@ func hasRootFloorMarker(fsys fs.FS) bool {
 		}
 	}
 	return false
+}
+
+// rootFloorSeed creates the synthetic single-workload seed and enriches it
+// with the same read-only framework profile used by deploy and doctor. The
+// root-floor detector intentionally remains the identity owner (the project
+// scan service scopes its generic name later), while the profile fills the
+// fields that a bare marker can establish without executing customer code.
+//
+// Profile inference is advisory. A malformed optional hosting manifest or an
+// unsupported marker must not turn a previously valid root-floor scan into an
+// error, so failures leave the conservative legacy seed unchanged.
+func rootFloorSeed(fsys fs.FS) workloadSeed {
+	seed := workloadSeed{
+		name:    keyApp,
+		rootDir: "",
+		tier:    TierSingle,
+		source:  "root-floor",
+	}
+	profile, err := frameworkprofile.Analyze(fsys)
+	if err != nil || profile.Framework == string(markers.FrameworkUnknown) {
+		return seed
+	}
+
+	// A recognized root framework is an app-shaped HTTP workload for the
+	// project scanner. Function-shaped templates are still represented by the
+	// existing project workload contract, but no longer appear as unknown.
+	seed.class = ClassHTTP
+	if command := strings.TrimSpace(profile.StartCommand); command != "" {
+		seed.command = []string{command}
+		seed.commandShell = true
+	}
+	return seed
 }
 
 // sortStableByName sorts Workloads in place by Name (case-insensitive,

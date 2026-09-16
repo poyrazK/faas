@@ -1190,6 +1190,32 @@ func TestResolveScanPathKeepsStableProjectIdentity(t *testing.T) {
 	}
 }
 
+func TestResolveScanPathDotUsesSelectedDirectoryIdentity(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "hello-go")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module hello-go\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, root)
+
+	archivePath, sourceName, cleanup, err := resolveScanSource("", ".", "", "main", 0)
+	if err != nil {
+		t.Fatalf("resolveScanSource: %v", err)
+	}
+	defer cleanup()
+	if archivePath == "" {
+		t.Fatal("resolveScanSource returned an empty archive path")
+	}
+	if sourceName != "hello-go.tar.gz" {
+		t.Fatalf("source name = %q, want hello-go.tar.gz", sourceName)
+	}
+	if got := defaultProjectSlug(sourceName); got != "hello-go" {
+		t.Fatalf("default project slug = %q, want hello-go", got)
+	}
+}
+
 func TestCmdScanRejectsExplicitInvalidProjectSlugsBeforeSourceOrNetwork(t *testing.T) {
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))

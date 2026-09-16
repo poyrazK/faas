@@ -28,6 +28,63 @@ func TestScan_MalformedComposeVariantsCannotFallBackToRoot(t *testing.T) {
 	}
 }
 
+func TestScan_RootFloorUsesFrameworkProfile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		files     fstest.MapFS
+		wantClass Class
+		wantCmd   string
+		wantShell bool
+	}{
+		{
+			name: "node app",
+			files: fstest.MapFS{
+				"package.json": &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node handler.js"}}`)},
+			},
+			wantClass: ClassHTTP, wantCmd: "npm run start", wantShell: true,
+		},
+		{
+			name: "go app",
+			files: fstest.MapFS{
+				"go.mod":  &fstest.MapFile{Data: []byte("module example.com/app\n\ngo 1.24\n")},
+				"main.go": &fstest.MapFile{Data: []byte("package main\n")},
+			},
+			wantClass: ClassHTTP, wantCmd: "go run .", wantShell: true,
+		},
+		{
+			name: "function-shaped node source",
+			files: fstest.MapFS{
+				"gregale.yaml": &fstest.MapFile{Data: []byte("function:\n  runtime: node22\n  handler: handler.handler\n")},
+				"package.json": &fstest.MapFile{Data: []byte(`{"name":"function-gregale"}`)},
+				"handler.js":   &fstest.MapFile{Data: []byte("export function handler() {}\n")},
+			},
+			wantClass: ClassHTTP,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Scan(tt.files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Workloads) != 1 {
+				t.Fatalf("workloads = %#v, want one root workload", result.Workloads)
+			}
+			workload := result.Workloads[0]
+			if workload.Class != tt.wantClass {
+				t.Errorf("class = %q, want %q", workload.Class, tt.wantClass)
+			}
+			if got := strings.Join(workload.Command, " "); got != tt.wantCmd {
+				t.Errorf("command = %q, want %q", got, tt.wantCmd)
+			}
+			if workload.CommandShell != tt.wantShell {
+				t.Errorf("command_shell = %t, want %t", workload.CommandShell, tt.wantShell)
+			}
+		})
+	}
+}
+
 // TestScan_ComposeK8sFixture is the §4 Phase 2 acceptance gate
 // fixture. Per docs/repo_decomposition_implementation.md §4.260:
 // compose (4 services, 2 datastores) + k8s CronJob → exactly 3
