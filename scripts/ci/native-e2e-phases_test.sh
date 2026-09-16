@@ -99,4 +99,14 @@ n="$(printf '%s\n' "${smoke_tests}" | grep -c .)"
 native_e2e_is_lane smoke || fail "smoke is not recognised as a lane"
 native_e2e_is_lane build && fail "a phase was recognised as a lane"
 
+# 9. The runner's selector gate must accept every phase AND every lane, and
+#    reject anything else. Run 35155683638 dispatched lane=smoke and the
+#    runner died with "unknown phase smoke" before running a single test.
+for sel in "${NATIVE_E2E_PHASES[@]}" "${NATIVE_E2E_LANES[@]}"; do
+  native_e2e_is_selector "${sel}" || fail "runner selector gate rejects ${sel}"
+done
+native_e2e_is_selector nonsense && fail "runner selector gate accepted a bogus name"
+grep -q 'native_e2e_is_selector "${phase}"' "${repo_root}/scripts/ci/run-native-e2e.sh" ||
+  fail "run-native-e2e.sh does not validate FAAS_E2E_PHASE with native_e2e_is_selector; a lane would be rejected as an unknown phase"
+
 echo "native e2e phase contracts OK (${#NATIVE_E2E_PHASES[@]} phases, ${#NATIVE_E2E_LANES[@]} lane)"

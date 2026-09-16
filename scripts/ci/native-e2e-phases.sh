@@ -228,3 +228,15 @@ native_e2e_assert_lanes() {
   done
   return "${rc}"
 }
+
+# native_e2e_is_selector reports whether a name is a phase or a lane — the
+# set FAAS_E2E_PHASE may carry. The runner validates against THIS, not
+# NATIVE_E2E_PHASES alone: the first smoke dispatch (run 35155683638) was
+# rejected with "unknown phase smoke" by a check that predated lanes, and the
+# lane's own contracts never caught it because they tested the library, not
+# the runner's gate.
+native_e2e_is_selector() {
+  local name="${1:?name required}" p
+  for p in "${NATIVE_E2E_PHASES[@]}"; do [[ "${name}" == "${p}" ]] && return 0; done
+  native_e2e_is_lane "${name}"
+}

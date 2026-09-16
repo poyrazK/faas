@@ -439,8 +439,8 @@ native_e2e_assert_phase_partition "${repo_root}" ||
 # keeps `bash scripts/ci/run-native-e2e.sh` usable by hand.
 phase="${FAAS_E2E_PHASE:-}"
 if [[ -n "${phase}" ]]; then
-  printf '%s\n' "${NATIVE_E2E_PHASES[@]}" | grep -qx "${phase}" ||
-    die "unknown phase ${phase}; known: ${NATIVE_E2E_PHASES[*]}"
+  native_e2e_is_selector "${phase}" ||
+    die "unknown phase ${phase}; known phases: ${NATIVE_E2E_PHASES[*]}; lanes: ${NATIVE_E2E_LANES[*]}"
   # A lane (smoke) is a hand-picked subset and makes no whole-suite claim; it
   # is selected only by an explicit dispatch input. See native-e2e-phases.sh.
   if native_e2e_is_lane "${phase}"; then
