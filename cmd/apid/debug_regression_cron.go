@@ -154,6 +154,17 @@ func (s *server) runRegressionOnce(ctx context.Context, log *slog.Logger) {
 		}
 		cancel()
 	}
+	resolved, err := s.store.ResolveStaleRegressionObservations(ctx, pgtype.Interval{
+		Microseconds: int64(debugRegressionWindow / time.Microsecond),
+		Valid:        true,
+	})
+	if err != nil {
+		log.Warn("regression_cron: resolve stale observations failed", "err", err)
+	} else {
+		for _, row := range resolved {
+			s.notifyDebugRegressionChanged(ctx, uuidFromPg(row.AppID), debugRegressionObservationToItem(row))
+		}
+	}
 	// Always refresh the gauge — even if the per-app pass failed,
 	// the gauge still reflects the wall-clock staleness of the
 	// cron loop so a stalled-loop alert fires when nothing else
@@ -294,7 +305,7 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 				"route", curRow.Route, "err", err)
 			continue
 		}
-		if err := s.store.UpsertRegressionObservation(ctx, sqlc.UpsertRegressionObservationParams{
+		params := sqlc.UpsertRegressionObservationParams{
 			AppID:            appID,
 			DeploymentID:     cur.DeploymentID,
 			Route:            curRow.Route,
@@ -302,7 +313,8 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 			P95BaseMs:        baseP95,
 			AffectedCount:    affected,
 			RegressionFactor: factor,
-		}); err != nil {
+		}
+		if err := s.store.UpsertRegressionObservation(ctx, params); err != nil {
 			log.Warn("regression_cron: upsert failed",
 				"app", appID.String(),
 				"deployment", cur.DeploymentID.String(),
@@ -310,6 +322,20 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 				"err", err)
 			continue
 		}
+		row, err := s.store.GetRegressionObservation(ctx, sqlc.GetRegressionObservationParams{
+			AppID:        appID,
+			DeploymentID: cur.DeploymentID,
+			Route:        curRow.Route,
+		})
+		if err != nil {
+			log.Warn("regression_cron: read after upsert failed",
+				"app", appID.String(),
+				"deployment", cur.DeploymentID.String(),
+				"route", curRow.Route,
+				"err", err)
+			continue
+		}
+		s.notifyDebugRegressionChanged(ctx, uuidFromPg(appID), debugRegressionObservationToItem(row))
 		// ADR-127 Debugger UX v1: regression persisted to
 		// debug_regression_observations — bump
 		// apid_debug_regression_detected_total so the

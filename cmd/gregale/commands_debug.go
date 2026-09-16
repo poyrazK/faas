@@ -18,6 +18,7 @@
 //	gregale debug regressions watch <slug> [--since <dur>] [--interval D] [--once]
 //	gregale debug regressions <slug> [--since <dur>]
 //	gregale debug regressions --all [--since <dur>]
+//	gregale debug regressions <acknowledge|dismiss|resolve|reopen> <slug> --deployment-id UUID --route P [--dismissed-until RFC3339]
 //	gregale debug regressions rollback <slug> [--to <deployment_id>] --yes
 //	gregale debug compare <slug> --source <id> --mirror <id> [--route <pattern>] [--since <dur>] [--until <timestamp>]
 //
@@ -59,7 +60,7 @@ func cmdDebug(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch regression observations for changes\n  compare           compare two deployments\n  bundle            export a redacted incident bundle", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -451,6 +452,12 @@ func cmdDebugRegressions(args []string) int {
 	if len(args) > 0 && args[0] == "watch" {
 		return cmdDebugRegressionsWatch(args[1:])
 	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "ack", "acknowledge", "dismiss", "resolve", "reopen":
+			return cmdDebugRegressionAction(args[1:], args[0])
+		}
+	}
 	fs := newFlagSet("debug regressions", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	all := fs.Bool("all", false, "list regressions for every app in the account")
@@ -478,6 +485,53 @@ func cmdDebugRegressions(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	renderDebugRegressionsTable(osStdout, resp)
+	return 0
+}
+
+// cmdDebugRegressionAction changes the triage state of one regression. The
+// deployment and route form the observation key, so actions stay precise even
+// when several routes regress on the same deployment.
+func cmdDebugRegressionAction(args []string, action string) int {
+	if action == "ack" {
+		action = "acknowledge"
+	}
+	fs := newFlagSet("debug regressions "+action, flag.ContinueOnError)
+	deploymentID := fs.String("deployment-id", "", "regression deployment UUID")
+	route := fs.String("route", "", "regression route")
+	dismissedUntil := fs.String("dismissed-until", "", "dismissal expiry (RFC3339; default 24h)")
+	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
+		"deployment-id": true, "route": true, "dismissed-until": true,
+	})
+	if err := fs.Parse(flagArgs); err != nil {
+		return 1
+	}
+	if len(positional) != 1 {
+		PrintUsage(os.Stderr, "usage: gregale debug regressions "+action+" [--deployment-id UUID] [--route P] [--dismissed-until RFC3339] <slug>", debugCmdDocsTopic)
+		return 1
+	}
+	if *deploymentID == "" || *route == "" {
+		return printErr("Incomplete debugger regression key", fmt.Errorf("--deployment-id and --route are required"))
+	}
+	if action != "dismiss" && *dismissedUntil != "" {
+		return printErr("Invalid dismissal expiry", fmt.Errorf("--dismissed-until is only valid with dismiss"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.UpdateAppDebugRegression(context.Background(), positional[0], api.DebugRegressionActionRequest{
+		DeploymentID:   *deploymentID,
+		Route:          *route,
+		Action:         action,
+		DismissedUntil: *dismissedUntil,
+	})
+	if err != nil {
+		return printErr("Could not update debugger regression", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	PrintOK(osStdout, "Regression %s for %s is now %s.", resp.Regression.Route, positional[0], resp.Regression.State)
 	return 0
 }
 
@@ -792,10 +846,10 @@ func normalizeDebugFlagArgs(args []string, valueFlags map[string]bool) (flagArgs
 
 func renderDebugRegressionsTable(w io.Writer, resp api.DebugRegressionsResponse) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "DEPLOYMENT\tROUTE\tFACTOR\tP95_MS\tP95_BASE_MS\tAFFECTED\tLAST_DETECTED")
+	_, _ = fmt.Fprintln(tw, "DEPLOYMENT\tROUTE\tSTATE\tFACTOR\tP95_MS\tP95_BASE_MS\tAFFECTED\tLAST_DETECTED")
 	for _, r := range resp.Regressions {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
-			r.DeploymentID, r.Route, r.Factor, r.P95MS, r.P95BaseMS, r.AffectedCount, r.LastDetectedAt)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
+			r.DeploymentID, r.Route, r.State, r.Factor, r.P95MS, r.P95BaseMS, r.AffectedCount, r.LastDetectedAt)
 	}
 	_ = tw.Flush()
 }

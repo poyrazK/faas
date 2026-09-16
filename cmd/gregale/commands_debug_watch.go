@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -155,14 +157,15 @@ func cmdDebugRegressionsWatch(args []string) int {
 	interval := fs.Duration("interval", debugWatchDefaultInterval, "poll interval (250ms..1h)")
 	once := fs.Bool("once", false, "poll once and exit (useful for scripts and tests)")
 	all := fs.Bool("all", false, "watch regressions for every app in the account")
+	poll := fs.Bool("poll", false, "use polling instead of the live event stream")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
-		"since": true, "interval": true, "all": false,
+		"since": true, "interval": true, "all": false, "poll": false,
 	})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
 	if (*all && len(positional) != 0) || (!*all && len(positional) != 1) {
-		PrintUsage(os.Stderr, "usage: gregale debug regressions watch [--all] [--since D] [--interval D] [--once] [<slug>]", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug regressions watch [--all] [--since D] [--interval D] [--poll] [--once] [<slug>]", debugCmdDocsTopic)
 		return 1
 	}
 	if err := validateDebugWatchInterval(*interval); err != nil {
@@ -174,10 +177,132 @@ func cmdDebugRegressionsWatch(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if !*once && !*poll {
+		return runDebugRegressionsStream(ctx, client, strings.Join(positional, ""), *all, *since)
+	}
 	if *all {
 		return runDebugRegressionsWatchAll(ctx, client, *since, *interval, *once)
 	}
 	return runDebugRegressionsWatch(ctx, client, positional[0], *since, *interval, *once)
+}
+
+// runDebugRegressionsStream consumes the typed debugger event channel from
+// /v1/events. The existing polling implementation remains available with
+// --poll and is still used by --once for snapshot-style scripts.
+func runDebugRegressionsStream(ctx context.Context, client *api.Client, slug string, all bool, since string) int {
+	appID := ""
+	if !all {
+		app, err := client.GetApp(ctx, slug)
+		if err != nil {
+			return printErr("Could not resolve app for debugger event stream", err)
+		}
+		appID = app.ID
+	}
+	body, err := client.StreamEvents(ctx)
+	if err != nil {
+		return printErr("Could not open debugger event stream", err)
+	}
+	defer func() { _ = body.Close() }()
+	dec := api.NewDecoder(body)
+	dec.SetCloseFn(body.Close)
+	defer func() { _ = dec.Close() }()
+	if !jsonOutput {
+		if all {
+			_, _ = fmt.Fprintf(osStdout, "Watching debugger regression events for every app (live; --poll for polling). Ctrl-C to exit.\n")
+		} else {
+			_, _ = fmt.Fprintf(osStdout, "Watching debugger regression events for %s (live; --poll for polling). Ctrl-C to exit.\n", slug)
+		}
+	}
+	emit := func(displaySlug string, item api.DebugRegressionItem, observedAt string) {
+		if item.State == "resolved" {
+			if jsonOutput {
+				_ = writeDebugWatchEvent(debugWatchEvent{Type: "regression_cleared", ObservedAt: observedAt, AppSlug: displaySlug, Regression: &item, DeploymentID: item.DeploymentID, Route: item.Route})
+			} else {
+				_, _ = fmt.Fprintf(osStdout, "[%s] resolved\t%s\t%s\n", observedAt, item.DeploymentID, item.Route)
+			}
+			return
+		}
+		if jsonOutput {
+			_ = writeDebugWatchEvent(debugWatchEvent{Type: "regression", ObservedAt: observedAt, AppSlug: displaySlug, Regression: &item})
+		} else {
+			_, _ = fmt.Fprintf(osStdout, "[%s] debugger regression changed\n", observedAt)
+			renderDebugRegressionsTable(osStdout, api.DebugRegressionsResponse{Regressions: []api.DebugRegressionItem{item}})
+		}
+	}
+	// Emit the current bounded snapshot first, then keep the stream open for
+	// changes. This preserves the old watch UX while removing its polling lag.
+	if all {
+		apps, err := client.ListApps(ctx)
+		if err != nil {
+			return printErr("Could not list apps for debugger event stream", err)
+		}
+		for _, app := range apps {
+			resp, err := client.ListAppDebugRegressions(ctx, app.Slug, since)
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "debug regressions watch %s: %v\n", app.Slug, err)
+				continue
+			}
+			for _, item := range resp.Regressions {
+				emit(app.Slug, item, time.Now().UTC().Format(time.RFC3339Nano))
+			}
+		}
+	} else {
+		resp, err := client.ListAppDebugRegressions(ctx, slug, since)
+		if err != nil {
+			return printErr("Could not list regressions", err)
+		}
+		for _, item := range resp.Regressions {
+			emit(slug, item, time.Now().UTC().Format(time.RFC3339Nano))
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return 130
+		case event, ok := <-dec.Events():
+			if !ok {
+				streamErr := <-dec.Errors()
+				if streamErr != nil && !errors.Is(streamErr, io.EOF) {
+					return printErr("Debugger event stream closed", streamErr)
+				}
+				return 0
+			}
+			if event.Event != "debug_regression_changed" {
+				continue
+			}
+			var payload struct {
+				AppID          string `json:"app_id"`
+				DeploymentID   string `json:"deployment_id"`
+				Route          string `json:"route"`
+				P95MS          int    `json:"p95_ms"`
+				P95BaseMS      int    `json:"p95_base_ms"`
+				AffectedCount  int    `json:"affected_count"`
+				Factor         string `json:"regression_factor"`
+				State          string `json:"state"`
+				FirstDetected  string `json:"first_detected_at"`
+				LastDetected   string `json:"last_detected_at"`
+				AcknowledgedAt string `json:"acknowledged_at"`
+				DismissedUntil string `json:"dismissed_until"`
+				ResolvedAt     string `json:"resolved_at"`
+			}
+			if err := json.Unmarshal([]byte(event.Data), &payload); err != nil || (appID != "" && payload.AppID != appID) {
+				continue
+			}
+			item := api.DebugRegressionItem{
+				DeploymentID: payload.DeploymentID, Route: payload.Route,
+				P95MS: payload.P95MS, P95BaseMS: payload.P95BaseMS,
+				AffectedCount: payload.AffectedCount, Factor: payload.Factor,
+				State: payload.State, FirstDetectedAt: payload.FirstDetected,
+				LastDetectedAt: payload.LastDetected, AcknowledgedAt: payload.AcknowledgedAt,
+				DismissedUntil: payload.DismissedUntil, ResolvedAt: payload.ResolvedAt,
+			}
+			displaySlug := slug
+			if all {
+				displaySlug = payload.AppID
+			}
+			emit(displaySlug, item, time.Now().UTC().Format(time.RFC3339Nano))
+		}
+	}
 }
 
 func runDebugRegressionsWatchAll(ctx context.Context, client *api.Client, since string, interval time.Duration, once bool) int {

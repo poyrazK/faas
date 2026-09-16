@@ -1120,7 +1120,7 @@ Explain why an app is still running, with request evidence when available (runni
 
 ### debug regressions
 
-Regressions (per-app/--all, watch, and confirmed rollback)
+Regressions (live watch, lifecycle actions, per-app/--all, rollback)
 
 ### debug compare
 
@@ -1128,7 +1128,7 @@ Per-route deployment-vs-deployment compare
 
 ### debug bundle
 
-Export a redacted incident investigation bundle (bundle &lt;slug&gt; &lt;req_id&gt; [--output PATH])
+Export a redacted incident bundle with coverage (bundle &lt;slug&gt; &lt;req_id&gt; [--output PATH])
 
 
 ## invitations

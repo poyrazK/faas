@@ -8112,6 +8112,10 @@ type DebugRegressionItem struct {
 	Factor          string `json:"regression_factor"`
 	FirstDetectedAt string `json:"first_detected_at"`
 	LastDetectedAt  string `json:"last_detected_at"`
+	State           string `json:"state"`
+	AcknowledgedAt  string `json:"acknowledged_at,omitempty"`
+	DismissedUntil  string `json:"dismissed_until,omitempty"`
+	ResolvedAt      string `json:"resolved_at,omitempty"`
 }
 
 // DebugRegressionsResponse is the wire envelope for the debug
@@ -8120,6 +8124,35 @@ type DebugRegressionItem struct {
 type DebugRegressionsResponse struct {
 	Since       string                `json:"since"`
 	Regressions []DebugRegressionItem `json:"regressions"`
+}
+
+// DebugRegressionActionRequest is the body for PATCH
+// /v1/apps/{slug}/debug/regressions. Actions change only the debugger's
+// workflow state; they never alter traffic or deployment state.
+type DebugRegressionActionRequest struct {
+	DeploymentID   string `json:"deployment_id"`
+	Route          string `json:"route"`
+	Action         string `json:"action"`
+	DismissedUntil string `json:"dismissed_until,omitempty"`
+}
+
+// DebugRegressionActionResponse returns the updated observation so API,
+// CLI, dashboard, and event consumers share one post-action representation.
+type DebugRegressionActionResponse struct {
+	Regression DebugRegressionItem `json:"regression"`
+}
+
+// AllowedDebugRegressionActions is the closed workflow vocabulary for a
+// regression observation. "reopen" maps back to the active state.
+var AllowedDebugRegressionActions = []string{"acknowledge", "dismiss", "resolve", "reopen"}
+
+func AllowedDebugRegressionAction(action string) bool {
+	for _, allowed := range AllowedDebugRegressionActions {
+		if action == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // DebugCompareRequest is the body shape for POST /v1/apps/{slug}

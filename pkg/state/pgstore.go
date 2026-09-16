@@ -25612,6 +25612,12 @@ func (s *PgStore) UpsertRegressionObservation(ctx context.Context, arg sqlc.Upse
 	return s.appErrorsQueries().UpsertRegressionObservation(ctx, s.pool, arg)
 }
 
+// GetRegressionObservation reads the post-upsert observation so event
+// consumers see any lifecycle state preserved by the detector.
+func (s *PgStore) GetRegressionObservation(ctx context.Context, arg sqlc.GetRegressionObservationParams) (sqlc.DebugRegressionObservation, error) {
+	return s.appErrorsQueries().GetRegressionObservation(ctx, s.pool, arg)
+}
+
 // ListActiveRegressionsByApp backs GET /v1/apps/{slug}/debug/regressions
 // and the dashboard regression banner. since is an interval (e.g.
 // pgtype.Interval{Microseconds: 3600 * 1e6} for "1 hour"); the
@@ -25620,6 +25626,18 @@ func (s *PgStore) UpsertRegressionObservation(ctx context.Context, arg sqlc.Upse
 // 30-minute deployment diff still surfaces.
 func (s *PgStore) ListActiveRegressionsByApp(ctx context.Context, arg sqlc.ListActiveRegressionsByAppParams) ([]sqlc.ListActiveRegressionsByAppRow, error) {
 	return s.appErrorsQueries().ListActiveRegressionsByApp(ctx, s.pool, arg)
+}
+
+// ApplyRegressionAction updates one app-scoped debugger observation's
+// workflow state and returns the complete redacted observation.
+func (s *PgStore) ApplyRegressionAction(ctx context.Context, arg sqlc.ApplyRegressionActionParams) (sqlc.DebugRegressionObservation, error) {
+	return s.appErrorsQueries().ApplyRegressionAction(ctx, s.pool, arg)
+}
+
+// ResolveStaleRegressionObservations closes observations that have not been
+// refreshed by the detector within the supplied interval.
+func (s *PgStore) ResolveStaleRegressionObservations(ctx context.Context, arg pgtype.Interval) ([]sqlc.DebugRegressionObservation, error) {
+	return s.appErrorsQueries().ResolveStaleRegressionObservations(ctx, s.pool, arg)
 }
 
 // CheckDebugRegressionReadiness verifies the exact relation and parameterized

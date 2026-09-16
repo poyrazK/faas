@@ -5207,6 +5207,16 @@ func (c *Client) ListAppDebugRegressions(ctx context.Context, slug, since string
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// UpdateAppDebugRegression changes the workflow state of one regression
+// observation. The server validates the deployment/route pair within the
+// app and keeps the operation idempotent under the SDK's normal PATCH
+// request handling.
+func (c *Client) UpdateAppDebugRegression(ctx context.Context, slug string, req DebugRegressionActionRequest) (DebugRegressionActionResponse, error) {
+	var out DebugRegressionActionResponse
+	path := "/v1/apps/" + slug + "/debug/regressions"
+	return out, c.do(ctx, "PATCH", path, req, &out)
+}
+
 // CompareAppDebugDeployments compares two deployments' per-route
 // latency distributions in a shared window (ADR-127 / PR-B).
 // `route` is optional (empty = all routes). `until` is optional

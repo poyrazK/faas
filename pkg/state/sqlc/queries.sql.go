@@ -478,6 +478,59 @@ func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg Apply
 	return result.RowsAffected(), nil
 }
 
+const applyRegressionAction = `-- name: ApplyRegressionAction :one
+UPDATE debug_regression_observations
+SET state = $4,
+    last_detected_at = CASE WHEN $4 = 'active' THEN now() ELSE last_detected_at END,
+    acknowledged_at = CASE WHEN $4 = 'acknowledged' THEN now() ELSE NULL END,
+    dismissed_until = CASE WHEN $4 = 'dismissed' THEN $5::timestamptz ELSE NULL END,
+    resolved_at = CASE WHEN $4 = 'resolved' THEN now() ELSE NULL END
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND route = $3
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at
+`
+
+type ApplyRegressionActionParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Route        string
+	State        string
+	Column5      pgtype.Timestamptz
+}
+
+// Change only the debugger workflow state for one app-scoped observation.
+// The handler maps reopen to active before calling this query.
+func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error) {
+	row := db.QueryRow(ctx, applyRegressionAction,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.Route,
+		arg.State,
+		arg.Column5,
+	)
+	var i DebugRegressionObservation
+	err := row.Scan(
+		&i.AppID,
+		&i.DeploymentID,
+		&i.Route,
+		&i.P95Ms,
+		&i.P95BaseMs,
+		&i.AffectedCount,
+		&i.RegressionFactor,
+		&i.FirstDetectedAt,
+		&i.LastDetectedAt,
+		&i.State,
+		&i.AcknowledgedAt,
+		&i.DismissedUntil,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
 const buildByDeployment = `-- name: BuildByDeployment :one
 select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at, cache_status, cache_key_sha256
 from builds where deployment_id = $1 order by started_at desc nulls last limit 1
@@ -3474,6 +3527,46 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 	return i, err
 }
 
+const getRegressionObservation = `-- name: GetRegressionObservation :one
+SELECT app_id, deployment_id, route,
+       p95_ms, p95_base_ms, affected_count,
+       regression_factor, first_detected_at, last_detected_at,
+       state, acknowledged_at, dismissed_until, resolved_at
+FROM debug_regression_observations
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND route = $3
+`
+
+type GetRegressionObservationParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Route        string
+}
+
+// Read the row after a detector upsert so the notification reflects a
+// preserved acknowledgement/dismissal rather than assuming active state.
+func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error) {
+	row := db.QueryRow(ctx, getRegressionObservation, arg.AppID, arg.DeploymentID, arg.Route)
+	var i DebugRegressionObservation
+	err := row.Scan(
+		&i.AppID,
+		&i.DeploymentID,
+		&i.Route,
+		&i.P95Ms,
+		&i.P95BaseMs,
+		&i.AffectedCount,
+		&i.RegressionFactor,
+		&i.FirstDetectedAt,
+		&i.LastDetectedAt,
+		&i.State,
+		&i.AcknowledgedAt,
+		&i.DismissedUntil,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
 const getRequestTelemetryByAppAndID = `-- name: GetRequestTelemetryByAppAndID :one
 SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
@@ -4432,10 +4525,19 @@ func (q *Queries) ListAPIKeys(ctx context.Context, db DBTX, accountID pgtype.UUI
 const listActiveRegressionsByApp = `-- name: ListActiveRegressionsByApp :many
 SELECT deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
-       regression_factor, first_detected_at, last_detected_at
+       regression_factor, first_detected_at, last_detected_at,
+       CASE
+           WHEN state = 'dismissed'
+                AND dismissed_until IS NOT NULL
+                AND dismissed_until <= now() THEN 'active'
+           ELSE state
+       END AS state,
+       acknowledged_at, dismissed_until, resolved_at
 FROM debug_regression_observations
 WHERE app_id = $1
   AND last_detected_at > now() - $2::interval
+  AND state <> 'resolved'
+  AND (state <> 'dismissed' OR dismissed_until IS NULL OR dismissed_until <= now())
 ORDER BY regression_factor DESC, last_detected_at DESC
 `
 
@@ -4453,6 +4555,10 @@ type ListActiveRegressionsByAppRow struct {
 	RegressionFactor pgtype.Numeric
 	FirstDetectedAt  pgtype.Timestamptz
 	LastDetectedAt   pgtype.Timestamptz
+	State            interface{}
+	AcknowledgedAt   pgtype.Timestamptz
+	DismissedUntil   pgtype.Timestamptz
+	ResolvedAt       pgtype.Timestamptz
 }
 
 // Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
@@ -4479,6 +4585,10 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 			&i.RegressionFactor,
 			&i.FirstDetectedAt,
 			&i.LastDetectedAt,
+			&i.State,
+			&i.AcknowledgedAt,
+			&i.DismissedUntil,
+			&i.ResolvedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -10656,6 +10766,55 @@ func (q *Queries) RequestTelemetryCoverage(ctx context.Context, db DBTX, arg Req
 	return i, err
 }
 
+const resolveStaleRegressionObservations = `-- name: ResolveStaleRegressionObservations :many
+UPDATE debug_regression_observations
+SET state = 'resolved',
+    resolved_at = COALESCE(resolved_at, now())
+WHERE last_detected_at <= now() - $1::interval
+  AND state <> 'resolved'
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at
+`
+
+// A detector pass that no longer sees a regression resolves the previous
+// observation. Returning rows lets apid publish one account-scoped event per
+// lifecycle transition without a second read.
+func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]DebugRegressionObservation, error) {
+	rows, err := db.Query(ctx, resolveStaleRegressionObservations, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DebugRegressionObservation{}
+	for rows.Next() {
+		var i DebugRegressionObservation
+		if err := rows.Scan(
+			&i.AppID,
+			&i.DeploymentID,
+			&i.Route,
+			&i.P95Ms,
+			&i.P95BaseMs,
+			&i.AffectedCount,
+			&i.RegressionFactor,
+			&i.FirstDetectedAt,
+			&i.LastDetectedAt,
+			&i.State,
+			&i.AcknowledgedAt,
+			&i.DismissedUntil,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeAllSessions = `-- name: RevokeAllSessions :many
 update sessions set revoked_at = now()
 where account_id = $1 and id <> $2 and revoked_at is null
@@ -11926,18 +12085,37 @@ const upsertRegressionObservation = `-- name: UpsertRegressionObservation :exec
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, last_detected_at
+    regression_factor, state, last_detected_at
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, now()
+    $7, 'active', now()
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
-    last_detected_at  = EXCLUDED.last_detected_at
+    last_detected_at  = EXCLUDED.last_detected_at,
+    state             = CASE
+        WHEN debug_regression_observations.state = 'acknowledged' THEN 'acknowledged'
+        WHEN debug_regression_observations.state = 'dismissed'
+             AND debug_regression_observations.dismissed_until IS NOT NULL
+             AND debug_regression_observations.dismissed_until > now() THEN 'dismissed'
+        ELSE 'active'
+    END,
+    acknowledged_at   = CASE
+        WHEN debug_regression_observations.state = 'acknowledged' THEN debug_regression_observations.acknowledged_at
+        ELSE NULL
+    END,
+    dismissed_until   = CASE
+        WHEN debug_regression_observations.state = 'dismissed'
+             AND debug_regression_observations.dismissed_until IS NOT NULL
+             AND debug_regression_observations.dismissed_until > now()
+            THEN debug_regression_observations.dismissed_until
+        ELSE NULL
+    END,
+    resolved_at       = NULL
 `
 
 type UpsertRegressionObservationParams struct {

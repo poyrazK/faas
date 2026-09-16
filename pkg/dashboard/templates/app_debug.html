@@ -167,7 +167,7 @@
         <p class="muted">The detector compares route latency across deployments. Open a request below to inspect the slowest recorded spans.</p>
         {{range .Data.Regressions}}
           <article class="regression">
-            <strong>{{.Factor}}× slower</strong> on <code>{{.Route}}</code>
+            <strong>{{.Factor}}× slower</strong> on <code>{{.Route}}</code> <span class="muted">({{.State}})</span>
             <span class="muted">· p95 {{.P95MS}} ms vs {{.P95BaseMS}} ms baseline · {{.AffectedCount}} affected requests</span>
             <br><small class="muted">deployment <code>{{.DeploymentID}}</code> · first {{.FirstDetectedAt}} · last {{.LastDetectedAt}} · <a href="{{.RequestsURL}}">inspect requests →</a>{{if .CompareURL}} · <a href="{{.CompareURL}}">compare deployments →</a>{{end}}</small>
           </article>

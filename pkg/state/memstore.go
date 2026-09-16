@@ -21200,11 +21200,29 @@ func (m *MemStore) UpsertRegressionObservation(_ context.Context, _ sqlc.UpsertR
 	panic("memstore: UpsertRegressionObservation unimplemented")
 }
 
+// GetRegressionObservation is intentionally unsupported by MemStore;
+// regression observations are a Postgres-only request telemetry surface.
+func (m *MemStore) GetRegressionObservation(_ context.Context, _ sqlc.GetRegressionObservationParams) (sqlc.DebugRegressionObservation, error) {
+	panic("memstore: GetRegressionObservation unimplemented")
+}
+
 // ListActiveRegressionsByApp is intentionally unsupported by MemStore;
 // dashboard reads degrade gracefully in local/unit environments while
 // production uses the Postgres implementation.
 func (m *MemStore) ListActiveRegressionsByApp(_ context.Context, _ sqlc.ListActiveRegressionsByAppParams) ([]sqlc.ListActiveRegressionsByAppRow, error) {
 	return nil, errMemStoreRequestTelemetry
+}
+
+// ApplyRegressionAction is intentionally unsupported by MemStore because
+// debugger lifecycle state is persisted with request telemetry in Postgres.
+func (m *MemStore) ApplyRegressionAction(_ context.Context, _ sqlc.ApplyRegressionActionParams) (sqlc.DebugRegressionObservation, error) {
+	panic("memstore: ApplyRegressionAction unimplemented")
+}
+
+// ResolveStaleRegressionObservations is intentionally unsupported by
+// MemStore; the detector and its lifecycle transitions are Postgres-only.
+func (m *MemStore) ResolveStaleRegressionObservations(_ context.Context, _ pgtype.Interval) ([]sqlc.DebugRegressionObservation, error) {
+	panic("memstore: ResolveStaleRegressionObservations unimplemented")
 }
 
 // ListDeploymentsForCompare is intentionally unsupported by MemStore;

@@ -627,6 +627,7 @@ func dashboardDebugRegressionView(item api.DebugRegressionItem, slug, since stri
 	return dashboard.DebugRegressionView{
 		DeploymentID:    item.DeploymentID,
 		Route:           item.Route,
+		State:           item.State,
 		P95MS:           item.P95MS,
 		P95BaseMS:       item.P95BaseMS,
 		AffectedCount:   item.AffectedCount,
@@ -870,7 +871,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 	}
 	var apiRegression *api.DebugRegressionItem
 	if matching != nil {
-		apiRegression = &api.DebugRegressionItem{DeploymentID: matching.DeploymentID, Route: matching.Route, P95MS: matching.P95MS, P95BaseMS: matching.P95BaseMS, AffectedCount: matching.AffectedCount, Factor: matching.Factor, FirstDetectedAt: matching.FirstDetectedAt, LastDetectedAt: matching.LastDetectedAt}
+		apiRegression = &api.DebugRegressionItem{DeploymentID: matching.DeploymentID, Route: matching.Route, P95MS: matching.P95MS, P95BaseMS: matching.P95BaseMS, AffectedCount: matching.AffectedCount, Factor: matching.Factor, FirstDetectedAt: matching.FirstDetectedAt, LastDetectedAt: matching.LastDetectedAt, State: matching.State}
 	}
 	explanation := buildDebugEvidenceExplanation(item, apiRegression, spans)
 	if regressionErr != nil {

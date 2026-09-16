@@ -4798,6 +4798,37 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
+    patch:
+      tags: [apps]
+      operationId: updateAppDebugRegression
+      summary: Update regression triage state.
+      description: |
+        Acknowledge, temporarily dismiss, resolve, or reopen one
+        deployment/route regression observation. This changes debugger
+        workflow metadata only; it never changes deployment traffic.
+        `dismissed_until` is required only for dismiss and defaults to 24h
+        when omitted. The server caps dismissals at 30 days.
+      x-since: 2026-09
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DebugRegressionActionRequest'
+      responses:
+        '200':
+          description: Updated regression observation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugRegressionActionResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
 
   /v1/apps/{slug}/debug/regressions:
     parameters:
@@ -29049,7 +29080,7 @@ components:
     DebugRegressionItem:
       type: object
       description: "One regression observation row."
-      required: [deployment_id, route, p95_ms, p95_base_ms, affected_count, regression_factor, first_detected_at, last_detected_at]
+      required: [deployment_id, route, p95_ms, p95_base_ms, affected_count, regression_factor, first_detected_at, last_detected_at, state]
       properties:
         deployment_id: { type: string, format: uuid }
         route: { type: string }
@@ -29059,6 +29090,25 @@ components:
         regression_factor: { type: string, description: "Decimal string with up to 2 places, NUMERIC(5,2)." }
         first_detected_at: { type: string, format: date-time }
         last_detected_at: { type: string, format: date-time }
+        state: { type: string, enum: [active, acknowledged, dismissed, resolved] }
+        acknowledged_at: { type: string, format: date-time }
+        dismissed_until: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+
+    DebugRegressionActionRequest:
+      type: object
+      required: [deployment_id, route, action]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        route: { type: string, minLength: 1, maxLength: 256 }
+        action: { type: string, enum: [acknowledge, dismiss, resolve, reopen] }
+        dismissed_until: { type: string, format: date-time, description: "Dismissal expiry; defaults to 24h and is capped at 30d." }
+
+    DebugRegressionActionResponse:
+      type: object
+      required: [regression]
+      properties:
+        regression: { $ref: '#/components/schemas/DebugRegressionItem' }
 
     DebugCompareRequest:
       type: object
