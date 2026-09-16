@@ -48,7 +48,7 @@ import (
 // time of writing:
 //   - server.go:626-633 (org CRUD + member management)
 //   - server.go:835-839 (org-bound API keys, PR 6)
-//   - PR 7: revokeInvitation (DELETE /v1/orgs/{slug}/invitations/{token})
+//   - PR 7: revokeInvitation (DELETE /v1/orgs/{slug}/invitations/{invitation_id})
 //   - getOrgSeatUsage (GET /v1/orgs/{slug}/seat_usage)
 //
 // If the table moves, update this list (the test names the source
@@ -67,7 +67,7 @@ var orgRoutesRequiringAuthorize = []struct {
 	{"DELETE", "/v1/orgs/example-slug/members/user-1"},
 	{"POST", "/v1/orgs/example-slug/transfer_ownership"},
 	// PR 7: invitation revoke + seat-usage visibility.
-	{"DELETE", "/v1/orgs/example-slug/invitations/invite-token-1"},
+	{"DELETE", "/v1/orgs/example-slug/invitations/00000000-0000-0000-0000-000000000001"},
 	{"GET", "/v1/orgs/example-slug/seat_usage"},
 
 	// Org-bound API keys (server.go:835-839, PR 6).

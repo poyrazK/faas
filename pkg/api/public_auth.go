@@ -14,6 +14,10 @@
 
 package api
 
+// AppPublicAuthBasicSealNamespace is the shared secretbox namespace used by
+// apid when sealing Basic credentials and by gatewayd when opening them.
+const AppPublicAuthBasicSealNamespace = "APP_BASIC_AUTH"
+
 // AppPublicAuthBasicMaxBytes bounds the plaintext payload
 // the apid seal step accepts on PATCH mode='basic'.
 // 385 = 128 (basic_user) + 1 (\n) + 256 (basic_pass) —

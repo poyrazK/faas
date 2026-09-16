@@ -43,16 +43,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// publicAuthBasicSealNamespace is the secretbox namespace tag
-// apid stamps onto PATCH mode='basic' ciphertext, mirroring
-// `appWebhookSecretSealLabel = "APP_WEBHOOK"` from
-// handlers_webhooks.go:44. The partner string lives in
-// cmd/gatewayd-internal/public_auth_unsealer.go; a future drift
-// surfaces as a fail-closed decryption at gatewayd-internal boot (the
-// unsealer rejects any sealed blob whose namespace tag doesn't
-// match — see pkg/secretbox.SealBytes SetNamespaces contract).
-const publicAuthBasicSealNamespace = "APP_BASIC_AUTH"
-
 // --- apps CRUD --------------------------------------------------------------
 
 // getApp returns one app by slug.
@@ -926,7 +916,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// splits on the first newline and treats both
 		// halves as required.
 		plaintext := []byte(req.PublicAuth.BasicUser + "\n" + req.PublicAuth.BasicPass)
-		sealed, err := secretbox.SealBytes(recipient, publicAuthBasicSealNamespace, plaintext, api.AppPublicAuthBasicMaxBytes)
+		sealed, err := secretbox.SealBytes(recipient, api.AppPublicAuthBasicSealNamespace, plaintext, api.AppPublicAuthBasicMaxBytes)
 		if err != nil {
 			if prob := api.AsProblem(err); prob != nil {
 				api.WriteProblem(w, prob)

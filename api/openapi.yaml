@@ -15481,8 +15481,8 @@ paths:
       description: |
         Mints a 32-byte plaintext token, hashes it via SHA-256 for
         storage, and returns the plaintext ONCE in the response.
-        The token expires after 14 days; admins can revoke earlier
-        via `DELETE /v1/orgs/{slug}/invitations/{token}` (PR 7 owns
+        The token expires after 14 days; admins can revoke earlier by
+        row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (PR 7 owns
         the accept surface too — see
         `POST /v1/invitations/{token}/accept`). Role cannot be
         `owner`; transfer-ownership is the only path to owner.
@@ -15722,18 +15722,17 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
-  /v1/orgs/{slug}/invitations/{token}:
+  /v1/orgs/{slug}/invitations/{invitation_id}:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
-      - name: token
+      - name: invitation_id
         in: path
         required: true
         description: |
-          Plaintext or base64url-encoded invitation token. The URL
-          is org-scoped here (vs the no-org-scoped peek at
-          `GET /v1/invitations/{token}`), so admin/owner gate fires
-          before the consume path resolves the hash.
-        schema: { type: string }
+          Stable invitation row ID returned by organization invitation list
+          responses. The URL is org-scoped, so an ID from another organization
+          is treated as an invalid invitation.
+        schema: { type: string, format: uuid }
     delete:
       tags: [orgs]
       operationId: revokeInvitation
@@ -15742,11 +15741,11 @@ paths:
         Stamps `revoked_at` on a still-pending invitation via
         `Store.RevokeOrgInvitation`. Owner + admin only
         (`org.invite_members`, symmetric with the create-invite
-        path). Already-consumed / already-revoked / unknown tokens
+        path). Already-consumed / already-revoked / unknown IDs
         collapse to a single `org_invitation_invalid` 410 (don't
         leak which row state was reached). Emits
-        `org.invitation.revoked` with an 8-char token-hash prefix
-        (never the full hash) for dashboard correlation.
+        `org.invitation.revoked` with the stable invitation ID for dashboard
+        correlation. Plaintext tokens and hashes are never written to audit.
       responses:
         '204':
           description: Revoked.
@@ -15759,7 +15758,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '410':
           description: |
-            `410 Gone` — the token is unknown, already consumed,
+            `410 Gone` — the ID is unknown, already consumed,
             or already revoked. Stable code `org_invitation_invalid`.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }

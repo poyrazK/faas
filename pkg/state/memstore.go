@@ -20335,14 +20335,20 @@ func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptin
 	return mem, inv, nil
 }
 
-// RevokeOrgInvitation stamps revoked_at on a still-pending row.
-func (m *MemStore) RevokeOrgInvitation(_ context.Context, hash []byte, _ string) error {
+// RevokeOrgInvitation stamps revoked_at on one org-scoped, still-pending row.
+func (m *MemStore) RevokeOrgInvitation(_ context.Context, orgID, invitationID, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	hashKey := hex.EncodeToString(hash)
-	inv, ok := m.invitations[hashKey]
-	if !ok {
-		return ErrNotFound
+	var hashKey string
+	var inv OrgInvitation
+	for key, candidate := range m.invitations {
+		if candidate.ID == invitationID && candidate.OrgID == orgID {
+			hashKey, inv = key, candidate
+			break
+		}
+	}
+	if hashKey == "" {
+		return ErrOrgInvitationInvalid
 	}
 	if inv.ConsumedAt != nil || inv.RevokedAt != nil {
 		return ErrOrgInvitationInvalid

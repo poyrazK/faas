@@ -459,8 +459,14 @@ func TestPgStore_InvitationOps_AllBranches(t *testing.T) {
 		t.Errorf("ListOrgInvitationsForOrg len = %d, want 1", len(listed))
 	}
 
+	// The row ID is not sufficient on its own: revocation is scoped to the
+	// organization resolved by the authenticated route.
+	if err := s.RevokeOrgInvitation(ctx, "00000000-0000-0000-0000-000000000097", inv.ID, "00000000-0000-0000-0000-000000000099"); !errors.Is(err, ErrOrgInvitationInvalid) {
+		t.Fatalf("RevokeOrgInvitation wrong org: err = %v, want ErrOrgInvitationInvalid", err)
+	}
+
 	// RevokeOrgInvitation happy path.
-	if err := s.RevokeOrgInvitation(ctx, hash[:], "00000000-0000-0000-0000-000000000099"); err != nil {
+	if err := s.RevokeOrgInvitation(ctx, o.ID, inv.ID, "00000000-0000-0000-0000-000000000099"); err != nil {
 		t.Fatalf("RevokeOrgInvitation: %v", err)
 	}
 	got, err = s.OrgInvitationByTokenHash(ctx, hash[:])
@@ -471,11 +477,11 @@ func TestPgStore_InvitationOps_AllBranches(t *testing.T) {
 		t.Errorf("after revoke: RevokedAt is nil")
 	}
 
-	// RevokeOrgInvitation miss path: a token that never existed is
+	// RevokeOrgInvitation miss path: an invitation ID that never existed is
 	// indistinguishable from one already revoked — both report zero
 	// rows updated, which the implementation surfaces as
 	// ErrOrgInvitationInvalid (parity with ConsumeOrgInvitation).
-	if err := s.RevokeOrgInvitation(ctx, []byte("never-stored-x"), "00000000-0000-0000-0000-000000000099"); !errors.Is(err, ErrOrgInvitationInvalid) {
+	if err := s.RevokeOrgInvitation(ctx, o.ID, "00000000-0000-0000-0000-000000000098", "00000000-0000-0000-0000-000000000099"); !errors.Is(err, ErrOrgInvitationInvalid) {
 		t.Errorf("RevokeOrgInvitation miss: err = %v, want ErrOrgInvitationInvalid", err)
 	}
 }

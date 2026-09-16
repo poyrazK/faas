@@ -24448,14 +24448,15 @@ func (s *PgStore) OrgInvitationByTokenHash(ctx context.Context, hash []byte) (Or
 	return scanOrgInvitation(row)
 }
 
-// RevokeOrgInvitation stamps revoked_at on a still-pending row.
-func (s *PgStore) RevokeOrgInvitation(ctx context.Context, hash []byte, _ string) error {
+// RevokeOrgInvitation stamps revoked_at on one org-scoped, still-pending row.
+func (s *PgStore) RevokeOrgInvitation(ctx context.Context, orgID, invitationID, _ string) error {
 	tag, err := s.pool.Exec(ctx, `
 		update org_invitations set revoked_at = now()
-		 where token_hash = $1
+		 where id = $1
+		   and org_id = $2
 		   and consumed_at is null
 		   and revoked_at is null
-	`, hash)
+	`, invitationID, orgID)
 	if err != nil {
 		return fmt.Errorf("state: revoke org invitation: %w", err)
 	}

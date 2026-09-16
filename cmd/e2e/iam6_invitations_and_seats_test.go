@@ -6,10 +6,10 @@
 //
 //   - TestE2E_InvitationAcceptAndRevokeRoundtrip
 //       Owner POSTs /v1/orgs/{slug}/members (mints the
-//       one-time plaintext token); DELETE /v1/orgs/{slug}/
-//       invitations/{token} revokes it. The audit row lands
-//       at the store seam with token_hash_prefix of exactly
-//       8 chars (the security posture). The state row's
+//       one-time plaintext token); the row is listed and DELETE
+//       /v1/orgs/{slug}/invitations/{invitation_id} revokes it.
+//       The audit row identifies the invitation without token-derived
+//       material. The state row's
 //       revoked_at stamp matches the revocation time.
 //
 //   - TestE2E_SeatUsageEndpoint
@@ -21,7 +21,7 @@
 // The accept path requires a second bearer (the invitee) so the
 // whitebox suite (cmd/apid/handlers_org_invitations_test.go) owns
 // the accept-side pin; the roundtrip here exercises the
-// wire-creates-token → wire-revokes-token leg end-to-end and pins
+// wire-creates-token → wire-lists-ID → wire-revokes-ID leg end-to-end and pins
 // the audit + state-row stamps.
 //
 // Build tag: (none). CI-safe. Requires Postgres (skip via
@@ -92,8 +92,8 @@ func findOrgInvitationByEmail(t *testing.T, h *e2etest.Harness, orgID, email str
 // TestE2E_InvitationAcceptAndRevokeRoundtrip drives the
 // create-invite → revoke-invite flow against a real apid. Pins:
 //   - the wire response carries the plaintext token (once)
-//   - the audit row org.invitation.revoked fires with
-//     token_hash_prefix of exactly 8 chars
+//   - the audit row org.invitation.revoked carries the stable row ID
+//     and no token-derived material
 //   - the state row's revoked_at stamp lands within the test window
 func TestE2E_InvitationAcceptAndRevokeRoundtrip(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
@@ -146,9 +146,35 @@ func TestE2E_InvitationAcceptAndRevokeRoundtrip(t *testing.T) {
 		t.Errorf("minted.Status = %q, want pending", minted.Status)
 	}
 
+	// Discover the stable administrative identifier through the list surface;
+	// owners must not need to retain the one-time plaintext token to revoke.
+	listRaw, listStatus := doReq(t, h, key, http.MethodGet,
+		"/v1/orgs/"+shared.Slug+"/invitations", nil,
+		map[string]string{"X-Active-Org": shared.Slug})
+	if listStatus != http.StatusOK {
+		t.Fatalf("list before revoke: %d %s", listStatus, listRaw)
+	}
+	var listed api.InvitationListResponse
+	if err := json.Unmarshal(listRaw, &listed); err != nil {
+		t.Fatalf("decode list before revoke: %v (body=%s)", err, listRaw)
+	}
+	var listedID string
+	for _, invitation := range listed.Invitations {
+		if invitation.Email == minted.Email {
+			listedID = invitation.ID
+			break
+		}
+	}
+	if listedID == "" {
+		t.Fatalf("minted invitation missing from list: %+v", listed.Invitations)
+	}
+	if listedID != minted.ID {
+		t.Fatalf("listed invitation id = %s, want minted id %s", listedID, minted.ID)
+	}
+
 	// Revoke via the wire. Should 204 + emit org.invitation.revoked.
 	revRaw, revStatus := doReq(t, h, key, http.MethodDelete,
-		"/v1/orgs/"+shared.Slug+"/invitations/"+minted.Token,
+		"/v1/orgs/"+shared.Slug+"/invitations/"+listedID,
 		nil,
 		map[string]string{"X-Active-Org": shared.Slug})
 	if revStatus != http.StatusNoContent {
@@ -164,8 +190,35 @@ func TestE2E_InvitationAcceptAndRevokeRoundtrip(t *testing.T) {
 		t.Errorf("ConsumedAt non-nil after revoke; want nil")
 	}
 
+	listRaw, listStatus = doReq(t, h, key, http.MethodGet,
+		"/v1/orgs/"+shared.Slug+"/invitations", nil,
+		map[string]string{"X-Active-Org": shared.Slug})
+	if listStatus != http.StatusOK {
+		t.Fatalf("list after revoke: %d %s", listStatus, listRaw)
+	}
+	listed = api.InvitationListResponse{}
+	if err := json.Unmarshal(listRaw, &listed); err != nil {
+		t.Fatalf("decode list after revoke: %v (body=%s)", err, listRaw)
+	}
+	var revokedStatus string
+	for _, invitation := range listed.Invitations {
+		if invitation.ID == listedID {
+			revokedStatus = invitation.Status
+			break
+		}
+	}
+	if revokedStatus != "revoked" {
+		t.Fatalf("listed invitation status after revoke = %q, want revoked", revokedStatus)
+	}
+
+	peekRaw, peekStatus := doReq(t, h, key, http.MethodGet,
+		"/v1/invitations/"+minted.Token, nil, nil)
+	if peekStatus != http.StatusGone {
+		t.Fatalf("peek revoked token: %d, want 410; body=%s", peekStatus, peekRaw)
+	}
+
 	// Audit seam: ListEvents(org owner's account ID) returns
-	// org.invitation.revoked with token_hash_prefix of 8 chars.
+	// org.invitation.revoked with the stable invitation row ID.
 	ownerAcct, err := store.AccountByEmail(ctx, seedEmail(api.PlanPro, "pr7-rtrip"))
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -191,9 +244,11 @@ func TestE2E_InvitationAcceptAndRevokeRoundtrip(t *testing.T) {
 	if data["org_id"] != shared.ID {
 		t.Errorf("data.org_id = %v, want %s", data["org_id"], shared.ID)
 	}
-	prefix, _ := data["token_hash_prefix"].(string)
-	if len(prefix) != 8 {
-		t.Errorf("data.token_hash_prefix = %q (len %d), want 8 chars", prefix, len(prefix))
+	if data["invitation_id"] != minted.ID {
+		t.Errorf("data.invitation_id = %v, want %s", data["invitation_id"], minted.ID)
+	}
+	if _, exists := data["token_hash_prefix"]; exists {
+		t.Error("audit event exposes token_hash_prefix")
 	}
 }
 

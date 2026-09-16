@@ -5647,10 +5647,11 @@ type Store interface {
 	// the consumed invitation row.
 	ConsumeOrgInvitation(ctx context.Context, hash []byte, acceptingAccount Account) (OrgMembership, OrgInvitation, error)
 
-	// RevokeOrgInvitation stamps revoked_at = now() if the row is
-	// still pending. Returns ErrOrgInvitationInvalid when the
-	// invitation is already consumed or revoked.
-	RevokeOrgInvitation(ctx context.Context, hash []byte, byAccountID string) error
+	// RevokeOrgInvitation stamps revoked_at = now() on the org-scoped row ID
+	// exposed by invitation list responses. Returns ErrOrgInvitationInvalid
+	// when the invitation is unknown, consumed, revoked, or belongs to a
+	// different organization.
+	RevokeOrgInvitation(ctx context.Context, orgID, invitationID, byAccountID string) error
 
 	// ListOrgInvitationsForOrg returns every invitation row
 	// (regardless of state) ordered by created_at desc. The

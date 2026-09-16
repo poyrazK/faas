@@ -394,19 +394,23 @@ func TestMemStore_RevokeOrgInvitation(t *testing.T) {
 		TokenHash: tokenHash[:],
 		ExpiresAt: timeNow().Add(time.Hour),
 	}
-	if _, err := m.CreateOrgInvitation(ctx, inv); err != nil {
+	created, err := m.CreateOrgInvitation(ctx, inv)
+	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if err := m.RevokeOrgInvitation(ctx, tokenHash[:], "irrelevant"); err != nil {
+	if err := m.RevokeOrgInvitation(ctx, "wrong-org", created.ID, "irrelevant"); !errors.Is(err, ErrOrgInvitationInvalid) {
+		t.Fatalf("wrong-org revoke: err = %v, want ErrOrgInvitationInvalid", err)
+	}
+	if err := m.RevokeOrgInvitation(ctx, org.ID, created.ID, "irrelevant"); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	// Revoking a revoked/expired invitation is ErrOrgInvitationInvalid
 	// (matches the PgStore contract where the UPDATE matches 0 rows).
-	if err := m.RevokeOrgInvitation(ctx, tokenHash[:], "irrelevant"); !errors.Is(err, ErrOrgInvitationInvalid) {
+	if err := m.RevokeOrgInvitation(ctx, org.ID, created.ID, "irrelevant"); !errors.Is(err, ErrOrgInvitationInvalid) {
 		t.Errorf("re-revoke: err = %v, want ErrOrgInvitationInvalid", err)
 	}
-	if err := m.RevokeOrgInvitation(ctx, []byte("never-existed"), "x"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("missing token revoke: err = %v, want ErrNotFound", err)
+	if err := m.RevokeOrgInvitation(ctx, org.ID, "never-existed", "x"); !errors.Is(err, ErrOrgInvitationInvalid) {
+		t.Errorf("missing invitation revoke: err = %v, want ErrOrgInvitationInvalid", err)
 	}
 }
 

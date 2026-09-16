@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // recordingNotifier is a fake Notifier that lets the test inject
@@ -49,7 +50,8 @@ func TestEvents_FiltersByAccount(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	notif := newRecordingNotifier()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(e.store, log, "gregale.dev", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "").handler()
+	srv := newServerWithDeps(e.store, log, "gregale.dev", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "").
+		WithOpsMetrics(context.Background(), wire.NewOpsMetrics("apid_sse_observe_test")).handler()
 
 	res := make(chan string, 1)
 	go func() {

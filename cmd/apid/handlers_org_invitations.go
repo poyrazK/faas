@@ -4,7 +4,7 @@
 // Mounted at:
 //   - GET    /v1/invitations/{token}                       peekInvitation
 //   - POST   /v1/invitations/{token}/accept                acceptInvitation
-//   - DELETE /v1/orgs/{slug}/invitations/{token}           revokeInvitation
+//   - DELETE /v1/orgs/{slug}/invitations/{invitation_id}   revokeInvitation
 //   - POST   /v1/orgs/{slug}/transfer_ownership            transferOrgOwnership
 //
 // The invitation-create handler (POST /v1/orgs/{slug}/members) lives
@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/cursor"
@@ -253,10 +254,9 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, acct s
 // The store enforces ErrOrgInvitationInvalid when the row is
 // already consumed / revoked / unknown.
 //
-// Mounted at DELETE /v1/orgs/{slug}/invitations/{token}. The
-// plaintext token hash is logged with an 8-char prefix only — the
-// full hash is never written to the audit table (mirrors the
-// secret.set posture at handlers_secrets.go).
+// Mounted at DELETE /v1/orgs/{slug}/invitations/{invitation_id}. The stable
+// row ID comes from the invitation list; plaintext tokens remain confined to
+// peek and accept flows.
 func (s *server) revokeInvitation(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.requireOrgAction(w, r, authz.OrgActionInviteMembers) {
 		return
@@ -265,19 +265,13 @@ func (s *server) revokeInvitation(w http.ResponseWriter, r *http.Request, acct s
 	if !ok {
 		return
 	}
-	token := r.PathValue("token")
-	if token == "" {
+	invitationID := r.PathValue("invitation_id")
+	if _, err := uuid.Parse(invitationID); err != nil {
 		api.WriteProblem(w, api.ErrOrgInvitationInvalid())
 		return
 	}
-	plaintext, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		api.WriteProblem(w, api.ErrOrgInvitationInvalid())
-		return
-	}
-	hash := sha256.Sum256(plaintext)
 
-	if err := s.store.RevokeOrgInvitation(r.Context(), hash[:], acct.ID); err != nil {
+	if err := s.store.RevokeOrgInvitation(r.Context(), mem.OrgID, invitationID, acct.ID); err != nil {
 		switch {
 		case errors.Is(err, state.ErrOrgInvitationInvalid), errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, api.ErrOrgInvitationInvalid())
@@ -289,12 +283,8 @@ func (s *server) revokeInvitation(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	s.audit.Emit(r.Context(), "org.invitation.revoked", &acct.ID, map[string]any{
-		"org_id": mem.OrgID,
-		// 8-char prefix is enough for the dashboard to link the
-		// revoke row back to the create row; full hash would let
-		// an attacker pivot to the token if the audit table is
-		// ever exfiltrated.
-		"token_hash_prefix": base64.RawURLEncoding.EncodeToString(hash[:])[:8],
+		"org_id":        mem.OrgID,
+		"invitation_id": invitationID,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

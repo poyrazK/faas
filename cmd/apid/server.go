@@ -1189,7 +1189,7 @@ func (s *server) handler() http.Handler {
 	//   - org-scoped (s.loadOrg mounted inside scope wrapper):
 	//     GET/PATCH/DELETE /v1/orgs/{slug}, /v1/orgs/{slug}/members[/...],
 	//     /v1/orgs/{slug}/transfer_ownership,
-	//     /v1/orgs/{slug}/invitations/{token} (revoke),
+	//     /v1/orgs/{slug}/invitations/{invitation_id} (revoke),
 	//     /v1/orgs/{slug}/seat_usage (PR 7 visibility-only)
 	// PR 9 ships the per-seat billing cut-over (pricing + Stripe
 	// subscription-item quantities) per ADR-061 §"Out of scope";
@@ -1216,7 +1216,7 @@ func (s *server) handler() http.Handler {
 	// Compose order mirrors POST /v1/orgs/{slug}/transfer_ownership
 	// (server.go:655): authLimited → requireMFA → requireStepUpStrict.
 	mux.HandleFunc("POST /v1/invitations/{token}/accept", s.authLimited(s.requireMFA(s.requireStepUpStrict(5*time.Minute)(s.acceptInvitation))))
-	mux.HandleFunc("DELETE /v1/orgs/{slug}/invitations/{token}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.revokeInvitation)))))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}/invitations/{invitation_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.revokeInvitation)))))
 	// PR-8 §2: list invitations surface (cursor-paginated, every role).
 	mux.HandleFunc("GET /v1/orgs/{slug}/invitations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgInvitations)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/seat_usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrgSeatUsage)))))
@@ -3186,6 +3186,15 @@ type observeWriter struct {
 func (o *observeWriter) WriteHeader(s int) {
 	o.status = s
 	o.ResponseWriter.WriteHeader(s)
+}
+
+// Unwrap lets http.ResponseController reach optional interfaces implemented
+// by the underlying server writer.
+func (o *observeWriter) Unwrap() http.ResponseWriter { return o.ResponseWriter }
+
+// Flush preserves SSE and other streaming handlers through the metrics layer.
+func (o *observeWriter) Flush() {
+	_ = http.NewResponseController(o.ResponseWriter).Flush()
 }
 
 // observeErrFromStatus maps a route's terminal status code to an

@@ -42,18 +42,10 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
-
-// publicAuthNamespace is the secretbox namespace the apid
-// seal step writes under (issue #477 / ADR-079). The
-// prefix-on-blob layout means OpenBytesMulti returns this
-// string back; the adapter checks it matches as a defense
-// against a future seal-side namespace drift (a
-// double-seal between APP_BASIC_AUTH and APP_WEBHOOK
-// would silently authenticate if we didn't).
-const publicAuthNamespace = "app_basic_auth"
 
 // publicAuthUnsealer is the production implementation of
 // gateway.PublicAuthUnsealer. Holds a stable snapshot of
@@ -112,7 +104,7 @@ func (u *publicAuthUnsealer) UnsealBasicAuth(ctx context.Context, sealed []byte)
 	if err != nil {
 		return "", "", err
 	}
-	if namespace != publicAuthNamespace {
+	if namespace != api.AppPublicAuthBasicSealNamespace {
 		return "", "", errPublicAuthNamespaceMismatch
 	}
 	// The on-blob layout is "<username>\n<password>\n" —

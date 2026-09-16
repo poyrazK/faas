@@ -250,12 +250,7 @@ func TestE2E_OrgLifecycle_HappyPath(t *testing.T) {
 	// invitations doesn't trip later (we don't enforce a cap in
 	// PR 5 since OrgPendingInvitationsMax is 0/0, but it's
 	// cleaner to leave the system in a deterministic state).
-	plaintext, err := base64.RawURLEncoding.DecodeString(inv.Token)
-	if err != nil {
-		t.Fatalf("decode token: %v", err)
-	}
-	hash := sha256.Sum256(plaintext)
-	if err := store.RevokeOrgInvitation(ctx, hash[:], aliceAcct.ID); err != nil {
+	if err := store.RevokeOrgInvitation(ctx, acmeID, inv.ID, aliceAcct.ID); err != nil {
 		t.Fatalf("RevokeOrgInvitation: %v", err)
 	}
 
@@ -544,7 +539,7 @@ func TestE2E_OrgLifecycle_PeekTerminalStates(t *testing.T) {
 
 	t.Run("revoked", func(t *testing.T) {
 		token, inv := mint(t, "revoked")
-		if err := store.RevokeOrgInvitation(ctx, inv.TokenHash, aliceAcct.ID); err != nil {
+		if err := store.RevokeOrgInvitation(ctx, inv.OrgID, inv.ID, aliceAcct.ID); err != nil {
 			t.Fatalf("RevokeOrgInvitation: %v", err)
 		}
 		probe(t, token)

@@ -39,29 +39,31 @@ import (
 
 // seedInvitationForPrincipal creates a pending invitation for the
 // supplied principal account at the given org/role. The plaintext
-// token is the SHA-256-input the store will hash; the returned
-// wireToken is the base64url-encoded form that goes into the URL
-// path. The store enforces email-match inside ConsumeOrgInvitation
+// token is the SHA-256 input the store will look up; the returned
+// wireToken is the base64url-encoded form used by peek and accept,
+// while invitation carries the stable row ID used by revoke.
+// The store enforces email-match inside ConsumeOrgInvitation
 // — the seed MUST use the accepting account's email or the accept
 // path returns ErrOrgInvitationInvalid.
-func seedInvitationForPrincipal(t *testing.T, store *state.MemStore, org *state.Org, ownerID, acceptingEmail string, role state.OrgRole) (wireToken string, hash []byte) {
+func seedInvitationForPrincipal(t *testing.T, store *state.MemStore, org *state.Org, ownerID, acceptingEmail string, role state.OrgRole) (wireToken string, invitation state.OrgInvitation) {
 	t.Helper()
 	plaintext := make([]byte, 32)
 	for i := range plaintext {
 		plaintext[i] = byte(i + 1)
 	}
 	sum := sha256.Sum256(plaintext)
-	if _, err := store.CreateOrgInvitation(context.Background(), state.OrgInvitation{
+	created, err := store.CreateOrgInvitation(context.Background(), state.OrgInvitation{
 		OrgID:              org.ID,
 		Email:              acceptingEmail,
 		Role:               role,
 		TokenHash:          sum[:],
 		ExpiresAt:          time.Now().Add(time.Hour),
 		InvitedByAccountID: &ownerID,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("CreateOrgInvitation: %v", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(plaintext), sum[:]
+	return base64.RawURLEncoding.EncodeToString(plaintext), created
 }
 
 // seedInvitationNonce is the nonce-aware twin of
@@ -213,15 +215,15 @@ func TestAuditEvents_OrgInvitationAcceptedEmitsEvent(t *testing.T) {
 }
 
 // TestAuditEvents_OrgInvitationRevokedEmitsEvent (PR 7) drives
-// DELETE /v1/orgs/{slug}/invitations/{token} via the org owner and
-// asserts org.invitation.revoked lands with token_hash_prefix of
-// exactly 8 chars (the security posture — never log the full hash).
+// DELETE /v1/orgs/{slug}/invitations/{invitation_id} via the org owner and
+// asserts org.invitation.revoked identifies the row without exposing token
+// material.
 func TestAuditEvents_OrgInvitationRevokedEmitsEvent(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	org := seedSharedOrgWithOwner(t, e, "acme-pr7-rev", "Acme PR7 Rev", api.PlanPro)
-	wireToken, _ := seedInvitationForPrincipal(t, e.store, &org, e.acct.ID, "rev-target@acme.test", state.OrgRoleDeveloper)
+	_, invitation := seedInvitationForPrincipal(t, e.store, &org, e.acct.ID, "rev-target@acme.test", state.OrgRoleDeveloper)
 
-	rec := e.do(t, http.MethodDelete, "/v1/orgs/"+org.Slug+"/invitations/"+wireToken, nil, map[string]string{
+	rec := e.do(t, http.MethodDelete, "/v1/orgs/"+org.Slug+"/invitations/"+invitation.ID, nil, map[string]string{
 		"X-Active-Org": org.Slug,
 	})
 	if rec.Code != http.StatusNoContent {
@@ -244,9 +246,11 @@ func TestAuditEvents_OrgInvitationRevokedEmitsEvent(t *testing.T) {
 	if data["org_id"] != org.ID {
 		t.Errorf("data.org_id = %v, want %s", data["org_id"], org.ID)
 	}
-	prefix, _ := data["token_hash_prefix"].(string)
-	if len(prefix) != 8 {
-		t.Errorf("data.token_hash_prefix = %q (len %d), want 8 chars (security: never log full hash)", prefix, len(prefix))
+	if data["invitation_id"] != invitation.ID {
+		t.Errorf("data.invitation_id = %v, want %s", data["invitation_id"], invitation.ID)
+	}
+	if _, exists := data["token_hash_prefix"]; exists {
+		t.Error("audit event exposes token_hash_prefix")
 	}
 }
 
@@ -361,12 +365,11 @@ func TestAcceptInvitation_AlreadyMemberSurfacesExistingRole(t *testing.T) {
 func TestAcceptInvitation_GateFiresBeforeEmit(t *testing.T) {
 	e, cookie := setupWithSessionFreshStepUpForTest(t)
 	org := seedSharedOrgWithOwner(t, e, "acme-pr7-rev2", "Acme PR7 Rev2", api.PlanPro)
-	wireToken, hash := seedInvitationForPrincipal(t, e.store, &org, e.acct.ID, e.acct.Email, state.OrgRoleDeveloper)
+	wireToken, invitation := seedInvitationForPrincipal(t, e.store, &org, e.acct.ID, e.acct.Email, state.OrgRoleDeveloper)
 
 	// Pre-revoke the invitation so the consume tx fires the
-	// already-revoked branch. RevokeOrgInvitation takes the SHA-256
-	// hash (NOT the plaintext) — see memstore.go:8977.
-	if err := e.store.RevokeOrgInvitation(context.Background(), hash, e.acct.ID); err != nil {
+	// already-revoked branch.
+	if err := e.store.RevokeOrgInvitation(context.Background(), org.ID, invitation.ID, e.acct.ID); err != nil {
 		t.Fatalf("pre-revoke: %v", err)
 	}
 

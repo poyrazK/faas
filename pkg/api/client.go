@@ -4527,12 +4527,11 @@ func (c *Client) AcceptInvitation(ctx context.Context, token string) (OrgMemberR
 	return out, c.do(ctx, "POST", "/v1/invitations/"+token+"/accept", nil, &out)
 }
 
-// RevokeInvitation stamps revoked_at on a still-pending invitation.
-// Owner + admin only (org.invite_members, symmetric with
-// InviteOrgMember). Emits `org.invitation.revoked` with an 8-char
-// token-hash prefix (never the full hash).
-func (c *Client) RevokeInvitation(ctx context.Context, slug, token string) error {
-	return c.do(ctx, "DELETE", "/v1/orgs/"+slug+"/invitations/"+token, nil, nil)
+// RevokeInvitation stamps revoked_at on the org-scoped invitation row ID
+// returned by list operations. Plaintext tokens are accepted only by the
+// separate peek and accept flows.
+func (c *Client) RevokeInvitation(ctx context.Context, slug, invitationID string) error {
+	return c.do(ctx, "DELETE", "/v1/orgs/"+slug+"/invitations/"+invitationID, nil, nil)
 }
 
 // ListOrgInvitationsAll walks the next_before cursor on
