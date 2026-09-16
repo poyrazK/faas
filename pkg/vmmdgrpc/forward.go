@@ -649,8 +649,10 @@ func resolveRawBridgePath() (string, error) {
 //
 // The bridge that owns the guest TCP socket is the new
 // vmmd-raw-bridge Go binary (cmd/vmmd-raw-bridge/), spawned by
-// vmmd under the stream context via `ip netns exec <netns>
-// vmmd-raw-bridge <ip> <port>`. The Go binary replaces the bash
+// vmmd under the stream context via `nsenter --target <firecracker-pid>
+// --net -- vmmd-raw-bridge <ip> <port>`. The live PID is the same
+// namespace handle used by production diagnostics and cannot resolve to a
+// stale named-netns mount. The Go binary replaces the bash
 // /dev/tcp pattern with explicit Go netns entry + net.Dial + a
 // framing protocol that sends the HTTP response head first
 // (status line + headers + blank line) and then raw body bytes —
@@ -690,9 +692,13 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	s.beginActivity(reqInit.GetInstance())
 	defer s.endActivity(reqInit.GetInstance())
 
-	netnsName, ok := s.vmm.NetnsFor(reqInit.GetInstance())
+	_, ok := s.vmm.NetnsFor(reqInit.GetInstance())
 	if !ok {
 		return status.Errorf(codes.NotFound, "instance %q not live", reqInit.GetInstance())
+	}
+	instancePID, ok := s.vmm.InstancePID(reqInit.GetInstance())
+	if !ok || instancePID <= 0 {
+		return status.Errorf(codes.NotFound, "instance %q has no live network namespace", reqInit.GetInstance())
 	}
 	dialPort := reqInit.GetPort()
 	if dialPort == 0 {
@@ -704,7 +710,7 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	// the handler stays under the CLAUDE.md 50-line cap and the
 	// individual concerns (process lifecycle, streaming, error
 	// mapping) are testable in isolation.
-	cmd, stdinR, stdinW, stdoutR, stderr, err := rawBridgeSpawn(stream.Context(), netnsName, dialPort)
+	cmd, stdinR, stdinW, stdoutR, stderr, err := rawBridgeSpawn(stream.Context(), instancePID, dialPort)
 	if err != nil {
 		return err
 	}
@@ -764,7 +770,10 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 }
 
 // rawBridgeSpawn resolves the vmmd-raw-bridge binary path, opens
-// the stdio pipes, and starts the bridge under `ip netns exec`.
+// the stdio pipes, and starts the bridge in the live Firecracker process's
+// network namespace. The PID is the authoritative production handle: named
+// /run/netns entries can survive as stale mount points and make
+// `ip netns exec` fail with EINVAL even while the instance is healthy.
 // Returns the running *exec.Cmd + the pipe ends + the stderr
 // capture buffer. Callers own stdinR/stdoutR (close on exit) and
 // stdinW (closed by the body-loop goroutine on its own exit).
@@ -776,7 +785,7 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 // the legacy shell bridge's `sh -c <inline-script>` TOCTOU-free
 // property is preserved — the resolved file is opened by
 // execve(2) before the kernel unlinks its inode can race us.
-func rawBridgeSpawn(ctx context.Context, netnsName string, dialPort uint32) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
+func rawBridgeSpawn(ctx context.Context, instancePID int, dialPort uint32) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
 	bridgePath, err := resolveRawBridgePath()
 	if err != nil {
 		return nil, nil, nil, nil, nil, status.Errorf(codes.FailedPrecondition, "raw bridge path: %v", err)
@@ -797,8 +806,7 @@ func rawBridgeSpawn(ctx context.Context, netnsName string, dialPort uint32) (*ex
 		return nil, nil, nil, nil, nil, status.Errorf(codes.Internal, "stdout pipe: %v", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", netnsName,
-		bridgePath, netns.GuestIP, strconv.FormatUint(uint64(dialPort), 10))
+	cmd := rawBridgeCommand(ctx, instancePID, bridgePath, dialPort)
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
 	var stderr bytes.Buffer
@@ -815,6 +823,11 @@ func rawBridgeSpawn(ctx context.Context, netnsName string, dialPort uint32) (*ex
 	// Closing stdoutW after cmd.Wait ensures the pipe reader sees EOF.
 	defer func() { _ = stdoutW.Close() }()
 	return cmd, stdinR, stdinW, stdoutR, &stderr, nil
+}
+
+func rawBridgeCommand(ctx context.Context, instancePID int, bridgePath string, dialPort uint32) *exec.Cmd {
+	return exec.CommandContext(ctx, "nsenter", "--target", strconv.Itoa(instancePID), "--net", "--",
+		bridgePath, netns.GuestIP, strconv.FormatUint(uint64(dialPort), 10))
 }
 
 // rawBridgeBodyLoop copies inbound body_chunks → bridge stdin.

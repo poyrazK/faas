@@ -34,8 +34,8 @@
 //	4 = read/write error on the guest socket
 //
 // The binary is intentionally tiny: a few hundred lines. It runs
-// inside the per-instance netns via `ip netns exec <netns>
-// vmmd-raw-bridge <ip> <port>` and inherits stdin/stdout from the
+// inside the per-instance netns via `nsenter --target <firecracker-pid>
+// --net -- vmmd-raw-bridge <ip> <port>` and inherits stdin/stdout from the
 // parent process, so the gRPC handler's pipe plumbing is the
 // natural carry.
 package main
@@ -79,7 +79,7 @@ func main() {
 	}
 
 	// 1. Dial the guest. The bridge is already inside the per-instance
-	//    netns (via `ip netns exec <netns> vmmd-raw-bridge ...`), so
+	//    netns (via `nsenter --target <firecracker-pid> --net -- ...`), so
 	//    the 10.0.0.2/30 inner network is directly reachable.
 	d := net.Dialer{Timeout: dialTimeout}
 	conn, err := d.Dial("tcp", net.JoinHostPort(ip, strconv.FormatUint(port, 10)))
