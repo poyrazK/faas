@@ -4798,38 +4798,6 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
-    patch:
-      tags: [apps]
-      operationId: updateAppDebugRegression
-      summary: Update regression triage state.
-      description: |
-        Acknowledge, temporarily dismiss, resolve, or reopen one
-        deployment/route regression observation. This changes debugger
-        workflow metadata only; it never changes deployment traffic.
-        `dismissed_until` is required only for dismiss and defaults to 24h
-        when omitted. The server caps dismissals at 30 days.
-      x-since: 2026-09
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DebugRegressionActionRequest'
-      responses:
-        '200':
-          description: Updated regression observation.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DebugRegressionActionResponse'
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
-
   /v1/apps/{slug}/debug/regressions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -4861,6 +4829,37 @@ paths:
                 $ref: '#/components/schemas/DebugRegressionsResponse'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
+    patch:
+      tags: [apps]
+      operationId: updateAppDebugRegression
+      summary: Update regression triage state.
+      description: |
+        Acknowledge, temporarily dismiss, resolve, or reopen one
+        deployment/route regression observation. This changes debugger
+        workflow metadata only; it never changes deployment traffic.
+        `dismissed_until` is required only for dismiss and defaults to 24h
+        when omitted. The server caps dismissals at 30 days.
+      x-since: 2026-09
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DebugRegressionActionRequest'
+      responses:
+        '200':
+          description: Updated regression observation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugRegressionActionResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
