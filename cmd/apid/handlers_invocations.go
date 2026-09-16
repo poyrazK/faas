@@ -71,7 +71,7 @@ func decodeJSONLimit(w http.ResponseWriter, r *http.Request, dst any, maxBytes i
 		return false
 	}
 	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			api.WriteProblem(w, api.ErrPlanSourceBytes(int(maxBytes), int64(maxBytes)))

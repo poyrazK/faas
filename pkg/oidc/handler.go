@@ -125,7 +125,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			api.WriteProblem(w, api.ErrRequestBodyTooLarge(maxExchangeBodyBytes, maxExchangeBodyBytes+1))
