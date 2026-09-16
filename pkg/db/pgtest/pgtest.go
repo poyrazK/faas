@@ -51,6 +51,23 @@ func Open(t *testing.T) *pgxpool.Pool {
 		boot.Close()
 		t.Skipf("pgtest: Postgres not reachable (%v); skipping", err)
 	}
+	// Refuse to run on a cluster whose public schema has been migrated. With
+	// search_path=<schema>,public an unqualified goose_db_version in a fresh
+	// schema resolves to public's, goose reports "no migrations to run", and
+	// the schema stays empty — an intermittent failure in whichever package
+	// happens to be migrating at the time (pg shard 2a, run 35150622499). The
+	// only source is a test migrating public on the shared cluster; make that
+	// fail HERE, by name, rather than somewhere else at random.
+	if migrated, err := schemaHasLedger(ctx, boot, "public"); err != nil {
+		boot.Close()
+		t.Fatalf("pgtest: inspect public schema: %v", err)
+	} else if migrated {
+		boot.Close()
+		t.Fatal("pgtest: the shared cluster's public schema has a migration ledger; some test " +
+			"migrated public. Every other test's fresh schema now resolves public.goose_db_version " +
+			"through search_path and is left empty. Use pgtest.Open (isolated schema) or " +
+			"pgtest.OpenMigrated (private template database) instead of migrating public.")
+	}
 	if _, err := boot.Exec(ctx, fmt.Sprintf("create schema %s", schema)); err != nil {
 		boot.Close()
 		t.Fatalf("pgtest: create schema: %v", err)
@@ -219,4 +236,12 @@ func WaitForMigration(t *testing.T, pool *pgxpool.Pool, targetVersion int64, dea
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// schemaHasLedger reports whether schema carries a goose migration ledger.
+func schemaHasLedger(ctx context.Context, pool *pgxpool.Pool, schema string) (bool, error) {
+	var found bool
+	err := pool.QueryRow(ctx,
+		`SELECT to_regclass($1) IS NOT NULL`, schema+".goose_db_version").Scan(&found)
+	return found, err
 }

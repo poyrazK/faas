@@ -22,9 +22,7 @@
 // (PaddleOverageDedupeSchema at pgstore.go:9713) hard-codes
 // `to_regclass('public.paddle_overage_dedupe')` — the B4 pre-flight
 // is public-schema-shaped because production runs against public.
-// To exercise that probe honestly, the test must migrate into
-// public. openPublicSchema does that, with a t.Cleanup drop so
-// other tests aren't polluted.
+// openPublicSchema (below) gives each test an isolated, migrated schema.
 //
 // Build tag mirrors the rest of pkg/state pgtests: !no_pg so the
 // FAAS_SKIP_PG_TESTS=1 escape hatch still works.
@@ -42,6 +40,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 // TestPgStorePaddleOverageDedupeSchema_PostApply is the happy
@@ -123,7 +122,7 @@ func TestPgStorePaddleOverageDedupeSchema_PreApply_ReturnsTableMissing(t *testin
 		t.Fatalf("db.MigrateUp: %v", err)
 	}
 
-	if _, err := pool.Exec(ctx, `drop table if exists public.paddle_overage_dedupe`); err != nil {
+	if _, err := pool.Exec(ctx, `drop table if exists paddle_overage_dedupe`); err != nil {
 		t.Fatalf("drop paddle_overage_dedupe: %v", err)
 	}
 
@@ -169,45 +168,28 @@ func uniqueEmail(label string) string {
 // PreApply drop-table assertion.
 //
 // Honours FAAS_SKIP_PG_TESTS=1 — same escape hatch as pgtest.Open.
+// openPublicSchema returns a pool whose public schema the caller may migrate.
+//
+// The probe under test inspects PUBLIC by name, so it genuinely needs a
+// migrated public — but never the SHARED cluster's. This test used to migrate
+// public on the shared cluster, and every other package's pgtest schema
+// (search_path=<schema>,public) then resolved public.goose_db_version, goose
+// reported "no migrations to run", and the schema stayed empty — the
+// intermittent `relation "accounts" does not exist` failures in pg shard 2a
+// (run 35150622499). pgtest.Open now refuses to start on a cluster whose
+// public has been migrated, so that cannot come back quietly.
+//
+// pgtest.OpenMigrated hands out a PRIVATE database cloned from a migrated
+// template when FAAS_PGTEST_TEMPLATE_DATABASE is set (CI sets it). Its public
+// is migrated, it is ours alone, and it is dropped afterwards. Without the
+// flag OpenMigrated falls back to an isolated schema, where a public-by-name
+// probe cannot see its table, so the test declines rather than migrate the
+// shared public to compensate.
 func openPublicSchema(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	if os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
-		t.Skip("FAAS_SKIP_PG_TESTS set; skipping Postgres integration test")
+	if os.Getenv(pgtest.UseTemplateDatabase) == "" {
+		t.Skipf("needs a private database (set %s=1, as CI does): the probe reads public by name, "+
+			"and migrating the shared cluster's public poisons every other package", pgtest.UseTemplateDatabase)
 	}
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres:///faas?host=/run/postgresql&user=faas"
-	}
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Skipf("openPublicSchema: cannot parse DATABASE_URL (%v); skipping", err)
-	}
-	if cfg.ConnConfig.RuntimeParams == nil {
-		cfg.ConnConfig.RuntimeParams = map[string]string{}
-	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = "public"
-	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
-	if err != nil {
-		t.Skipf("openPublicSchema: connect (%v); skipping", err)
-	}
-	if err := pool.Ping(context.Background()); err != nil {
-		pool.Close()
-		t.Skipf("openPublicSchema: ping (%v); skipping", err)
-	}
-	t.Cleanup(func() {
-		// Best-effort cleanup of every table in public so the
-		// next test invocation sees an empty database. The
-		// citext extension stays — it's shared across runs.
-		_, _ = pool.Exec(context.Background(),
-			`do $$ declare r record; begin
-			    for r in select tablename from pg_tables where schemaname = 'public' loop
-			      execute format('drop table if exists public.%I cascade', r.tablename);
-			    end loop;
-			  end $$`)
-		func() {
-			defer func() { _ = recover() }()
-			pool.Close()
-		}()
-	})
-	return pool
+	return pgtest.OpenMigrated(t)
 }
