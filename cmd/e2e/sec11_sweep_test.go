@@ -201,6 +201,11 @@ func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 		"DATABASE_URL=" + dbURL,
 		"FAAS_SKIP_SOCKET_GROUP=1",      // harness convention; see harness.go:498
 		"FAAS_APP_ERRORS_ENABLED=false", // harness convention; see pkg/e2etest/harness.go:804 — ADR-096 / PR-B default-on kill-switch probes `faas-apid` unix user (config.go:144-149) which doesn't exist in the CI runner, so the gRPC listener never boots. Production deploys run as `faas-apid` via systemd and remain default-on; reader-path handlers (cmd/apid/handlers_app_errors.go) read from the SQL store regardless of the listener state.
+		// The request-telemetry gRPC listener is independent from app
+		// errors. Keep this direct-apid helper on the same opt-out as the
+		// shared e2e harness; telemetry-specific tests can override it via
+		// extra after this base environment.
+		"FAAS_REQUEST_TELEMETRY_ENABLED=false",
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
 		"FAAS_APPS_DOMAIN=apps.test.example",
