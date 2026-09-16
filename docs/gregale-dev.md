@@ -43,6 +43,8 @@ gregale dev status             # show developer-environment quota usage
 gregale dev --no-logs          # keep the watcher quiet for scripts
 gregale dev --open             # open the verified dev URL after the first live sync
 gregale dev --env-file .env.dev # opt in to syncing local config as secrets
+gregale dev --postgres         # provision an isolated database and inject DATABASE_URL
+gregale dev --postgres --postgres-region eu-central-1 # choose database placement
 gregale dev --once --json      # emit one machine-readable edit-to-live receipt
 ```
 
@@ -59,6 +61,14 @@ Changes to the file trigger the same debounced redeploy as source edits. The
 file itself is excluded from the source archive, including when it lives inside
 the watched directory. Use `gregale secrets unset --app <slug> KEY` when a key
 must be removed intentionally.
+
+`--postgres` provisions one development-class, scale-to-zero PostgreSQL
+database for this local workspace and binds its sealed credential to the
+developer app as `DATABASE_URL`. The database is reused on later starts, and
+the binding is refreshed asynchronously if the provider is still provisioning.
+The safe database and binding states appear in human output and `--json`
+receipts; credentials and connection URLs never do. `--stop` and the 24-hour
+developer lease clean up the binding and database together.
 
 Watch mode attaches one app-level runtime log stream after the first live sync.
 It follows the stable developer URL across later redeploys, prefixes lines with

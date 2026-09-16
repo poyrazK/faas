@@ -50,6 +50,15 @@ type Service struct {
 	maxDatabasesPerAccount func(context.Context, string) (int, error)
 }
 
+// DefaultRegion returns the operator-configured placement used when a
+// higher-level workflow does not ask for a specific region.
+func (s *Service) DefaultRegion() string {
+	if s == nil || s.registry == nil {
+		return ""
+	}
+	return s.registry.DefaultRegion
+}
+
 type CreateRequest struct {
 	AccountID string
 	Name      string

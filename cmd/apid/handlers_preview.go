@@ -71,6 +71,10 @@ func (s *server) destroyPreview(w http.ResponseWriter, r *http.Request, acct sta
 // destroyPreviewApp applies the shared preview tombstone ordering used by
 // both GitHub previews and CLI-managed developer sessions.
 func (s *server) destroyPreviewApp(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, auditKind string) {
+	if err := s.cleanupDevPostgres(r.Context(), app); err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
 	if _, err := s.store.SetPreviewPrState(r.Context(), app.ID, state.PreviewPrStateTornDown); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			// Race: the row vanished between loadApp and the

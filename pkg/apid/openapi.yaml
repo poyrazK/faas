@@ -18708,6 +18708,29 @@ components:
           type: string
           pattern: '^[a-f0-9]{32}$'
           description: Opaque identity derived locally from the CLI installation and canonical source path. Omit only for legacy sessions.
+        postgres:
+          $ref: '#/components/schemas/DevPostgresRequest'
+
+    DevPostgresRequest:
+      description: Opts the developer environment into an isolated managed PostgreSQL database.
+      type: object
+      properties:
+        region:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+          description: Optional placement region; omitted uses the platform default.
+
+    DevPostgresResponse:
+      description: Safe receipt for the isolated developer database and its app binding. Credentials are injected into DATABASE_URL and never returned.
+      type: object
+      required: [database_id, name, state, binding_id, binding_state, environment_key]
+      properties:
+        database_id: { type: string }
+        name: { type: string }
+        state: { type: string, enum: [provisioning, ready, updating, deleting, failed, deleted] }
+        binding_id: { type: string }
+        binding_state: { type: string, enum: [provisioning, ready, deleting, failed, deleted] }
+        environment_key: { type: string, example: DATABASE_URL }
 
     DevSessionResponse:
       description: Stable remote developer workspace and its renewable lease.
@@ -18716,6 +18739,7 @@ components:
       properties:
         app: { $ref: '#/components/schemas/AppResponse' }
         expires_at: { type: string, format: date-time }
+        postgres: { $ref: '#/components/schemas/DevPostgresResponse' }
 
     UpdateAppRequest:
       description: "Partial update — every field is optional; omitted fields are unchanged."

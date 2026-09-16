@@ -2101,7 +2101,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Preview teardown is independent of the optional app-error writer. Keep
 	// the janitor outside that feature gate so disabling the gRPC listener in
 	// development or CI cannot strand expired preview applications.
-	go newPreviewJanitor(srv.store, srv.notif, srv.ops, log, true).Run(ctx)
+	go newPreviewJanitor(srv.store, srv.notif, srv.ops, log, true).
+		withResourceCleanup(srv.cleanupDevPostgres).Run(ctx)
 
 	// ADR-127 PR-B: gatewayd-internal → apid
 	// IncrementRequestTelemetry streaming RPC. This data-plane surface is

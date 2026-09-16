@@ -36,11 +36,14 @@ func resolveDevSourceConfig(sourceDir string) (devSourceConfig, error) {
 	return devSourceConfig{shape: resolvedShape, runtime: runtime, handler: handler}, nil
 }
 
-func (c devSourceConfig) sessionRequest(workspaceID string) api.UpsertDevSessionRequest {
+func (c devSourceConfig) sessionRequest(workspaceID string, withPostgres bool, postgresRegion string) api.UpsertDevSessionRequest {
 	req := api.UpsertDevSessionRequest{WorkspaceID: workspaceID}
 	if c.shape == shapeFunction {
 		req.Type = devSessionFunction
 		req.Runtime = c.runtime
+	}
+	if withPostgres {
+		req.Postgres = &api.DevPostgresRequest{Region: postgresRegion}
 	}
 	return req
 }
@@ -288,12 +291,14 @@ func cmdDev(args []string) int {
 	stop := fs.Bool("stop", false, "tear down this project's developer environment")
 	noLogs := fs.Bool("no-logs", false, "do not attach the live runtime log stream")
 	open := fs.Bool("open", false, "open the developer environment URL after the first live sync")
+	withPostgres := fs.Bool("postgres", false, "provision an isolated PostgreSQL database and inject DATABASE_URL")
+	postgresRegion := fs.String("postgres-region", "", "managed PostgreSQL region (default: platform default)")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs] [--open]", "dev")
+		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs] [--open]", "dev")
+		PrintUsage(osStderr, "usage: gregale dev [--path DIR] [--name PROJECT] [--env-file PATH] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION]]", "dev")
 		return 1
 	}
 	if *once && *stop {
@@ -304,6 +309,9 @@ func cmdDev(args []string) int {
 	}
 	if *stop && *envFile != "" {
 		return printErr("Invalid flags", fmt.Errorf("--env-file cannot be combined with --stop"))
+	}
+	if !*withPostgres && *postgresRegion != "" {
+		return printErr("Invalid flags", fmt.Errorf("--postgres-region requires --postgres"))
 	}
 
 	cwd, err := os.Getwd()
@@ -361,13 +369,16 @@ func cmdDev(args []string) int {
 		return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 	}
 
-	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID))
+	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
 	if !jsonOutput {
 		PrintOK(osStdout, "Developer environment: %s", session.App.URL)
 		PrintProgress(osStdout, "lease expires %s after the latest sync", session.ExpiresAt.Local().Format(time.RFC822))
+		if session.Postgres != nil {
+			PrintProgress(osStdout, "PostgreSQL: %s (%s); %s is injected when the binding is ready", session.Postgres.Name, session.Postgres.BindingState, session.Postgres.EnvironmentKey)
+		}
 	}
 
 	ctx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -421,6 +432,7 @@ func cmdDev(args []string) int {
 			}
 			started := time.Now()
 			devTelemetry := newDevPhaseTracker()
+			devTelemetry.setPostgres(session.Postgres)
 			execution := deployExecution{
 				prefixBuildLogs:  true,
 				streamLogsOnJSON: true,
@@ -499,7 +511,7 @@ func cmdDev(args []string) int {
 		waitForChange: waitForChange,
 		resolve:       resolveDevSourceConfig,
 		refresh: func(config devSourceConfig) error {
-			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID))
+			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion))
 			if refreshErr == nil {
 				session = refreshed
 			}

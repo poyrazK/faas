@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // The development loop already has all of the server-side stage signals. This
@@ -41,17 +43,19 @@ type devPhaseTiming struct {
 }
 
 // devSyncReceipt is the machine-readable contract emitted by `gregale dev
-// --json`. It intentionally contains only timings and a deployment id; source
-// paths, environment values, and application logs never enter the receipt.
+// --json`. It intentionally contains only timings, a deployment id, and safe
+// resource metadata; source paths, environment values, credentials, and
+// application logs never enter the receipt.
 type devSyncReceipt struct {
-	SchemaVersion int              `json:"schema_version"`
-	Type          string           `json:"type"`
-	DeploymentID  string           `json:"deployment_id,omitempty"`
-	Status        string           `json:"status"`
-	EditToLiveMS  int64            `json:"edit_to_live_ms"`
-	SLOTargetMS   int64            `json:"slo_target_ms"`
-	WithinSLO     bool             `json:"within_slo"`
-	Phases        []devPhaseTiming `json:"phases"`
+	SchemaVersion int                      `json:"schema_version"`
+	Type          string                   `json:"type"`
+	DeploymentID  string                   `json:"deployment_id,omitempty"`
+	Status        string                   `json:"status"`
+	EditToLiveMS  int64                    `json:"edit_to_live_ms"`
+	SLOTargetMS   int64                    `json:"slo_target_ms"`
+	WithinSLO     bool                     `json:"within_slo"`
+	Phases        []devPhaseTiming         `json:"phases"`
+	Postgres      *api.DevPostgresResponse `json:"postgres,omitempty"`
 }
 
 type devPhaseTracker struct {
@@ -61,6 +65,7 @@ type devPhaseTracker struct {
 	started        map[string]time.Time
 	timings        map[string]devPhaseTiming
 	routeStartedAt time.Time
+	postgres       *api.DevPostgresResponse
 }
 
 func newDevPhaseTracker() *devPhaseTracker {
@@ -78,6 +83,11 @@ func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
 	deploymentID, timings := t.snapshot()
 	t.mu.Lock()
 	startedAt := t.startedAt
+	var postgres *api.DevPostgresResponse
+	if t.postgres != nil {
+		copy := *t.postgres
+		postgres = &copy
+	}
 	t.mu.Unlock()
 	editToLive := time.Since(startedAt)
 	if editToLive < 0 {
@@ -92,7 +102,18 @@ func (t *devPhaseTracker) receipt(status string) devSyncReceipt {
 		SLOTargetMS:   devEditToLiveTarget.Milliseconds(),
 		WithinSLO:     editToLive <= devEditToLiveTarget,
 		Phases:        timings,
+		Postgres:      postgres,
 	}
+}
+
+func (t *devPhaseTracker) setPostgres(postgres *api.DevPostgresResponse) {
+	if t == nil || postgres == nil {
+		return
+	}
+	t.mu.Lock()
+	copy := *postgres
+	t.postgres = &copy
+	t.mu.Unlock()
 }
 
 func (t *devPhaseTracker) setDeploymentID(id string) {

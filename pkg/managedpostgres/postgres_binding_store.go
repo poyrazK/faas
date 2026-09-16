@@ -78,7 +78,7 @@ func (s *PostgresStore) ReserveBinding(ctx context.Context, binding Binding) (Bi
 	if databaseAccountID != binding.AccountID {
 		return Binding{}, false, ErrNotFound
 	}
-	if State(databaseState) != StateReady {
+	if State(databaseState) != StateReady && State(databaseState) != StateProvisioning {
 		return Binding{}, false, ErrConflict
 	}
 

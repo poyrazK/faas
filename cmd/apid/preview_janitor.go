@@ -145,6 +145,7 @@ type previewJanitorNotifier interface {
 type previewJanitor struct {
 	store   previewJanitorStore
 	notif   previewJanitorNotifier
+	cleanup func(context.Context, state.App) error
 	ops     *wire.OpsMetrics
 	log     *slog.Logger
 	now     func() time.Time // test seam for TTL advance
@@ -170,6 +171,15 @@ func newPreviewJanitor(store previewJanitorStore, notif previewJanitorNotifier, 
 //	j := newPreviewJanitor(...).withClock(func() time.Time { ... })
 func (j *previewJanitor) withClock(now func() time.Time) *previewJanitor {
 	j.now = now
+	return j
+}
+
+// withResourceCleanup attaches optional resource teardown to the same
+// tombstone boundary as the preview app. Keeping it optional preserves the
+// janitor's small test seam while allowing developer environments to reclaim
+// bound data resources with their app lease.
+func (j *previewJanitor) withResourceCleanup(cleanup func(context.Context, state.App) error) *previewJanitor {
+	j.cleanup = cleanup
 	return j
 }
 
@@ -341,6 +351,11 @@ func (j *previewJanitor) transition(row state.App, now time.Time) (string, trans
 // delete button uses. The payload is a JSON object matching
 // the existing app-delete contract (pkg/db/notify.go).
 func (j *previewJanitor) tombstone(ctx context.Context, row state.App) error {
+	if j.cleanup != nil {
+		if err := j.cleanup(ctx, row); err != nil {
+			return fmt.Errorf("cleanup preview resources: %w", err)
+		}
+	}
 	if _, err := j.store.SetPreviewPrState(ctx, row.ID, state.PreviewPrStateTornDown); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return nil

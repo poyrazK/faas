@@ -15,6 +15,7 @@ import (
 type BindingServiceOptions struct {
 	LeaseDuration       time.Duration
 	ProviderTimeout     time.Duration
+	RetryInterval       time.Duration
 	ProvisioningEnabled func() bool
 	// ProvisioningAllowed optionally narrows an enabled rollout to specific
 	// accounts. It is intended for staging canaries; deletion remains
@@ -37,6 +38,7 @@ type BindingService struct {
 	sink                CredentialSink
 	leaseDuration       time.Duration
 	providerTimeout     time.Duration
+	retryInterval       time.Duration
 	provisioningEnabled func() bool
 	provisioningAllowed func(context.Context, string) bool
 	now                 func() time.Time
@@ -63,13 +65,16 @@ func NewBindingService(registry *Registry, databases Store, bindings BindingStor
 	if options.ProviderTimeout == 0 {
 		options.ProviderTimeout = defaultProviderTimeout
 	}
+	if options.RetryInterval == 0 {
+		options.RetryInterval = defaultPollInterval
+	}
 	if options.ProvisioningEnabled == nil {
 		options.ProvisioningEnabled = func() bool { return false }
 	}
 	if options.ProvisioningAllowed == nil {
 		options.ProvisioningAllowed = func(context.Context, string) bool { return true }
 	}
-	if options.LeaseDuration < time.Second || options.ProviderTimeout < time.Second {
+	if options.LeaseDuration < time.Second || options.ProviderTimeout < time.Second || options.RetryInterval < time.Second {
 		return nil, ErrInvalid
 	}
 	if options.Now == nil {
@@ -88,6 +93,7 @@ func NewBindingService(registry *Registry, databases Store, bindings BindingStor
 		sink:                sink,
 		leaseDuration:       options.LeaseDuration,
 		providerTimeout:     options.ProviderTimeout,
+		retryInterval:       options.RetryInterval,
 		provisioningEnabled: options.ProvisioningEnabled,
 		provisioningAllowed: options.ProvisioningAllowed,
 		now:                 options.Now,
@@ -146,6 +152,15 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	if binding.State == BindingStateDeleting || binding.State == BindingStateDeleted {
 		return Binding{}, false, ErrConflict
 	}
+	// A database may still be provisioning. Reserve the durable binding now so
+	// the binding reconciler can inject DATABASE_URL as soon as it is ready.
+	database, databaseErr := s.databases.Get(ctx, request.AccountID, request.DatabaseID)
+	if databaseErr != nil {
+		return binding, created, databaseErr
+	}
+	if database.State == StateProvisioning {
+		return binding, created, nil
+	}
 	ready, err := s.Reconcile(ctx, request.AccountID, binding.ID)
 	if err != nil {
 		// Preserve the reserved row identity so callers can compensate a
@@ -182,6 +197,9 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	database, err := s.databases.Get(ctx, accountID, binding.DatabaseID)
 	if err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "database_unavailable", normalizeProviderError(err), time.Hour)
+	}
+	if database.State == StateProvisioning {
+		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateProvisioning, "database_not_ready", ErrConflict, s.retryInterval)
 	}
 	if database.State != StateReady || database.ProviderResourceID == "" {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "database_not_ready", ErrConflict, time.Hour)
@@ -241,6 +259,11 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateDeleting, "backend_unavailable", ErrUnavailable, time.Hour)
 	}
 	if database.ProviderResourceID == "" {
+		// No provider credential can exist before the database has a provider
+		// resource. Finish the durable binding deletion locally.
+		return s.finishDelete(ctx, binding)
+	}
+	if database.State == StateProvisioning {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateDeleting, "database_not_ready", ErrConflict, time.Hour)
 	}
 

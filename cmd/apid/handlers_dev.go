@@ -104,8 +104,13 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		s.audit.Emit(r.Context(), "dev_session.refreshed", &acct.ID, map[string]any{
 			"app_id": refreshed.ID, "slug": refreshed.Slug, "project": project, "workspace_id": req.WorkspaceID,
 		})
+		postgres, postgresErr := s.ensureDevPostgres(r.Context(), acct, refreshed, req.Postgres)
+		if postgresErr != nil {
+			managedPostgresProblem(w, postgresErr)
+			return
+		}
 		writeJSON(w, http.StatusOK, api.DevSessionResponse{
-			App: s.appResponse(refreshed, acct.Plan), ExpiresAt: expiresAt,
+			App: s.appResponse(refreshed, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
 		})
 		return
 	} else if !errors.Is(err, state.ErrNotFound) {
@@ -142,8 +147,13 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 			s.audit.Emit(r.Context(), "dev_session.refreshed", &acct.ID, map[string]any{
 				"app_id": refreshed.ID, "slug": refreshed.Slug, "project": project, "workspace_id": req.WorkspaceID,
 			})
+			postgres, postgresErr := s.ensureDevPostgres(r.Context(), acct, refreshed, req.Postgres)
+			if postgresErr != nil {
+				managedPostgresProblem(w, postgresErr)
+				return
+			}
 			writeJSON(w, http.StatusOK, api.DevSessionResponse{
-				App: s.appResponse(refreshed, acct.Plan), ExpiresAt: expiresAt,
+				App: s.appResponse(refreshed, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
 			})
 			return
 		default:
@@ -157,8 +167,13 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 	})
 	s.log.Info("developer session created", "app", created.ID,
 		"slug", logsanitize.Field(created.Slug), "account", acct.ID)
+	postgres, postgresErr := s.ensureDevPostgres(r.Context(), acct, created, req.Postgres)
+	if postgresErr != nil {
+		managedPostgresProblem(w, postgresErr)
+		return
+	}
 	writeJSON(w, http.StatusCreated, api.DevSessionResponse{
-		App: s.appResponse(created, acct.Plan), ExpiresAt: expiresAt,
+		App: s.appResponse(created, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres,
 	})
 }
 

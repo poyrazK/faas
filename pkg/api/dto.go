@@ -186,17 +186,37 @@ type CreateAppRequest struct {
 // CLI-managed developer preview. The project identity lives in the URL path;
 // WorkspaceID separates developers and local source trees within that project.
 type UpsertDevSessionRequest struct {
-	Type        string `json:"type,omitempty"`         // "app" (default) | "function"
-	Runtime     string `json:"runtime,omitempty"`      // required for functions
-	WorkspaceID string `json:"workspace_id,omitempty"` // opaque, CLI-derived local workspace identity
+	Type        string              `json:"type,omitempty"`         // "app" (default) | "function"
+	Runtime     string              `json:"runtime,omitempty"`      // required for functions
+	WorkspaceID string              `json:"workspace_id,omitempty"` // opaque, CLI-derived local workspace identity
+	Postgres    *DevPostgresRequest `json:"postgres,omitempty"`
+}
+
+// DevPostgresRequest opts a developer session into an isolated managed
+// PostgreSQL database. The connection credential is injected into the app's
+// secret environment; it is never returned over this API.
+type DevPostgresRequest struct {
+	Region string `json:"region,omitempty"`
+}
+
+// DevPostgresResponse is the non-sensitive receipt for an automatically
+// managed developer database and its app binding.
+type DevPostgresResponse struct {
+	DatabaseID     string `json:"database_id"`
+	Name           string `json:"name"`
+	State          string `json:"state"`
+	BindingID      string `json:"binding_id"`
+	BindingState   string `json:"binding_state"`
+	EnvironmentKey string `json:"environment_key"`
 }
 
 // DevSessionResponse is returned when a developer preview is created or its
 // lease is refreshed. App.URL is the stable browser URL for this account and
 // developer workspace; ExpiresAt is renewed whenever the CLI syncs source.
 type DevSessionResponse struct {
-	App       AppResponse `json:"app"`
-	ExpiresAt time.Time   `json:"expires_at"`
+	App       AppResponse          `json:"app"`
+	ExpiresAt time.Time            `json:"expires_at"`
+	Postgres  *DevPostgresResponse `json:"postgres,omitempty"`
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
