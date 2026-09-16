@@ -80,3 +80,30 @@ func envOrLocalBackend() string {
 	}
 	return "local"
 }
+
+// OverrideDeployBase points imaged's runtime ("deploy") base at stubRef — but
+// only on a host that cannot resolve a real one.
+//
+// Exactly the same defect as OverrideBuilderBase, one variable over, and it
+// only became visible once the builder-base override stopped firing first.
+// imaged validates every base it stages, and the runtime base has its own
+// required paths:
+//
+//	imaged: reconcile assigned minimal base: imaged: stage runtime base
+//	(.../onebox-faas/deploy-base:latest → base/base-amd64.ext4): imaged:
+//	validate base ext4 "base/base-amd64.ext4": required path /bin/busybox
+//	missing from ...: File not found by ext2_lookup
+//
+// The stub deploy-base is a single synthetic layer and has no /bin/busybox,
+// /sbin/init, /bin/sh or /etc/passwd, so imaged exits at boot and every
+// deployment in these tests times out in `building` — the same 14 failures,
+// re-attributed from the builder base to the runtime base.
+func OverrideDeployBase(t *testing.T, stubRef string) {
+	t.Helper()
+	if HasRealBuilderBase() {
+		t.Logf("e2etest: host can resolve real bases (backend=%q); not overriding the runtime base",
+			envOrLocalBackend())
+		return
+	}
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", stubRef)
+}

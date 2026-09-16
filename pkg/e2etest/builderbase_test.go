@@ -106,3 +106,30 @@ func TestOverrideBuilderBase_OCIBackendIsCaseInsensitive(t *testing.T) {
 		t.Errorf("FAAS_STORAGE_BACKEND=%q was not recognised as OCI; override applied (%q)", "OCI", got)
 	}
 }
+
+// The runtime base has the same defect as the builder base, one variable over.
+func TestOverrideDeployBase_OCIBackendCountsAsARealBase(t *testing.T) {
+	t.Setenv("FAAS_STORAGE_BACKEND", "oci")
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", "")
+
+	OverrideDeployBase(t, "127.0.0.1:5000/onebox-faas/deploy-base:latest")
+
+	if got := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); got != "" {
+		t.Errorf("override applied on an OCI-backend host: FAAS_TEST_DEPLOY_BASE_REF=%q. "+
+			"The stub has no /bin/busybox, so imaged exits at boot validating "+
+			"base/base-amd64.ext4.", got)
+	}
+}
+
+func TestOverrideDeployBase_AppliesWhenNoBaseIsAvailable(t *testing.T) {
+	t.Setenv("FAAS_STORAGE_BACKEND", "local")
+	t.Setenv("FAAS_BUILDER_BASE_PATH", filepath.Join(t.TempDir(), "absent.ext4"))
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", "")
+
+	const stub = "127.0.0.1:5000/onebox-faas/deploy-base:latest"
+	OverrideDeployBase(t, stub)
+
+	if got := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); got != stub {
+		t.Errorf("FAAS_TEST_DEPLOY_BASE_REF = %q, want the stub %q", got, stub)
+	}
+}

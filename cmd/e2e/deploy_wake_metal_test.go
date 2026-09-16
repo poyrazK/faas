@@ -103,7 +103,7 @@ func TestDeployWakeMetal(t *testing.T) {
 	// to discard it and hand-build a tag, so imaged died on every one of
 	// these tests and the failure surfaced later as a deploy timeout.
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.Start(t, pool, e2etest.DeployWake)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)

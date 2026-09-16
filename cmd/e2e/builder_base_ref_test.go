@@ -105,7 +105,7 @@ func TestMetalTestsDoNotSetTheBuilderBaseOverrideDirectly(t *testing.T) {
 		t.Fatalf("glob: %v", err)
 	}
 
-	direct := regexp.MustCompile(`Setenv\(\s*"FAAS_TEST_BUILDER_BASE_REF"`)
+	direct := regexp.MustCompile(`Setenv\(\s*"FAAS_TEST_(BUILDER|DEPLOY)_BASE_REF"`)
 
 	var bad []string
 	for _, f := range files {
@@ -121,9 +121,9 @@ func TestMetalTestsDoNotSetTheBuilderBaseOverrideDirectly(t *testing.T) {
 		}
 	}
 	if len(bad) > 0 {
-		t.Errorf("these tests set FAAS_TEST_BUILDER_BASE_REF directly, which replaces a "+
-			"real builder base with a stub imaged rejects at boot: %s\n"+
-			"Call e2etest.OverrideBuilderBase(t, ref) instead.",
+		t.Errorf("these tests set a base-ref override directly, which replaces a real "+
+			"base with a stub imaged rejects at boot: %s\n"+
+			"Call e2etest.OverrideBuilderBase / OverrideDeployBase instead.",
 			strings.Join(bad, ", "))
 	}
 }
