@@ -82,6 +82,11 @@ type installBindRequest struct {
 	InstallationID   int64  `json:"installation_id"`
 	RepoFullName     string `json:"repo_full_name"`
 	ProductionBranch string `json:"production_branch"`
+	// CSRFToken is part of the browser bind envelope and is verified by
+	// VerifyAuthenticatedNamed before the request reaches this handler.
+	// Keep it in the decoded shape so strict JSON decoding does not reject
+	// the legitimate middleware field.
+	CSRFToken string `json:"csrf_token"`
 	// DeployBranches maps GitHub branches to named deployment scopes. A
 	// non-nil empty map deliberately clears the existing routing rules.
 	DeployBranches map[string]string `json:"deploy_branches"`
