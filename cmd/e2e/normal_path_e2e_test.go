@@ -57,6 +57,8 @@
 //   map a queued platform-budget expiry to the canonical 504 problem.
 //   distribute warm traffic across live sibling instances and fail over away
 //   from a stale bridge target when a replacement is published.
+//   isolate a live 0%-traffic candidate, apply live traffic weight changes
+//   through the API, observe pg_notify refresh, and roll the split back.
 //   carry the http1/http2/grpc app-protocol selector through the bridge,
 //   including grpc trailers.
 //   keep guest hop-by-hop response headers off the customer-facing response.

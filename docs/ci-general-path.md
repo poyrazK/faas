@@ -62,6 +62,7 @@ The current contract is intentionally small and high-signal:
 | `TestE2E_NormalPath_QueuedAdmissionBudgetExpiryReturns504` | a platform-owned budget expiry while admission is queued returns the canonical 504 problem |
 | `TestE2E_NormalPath_TrafficSpreadsAcrossLiveInstances` | Postgres target hydration and round-robin routing reach multiple live siblings |
 | `TestE2E_NormalPath_StaleInstanceFailsOverAndReplacementRejoins` | a stale VMMD target is evicted while a healthy sibling continues serving and a replacement re-enters rotation |
+| `TestE2E_NormalPath_TrafficSplitUpdatesAndRollsBack` | live 0%-candidate isolation, API weight changes, pg_notify refresh, weighted routing, and rollback |
 | `TestE2E_NormalPath_AppProtocolMatrix` | `http1`, `http2`, and `grpc` selectors reach VMMD; gRPC trailers remain trailers |
 | `TestE2E_NormalPath_GuestHopByHopHeadersAreNotExposed` | guest connection-management headers are filtered at the customer response boundary |
 
