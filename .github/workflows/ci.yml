@@ -1106,6 +1106,7 @@ jobs:
           cd deploy/ansible
           COLLECTIONS_PATH="${RUNNER_TEMP}/ansible-collections"
           export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_PATH}"
+          echo "ANSIBLE_COLLECTIONS_PATH=${COLLECTIONS_PATH}" >> "${GITHUB_ENV}"
           # ansible-core can retain a malformed Galaxy response cache on a
           # hosted runner. Do not let that cache turn this repository contract
           # into an unrelated infrastructure failure.
