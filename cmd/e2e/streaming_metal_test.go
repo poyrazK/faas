@@ -121,10 +121,10 @@ func TestE2E_Streaming_Metal_TTFBUnder1s(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
+	if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, sourceDeployLiveDeadline()); err != nil {
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
 		t.Fatalf("no parked instance: %v", err)
 	}
 
@@ -211,10 +211,10 @@ func TestE2E_Streaming_Metal_TxBytesAccuracy(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
+	if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, sourceDeployLiveDeadline()); err != nil {
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
 		t.Fatalf("no parked instance: %v", err)
 	}
 
@@ -321,10 +321,10 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 			defer cancel()
-			if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
+			if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
 				t.Fatalf("deployment did not reach live: %v", err)
 			}
-			if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, sourceDeployLiveDeadline()); err != nil {
+			if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
 				t.Fatalf("no parked instance: %v", err)
 			}
 
@@ -413,10 +413,10 @@ func TestE2E_Streaming_Metal_QuotaNonCounting(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
+	if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, sourceDeployLiveDeadline()); err != nil {
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
 		t.Fatalf("no parked instance: %v", err)
 	}
 
@@ -536,10 +536,10 @@ func TestE2E_Streaming_Metal_H2CInnerLeg(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
+	if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, sourceDeployLiveDeadline()); err != nil {
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
 		t.Fatalf("no parked instance: %v", err)
 	}
 

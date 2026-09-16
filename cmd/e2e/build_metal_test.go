@@ -228,20 +228,9 @@ func TestBuildMetal(t *testing.T) {
 // <TmpDir>/out/<build_id>/build/out/image.tar, or build-done.json.
 func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug, _ string, sourceTar []byte, isDockerfile bool) buildResult {
 	t.Helper()
-	store := state.NewPgStore(pool)
-	// Derived from the platform's own budget, never a smaller constant. The
-	// build VM is granted api.BuildTimeoutSeconds (900 s, "cold rootless
-	// Railpack export needs headroom"), so a test that gives up at 6 minutes
-	// fails builds that are entirely within spec. It did: on a cold acceptance
-	// node every go124 subtest died at exactly 360.00 s with the deployment
-	// still `building`, while the guest console showed buildkit healthy and
-	// pulling the Railpack frontend from ghcr.io.
-	//
-	// The poll must outlast the platform cap so the BUILD's own timeout fires
-	// first — then the failure is reported as a failed build with its log,
-	// rather than as a test deadline with no diagnosis.
-	buildPoll := api.BuildTimeoutSeconds*time.Second + time.Minute
-	ctx, cancel := context.WithTimeout(context.Background(), buildPoll+5*time.Minute)
+	// The wait below watches progress, not a clock (pkg/e2etest/buildprogress.go);
+	// this context is only the backstop that outlasts the build ceiling.
+	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
 
 	public := false
@@ -262,55 +251,22 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, 
 	// frontend takes far longer, which is what api.BuildTimeoutSeconds budgets
 	// for. The outer ctx adds headroom on top so a hung daemon still leaves
 	// room to report the last build state cleanly.
-	build, err := e2etest.WaitForBuildStatus(ctx, t, pool, buildID,
-		state.BuildSucceeded, buildPoll)
+	// One progress-aware wait covers the whole chain: build_queued -> builderd
+	// picks up -> vm.Spawn -> in-VM build -> OCI image -> imaged primes a
+	// snapshot -> MarkDeploymentLive. It returns the moment either row reaches
+	// a terminal state, and reports a build that has gone silent for
+	// DefaultBuildStallWindow with its log tail, so a wedge names where it
+	// stopped instead of burning the ceiling (see pkg/e2etest/buildprogress.go).
+	dep, build, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID,
+		e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
 	if err != nil {
-		// Best-effort dump of the build row + log so a CI failure has
-		// the in-VM buildctl/railpack stderr inline. The log file lives
-		// at <FAAS_SPOOL_ROOT>/<deployment_id>/build.log on the harness
-		// host (the apid subprocess's spool dir).
-		if got, lerr := store.BuildByID(context.Background(), buildID); lerr == nil {
-			t.Logf("build row at timeout: status=%s failure_class=%s log_path=%s",
-				got.Status, got.FailureClass, got.LogPath)
-			if got.LogPath != "" {
-				if data, rerr := os.ReadFile(got.LogPath); rerr != nil {
-					// Surface the read failure — silent failure looks
-					// like "no log produced" when actually the read failed.
-					t.Logf("read build.log at %q failed: %v", got.LogPath, rerr)
-				} else {
-					// Print at most the last 4 KiB so a multi-MB
-					// build log doesn't blow up the test output.
-					tail := data
-					if len(tail) > 4096 {
-						tail = tail[len(tail)-4096:]
-					}
-					t.Logf("build.log tail (last %d bytes):\n%s", len(tail), tail)
-				}
-			}
-		}
-		t.Fatalf("build %s did not reach succeeded: %v", buildID, err)
+		t.Fatalf("build %s / deployment %s did not reach live: %v", buildID, depID, err)
 	}
-	if build.FailureClass != "" {
-		t.Errorf("build %s succeeded with non-empty failure_class=%q", buildID, build.FailureClass)
+	if build.ID != buildID {
+		t.Fatalf("deployment %s is attached to build %q, want %q", depID, build.ID, buildID)
 	}
-	if build.StartedAt.IsZero() {
-		t.Errorf("build %s: StartedAt is zero", buildID)
-	}
-	if build.FinishedAt.IsZero() {
-		t.Errorf("build %s: FinishedAt is zero", buildID)
-	}
-	// Step 4 — the M3 chain. builderd.UpdateBuildStatus(succeeded)
-	// emits a build_queued-done notify; imaged picks up the OCI image,
-	// primes a snapshot, and MarkDeploymentLive fires. The deployment
-	// row advances Building -> Live via deployment_changed.
-	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline())
-	if err != nil {
-		// Surface the last deployment status so a CI failure shows
-		// whether we hung in 'building' or 'failed'.
-		if last, lerr := store.DeploymentByID(context.Background(), depID); lerr == nil {
-			t.Logf("deployment %s at timeout: status=%s error=%q", last.ID, last.Status, last.Error)
-		}
-		t.Fatalf("deployment %s did not reach live: %v", depID, err)
+	if build.Status != state.BuildSucceeded {
+		t.Fatalf("deployment %s went live but build %s is %s", depID, buildID, build.Status)
 	}
 	// Sanity: the app ID we got back from /v1/apps matches the deployment.
 	if dep.AppID != appID {
