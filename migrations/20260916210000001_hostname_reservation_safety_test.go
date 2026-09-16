@@ -9,12 +9,16 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestHostnameReservationSafetyMigration(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.OpenMigrated(t)
+	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	accountID := seedAccount(t, ctx, pool)
 	reserved := []string{
 		"account", "admin", "api", "assets", "billing", "cdn", "console",

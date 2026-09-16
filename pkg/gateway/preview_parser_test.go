@@ -6,6 +6,7 @@
 //
 // Issue #272 / ADR-095 = PreviewScopeFromHost (pr-{N}.{slug}.{suffix}).
 // Issue #976 / ADR-122 = DeploymentScopeFromHost (deploy-{N}-{slug}.{suffix}).
+// adr: 122
 
 package gateway
 
