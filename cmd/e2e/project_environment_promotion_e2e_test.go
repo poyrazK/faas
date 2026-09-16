@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -187,16 +188,28 @@ func assertPromotionProblem(t *testing.T, h *e2etest.Harness, key, method, path 
 	}
 }
 
+func reportPromotionE2EFailure(t *testing.T, stage *string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if t.Failed() {
+			fmt.Printf("::error title=promotion E2E failure::failed during %s\n", *stage)
+		}
+	})
+}
+
 // TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback covers the
 // full successful operation through real apid HTTP routes. It deliberately
 // includes both promotion shapes: api replaces an existing production
 // deployment and worker creates its first production deployment.
 func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing.T) {
+	stage := "fixture setup"
+	reportPromotionE2EFailure(t, &stage)
 	f := newProjectEnvironmentPromotionFixture(t, "route")
 	if f == nil {
 		return
 	}
 	ctx := context.Background()
+	stage = "promotion preview"
 	previewPath := "/v1/projects/" + f.project.Slug + "/environments/production/promotion-preview?from=staging"
 	raw, status := doReq(t, f.h, f.key, http.MethodGet, previewPath, nil)
 	if status != http.StatusOK {
@@ -224,6 +237,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 		t.Fatalf("preview omitted promotion identity: %+v", preview)
 	}
 
+	stage = "approval and promotion"
 	promotePath := "/v1/projects/" + f.project.Slug + "/environments/production/promote"
 	promoteRequest := api.PromoteProjectEnvironmentRequest{
 		FromEnvironment: "staging", PromotionToken: preview.PromotionToken,
@@ -300,6 +314,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 		t.Fatalf("promoted sidecars=%+v", layers)
 	}
 
+	stage = "promotion idempotency replay"
 	raw, status = doReq(t, f.h, f.key, http.MethodPost, promotePath, promoteRequest,
 		map[string]string{"Idempotency-Key": "promotion-route-1"})
 	if status != http.StatusOK || string(raw) != string(firstPromotionBody) {
@@ -317,6 +332,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 		t.Fatalf("idempotent replay created deployments: api=%d worker=%d", len(apiDeployments), len(workerDeployments))
 	}
 
+	stage = "promotion status verification"
 	statusPath := "/v1/projects/" + f.project.Slug + "/environments/production/promotions/" + promoted.PromotionID
 	raw, status = doReq(t, f.h, f.key, http.MethodGet, statusPath, nil)
 	if status != http.StatusOK {
@@ -336,6 +352,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 		t.Fatalf("worker verification=%+v", got)
 	}
 
+	stage = "promotion rollback"
 	rollbackPath := statusPath + "/rollback"
 	raw, status = doReq(t, f.h, f.key, http.MethodPost, rollbackPath, nil,
 		map[string]string{"Idempotency-Key": "promotion-route-rollback-1"})
@@ -366,6 +383,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 	if _, err := f.store.LiveDeploymentForScope(ctx, f.workerApp.ID, "production"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("worker live deployment after rollback: err=%v, want not found", err)
 	}
+	stage = "rollback idempotency replay"
 	raw, status = doReq(t, f.h, f.key, http.MethodPost, rollbackPath, nil,
 		map[string]string{"Idempotency-Key": "promotion-route-rollback-1"})
 	if status != http.StatusOK || string(raw) != string(firstRollbackBody) {
@@ -377,11 +395,14 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 // check between preview and execution. A source release change must reject
 // the old token before any target deployment or promotion record is created.
 func TestE2E_ProjectEnvironmentPromotion_StalePreviewRejected(t *testing.T) {
+	stage := "fixture setup"
+	reportPromotionE2EFailure(t, &stage)
 	f := newProjectEnvironmentPromotionFixture(t, "stale")
 	if f == nil {
 		return
 	}
 	ctx := context.Background()
+	stage = "stale preview rejection"
 	previewPath := "/v1/projects/" + f.project.Slug + "/environments/production/promotion-preview?from=staging"
 	raw, status := doReq(t, f.h, f.key, http.MethodGet, previewPath, nil)
 	if status != http.StatusOK {
