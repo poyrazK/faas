@@ -198,41 +198,27 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 		startAPID(t, h, bin, dbURL)
 	}
 
-	if which&Schedd != 0 {
-		sockPath := filepath.Join(h.SockDir, "schedd.sock")
-		vmmdSock := os.Getenv("FAAS_E2E_VMMD_SOCKET")
-		if vmmdSock == "" {
-			vmmdSock = filepath.Join(h.SockDir, "vmmd.sock")
-		}
-		h.ScheddSock = sockPath
-		h.VMMDSock = vmmdSock
-		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
-		signPubPath := writeScheddSignPub(t, h)
-		env := append(testEnvCommon(dbURL),
-			"FAAS_SCHEDD_CONFIG="+cfgPath,
-			"FAAS_SIGN_PUB="+signPubPath,
-		)
-		// Repoint the seeded node before schedd's initial heartbeat. A
-		// KVM-free test may already have a fake VMMD listening on the
-		// configured socket; even when it does not, keeping the durable
-		// target aligned before boot avoids one probe using /run/faas.
-		setDefaultLocalScheddTarget(t, pool, sockPath, vmmdSock)
-		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
-		// 30s tolerates schedd's first-boot db.MigrateUp on a fresh
-		// schema — observed 16s on CI's postgres15 service for 12
-		// migrations. The metal path reuses the same socket so this
-		// ceiling also covers the post-migration cold start.
-		waitUnix(t, sockPath, 30*time.Second)
-		// Multi-host safety cluster PR-7 (audit F5) removed the
-		// legacy FAAS_SCHEDD_SOCKET fallback in
-		// pkg/gateway/pgbackend.go:resolveSched; the scheddrouter
-		// now dials compute_nodes.schedd_target_url, which
-		// migration 00090 seeds with the canonical production
-		// socket (/run/faas/schedd.sock). Re-point the row at the
-		// per-test socket so synth dispatch can find schedd.
-		setDefaultLocalScheddTarget(t, pool, sockPath, h.VMMDSock)
+	// Both socket paths are fixed up front: vmmd's env carries schedd's target
+	// and schedd's config carries vmmd's socket, whichever boots first.
+	if h.ScheddSock == "" {
+		h.ScheddSock = filepath.Join(h.SockDir, "schedd.sock")
+	}
+	if h.VMMDSock == "" {
+		h.VMMDSock = os.Getenv("FAAS_E2E_VMMD_SOCKET")
+	}
+	if h.VMMDSock == "" {
+		h.VMMDSock = filepath.Join(h.SockDir, "vmmd.sock")
 	}
 
+	// vmmd boots BEFORE schedd. schedd's heartbeat dials compute_nodes.
+	// target_url — the vmmd socket — on its very first tick, and one failed
+	// dial marks the node unavailable for 30s and out of placement. With
+	// schedd first, that dial raced vmmd's own startup: in smoke run
+	// 35157946150 the first ping fired 48ms before vmmd had even logged its
+	// config, ENOENT on the socket, and every wake in the test then failed
+	// with "no active compute_node fits ... across 0 candidates". vmmd's
+	// outbound side (capacity publish to schedd) retries with backoff, so it
+	// tolerates schedd arriving later; the reverse is not true.
 	if which&VMMD != 0 {
 		// Metal-only path. Caller is responsible for ensuring /dev/kvm + root.
 		sockPath := h.VMMDSock
@@ -265,6 +251,36 @@ kernel_path = %q
 	// into the public API-hosting smoke. imaged needs the gateway origin before
 	// it handles snapshot_written; the default path remains unchanged because
 	// the smoke is opt-in for metal acceptance only.
+	if which&Schedd != 0 {
+		sockPath := h.ScheddSock
+		vmmdSock := h.VMMDSock
+		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
+		signPubPath := writeScheddSignPub(t, h)
+		env := append(testEnvCommon(dbURL),
+			"FAAS_SCHEDD_CONFIG="+cfgPath,
+			"FAAS_SIGN_PUB="+signPubPath,
+		)
+		// Repoint the seeded node before schedd's initial heartbeat. A
+		// KVM-free test may already have a fake VMMD listening on the
+		// configured socket; even when it does not, keeping the durable
+		// target aligned before boot avoids one probe using /run/faas.
+		setDefaultLocalScheddTarget(t, pool, sockPath, vmmdSock)
+		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
+		// 30s tolerates schedd's first-boot db.MigrateUp on a fresh
+		// schema — observed 16s on CI's postgres15 service for 12
+		// migrations. The metal path reuses the same socket so this
+		// ceiling also covers the post-migration cold start.
+		waitUnix(t, sockPath, 30*time.Second)
+		// Multi-host safety cluster PR-7 (audit F5) removed the
+		// legacy FAAS_SCHEDD_SOCKET fallback in
+		// pkg/gateway/pgbackend.go:resolveSched; the scheddrouter
+		// now dials compute_nodes.schedd_target_url, which
+		// migration 00090 seeds with the canonical production
+		// socket (/run/faas/schedd.sock). Re-point the row at the
+		// per-test socket so synth dispatch can find schedd.
+		setDefaultLocalScheddTarget(t, pool, sockPath, h.VMMDSock)
+	}
+
 	if which&Gatewayd != 0 {
 		startGatewayd(t, h, bin, dbURL, nil)
 	}
@@ -310,6 +326,19 @@ kernel_path = %q
 			env = append(env, "FAAS_APPS_DOMAIN="+testDomain)
 		}
 		h.procs = append(h.procs, startProc(t, bin, "imaged", env))
+		// imaged is not ready when its process is up. It stages the builder
+		// base first — 70s on faas-acceptance-1 in smoke run 35157946150 —
+		// and only then subscribes to deployment_changed. Start used to return
+		// here immediately, the test POSTed a deployment into a LISTEN that
+		// did not exist yet, and imaged's catch-up sweep only looks at
+		// deployments older than two hours: the image deploy sat in `pending`
+		// until the test gave up, in every image-deploy test. Wait for the
+		// subscription itself, not the process.
+		imagedStart := time.Now()
+		if err := h.waitImagedListens(3 * time.Minute); err != nil {
+			t.Fatalf("e2etest: imaged did not subscribe to its notify channels: %v", err)
+		}
+		t.Logf("e2etest: imaged subscribed after %s", time.Since(imagedStart).Round(time.Millisecond))
 	}
 
 	if which&Meterd != 0 {
@@ -1887,6 +1916,36 @@ func (h *Harness) waitBuilderdListens(d time.Duration) error {
 // Without a label, the email is "e2e+<plan>@test.example" — one account per
 // plan per run. With a label, the email is "e2e+<plan>+<label>@test.example"
 // so each call produces a distinct account.
+// waitImagedListens waits until imaged holds a LISTEN session. Its process
+// being up is not enough: it stages bases before it subscribes, and a notify
+// sent before the subscription is lost — imaged's sweep only revisits
+// deployments older than staleDeploymentThreshold (2h). A session named
+// faas-imaged whose last statement is a LISTEN is the subscription itself.
+func (h *Harness) waitImagedListens(d time.Duration) error {
+	h.T.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		ok, err := sessionListens(context.Background(), h.Pool, "faas-imaged")
+		if err == nil && ok {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("no application_name='faas-imaged' session holding a LISTEN in pg_stat_activity within %s", d)
+}
+
+// sessionListens reports whether a session with the given application_name
+// has issued a LISTEN — the shape of a daemon's notify subscription.
+func sessionListens(ctx context.Context, pool *pgxpool.Pool, appName string) (bool, error) {
+	var ok bool
+	err := pool.QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM pg_stat_activity
+		    WHERE application_name = $1 AND query ILIKE 'LISTEN %'
+		 )`, appName).Scan(&ok)
+	return ok, err
+}
+
 func (h *Harness) SeedAccount(ctx context.Context, plan api.Plan, label ...string) string {
 	h.T.Helper()
 	store := state.NewPgStore(h.Pool)
