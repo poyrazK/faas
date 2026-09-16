@@ -13,7 +13,7 @@ is the chain-bearing `httpx.Client` for streaming and SSE.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +29,8 @@ from .client import Client as _GenClient
 
 if TYPE_CHECKING:
     from .executions import ExecutionEvent, ExecutionID
+    from .models.execution_response import ExecutionResponse
+    from .types import Unset
 
 
 @dataclass
@@ -162,6 +164,58 @@ class FaaSClient:
         return awatch_execution(
             self,
             execution_id,
+            after=after,
+            limit=limit,
+            retry_initial=retry_initial,
+            retry_max=retry_max,
+        )
+
+    def run_execution(
+        self,
+        body: Any,
+        *,
+        on_event: Callable[[ExecutionEvent], Any] | None = None,
+        idempotency_key: str | Unset | None = None,
+        after: int = 0,
+        limit: int = 100,
+        retry_initial: float = 0.1,
+        retry_max: float = 2.0,
+    ) -> ExecutionResponse:
+        """Create, stream, and return one disposable execution receipt."""
+        from .executions import run_execution
+        from .types import UNSET
+
+        return run_execution(
+            self,
+            body,
+            on_event=on_event,
+            idempotency_key=UNSET if idempotency_key is None else idempotency_key,
+            after=after,
+            limit=limit,
+            retry_initial=retry_initial,
+            retry_max=retry_max,
+        )
+
+    async def arun_execution(
+        self,
+        body: Any,
+        *,
+        on_event: Callable[[ExecutionEvent], Any] | None = None,
+        idempotency_key: str | Unset | None = None,
+        after: int = 0,
+        limit: int = 100,
+        retry_initial: float = 0.1,
+        retry_max: float = 2.0,
+    ) -> ExecutionResponse:
+        """Async counterpart to :meth:`run_execution`."""
+        from .executions import arun_execution
+        from .types import UNSET
+
+        return await arun_execution(
+            self,
+            body,
+            on_event=on_event,
+            idempotency_key=UNSET if idempotency_key is None else idempotency_key,
             after=after,
             limit=limit,
             retry_initial=retry_initial,

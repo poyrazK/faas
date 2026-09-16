@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -14,6 +15,9 @@ from uuid import UUID
 import httpx
 
 from ._sse import SseEvent, aiter_sse, iter_sse
+from .api.runs import create_execution, get_execution
+from .models.execution_response import ExecutionResponse
+from .types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ._wrapper import FaaSClient
@@ -208,10 +212,112 @@ async def awatch_execution(
         delay = min(max(delay * 2, retry_initial), max_delay)
 
 
+def _require_execution_response(value: Any, operation: str) -> ExecutionResponse:
+    if isinstance(value, ExecutionResponse):
+        return value
+    raise RuntimeError(f"{operation} did not return an execution receipt")
+
+
+def run_execution(
+    client: FaaSClient,
+    body: Any,
+    *,
+    on_event: Callable[[ExecutionEvent], Any] | None = None,
+    idempotency_key: str | Unset | None = UNSET,
+    after: int = 0,
+    limit: int = 100,
+    retry_initial: float = 0.1,
+    retry_max: float = 2.0,
+) -> ExecutionResponse:
+    """Create one disposable execution, stream it to completion, and fetch
+    the terminal receipt.
+
+    ``on_event`` is called in event order. The callback may raise to stop
+    local consumption; the already-admitted remote execution is not cancelled.
+    Source/files are used only by the ephemeral guest and never persisted as a
+    customer-facing workspace.
+    """
+    if idempotency_key is None:
+        idempotency_key = UNSET
+    created = _require_execution_response(
+        create_execution.sync(
+            client=client.inner,
+            body=body,
+            idempotency_key=idempotency_key,
+        ),
+        "create_execution",
+    )
+    for event in watch_execution(
+        client,
+        created.id,
+        after=after,
+        limit=limit,
+        retry_initial=retry_initial,
+        retry_max=retry_max,
+    ):
+        if on_event is not None:
+            on_event(event)
+        if event.type == "terminal":
+            break
+    return _require_execution_response(
+        get_execution.sync(client=client.inner, id=created.id),
+        "get_execution",
+    )
+
+
+async def arun_execution(
+    client: FaaSClient,
+    body: Any,
+    *,
+    on_event: Callable[[ExecutionEvent], Awaitable[Any] | Any] | None = None,
+    idempotency_key: str | Unset | None = UNSET,
+    after: int = 0,
+    limit: int = 100,
+    retry_initial: float = 0.1,
+    retry_max: float = 2.0,
+) -> ExecutionResponse:
+    """Async counterpart to :func:`run_execution`.
+
+    ``on_event`` may be synchronous or awaitable. Cancelling the surrounding
+    task stops local consumption while the remote execution remains governed
+    by its admitted deadline.
+    """
+    if idempotency_key is None:
+        idempotency_key = UNSET
+    created = _require_execution_response(
+        await create_execution.asyncio(
+            client=client.inner,
+            body=body,
+            idempotency_key=idempotency_key,
+        ),
+        "create_execution",
+    )
+    async for event in awatch_execution(
+        client,
+        created.id,
+        after=after,
+        limit=limit,
+        retry_initial=retry_initial,
+        retry_max=retry_max,
+    ):
+        if on_event is not None:
+            callback_result = on_event(event)
+            if inspect.isawaitable(callback_result):
+                await callback_result
+        if event.type == "terminal":
+            break
+    return _require_execution_response(
+        await get_execution.asyncio(client=client.inner, id=created.id),
+        "get_execution",
+    )
+
+
 __all__ = [
     "ExecutionEvent",
     "ExecutionEventParseError",
     "ExecutionID",
+    "arun_execution",
     "watch_execution",
     "awatch_execution",
+    "run_execution",
 ]

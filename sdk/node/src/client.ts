@@ -35,10 +35,14 @@ import {
 } from './errors.js';
 import { isMutating, mintIdempotencyKey, type IdempotencyKey } from './idempotency.js';
 import {
+  runExecution as runExecutionRequest,
   watchExecution as watchExecutionEvents,
+  type RunExecutionOptions,
   type ExecutionEvent,
   type WatchExecutionOptions,
 } from './executions.js';
+import type { CreateExecutionRequest } from './generated/models/CreateExecutionRequest.js';
+import type { ExecutionResponse } from './generated/models/ExecutionResponse.js';
 
 /** Minimal logger contract — the SDK doesn't bind to `console` or a
  *  third-party logger. Customers can pass `console`, pino, winston,
@@ -192,6 +196,15 @@ export class FaaSClient {
     options: WatchExecutionOptions = {},
   ): AsyncGenerator<ExecutionEvent, void, void> {
     return watchExecutionEvents(executionID, options);
+  }
+
+  /** Submit one disposable execution, stream/resume its events, and return
+   * the terminal receipt after VM teardown. */
+  runExecution(
+    requestBody: CreateExecutionRequest,
+    options: RunExecutionOptions = {},
+  ): Promise<ExecutionResponse> {
+    return runExecutionRequest(requestBody, options);
   }
 
   /** Build the wrapped fetch. Exported via `install()` above; the

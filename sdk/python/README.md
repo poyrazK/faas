@@ -23,6 +23,24 @@ an async application. The generated
 `faas_sdk.api.runs.stream_execution_events` endpoint remains available for
 callers that need the raw response body.
 
+For the common submit-and-wait flow, the façade composes create, resumable
+watching, and the terminal receipt:
+
+```python
+from faas_sdk import FaaSClient
+
+with FaaSClient(base_url="https://api.example.com", token="...") as client:
+    receipt = client.run_execution(
+        {"runtime": "node22", "source": "console.log('hello')"},
+        on_event=lambda event: print(event.chunk or "", end="")
+        if event.type == "stdout" else None,
+    )
+```
+
+Use `await client.arun_execution(...)` with an async callback in an async
+application. Source/files are staged only in the guest's ephemeral scratch
+filesystem; no customer storage disk is attached.
+
 ## Usage
 First, create a client:
 

@@ -6,6 +6,9 @@
 // established stream ends before its terminal event.
 
 import { OpenAPI } from './generated/index.js';
+import { RunsService } from './generated/services/RunsService.js';
+import type { CreateExecutionRequest } from './generated/models/CreateExecutionRequest.js';
+import type { ExecutionResponse } from './generated/models/ExecutionResponse.js';
 import { streamSse, type SseEvent } from './sse.js';
 
 /** Event names emitted by `/v1/executions/{id}/events`. */
@@ -54,6 +57,14 @@ export interface WatchExecutionOptions {
   retryInitialMs?: number;
   /** Maximum reconnect delay. */
   retryMaxMs?: number;
+}
+
+/** Options for `FaaSClient.runExecution`. */
+export interface RunExecutionOptions extends WatchExecutionOptions {
+  /** Stable key for replaying the create request, when desired. */
+  idempotencyKey?: string;
+  /** Called in stream order for every status, output, and terminal event. */
+  onEvent?: (event: ExecutionEvent) => void | Promise<void>;
 }
 
 class ExecutionEventParseError extends Error {}
@@ -225,4 +236,35 @@ export async function* watchExecution(
     await sleep(delay, options.signal);
     delay = Math.min(Math.max(delay * 2, initialDelay), maxDelay);
   }
+}
+
+/**
+ * Submit one disposable execution, consume its resumable event stream, and
+ * return the final receipt. The create response is intentionally not treated
+ * as completion: agents receive live output and the final GET is made only
+ * after the terminal event, when the VM has been destroyed.
+ */
+export async function runExecution(
+  requestBody: CreateExecutionRequest,
+  options: RunExecutionOptions = {},
+): Promise<ExecutionResponse> {
+  const { idempotencyKey, onEvent, ...watchOptions } = options;
+  if (watchOptions.signal?.aborted) throw abortReason(watchOptions.signal);
+
+  const createRequest = RunsService.createExecution({ requestBody, idempotencyKey });
+  const onAbort = () => createRequest.cancel();
+  watchOptions.signal?.addEventListener('abort', onAbort, { once: true });
+  let receipt: ExecutionResponse;
+  try {
+    receipt = await createRequest;
+  } finally {
+    watchOptions.signal?.removeEventListener('abort', onAbort);
+  }
+
+  for await (const event of watchExecution(receipt.id, watchOptions)) {
+    if (onEvent) await onEvent(event);
+    if (event.type === 'terminal') break;
+  }
+  if (watchOptions.signal?.aborted) throw abortReason(watchOptions.signal);
+  return RunsService.getExecution({ id: receipt.id });
 }

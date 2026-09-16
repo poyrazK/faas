@@ -151,6 +151,23 @@ for await (const event of client.watchExecution(execution.id)) {
 `RunsService.streamExecutionEvents()` remains available when a raw SSE body
 is needed. `watchExecution` is the recommended agent-runtime path.
 
+For the common submit-and-wait flow, `runExecution` composes create, resumable
+watching, and the terminal receipt:
+
+```ts
+const receipt = await client.runExecution(
+  { runtime: 'node22', source: "console.log('hello')" },
+  {
+    onEvent: (event) => {
+      if (event.type === 'stdout') process.stdout.write(event.data.chunk ?? '');
+    },
+  },
+);
+```
+
+The source/files bundle is available only in the disposable guest's ephemeral
+scratch filesystem; no customer storage disk is attached.
+
 ## SSE streaming
 
 `/v1/logs/{app_id}/tail` (and a few other out-of-spec streams) expose

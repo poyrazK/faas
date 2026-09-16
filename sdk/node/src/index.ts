@@ -75,9 +75,11 @@ export {
 // SSE streaming helpers.
 export { streamSse, parseFrame, type SseEvent } from './sse.js';
 export {
+  runExecution,
   watchExecution,
   type ExecutionEvent,
   type ExecutionEventData,
   type ExecutionEventType,
+  type RunExecutionOptions,
   type WatchExecutionOptions,
 } from './executions.js';
