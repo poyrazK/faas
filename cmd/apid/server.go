@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -3526,24 +3527,37 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+const defaultJSONBodyMaxBytes int64 = 1 << 20
+
 func decodeJSON(r *http.Request, v any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	return decodeJSONSized(r, v, defaultJSONBodyMaxBytes)
+}
+
+// decodeJSONSized is the single bounded JSON decoder for apid control-plane
+// requests. It rejects unknown fields and consumes the remainder so both
+// Content-Length and chunked requests are held to the same byte cap.
+func decodeJSONSized(r *http.Request, v any, maxBytes int64) error {
+	if maxBytes <= 0 {
+		maxBytes = defaultJSONBodyMaxBytes
+	}
+	if r.Body == nil {
+		return io.EOF
+	}
+	if r.ContentLength > maxBytes {
+		return &http.MaxBytesError{Limit: maxBytes}
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return err
 	}
-	return nil
-}
-
-// decodeJSONSized mirrors decodeJSON but with a caller-supplied
-// body byte cap. Used by handlers that need a tighter cap than the
-// 1 MiB default (e.g. handlers_registry_auth.go caps at 1 MiB
-// anyway — but the seam lets future handlers pass a smaller cap
-// without re-implementing the DisallowUnknownFields dance).
-func decodeJSONSized(r *http.Request, v any, maxBytes int64) error {
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBytes))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
+	// Consume the remainder so chunked requests with a valid JSON prefix
+	// and an oversized/trailing payload cannot evade the reader cap.
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("request body must contain a single JSON value")
+		}
 		return err
 	}
 	return nil

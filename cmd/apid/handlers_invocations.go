@@ -44,6 +44,14 @@ func decodeJSONLimit(w http.ResponseWriter, r *http.Request, dst any, maxBytes i
 	if maxBytes <= 0 {
 		maxBytes = 1 << 20 // 1 MB hard fallback — defensive only
 	}
+	if r.ContentLength > maxBytes {
+		api.WriteProblem(w, api.ErrPlanSourceBytes(int(maxBytes), r.ContentLength))
+		return false
+	}
+	if r.Body == nil {
+		api.WriteProblem(w, api.ErrValidation("empty request body"))
+		return false
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -58,6 +66,19 @@ func decodeJSONLimit(w http.ResponseWriter, r *http.Request, dst any, maxBytes i
 		if errors.As(err, &mbe) {
 			api.WriteProblem(w, api.ErrPlanSourceBytes(int(maxBytes), int64(mbe.Limit)))
 			return false
+		}
+		api.WriteProblem(w, api.ErrValidation("malformed JSON: "+err.Error()))
+		return false
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			api.WriteProblem(w, api.ErrPlanSourceBytes(int(maxBytes), int64(maxBytes)))
+			return false
+		}
+		if err == nil {
+			err = errors.New("request body must contain a single JSON value")
 		}
 		api.WriteProblem(w, api.ErrValidation("malformed JSON: "+err.Error()))
 		return false

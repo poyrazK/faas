@@ -62,6 +62,11 @@ import (
 // site (the helper does not own cookie attributes — see the call sites
 // in cmd/apid/handlers_dashboard.go and cmd/apid/handlers_cli_auth.go).
 const (
+	// csrfRequestBodyMaxBytes bounds the body peek performed before the
+	// handler gets to decode it. CSRF verification runs ahead of the JSON
+	// handlers, so an unbounded read here would bypass their caps.
+	csrfRequestBodyMaxBytes int64 = 1 << 20
+
 	// CookieNameAuthenticated carries a CSRF token bound to an
 	// authenticated account. Set on every dashboard GET that renders a
 	// form-bearing page; consumed on the matching POST.
@@ -275,6 +280,15 @@ func verifyAgainstRequest(manager *session.Manager, r *http.Request, action, sub
 // peeked-bytes shape is mandatory: without it the MFA handlers'
 // decodeJSON calls would observe an empty body.
 func extractRequestToken(r *http.Request) (string, error) {
+	if r.Body != nil {
+		if r.ContentLength > csrfRequestBodyMaxBytes {
+			return "", fmt.Errorf("%w: request body exceeds %d bytes", ErrCSRFInvalid, csrfRequestBodyMaxBytes)
+		}
+		// Keep the peek bounded for both form and JSON requests. The
+		// downstream handler may wrap the body again with a tighter cap;
+		// nested MaxBytesReaders safely preserve the smallest limit.
+		r.Body = http.MaxBytesReader(nil, r.Body, csrfRequestBodyMaxBytes)
+	}
 	// Form path — only when the request advertises a form
 	// Content-Type. r.ParseForm is cheap and idempotent; failure
 	// here means a malformed form, which we treat as "no token

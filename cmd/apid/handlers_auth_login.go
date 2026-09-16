@@ -590,7 +590,7 @@ func decodeEmailPasswordRequest(w http.ResponseWriter, r *http.Request) (string,
 	email, password := "", ""
 	if strings.HasPrefix(ct, "application/json") {
 		var body api.PasswordLoginRequest
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := decodeJSON(r, &body); err != nil {
 			api.WriteProblem(w, api.ErrValidation("could not decode JSON body"))
 			return "", "", false
 		}
@@ -624,7 +624,7 @@ func extractEmailFromRequest(r *http.Request) string {
 		var body struct {
 			Email string `json:"email"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = decodeJSON(r, &body)
 		return body.Email
 	}
 	if err := r.ParseForm(); err == nil {

@@ -30,7 +30,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -145,7 +144,7 @@ func (s *server) listInstallableRepos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req installBindRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
 			"Invalid body", "expected JSON with installation_id"))
 		return
@@ -265,7 +264,7 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req installBindRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
 			"Invalid body", "expected JSON with installation_id, repo_full_name, production_branch"))
 		return
@@ -403,7 +402,7 @@ func (s *server) bindGitHubConnection(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	var req installBindRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
 			"Invalid body", "expected JSON with installation_id, repo_full_name, production_branch"))
 		return

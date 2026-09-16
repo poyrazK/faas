@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -26,7 +27,46 @@ import (
 const (
 	batchDispatchStatusSucceeded = "succeeded"
 	batchDispatchStatusRetry     = "retry"
+
+	// The synth listener is a trusted unix-socket hop, but its request
+	// envelopes still need finite bounds so a compromised peer cannot pin
+	// gateway memory. Single invocation payloads are capped by the largest
+	// customer invocation (1 MiB) plus base64/envelope overhead; trigger
+	// batches carry at most the 16 MiB plan payload budget plus overhead.
+	synthRequestBodyMaxBytes         int64 = 64 << 10
+	synthInvocationBodyMaxBytes      int64 = 4 << 20
+	synthBatchInvocationBodyMaxBytes int64 = 32 << 20
 )
+
+func decodeSynthJSON(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64) error {
+	if r.Body == nil {
+		return io.EOF
+	}
+	if r.ContentLength > maxBytes {
+		return &http.MaxBytesError{Limit: maxBytes}
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBytes))
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("request body must contain a single JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func writeSynthDecodeError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		status = http.StatusRequestEntityTooLarge
+	}
+	http.Error(w, err.Error(), status)
+}
 
 // SynthDispatcher is the slice of the gateway the internal schedd
 // RPC needs. Going through Wake/Invoke (rather than reimplementing
@@ -334,8 +374,8 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req synthesizeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := decodeSynthJSON(w, r, &req, synthRequestBodyMaxBytes); err != nil {
+		writeSynthDecodeError(w, err)
 		return
 	}
 	if req.AppID == "" || req.Path == "" {
@@ -414,8 +454,8 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var req invocationDispatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := decodeSynthJSON(w, r, &req, synthInvocationBodyMaxBytes); err != nil {
+		writeSynthDecodeError(w, err)
 		return
 	}
 	if req.AppID == "" || req.InvocationID == "" {
@@ -700,8 +740,8 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 		return
 	}
 	var req batchDispatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := decodeSynthJSON(w, r, &req, synthBatchInvocationBodyMaxBytes); err != nil {
+		writeSynthDecodeError(w, err)
 		return
 	}
 	if req.AppID == "" || req.InvocationID == "" {

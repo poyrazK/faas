@@ -267,6 +267,16 @@ func TestHandleSynthesize_MalformedJSONReturns400(t *testing.T) {
 	}
 }
 
+func TestHandleSynthesize_RejectsOversizeBody(t *testing.T) {
+	srv := NewSynthServer("/tmp/faas-synth-oversize-test.sock", &fakeDispatcher{}, nil)
+	r := httptest.NewRequest(http.MethodPost, "/v1/synthesize", strings.NewReader(strings.Repeat("x", int(synthRequestBodyMaxBytes)+1)))
+	w := httptest.NewRecorder()
+	srv.handleSynthesize(w, r)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body=%q", w.Code, w.Body.String())
+	}
+}
+
 func TestHandleSynthesize_MissingAppIDReturns400(t *testing.T) {
 	srv, d := newSynthServer(t)
 	w := httptest.NewRecorder()
