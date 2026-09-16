@@ -935,10 +935,10 @@ var cliCommands = []cliCommand{
 		DocSlug: "debug",
 		Short:   "Production debugger (ADR-127)",
 		Subcommands: []cliSub{
-			{Name: "requests", Short: "Per-request telemetry (list/watch filters: deployment, status, cold boot, consumer, latency)"},
+			{Name: "requests", Short: "Per-request telemetry (list/export/watch/get/evidence/replay)"},
 			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
 			{Name: "running", Short: "Explain why an app is still running, with request evidence when available (running <slug> [--since D] [--limit N])"},
-			{Name: "regressions", Short: "Active regression observations (list|watch [--interval D] [--once])"},
+			{Name: "regressions", Short: "Regressions (per-app/--all, watch, and confirmed rollback)"},
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
 			{Name: "bundle", Short: "Export a redacted incident investigation bundle (bundle <slug> <req_id> [--output PATH])"},
 		},

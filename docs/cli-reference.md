@@ -1108,7 +1108,14 @@ Production debugger (ADR-127)
 
 ### debug requests
 
-Per-request telemetry (list/watch filters: deployment, status, cold boot, consumer, latency)
+Per-request telemetry:
+
+- `requests list <slug> [--all] [--since D] [--route P] [--deployment-id ID] [--status N] [--cold-boot true|false] [--consumer-id ID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N]`
+- `requests export <slug> [--since D] [--route P] [--format ndjson|csv] [--limit N] [--output PATH]`
+- `requests watch <slug> [--since D] [--route P] [--interval D] [--once]`
+- `requests get <slug> <request-id>`
+- `requests show|evidence <slug> <request-id>`
+- `requests replay <slug> <request-id> [--wait] [--timeout D] [--interval D]`
 
 ### debug coverage
 
@@ -1120,11 +1127,11 @@ Explain why an app is still running, with request evidence when available (runni
 
 ### debug regressions
 
-Active regression observations (list|watch [--interval D] [--once])
+Active regression observations and remediation (`regressions <slug>`, `regressions --all`, `regressions watch [--all] <slug> [--interval D] [--once]`, or `regressions rollback <slug> [--to ID] --yes`)
 
 ### debug compare
 
-Per-route deployment-vs-deployment compare
+Per-route deployment-vs-deployment compare (`--source ID --mirror ID [--route P] [--since D] [--until RFC3339]`)
 
 ### debug bundle
 
@@ -1887,4 +1894,3 @@ Print the powershell completion snippet
 Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg)
 
 `gregale man <command>`
-

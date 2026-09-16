@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -27,6 +28,7 @@ type debugWatchEvent struct {
 	Type         string                         `json:"type"`
 	ObservedAt   string                         `json:"observed_at"`
 	Since        string                         `json:"since,omitempty"`
+	AppSlug      string                         `json:"app_slug,omitempty"`
 	Request      *api.DebugTelemetryRequestItem `json:"request,omitempty"`
 	Regression   *api.DebugRegressionItem       `json:"regression,omitempty"`
 	DeploymentID string                         `json:"deployment_id,omitempty"`
@@ -152,14 +154,15 @@ func cmdDebugRegressionsWatch(args []string) int {
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	interval := fs.Duration("interval", debugWatchDefaultInterval, "poll interval (250ms..1h)")
 	once := fs.Bool("once", false, "poll once and exit (useful for scripts and tests)")
+	all := fs.Bool("all", false, "watch regressions for every app in the account")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{
-		"since": true, "interval": true,
+		"since": true, "interval": true, "all": false,
 	})
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug regressions watch [--since D] [--interval D] [--once] <slug>", debugCmdDocsTopic)
+	if (*all && len(positional) != 0) || (!*all && len(positional) != 1) {
+		PrintUsage(os.Stderr, "usage: gregale debug regressions watch [--all] [--since D] [--interval D] [--once] [<slug>]", debugCmdDocsTopic)
 		return 1
 	}
 	if err := validateDebugWatchInterval(*interval); err != nil {
@@ -171,7 +174,118 @@ func cmdDebugRegressionsWatch(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if *all {
+		return runDebugRegressionsWatchAll(ctx, client, *since, *interval, *once)
+	}
 	return runDebugRegressionsWatch(ctx, client, positional[0], *since, *interval, *once)
+}
+
+func runDebugRegressionsWatchAll(ctx context.Context, client *api.Client, since string, interval time.Duration, once bool) int {
+	seen := make(map[string]string)
+	poll := 0
+	if !jsonOutput {
+		_, _ = fmt.Fprintf(osStdout, "Watching debugger regressions for every app (every %s). Ctrl-C to exit.\n", interval)
+	}
+	for {
+		if ctx.Err() != nil {
+			return 130
+		}
+		apps, err := client.ListApps(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return 130
+			}
+			if poll == 0 {
+				return printErr("Could not list apps for debugger regressions", err)
+			}
+			_, _ = fmt.Fprintf(os.Stderr, "debug regressions watch: poll %d: %v (continuing)\n", poll+1, err)
+		} else {
+			current := make(map[string]string)
+			changed := make([]struct {
+				app  string
+				item api.DebugRegressionItem
+			}, 0)
+			for _, app := range apps {
+				resp, err := client.ListAppDebugRegressions(ctx, app.Slug, since)
+				if err != nil {
+					// Preserve the previous state for an app whose poll
+					// failed; otherwise a transient 5xx would look like a
+					// false regression_cleared event.
+					prefix := app.Slug + "\x00"
+					for key, fingerprint := range seen {
+						if strings.HasPrefix(key, prefix) {
+							current[key] = fingerprint
+						}
+					}
+					_, _ = fmt.Fprintf(os.Stderr, "debug regressions watch %s: %v\n", app.Slug, err)
+					continue
+				}
+				for _, regression := range resp.Regressions {
+					key := app.Slug + "\x00" + debugRegressionWatchKey(regression)
+					fingerprint := debugWatchFingerprint(regression)
+					current[key] = fingerprint
+					if previous, ok := seen[key]; !ok || previous != fingerprint {
+						changed = append(changed, struct {
+							app  string
+							item api.DebugRegressionItem
+						}{app: app.Slug, item: regression})
+					}
+				}
+			}
+			cleared := make([]string, 0)
+			for key := range seen {
+				if _, ok := current[key]; !ok {
+					cleared = append(cleared, key)
+				}
+			}
+			seen = current
+			observedAt := time.Now().UTC().Format(time.RFC3339Nano)
+			if jsonOutput {
+				if len(changed) == 0 && len(cleared) == 0 {
+					_ = writeDebugWatchEvent(debugWatchEvent{Type: "heartbeat", ObservedAt: observedAt, Since: since})
+				} else {
+					for _, entry := range changed {
+						item := entry.item
+						_ = writeDebugWatchEvent(debugWatchEvent{Type: "regression", ObservedAt: observedAt, Since: since, AppSlug: entry.app, Regression: &item})
+					}
+					for _, key := range cleared {
+						app, rest := splitDebugFleetRegressionWatchKey(key)
+						deploymentID, route := splitDebugRegressionWatchKey(rest)
+						_ = writeDebugWatchEvent(debugWatchEvent{Type: "regression_cleared", ObservedAt: observedAt, Since: since, AppSlug: app, DeploymentID: deploymentID, Route: route})
+					}
+				}
+			} else if len(changed) == 0 && len(cleared) == 0 {
+				_, _ = fmt.Fprintf(osStdout, "[%s] no regression changes\n", observedAt)
+			} else {
+				_, _ = fmt.Fprintf(osStdout, "[%s] %d changed regression(s), %d cleared\n", observedAt, len(changed), len(cleared))
+				for _, entry := range changed {
+					_, _ = fmt.Fprintf(osStdout, "APP %s\n", entry.app)
+					renderDebugRegressionsTable(osStdout, api.DebugRegressionsResponse{Since: since, Regressions: []api.DebugRegressionItem{entry.item}})
+				}
+				for _, key := range cleared {
+					app, rest := splitDebugFleetRegressionWatchKey(key)
+					deploymentID, route := splitDebugRegressionWatchKey(rest)
+					_, _ = fmt.Fprintf(osStdout, "cleared\t%s\t%s\t%s\n", app, deploymentID, route)
+				}
+			}
+		}
+		poll++
+		if once {
+			return 0
+		}
+		if !waitDebugWatch(ctx, interval) {
+			return 130
+		}
+	}
+}
+
+func splitDebugFleetRegressionWatchKey(key string) (string, string) {
+	for i := 0; i < len(key); i++ {
+		if key[i] == 0 {
+			return key[:i], key[i+1:]
+		}
+	}
+	return key, ""
 }
 
 func runDebugRegressionsWatch(ctx context.Context, client *api.Client, slug, since string, interval time.Duration, once bool) int {
