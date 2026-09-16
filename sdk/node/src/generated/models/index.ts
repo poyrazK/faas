@@ -416,6 +416,7 @@ export type { PaymentMethodSummary } from './PaymentMethodSummary.js';
 export type { PlanAffectedApp } from './PlanAffectedApp.js';
 export type { PlanCron } from './PlanCron.js';
 export type { PlanDetectedBy } from './PlanDetectedBy.js';
+export type { PlanDetectionWarning } from './PlanDetectionWarning.js';
 export type { PlanManaged } from './PlanManaged.js';
 export type { PlanResponse } from './PlanResponse.js';
 export type { PlanWorkload } from './PlanWorkload.js';

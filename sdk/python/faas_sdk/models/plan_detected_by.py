@@ -30,6 +30,9 @@ class PlanDetectedBy:
 
     detector: PlanDetectedByDetector
     """closed vocabulary — the detector that won identity for this workload"""
+    marker: str
+    """Concrete source marker for the winning detector, such as compose.yaml or Procfile; excludes the workload
+    name."""
     priority: int
     """The detector's tiebreak weight; higher wins identity
     within a tier. Surfaced so the precedence order is visible
@@ -47,6 +50,8 @@ class PlanDetectedBy:
     def to_dict(self) -> dict[str, Any]:
         detector: str = self.detector
 
+        marker = self.marker
+
         priority = self.priority
 
         merged_from: list[str] | Unset = UNSET
@@ -61,6 +66,7 @@ class PlanDetectedBy:
         field_dict.update(
             {
                 "detector": detector,
+                "marker": marker,
                 "priority": priority,
             }
         )
@@ -73,6 +79,8 @@ class PlanDetectedBy:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         detector = check_plan_detected_by_detector(d.pop("detector"))
+
+        marker = d.pop("marker")
 
         priority = d.pop("priority")
 
@@ -87,6 +95,7 @@ class PlanDetectedBy:
 
         plan_detected_by = cls(
             detector=detector,
+            marker=marker,
             priority=priority,
             merged_from=merged_from,
         )

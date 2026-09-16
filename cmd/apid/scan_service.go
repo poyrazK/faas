@@ -148,14 +148,15 @@ type scanPlanResponse struct {
 	// uses CronNames[i] to look up the freshly inserted app_id from
 	// insertedApps (matched by Slug == WorkloadName). Not exposed
 	// on /scan responses because the scan handler doesn't need it.
-	CronNames     []string `json:"-"`
-	Warnings      []string `json:"warnings,omitempty"`
-	ObservedApps  int      `json:"observed_apps"`
-	ObservedCrons int      `json:"observed_crons"`
-	LimitApps     int      `json:"limit_apps"`
-	LimitCrons    int      `json:"limit_crons"`
-	CanApply      bool     `json:"can_apply"`
-	NotAllowed    bool     `json:"crons_not_allowed,omitempty"`
+	CronNames         []string                   `json:"-"`
+	Warnings          []string                   `json:"warnings,omitempty"`
+	DetectionWarnings []api.PlanDetectionWarning `json:"detection_warnings,omitempty"`
+	ObservedApps      int                        `json:"observed_apps"`
+	ObservedCrons     int                        `json:"observed_crons"`
+	LimitApps         int                        `json:"limit_apps"`
+	LimitCrons        int                        `json:"limit_crons"`
+	CanApply          bool                       `json:"can_apply"`
+	NotAllowed        bool                       `json:"crons_not_allowed,omitempty"`
 	// ADR-124 can_apply rescue signal. PreExclude is the gate
 	// evaluated on the full scan (result.Workloads, pre-`--only`/
 	// pre-`--exclude`); Rescued is the diff between pre and post
@@ -247,9 +248,28 @@ func toPlanDetectedBy(d reposcan.Detection) *api.PlanDetectedBy {
 	}
 	return &api.PlanDetectedBy{
 		Detector:   d.Detector,
+		Marker:     d.Marker,
 		Priority:   int(d.Priority),
 		MergedFrom: d.MergedFrom,
 	}
+}
+
+func toPlanDetectionWarnings(warnings []reposcan.DetectionWarning) []api.PlanDetectionWarning {
+	if len(warnings) == 0 {
+		return nil
+	}
+	out := make([]api.PlanDetectionWarning, 0, len(warnings))
+	for _, warning := range warnings {
+		out = append(out, api.PlanDetectionWarning{
+			Workload: warning.Workload,
+			Detector: warning.Detector,
+			Marker:   warning.Marker,
+			Priority: int(warning.Priority),
+			Outcome:  warning.Outcome,
+			Reason:   warning.Reason,
+		})
+	}
+	return out
 }
 
 // affectedPartition is the ADR-124 blast-radius projection over the
@@ -1596,6 +1616,7 @@ func (s *server) scanService(
 		Managed:               respManaged,
 		Crons:                 crons,
 		Warnings:              warnings,
+		DetectionWarnings:     toPlanDetectionWarnings(result.DetectionWarnings),
 		ObservedApps:          projectedApps,
 		ObservedCrons:         projectedCrons,
 		LimitApps:             limits.DeployedApps,
@@ -1846,10 +1867,11 @@ func (s *server) scanService(
 	// of this branch (filteredW). The tier + warnings + managed
 	// metadata pass through verbatim — only Workloads is filtered.
 	filteredScan := reposcan.Result{
-		Workloads: filteredW,
-		Managed:   filteredMc,
-		Tier:      result.Tier,
-		Warnings:  warnings,
+		Workloads:         filteredW,
+		Managed:           filteredMc,
+		Tier:              result.Tier,
+		Warnings:          warnings,
+		DetectionWarnings: result.DetectionWarnings,
 	}
 
 	// preRemoveIdToSlug maps each app's ID to its pre-remove slug.

@@ -350,6 +350,7 @@ func TestCmdScan_ExplainDetectionTrace(t *testing.T) {
 			Source:  "Procfile: worker",
 			DetectedBy: &api.PlanDetectedBy{
 				Detector:   "procfile",
+				Marker:     "Procfile",
 				Priority:   75,
 				MergedFrom: []string{"compose", "k8s", "compose"},
 			},
@@ -361,10 +362,19 @@ func TestCmdScan_ExplainDetectionTrace(t *testing.T) {
 			Source:  "compose.yaml: api",
 			DetectedBy: &api.PlanDetectedBy{
 				Detector: "compose",
+				Marker:   "compose.yaml",
 				Priority: 80,
 			},
 		},
 	}
+	plan.DetectionWarnings = []api.PlanDetectionWarning{{
+		Workload: "worker",
+		Detector: "compose",
+		Marker:   "compose.yaml",
+		Priority: 80,
+		Outcome:  "skipped",
+		Reason:   "has no build: or image: — skipping",
+	}}
 	sink := &decomposeSink{scanStatus: http.StatusOK, scanBody: plan}
 	srv := httptest.NewServer(sink)
 	defer srv.Close()
@@ -379,9 +389,11 @@ func TestCmdScan_ExplainDetectionTrace(t *testing.T) {
 	}
 	out := stdout.String()
 	for _, want := range []string{
-		"detected_by: compose  marker=compose.yaml: api  priority=80",
-		"detected_by: procfile  marker=Procfile: worker  priority=75",
+		"detected_by: compose  marker=compose.yaml  priority=80",
+		"detected_by: procfile  marker=Procfile  priority=75",
 		"merged_from: compose, k8s",
+		"Detection decisions:",
+		"worker: skipped compose  marker=compose.yaml  priority=80",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("--explain output missing %q:\n%s", want, out)

@@ -76,7 +76,7 @@ func cmdScan(args []string) int {
 	// Detector explainability is opt-in so the default table remains
 	// byte-compatible for scripts and existing operators. JSON already
 	// carries the structured detected_by field when the server supports it.
-	explain := fs.Bool("explain", false, "show why each workload was detected (detector, marker, priority)")
+	explain := fs.Bool("explain", false, "show detector provenance and skipped/merged decisions")
 	// ADR-124 follow-up #3 (PR-B commit 5): --persist-exclude on
 	// `scan` is a no-op (scan never writes); accepted for symmetry
 	// with `deploy` so a single flag set can be reused across the
@@ -535,6 +535,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		printAffectedText(w, plan, excludeIdx)
 		if explain {
 			printPlanDetectionTrace(w, plan.Workloads)
+			printPlanDetectionWarnings(w, plan.DetectionWarnings)
 		}
 		return 0
 	}
@@ -581,6 +582,9 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	if explain && len(plan.Workloads) == 0 {
 		printPlanDetectionTrace(w, nil)
 	}
+	if explain {
+		printPlanDetectionWarnings(w, plan.DetectionWarnings)
+	}
 	return 0
 }
 
@@ -604,13 +608,21 @@ func printPlanDetectionTrace(w io.Writer, workloads []api.PlanWorkload) {
 }
 
 // printWorkloadDetectionTrace emits the stable, human-readable form of the
-// structured PlanWorkload.detected_by trace. Source is the detector marker
-// (for example "compose.yaml: api"). A nil trace is called out explicitly so
-// operators can distinguish an older server from an unexplained workload.
+// structured PlanWorkload.detected_by trace. Marker is the concrete detector
+// source (for example "compose.yaml"); Source remains the full provenance
+// string for context. A nil trace is called out explicitly so operators can
+// distinguish an older server from an unexplained workload.
 //
 //nolint:errcheck // best-effort terminal rendering mirrors printPlanText.
 func printWorkloadDetectionTrace(w io.Writer, wl api.PlanWorkload) {
-	marker := wl.Source
+	marker := ""
+	if wl.DetectedBy != nil {
+		marker = wl.DetectedBy.Marker
+	}
+	// Keep old servers readable while preferring the new structured marker.
+	if marker == "" {
+		marker = wl.Source
+	}
 	if marker == "" {
 		marker = "(unavailable)"
 	}
@@ -633,6 +645,46 @@ func printWorkloadDetectionTrace(w io.Writer, wl api.PlanWorkload) {
 			}
 		}
 		fmt.Fprintf(w, "      merged_from: %s\n", strings.Join(unique, ", "))
+	}
+}
+
+// printPlanDetectionWarnings renders skipped and merged detector decisions
+// returned by the server. These are only shown for --explain; the normal
+// warning list remains unchanged for scripts and terse operator output.
+//
+//nolint:errcheck // best-effort terminal rendering mirrors printPlanText.
+func printPlanDetectionWarnings(w io.Writer, warnings []api.PlanDetectionWarning) {
+	if len(warnings) == 0 {
+		return
+	}
+	items := append([]api.PlanDetectionWarning(nil), warnings...)
+	sort.SliceStable(items, func(i, j int) bool {
+		if strings.ToLower(items[i].Workload) != strings.ToLower(items[j].Workload) {
+			return strings.ToLower(items[i].Workload) < strings.ToLower(items[j].Workload)
+		}
+		if items[i].Outcome != items[j].Outcome {
+			return items[i].Outcome < items[j].Outcome
+		}
+		if items[i].Detector != items[j].Detector {
+			return items[i].Detector < items[j].Detector
+		}
+		if items[i].Marker != items[j].Marker {
+			return items[i].Marker < items[j].Marker
+		}
+		return items[i].Reason < items[j].Reason
+	})
+	fmt.Fprintln(w, "\nDetection decisions:")
+	for _, item := range items {
+		workload := item.Workload
+		if workload == "" {
+			workload = "(scan)"
+		}
+		fmt.Fprintf(w, "  - %s: %s %s  marker=%s  priority=%d",
+			workload, item.Outcome, item.Detector, item.Marker, item.Priority)
+		if item.Reason != "" {
+			fmt.Fprintf(w, "  — %s", item.Reason)
+		}
+		fmt.Fprintln(w)
 	}
 }
 

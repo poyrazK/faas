@@ -2,7 +2,9 @@ package reposcan
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 // TestDetectorString_ClosedVocabulary pins the wire vocabulary
@@ -59,6 +61,9 @@ func TestMergeByKey_StampsWinningDetector(t *testing.T) {
 	if got.Priority != detCompose.priority() {
 		t.Errorf("Priority = %d, want %d", got.Priority, detCompose.priority())
 	}
+	if got.Marker != "compose.yaml" {
+		t.Errorf("Marker = %q, want compose.yaml", got.Marker)
+	}
 	if len(got.MergedFrom) != 0 {
 		t.Errorf("MergedFrom = %v, want empty for a single-seed workload", got.MergedFrom)
 	}
@@ -81,6 +86,9 @@ func TestMergeByKey_RecordsMergedFrom(t *testing.T) {
 	if w.DetectedBy.Detector != "compose" {
 		t.Errorf("Detector = %q, want compose (priority 80 beats procfile 75)", w.DetectedBy.Detector)
 	}
+	if w.DetectedBy.Marker != "compose.yaml" {
+		t.Errorf("Marker = %q, want compose.yaml", w.DetectedBy.Marker)
+	}
 	if want := []string{"procfile"}; !reflect.DeepEqual(w.DetectedBy.MergedFrom, want) {
 		t.Errorf("MergedFrom = %v, want %v", w.DetectedBy.MergedFrom, want)
 	}
@@ -89,6 +97,46 @@ func TestMergeByKey_RecordsMergedFrom(t *testing.T) {
 	// observability, not a behaviour change.
 	if w.Class != ClassHTTP {
 		t.Errorf("Class = %q, want http (per-field fill from the procfile seed)", w.Class)
+	}
+}
+
+func TestScan_ExplainabilityIncludesSkippedAndMergedDecisions(t *testing.T) {
+	result, err := Scan(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  web:
+    build:
+      dockerfile: Dockerfile
+  docs:
+    profiles: [docs]
+    build: .
+`)},
+		"Procfile":   &fstest.MapFile{Data: []byte("web: go run ./web\n")},
+		"Dockerfile": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(result.DetectionWarnings) != 2 {
+		t.Fatalf("DetectionWarnings = %#v, want one skipped and one merged decision", result.DetectionWarnings)
+	}
+	var skipped, merged *DetectionWarning
+	for i := range result.DetectionWarnings {
+		warning := &result.DetectionWarnings[i]
+		switch warning.Outcome {
+		case detectionOutcomeSkipped:
+			skipped = warning
+		case detectionOutcomeMerged:
+			merged = warning
+		}
+	}
+	if skipped == nil || skipped.Detector != "compose" || skipped.Marker != "compose.yaml" || skipped.Workload != "docs" {
+		t.Errorf("skipped decision = %+v, want compose/docs from compose.yaml", skipped)
+	}
+	if merged == nil || merged.Detector != "procfile" || merged.Marker != "Procfile" || merged.Workload != "web" {
+		t.Errorf("merged decision = %+v, want procfile/web from Procfile", merged)
+	}
+	if !strings.Contains(merged.Reason, "compose won identity") {
+		t.Errorf("merged reason = %q, want winning detector explanation", merged.Reason)
 	}
 }
 

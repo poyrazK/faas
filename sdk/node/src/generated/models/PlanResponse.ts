@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { PlanAffectedApp } from './PlanAffectedApp.js';
 import type { PlanCron } from './PlanCron.js';
+import type { PlanDetectionWarning } from './PlanDetectionWarning.js';
 import type { PlanManaged } from './PlanManaged.js';
 import type { PlanWorkload } from './PlanWorkload.js';
 /**
@@ -30,6 +31,10 @@ export type PlanResponse = {
   managed: Array<PlanManaged>;
   crons: Array<PlanCron>;
   warnings?: Array<string>;
+  /**
+   * Structured skipped/merged detector decisions available to explain-mode clients.
+   */
+  detection_warnings?: Array<PlanDetectionWarning>;
   observed_apps: number;
   observed_crons: number;
   limit_apps: number;

@@ -5107,6 +5107,10 @@ type PlanDetectedBy struct {
 	// app_yaml | other. Pinned by the OpenAPI enum; renaming a
 	// value is a wire-contract change.
 	Detector string `json:"detector"`
+	// Marker is the concrete source marker for the winning detector,
+	// such as "compose.yaml" or "Procfile". It excludes the workload
+	// name, which remains available in PlanWorkload.Name.
+	Marker string `json:"marker"`
 	// Priority is the detector's tiebreak weight. Higher wins
 	// identity within a tier. Surfaced so the precedence order is
 	// visible on the wire rather than implied by our source.
@@ -5119,6 +5123,18 @@ type PlanDetectedBy struct {
 	// This is what answers "why didn't my Procfile `web` get its
 	// own workload?" — it merged into the compose `web`.
 	MergedFrom []string `json:"merged_from,omitempty"`
+}
+
+// PlanDetectionWarning is one detector decision that did not become a
+// standalone workload. Outcome is "merged" or "skipped". The legacy
+// PlanResponse.Warnings string list remains alongside this additive trace.
+type PlanDetectionWarning struct {
+	Workload string `json:"workload,omitempty"`
+	Detector string `json:"detector"`
+	Marker   string `json:"marker"`
+	Priority int    `json:"priority"`
+	Outcome  string `json:"outcome"`
+	Reason   string `json:"reason"`
 }
 
 // PlanManaged mirrors reposcan.Managed.
@@ -5186,24 +5202,25 @@ type QuotaBlock struct {
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
 type PlanResponse struct {
-	ProjectSlug           string         `json:"project_slug"`
-	RepoFullName          string         `json:"repo_full_name,omitempty"`
-	Environment           string         `json:"environment,omitempty"`
-	EnvironmentProtected  bool           `json:"environment_protected,omitempty"`
-	EnvironmentConfigHash string         `json:"environment_config_hash,omitempty"`
-	ScanSource            string         `json:"scan_source"`
-	Tier                  string         `json:"tier"`
-	Workloads             []PlanWorkload `json:"workloads"`
-	Managed               []PlanManaged  `json:"managed"`
-	Crons                 []PlanCron     `json:"crons"`
-	Warnings              []string       `json:"warnings,omitempty"`
-	ObservedApps          int            `json:"observed_apps"`
-	ObservedCrons         int            `json:"observed_crons"`
-	LimitApps             int            `json:"limit_apps"`
-	LimitCrons            int            `json:"limit_crons"`
-	CanApply              bool           `json:"can_apply"`
-	CronsNotAllowed       bool           `json:"crons_not_allowed,omitempty"`
-	PlanToken             string         `json:"plan_token"`
+	ProjectSlug           string                 `json:"project_slug"`
+	RepoFullName          string                 `json:"repo_full_name,omitempty"`
+	Environment           string                 `json:"environment,omitempty"`
+	EnvironmentProtected  bool                   `json:"environment_protected,omitempty"`
+	EnvironmentConfigHash string                 `json:"environment_config_hash,omitempty"`
+	ScanSource            string                 `json:"scan_source"`
+	Tier                  string                 `json:"tier"`
+	Workloads             []PlanWorkload         `json:"workloads"`
+	Managed               []PlanManaged          `json:"managed"`
+	Crons                 []PlanCron             `json:"crons"`
+	Warnings              []string               `json:"warnings,omitempty"`
+	DetectionWarnings     []PlanDetectionWarning `json:"detection_warnings,omitempty"`
+	ObservedApps          int                    `json:"observed_apps"`
+	ObservedCrons         int                    `json:"observed_crons"`
+	LimitApps             int                    `json:"limit_apps"`
+	LimitCrons            int                    `json:"limit_crons"`
+	CanApply              bool                   `json:"can_apply"`
+	CronsNotAllowed       bool                   `json:"crons_not_allowed,omitempty"`
+	PlanToken             string                 `json:"plan_token"`
 	// ADR-124 can_apply rescue signal. PreExclude is the gate
 	// evaluated on the full scan (pre-`--only`/pre-`--exclude`).
 	// Rescued is true when --exclude flipped a blocked gate to

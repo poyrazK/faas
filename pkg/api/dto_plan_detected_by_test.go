@@ -38,6 +38,7 @@ func TestPlanWorkload_DetectedByRoundTrip(t *testing.T) {
 		Ports:   []int{},
 		DetectedBy: &PlanDetectedBy{
 			Detector:   "compose",
+			Marker:     "compose.yaml",
 			Priority:   80,
 			MergedFrom: []string{"procfile"},
 		},
@@ -63,7 +64,7 @@ func TestPlanWorkload_DetectedByRoundTrip(t *testing.T) {
 	if out.DetectedBy == nil {
 		t.Fatal("DetectedBy lost on round-trip")
 	}
-	if out.DetectedBy.Detector != "compose" || out.DetectedBy.Priority != 80 {
+	if out.DetectedBy.Detector != "compose" || out.DetectedBy.Marker != "compose.yaml" || out.DetectedBy.Priority != 80 {
 		t.Errorf("round-trip mismatch: %+v", out.DetectedBy)
 	}
 	if len(out.DetectedBy.MergedFrom) != 1 || out.DetectedBy.MergedFrom[0] != "procfile" {
@@ -76,7 +77,7 @@ func TestPlanWorkload_DetectedByRoundTrip(t *testing.T) {
 // "merged from N detectors" off presence, so an empty array would
 // read as a merge that did not happen.
 func TestPlanDetectedBy_MergedFromOmittedWhenEmpty(t *testing.T) {
-	b, err := json.Marshal(PlanDetectedBy{Detector: "procfile", Priority: 75})
+	b, err := json.Marshal(PlanDetectedBy{Detector: "procfile", Marker: "Procfile", Priority: 75})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -85,5 +86,30 @@ func TestPlanDetectedBy_MergedFromOmittedWhenEmpty(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"detector":"procfile"`) {
 		t.Errorf("detector missing: %s", b)
+	}
+}
+
+func TestPlanDetectionWarningRoundTrip(t *testing.T) {
+	in := PlanResponse{DetectionWarnings: []PlanDetectionWarning{{
+		Workload: "web",
+		Detector: "procfile",
+		Marker:   "Procfile",
+		Priority: 75,
+		Outcome:  "merged",
+		Reason:   "matched root_dir=\"\" and name=\"web\"; compose won identity with priority 80",
+	}}}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"detection_warnings"`) {
+		t.Fatalf("structured warning missing: %s", b)
+	}
+	var out PlanResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.DetectionWarnings) != 1 || out.DetectionWarnings[0].Outcome != "merged" || out.DetectionWarnings[0].Marker != "Procfile" {
+		t.Fatalf("warning round-trip = %+v", out.DetectionWarnings)
 	}
 }

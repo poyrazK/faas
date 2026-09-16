@@ -75,7 +75,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		// a second sort; the cardinality is bounded by the detector
 		// enum (8), so the linear contains-check is cheaper than a
 		// map allocation per bucket.
-		mergedFrom []string
+		mergedFrom       []string
+		mergedCandidates []detectionCandidate
+		marker           string
 	}
 	ordered := make([]workloadKey, 0, len(sorted))
 	buckets := make(map[workloadKey]*bucket, len(sorted))
@@ -93,6 +95,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.source = s.source
 			b.tier = s.tier
 			b.det = s.det
+			b.marker = detectionMarker(s.source)
 			b.sourceSet = true
 		} else if name := s.det.String(); name != b.det.String() && !containsString(b.mergedFrom, name) {
 			// A non-winning seed collapsed into this bucket. Record
@@ -102,6 +105,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			// e.g. two compose services in one file — so it is
 			// deduplicated rather than repeated.
 			b.mergedFrom = append(b.mergedFrom, name)
+			candidate := detectionCandidate{detector: s.det, marker: detectionMarker(s.source)}
+			if !containsDetectionCandidate(b.mergedCandidates, candidate) {
+				b.mergedCandidates = append(b.mergedCandidates, candidate)
+			}
 		}
 		if !b.dfSet && s.dockerfile != "" {
 			b.dockerfile = s.dockerfile
@@ -185,13 +192,24 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			Source:       b.source,
 			Tier:         b.tier,
 			DetectedBy: Detection{
-				Detector:   b.det.String(),
-				Priority:   b.det.priority(),
-				MergedFrom: b.mergedFrom,
+				Detector:         b.det.String(),
+				Priority:         b.det.priority(),
+				MergedFrom:       b.mergedFrom,
+				Marker:           b.marker,
+				mergedCandidates: b.mergedCandidates,
 			},
 		})
 	}
 	return out
+}
+
+func containsDetectionCandidate(xs []detectionCandidate, want detectionCandidate) bool {
+	for _, candidate := range xs {
+		if candidate.detector == want.detector && candidate.marker == want.marker {
+			return true
+		}
+	}
+	return false
 }
 
 // containsString is the linear membership check used by the

@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.plan_affected_app import PlanAffectedApp
     from ..models.plan_cron import PlanCron
+    from ..models.plan_detection_warning import PlanDetectionWarning
     from ..models.plan_managed import PlanManaged
     from ..models.plan_workload import PlanWorkload
 
@@ -44,6 +45,8 @@ class PlanResponse:
     environment_config_hash: str | Unset = UNSET
     """Hash of the non-secret environment configuration bound into this plan"""
     warnings: list[str] | Unset = UNSET
+    detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
+    """Structured skipped/merged detector decisions available to explain-mode clients."""
     crons_not_allowed: bool | Unset = UNSET
     can_apply_pre_exclude: bool | Unset = UNSET
     gate_rescued_by_exclude: bool | Unset = UNSET
@@ -101,6 +104,13 @@ class PlanResponse:
         warnings: list[str] | Unset = UNSET
         if not isinstance(self.warnings, Unset):
             warnings = self.warnings
+
+        detection_warnings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.detection_warnings, Unset):
+            detection_warnings = []
+            for detection_warnings_item_data in self.detection_warnings:
+                detection_warnings_item = detection_warnings_item_data.to_dict()
+                detection_warnings.append(detection_warnings_item)
 
         crons_not_allowed = self.crons_not_allowed
 
@@ -173,6 +183,8 @@ class PlanResponse:
             field_dict["environment_config_hash"] = environment_config_hash
         if warnings is not UNSET:
             field_dict["warnings"] = warnings
+        if detection_warnings is not UNSET:
+            field_dict["detection_warnings"] = detection_warnings
         if crons_not_allowed is not UNSET:
             field_dict["crons_not_allowed"] = crons_not_allowed
         if can_apply_pre_exclude is not UNSET:
@@ -200,6 +212,7 @@ class PlanResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.plan_affected_app import PlanAffectedApp
         from ..models.plan_cron import PlanCron
+        from ..models.plan_detection_warning import PlanDetectionWarning
         from ..models.plan_managed import PlanManaged
         from ..models.plan_workload import PlanWorkload
 
@@ -252,6 +265,15 @@ class PlanResponse:
         environment_config_hash = d.pop("environment_config_hash", UNSET)
 
         warnings = cast(list[str], d.pop("warnings", UNSET))
+
+        _detection_warnings = d.pop("detection_warnings", UNSET)
+        detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
+        if _detection_warnings is not UNSET:
+            detection_warnings = []
+            for detection_warnings_item_data in _detection_warnings:
+                detection_warnings_item = PlanDetectionWarning.from_dict(detection_warnings_item_data)
+
+                detection_warnings.append(detection_warnings_item)
 
         crons_not_allowed = d.pop("crons_not_allowed", UNSET)
 
@@ -312,6 +334,7 @@ class PlanResponse:
             environment_protected=environment_protected,
             environment_config_hash=environment_config_hash,
             warnings=warnings,
+            detection_warnings=detection_warnings,
             crons_not_allowed=crons_not_allowed,
             can_apply_pre_exclude=can_apply_pre_exclude,
             gate_rescued_by_exclude=gate_rescued_by_exclude,

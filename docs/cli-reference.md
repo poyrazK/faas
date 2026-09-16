@@ -1518,7 +1518,7 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 | `--environment <SLUG>` | registered project environment to scan |  |
 | `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
 | `--show-affected` | render the WillDeploy + Unaffected tables (ADR-124) |  |
-| `--explain` | show why each workload was detected (detector, marker, priority) |  |
+| `--explain` | show detector provenance and skipped/merged decisions |  |
 | `--persist-exclude` | record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3) |  |
 
 

@@ -18,6 +18,10 @@ export type PlanDetectedBy = {
    */
   detector: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'app_yaml' | 'other';
   /**
+   * Concrete source marker for the winning detector, such as compose.yaml or Procfile; excludes the workload name.
+   */
+  marker: string;
+  /**
    * The detector's tiebreak weight; higher wins identity
    * within a tier. Surfaced so the precedence order is visible
    * on the wire rather than implied by server source.

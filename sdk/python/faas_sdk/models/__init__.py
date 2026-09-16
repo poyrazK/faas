@@ -795,6 +795,9 @@ from .plan_cron import PlanCron
 from .plan_detected_by import PlanDetectedBy
 from .plan_detected_by_detector import PlanDetectedByDetector
 from .plan_detected_by_merged_from_item import PlanDetectedByMergedFromItem
+from .plan_detection_warning import PlanDetectionWarning
+from .plan_detection_warning_detector import PlanDetectionWarningDetector
+from .plan_detection_warning_outcome import PlanDetectionWarningOutcome
 from .plan_managed import PlanManaged
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
@@ -1920,6 +1923,9 @@ __all__ = (
     "PlanDetectedBy",
     "PlanDetectedByDetector",
     "PlanDetectedByMergedFromItem",
+    "PlanDetectionWarning",
+    "PlanDetectionWarningDetector",
+    "PlanDetectionWarningOutcome",
     "PlanManaged",
     "PlanResponse",
     "PlanResponseScanSource",

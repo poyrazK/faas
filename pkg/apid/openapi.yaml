@@ -22842,13 +22842,17 @@ components:
         Additive and optional: absent on any response the server did
         not populate, so existing consumers are unaffected.
       type: object
-      required: [detector, priority]
+      required: [detector, marker, priority]
       properties:
         detector:
           type: string
           description: "closed vocabulary — the detector that won identity for this workload"
           enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
           example: compose
+        marker:
+          type: string
+          description: "Concrete source marker for the winning detector, such as compose.yaml or Procfile; excludes the workload name."
+          example: compose.yaml
         priority:
           type: integer
           description: |
@@ -22868,6 +22872,34 @@ components:
             type: string
             enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
           example: [procfile]
+
+    PlanDetectionWarning:
+      description: |
+        One detector decision that did not become a standalone workload
+        (issue #742). Outcome is merged when the candidate collapsed into
+        the winning workload, or skipped when the detector rejected it.
+        The legacy warnings string list remains available for compatibility.
+      type: object
+      required: [detector, marker, priority, outcome, reason]
+      properties:
+        workload:
+          type: string
+          description: "Workload affected by the decision; omitted for source-wide warnings."
+        detector:
+          type: string
+          enum: [compose, procfile, k8s, render, fly, serverless, app_yaml, other]
+        marker:
+          type: string
+          description: "Concrete source marker associated with the detector decision."
+        priority:
+          type: integer
+          description: "Detector priority used by the merge tiebreak."
+        outcome:
+          type: string
+          enum: [merged, skipped]
+        reason:
+          type: string
+          description: "Stable human-readable reason for the detector decision."
 
     PlanManaged:
       description: |
@@ -22969,6 +23001,10 @@ components:
         warnings:
           type: array
           items: { type: string }
+        detection_warnings:
+          type: array
+          description: "Structured skipped/merged detector decisions available to explain-mode clients."
+          items: { $ref: '#/components/schemas/PlanDetectionWarning' }
         observed_apps: { type: integer }
         observed_crons: { type: integer }
         limit_apps: { type: integer }
@@ -23046,6 +23082,10 @@ components:
         warnings:
           type: array
           items: { type: string }
+        detection_warnings:
+          type: array
+          description: "Structured skipped/merged detector decisions available to explain-mode clients."
+          items: { $ref: '#/components/schemas/PlanDetectionWarning' }
         observed_apps: { type: integer }
         observed_crons: { type: integer }
         limit_apps: { type: integer }

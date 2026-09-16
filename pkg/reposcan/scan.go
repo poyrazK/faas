@@ -178,6 +178,15 @@ type Detection struct {
 	// not get its own workload?": it merged into the compose
 	// `web`, and compose won identity on priority.
 	MergedFrom []string
+	// Marker is the concrete source marker for the winning detector,
+	// such as "compose.yaml" or "Procfile". It deliberately excludes
+	// the workload name so clients do not have to parse Source.
+	Marker string
+
+	// mergedCandidates is retained inside reposcan to build structured
+	// merge decisions. It is not serialized directly; MergedFrom remains
+	// the compact public summary on the workload.
+	mergedCandidates []detectionCandidate
 }
 
 // Key returns the merge key described in impl plan §3: pair
@@ -210,6 +219,10 @@ type Result struct {
 	Managed   []Managed
 	Tier      Tier // highest tier that produced any workload
 	Warnings  []string
+	// DetectionWarnings is the structured skip/merge decision trail used
+	// by the scan explainability surface. Warnings remains the legacy
+	// human-readable list for compatibility.
+	DetectionWarnings []DetectionWarning
 }
 
 // Scan walks an fs.FS (the extracted tarball in production,
@@ -226,10 +239,11 @@ type Result struct {
 // collision.
 func Scan(fsys fs.FS) (Result, error) {
 	var (
-		seeds       []workloadSeed
-		managed     []Managed
-		warnings    []string
-		highestTier Tier
+		seeds             []workloadSeed
+		managed           []Managed
+		warnings          []string
+		detectionWarnings []DetectionWarning
+		highestTier       Tier
 	)
 
 	// Tier 1 — explicit sources. Each detector is paired with its
@@ -266,6 +280,9 @@ func Scan(fsys fs.FS) (Result, error) {
 		}
 		managed = append(managed, m...)
 		warnings = append(warnings, w...)
+		for _, warning := range w {
+			detectionWarnings = append(detectionWarnings, detectionWarningFromString(r.tag, warning))
+		}
 	}
 
 	// Tier 2 — workspaces.
@@ -274,6 +291,9 @@ func Scan(fsys fs.FS) (Result, error) {
 		return Result{}, err
 	}
 	warnings = append(warnings, wsw...)
+	for _, warning := range wsw {
+		detectionWarnings = append(detectionWarnings, detectionWarningFromString(detOther, warning))
+	}
 	for _, s := range wsSeeds {
 		s.tier = TierWorkspace
 		seeds = append(seeds, s)
@@ -288,6 +308,9 @@ func Scan(fsys fs.FS) (Result, error) {
 		return Result{}, err
 	}
 	warnings = append(warnings, conw...)
+	for _, warning := range conw {
+		detectionWarnings = append(detectionWarnings, detectionWarningFromString(detOther, warning))
+	}
 	for _, s := range conSeeds {
 		s.tier = TierConvention
 		seeds = append(seeds, s)
@@ -311,6 +334,8 @@ func Scan(fsys fs.FS) (Result, error) {
 	}
 
 	workloads := mergeByKey(seeds)
+	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)
+	sortDetectionWarnings(detectionWarnings)
 	for i := range workloads {
 		digest, err := hashWorkloadSource(fsys, workloads[i])
 		if err != nil {
@@ -322,10 +347,11 @@ func Scan(fsys fs.FS) (Result, error) {
 	sortManagedByName(managed)
 
 	return Result{
-		Workloads: workloads,
-		Managed:   managed,
-		Tier:      highestTier,
-		Warnings:  warnings,
+		Workloads:         workloads,
+		Managed:           managed,
+		Tier:              highestTier,
+		Warnings:          warnings,
+		DetectionWarnings: detectionWarnings,
 	}, nil
 }
 

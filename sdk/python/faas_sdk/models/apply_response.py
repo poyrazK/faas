@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.apply_response_apps_item import ApplyResponseAppsItem
     from ..models.plan_affected_app import PlanAffectedApp
     from ..models.plan_cron import PlanCron
+    from ..models.plan_detection_warning import PlanDetectionWarning
     from ..models.plan_managed import PlanManaged
     from ..models.plan_workload import PlanWorkload
 
@@ -34,6 +35,8 @@ class ApplyResponse:
     managed: list[PlanManaged] | Unset = UNSET
     crons: list[PlanCron] | Unset = UNSET
     warnings: list[str] | Unset = UNSET
+    detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
+    """Structured skipped/merged detector decisions available to explain-mode clients."""
     observed_apps: int | Unset = UNSET
     observed_crons: int | Unset = UNSET
     limit_apps: int | Unset = UNSET
@@ -96,6 +99,13 @@ class ApplyResponse:
         warnings: list[str] | Unset = UNSET
         if not isinstance(self.warnings, Unset):
             warnings = self.warnings
+
+        detection_warnings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.detection_warnings, Unset):
+            detection_warnings = []
+            for detection_warnings_item_data in self.detection_warnings:
+                detection_warnings_item = detection_warnings_item_data.to_dict()
+                detection_warnings.append(detection_warnings_item)
 
         observed_apps = self.observed_apps
 
@@ -186,6 +196,8 @@ class ApplyResponse:
             field_dict["crons"] = crons
         if warnings is not UNSET:
             field_dict["warnings"] = warnings
+        if detection_warnings is not UNSET:
+            field_dict["detection_warnings"] = detection_warnings
         if observed_apps is not UNSET:
             field_dict["observed_apps"] = observed_apps
         if observed_crons is not UNSET:
@@ -229,6 +241,7 @@ class ApplyResponse:
         from ..models.apply_response_apps_item import ApplyResponseAppsItem
         from ..models.plan_affected_app import PlanAffectedApp
         from ..models.plan_cron import PlanCron
+        from ..models.plan_detection_warning import PlanDetectionWarning
         from ..models.plan_managed import PlanManaged
         from ..models.plan_workload import PlanWorkload
 
@@ -273,6 +286,15 @@ class ApplyResponse:
                 crons.append(crons_item)
 
         warnings = cast(list[str], d.pop("warnings", UNSET))
+
+        _detection_warnings = d.pop("detection_warnings", UNSET)
+        detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
+        if _detection_warnings is not UNSET:
+            detection_warnings = []
+            for detection_warnings_item_data in _detection_warnings:
+                detection_warnings_item = PlanDetectionWarning.from_dict(detection_warnings_item_data)
+
+                detection_warnings.append(detection_warnings_item)
 
         observed_apps = d.pop("observed_apps", UNSET)
 
@@ -354,6 +376,7 @@ class ApplyResponse:
             managed=managed,
             crons=crons,
             warnings=warnings,
+            detection_warnings=detection_warnings,
             observed_apps=observed_apps,
             observed_crons=observed_crons,
             limit_apps=limit_apps,
