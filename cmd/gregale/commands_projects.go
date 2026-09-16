@@ -268,11 +268,11 @@ func readProjectEnvironmentConfigInput(path string, fromStdin bool) ([]byte, err
 	if fromStdin {
 		return io.ReadAll(io.LimitReader(osStdin, limit))
 	}
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return io.ReadAll(io.LimitReader(f, limit))
 }
 
