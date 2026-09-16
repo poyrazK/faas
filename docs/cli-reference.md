@@ -304,6 +304,10 @@ Toggle require_signed on deploys
 
 Inspect or update the outbound CIDR allowlist
 
+### app network
+
+Show effective networking and inspect observed connectivity
+
 ### app routes
 
 List admitted per-route labels for one app (ADR-093)

@@ -35,6 +35,7 @@
     {"path": "gdpr", "source": "docs/account.md"},
     {"path": "jobs", "source": "docs/jobs.md"},
     {"path": "managed-postgres", "source": "docs/managed-postgres.md"},
+    {"path": "networking", "source": "docs/networking.md"},
     {"path": "object-storage", "source": "docs/object-storage.md"},
     {"path": "orgs", "source": "docs/account.md"},
     {"path": "plans", "source": "docs/plans.md"},
