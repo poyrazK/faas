@@ -39,6 +39,19 @@ type jobLogVMM struct {
 	lines []LogLine
 }
 
+type routedDestroyJobVMM struct {
+	*fakeVMM
+	destroyNode     string
+	destroyInstance string
+}
+
+func (v *routedDestroyJobVMM) Destroy(_ context.Context, nodeID, instanceID string) error {
+	v.destroyNode = nodeID
+	v.destroyInstance = instanceID
+	v.destroys++
+	return v.destroyErr
+}
+
 func (v *jobLogVMM) Logs(_ context.Context, nodeID, instanceID string, sinceSeq int64, sinceWrittenAt time.Time, follow bool) (LogStream, error) {
 	return &jobLogStream{lines: append([]LogLine(nil), v.lines...)}, nil
 }
@@ -229,6 +242,93 @@ func TestEngineWakeJobFailureRequeuesAndReleases(t *testing.T) {
 	}
 	if failed.State != string(state.StateFailed) {
 		t.Fatalf("failed job instance = %+v, want terminal failed state", failed)
+	}
+}
+
+func TestJobRetryPolicyUsesRunOverrideWithoutExtraAttempt(t *testing.T) {
+	zero, one, three := 0, 1, 3
+	tests := []struct {
+		name        string
+		jobDefault  int
+		runOverride *int
+		wantRetries int
+	}{
+		{name: "job default zero", jobDefault: 0, wantRetries: 0},
+		{name: "job default one", jobDefault: 1, wantRetries: 1},
+		{name: "override zero", jobDefault: 1, runOverride: &zero, wantRetries: 0},
+		{name: "override one", jobDefault: 0, runOverride: &one, wantRetries: 1},
+		{name: "override three", jobDefault: 1, runOverride: &three, wantRetries: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := state.Job{RetryMax: tt.jobDefault}
+			run := state.JobRun{RetryMax: tt.runOverride}
+			retryMax := effectiveJobRetryMax(job, run)
+			attempts := 1
+			for jobTaskHasRetryRemaining(attempts, retryMax) {
+				attempts++
+			}
+			if got := attempts - 1; got != tt.wantRetries {
+				t.Fatalf("retry count = %d, want %d (total attempts=%d)", got, tt.wantRetries, attempts)
+			}
+		})
+	}
+}
+
+func TestHandleJobExitDestroysOnComputeNodeNotLeaseOwner(t *testing.T) {
+	store := state.NewMemStore()
+	acct, job, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	ctx := context.Background()
+	remote, err := store.CreateComputeNode(ctx, state.ComputeNode{
+		Name: "job-compute", TargetURL: "tcp://10.0.0.42:50051", VPCPUs: 2,
+		MemMB: 2048, MaxConcurrency: 10, AdmissionCeilingMB: 1024, VCPUBudget: 2, Active: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	const (
+		instanceID = "88ff3215-cc04-4a16-81f2-4136067e1350"
+		leaseToken = "6a274117-5aca-4a61-9672-e9e21b691f8b"
+	)
+	if _, err := store.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, 0,
+		string(state.StateRunning), job.RAMMB, remote.ID, instanceID, leaseToken,
+		time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
+		t.Fatalf("CreateAndClaimJobInstance: %v", err)
+	}
+	vmm := &routedDestroyJobVMM{fakeVMM: &fakeVMM{}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil)))
+	if err := e.HandleJobExit(ctx, acct.ID, run.ID, 0, 0, "succeeded", leaseToken); err != nil {
+		t.Fatalf("HandleJobExit: %v", err)
+	}
+	if vmm.destroyNode != remote.ID || vmm.destroyInstance != instanceID {
+		t.Fatalf("destroy routed to node=%q instance=%q, want node=%q instance=%q", vmm.destroyNode, vmm.destroyInstance, remote.ID, instanceID)
+	}
+}
+
+func TestReconcileOrphanedJobInstancesDestroysAndSettles(t *testing.T) {
+	store := state.NewMemStore()
+	_, job, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	ctx := context.Background()
+	const instanceID = "e34081c8-66a9-47f1-975f-0c167c384ba3"
+	if _, err := store.CreateJobInstance(ctx, instanceID, job.ID, run.ID, 0,
+		string(state.StateRunning), job.RAMMB, state.DefaultLocalNodeName, instanceID); err != nil {
+		t.Fatalf("CreateJobInstance: %v", err)
+	}
+	vmm := &routedDestroyJobVMM{fakeVMM: &fakeVMM{}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	got, err := e.ReconcileOrphanedJobInstances(ctx, 64)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedJobInstances: %v", err)
+	}
+	if got != 1 || vmm.destroyInstance != instanceID {
+		t.Fatalf("reconciled=%d destroy=%q, want 1/%q", got, vmm.destroyInstance, instanceID)
+	}
+	ins, err := store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if ins.State != string(state.StateStopped) {
+		t.Fatalf("orphan state=%q, want stopped", ins.State)
 	}
 }
 

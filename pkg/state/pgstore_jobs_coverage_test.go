@@ -467,6 +467,27 @@ func TestPg_Jobs_JobTaskMarkClaimed(t *testing.T) {
 	}
 }
 
+func TestPg_Jobs_CreateAndClaimJobInstanceRollsBackLosingInsert(t *testing.T) {
+	s, _, ctx := pgJobsStoreWithPool(t)
+	job, run, fanned := pgJobsSeed(t, s, ctx, "task-atomic-claim")
+	task := fanned[0]
+	nodeID := resolveDefaultLocal(t, ctx, s)
+	expires := time.Now().Add(5 * time.Minute)
+	firstID := "9c1d11fa-83df-4b5a-aea4-0af6e6ae6d80"
+	if _, err := s.CreateAndClaimJobInstance(ctx, firstID, job.ID, run.ID, task.TaskIndex,
+		"cold_booting", 128, nodeID, firstID, "11111111-1111-4111-8111-111111111111", expires, nodeID); err != nil {
+		t.Fatalf("first CreateAndClaimJobInstance: %v", err)
+	}
+	secondID := "9f300ccc-646f-41f7-885d-4bf1219748dd"
+	if _, err := s.CreateAndClaimJobInstance(ctx, secondID, job.ID, run.ID, task.TaskIndex,
+		"cold_booting", 128, nodeID, secondID, "22222222-2222-4222-8222-222222222222", expires, nodeID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("second CreateAndClaimJobInstance error=%v, want ErrNotFound", err)
+	}
+	if _, err := s.InstanceByID(ctx, secondID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("losing instance exists, error=%v", err)
+	}
+}
+
 func TestPg_Jobs_JobTaskMarkTerminal(t *testing.T) {
 	s, _, ctx := pgJobsStoreWithPool(t)
 	_, run, fanned := pgJobsSeed(t, s, ctx, "task-3")

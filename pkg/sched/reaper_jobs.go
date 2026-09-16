@@ -159,5 +159,52 @@ func (e *Engine) ReapStuckJobTasks(ctx context.Context, cfg StuckJobReaperConfig
 // (pkg/sched/reaper_jobs_test.go will exercise ReapStuckJobTasks
 // directly without driving a ticker).
 func (e *Engine) JobReaperTick(ctx context.Context) (int, error) {
-	return e.ReapStuckJobTasks(ctx, StuckJobReaperConfig{})
+	cfg := StuckJobReaperConfig{}.withDefaults()
+	reaped, reapErr := e.ReapStuckJobTasks(ctx, cfg)
+	reconciled, reconcileErr := e.ReconcileOrphanedJobInstances(ctx, cfg.BatchSize)
+	return reaped + reconciled, errors.Join(reapErr, reconcileErr)
+}
+
+// ReconcileOrphanedJobInstances retries the durable half of terminal job
+// cleanup. A row is eligible when the instance is still live but no claimed
+// task owns it. This includes terminal tasks whose first vmmd destroy failed
+// and unbound rows left by older non-atomic dispatchers.
+func (e *Engine) ReconcileOrphanedJobInstances(ctx context.Context, limit int) (int, error) {
+	orphans, err := e.store.ListOrphanedJobInstances(ctx, limit)
+	if err != nil {
+		return 0, fmt.Errorf("sched: reconcile orphaned job instances: list: %w", err)
+	}
+	reconciled := 0
+	var cleanupErrs []error
+	for _, ins := range orphans {
+		if e.ops != nil {
+			e.ops.JobInstanceReconcileDecisions("found").Inc()
+		}
+		if e.vmm == nil {
+			reconcileErr := fmt.Errorf("instance %s: vmm router unavailable", ins.ID)
+			cleanupErrs = append(cleanupErrs, reconcileErr)
+			if e.ops != nil {
+				e.ops.JobInstanceReconcileDecisions("error").Inc()
+			}
+			continue
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), DestroyTimeout)
+		destroyErr := e.vmm.Destroy(cleanupCtx, e.nodeForRoute(ins.NodeID), ins.ID)
+		if destroyErr != nil {
+			cancel()
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("destroy instance %s: %w", ins.ID, destroyErr))
+			if e.ops != nil {
+				e.ops.JobInstanceReconcileDecisions("error").Inc()
+			}
+			e.log.Warn("sched: reconcile orphaned job instance: destroy", "instance", ins.ID, "node", ins.NodeID, "err", destroyErr)
+			continue
+		}
+		e.settleJobInstance(cleanupCtx, ins.ID, "job_orphan_reconciled")
+		cancel()
+		if e.ops != nil {
+			e.ops.JobInstanceReconcileDecisions("cleaned").Inc()
+		}
+		reconciled++
+	}
+	return reconciled, errors.Join(cleanupErrs...)
 }

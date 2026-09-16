@@ -782,6 +782,19 @@ groups:
           description: "Resident RAM has remained between 80% and 92% of the host budget for 10m. Start or provision another SSD compute node through the reviewed node-join path before this host reaches the admission ceiling."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHighResidentRam.md"
 
+      - alert: FaasJobInstanceCleanupFailed
+        expr: increase(schedd_job_instance_reconcile_total{outcome="error"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: page
+          component: schedd
+          family: job_instance_lifecycle
+          public_status: internal
+        annotations:
+          summary: "A terminal or unowned job VM could not be destroyed"
+          description: "The job ownership reconciler found a live Firecracker instance without a matching claimed task and vmmd destroy failed. The VM may still consume and meter RAM until the next successful sweep."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasJobInstanceCleanupFailed.md"
+
       # ─────────────────────────────────────────────────────────────────
       # Snapshot fleet average size (vmmd / fcvm — schedd /metrics/fcvm)
       # Spec §12 row: "snapshot_fleet_avg_mb 130 plan, > 160 warn, > 200 page".

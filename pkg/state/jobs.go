@@ -347,16 +347,16 @@ type JobStore interface {
 	// Failure modes:
 	//   - ErrNotFound on missing run id.
 	JobRunIncrementDeadLetter(ctx context.Context, runID string) error
+	// JobRunReopenDeadLetter removes one exhausted-task marker after an
+	// explicit task retry and reopens the run's terminal timestamps.
+	JobRunReopenDeadLetter(ctx context.Context, runID string) error
 
 	// --- job_tasks ---
 
-	// JobTaskClaimBatch returns up to `limit` queued tasks ordered
-	// by created_at ASC, holding a SELECT FOR UPDATE SKIP LOCKED
-	// lock for the duration of the transaction. Concurrent schedd
-	// replicas (multi-host scale-out) each claim disjoint row
-	// sets without retry-on-collision. The caller is responsible
-	// for transitioning queued→claimed via JobTaskMarkClaimed in
-	// a follow-up call (the lock is released at tx commit).
+	// JobTaskClaimBatch returns up to `limit` queued candidates ordered by
+	// created_at ASC. The selection lock ends with this method's transaction;
+	// CreateAndClaimJobInstance is the authoritative queued->claimed race and
+	// atomically rolls back a losing instance insert.
 	//
 	// Failure modes:
 	//   - mapErr-wrapped SQL errors on tx begin / commit.
@@ -370,6 +370,11 @@ type JobStore interface {
 	// OR when the task is no longer status='queued' (e.g. a parallel
 	// dispatcher claimed it first; lost the race).
 	JobTaskMarkClaimed(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, leaseExpiresAt time.Time, nodeID string) error
+	// CreateAndClaimJobInstance atomically creates the job-task instance row
+	// and attaches it to a still-queued task. The transaction rolls back the
+	// instance insert when another dispatcher has already won the task, so a
+	// losing scheduler can never leave an unowned job VM row behind.
+	CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error)
 	// JobTaskMarkTerminal transitions a single task to a terminal
 	// status ('succeeded' | 'failed' | 'timeout' | 'cancelled' |
 	// 'oom') AND stamps exit_code + error_class + error_message +
@@ -439,6 +444,10 @@ type JobStore interface {
 	// included; terminal rows remain available through the normal
 	// instance retention path.
 	ListJobInstances(ctx context.Context) ([]Instance, error)
+	// ListOrphanedJobInstances returns live job-task instances that are not
+	// owned by the matching claimed task. It includes both terminal-task VMs
+	// whose first destroy failed and unbound rows left by older schedulers.
+	ListOrphanedJobInstances(ctx context.Context, limit int) ([]Instance, error)
 }
 
 // compile-time check: api.Limits is referenced (the JobQuotaError

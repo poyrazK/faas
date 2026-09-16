@@ -517,6 +517,20 @@ func (m *MemStore) JobRunIncrementDeadLetter(_ context.Context, runID string) er
 	return nil
 }
 
+func (m *MemStore) JobRunReopenDeadLetter(_ context.Context, runID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.jobRuns[runID]
+	if !ok || r.DeadLetterCount <= 0 {
+		return ErrNotFound
+	}
+	r.DeadLetterCount--
+	r.AggregateStatus = "running"
+	r.FinishedAt = nil
+	m.jobRuns[runID] = r
+	return nil
+}
+
 // --- job_tasks -------------------------------------------------------
 
 // JobTaskClaimBatch returns up to `limit` queued tasks ordered by
@@ -584,6 +598,53 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	tasks[taskIndex] = t
 	m.jobTasks[runID] = tasks
 	return nil
+}
+
+func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
+	if err := validateMemStoreCreateInstanceState(instanceState); err != nil {
+		return Instance{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.jobs[jobID]; !ok {
+		return Instance{}, ErrNotFound
+	}
+	tasks, ok := m.jobTasks[runID]
+	if !ok {
+		return Instance{}, ErrNotFound
+	}
+	task, ok := tasks[taskIndex]
+	if !ok || task.Status != "queued" {
+		return Instance{}, ErrNotFound
+	}
+	if instanceID == "" {
+		instanceID = newID()
+	}
+	if _, exists := m.instances[instanceID]; exists {
+		return Instance{}, ErrConflict
+	}
+	now := time.Now().UTC()
+	ins := Instance{ID: instanceID, State: instanceState, RAMMB: ramMB, NodeID: computeNodeID,
+		StartedAt: now, Mode: string(InstanceModeJob), Kind: "job_task", JobID: jobID,
+		JobRunID: runID, JobTaskIndex: taskIndex}
+	if wakeID != "" {
+		ins.WakeID = wakeID
+	} else {
+		ins.WakeID = newID()
+	}
+	task.Status = "claimed"
+	task.InstanceID = &instanceID
+	task.LeaseToken = &leaseToken
+	expires := leaseExpiresAt.UTC()
+	task.LeaseExpiresAt = &expires
+	task.LastLeaseNode = &leaseOwnerNodeID
+	if task.StartedAt == nil {
+		task.StartedAt = &now
+	}
+	m.instances[instanceID] = ins
+	tasks[taskIndex] = task
+	m.jobTasks[runID] = tasks
+	return ins, nil
 }
 
 // JobTaskMarkTerminal transitions a single task to a terminal status
@@ -830,6 +891,42 @@ func (m *MemStore) ListJobInstances(_ context.Context) ([]Instance, error) {
 			continue
 		}
 		out = append(out, ins)
+	}
+	return out, nil
+}
+
+func (m *MemStore) ListOrphanedJobInstances(_ context.Context, limit int) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 64
+	}
+	owned := make(map[string]struct{})
+	for _, tasks := range m.jobTasks {
+		for _, task := range tasks {
+			if task.Status == "claimed" && task.InstanceID != nil {
+				owned[*task.InstanceID] = struct{}{}
+			}
+		}
+	}
+	out := make([]Instance, 0)
+	for _, ins := range m.instances {
+		if ins.Kind != "job_task" || (ins.State != "waking" && ins.State != "cold_booting" && ins.State != "running") {
+			continue
+		}
+		if _, ok := owned[ins.ID]; ok {
+			continue
+		}
+		out = append(out, ins)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].StartedAt.Before(out[j].StartedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }

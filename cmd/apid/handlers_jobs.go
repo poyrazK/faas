@@ -77,11 +77,10 @@ func jobResponse(j state.Job) api.JobResponse {
 // updates them after every terminal task transition); the wire
 // shape stays stable across run lifecycle stages.
 //
-// RetryMax / TaskTimeoutSec are *int on the row (nil = inherit
-// from jobs.*); we dereference here so the wire carries the
-// effective integer value (the inheritance was already resolved
-// at run-create time per migrations/00255 + 00574).
-func jobRunResponse(r state.JobRun) api.JobRunResponse {
+// RetryMax / TaskTimeoutSec are nullable overrides on the run. The public
+// response always projects their effective values so inherited policy never
+// appears as a misleading zero in list/detail output.
+func jobRunResponse(r state.JobRun, job state.Job) api.JobRunResponse {
 	resp := api.JobRunResponse{
 		ID:              r.ID,
 		JobID:           r.JobID,
@@ -96,6 +95,8 @@ func jobRunResponse(r state.JobRun) api.JobRunResponse {
 		TasksRunning:    r.TasksRunning,
 		DeadLetterCount: r.DeadLetterCount,
 		CreatedAt:       r.CreatedAt.UTC().Format(time.RFC3339),
+		RetryMax:        job.RetryMax,
+		TaskTimeoutSec:  job.TaskTimeoutS,
 	}
 	if r.RetryMax != nil {
 		resp.RetryMax = *r.RetryMax
@@ -358,7 +359,7 @@ func (s *server) listJobRuns(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	out := make([]api.JobRunResponse, 0, len(runs))
 	for _, run := range runs {
-		out = append(out, jobRunResponse(run))
+		out = append(out, jobRunResponse(run, job))
 	}
 	// Run count is per-job (not per-account); the dashboard
 	// only needs the visible page + the next-offset hint. No
@@ -387,7 +388,7 @@ func (s *server) listJobRuns(w http.ResponseWriter, r *http.Request, acct state.
 // resolveJobRun which walks run → job → account_id compare.
 func (s *server) getJobRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	runID := r.PathValue("id")
-	_, run, ok, err := s.resolveJobRun(r.Context(), runID, acct)
+	job, run, ok, err := s.resolveJobRun(r.Context(), runID, acct)
 	if err != nil {
 		s.log.Error("get job run failed", "id", runID, "account", acct.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not get run"))
@@ -397,7 +398,7 @@ func (s *server) getJobRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 		s.notFound(w, "no such run")
 		return
 	}
-	writeJSON(w, http.StatusOK, jobRunResponse(run))
+	writeJSON(w, http.StatusOK, jobRunResponse(run, job))
 }
 
 // listJobRunTasks handles GET /v1/jobs/{name}/runs/{id}/tasks.
@@ -914,7 +915,7 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 	})
 	_ = s.notif.Notify(r.Context(), db.NotifyJobChanged,
 		fmt.Sprintf(`{"kind":"run_created","job_id":"%s","run_id":"%s","account_id":"%s"}`, j.ID, run.ID, acct.ID))
-	writeJSON(w, http.StatusCreated, jobRunResponse(run))
+	writeJSON(w, http.StatusCreated, jobRunResponse(run, j))
 }
 
 // cancelJobRun handles POST /v1/jobs/{name}/runs/{id}/cancel.
@@ -951,7 +952,7 @@ func (s *server) cancelJobRun(w http.ResponseWriter, r *http.Request, acct state
 		fmt.Sprintf(`{"kind":"run_cancelled","job_id":"%s","run_id":"%s","account_id":"%s"}`, j.ID, cancelled.ID, acct.ID))
 	cancelledAt := time.Now().UTC().Format(time.RFC3339)
 	writeJSON(w, http.StatusOK, api.JobRunCancelledResponse{
-		Run:         jobRunResponse(cancelled),
+		Run:         jobRunResponse(cancelled, j),
 		CancelledAt: cancelledAt,
 	})
 }

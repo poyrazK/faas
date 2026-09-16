@@ -500,6 +500,26 @@ func TestMemStoreJobs_JobTaskMarkClaimed(t *testing.T) {
 	}
 }
 
+func TestMemStoreJobs_CreateAndClaimJobInstanceIsAtomic(t *testing.T) {
+	ms := NewMemStore()
+	job, run, _ := newJobAndRun(t, ms, "acct-atomic-claim", "atomic-claim")
+	ctx := context.Background()
+	expires := time.Now().Add(time.Minute)
+	firstID := "6ad769e8-82c9-4f7d-a3c7-67a87f090da6"
+	if _, err := ms.CreateAndClaimJobInstance(ctx, firstID, job.ID, run.ID, 0, "cold_booting", 128,
+		DefaultLocalNodeName, firstID, "lease-1", expires, DefaultLocalNodeName); err != nil {
+		t.Fatalf("first CreateAndClaimJobInstance: %v", err)
+	}
+	secondID := "1e5e7654-ce5c-45ce-b334-3f3a389cff56"
+	if _, err := ms.CreateAndClaimJobInstance(ctx, secondID, job.ID, run.ID, 0, "cold_booting", 128,
+		DefaultLocalNodeName, secondID, "lease-2", expires, DefaultLocalNodeName); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second CreateAndClaimJobInstance error=%v, want ErrNotFound", err)
+	}
+	if _, err := ms.InstanceByID(ctx, secondID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("losing instance exists, error=%v", err)
+	}
+}
+
 // TestMemStoreJobs_JobTaskMarkTerminal — happy + ErrNotFound when
 // already terminal.
 func TestMemStoreJobs_JobTaskMarkTerminal(t *testing.T) {

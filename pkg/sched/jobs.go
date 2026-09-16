@@ -51,9 +51,8 @@ type JobWakeResult struct {
 // app wakes) and the scope (set by WithScope for free).
 
 // WakeJob admits one job task for execution. Resolves the (runID,
-// taskIndex) tuple, locks the task via JobTaskClaimBatch +
-// JobTaskMarkClaimed, then issues the vmmd cold-boot RPC (M7). On
-// any error after MarkClaimed, the lease is released and the task
+// taskIndex) tuple, atomically creates and claims its instance, then issues
+// the vmmd cold-boot RPC (M7). On any error after the claim, the lease is released and the task
 // is reversed to status='queued' via JobTaskRetry with a 0-second
 // next_attempt_at — a transient vmmd failure should retry on the
 // next dispatch tick, not deadlock.
@@ -183,9 +182,10 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		e.ledger.Release(instanceID)
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob lease: %w", err)
 	}
-	// 4. Write the instances row before attaching it to job_tasks. PostgreSQL's
-	//    job_tasks_instance_id_fkey is immediate, so claiming first always fails
-	//    on the production store even though the in-memory store accepts it.
+	// 4. Create the instance and attach it to the task in one store transaction.
+	//    PostgreSQL's job_tasks_instance_id_fkey is immediate, so the insert must
+	//    happen first inside the transaction. If another dispatcher won the task,
+	//    the store rolls the insert back and no unbound billable row can escape.
 	//
 	//    CR-H / code-review #2 round-8:
 	//    the previous shape deferred this to M7 — but without an
@@ -200,20 +200,12 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	//
 	//    On any create-instance failure, release the lease + ledger slot. The
 	//    task has not been claimed yet, so it remains queued for the next tick.
-	if _, err := e.store.CreateJobInstance(ctx, instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID); err != nil {
+	if _, err := e.store.CreateAndClaimJobInstance(ctx, instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
 		e.rollbackUnclaimedJobAdmission(ctx, instanceID, tok, "")
-		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create instance: %w", err)
+		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create and claim instance: %w", err)
 	}
 
-	// 5. Attach the task lease to the now-persisted instance. If another
-	//    dispatcher won the queued→claimed race, terminalize our unused row
-	//    and release its in-memory admission and lease before returning.
-	if err := e.store.JobTaskMarkClaimed(ctx, runID, taskIndex, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
-		e.rollbackUnclaimedJobAdmission(ctx, instanceID, tok, "job_task_claim_failed")
-		return JobWakeResult{}, fmt.Errorf("sched: WakeJob mark claimed: %w", err)
-	}
-
-	// 6. vmmd RPC. The engine validates that vmmd acknowledges the same
+	// 5. vmmd RPC. The engine validates that vmmd acknowledges the same
 	// instance and node selected during admission; a mismatched response is
 	// treated as a failed boot and all host-side resources are released.
 	if e.jobVmmClient == nil {
@@ -392,30 +384,24 @@ func (e *Engine) RetryJob(ctx context.Context, accountID, runID string, taskInde
 	if err != nil {
 		return fmt.Errorf("sched: RetryJob resolve job: %w", err)
 	}
-	if task.Attempt > job.RetryMax+1 {
+	retryMax := effectiveJobRetryMax(job, run)
+	if !jobTaskHasRetryRemaining(task.Attempt, retryMax) {
 		return ErrJobTaskMaxRetriesReached
 	}
 	// Capped exponential backoff: base * 2^(attempt-1), capped at
 	// api.JobBackoffMaxSeconds. The base is api.JobBackoffBaseSeconds
 	// = 5s; cap is 300s.
-	delay := time.Duration(api.JobBackoffBaseSeconds) * time.Second
-	for i := 1; i < task.Attempt; i++ {
-		delay *= 2
-		if delay > time.Duration(api.JobBackoffMaxSeconds)*time.Second {
-			delay = time.Duration(api.JobBackoffMaxSeconds) * time.Second
-			break
-		}
-	}
+	delay := jobRetryDelay(task.Attempt)
 	next := time.Now().Add(delay)
 	if err := e.store.JobTaskRetry(ctx, runID, taskIndex, next); err != nil {
 		return fmt.Errorf("sched: RetryJob: %w", err)
 	}
-	// Bump dead_letter_count → 0 on a successful re-queue. The
-	// JobRunRecompute sweep on the next tick will re-derive the
-	// aggregate status; if ALL tasks have been retried successfully,
-	// the aggregate flips back to 'running'.
+	// Remove the exhausted-task marker and reopen the terminal run after the
+	// task is successfully re-queued. The next recompute derives exact counters.
 	if run.DeadLetterCount > 0 {
-		_ = e.store.JobRunIncrementDeadLetter(ctx, runID) // best-effort; recompute fixes it
+		if err := e.store.JobRunReopenDeadLetter(ctx, runID); err != nil {
+			return fmt.Errorf("sched: RetryJob reopen run: %w", err)
+		}
 	}
 	return nil
 }
@@ -457,9 +443,9 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	if task.InstanceID != nil {
 		instanceID = *task.InstanceID
 	}
-	nodeID := e.ownerNodeID
+	leaseOwnerNodeID := e.ownerNodeID
 	if task.LastLeaseNode != nil && *task.LastLeaseNode != "" {
-		nodeID = *task.LastLeaseNode
+		leaseOwnerNodeID = *task.LastLeaseNode
 	}
 	if task.LeaseToken == nil || *task.LeaseToken != leaseTokenStr {
 		return ErrLeaseHeldByOther
@@ -468,14 +454,20 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	// status. The mapping mirrors guest/init/job_supervisor_linux.go
 	// (M8); keep them in lock-step.
 	status := mapExitToTerminalStatus(exitCode, errorClass)
-	logContent, logTruncated, logErr := e.captureJobTaskLogs(ctx, nodeID, instanceID)
+	computeNodeID := e.ownerNodeID
+	if instanceID != "" {
+		if ins, lookupErr := e.store.InstanceByID(ctx, instanceID); lookupErr == nil && ins.NodeID != "" {
+			computeNodeID = ins.NodeID
+		}
+	}
+	logContent, logTruncated, logErr := e.captureJobTaskLogs(ctx, computeNodeID, instanceID)
 	if logErr != nil {
 		// The task still has to settle and release capacity when vmmd's log
 		// stream is unavailable. Marking it truncated makes the partial result
 		// explicit to the customer instead of reporting a known-incomplete empty
 		// response as complete.
 		logTruncated = true
-		e.log.Warn("sched: capture terminal job logs", "run", runID, "task", taskIndex, "instance", instanceID, "node", nodeID, "err", logErr)
+		e.log.Warn("sched: capture terminal job logs", "run", runID, "task", taskIndex, "instance", instanceID, "node", computeNodeID, "err", logErr)
 	}
 	if err := e.store.JobTaskMarkTerminalWithLogs(ctx, runID, taskIndex, status, exitCode, errorClass, "", logContent, logTruncated, time.Now()); err != nil {
 		return fmt.Errorf("sched: HandleJobExit mark terminal: %w", err)
@@ -489,22 +481,19 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	// intentionally omits the optional leaser. Production schedd wires the
 	// concrete PgLeaser through AdaptJobLeaser.
 	if tok := LeaseToken(leaseTokenStr); tok != "" && e.jobLeaser != nil {
-		_ = e.jobLeaser.Release(ctx, tok, nodeID)
+		_ = e.jobLeaser.Release(ctx, tok, leaseOwnerNodeID)
 	}
-	e.cleanupJobInstance(ctx, instanceID, nodeID, "job_exit")
+	e.cleanupJobInstance(ctx, instanceID, computeNodeID, "job_exit")
 	// Retry-on-failure: re-queue failed/timeout/oom tasks if budget
 	// remains.
 	if status == "failed" || status == "timeout" || status == "oom" {
 		job, err := e.store.JobGetByID(ctx, run.JobID)
-		if err == nil && task.Attempt <= job.RetryMax+1 {
-			delay := time.Duration(api.JobBackoffBaseSeconds) * time.Second
-			for i := 1; i < task.Attempt; i++ {
-				delay *= 2
-				if delay > time.Duration(api.JobBackoffMaxSeconds)*time.Second {
-					delay = time.Duration(api.JobBackoffMaxSeconds) * time.Second
-					break
-				}
-			}
+		retryMax := 0
+		if err == nil {
+			retryMax = effectiveJobRetryMax(job, run)
+		}
+		if err == nil && jobTaskHasRetryRemaining(task.Attempt, retryMax) {
+			delay := jobRetryDelay(task.Attempt)
 			next := time.Now().Add(delay)
 			if rerr := e.store.JobTaskRetry(ctx, runID, taskIndex, next); rerr == nil {
 				// Skip recompute — the task is back in 'queued',
@@ -514,7 +503,7 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		}
 		// Exhausted retries → dead-letter. JobRunRecompute picks
 		// this up via the dead_letter_count column.
-		if err == nil && task.Attempt > job.RetryMax+1 {
+		if err == nil && !jobTaskHasRetryRemaining(task.Attempt, retryMax) {
 			_ = e.store.JobRunIncrementDeadLetter(ctx, runID)
 		}
 	}
@@ -524,6 +513,32 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		return fmt.Errorf("sched: HandleJobExit recompute: %w", err)
 	}
 	return nil
+}
+
+// effectiveJobRetryMax resolves the immutable policy recorded for a run. A
+// nil run value inherits the job default; an explicit zero disables retries.
+func effectiveJobRetryMax(job state.Job, run state.JobRun) int {
+	if run.RetryMax != nil {
+		return *run.RetryMax
+	}
+	return job.RetryMax
+}
+
+// attempt starts at one, while retry_max counts executions after the initial
+// attempt. Therefore attempt <= retry_max means another retry remains.
+func jobTaskHasRetryRemaining(attempt, retryMax int) bool {
+	return attempt <= retryMax
+}
+
+func jobRetryDelay(attempt int) time.Duration {
+	delay := time.Duration(api.JobBackoffBaseSeconds) * time.Second
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay > time.Duration(api.JobBackoffMaxSeconds)*time.Second {
+			return time.Duration(api.JobBackoffMaxSeconds) * time.Second
+		}
+	}
+	return delay
 }
 
 const (

@@ -1687,6 +1687,10 @@ type OpsMetrics struct {
 	// the §12 dashboard treats a sustained non-zero rate as an
 	// incident signal, not routine background repair.
 	deadNodeReconcileDecisions *prometheus.CounterVec
+	// jobInstanceReconcileDecisions reports live job-task rows without an
+	// active task owner. found is the invariant breach; cleaned/error record
+	// the idempotent destroy outcome.
+	jobInstanceReconcileDecisions *prometheus.CounterVec
 	// recreateDecisions: Workstream B / issue #1184 / ADR-137.
 	// Counts every per-instance verdict the recovery arbiter's
 	// recreate primitive lands. outcome ∈ {succeeded, skipped,
@@ -3908,6 +3912,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Dead-node billing reconciler decisions, labelled by outcome ∈ {failed, conflict, error}. `failed` counts RUNNING instances terminated because their compute_node stopped heartbeating past the staleness window — each one was billing the customer for a VM that no longer existed and holding §6.2-2 RAM ceiling. A sustained non-zero `failed` rate is an incident signal (a vmmd is dying without transitioning its rows), not routine repair. `conflict` is the benign peer-wins/node-recovered path.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, deadNodeReconcileDecisions)
+	jobInstanceReconcileDecisions := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_job_instance_reconcile_total",
+		Help: "Job-instance ownership reconciler decisions, labelled by outcome in {found, cleaned, error}. A found row is a live billable job VM with no matching claimed task; cleaned confirms vmmd destroy and terminal state convergence.",
+	}, []string{"outcome"})
+	commonCollectors = append(commonCollectors, jobInstanceReconcileDecisions)
 	// Recovery-arbiter recreate primitive counter (Workstream B /
 	// issue #1184 / ADR-137). Single-registry pattern (mirrors
 	// deadNodeReconcileDecisions): registered on every daemon,
@@ -4369,6 +4378,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// a graph but only one proves the reconciler is wired.
 	for _, outcome := range []string{"failed", "conflict", "error"} {
 		deadNodeReconcileDecisions.WithLabelValues(outcome)
+	}
+	for _, outcome := range []string{"found", "cleaned", "error"} {
+		jobInstanceReconcileDecisions.WithLabelValues(outcome)
 	}
 	// Pre-instantiate the recovery-arbiter recreate decision set
 	// so the §12 recovery panel reads zero on a healthy fleet
@@ -4841,6 +4853,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		standbyState:                                          standbyState,
 		standbyStateValue:                                     StandbyStateWarming, // mirrors the gauge.Set(StandbyStateWarming) above
 		deadNodeReconcileDecisions:                            deadNodeReconcileDecisions,
+		jobInstanceReconcileDecisions:                         jobInstanceReconcileDecisions,
 		recreateDecisions:                                     recreateDecisions,
 		snapshotBackoffStamp:                                  snapshotBackoffStamp,
 		snapshotBackoffGate:                                   snapshotBackoffGate,
@@ -5918,6 +5931,12 @@ func (m *OpsMetrics) StandbyState() int {
 // MigratingReconcileDecisions.
 func (m *OpsMetrics) DeadNodeReconcileDecisions(outcome string) prometheus.Counter {
 	return m.deadNodeReconcileDecisions.WithLabelValues(outcome)
+}
+
+// JobInstanceReconcileDecisions returns the bounded outcome counter for the
+// job ownership reconciler.
+func (m *OpsMetrics) JobInstanceReconcileDecisions(outcome string) prometheus.Counter {
+	return m.jobInstanceReconcileDecisions.WithLabelValues(outcome)
 }
 
 // RecreateDecisions returns the labelled counter for the

@@ -718,19 +718,29 @@ func (s *PgStore) JobRunIncrementDeadLetter(ctx context.Context, runID string) e
 	return nil
 }
 
+func (s *PgStore) JobRunReopenDeadLetter(ctx context.Context, runID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update job_runs set
+		   dead_letter_count = greatest(dead_letter_count - 1, 0),
+		   aggregate_status = 'running',
+		   finished_at = null
+		 where id = $1::uuid and dead_letter_count > 0`, runID)
+	if err != nil {
+		return fmt.Errorf("state: reopen dead-letter run %s: %w", runID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- job_tasks -------------------------------------------------------
 
-// JobTaskClaimBatch returns up to `limit` queued tasks ordered by
-// created_at ASC, holding a SELECT FOR UPDATE SKIP LOCKED lock for
-// the duration of the transaction. Concurrent schedd replicas each
-// claim disjoint row sets without retry-on-collision.
-//
-// Returns the row surface (jobTaskSelectCols) read under the lock.
-// The caller is responsible for transitioning queued→claimed via
-// JobTaskMarkClaimed in a follow-up call; the lock releases at tx
-// commit so two schedulers calling ClaimBatch in lockstep could in
-// principle see the same row, but the MarkClaimed WHERE guard
-// (status='queued') makes the second attempt a no-op success.
+// JobTaskClaimBatch returns up to `limit` queued candidates ordered by
+// created_at ASC. SELECT FOR UPDATE SKIP LOCKED prevents overlap while this
+// short transaction is open. After commit, CreateAndClaimJobInstance is the
+// authoritative ownership race; it atomically attaches the winner and rolls
+// back the losing instance insert without holding a DB lock across cold boot.
 //
 // Failure modes:
 //   - mapErr-wrapped SQL errors on tx begin / commit.
@@ -789,6 +799,53 @@ func (s *PgStore) JobTaskMarkClaimed(ctx context.Context, runID string, taskInde
 		return ErrNotFound
 	}
 	return nil
+}
+
+// CreateAndClaimJobInstance makes instance creation and queued-task ownership
+// one PostgreSQL transaction. In particular, the instance FK is satisfied
+// before job_tasks is updated, while a lost queued->claimed race rolls the
+// insert back instead of leaving an unbound billable row.
+func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Instance{}, fmt.Errorf("state: begin create-and-claim job instance: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after commit
+
+	row := tx.QueryRow(ctx,
+		`insert into instances (id, app_id, deployment_id, job_id, kind, state, ram_mb, node_id, wake_id, started_at, mode)
+		 values ($1::uuid, null, null, $2::uuid, 'job_task', $3, $4, $5::uuid,
+		         case when $6::text = '' then gen_random_uuid() else ($6::text)::uuid end, now(), 'job')
+		 returning id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
+		           coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count`,
+		instanceID, jobID, instanceState, ramMB, computeNodeID, wakeID)
+	inst, err := scanInstanceCols(row.Scan)
+	if err != nil {
+		return Instance{}, fmt.Errorf("state: create job instance for atomic claim (instance=%s run=%s task=%d): %w", instanceID, runID, taskIndex, err)
+	}
+
+	tag, err := tx.Exec(ctx,
+		`update job_tasks set
+		   status = 'claimed', instance_id = $3::uuid,
+		   lease_token = $4, lease_expires_at = $5,
+		   last_lease_node = $6::uuid,
+		   started_at = coalesce(started_at, now())
+		 where run_id = $1::uuid and task_index = $2 and status = 'queued'`,
+		runID, taskIndex, instanceID, leaseToken, leaseExpiresAt.UTC(), leaseOwnerNodeID)
+	if err != nil {
+		return Instance{}, fmt.Errorf("state: claim task for job instance (%s, %d): %w", runID, taskIndex, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return Instance{}, ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Instance{}, fmt.Errorf("state: commit create-and-claim job instance: %w", err)
+	}
+	inst.Kind = "job_task"
+	inst.JobID = jobID
+	inst.JobRunID = runID
+	inst.JobTaskIndex = taskIndex
+	return inst, nil
 }
 
 // JobTaskMarkTerminal transitions a single task to a terminal status
@@ -1021,6 +1078,42 @@ func (s *PgStore) ListJobInstances(ctx context.Context) ([]Instance, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("state: iterate job_task instances: %w", err)
+	}
+	return out, nil
+}
+
+func (s *PgStore) ListOrphanedJobInstances(ctx context.Context, limit int) ([]Instance, error) {
+	if limit <= 0 {
+		limit = 64
+	}
+	rows, err := s.pool.Query(ctx,
+		`select i.id, i.state, i.ram_mb, coalesce(i.node_id::text, ''),
+		        coalesce(i.job_id::text, ''), i.started_at
+		   from instances i
+		  where i.kind = 'job_task'
+		    and i.state in ('waking', 'cold_booting', 'running')
+		    and not exists (
+		      select 1 from job_tasks t
+		       where t.instance_id = i.id and t.status = 'claimed'
+		    )
+		  order by i.started_at nulls first, i.id
+		  limit $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list orphaned job instances: %w", err)
+	}
+	defer rows.Close()
+	out := make([]Instance, 0)
+	for rows.Next() {
+		var ins Instance
+		if err := rows.Scan(&ins.ID, &ins.State, &ins.RAMMB, &ins.NodeID, &ins.JobID, &ins.StartedAt); err != nil {
+			return nil, fmt.Errorf("state: scan orphaned job instance: %w", err)
+		}
+		ins.Kind = "job_task"
+		ins.Mode = string(InstanceModeJob)
+		out = append(out, ins)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate orphaned job instances: %w", err)
 	}
 	return out, nil
 }

@@ -434,6 +434,22 @@ func jobName(i int) string {
 	return "job-" + string(letters[i])
 }
 
+func TestJobRunResponseProjectsInheritedAndOverriddenPolicy(t *testing.T) {
+	job := state.Job{RetryMax: 2, TaskTimeoutS: 90}
+	run := state.JobRun{ID: "run", JobID: "job", CreatedAt: time.Now()}
+	got := jobRunResponse(run, job)
+	if got.RetryMax != 2 || got.TaskTimeoutSec != 90 {
+		t.Fatalf("inherited policy = retries %d timeout %d, want 2/90", got.RetryMax, got.TaskTimeoutSec)
+	}
+	zero, thirty := 0, 30
+	run.RetryMax = &zero
+	run.TaskTimeoutS = &thirty
+	got = jobRunResponse(run, job)
+	if got.RetryMax != 0 || got.TaskTimeoutSec != 30 {
+		t.Fatalf("overridden policy = retries %d timeout %d, want 0/30", got.RetryMax, got.TaskTimeoutSec)
+	}
+}
+
 // Compile-time guard: the memstore actually implements the
 // JobStore sub-interface. Pinning this here means a future
 // signature drift in pkg/state surfaces as a build failure in
