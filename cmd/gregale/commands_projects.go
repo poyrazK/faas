@@ -37,7 +37,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|preview|promote|status>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -55,6 +55,8 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentPromote(args[1:])
 	case "status":
 		return cmdProjectsEnvironmentPromotionStatus(args[1:])
+	case "rollback":
+		return cmdProjectsEnvironmentPromotionRollback(args[1:])
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown project environments subcommand %q", args[0]), "projects environments")
 		return 1
@@ -162,6 +164,47 @@ func cmdProjectsEnvironmentPromotionStatus(args []string) int {
 		line := fmt.Sprintf("  %-20s %s", workload.WorkloadSlug, workload.Status)
 		if workload.Error != "" {
 			line += " — " + workload.Error
+		}
+		_, _ = fmt.Fprintln(osStdout, line)
+	}
+	return 0
+}
+
+func cmdProjectsEnvironmentPromotionRollback(args []string) int {
+	flags, positional := splitArgsForFlags(args, "yes", "idempotency-key")
+	fs := newFlagSet("projects-environments-rollback", flag.ContinueOnError)
+	to := fs.String("to", "", "target environment")
+	yes := fs.Bool("yes", false, "confirm the rollback")
+	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying this rollback")
+	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) || strings.TrimSpace(positional[1]) == "" || !api.ValidProjectEnvironmentSlug(*to) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments rollback <project-slug> <promotion-id> --to <environment> [--yes] [--idempotency-key <KEY>]", "projects environments")
+		return 1
+	}
+	if !*yes {
+		return printErr("Confirmation required", errors.New("project environment rollback requires --yes"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	key := strings.TrimSpace(*idempotencyKey)
+	if key == "" {
+		digest := sha256.Sum256([]byte("project-environment-promotion-rollback\x00" + positional[0] + "\x00" + *to + "\x00" + positional[1]))
+		key = "project-rollback-" + hex.EncodeToString(digest[:])
+	}
+	rollbackCtx := api.ContextWithIdempotencyKey(context.Background(), key)
+	status, err := client.RollbackProjectEnvironmentPromotion(rollbackCtx, positional[0], *to, positional[1])
+	if err != nil {
+		return printErr("Promotion rollback failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(status))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Rolled back promotion %s: %s -> %s (%s)\n", status.PromotionID, status.FromEnvironment, status.ToEnvironment, status.RollbackStatus)
+	for _, workload := range status.Workloads {
+		line := fmt.Sprintf("  %-20s %s", workload.WorkloadSlug, workload.RollbackStatus)
+		if workload.RollbackError != "" {
+			line += " — " + workload.RollbackError
 		}
 		_, _ = fmt.Fprintln(osStdout, line)
 	}

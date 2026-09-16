@@ -26,6 +26,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/e2etest"
 )
 
 func phaseOuterBudgets(t *testing.T) map[string]time.Duration {
@@ -124,9 +126,9 @@ func TestSourceBuildingPhasesHaveABuildSizedBudget(t *testing.T) {
 				"short default despite running real builds", phase)
 			continue
 		}
-		if got < 2*sourceDeployLiveDeadline() {
+		if got < 2*e2etest.DefaultBuildCeiling {
 			t.Errorf("phase %s budget %s leaves room for fewer than two builds at %s each",
-				phase, got, sourceDeployLiveDeadline())
+				phase, got, e2etest.DefaultBuildCeiling)
 		}
 	}
 }

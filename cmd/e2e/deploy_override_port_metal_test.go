@@ -132,7 +132,7 @@ func TestDeployOverridePortMetal(t *testing.T) {
 	// Wait for parked → live.
 	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline())
+	dep, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
 	if err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}

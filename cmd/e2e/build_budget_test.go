@@ -1,38 +1,60 @@
 package e2e_test
 
-// The build e2e test must never give a build less time than the platform does.
+// The build e2e test must never give a build less time than the platform
+// does — and must never give a WEDGED build more time than it needs to be
+// diagnosed.
 //
-// runBuildSubtest used a hardcoded 6-minute deadline while
-// api.BuildTimeoutSeconds grants a build 900 s — and the constant's own
-// comment says why: "cold rootless Railpack export needs headroom". A build
-// that took 7 minutes was therefore within spec and still failed the test.
+// This file has pinned each half of that in turn, and each time the other
+// half bit:
 //
-// On a cold acceptance node every go124 subtest died at exactly 360.00 s with
-// the deployment still `building`, while the guest console showed buildkit
-// healthy and pulling the Railpack frontend from ghcr.io. Nothing was broken
-// except the test's own budget.
+//   - runBuildSubtest used a hardcoded 6-minute deadline while
+//     api.BuildTimeoutSeconds grants a build 900 s. On a cold acceptance node
+//     every go124 subtest died at exactly 360.00 s with the deployment still
+//     `building`, while the guest console showed buildkit healthy and pulling
+//     the Railpack frontend. Nothing was broken except the test's budget.
+//   - #2624 fixed that by deriving the poll from api.BuildTimeoutSeconds plus
+//     headroom, and this file guarded the derivation. Then #2694 spread the
+//     same 16-minute poll across every source deploy — and nine wedged builds
+//     pinned phase 2 at its 60-minute ceiling, each reporting nothing but
+//     "deadline reached". A clock that is long enough for a healthy cold
+//     build is far too long for a wedged one.
 //
-// Untagged deliberately: the test it guards is metal-only, but the invariant
-// is arithmetic over two constants and belongs in ordinary CI, where it runs
-// on every PR instead of only on hardware.
+// The resolution is not a better number. It is to wait on PROGRESS: a healthy
+// build writes output continuously, a wedged one goes silent, and
+// e2etest.WaitForSourceDeployment fails within DefaultBuildStallWindow of the
+// last change with the log tail attached, while keeping the platform budget
+// only as a ceiling. These guards pin that shape.
+//
+// Untagged deliberately: the test they guard is metal-only, but the shape is
+// visible in its source and belongs in ordinary CI, where it runs on every PR
+// instead of only on hardware.
 
 import (
 	"os"
 	"regexp"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/e2etest"
 )
 
-func TestBuildSubtestDeadlineIsNotTighterThanThePlatformBudget(t *testing.T) {
+func readBuildMetalSource(t *testing.T) []byte {
+	t.Helper()
 	src, err := os.ReadFile("build_metal_test.go")
 	if err != nil {
 		t.Fatalf("read build_metal_test.go: %v", err)
 	}
+	return src
+}
 
-	// A literal minute-valued context deadline in the build path is the shape
-	// that caused this: it cannot track api.BuildTimeoutSeconds.
+// A literal minute-valued context deadline in the build path cannot track
+// the platform budget; it is the shape that failed builds inside their own
+// budget.
+func TestBuildSubtestHasNoHardcodedDeadlineTighterThanThePlatformBudget(t *testing.T) {
+	src := readBuildMetalSource(t)
+
 	literal := regexp.MustCompile(`context\.WithTimeout\(context\.Background\(\), (\d+)\s*\*\s*time\.Minute\)`)
 	for _, m := range literal.FindAllSubmatch(src, -1) {
 		mins, convErr := strconv.Atoi(string(m[1]))
@@ -42,29 +64,38 @@ func TestBuildSubtestDeadlineIsNotTighterThanThePlatformBudget(t *testing.T) {
 		if mins*60 < api.BuildTimeoutSeconds {
 			t.Errorf("build_metal_test.go uses a hardcoded %d-minute deadline, but the "+
 				"platform grants a build %d s (api.BuildTimeoutSeconds). A build inside "+
-				"its own budget would fail this test. Derive the deadline from the "+
-				"constant instead.", mins, api.BuildTimeoutSeconds)
+				"its own budget would fail this test.", mins, api.BuildTimeoutSeconds)
 		}
-	}
-
-	// And it must actually reference the constant, or the next edit reverts to
-	// a literal without tripping the check above.
-	if !regexp.MustCompile(`api\.BuildTimeoutSeconds`).Match(src) {
-		t.Error("build_metal_test.go no longer derives its deadline from " +
-			"api.BuildTimeoutSeconds; a hardcoded budget will drift from the platform's")
 	}
 }
 
-// The poll must outlast the platform cap, so the BUILD's own timeout fires
-// first and the failure arrives as a failed build with its log rather than as
-// a bare test deadline with nothing to diagnose.
-func TestBuildPollOutlastsThePlatformCap(t *testing.T) {
-	src, err := os.ReadFile("build_metal_test.go")
-	if err != nil {
-		t.Fatalf("read build_metal_test.go: %v", err)
+// The build path must wait on progress, not on a clock. A clock-based wait
+// on either row is the shape that sat sixteen minutes on every wedge.
+func TestBuildSubtestWaitsOnProgressNotAClock(t *testing.T) {
+	src := readBuildMetalSource(t)
+
+	if !regexp.MustCompile(`e2etest\.WaitForSourceDeployment\(`).Match(src) {
+		t.Error("build_metal_test.go does not use e2etest.WaitForSourceDeployment; " +
+			"a wedged build would burn a fixed deadline and report nothing about where it stopped")
 	}
-	if !regexp.MustCompile(`buildPoll\s*:=\s*api\.BuildTimeoutSeconds\*time\.Second\s*\+`).Match(src) {
-		t.Error("the build poll is not derived as api.BuildTimeoutSeconds + headroom; " +
-			"a poll shorter than the platform cap reports a test deadline instead of a build failure")
+	for _, clockWait := range []string{
+		`e2etest\.WaitForBuildStatus\(`,
+		`e2etest\.WaitForDeploymentLive\(`,
+	} {
+		if regexp.MustCompile(clockWait).Match(src) {
+			t.Errorf("build_metal_test.go still uses the clock-based %s on the build path; "+
+				"it waits a fixed deadline on a wedge instead of failing within "+
+				"DefaultBuildStallWindow with the log tail", clockWait)
+		}
+	}
+}
+
+// The ceiling the progress wait keeps as a backstop is the platform's own
+// in-guest budget — never a smaller constant that would drift from it.
+func TestBuildCeilingIsThePlatformBudget(t *testing.T) {
+	if want := time.Duration(api.BuildTimeoutSeconds) * time.Second; e2etest.DefaultBuildCeiling != want {
+		t.Errorf("e2etest.DefaultBuildCeiling = %s, want api.BuildTimeoutSeconds = %s; "+
+			"a smaller ceiling fails builds the platform would have allowed",
+			e2etest.DefaultBuildCeiling, want)
 	}
 }

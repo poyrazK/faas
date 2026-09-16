@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.project_environment_promotion_status_response_rollback_status import (
+    ProjectEnvironmentPromotionStatusResponseRollbackStatus,
+    check_project_environment_promotion_status_response_rollback_status,
+)
 from ..models.project_environment_promotion_status_response_status import (
     ProjectEnvironmentPromotionStatusResponseStatus,
     check_project_environment_promotion_status_response_status,
@@ -37,6 +41,10 @@ class ProjectEnvironmentPromotionStatusResponse:
     workloads: list[ProjectEnvironmentPromotionStatusWorkloadResponse]
     error: str | Unset = UNSET
     completed_at: datetime.datetime | Unset = UNSET
+    rollback_status: ProjectEnvironmentPromotionStatusResponseRollbackStatus | Unset = UNSET
+    rollback_error: str | Unset = UNSET
+    rollback_started_at: datetime.datetime | Unset = UNSET
+    rollback_completed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +75,20 @@ class ProjectEnvironmentPromotionStatusResponse:
         if not isinstance(self.completed_at, Unset):
             completed_at = self.completed_at.isoformat()
 
+        rollback_status: str | Unset = UNSET
+        if not isinstance(self.rollback_status, Unset):
+            rollback_status = self.rollback_status
+
+        rollback_error = self.rollback_error
+
+        rollback_started_at: str | Unset = UNSET
+        if not isinstance(self.rollback_started_at, Unset):
+            rollback_started_at = self.rollback_started_at.isoformat()
+
+        rollback_completed_at: str | Unset = UNSET
+        if not isinstance(self.rollback_completed_at, Unset):
+            rollback_completed_at = self.rollback_completed_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -86,6 +108,14 @@ class ProjectEnvironmentPromotionStatusResponse:
             field_dict["error"] = error
         if completed_at is not UNSET:
             field_dict["completed_at"] = completed_at
+        if rollback_status is not UNSET:
+            field_dict["rollback_status"] = rollback_status
+        if rollback_error is not UNSET:
+            field_dict["rollback_error"] = rollback_error
+        if rollback_started_at is not UNSET:
+            field_dict["rollback_started_at"] = rollback_started_at
+        if rollback_completed_at is not UNSET:
+            field_dict["rollback_completed_at"] = rollback_completed_at
 
         return field_dict
 
@@ -128,6 +158,29 @@ class ProjectEnvironmentPromotionStatusResponse:
         else:
             completed_at = datetime.datetime.fromisoformat(_completed_at)
 
+        _rollback_status = d.pop("rollback_status", UNSET)
+        rollback_status: ProjectEnvironmentPromotionStatusResponseRollbackStatus | Unset
+        if isinstance(_rollback_status, Unset):
+            rollback_status = UNSET
+        else:
+            rollback_status = check_project_environment_promotion_status_response_rollback_status(_rollback_status)
+
+        rollback_error = d.pop("rollback_error", UNSET)
+
+        _rollback_started_at = d.pop("rollback_started_at", UNSET)
+        rollback_started_at: datetime.datetime | Unset
+        if isinstance(_rollback_started_at, Unset):
+            rollback_started_at = UNSET
+        else:
+            rollback_started_at = datetime.datetime.fromisoformat(_rollback_started_at)
+
+        _rollback_completed_at = d.pop("rollback_completed_at", UNSET)
+        rollback_completed_at: datetime.datetime | Unset
+        if isinstance(_rollback_completed_at, Unset):
+            rollback_completed_at = UNSET
+        else:
+            rollback_completed_at = datetime.datetime.fromisoformat(_rollback_completed_at)
+
         project_environment_promotion_status_response = cls(
             promotion_id=promotion_id,
             project_slug=project_slug,
@@ -140,6 +193,10 @@ class ProjectEnvironmentPromotionStatusResponse:
             workloads=workloads,
             error=error,
             completed_at=completed_at,
+            rollback_status=rollback_status,
+            rollback_error=rollback_error,
+            rollback_started_at=rollback_started_at,
+            rollback_completed_at=rollback_completed_at,
         )
 
         project_environment_promotion_status_response.additional_properties = d

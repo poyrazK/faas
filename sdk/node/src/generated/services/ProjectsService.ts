@@ -721,6 +721,63 @@ export class ProjectsService {
     });
   }
   /**
+   * Roll back a completed or failed project environment promotion.
+   * Restores each workload to the target deployment captured before the
+   * promotion. Workloads created by the promotion are failed and removed
+   * from traffic when there was no prior target. The operation refuses to
+   * overwrite a target changed after the promotion and records durable
+   * per-workload rollback checkpoints.
+   *
+   * @returns ProjectEnvironmentPromotionStatusResponse Durable rollback status and per-workload restoration result.
+   * @throws ApiError
+   */
+  public static rollbackProjectEnvironmentPromotion({
+    slug,
+    environment,
+    promotion,
+    idempotencyKey,
+  }: {
+    /**
+     * Project slug owning the promotion rollback operation.
+     */
+    slug: string,
+    /**
+     * Target environment receiving the promotion rollback.
+     */
+    environment: string,
+    /**
+     * Durable promotion operation identifier to roll back.
+     */
+    promotion: string,
+    /**
+     * Stable key that makes this rollback replayable without repeating cutover.
+     */
+    idempotencyKey: string,
+  }): CancelablePromise<ProjectEnvironmentPromotionStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Preview the workloads and related state affected by project deletion.
    * @returns ProjectDeletePreviewResponse Deletion impact. Workloads and their related resources remain live after detachment.
    * @throws ApiError

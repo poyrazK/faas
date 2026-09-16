@@ -93,6 +93,10 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptions(ctx context.Context, slug,
 }
 
 func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool, idempotencyKey string, waitTimeout time.Duration, noTriggers bool) int {
+	return cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx, slug, repo, ref, ann, waitForDeploy, jsonWait, idempotencyKey, waitTimeout, noTriggers, false)
+}
+
+func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool, idempotencyKey string, waitTimeout time.Duration, noTriggers, waitForRollout bool) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -158,9 +162,9 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx context.Con
 		return 0
 	}
 	if jsonWait {
-		return writeWaitedDeploymentReceiptUntil(ctx, client, dep, nil, deployedAppURL(slug), "", slug, waitTimeout)
+		return writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, deployedAppURL(slug), "", slug, waitTimeout, waitForRollout)
 	}
-	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout})
+	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout, waitForRollout: waitForRollout})
 }
 
 func ensureSourceRefApp(ctx context.Context, client *Client, slug string) error {

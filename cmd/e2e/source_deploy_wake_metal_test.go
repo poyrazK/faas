@@ -154,16 +154,17 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	t.Run("source-deployed-live", func(t *testing.T) {
 		defer h.DumpLogs(t)
 
-		bctx, bcancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
-		defer bcancel()
-		if _, err := e2etest.WaitForBuildStatus(bctx, t, pool, buildID, state.BuildSucceeded, 5*time.Minute); err != nil {
-			t.Fatalf("build %s did not reach succeeded: %v", buildID, err)
-		}
+		// One progress-aware wait covers build and deployment: a wedged build
+		// is reported within DefaultBuildStallWindow with its log tail rather
+		// than after a fixed clock (pkg/e2etest/buildprogress.go).
 		dctx, dcancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 		defer dcancel()
-		dep, err := e2etest.WaitForDeploymentLive(dctx, t, pool, depID, sourceDeployLiveDeadline())
+		dep, build, err := e2etest.WaitForSourceDeployment(dctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
 		if err != nil {
 			t.Fatalf("deployment %s did not reach live: %v", depID, err)
+		}
+		if build.ID != buildID || build.Status != state.BuildSucceeded {
+			t.Fatalf("deployment %s went live via build %q (%s), want %s succeeded", depID, build.ID, build.Status, buildID)
 		}
 		if dep.AppID != appID {
 			t.Errorf("deployment.AppID = %s, want %s", dep.AppID, appID)

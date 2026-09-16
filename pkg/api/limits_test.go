@@ -1890,16 +1890,6 @@ func TestPlanTrafficSplitAllowed(t *testing.T) {
 	}
 }
 
-// TestPlanPublicAuthModeDefault pins the per-plan CREATE-TIME default
-// for apps.public_auth_mode (issue #695 / ADR-080). Closed enum:
-// "open" / "bearer" / "basic". Per-plan truth table: Free="open",
-// Hobby="open" (no bearer scope on Hobby), Pro="bearer", Scale="bearer".
-// Hobby unlocks the require_authn gate but not the bearer scope —
-// defaulting to "bearer" without an unlocked scope would strand the
-// customer. apid's buildApp path reads Plan.PublicAuthModeDefault()
-// when the POST body omitted the field. Unknown plans must fail closed
-// (return "open") — same fail-closed contract as the bearer / basic
-// gate tests above.
 func TestPlanRollbackOn5xxAllowed(t *testing.T) {
 	cases := []struct {
 		plan Plan
@@ -1918,6 +1908,16 @@ func TestPlanRollbackOn5xxAllowed(t *testing.T) {
 	}
 }
 
+// TestPlanPublicAuthModeDefault pins the per-plan CREATE-TIME default
+// for apps.public_auth_mode (issue #695 / ADR-080). Closed enum:
+// "open" / "bearer" / "basic". Per-plan truth table: Free="open",
+// Hobby="open" (no bearer scope on Hobby), Pro="bearer", Scale="bearer".
+// Hobby unlocks the require_authn gate but not the bearer scope —
+// defaulting to "bearer" without an unlocked scope would strand the
+// customer. apid's buildApp path reads Plan.PublicAuthModeDefault()
+// when the POST body omitted the field. Unknown plans must fail closed
+// (return "open") — same fail-closed contract as the bearer / basic
+// gate tests above.
 func TestPlanPublicAuthModeDefault(t *testing.T) {
 	cases := []struct {
 		plan Plan

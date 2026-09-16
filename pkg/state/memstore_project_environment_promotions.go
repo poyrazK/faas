@@ -65,6 +65,73 @@ func (m *MemStore) ProjectEnvironmentPromotionByIdempotencyKey(_ context.Context
 	return ProjectEnvironmentPromotion{}, nil, ErrNotFound
 }
 
+func (m *MemStore) StartProjectEnvironmentPromotionRollback(_ context.Context, accountID, id, idempotencyKey string) (ProjectEnvironmentPromotion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	promotion, ok := m.projectEnvironmentPromotions[id]
+	if !ok || promotion.AccountID != accountID {
+		return ProjectEnvironmentPromotion{}, ErrNotFound
+	}
+	if promotion.RollbackIdempotencyKey != "" && promotion.RollbackIdempotencyKey != idempotencyKey {
+		return ProjectEnvironmentPromotion{}, ErrConflict
+	}
+	if promotion.RollbackStatus == "rolled_back" {
+		return cloneProjectEnvironmentPromotion(promotion), nil
+	}
+	now := time.Now().UTC()
+	promotion.RollbackStatus = "rolling_back"
+	promotion.RollbackIdempotencyKey = idempotencyKey
+	promotion.RollbackError = ""
+	if promotion.RollbackStartedAt == nil {
+		promotion.RollbackStartedAt = &now
+	}
+	promotion.RollbackCompletedAt = nil
+	promotion.UpdatedAt = now
+	m.projectEnvironmentPromotions[id] = promotion
+	return cloneProjectEnvironmentPromotion(promotion), nil
+}
+
+func (m *MemStore) UpdateProjectEnvironmentPromotionRollback(_ context.Context, accountID, id, status, errorMessage string, completedAt *time.Time) (ProjectEnvironmentPromotion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	promotion, ok := m.projectEnvironmentPromotions[id]
+	if !ok || promotion.AccountID != accountID {
+		return ProjectEnvironmentPromotion{}, ErrNotFound
+	}
+	promotion.RollbackStatus = status
+	promotion.RollbackError = errorMessage
+	promotion.UpdatedAt = time.Now().UTC()
+	if completedAt != nil {
+		stamp := completedAt.UTC()
+		promotion.RollbackCompletedAt = &stamp
+	}
+	m.projectEnvironmentPromotions[id] = promotion
+	return cloneProjectEnvironmentPromotion(promotion), nil
+}
+
+func (m *MemStore) UpdateProjectEnvironmentPromotionRollbackWorkload(_ context.Context, accountID, promotionID, workloadID, status, restoredTargetDeploymentID, errorMessage string) (ProjectEnvironmentPromotionWorkload, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	promotion, ok := m.projectEnvironmentPromotions[promotionID]
+	if !ok || promotion.AccountID != accountID {
+		return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
+	}
+	items := m.projectEnvironmentPromotionWorkloads[promotionID]
+	for i, workload := range items {
+		if workload.ID != workloadID {
+			continue
+		}
+		workload.RollbackStatus = status
+		workload.RestoredTargetDeploymentID = restoredTargetDeploymentID
+		workload.RollbackError = errorMessage
+		workload.UpdatedAt = time.Now().UTC()
+		items[i] = workload
+		m.projectEnvironmentPromotionWorkloads[promotionID] = items
+		return workload, nil
+	}
+	return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
+}
+
 func (m *MemStore) UpdateProjectEnvironmentPromotion(_ context.Context, accountID, id, status, errorMessage string, completedAt *time.Time) (ProjectEnvironmentPromotion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -110,6 +177,14 @@ func cloneProjectEnvironmentPromotion(promotion ProjectEnvironmentPromotion) Pro
 	if promotion.CompletedAt != nil {
 		stamp := *promotion.CompletedAt
 		promotion.CompletedAt = &stamp
+	}
+	if promotion.RollbackStartedAt != nil {
+		stamp := *promotion.RollbackStartedAt
+		promotion.RollbackStartedAt = &stamp
+	}
+	if promotion.RollbackCompletedAt != nil {
+		stamp := *promotion.RollbackCompletedAt
+		promotion.RollbackCompletedAt = &stamp
 	}
 	return promotion
 }

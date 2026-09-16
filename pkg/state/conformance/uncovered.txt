@@ -639,6 +639,7 @@ StampAppScaleOut
 StampFirstWake
 StampInstanceInvocation
 StampPreviewDestroyCommentedAt
+StartProjectEnvironmentPromotionRollback
 StorageUsage
 SumOpenUploadSessionBytesByAccount
 SweepExpiredWebhookDeliveries
@@ -682,6 +683,8 @@ UpdateOrgName
 UpdateOrgPlan
 UpdateOrgStatus
 UpdateProjectEnvironmentPromotion
+UpdateProjectEnvironmentPromotionRollback
+UpdateProjectEnvironmentPromotionRollbackWorkload
 UpdateProjectEnvironmentPromotionWorkload
 UpdateSessionBinding
 UpdateSpansSummary

@@ -15,6 +15,9 @@ import (
 // into a slow or failed command.
 const (
 	deploymentReceiptFetchTimeout = 3 * time.Second
+	rolloutPollInterval           = 2 * time.Second
+	rolloutStateComplete          = "complete"
+	rolloutStateAborted           = "aborted"
 	// defaultDeployWaitTimeout covers the server's complete build budget
 	// (currently 15 minutes) plus five minutes for security scanning,
 	// snapshot preparation, readiness, and the post-readiness smoke. The
@@ -61,7 +64,26 @@ func deploymentWithReleaseSummary(ctx context.Context, c *Client, appSlug, deplo
 // persisted a hosting receipt.
 func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string) int {
 	final := deploymentWithReceipt(ctx, c, dep)
-	PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
+	if final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
+		reason := final.RolloutAbortedReason
+		if reason == "" {
+			reason = "the rollout was aborted"
+		}
+		PrintFail(osStderr, "Safe rollout stopped before reaching 100%% traffic for %s: %s", appSlug, reason)
+		PrintProgress(osStderr, "inspect: gregale deployment %s", final.ID)
+		return 1
+	}
+	if final.CanaryTotalSteps > 0 && !deploymentRolloutComplete(final) {
+		step := final.CanaryStep + 1
+		if step > final.CanaryTotalSteps {
+			step = final.CanaryTotalSteps
+		}
+		PrintOK(osStdout, "Candidate live. %s", deployedAppURL(appSlug))
+		PrintProgress(osStdout, "Rollout: %d%% traffic · step %d/%d · in progress", final.TrafficPercent, step, final.CanaryTotalSteps)
+		PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
+	} else {
+		PrintOK(osStdout, "Deployed. %s", deployedAppURL(appSlug))
+	}
 	printDeployColdWakeSentence()
 	if cache := formatBuildCacheSummary(final.BuildCacheStatus, final.CacheKeySHA256); cache != "" {
 		PrintProgress(osStdout, "Build cache: %s", cache)
@@ -71,6 +93,58 @@ func renderSuccessfulDeployment(ctx context.Context, c *Client, dep api.Deployme
 		renderDeploymentReleaseSummary(osStdout, summary, appSlug)
 	}
 	return 0
+}
+
+// deploymentRolloutComplete is deliberately separate from readiness
+// completion. A canary deployment can be live and routable while it is still
+// below 100% traffic; safe deploys must wait for the rollout state machine to
+// finish before reporting success.
+func deploymentRolloutComplete(dep api.DeploymentResponse) bool {
+	if dep.Status != statusLive {
+		return false
+	}
+	if dep.CanaryTotalSteps <= 0 {
+		return true
+	}
+	return dep.RolloutState == rolloutStateComplete
+}
+
+func deploymentRolloutTerminal(dep api.DeploymentResponse) bool {
+	if dep.Status != statusLive {
+		return isTerminalDeploymentStatus(dep.Status)
+	}
+	return dep.CanaryTotalSteps <= 0 || dep.RolloutState == rolloutStateComplete || dep.RolloutState == rolloutStateAborted
+}
+
+// waitForDeploymentRollout polls the durable deployment row after readiness
+// has completed. It returns on full rollout, an aborted/terminal deployment,
+// or context cancellation.
+func waitForDeploymentRollout(ctx context.Context, c *Client, dep api.DeploymentResponse) (api.DeploymentResponse, bool) {
+	if deploymentRolloutTerminal(dep) {
+		return deploymentWithReceipt(ctx, c, dep), true
+	}
+	if c == nil {
+		return dep, false
+	}
+	last := dep
+	for {
+		got, err := c.GetDeployment(ctx, dep.ID)
+		if err == nil {
+			last = got
+			if deploymentRolloutTerminal(got) {
+				return deploymentWithReceipt(ctx, c, got), true
+			}
+		}
+		timer := time.NewTimer(rolloutPollInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return last, false
+		case <-timer.C:
+		}
+	}
 }
 
 func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryResponse, appSlug string) {
@@ -109,11 +183,19 @@ func waitForDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.Deplo
 // deploymentWaitResumeCommand is deliberately emitted as a complete command
 // so a timed-out deploy can be resumed without reconstructing flags from logs.
 func deploymentWaitResumeCommand(deploymentID string, deadline time.Duration) string {
+	return deploymentWaitResumeCommandWithRollout(deploymentID, deadline, false)
+}
+
+func deploymentWaitResumeCommandWithRollout(deploymentID string, deadline time.Duration, rollout bool) string {
 	seconds := int(deadline / time.Second)
 	if seconds <= 0 {
 		seconds = defaultDeployWaitTimeoutSeconds
 	}
-	return fmt.Sprintf("gregale deployment wait %s --timeout %d", deploymentID, seconds)
+	rolloutFlag := ""
+	if rollout {
+		rolloutFlag = " --rollout"
+	}
+	return fmt.Sprintf("gregale deployment wait %s%s --timeout %d", deploymentID, rolloutFlag, seconds)
 }
 
 func warnDeploymentWaitTimeout(appSlug, deploymentID string, deadline time.Duration) {
@@ -122,16 +204,51 @@ func warnDeploymentWaitTimeout(appSlug, deploymentID string, deadline time.Durat
 		deadline, deploymentWaitResumeCommand(deploymentID, deadline), appSlug, deploymentID)
 }
 
+func warnDeploymentRolloutTimeout(appSlug, deploymentID string, deadline time.Duration) {
+	PrintWarn(osStderr,
+		"safe rollout timed out after %s; server continues processing; resume with: %s; follow logs with: gregale logs %s --deployment %s --follow",
+		deadline, deploymentWaitResumeCommandWithRollout(deploymentID, deadline, true), appSlug, deploymentID)
+}
+
+func warnDeploymentTimeoutForMode(appSlug, deploymentID string, deadline time.Duration, waitForRollout bool) {
+	if waitForRollout {
+		warnDeploymentRolloutTimeout(appSlug, deploymentID, deadline)
+		return
+	}
+	warnDeploymentWaitTimeout(appSlug, deploymentID, deadline)
+}
+
 // writeWaitedDeploymentReceiptUntil emits a single terminal-or-timeout JSON
 // object using the caller's wait deadline. A timeout still returns the
 // accepted deployment id so automation can resume with `deployment wait`.
 func writeWaitedDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration) int {
-	final, ok := waitForDeploymentReceiptUntil(ctx, c, dep, deadline)
+	return writeWaitedDeploymentReceiptUntilWithOptions(ctx, c, dep, prov, appURL, sourceSHA256, appSlug, deadline, false)
+}
+
+func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout bool) int {
+	if deadline <= 0 {
+		deadline = defaultDeployWaitTimeout
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
+	final, ok := waitForDeploymentReceiptUntil(waitCtx, c, dep, deadline)
+	if ok && waitForRollout && final.Status == statusLive && !deploymentRolloutComplete(final) {
+		final, ok = waitForDeploymentRollout(waitCtx, c, final)
+	}
 	if !ok {
-		PrintWarn(osStderr, "deployment did not reach a terminal state before the wait deadline; server continues processing; resume with: %s", deploymentWaitResumeCommand(dep.ID, deadline))
-		receipt := newDeployReceipt(dep, prov, appURL, sourceSHA256)
+		resumeCommand := deploymentWaitResumeCommandWithRollout(dep.ID, deadline, waitForRollout)
+		if waitForRollout {
+			PrintWarn(osStderr, "safe deployment did not reach 100%% traffic before the wait deadline; server continues processing; resume with: %s", resumeCommand)
+		} else {
+			PrintWarn(osStderr, "deployment did not reach a terminal state before the wait deadline; server continues processing; resume with: %s", resumeCommand)
+		}
+		receiptDep := dep
+		if final.ID != "" {
+			receiptDep = final
+		}
+		receipt := newDeployReceipt(receiptDep, prov, appURL, sourceSHA256)
 		receipt.TimedOut = true
-		receipt.ResumeCommand = deploymentWaitResumeCommand(dep.ID, deadline)
+		receipt.ResumeCommand = resumeCommand
 		if code := jsonOut(writeJSON(receipt)); code != 0 {
 			return code
 		}
@@ -145,6 +262,9 @@ func writeWaitedDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.D
 	}
 	if code := jsonOut(writeJSON(receipt)); code != 0 {
 		return code
+	}
+	if waitForRollout && final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
+		return 1
 	}
 	if final.Status != statusLive {
 		return 1

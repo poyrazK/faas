@@ -148,7 +148,7 @@ func TestDeployHealthcheckMetal(t *testing.T) {
 	// load-bearing one: wake ready happened via the HTTP probe.
 	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
+	if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
 	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, StateParkedForHealthcheck, 90*time.Second); err != nil {

@@ -202,14 +202,16 @@ func TestUploadSession_OffsetCAS(t *testing.T) {
 
 func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := setup(t, api.PlanFree)
+	e := setup(t, api.PlanPro)
 	e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "metadata"}, nil)
+	rollback := true
 	body, err := json.Marshal(startUploadRequest{
 		AppSlug: "metadata", TotalSize: 4096,
 		DeployOptions: &api.UploadDeployOptions{
 			SourceRoot: "apps/api", Scope: "production", Dockerfile: true, Reason: "release",
-			SourceURL: "github://acme/metadata@0123456789abcdef0123456789abcdef01234567",
-			CommitSHA: "0123456789abcdef0123456789abcdef01234567",
+			SourceURL:     "github://acme/metadata@0123456789abcdef0123456789abcdef01234567",
+			CommitSHA:     "0123456789abcdef0123456789abcdef01234567",
+			RollbackOn5xx: &rollback,
 		},
 	})
 	if err != nil {
@@ -234,6 +236,9 @@ func TestUploadSession_MetadataAndDiscovery(t *testing.T) {
 	if !bytes.Contains(row.DeployOptions, []byte(`"source_url":"github://acme/metadata@0123456789abcdef0123456789abcdef01234567"`)) ||
 		!bytes.Contains(row.DeployOptions, []byte(`"commit_sha":"0123456789abcdef0123456789abcdef01234567"`)) {
 		t.Fatalf("persisted provenance options = %s", row.DeployOptions)
+	}
+	if !bytes.Contains(row.DeployOptions, []byte(`"rollback_on_5xx":true`)) {
+		t.Fatalf("persisted rollback option = %s", row.DeployOptions)
 	}
 	req = httptest.NewRequest("GET", "/v1/uploads/"+started.UploadID, nil)
 	req.Header.Set("Authorization", "Bearer "+e.key)

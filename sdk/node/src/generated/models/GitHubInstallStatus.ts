@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { GitHubInstallActivity } from './GitHubInstallActivity.js';
 /**
  * Account-scoped GitHub installation and app binding health. Sealed
  * installation credentials are never returned. `state` is
@@ -33,5 +34,6 @@ export type GitHubInstallStatus = {
     remote_repository_count?: number;
     synced_at?: string;
   };
+  activity?: GitHubInstallActivity;
 };
 

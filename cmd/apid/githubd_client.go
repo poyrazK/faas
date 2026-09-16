@@ -74,6 +74,13 @@ type githubdRecoveryClient interface {
 	RetryCheckUpdate(context.Context, string) (bool, error)
 }
 
+// githubdActivityClient is optional so existing customer-path fakes and
+// older githubd clients can continue serving connection status while the
+// activity projection rolls out.
+type githubdActivityClient interface {
+	GetAppActivity(context.Context, string, string, int) (githubdgrpc.AppActivity, error)
+}
+
 // StreamSourceRefResult mirrors pkg/githubdgrpc.StreamSourceRefResult
 // so handler tests can construct it without importing the gRPC
 // package. Stay field-for-field compatible with the wire
@@ -158,6 +165,11 @@ func (stubGithubdClient) UnbindAppRepo(context.Context, string, string) error {
 // GetAppBinding returns the not-ready problem. Slice 8 replaces this.
 func (stubGithubdClient) GetAppBinding(context.Context, string, string) (AppBinding, error) {
 	return AppBinding{}, errGithubdNotReady
+}
+
+// GetAppActivity returns the not-ready problem. Slice 8 replaces this.
+func (stubGithubdClient) GetAppActivity(context.Context, string, string, int) (githubdgrpc.AppActivity, error) {
+	return githubdgrpc.AppActivity{}, errGithubdNotReady
 }
 
 // CreateDeploymentFromPush returns the not-ready problem. Slice 7 replaces this.
@@ -252,6 +264,11 @@ func (l *liveClient) UnbindAppRepo(ctx context.Context, appID, accountID string)
 // GetAppBinding passes through to githubdgrpc.Client.GetAppBinding.
 func (l *liveClient) GetAppBinding(ctx context.Context, appID, accountID string) (AppBinding, error) {
 	return l.c.GetAppBinding(ctx, appID, accountID)
+}
+
+// GetAppActivity passes through to githubdgrpc.Client.GetAppActivity.
+func (l *liveClient) GetAppActivity(ctx context.Context, accountID, appID string, limit int) (githubdgrpc.AppActivity, error) {
+	return l.c.GetAppActivity(ctx, accountID, appID, limit)
 }
 
 // CreateDeploymentFromPush passes through to githubdgrpc.Client.CreateDeploymentFromPush.

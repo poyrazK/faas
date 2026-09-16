@@ -526,13 +526,18 @@ from .get_deployment_stages_response_200_history_item_status import GetDeploymen
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .git_hub_check_activity import GitHubCheckActivity
+from .git_hub_check_activity_status import GitHubCheckActivityStatus
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
+from .git_hub_install_activity import GitHubInstallActivity
 from .git_hub_install_mutation_request import GitHubInstallMutationRequest
 from .git_hub_install_status import GitHubInstallStatus
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+from .git_hub_webhook_activity import GitHubWebhookActivity
+from .git_hub_webhook_activity_status import GitHubWebhookActivityStatus
 from .github_check_update_record import GithubCheckUpdateRecord
 from .github_check_update_record_status import GithubCheckUpdateRecordStatus
 from .github_recovery_retry_response import GithubRecoveryRetryResponse
@@ -821,8 +826,14 @@ from .project_environment_promotion_change_target_revision_kind import (
 from .project_environment_promotion_preview_response import ProjectEnvironmentPromotionPreviewResponse
 from .project_environment_promotion_response import ProjectEnvironmentPromotionResponse
 from .project_environment_promotion_status_response import ProjectEnvironmentPromotionStatusResponse
+from .project_environment_promotion_status_response_rollback_status import (
+    ProjectEnvironmentPromotionStatusResponseRollbackStatus,
+)
 from .project_environment_promotion_status_response_status import ProjectEnvironmentPromotionStatusResponseStatus
 from .project_environment_promotion_status_workload_response import ProjectEnvironmentPromotionStatusWorkloadResponse
+from .project_environment_promotion_status_workload_response_rollback_status import (
+    ProjectEnvironmentPromotionStatusWorkloadResponseRollbackStatus,
+)
 from .project_environment_promotion_status_workload_response_status import (
     ProjectEnvironmentPromotionStatusWorkloadResponseStatus,
 )
@@ -1627,10 +1638,13 @@ __all__ = (
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
+    "GitHubCheckActivity",
+    "GitHubCheckActivityStatus",
     "GithubCheckUpdateRecord",
     "GithubCheckUpdateRecordStatus",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
+    "GitHubInstallActivity",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusHealth",
@@ -1639,6 +1653,8 @@ __all__ = (
     "GithubRecoveryRetryResponse",
     "GithubRecoveryRetryResponseKind",
     "GithubRecoveryStatusResponse",
+    "GitHubWebhookActivity",
+    "GitHubWebhookActivityStatus",
     "GithubWebhookDeliveryRecord",
     "GithubWebhookDeliveryRecordStatus",
     "GraceWindowResponse",
@@ -1914,8 +1930,10 @@ __all__ = (
     "ProjectEnvironmentPromotionPreviewResponse",
     "ProjectEnvironmentPromotionResponse",
     "ProjectEnvironmentPromotionStatusResponse",
+    "ProjectEnvironmentPromotionStatusResponseRollbackStatus",
     "ProjectEnvironmentPromotionStatusResponseStatus",
     "ProjectEnvironmentPromotionStatusWorkloadResponse",
+    "ProjectEnvironmentPromotionStatusWorkloadResponseRollbackStatus",
     "ProjectEnvironmentPromotionStatusWorkloadResponseStatus",
     "ProjectEnvironmentPromotionWorkloadResponse",
     "ProjectEnvironmentPromotionWorkloadResponseStatus",

@@ -54,6 +54,11 @@ service Githubd {
   // fields when the app is not bound to any repo.
   rpc GetAppBinding(GetAppBindingRequest) returns (GetAppBindingResponse);
 
+  // GetAppActivity returns a redacted, account/app-scoped view of recent
+  // webhook processing and Check Run synchronization. Payloads, delivery
+  // identifiers, retry controls, and worker error text are not returned.
+  rpc GetAppActivity(GetAppActivityRequest) returns (GetAppActivityResponse);
+
   // CreateDeploymentFromPush turns a verified GitHub push webhook into
   // a deployment row in apid's `deployments` table. githubd calls this
   // after gatewayd-public forwards the request and the HMAC check passes.
@@ -201,6 +206,34 @@ message ListRecoveryQueueItemsResponse {
 message RetryWebhookDeliveryRequest { string delivery_id = 1; }
 message RetryCheckUpdateRequest { string deployment_id = 1; }
 message RetryRecoveryItemResponse { bool retried = 1; }
+
+message GetAppActivityRequest {
+  string account_id = 1;
+  string app_id = 2;
+  int32 limit = 3;
+}
+
+message WebhookActivity {
+  string event_type = 1;
+  string status = 2;
+  string commit_sha = 3;
+  string received_at = 4;
+  string processed_at = 5;
+  string updated_at = 6;
+}
+
+message CheckActivity {
+  string deployment_id = 1;
+  string status = 2;
+  string commit_sha = 3;
+  string processed_at = 4;
+  string updated_at = 5;
+}
+
+message GetAppActivityResponse {
+  repeated WebhookActivity webhooks = 1;
+  repeated CheckActivity checks = 2;
+}
 
 message VerifyInstallationRequest {
   int64 installation_id = 1;

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -19,6 +20,7 @@ import (
 const (
 	githubInstallManageAction     = "github_install_manage"
 	githubInstallManageCSRFCookie = "faas_csrf_github_install"
+	githubActivityLimit           = 10
 )
 
 // githubInstallStatusResponse intentionally excludes sealed credentials. It
@@ -41,12 +43,35 @@ type githubInstallStatusResponse struct {
 	LastReconcileDetachedCount   int                      `json:"last_reconcile_detached_count"`
 	CSRFToken                    string                   `json:"csrf_token,omitempty"`
 	SyncResult                   *githubInstallSyncResult `json:"sync_result,omitempty"`
+	Activity                     *githubActivityResponse  `json:"activity,omitempty"`
 }
 
 type githubInstallSyncResult struct {
 	Detached              bool      `json:"detached"`
 	RemoteRepositoryCount int       `json:"remote_repository_count"`
 	SyncedAt              time.Time `json:"synced_at"`
+}
+
+type githubActivityResponse struct {
+	WebhookDeliveries []githubWebhookActivityResponse `json:"webhook_deliveries"`
+	CheckUpdates      []githubCheckActivityResponse   `json:"check_updates"`
+}
+
+type githubWebhookActivityResponse struct {
+	EventType   string     `json:"event_type"`
+	Status      string     `json:"status"`
+	CommitSHA   string     `json:"commit_sha,omitempty"`
+	ReceivedAt  time.Time  `json:"received_at"`
+	ProcessedAt *time.Time `json:"processed_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type githubCheckActivityResponse struct {
+	DeploymentID string     `json:"deployment_id"`
+	Status       string     `json:"status"`
+	CommitSHA    string     `json:"commit_sha,omitempty"`
+	ProcessedAt  *time.Time `json:"processed_at,omitempty"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // getGitHubInstallStatus returns the account-scoped installation and app
@@ -387,8 +412,33 @@ func (s *server) githubInstallStatus(ctx context.Context, accountID, appID strin
 		if installErr != nil {
 			status.Health = "degraded"
 		}
+		if activityClient, ok := s.githubd.(githubdActivityClient); ok {
+			if activity, activityErr := activityClient.GetAppActivity(ctx, accountID, appID, githubActivityLimit); activityErr == nil {
+				status.Activity = projectGithubActivity(activity)
+			}
+		}
 	}
 	return status, nil
+}
+
+func projectGithubActivity(activity githubdgrpc.AppActivity) *githubActivityResponse {
+	out := &githubActivityResponse{
+		WebhookDeliveries: make([]githubWebhookActivityResponse, 0, len(activity.Webhooks)),
+		CheckUpdates:      make([]githubCheckActivityResponse, 0, len(activity.Checks)),
+	}
+	for _, item := range activity.Webhooks {
+		out.WebhookDeliveries = append(out.WebhookDeliveries, githubWebhookActivityResponse{
+			EventType: item.EventType, Status: item.Status, CommitSHA: item.CommitSHA,
+			ReceivedAt: item.ReceivedAt, ProcessedAt: item.ProcessedAt, UpdatedAt: item.UpdatedAt,
+		})
+	}
+	for _, item := range activity.Checks {
+		out.CheckUpdates = append(out.CheckUpdates, githubCheckActivityResponse{
+			DeploymentID: item.DeploymentID, Status: item.Status, CommitSHA: item.CommitSHA,
+			ProcessedAt: item.ProcessedAt, UpdatedAt: item.UpdatedAt,
+		})
+	}
+	return out
 }
 
 func canonicalGitHubRepo(name string) string {

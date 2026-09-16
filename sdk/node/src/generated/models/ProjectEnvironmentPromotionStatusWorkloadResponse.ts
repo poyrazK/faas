@@ -13,5 +13,8 @@ export type ProjectEnvironmentPromotionStatusWorkloadResponse = {
   previous_target_deployment_id?: string;
   target_deployment_id?: string;
   error?: string;
+  rollback_status?: 'pending' | 'restored' | 'cleared' | 'unchanged' | 'skipped' | 'failed';
+  restored_target_deployment_id?: string;
+  rollback_error?: string;
 };
 

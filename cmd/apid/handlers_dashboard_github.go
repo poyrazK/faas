@@ -57,8 +57,72 @@ func (s *server) dashboardGitHubConnection(ctx context.Context, log *slog.Logger
 		LastReconcileError:           status.LastReconcileError,
 		LastReconcileRepositoryCount: status.LastReconcileRepositoryCount,
 		LastReconcileDetachedCount:   status.LastReconcileDetachedCount,
+		Activity:                     projectDashboardGitHubActivity(status.Activity, status.RepoFullName, app.Slug),
 		CSRFToken:                    s.issueGitHubInstallManageCSRF(w, acct.ID),
 		Flash:                        flash,
+	}
+}
+
+func projectDashboardGitHubActivity(activity *githubActivityResponse, repoFullName, appSlug string) *dashboard.GitHubActivityView {
+	if activity == nil {
+		return nil
+	}
+	out := &dashboard.GitHubActivityView{
+		WebhookDeliveries: make([]dashboard.GitHubWebhookActivityView, 0, len(activity.WebhookDeliveries)),
+		CheckUpdates:      make([]dashboard.GitHubCheckActivityView, 0, len(activity.CheckUpdates)),
+	}
+	for _, item := range activity.WebhookDeliveries {
+		status, class, guidance := dashboardGitHubWebhookStatus(item.Status)
+		_, commitURL, _, _, commitShort := githubDeploymentLinks(
+			"github://"+repoFullName+"@"+item.CommitSHA, item.CommitSHA)
+		out.WebhookDeliveries = append(out.WebhookDeliveries, dashboard.GitHubWebhookActivityView{
+			EventType: item.EventType, Status: status, StatusClass: class, CommitShort: commitShort,
+			CommitURL: commitURL, ReceivedAt: item.ReceivedAt.UTC().Format(time.RFC3339), Guidance: guidance,
+		})
+	}
+	for _, item := range activity.CheckUpdates {
+		status, class, guidance := dashboardGitHubCheckStatus(item.Status)
+		_, _, _, _, commitShort := githubDeploymentLinks(
+			"github://"+repoFullName+"@"+item.CommitSHA, item.CommitSHA)
+		deploymentURL := ""
+		if item.DeploymentID != "" {
+			deploymentURL = "/dashboard/apps/" + url.PathEscape(appSlug) + "/deployments/" + url.PathEscape(item.DeploymentID)
+		}
+		out.CheckUpdates = append(out.CheckUpdates, dashboard.GitHubCheckActivityView{
+			DeploymentID: item.DeploymentID, DeploymentURL: deploymentURL, Status: status, StatusClass: class,
+			CommitShort: commitShort, UpdatedAt: item.UpdatedAt.UTC().Format(time.RFC3339), Guidance: guidance,
+		})
+	}
+	return out
+}
+
+func dashboardGitHubWebhookStatus(status string) (label, class, guidance string) {
+	switch status {
+	case "succeeded":
+		return "processed", "running", ""
+	case "pending":
+		return "queued", "waking", "Gregale received the event and is waiting to process it."
+	case "processing":
+		return "processing", "waking", "Gregale received the event and is processing it."
+	case "dead":
+		return "needs attention", "cert-failed", "Gregale received the event but could not process it. Sync GitHub access and try another push."
+	default:
+		return "unknown", "dim", "Refresh the page or sync GitHub access if this persists."
+	}
+}
+
+func dashboardGitHubCheckStatus(status string) (label, class, guidance string) {
+	switch status {
+	case "succeeded":
+		return "synced", "running", ""
+	case "pending":
+		return "queued", "waking", "Gregale is waiting to publish the deployment status to GitHub."
+	case "processing":
+		return "syncing", "waking", "Gregale is publishing the deployment status to GitHub."
+	case "dead":
+		return "not synced", "cert-failed", "The deployment is still available in Gregale, but its GitHub Check Run needs attention. Sync GitHub access if this repeats."
+	default:
+		return "unknown", "dim", "Refresh the page or sync GitHub access if this persists."
 	}
 }
 

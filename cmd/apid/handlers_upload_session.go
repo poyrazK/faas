@@ -581,6 +581,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
+	rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: opts.RollbackOn5xx}
+	if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if opts.SourceRoot != "" {
 		root, rootErr := sourcecontext.StorageRoot(opts.SourceRoot)
 		if rootErr != nil {
@@ -675,9 +680,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		Tag:              opts.Tag,
 		DeployedBy:       opts.DeployedBy,
 		PRNumber:         opts.PRNumber,
+		RollbackOn5xx:    opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
 		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
 		Scope:            rolloutReq.Scope,
-		RollbackOn5xx:    opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
 		HostingObserver:  s.ops,
 		HostingFlow:      "first_deploy",
 		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,
