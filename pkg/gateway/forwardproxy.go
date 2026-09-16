@@ -836,7 +836,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if init := frame.GetInit(); init != nil && !wroteHeader {
 			recordForwardedFirstByte(r.Context())
 			for _, h := range init.GetHeaders() {
-				forwardedResponseHeader(r.Context(), w.Header(), h.GetName(), h.GetValue())
+				forwardedResponseHeaderWithUpgrade(r.Context(), w.Header(), h.GetName(), h.GetValue(), init.GetStatus() == http.StatusSwitchingProtocols)
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
