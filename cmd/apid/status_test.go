@@ -72,7 +72,7 @@ func TestStatusHistoryRollup(t *testing.T) {
 			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"scalar","result":[{"value":[0,"0"]}]}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.5"]}]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.95"]}]}}`))
 	}))
 	t.Cleanup(prom.Close)
 
@@ -325,7 +325,7 @@ func TestStatusCacheFreshnessFastPath(t *testing.T) {
 			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.5"]}]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.95"]}]}}`))
 	}))
 	defer srv.Close()
 
@@ -361,7 +361,7 @@ func TestStatusCacheStaleOnError(t *testing.T) {
 			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.5"]}]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.95"]}]}}`))
 	}))
 	defer srv.Close()
 
@@ -371,8 +371,8 @@ func TestStatusCacheStaleOnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first get: %v", err)
 	}
-	if snap.APIAvailabilityPct != 99.5 {
-		t.Errorf("seeded pct = %v, want 99.5", snap.APIAvailabilityPct)
+	if snap.APIAvailabilityPct != 99.95 {
+		t.Errorf("seeded pct = %v, want 99.95", snap.APIAvailabilityPct)
 	}
 	healthy = false
 	c.mu.Lock()
@@ -382,8 +382,8 @@ func TestStatusCacheStaleOnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second get: %v", err)
 	}
-	if snap.APIAvailabilityPct != 99.5 {
-		t.Errorf("stale pct = %v, want 99.5 (graceful degradation)", snap.APIAvailabilityPct)
+	if snap.APIAvailabilityPct != 99.95 {
+		t.Errorf("stale pct = %v, want 99.95 (graceful degradation)", snap.APIAvailabilityPct)
 	}
 	if !strings.HasPrefix(snap.Source, "degraded:") {
 		t.Errorf("source = %q, want degraded prefix", snap.Source)
@@ -475,7 +475,7 @@ func TestStatusHandler_MissingFileFallback(t *testing.T) {
 //     never flips on in production.
 func TestStatus_DegradedFlag(t *testing.T) {
 	primary := func(w http.ResponseWriter) {
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.5"]}]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"99.95"]}]}}`))
 	}
 
 	t.Run("firing", func(t *testing.T) {

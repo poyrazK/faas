@@ -395,6 +395,7 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 	} else if _, durable := c.store.(latestDeploymentOutcomeStore); durable && !buildAvailable {
 		snap.states[publicstatus.ComponentDeployments] = publicstatus.StateUnknown
 	}
+	applyStatusIndicatorBreaches(&snap)
 	if okCount == 3 && snap.telemetryAvailable {
 		snap.dataStatus = "fresh"
 	} else if snap.legacy.Source == appmetrics.SourcePrometheus {
@@ -409,6 +410,37 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 	}
 	c.populateHistory(ctx, &snap.legacy)
 	return snap, nil
+}
+
+// applyStatusIndicatorBreaches keeps the legacy and structured status
+// projections consistent with the SLO values they publish. Alert evaluation
+// remains useful for failures that do not have a public indicator, but it must
+// not leave a component operational while an authoritative indicator is
+// already outside its advertised target.
+func applyStatusIndicatorBreaches(snap *statusEvaluation) {
+	type indicator struct {
+		available bool
+		value     *float64
+		target    float64
+		breached  func(float64, float64) bool
+		component publicstatus.Component
+		name      string
+	}
+	indicators := []indicator{
+		{snap.indicatorAvailable["api_availability"], float64Ptr(snap.legacy.APIAvailabilityPct), 99.9, func(v, target float64) bool { return v < target }, publicstatus.ComponentNetworking, "API availability"},
+		{snap.indicatorAvailable["wake_p95"], snap.legacy.WakeP95MS, 350, func(v, target float64) bool { return v > target }, publicstatus.ComponentNetworking, "platform wake p95"},
+		{snap.indicatorAvailable["build_success"], float64Ptr(snap.legacy.BuildSuccessPct), 99, func(v, target float64) bool { return v < target }, publicstatus.ComponentDeployments, "deployment success"},
+	}
+	for _, current := range indicators {
+		if !current.available || current.value == nil || !current.breached(*current.value, current.target) {
+			continue
+		}
+		snap.states[current.component] = publicstatus.Worse(snap.states[current.component], publicstatus.StateDegraded)
+		if !snap.legacy.Degraded {
+			snap.legacy.Source = appmetrics.SourceDegradedPrefix + current.name + " target breached"
+		}
+		snap.legacy.Degraded = true
+	}
 }
 
 const statusHistoryDays = 30

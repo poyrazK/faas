@@ -95,6 +95,50 @@ func TestPublicStatusOverviewCombinesTelemetryHistoryAndPublicEvents(t *testing.
 	}
 }
 
+func TestPublicStatusOverviewDegradesWhenWakeP95BreachesTarget(t *testing.T) {
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		switch {
+		case strings.Contains(query, "ALERTS"):
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+		case strings.Contains(query, "gateway_platform_wake_latency_seconds_bucket"):
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1700000000,"716"]}]}}`))
+		default:
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1700000000,"100"]}]}}`))
+		}
+	}))
+	t.Cleanup(prom.Close)
+
+	srv := newServer(state.NewMemStore(), slog.Default(), "gregale.dev", nil).WithStatusCache(prom.URL, "")
+	recorder := httptest.NewRecorder()
+	srv.publicStatusOverviewHandler(recorder, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+
+	var overview api.PublicStatusOverview
+	if err := json.Unmarshal(recorder.Body.Bytes(), &overview); err != nil {
+		t.Fatalf("decode public status: %v; body=%s", err, recorder.Body.String())
+	}
+	if overview.OverallStatus == string(publicstatus.StateOperational) {
+		t.Fatalf("overall status = %q with wake p95 above target", overview.OverallStatus)
+	}
+	var networking string
+	for _, component := range overview.Components {
+		if component.ID == string(publicstatus.ComponentNetworking) {
+			networking = component.Status
+		}
+	}
+	if networking != string(publicstatus.StateDegraded) {
+		t.Fatalf("networking = %q, want degraded", networking)
+	}
+
+	legacy, err := srv.statusCache.Get(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !legacy.Degraded || legacy.WakeP95MS == nil || *legacy.WakeP95MS != 716 {
+		t.Fatalf("legacy status = %+v, want same wake breach", legacy)
+	}
+}
+
 func TestPublicStatusLaunchBoundaryExcludesBurnInAndWeightsFirstDay(t *testing.T) {
 	day := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
 	launchAt := day.Add(10*time.Hour + 2*time.Minute)
