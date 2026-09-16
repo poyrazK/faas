@@ -37,8 +37,8 @@ class DiffRequest:
     """Per-app scalar patch. Pointer-aware: nil = "don't touch";
     explicit zero / explicit value = "set to this". Matches
     [UpdateAppRequest] semantics but exposes only the fields
-    the engine computes against (no ScalingPolicy /
-    PublicAuth / OverflowNode).
+    the engine computes against (no PublicAuth /
+    OverflowNode).
     """
     image: str | Unset = UNSET
     """Would-write image reference. Empty = no image deploy

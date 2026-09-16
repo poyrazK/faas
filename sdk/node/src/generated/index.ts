@@ -222,6 +222,8 @@ export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';
 export type { DeployTokenResponse } from './models/DeployTokenResponse.js';
+export type { DevPostgresRequest } from './models/DevPostgresRequest.js';
+export type { DevPostgresResponse } from './models/DevPostgresResponse.js';
 export type { DevSessionResponse } from './models/DevSessionResponse.js';
 export type { DiffAppConfigPatch } from './models/DiffAppConfigPatch.js';
 export type { DiffBreak } from './models/DiffBreak.js';

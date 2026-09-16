@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DevPostgresRequest } from './DevPostgresRequest.js';
 /**
  * Application shape and opaque local identity for a CLI-managed developer environment.
  */
@@ -12,5 +13,6 @@ export type UpsertDevSessionRequest = {
    * Opaque identity derived locally from the CLI installation and canonical source path. Omit only for legacy sessions.
    */
   workspace_id?: string;
+  postgres?: DevPostgresRequest;
 };
 

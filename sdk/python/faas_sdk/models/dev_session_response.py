@@ -7,8 +7,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.app_response import AppResponse
+    from ..models.dev_postgres_response import DevPostgresResponse
 
 
 T = TypeVar("T", bound="DevSessionResponse")
@@ -23,12 +26,19 @@ class DevSessionResponse:
     pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169
     / #172)."""
     expires_at: datetime.datetime
+    postgres: DevPostgresResponse | Unset = UNSET
+    """Safe receipt for the isolated developer database and its app binding. Credentials are injected into
+    DATABASE_URL and never returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         app = self.app.to_dict()
 
         expires_at = self.expires_at.isoformat()
+
+        postgres: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.postgres, Unset):
+            postgres = self.postgres.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -38,21 +48,32 @@ class DevSessionResponse:
                 "expires_at": expires_at,
             }
         )
+        if postgres is not UNSET:
+            field_dict["postgres"] = postgres
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_response import AppResponse
+        from ..models.dev_postgres_response import DevPostgresResponse
 
         d = dict(src_dict)
         app = AppResponse.from_dict(d.pop("app"))
 
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
 
+        _postgres = d.pop("postgres", UNSET)
+        postgres: DevPostgresResponse | Unset
+        if isinstance(_postgres, Unset):
+            postgres = UNSET
+        else:
+            postgres = DevPostgresResponse.from_dict(_postgres)
+
         dev_session_response = cls(
             app=app,
             expires_at=expires_at,
+            postgres=postgres,
         )
 
         dev_session_response.additional_properties = d

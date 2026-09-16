@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -12,6 +12,10 @@ from ..models.upsert_dev_session_request_runtime import (
 )
 from ..models.upsert_dev_session_request_type import UpsertDevSessionRequestType, check_upsert_dev_session_request_type
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.dev_postgres_request import DevPostgresRequest
+
 
 T = TypeVar("T", bound="UpsertDevSessionRequest")
 
@@ -25,6 +29,8 @@ class UpsertDevSessionRequest:
     workspace_id: str | Unset = UNSET
     """Opaque identity derived locally from the CLI installation and canonical source path. Omit only for legacy
     sessions."""
+    postgres: DevPostgresRequest | Unset = UNSET
+    """Opts the developer environment into an isolated managed PostgreSQL database."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,6 +44,10 @@ class UpsertDevSessionRequest:
 
         workspace_id = self.workspace_id
 
+        postgres: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.postgres, Unset):
+            postgres = self.postgres.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -47,11 +57,15 @@ class UpsertDevSessionRequest:
             field_dict["runtime"] = runtime
         if workspace_id is not UNSET:
             field_dict["workspace_id"] = workspace_id
+        if postgres is not UNSET:
+            field_dict["postgres"] = postgres
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.dev_postgres_request import DevPostgresRequest
+
         d = dict(src_dict)
         _type_ = d.pop("type", UNSET)
         type_: UpsertDevSessionRequestType | Unset
@@ -69,10 +83,18 @@ class UpsertDevSessionRequest:
 
         workspace_id = d.pop("workspace_id", UNSET)
 
+        _postgres = d.pop("postgres", UNSET)
+        postgres: DevPostgresRequest | Unset
+        if isinstance(_postgres, Unset):
+            postgres = UNSET
+        else:
+            postgres = DevPostgresRequest.from_dict(_postgres)
+
         upsert_dev_session_request = cls(
             type_=type_,
             runtime=runtime,
             workspace_id=workspace_id,
+            postgres=postgres,
         )
 
         upsert_dev_session_request.additional_properties = d

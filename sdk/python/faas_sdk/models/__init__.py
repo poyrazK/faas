@@ -420,6 +420,10 @@ from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
 from .deployment_summary_response import DeploymentSummaryResponse
+from .dev_postgres_request import DevPostgresRequest
+from .dev_postgres_response import DevPostgresResponse
+from .dev_postgres_response_binding_state import DevPostgresResponseBindingState
+from .dev_postgres_response_state import DevPostgresResponseState
 from .dev_session_response import DevSessionResponse
 from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
@@ -1557,6 +1561,10 @@ __all__ = (
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
     "DeployTokenResponseStatus",
+    "DevPostgresRequest",
+    "DevPostgresResponse",
+    "DevPostgresResponseBindingState",
+    "DevPostgresResponseState",
     "DevSessionResponse",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -20,6 +20,10 @@ from ..models.diff_app_config_patch_eviction_priority import (
 )
 from ..types import UNSET, Unset
 
+if TYPE_CHECKING:
+    from ..models.scaling_policy import ScalingPolicy
+
+
 T = TypeVar("T", bound="DiffAppConfigPatch")
 
 
@@ -28,8 +32,8 @@ class DiffAppConfigPatch:
     """Per-app scalar patch. Pointer-aware: nil = "don't touch";
     explicit zero / explicit value = "set to this". Matches
     [UpdateAppRequest] semantics but exposes only the fields
-    the engine computes against (no ScalingPolicy /
-    PublicAuth / OverflowNode).
+    the engine computes against (no PublicAuth /
+    OverflowNode).
 
     """
 
@@ -51,9 +55,13 @@ class DiffAppConfigPatch:
     app_protocol: DiffAppConfigPatchAppProtocol | Unset = UNSET
     """Per-app wire-protocol selector (ADR-124). Same closed set + plan gate as UpdateAppRequest.app_protocol.
     Pointer-aware: omitted → no change; non-null → set to this value."""
+    scaling_policy: None | ScalingPolicy | Unset = UNSET
+    """Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the app scaling policy."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.scaling_policy import ScalingPolicy
+
         ram_mb = self.ram_mb
 
         vcpu = self.vcpu
@@ -94,6 +102,14 @@ class DiffAppConfigPatch:
         if not isinstance(self.app_protocol, Unset):
             app_protocol = self.app_protocol
 
+        scaling_policy: dict[str, Any] | None | Unset
+        if isinstance(self.scaling_policy, Unset):
+            scaling_policy = UNSET
+        elif isinstance(self.scaling_policy, ScalingPolicy):
+            scaling_policy = self.scaling_policy.to_dict()
+        else:
+            scaling_policy = self.scaling_policy
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -129,11 +145,15 @@ class DiffAppConfigPatch:
             field_dict["eviction_priority"] = eviction_priority
         if app_protocol is not UNSET:
             field_dict["app_protocol"] = app_protocol
+        if scaling_policy is not UNSET:
+            field_dict["scaling_policy"] = scaling_policy
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.scaling_policy import ScalingPolicy
+
         d = dict(src_dict)
         ram_mb = d.pop("ram_mb", UNSET)
 
@@ -182,6 +202,23 @@ class DiffAppConfigPatch:
         else:
             app_protocol = check_diff_app_config_patch_app_protocol(_app_protocol)
 
+        def _parse_scaling_policy(data: object) -> None | ScalingPolicy | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                scaling_policy_type_1 = ScalingPolicy.from_dict(data)
+
+                return scaling_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ScalingPolicy | Unset, data)
+
+        scaling_policy = _parse_scaling_policy(d.pop("scaling_policy", UNSET))
+
         diff_app_config_patch = cls(
             ram_mb=ram_mb,
             vcpu=vcpu,
@@ -199,6 +236,7 @@ class DiffAppConfigPatch:
             require_authn=require_authn,
             eviction_priority=eviction_priority,
             app_protocol=app_protocol,
+            scaling_policy=scaling_policy,
         )
 
         diff_app_config_patch.additional_properties = d

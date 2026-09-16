@@ -216,6 +216,8 @@ export type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 export type { DeploymentPreviewURL } from './DeploymentPreviewURL.js';
 export type { DeploymentResponse } from './DeploymentResponse.js';
 export type { DeploymentSummaryResponse } from './DeploymentSummaryResponse.js';
+export type { DevPostgresRequest } from './DevPostgresRequest.js';
+export type { DevPostgresResponse } from './DevPostgresResponse.js';
 export type { DevSessionResponse } from './DevSessionResponse.js';
 export type { DiffAppConfigPatch } from './DiffAppConfigPatch.js';
 export type { DiffBreak } from './DiffBreak.js';
