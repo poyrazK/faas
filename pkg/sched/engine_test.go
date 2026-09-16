@@ -1308,6 +1308,54 @@ func TestEngineWake_ColdBootPersistsObservedClass(t *testing.T) {
 	}
 }
 
+func TestEngineWake_RequestModeDoesNotPersistSlowBindAsWorker(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	if _, err := store.SetAppWorkloadClass(context.Background(), app.ID, state.WorkloadClassHTTP, "scan_hint"); err != nil {
+		t.Fatalf("seed SetAppWorkloadClass: %v", err)
+	}
+
+	vmm := &fakeVMM{characterization: api.CharacterizationReport{
+		ObservedClass: string(state.WorkloadClassWorker),
+		ObservedPort:  0,
+		ExitCode:      -1,
+	}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if _, err := e.Wake(context.Background(), app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	got, err := store.AppByID(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if got.WorkloadClass != state.WorkloadClassHTTP {
+		t.Fatalf("workload class = %q, want retained %q", got.WorkloadClass, state.WorkloadClassHTTP)
+	}
+}
+
+func TestShouldPersistObservedClassKeepsSuccessfulServerIdentity(t *testing.T) {
+	tests := []struct {
+		name          string
+		appType       state.AppType
+		executionMode string
+		observed      state.WorkloadClass
+		want          bool
+	}{
+		{name: "request slow bind stays http", appType: state.AppTypeApp, executionMode: api.ExecutionModeRequest, observed: state.WorkloadClassWorker},
+		{name: "service slow bind stays http", appType: state.AppTypeApp, executionMode: api.ExecutionModeService, observed: state.WorkloadClassJob},
+		{name: "request server refinement persists", appType: state.AppTypeApp, executionMode: api.ExecutionModeRequest, observed: state.WorkloadClassGraphQL, want: true},
+		{name: "declared worker persists", appType: state.AppTypeApp, executionMode: api.ExecutionModeWorker, observed: state.WorkloadClassWorker, want: true},
+		{name: "function cannot become worker", appType: state.AppTypeFunction, executionMode: api.ExecutionModeWorker, observed: state.WorkloadClassWorker},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldPersistObservedClass(tt.appType, tt.executionMode, tt.observed); got != tt.want {
+				t.Fatalf("shouldPersistObservedClass() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEngineWake_FunctionIgnoresWorkerCharacterization(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()

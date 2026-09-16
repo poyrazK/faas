@@ -851,6 +851,28 @@ jobs:
             "${SSH_USER}@${SSH_HOST}" \
             "sudo -n bash -ceu 'mountpoint -q /var/lib/faas/cache; test \"\$(stat -c %d /var/lib/faas/cache)\" = \"\$(stat -c %d /srv/fc)\"; test \"\$(findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache)\" = xfs; xfs_info /srv/fc | grep -Eq \"(^|[[:space:]])reflink=1(\$|[[:space:]])\"'"
 
+      - name: Verify imaged public-smoke tenant routing after activation
+        run: |
+          set -euo pipefail
+          ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ARTIFACT_DIR/compute-known-hosts" \
+            "${SSH_USER}@${SSH_HOST}" 'sudo -n bash -s' <<'REMOTE'
+          set -euo pipefail
+          effective="$(systemctl show faas-imaged.service --property=Environment --value)"
+          for requirement in \
+            '(^|[[:space:]])FAAS_API_HOSTING_SMOKE_REQUIRED=1($|[[:space:]])' \
+            '(^|[[:space:]])FAAS_API_HOSTING_SMOKE_URL=https://[^[:space:]\"]+' \
+            '(^|[[:space:]])FAAS_APPS_DOMAIN=[^[:space:]\"]+'; do
+            grep -Eq "$requirement" <<<"$effective" || {
+              echo "faas-imaged effective environment does not satisfy ${requirement}" >&2
+              exit 1
+            }
+          done
+          REMOTE
+
       - name: Verify private compute gateway reachability
         run: |
           set -euo pipefail

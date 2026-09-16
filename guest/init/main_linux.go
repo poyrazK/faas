@@ -373,8 +373,6 @@ func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 // reserved variable in its image or deployment env.
 func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, workloadEnv map[string]string, cpuMillicoresOpt ...int) error {
 	argv := m.Entrypoint
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = m.EffectiveWorkingDir()
 	env := BuildEnvWithSecrets(os.Environ(), m, secrets, apiEnv)
 	// Issue #460 / ADR-053 (PR-C): stamp PORT=<m.EffectivePort()>
 	// onto the exec'd env so the runner shim can bind the
@@ -398,6 +396,14 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	// for warm handlers uses the traceparent HTTP header at the guest
 	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
+	// exec.Command resolves a bare argv[0] immediately using guest-init's
+	// own PATH. Direct OCI images expect Docker semantics: resolution uses
+	// the image's PATH. Resolve against the mounted image after pivot_root,
+	// before constructing the command, so entries such as
+	// "docker-entrypoint.sh" find /usr/local/bin from the image contract.
+	argv0 := resolveWorkloadCommandPath("/", argv[0], env)
+	cmd := exec.Command(argv0, argv[1:]...)
+	cmd.Dir = m.EffectiveWorkingDir()
 	cmd.Env = env
 	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr
 	// into the supervisor's ring buffer so the characterize probe can

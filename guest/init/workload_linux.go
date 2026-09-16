@@ -602,7 +602,7 @@ func runSidecar(spec workloadSpec, secrets, apiEnv, workloadEnv map[string]strin
 		// exec.Command resolves bare names against the guest-init process's
 		// host PATH before the child chroots. Resolve them against the image
 		// PATH instead, and pass the resulting image-absolute path to execve.
-		argv0 = resolveSidecarCommandPath(directRoot, argv0, env)
+		argv0 = resolveWorkloadCommandPath(directRoot, argv0, env)
 	}
 	cmd := exec.Command(argv0, argv...)
 	cmd.Env = env
@@ -798,12 +798,12 @@ func fullRootfsSidecarRootAt(root, name string) (string, error) {
 
 const defaultSidecarPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-// resolveSidecarCommandPath resolves a bare OCI command name inside a direct
-// sidecar root. exec.Command's normal LookPath runs before Chroot and would
-// therefore consult the guest-init binary's PATH. Returning an image-absolute
-// candidate also makes a missing command fail inside the chroot rather than
-// accidentally selecting a host executable.
-func resolveSidecarCommandPath(root, command string, env []string) string {
+// resolveWorkloadCommandPath resolves a bare OCI command name inside an image
+// root. exec.Command's normal LookPath runs before Cmd.Env is applied (and,
+// for sidecars, before Chroot), so it would consult guest-init's PATH rather
+// than the OCI image PATH. Returning an image-absolute candidate also makes a
+// missing command fail inside that image instead of selecting a host binary.
+func resolveWorkloadCommandPath(root, command string, env []string) string {
 	if root == "" || strings.Contains(command, "/") {
 		return command
 	}
