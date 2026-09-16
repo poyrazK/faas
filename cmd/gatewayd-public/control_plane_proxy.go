@@ -129,7 +129,7 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"Not found", "the requested API route does not exist"))
 		return
 	}
-	if r.URL.Path == apid.ApidRootHealthz {
+	if r.URL.Path == apid.ApidRootHealthz || r.URL.Path == apid.ApidRootReadyz {
 		if isPlatformHealthHost(r.Host, p.appsDomain) {
 			p.proxy.ServeHTTP(w, r)
 			return

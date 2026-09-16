@@ -196,6 +196,19 @@
     group: faas
     mode: "0640"
 
+# Production storage has one authority: /etc/faas/storage.env. Older OCI E2E
+# runs installed an EnvironmentFile and schedd drop-in that override it. Remove
+# both on every normal convergence so a repair rollout cannot silently retain
+# test registry credentials or local-storage behavior.
+- name: compute_only_service — remove legacy OCI E2E storage overrides
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/faas/oci-e2e.env
+    - /etc/systemd/system/faas-schedd.service.d/99-oci-e2e.conf
+  notify: restart faas-schedd
+
 - name: compute_only_service — install runtime base env example
   ansible.builtin.copy:
     src: ../../_shared/files/runtime-bases.env.example

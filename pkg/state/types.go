@@ -127,6 +127,14 @@ type DeploymentOutcomeCounts struct {
 	Failed    int
 }
 
+// LatestDeploymentOutcome is the last platform-attributable terminal
+// deployment result. It gives public status a durable last-known result so a
+// quiet period cannot erase an outage. User-code build failures are excluded.
+type LatestDeploymentOutcome struct {
+	Succeeded  bool
+	ObservedAt time.Time
+}
+
 const (
 	DeployPending      DeploymentStatus = "pending"
 	DeployBuilding     DeploymentStatus = "building"

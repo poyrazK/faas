@@ -115,15 +115,16 @@ ORDER BY name;
 
 ### 2. Dependency-Aware Readiness Verification
 
-Verify the public liveness endpoint through Cloudflare:
+Verify the public liveness and dependency-aware readiness endpoints through
+Cloudflare. Readiness preserves apid's HTTP 200/503 result:
 
 ```bash
 curl -fsS https://api.gregale.dev/healthz
+curl -fsS https://api.gregale.dev/readyz
 ```
 
-The public router does not expose a platform `/readyz`; a request to
-`https://api.gregale.dev/readyz` is interpreted as an app route. Run deep
-dependency checks on each host's loopback control listeners instead:
+For daemon-level diagnosis, run the dependency checks on each host's loopback
+control listeners:
 
 ```bash
 # Control plane: apid, schedd, gatewayd-public, githubd, meterd.

@@ -37,9 +37,9 @@ import "strings"
 // we'll catch immediately in tests).
 //
 // Customer apps cannot expose routes starting with any of these
-// roots (the proxy treats them as apid-bound). `/healthz` is deliberately
-// absent: the public edge scopes the platform probe by Host, while an app's
-// health path must reach that app like any other request. This is a deliberate
+// roots (the proxy treats them as apid-bound). `/healthz` and `/readyz` are
+// deliberately absent: the public edge scopes platform probes by Host, while
+// an app's probe paths must reach that app like any other request. This is a deliberate
 // constraint; the docs for customer apps should call this out
 // (issue #85 follow-up).
 const (
@@ -54,6 +54,7 @@ const (
 	ApidRootLogout      = "/logout"
 	ApidRootStatus      = "/status"
 	ApidRootHealthz     = "/healthz"
+	ApidRootReadyz      = "/readyz"
 	ApidRootCliAuth     = "/cli-auth"
 	ApidRootDocs        = "/docs"
 )

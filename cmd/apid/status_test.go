@@ -619,8 +619,8 @@ func TestStatusDegradedQueryExcludesNonServiceAlerts(t *testing.T) {
 func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
-	// A build may run longer than the status window. The aggregate is based on
-	// when the deployment reached its terminal state, not when it was queued.
+	// The last platform-attributable terminal result remains authoritative even
+	// when the deployment was queued long before the former 15-minute window.
 	queuedAt := time.Now().Add(-time.Hour)
 	acct, _ := store.CreateAccount(ctx, "deployment-status@example.com", api.PlanPro)
 	app, _ := store.CreateApp(ctx, state.App{
@@ -667,11 +667,38 @@ func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.BuildSuccessPct != 50 || !snap.Degraded {
-		t.Fatalf("status = %+v, want 50%% and degraded", snap)
+	if snap.BuildSuccessPct != 0 || !snap.Degraded {
+		t.Fatalf("status = %+v, want 0%% and degraded", snap)
 	}
-	if !strings.Contains(snap.Source, "recent platform deployment failures") {
+	if !strings.Contains(snap.Source, "last platform deployment failed") {
 		t.Fatalf("source = %q", snap.Source)
+	}
+
+	cleared, _ := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball,
+	})
+	if err := store.MarkDeploymentLive(ctx, cleared.ID); err != nil {
+		t.Fatal(err)
+	}
+	clearedSnap, err := newStatusCacheWithStore(srv.URL, store, slog.Default()).Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clearedSnap.BuildSuccessPct != 100 || clearedSnap.Degraded {
+		t.Fatalf("status after later success = %+v, want 100%% and operational", clearedSnap)
+	}
+	// Acceptance deployments are deliberately deleted after their release
+	// gate completes. Their terminal result must remain the durable platform
+	// outcome or cleanup would reveal the older failure again.
+	if err := store.DeleteApp(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	postCleanupSnap, err := newStatusCacheWithStore(srv.URL, store, slog.Default()).Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if postCleanupSnap.BuildSuccessPct != 100 || postCleanupSnap.Degraded {
+		t.Fatalf("status after acceptance cleanup = %+v, want durable success", postCleanupSnap)
 	}
 }
 

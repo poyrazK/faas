@@ -69,6 +69,7 @@ Commands:
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
   github        GitHub delivery + Check Run recovery (status|retry-delivery|retry-check)
   status        Publish incidents and maintenance (status incident|maintenance ...)
+  release-acceptance  Mint and revoke short-lived production acceptance credentials
   version      Print the CLI version
   completion   Print a shell completion script (bash|zsh|fish|powershell)
   man          Print the gregalectl(1) man page (or gregalectl-<command>(1) with one arg)
@@ -188,6 +189,8 @@ func run(args []string) int {
 		// Node registration/read tools plus authenticated, durable-intent
 		// lifecycle mutations. Direct DB writes require --break-glass-db.
 		return cmdComputeNodesDispatch(args[1:])
+	case "release-acceptance":
+		return cmdReleaseAcceptanceDispatch(args[1:])
 	case dispatchOperatorAuth:
 		// Password + TOTP session used by strict provider mutations.
 		return cmdOperatorAuthDispatch(args[1:])

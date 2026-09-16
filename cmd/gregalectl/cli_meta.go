@@ -67,6 +67,7 @@ type cliFlag struct {
 //   - secrets         (init | rotate | status | stamp)
 //   - artifact        (publish | verify)
 //   - compute-nodes   (add | list | show | drain | drain-status | activate | force-drain | retire)
+//   - release-acceptance (mint-token | revoke-token)
 //   - deploy          (join-node | add-node)
 //   - obs             (health | incidents | overview | capacity)
 //   - debug           (otel-smoke; ADR-127 PR-D)
@@ -102,6 +103,16 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "incident", Short: "Create, update, resolve, or list incidents"},
 			{Name: "maintenance", Short: "Schedule, update, start, complete, cancel, or list maintenance"},
+		},
+	},
+	{
+		Name:    dispatchReleaseAcceptance,
+		DocSlug: "release-acceptance",
+		Short:   "Run production release acceptance credential and placement checks",
+		Subcommands: []cliSub{
+			{Name: "mint-token", Short: "Mint a short-lived token for the production ingress gate", Flags: []cliFlag{{Name: "ttl", Short: "credential lifetime (15m..6h)"}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed production_release_acceptance audit reason", Req: true}}},
+			{Name: "revoke-token", Short: "Revoke one production ingress gate token", Flags: []cliFlag{{Name: "key-id", Short: "acceptance API key id", Req: true}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed production_release_acceptance audit reason", Req: true}}},
+			{Name: "verify-placement", Short: "Require app and function acceptance coverage on every active node", Flags: []cliFlag{{Name: "slugs", Short: "comma-separated acceptance app slugs", Req: true}}},
 		},
 	},
 	{

@@ -99,7 +99,7 @@ func TestControlPlaneProxyRejectsSpoofedForwardingContext(t *testing.T) {
 	}
 }
 
-func TestControlPlaneProxyScopesHealthToPlatformHost(t *testing.T) {
+func TestControlPlaneProxyScopesHealthAndReadinessToPlatformHost(t *testing.T) {
 	t.Setenv("FAAS_APPS_DOMAIN", "gregale.dev")
 	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("platform-health"))
@@ -115,23 +115,48 @@ func TestControlPlaneProxyScopesHealthToPlatformHost(t *testing.T) {
 
 	for _, tc := range []struct {
 		host string
+		path string
 		want string
 	}{
-		{host: "gregale.dev", want: "platform-health"},
-		{host: "api.gregale.dev", want: "platform-health"},
-		{host: "127.0.0.1:8080", want: "platform-health"},
-		{host: "healthy-app.gregale.dev", want: "app-health"},
-		{host: "nonexistent.gregale.dev", want: "app-health"},
-		{host: "customer.example", want: "app-health"},
+		{host: "gregale.dev", path: "/healthz", want: "platform-health"},
+		{host: "api.gregale.dev", path: "/healthz", want: "platform-health"},
+		{host: "api.gregale.dev", path: "/readyz", want: "platform-health"},
+		{host: "127.0.0.1:8080", path: "/readyz", want: "platform-health"},
+		{host: "healthy-app.gregale.dev", path: "/healthz", want: "app-health"},
+		{host: "healthy-app.gregale.dev", path: "/readyz", want: "app-health"},
+		{host: "nonexistent.gregale.dev", path: "/readyz", want: "app-health"},
+		{host: "customer.example", path: "/readyz", want: "app-health"},
 	} {
-		t.Run(tc.host, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/healthz", nil)
+		t.Run(tc.host+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+tc.path, nil)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
 			if got := rec.Body.String(); got != tc.want {
 				t.Fatalf("body = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestControlPlaneProxyPreservesPublicReadinessStatus(t *testing.T) {
+	t.Setenv("FAAS_APPS_DOMAIN", "gregale.dev")
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/readyz" {
+			t.Fatalf("path = %q, want /readyz", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "not-ready")
+	}))
+	t.Cleanup(controlPlane.Close)
+	handler, err := newControlPlaneProxy(controlPlane.URL, http.NotFoundHandler(), slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "https://api.gregale.dev/readyz", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != "not-ready" {
+		t.Fatalf("response = %d %q, want 503 not-ready", rec.Code, rec.Body.String())
 	}
 }
 

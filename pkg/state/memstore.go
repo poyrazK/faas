@@ -3701,6 +3701,47 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 	return out, nil
 }
 
+// LatestPlatformDeploymentOutcome mirrors the production last-known result.
+func (m *MemStore) LatestPlatformDeploymentOutcome(_ context.Context) (LatestDeploymentOutcome, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest LatestDeploymentOutcome
+	found := false
+	for _, d := range m.deployments {
+		succeeded := d.Status == DeployLive || d.Status == DeploySuperseded
+		if !succeeded && d.Status != DeployFailed {
+			continue
+		}
+		if d.Status == DeployFailed {
+			userError := false
+			for _, build := range m.builds {
+				if build.DeploymentID == d.ID && build.FailureClass == FailureUserError {
+					userError = true
+					break
+				}
+			}
+			if userError {
+				continue
+			}
+		}
+		observedAt := d.CreatedAt
+		if succeeded && d.RolloutCompletedAt != nil {
+			observedAt = *d.RolloutCompletedAt
+		}
+		if !succeeded && d.RolloutAbortedAt != nil {
+			observedAt = *d.RolloutAbortedAt
+		}
+		if !found || observedAt.After(latest.ObservedAt) {
+			latest = LatestDeploymentOutcome{Succeeded: succeeded, ObservedAt: observedAt.UTC()}
+			found = true
+		}
+	}
+	if !found {
+		return LatestDeploymentOutcome{}, ErrNotFound
+	}
+	return latest, nil
+}
+
 // ListDeploymentsByNodeID mirrors PgStore.ListDeploymentsByNodeID.
 // Same JOIN-through-apps predicate as the SQL version.
 func (m *MemStore) ListDeploymentsByNodeID(_ context.Context, nodeID string) ([]Deployment, error) {

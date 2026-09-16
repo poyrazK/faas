@@ -6442,6 +6442,36 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 	return out, err
 }
 
+// LatestPlatformDeploymentOutcome returns the newest successful deployment or
+// platform-attributable failure. A user-code build failure is not platform
+// health evidence and is skipped. The result remains authoritative until a
+// newer terminal deployment supersedes it.
+func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context) (LatestDeploymentOutcome, error) {
+	var out LatestDeploymentOutcome
+	err := s.pool.QueryRow(ctx, `
+		select d.status in ('live', 'superseded') as succeeded,
+		       case
+		         when d.status in ('live', 'superseded') then coalesce(d.rollout_completed_at, d.created_at)
+		         else coalesce(d.rollout_aborted_at, d.created_at)
+		       end as observed_at
+		  from deployments d
+		 where d.status in ('live', 'superseded', 'failed')
+		   and not (
+		     d.status = 'failed' and exists (
+		       select 1 from builds b
+		        where b.deployment_id = d.id
+		          and b.failure_class = 'user_error'
+		     )
+		   )
+		 order by observed_at desc, d.created_at desc
+		 limit 1`).Scan(&out.Succeeded, &out.ObservedAt)
+	if err != nil {
+		return LatestDeploymentOutcome{}, mapErr(err)
+	}
+	out.ObservedAt = out.ObservedAt.UTC()
+	return out, nil
+}
+
 // ListDeploymentsByNodeID returns every deployment whose parent
 // app's owner_node is the given compute_nodes.id. Phase 2 / Gate A
 // / issue #557 closure — the floor trigger's owner-shard walk.

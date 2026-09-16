@@ -156,11 +156,9 @@ type statusEvaluation struct {
 	telemetryAvailable bool
 }
 
-type deploymentOutcomeCounter interface {
-	CountDeploymentOutcomesSince(context.Context, time.Time) (state.DeploymentOutcomeCounts, error)
+type latestDeploymentOutcomeStore interface {
+	LatestPlatformDeploymentOutcome(context.Context) (state.LatestDeploymentOutcome, error)
 }
-
-const statusDeploymentOutcomeWindow = 15 * time.Minute
 
 // newStatusCache builds a cache. promURL is the local Prometheus base
 // (e.g. "http://10.0.0.1:9090"); empty string disables the cache and
@@ -313,37 +311,51 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 		}
 	}
 
-	// 3. Deployment success over the authoritative recent database window.
+	// 3. Deployment success from the authoritative last-known terminal result.
 	// The legacy field name remains build_success_pct for wire compatibility,
 	// but the numerator covers deployments that reached live and the
 	// denominator also covers platform-attributable build, scan, snapshot,
 	// and readiness failures. User-code build failures are excluded by the
-	// store aggregate. Prometheus remains the compatibility fallback for
-	// embedders without the aggregate and for an idle database window.
+	// store result. Prometheus remains a compatibility fallback only for
+	// embedders that do not expose the durable result.
 	buildAvailable := false
-	if pct, err := c.client.QueryScalar(ctx, statusBuildSuccessQuery); err == nil {
-		snap.legacy.BuildSuccessPct = pct
-		buildAvailable = true
-	} else {
-		c.log.Warn("status: build_success query failed", "err", err)
-		if firstErr == nil {
-			firstErr = err
+	deploymentFailed := false
+	queryPrometheusBuild := true
+	if outcomes, ok := c.store.(latestDeploymentOutcomeStore); ok {
+		outcome, outcomeErr := outcomes.LatestPlatformDeploymentOutcome(ctx)
+		switch {
+		case outcomeErr == nil:
+			queryPrometheusBuild = false
+			buildAvailable = true
+			if outcome.Succeeded {
+				snap.legacy.BuildSuccessPct = 100
+			} else {
+				snap.legacy.BuildSuccessPct = 0
+				deploymentFailed = true
+				snap.legacy.Degraded = true
+				snap.legacy.Source = appmetrics.SourceDegradedPrefix + "last platform deployment failed"
+			}
+		case errors.Is(outcomeErr, state.ErrNotFound):
+			// A new installation has no durable result yet. Preserve the
+			// existing rolling telemetry until the first terminal deployment;
+			// after that, the durable outcome prevents quiet periods from
+			// incorrectly clearing a failure.
+		case outcomeErr != nil:
+			queryPrometheusBuild = false
+			c.log.Warn("status: latest deployment outcome failed", "err", outcomeErr)
+			if firstErr == nil {
+				firstErr = outcomeErr
+			}
 		}
 	}
-	if counter, ok := c.store.(deploymentOutcomeCounter); ok {
-		counts, countErr := counter.CountDeploymentOutcomesSince(ctx, now.Add(-statusDeploymentOutcomeWindow))
-		if countErr != nil {
-			c.log.Warn("status: deployment outcome aggregate failed", "err", countErr)
-			buildAvailable = false
-			if firstErr == nil {
-				firstErr = countErr
-			}
-		} else if total := counts.Succeeded + counts.Failed; total > 0 {
-			snap.legacy.BuildSuccessPct = float64(counts.Succeeded) / float64(total) * 100
+	if queryPrometheusBuild {
+		if pct, err := c.client.QueryScalar(ctx, statusBuildSuccessQuery); err == nil {
+			snap.legacy.BuildSuccessPct = pct
 			buildAvailable = true
-			if counts.Failed > 0 {
-				snap.legacy.Degraded = true
-				snap.legacy.Source = appmetrics.SourceDegradedPrefix + "recent platform deployment failures"
+		} else {
+			c.log.Warn("status: build_success query failed", "err", err)
+			if firstErr == nil {
+				firstErr = err
 			}
 		}
 	}
@@ -377,6 +389,11 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 		if firstErr == nil {
 			firstErr = err
 		}
+	}
+	if deploymentFailed {
+		snap.states[publicstatus.ComponentDeployments] = publicstatus.StateDegraded
+	} else if _, durable := c.store.(latestDeploymentOutcomeStore); durable && !buildAvailable {
+		snap.states[publicstatus.ComponentDeployments] = publicstatus.StateUnknown
 	}
 	if okCount == 3 && snap.telemetryAvailable {
 		snap.dataStatus = "fresh"

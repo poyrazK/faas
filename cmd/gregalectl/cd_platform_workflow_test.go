@@ -59,6 +59,44 @@ func TestCDPlatformControlSuccessThenComputeFailureIsVisible(t *testing.T) {
 	}
 }
 
+func TestCDPlatformRequiresPublicReadinessAndProductionDeployments(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(body)
+	releaseGate := strings.Index(workflow, "compute-nodes release-status --desired-release")
+	publicReadiness := strings.Index(workflow, "https://api.gregale.dev/${endpoint}")
+	metricsGate := strings.Index(workflow, "Verify full-fleet metrics and metering convergence")
+	deployGate := strings.Index(workflow, "production-release-acceptance.sh")
+	if releaseGate < 0 || publicReadiness < 0 || metricsGate < 0 || deployGate < 0 {
+		t.Fatalf("production gates missing: release=%d readiness=%d metrics=%d deploy=%d", releaseGate, publicReadiness, metricsGate, deployGate)
+	}
+	if !(releaseGate < publicReadiness && publicReadiness < metricsGate && metricsGate < deployGate) {
+		t.Fatalf("production gates out of order: release=%d readiness=%d metrics=%d deploy=%d", releaseGate, publicReadiness, metricsGate, deployGate)
+	}
+	for _, required := range []string{"ACTIVE_NODE_COUNT", "healthz readyz", "RELEASE_SHA='${DESIRED_RELEASE}'"} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("production deployment gate missing %q", required)
+		}
+	}
+}
+
+func TestNormalAnsibleConvergenceRemovesLegacyOCIOverrides(t *testing.T) {
+	for _, role := range []string{"control_plane_service", "compute_only_service"} {
+		body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", role, "tasks", "main.yml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tasks := string(body)
+		for _, required := range []string{"remove legacy OCI E2E storage overrides", "/etc/faas/oci-e2e.env", "/etc/systemd/system/faas-schedd.service.d/99-oci-e2e.conf", "notify: restart faas-schedd"} {
+			if !strings.Contains(tasks, required) {
+				t.Fatalf("%s role does not remove legacy storage override %q", role, required)
+			}
+		}
+	}
+}
+
 func TestCDStageWorkflowsAreReusableByPlatformRollout(t *testing.T) {
 	for _, name := range []string{"cd-controlplane.yml", "cd-compute.yml"} {
 		body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
