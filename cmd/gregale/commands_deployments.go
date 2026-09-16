@@ -390,7 +390,7 @@ func cmdDeploymentWait(args []string) int {
 			}
 			return printErr("Could not fetch deployment", getErr)
 		}
-		if isTerminalDeploymentStatus(d.Status) {
+		if isCompletedDeployment(d) {
 			if d.Status != statusLive {
 				if jsonOutput {
 					_ = writeJSON(d)

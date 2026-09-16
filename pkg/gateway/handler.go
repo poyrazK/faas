@@ -5852,6 +5852,12 @@ haveApp:
 	}
 	defer vmRelease()
 	target := pick.Target
+	// This is platform-authored deployment evidence and is exposed only to an
+	// authenticated hosting smoke. Guest response headers with the same name
+	// are stripped by forwardedResponseHeader.
+	if h.authorizedDeploymentSmoke(r, app) {
+		w.Header().Set(api.DeploymentIDHeader, target.DeploymentID)
+	}
 	// A selected target proves the app is live, including a newly completed
 	// wake. Health probes can reuse this state while the app later parks.
 	h.markHealthReady(app.ID)

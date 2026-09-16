@@ -1278,6 +1278,11 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) {
 			h.log.Warn("imaged: bad deployment_changed payload", "err", err)
 			return
 		}
+		// This event exists only to refresh gateway routing before the public
+		// smoke. Re-entering the image pipeline would create a self-notify loop.
+		if p.Kind == "candidate_route" {
+			return
+		}
 		if err := h.handleDeployment(ctx, p); err != nil {
 			h.log.Warn("imaged: deploy failed", "app", p.AppID, "deployment", p.To, "err", err)
 		}
@@ -2759,7 +2764,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// candidate route before the smoke request; waiting until the end of this
 	// function leaves first deployments invisible and makes the gateway return
 	// its own 404 even though the workload is ready.
-	h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployLive)
+	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
 	restorePrevious := func(reason string) {
 		if previousLiveID == "" {
 			return
@@ -2902,9 +2907,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			h.ops.ObserveAPIHostingPhase(wire.APIHostingFlowDev, "route_switch", wire.APIHostingOutcomeComplete, 0)
 		}
 	}
-	// Fan out so audit / dashboard SSE see the terminal transition. The earlier
-	// route notification is intentionally repeated here after the stage and
-	// receipt writes so every consumer observes the complete terminal row.
+	// Fan out only now that the receipt and readiness stage are durable. The
+	// pre-smoke notification is route-only and carries no terminal status, so
+	// CLI/SSE waiters cannot report success while verification is still running.
 	h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployLive)
 	return nil
 }
@@ -2921,6 +2926,20 @@ func (h *Handler) notifyDeploymentState(ctx context.Context, appID, deploymentID
 	}{AppID: appID, DeploymentID: deploymentID, To: deploymentID, Status: string(status)})
 	if err := h.notif.Notify(ctx, db.NotifyDeploymentChanged, string(payload)); err != nil {
 		h.log.Warn("imaged: notify deployment state", "deployment_id", deploymentID, "status", status, "err", err)
+	}
+}
+
+func (h *Handler) notifyDeploymentRoute(ctx context.Context, appID, deploymentID string) {
+	if h.notif == nil {
+		return
+	}
+	payload, _ := json.Marshal(struct {
+		Kind         string `json:"kind"`
+		AppID        string `json:"app_id"`
+		DeploymentID string `json:"deployment_id"`
+	}{Kind: "candidate_route", AppID: appID, DeploymentID: deploymentID})
+	if err := h.notif.Notify(ctx, db.NotifyDeploymentChanged, string(payload)); err != nil {
+		h.log.Warn("imaged: notify candidate route", "deployment_id", deploymentID, "err", err)
 	}
 }
 

@@ -428,6 +428,26 @@ func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
 	if !sawRouteNotification {
 		t.Fatal("hosting smoke ran before the gateway route notification")
 	}
+	var deploymentEvents []map[string]any
+	for _, call := range notif.calls {
+		if call.channel != db.NotifyDeploymentChanged {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(call.payload), &event); err != nil {
+			t.Fatalf("decode deployment event: %v", err)
+		}
+		deploymentEvents = append(deploymentEvents, event)
+	}
+	if len(deploymentEvents) != 2 {
+		t.Fatalf("deployment events = %v, want route + terminal", deploymentEvents)
+	}
+	if deploymentEvents[0]["kind"] != "candidate_route" || deploymentEvents[0]["status"] != nil {
+		t.Fatalf("pre-smoke event = %v, want nonterminal candidate_route", deploymentEvents[0])
+	}
+	if deploymentEvents[1]["status"] != "live" {
+		t.Fatalf("terminal event = %v, want live", deploymentEvents[1])
+	}
 	if got.Status != state.DeployLive {
 		t.Fatalf("status = %s, want live", got.Status)
 	}

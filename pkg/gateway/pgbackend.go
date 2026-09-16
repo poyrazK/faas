@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -328,6 +329,14 @@ type PGBackend struct {
 	// for every app until a rule is poked (test seam; production
 	// wires this from cmd/gatewayd-internal).
 	mirrorStore mirrorRulesStore
+
+	smokeMu         sync.Mutex
+	smokeChallenges map[string]deploymentSmokeChallenge
+}
+
+type deploymentSmokeChallenge struct {
+	token     string
+	expiresAt time.Time
 }
 
 // recordScope (issue #272 / ADR-095 PR-B) is the test seam that
@@ -593,15 +602,53 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		log = slog.Default()
 	}
 	return &PGBackend{
-		router:       router,
-		sched:        sched,
-		log:          log,
-		routes:       NewRouteCache(RouteCacheCap),
-		apps:         map[string]App{},
-		appsPicker:   map[string]*appPicker{},
-		mirrorRules:  map[string][]MirrorRuleRow{},
-		staleTargets: map[string]time.Time{},
+		router:          router,
+		sched:           sched,
+		log:             log,
+		routes:          NewRouteCache(RouteCacheCap),
+		apps:            map[string]App{},
+		appsPicker:      map[string]*appPicker{},
+		mirrorRules:     map[string][]MirrorRuleRow{},
+		staleTargets:    map[string]time.Time{},
+		smokeChallenges: map[string]deploymentSmokeChallenge{},
 	}
+}
+
+func smokeChallengeKey(appID, deploymentID string) string { return appID + "\x00" + deploymentID }
+
+// AuthorizeDeploymentSmoke installs one short-lived challenge delivered over
+// the private database notification channel. Tokens are memory-only and may
+// be replayed only until expiresAt.
+func (b *PGBackend) AuthorizeDeploymentSmoke(appID, deploymentID, token string, expiresAt time.Time) {
+	if b == nil || appID == "" || deploymentID == "" || token == "" || !expiresAt.After(time.Now()) {
+		return
+	}
+	b.smokeMu.Lock()
+	defer b.smokeMu.Unlock()
+	now := time.Now()
+	for key, challenge := range b.smokeChallenges {
+		if !challenge.expiresAt.After(now) {
+			delete(b.smokeChallenges, key)
+		}
+	}
+	b.smokeChallenges[smokeChallengeKey(appID, deploymentID)] = deploymentSmokeChallenge{token: token, expiresAt: expiresAt}
+}
+
+// ValidateDeploymentSmoke authenticates the edge-health bypass. A valid token
+// is bound to both app and deployment, so it cannot authorize another tenant.
+func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) bool {
+	if b == nil || token == "" {
+		return false
+	}
+	b.smokeMu.Lock()
+	defer b.smokeMu.Unlock()
+	key := smokeChallengeKey(appID, deploymentID)
+	challenge, ok := b.smokeChallenges[key]
+	if !ok || !challenge.expiresAt.After(time.Now()) {
+		delete(b.smokeChallenges, key)
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(challenge.token), []byte(token)) == 1
 }
 
 // appPicker (PR-B / issue #556) is the per-app picker state the

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -466,6 +467,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyDomainVerify,
 		db.NotifyKeyChanged,
 		db.NotifyDeploymentChanged,
+		db.NotifyDeploymentSmokeChallenge,
 		db.NotifyEdgeRuleChanged,
 		db.NotifyCachePurge,
 		db.NotifyTenantSurfaceChanged,
@@ -675,6 +677,22 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			if err := inv.RefreshDeploymentWeights(ctx, p.AppID); err != nil {
 				log.Warn("gatewayd: refresh deployment weights failed", "app", p.AppID, "err", err)
 			}
+		}
+	case db.NotifyDeploymentSmokeChallenge:
+		var p struct {
+			AppID        string    `json:"app_id"`
+			DeploymentID string    `json:"deployment_id"`
+			Token        string    `json:"token"`
+			ExpiresAt    time.Time `json:"expires_at"`
+		}
+		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" || p.DeploymentID == "" || p.Token == "" || p.ExpiresAt.IsZero() {
+			log.Warn("gatewayd: bad deployment smoke challenge", "payload_length", len(n.Payload))
+			return
+		}
+		if authorizer, ok := inv.(interface {
+			AuthorizeDeploymentSmoke(string, string, string, time.Time)
+		}); ok {
+			authorizer.AuthorizeDeploymentSmoke(p.AppID, p.DeploymentID, p.Token, p.ExpiresAt)
 		}
 	case db.NotifyCachePurge:
 		var p struct {

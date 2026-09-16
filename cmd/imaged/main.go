@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -484,9 +485,27 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	smokeURL := strings.TrimSpace(getenv("FAAS_API_HOSTING_SMOKE_URL"))
 	h.WithHostingSmokeRequired(smokeRequired)
 	if smokeURL != "" || smokeRequired {
-		verifier := apihostingreceipt.Verifier{BaseURL: smokeURL, AppsDomain: getenv("FAAS_APPS_DOMAIN"), Timeout: 10 * time.Second, Required: smokeRequired}
+		verifier := apihostingreceipt.Verifier{
+			BaseURL: smokeURL, AppsDomain: getenv("FAAS_APPS_DOMAIN"), Timeout: 10 * time.Second, Required: smokeRequired,
+			Authorize: func(ctx context.Context, deploymentID, token string, expiresAt time.Time) error {
+				dep, err := store.DeploymentByID(ctx, deploymentID)
+				if err != nil {
+					return err
+				}
+				payload, err := json.Marshal(struct {
+					AppID        string    `json:"app_id"`
+					DeploymentID string    `json:"deployment_id"`
+					Token        string    `json:"token"`
+					ExpiresAt    time.Time `json:"expires_at"`
+				}{dep.AppID, deploymentID, token, expiresAt})
+				if err != nil {
+					return err
+				}
+				return notifier.Notify(ctx, db.NotifyDeploymentSmokeChallenge, string(payload))
+			},
+		}
 		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
-			return verifier.Verify(ctx, app.Slug, imaged.HostingHealthPath(app, dep))
+			return verifier.VerifyDeployment(ctx, app.Slug, imaged.HostingHealthPath(app, dep), dep.ID)
 		})
 		if smokeURL == "" {
 			log.Warn("imaged: API hosting readiness smoke required but public origin is unset; deployments will fail closed")

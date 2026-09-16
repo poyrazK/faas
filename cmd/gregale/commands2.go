@@ -4777,6 +4777,12 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		if status == deploymentStatusFailed && opts.onFailure != nil {
 			opts.onFailure(dep, "image_build", b.FailureClass)
 		}
+		if status == statusLive {
+			if final, ok := pollDeploymentFinalUntilContext(waitCtx, c, dep, waitTimeout); ok {
+				return terminalDeployment(final)
+			}
+			return 3
+		}
 		if opts.onTerminal != nil {
 			return opts.onTerminal(dep)
 		}
@@ -4884,6 +4890,12 @@ streamLoop:
 				if json.Unmarshal([]byte(e.Data), &status) == nil && isTerminalDeploymentStatus(status.Status) {
 					terminal := dep
 					terminal.Status = status.Status
+					if status.Status == statusLive && len(dep.StageState) > 0 {
+						if got, err := c.GetDeployment(waitCtx, dep.ID); err == nil && isCompletedDeployment(got) {
+							return terminalDeploymentWithFailure(got, failedStage, failedReason)
+						}
+						continue
+					}
 					return terminalDeploymentWithFailure(terminal, failedStage, failedReason)
 				}
 			case "end":
@@ -4972,7 +4984,7 @@ func pollDeploymentFinalContext(ctx context.Context, c *Client, dep api.Deployme
 	if err != nil {
 		return api.DeploymentResponse{}, false
 	}
-	if isTerminalDeploymentStatus(got.Status) {
+	if isCompletedDeployment(got) {
 		return got, true
 	}
 	return api.DeploymentResponse{}, false
