@@ -29,11 +29,15 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 	for _, c := range cmds {
 		_, _ = fmt.Fprintf(w, "| [`%s`](#%s) | %s |\n", c.Name, c.Name, mdCell(c.Short))
 	}
-	for _, c := range cmds {
+	for i, c := range cmds {
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintf(w, "## %s\n\n", c.Name)
 		_, _ = fmt.Fprintf(w, "%s\n\n", mdText(c.Short))
-		_, _ = fmt.Fprintf(w, "`%s`\n\n", mdSynopsis(c))
+		synopsisSuffix := "\n\n"
+		if i == len(cmds)-1 {
+			synopsisSuffix = "\n"
+		}
+		_, _ = fmt.Fprintf(w, "`%s`%s", mdSynopsis(c), synopsisSuffix)
 		if len(c.ClosedSet) > 0 && len(c.Positionals) > 0 {
 			_, _ = fmt.Fprintf(w, "%s is one of %s.\n\n", mdText(c.Positionals[0]), mdCodeList(c.ClosedSet))
 		}
