@@ -235,6 +235,14 @@ type DeploymentItem struct {
 	// app slug, not the repo owner/name) so a clickable `#4242`
 	// chip actually lands on GitHub.
 	RepoFullName string
+	// GitHub source links are populated only for deployments with a
+	// validated GitHub repository and canonical commit SHA. Empty values
+	// preserve the existing rendering for non-GitHub and legacy rows.
+	CommitSHA       string
+	CommitShort     string
+	GitHubRepoURL   string
+	GitHubCommitURL string
+	GitHubChecksURL string
 	// ScanSummary is the per-deploy grype scan chip rendered
 	// in the deploy list (issue #464 / ADR-055). Nil when no
 	// scan has run yet (the deploy is mid-pipeline or predates
@@ -1876,6 +1884,7 @@ type DebugReplayView struct {
 type DebugRegressionView struct {
 	DeploymentID    string
 	Route           string
+	State           string
 	P95MS           int
 	P95BaseMS       int
 	AffectedCount   int
@@ -2317,9 +2326,9 @@ type AccountData struct {
 	RestoreConfirmToken string
 	// ConnectGithubConfirmToken (issue #961 / Mega-B PR-3) backs the
 	// dashboard's "Connect GitHub" button. The form posts to
-	// /dashboard/install/connect with this token + the matching
-	// faas_csrf sidecar cookie. Same envelope shape as the delete /
-	// restore tokens above — sealed by (action, account_id).
+	// /dashboard/install/connect with this token + the matching named
+	// faas_csrf_github_connect sidecar cookie. Same envelope shape as
+	// the delete / restore tokens above — sealed by (action, account_id).
 	ConnectGithubConfirmToken string
 	// PlanConfirmToken backs the account-page plan form. Its sidecar uses
 	// a dedicated cookie name because the account page renders several

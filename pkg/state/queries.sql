@@ -2207,18 +2207,49 @@ ORDER BY g.dimension ASC, g.method ASC, b.bucket_start ASC;
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, last_detected_at
+    regression_factor, state, last_detected_at
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, now()
+    $7, 'active', now()
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
-    last_detected_at  = EXCLUDED.last_detected_at;
+    last_detected_at  = EXCLUDED.last_detected_at,
+    state             = CASE
+        WHEN debug_regression_observations.state = 'acknowledged' THEN 'acknowledged'
+        WHEN debug_regression_observations.state = 'dismissed'
+             AND debug_regression_observations.dismissed_until IS NOT NULL
+             AND debug_regression_observations.dismissed_until > now() THEN 'dismissed'
+        ELSE 'active'
+    END,
+    acknowledged_at   = CASE
+        WHEN debug_regression_observations.state = 'acknowledged' THEN debug_regression_observations.acknowledged_at
+        ELSE NULL
+    END,
+    dismissed_until   = CASE
+        WHEN debug_regression_observations.state = 'dismissed'
+             AND debug_regression_observations.dismissed_until IS NOT NULL
+             AND debug_regression_observations.dismissed_until > now()
+            THEN debug_regression_observations.dismissed_until
+        ELSE NULL
+    END,
+    resolved_at       = NULL;
+
+-- name: GetRegressionObservation :one
+-- Read the row after a detector upsert so the notification reflects a
+-- preserved acknowledgement/dismissal rather than assuming active state.
+SELECT app_id, deployment_id, route,
+       p95_ms, p95_base_ms, affected_count,
+       regression_factor, first_detected_at, last_detected_at,
+       state, acknowledged_at, dismissed_until, resolved_at
+FROM debug_regression_observations
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND route = $3;
 
 -- name: ListActiveRegressionsByApp :many
 -- Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
@@ -2229,11 +2260,51 @@ ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
 -- Uses debug_regression_observations_app_idx (00436).
 SELECT deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
-       regression_factor, first_detected_at, last_detected_at
+       regression_factor, first_detected_at, last_detected_at,
+       CASE
+           WHEN state = 'dismissed'
+                AND dismissed_until IS NOT NULL
+                AND dismissed_until <= now() THEN 'active'
+           ELSE state
+       END AS state,
+       acknowledged_at, dismissed_until, resolved_at
 FROM debug_regression_observations
 WHERE app_id = $1
   AND last_detected_at > now() - $2::interval
+  AND state <> 'resolved'
+  AND (state <> 'dismissed' OR dismissed_until IS NULL OR dismissed_until <= now())
 ORDER BY regression_factor DESC, last_detected_at DESC;
+
+-- name: ApplyRegressionAction :one
+-- Change only the debugger workflow state for one app-scoped observation.
+-- The handler maps reopen to active before calling this query.
+UPDATE debug_regression_observations
+SET state = $4,
+    last_detected_at = CASE WHEN $4 = 'active' THEN now() ELSE last_detected_at END,
+    acknowledged_at = CASE WHEN $4 = 'acknowledged' THEN now() ELSE NULL END,
+    dismissed_until = CASE WHEN $4 = 'dismissed' THEN $5::timestamptz ELSE NULL END,
+    resolved_at = CASE WHEN $4 = 'resolved' THEN now() ELSE NULL END
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND route = $3
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at;
+
+-- name: ResolveStaleRegressionObservations :many
+-- A detector pass that no longer sees a regression resolves the previous
+-- observation. Returning rows lets apid publish one account-scoped event per
+-- lifecycle transition without a second read.
+UPDATE debug_regression_observations
+SET state = 'resolved',
+    resolved_at = COALESCE(resolved_at, now())
+WHERE last_detected_at <= now() - $1::interval
+  AND state <> 'resolved'
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at;
 
 -- name: ListDeploymentsForCompare :many
 -- Backs the dashboard compare panel's two `<select>` dropdowns: "pick

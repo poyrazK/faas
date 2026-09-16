@@ -185,6 +185,8 @@ export type { DebugCoverageResponse } from './models/DebugCoverageResponse.js';
 export type { DebugCoverageSignal } from './models/DebugCoverageSignal.js';
 export type { DebugEvidenceExplanation } from './models/DebugEvidenceExplanation.js';
 export type { DebugGuestExecutionEvidence } from './models/DebugGuestExecutionEvidence.js';
+export type { DebugRegressionActionRequest } from './models/DebugRegressionActionRequest.js';
+export type { DebugRegressionActionResponse } from './models/DebugRegressionActionResponse.js';
 export type { DebugRegressionItem } from './models/DebugRegressionItem.js';
 export type { DebugRegressionsResponse } from './models/DebugRegressionsResponse.js';
 export type { DebugReplayResponse } from './models/DebugReplayResponse.js';

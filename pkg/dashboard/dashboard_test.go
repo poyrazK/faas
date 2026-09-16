@@ -851,6 +851,49 @@ func TestRender_DeploymentDetail_HostingReceipt(t *testing.T) {
 	}
 }
 
+// TestRender_DeploymentDetail_GitHubSource pins the customer-facing source
+// traceability block: repository, exact commit, GitHub checks, and the
+// deployment-scoped logs drill-down must remain one click away together.
+func TestRender_DeploymentDetail_GitHubSource(t *testing.T) {
+	rec := httptest.NewRecorder()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	page := dashboard.Page{
+		Title: "Deployment d-github",
+		Body:  "deployment_detail",
+		Data: dashboard.DeploymentDetailData{
+			App: dashboard.AppListItem{Slug: "myapp"},
+			Deployment: dashboard.DeploymentItem{
+				ID:              "d-github",
+				Status:          "building",
+				Kind:            "github",
+				CreatedAt:       "2026-09-16T10:00:00Z",
+				RepoFullName:    "acme/api",
+				CommitSHA:       "0123456789abcdef0123456789abcdef01234567",
+				CommitShort:     "0123456",
+				GitHubRepoURL:   "https://github.com/acme/api",
+				GitHubCommitURL: "https://github.com/acme/api/commit/0123456789abcdef0123456789abcdef01234567",
+				GitHubChecksURL: "https://github.com/acme/api/checks",
+			},
+		},
+	}
+	if err := dashboard.Render(rec, log, "", page); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-cluster="github-source"`,
+		`href="https://github.com/acme/api"`,
+		`href="https://github.com/acme/api/commit/0123456789abcdef0123456789abcdef01234567"`,
+		`href="https://github.com/acme/api/checks"`,
+		`href="/dashboard/apps/myapp/logs?deployment=d-github"`,
+		"mirrors this deployment’s lifecycle",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q\n--- body ---\n%s", want, body)
+		}
+	}
+}
+
 // TestRender_DeploymentDetail_StagesPresent — A2 (ADR-117 v2
 // follow-on). Pins the positive path: when Stages is non-nil with
 // a BodyHTML, the deployment_detail template renders the section

@@ -55,6 +55,10 @@
 //   the active request completes.
 //   cancel a queued request without reaching the bridge or leaking capacity.
 //   map a queued platform-budget expiry to the canonical 504 problem.
+//   distribute warm traffic across live sibling instances and fail over away
+//   from a stale bridge target when a replacement is published.
+//   isolate a live 0%-traffic candidate, apply live traffic weight changes
+//   through the API, observe pg_notify refresh, and roll the split back.
 //   carry the http1/http2/grpc app-protocol selector through the bridge,
 //   including grpc trailers.
 //   keep guest hop-by-hop response headers off the customer-facing response.
@@ -1679,6 +1683,7 @@ type normalPathVMMD struct {
 	responsesByPath  map[string]map[string]normalPathResponse
 	responseSequence map[string][]normalPathResponse
 	failNext         map[string]error
+	failures         map[string]error
 	probes           map[string]*normalPathCancellationProbe
 	gates            map[string]*normalPathRequestGate
 	requests         []normalPathRequestCapture
@@ -1765,6 +1770,7 @@ func startNormalPathVMMD(t *testing.T, socketPath string) *normalPathVMMD {
 		responsesByPath:  make(map[string]map[string]normalPathResponse),
 		responseSequence: make(map[string][]normalPathResponse),
 		failNext:         make(map[string]error),
+		failures:         make(map[string]error),
 		probes:           make(map[string]*normalPathCancellationProbe),
 		gates:            make(map[string]*normalPathRequestGate),
 	}
@@ -1791,6 +1797,14 @@ func (s *normalPathVMMD) FailNext(instanceID string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failNext[instanceID] = err
+}
+
+// FailAll keeps returning err for this instance until the gateway evicts it.
+// It models a dead VMMD/netns rather than a single transient bridge failure.
+func (s *normalPathVMMD) FailAll(instanceID string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failures[instanceID] = err
 }
 
 func (s *normalPathVMMD) SetResponse(instanceID string, response normalPathResponse) {
@@ -1976,7 +1990,10 @@ func (s *normalPathVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamS
 		response = sequence[0]
 		s.responseSequence[init.Instance] = sequence[1:]
 	}
-	failure := s.failNext[init.Instance]
+	failure := s.failures[init.Instance]
+	if nextFailure := s.failNext[init.Instance]; nextFailure != nil {
+		failure = nextFailure
+	}
 	gate := s.gates[init.Instance]
 	delete(s.failNext, init.Instance)
 	s.mu.Unlock()

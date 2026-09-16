@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -152,6 +153,31 @@ func stampCookie(t *testing.T, mgr *session.Manager, raw, login string) string {
 	return out
 }
 
+func bindJSONRequest(t *testing.T, mgr *session.Manager, accountID, payload string) *http.Request {
+	t.Helper()
+	tok, err := middleware.IssueForAuthenticatedNamed(mgr, githubBindAction, accountID, githubBindCSRFCookie)
+	if err != nil {
+		t.Fatalf("issue bind csrf: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+		t.Fatalf("decode bind payload: %v", err)
+	}
+	encodedToken, err := json.Marshal(tok)
+	if err != nil {
+		t.Fatalf("encode bind csrf: %v", err)
+	}
+	fields["csrf_token"] = encodedToken
+	body, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("encode bind payload: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/v1/apps/myapp/install/bind", strings.NewReader(string(body)))
+	r.Header.Set("Content-Type", "application/json")
+	r.AddCookie(&http.Cookie{Name: githubBindCSRFCookie, Value: tok})
+	return r
+}
+
 // TestListInstallableRepos_UnauthenticatedRefused asserts the
 // "session has no github_login" path: a logged-in FaaS user with
 // no completed /v1/auth/github gets a 403 (not 503, not a redirect)
@@ -217,13 +243,11 @@ func TestListInstallableRepos_ForeignInstallRefused(t *testing.T) {
 // the load-bearing assertion.
 func TestBindAppToRepo_RejectsForeignInstall(t *testing.T) {
 	gh := &bindPickerFake{verified: false, accountLogin: "bob"}
-	srv, mgr, _, cookie := newBindPickerTestServer(t, gh)
+	srv, mgr, accountID, cookie := newBindPickerTestServer(t, gh)
 	stamped := stampCookie(t, mgr, cookie, "alice")
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"installation_id": 42, "repo_full_name": "octocat/hello", "production_branch": "main"}`)
-	r := httptest.NewRequest(http.MethodPost, "/v1/apps/myapp/install/bind", body)
-	r.Header.Set("Content-Type", "application/json")
+	r := bindJSONRequest(t, mgr, accountID, `{"installation_id": 42, "repo_full_name": "octocat/hello", "production_branch": "main"}`)
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: stamped})
 	srv.ServeHTTP(rec, r)
 
@@ -252,13 +276,11 @@ func TestBindAppToRepo_PersistsOnHappyPath(t *testing.T) {
 		defaultBranch: "main",
 		bindReturn:    "bind-myapp-octocat/hello",
 	}
-	srv, mgr, _, cookie := newBindPickerTestServer(t, gh)
+	srv, mgr, accountID, cookie := newBindPickerTestServer(t, gh)
 	stamped := stampCookie(t, mgr, cookie, "alice")
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"installation_id": 42, "repo_full_name": "octocat/hello", "production_branch": "main"}`)
-	r := httptest.NewRequest(http.MethodPost, "/v1/apps/myapp/install/bind", body)
-	r.Header.Set("Content-Type", "application/json")
+	r := bindJSONRequest(t, mgr, accountID, `{"installation_id": 42, "repo_full_name": "octocat/hello", "production_branch": "main"}`)
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: stamped})
 	srv.ServeHTTP(rec, r)
 
@@ -284,13 +306,11 @@ func TestBindAppToRepo_PersistsOnHappyPath(t *testing.T) {
 // 500) so the dashboard renders a retry banner.
 func TestBindAppToRepo_GithubdTransportErrorReturns502(t *testing.T) {
 	gh := &bindPickerFake{verifyErr: errors.New("dial tcp: connection refused")}
-	srv, mgr, _, cookie := newBindPickerTestServer(t, gh)
+	srv, mgr, accountID, cookie := newBindPickerTestServer(t, gh)
 	stamped := stampCookie(t, mgr, cookie, "alice")
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"installation_id": 42, "repo_full_name": "octocat/hello"}`)
-	r := httptest.NewRequest(http.MethodPost, "/v1/apps/myapp/install/bind", body)
-	r.Header.Set("Content-Type", "application/json")
+	r := bindJSONRequest(t, mgr, accountID, `{"installation_id": 42, "repo_full_name": "octocat/hello"}`)
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: stamped})
 	srv.ServeHTTP(rec, r)
 

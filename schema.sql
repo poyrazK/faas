@@ -2114,11 +2114,16 @@ CREATE TABLE public.debug_regression_observations (
     regression_factor numeric(5,2) NOT NULL,
     first_detected_at timestamp with time zone DEFAULT now() NOT NULL,
     last_detected_at timestamp with time zone DEFAULT now() NOT NULL,
+    state text DEFAULT 'active'::text NOT NULL,
+    acknowledged_at timestamp with time zone,
+    dismissed_until timestamp with time zone,
+    resolved_at timestamp with time zone,
     CONSTRAINT debug_regression_observations_affected_count_check CHECK ((affected_count >= 0)),
     CONSTRAINT debug_regression_observations_p95_base_ms_check CHECK ((p95_base_ms >= 0)),
     CONSTRAINT debug_regression_observations_p95_ms_check CHECK ((p95_ms >= 0)),
     CONSTRAINT debug_regression_observations_regression_factor_check CHECK ((regression_factor >= 1.0)),
-    CONSTRAINT debug_regression_observations_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256)))
+    CONSTRAINT debug_regression_observations_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT debug_regression_observations_state_check CHECK ((state = ANY (ARRAY['active'::text, 'acknowledged'::text, 'dismissed'::text, 'resolved'::text])))
 );
 
 
@@ -5981,6 +5986,13 @@ CREATE INDEX data_upstreams_host_redacted_idx ON public.data_upstreams USING btr
 --
 
 CREATE INDEX debug_regression_observations_app_idx ON public.debug_regression_observations USING btree (app_id, last_detected_at DESC);
+
+
+--
+-- Name: debug_regression_observations_lifecycle_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX debug_regression_observations_lifecycle_idx ON public.debug_regression_observations USING btree (state, dismissed_until, last_detected_at DESC);
 
 
 --

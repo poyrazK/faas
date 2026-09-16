@@ -365,6 +365,10 @@ const (
 	NotifyBillingPastDue  = "billing_past_due"
 	NotifyQuotaWarning    = "quota_warning"
 	NotifyCronFired       = "cron_fired"
+	// NotifyDebugRegressionChanged carries one account-scoped, redacted
+	// regression observation whenever detection or operator workflow state
+	// changes. Payload includes app_id, deployment_id, route, and state.
+	NotifyDebugRegressionChanged = "debug_regression_changed"
 	// NotifyRateLimitChanged fires on every INSERT / UPDATE of
 	// tokens/last_refill on pg_ratelimit_counters (migration
 	// 00126, the C4 trigger). Payload is JSON

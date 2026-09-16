@@ -202,6 +202,7 @@ type EnqueueParams struct {
 	Workflows              json.RawMessage
 	TrafficPercent         int
 	TrafficPercentExplicit bool
+	RollbackOn5xx          bool
 	CanaryPreset           string
 	CanaryStep             int
 	CanaryTotalSteps       int
@@ -455,6 +456,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		InferredProfile:        append(json.RawMessage(nil), inferredProfile...),
 		TrafficPercent:         p.TrafficPercent,
 		TrafficPercentExplicit: p.TrafficPercentExplicit,
+		RollbackOn5xx:          p.RollbackOn5xx,
 		CanaryPreset:           p.CanaryPreset,
 		CanaryStep:             p.CanaryStep,
 		CanaryTotalSteps:       p.CanaryTotalSteps,

@@ -78,3 +78,35 @@ func TestCDComputeWorkflowVerifiesFastCacheAfterActivation(t *testing.T) {
 		}
 	}
 }
+
+func TestCDComputeWorkflowVerifiesHostingSmokeTenantRouting(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-compute.yml"))
+	if err != nil {
+		t.Fatalf("read cd-compute workflow: %v", err)
+	}
+	workflow := string(body)
+	join := strings.Index(workflow, `"$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"`)
+	smokeGate := strings.Index(workflow, "Verify imaged public-smoke tenant routing after activation")
+	gatewayGate := strings.Index(workflow, "Verify private compute gateway reachability")
+	if join < 0 || smokeGate < 0 || gatewayGate < 0 || !(join < smokeGate && smokeGate < gatewayGate) {
+		t.Fatalf("public-smoke config gate order is invalid: join=%d smoke=%d gateway=%d", join, smokeGate, gatewayGate)
+	}
+	for _, want := range []string{
+		"systemctl show faas-imaged.service --property=Environment --value",
+		"FAAS_API_HOSTING_SMOKE_REQUIRED=1",
+		"FAAS_API_HOSTING_SMOKE_URL=https://",
+		"FAAS_APPS_DOMAIN=",
+	} {
+		if !strings.Contains(workflow[smokeGate:gatewayGate], want) {
+			t.Errorf("public-smoke config gate is missing %q", want)
+		}
+	}
+
+	template, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "compute_only_service", "templates", "zz-faas-api-hosting-smoke.conf.j2"))
+	if err != nil {
+		t.Fatalf("read hosting-smoke drop-in: %v", err)
+	}
+	if !strings.Contains(string(template), "Environment=FAAS_APPS_DOMAIN={{ gatewayd_apps_domain | default('gregale.dev') }}") {
+		t.Fatal("compute hosting-smoke drop-in does not render the tenant apps domain")
+	}
+}

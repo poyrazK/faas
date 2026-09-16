@@ -763,6 +763,10 @@ type DebugRegressionObservation struct {
 	RegressionFactor pgtype.Numeric
 	FirstDetectedAt  pgtype.Timestamptz
 	LastDetectedAt   pgtype.Timestamptz
+	State            string
+	AcknowledgedAt   pgtype.Timestamptz
+	DismissedUntil   pgtype.Timestamptz
+	ResolvedAt       pgtype.Timestamptz
 }
 
 type Deployment struct {

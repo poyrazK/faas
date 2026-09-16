@@ -41,6 +41,7 @@ AppendEventWithTrace
 AppendSnapshotStorage
 AppendUploadBytes
 ApplyProjectPlan
+ApplyRegressionAction
 AppsForProject
 AuthDefaultFlippedAt
 AuthenticateKey
@@ -258,6 +259,7 @@ GetOIDCExchangedTokenByHash
 GetOIDCTrustPolicy
 GetOperatorIntent
 GetOrgAPIKey
+GetRegressionObservation
 GetRequestTelemetryByAppAndID
 GetRuntimeConfig
 GetRuntimeConfigOperation
@@ -589,6 +591,7 @@ RequestTelemetryCoverage
 RequeueBuild
 ResealAppSecretWithKidAndValueHashInScope
 ResetAppWebhookDeliveryFromDead
+ResolveStaleRegressionObservations
 ResolveStatusIncident
 RestoreAccount
 RetireRuntimeSnapshot

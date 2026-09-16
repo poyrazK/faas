@@ -5949,6 +5949,7 @@ type Store interface {
 	// first_detected_at is set on INSERT only; last_detected_at
 	// refreshed to now() on every pass.
 	UpsertRegressionObservation(ctx context.Context, arg sqlc.UpsertRegressionObservationParams) error
+	GetRegressionObservation(ctx context.Context, arg sqlc.GetRegressionObservationParams) (sqlc.DebugRegressionObservation, error)
 
 	// ListActiveRegressionsByApp backs GET /v1/apps/{slug}/debug/regressions
 	// and the dashboard regression banner. since is an interval
@@ -5956,6 +5957,8 @@ type Store interface {
 	// ORDER BY regression_factor DESC, last_detected_at DESC matches
 	// the dashboard render order (worst first, most-recent next).
 	ListActiveRegressionsByApp(ctx context.Context, arg sqlc.ListActiveRegressionsByAppParams) ([]sqlc.ListActiveRegressionsByAppRow, error)
+	ApplyRegressionAction(ctx context.Context, arg sqlc.ApplyRegressionActionParams) (sqlc.DebugRegressionObservation, error)
+	ResolveStaleRegressionObservations(ctx context.Context, arg pgtype.Interval) ([]sqlc.DebugRegressionObservation, error)
 
 	// ListDeploymentsForCompare backs the dashboard compare panel's
 	// two <select> dropdowns. Returns distinct deployment_ids that

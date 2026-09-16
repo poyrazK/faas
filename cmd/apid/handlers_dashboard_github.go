@@ -30,6 +30,8 @@ func githubDashboardFlash(r *http.Request) string {
 		return "GitHub access could not be synced. Try again in a minute."
 	case "disconnect-error":
 		return "GitHub could not be disconnected. Try again."
+	case "bind-error":
+		return "The app was created, but the GitHub repository could not be connected. Retry from this page or reconnect GitHub."
 	case "forbidden":
 		return "The GitHub action expired. Reload the page and try again."
 	default:

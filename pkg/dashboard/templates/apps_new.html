@@ -41,15 +41,20 @@
     {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
     <section class="card">
-      <p>Walk through GitHub authorization, pick a repository, and pick a starting template. The dashboard handles the OAuth handshake server-side; the <code>install</code> and <code>production_branch</code> come back pre-filled from the GitHub App callback.</p>
+      <p>Connect GitHub, choose the installation that owns your repository, then create an app bound to it. The next push to the selected repository will start a deployment.</p>
 
-      {{if .Data.NeedsGithubConnect}}
+      {{if or .Data.NeedsGithubConnect .Data.NeedsGithubInstall}}
         <div class="empty">
           <h2>1. Connect GitHub</h2>
-          <p>The dashboard is the install-token trust root (ADR-116); connecting is what proves you own the GitHub repos you'll bind. Until the GitHub OAuth dance is complete, the wizard can't list your installations.</p>
+          {{if .Data.NeedsGithubConnect}}
+            <p>The dashboard is the install-token trust root. Connect GitHub so Gregale can verify which repositories you can use.</p>
+          {{else}}
+            <p>Your GitHub identity is connected, but the Gregale GitHub App is not installed yet. Install it, then return here to choose a repository.</p>
+          {{end}}
           <form method="POST" action="/dashboard/install/connect">
             <input type="hidden" name="csrf_token" value="{{.Data.ConnectGithubConfirmToken}}">
-            <button type="submit" class="btn-cta">Connect GitHub</button>
+            <input type="hidden" name="return_to" value="{{.Data.ReturnTo}}">
+            <button type="submit" class="btn-cta">{{if .Data.NeedsGithubConnect}}Connect GitHub{{else}}Install GitHub App{{end}}</button>
           </form>
         </div>
       {{else if .Data.GitHubDegraded}}
@@ -59,19 +64,28 @@
           <a class="btn" href="/dashboard/apps/new">Retry</a>
         </div>
       {{else}}
-        <h2>2. Pick installation, repo, template</h2>
-        <p>All three are pre-filled when you arrived from <code>gregale connect repo &lt;owner&gt;/&lt;name&gt;</code> or the GitHub App callback.</p>
-        <form method="POST" action="/v1/apps/new-app/install/bind">
-          <input type="hidden" name="csrf_token" value="{{.Data.BindAppConfirmToken}}">
-
+        <h2>2. Choose GitHub installation</h2>
+        <form method="GET" action="/dashboard/apps/new">
           <label>
             Installation
-            <select name="installation_id">
+            <select name="install">
               {{range .Data.Installations}}
-                <option value="{{.ID}}" {{if eq (printf "%v" .ID) $.Data.PreFilledInstallID}}selected{{end}}>{{.AccountLogin}} ({{.RepoCount}} repo)</option>
+                <option value="{{.ID}}" {{if eq (printf "%v" .ID) $.Data.PreFilledInstallID}}selected{{end}}>{{.AccountLogin}}{{if gt .RepoCount 0}} ({{.RepoCount}} repos){{end}}</option>
               {{end}}
             </select>
           </label>
+          <input type="hidden" name="repo" value="{{.Data.PreFilledRepo}}">
+          <input type="hidden" name="default_branch" value="{{.Data.PreFilledBranch}}">
+          <input type="hidden" name="slug" value="{{.Data.PreFilledSlug}}">
+          <button type="submit" class="btn">Load repositories</button>
+        </form>
+
+        <h2>3. Choose repository and app settings</h2>
+        <p>The installation and repository are verified again when you submit.</p>
+        {{if .Data.FormError}}<p class="error" role="alert">{{.Data.FormError}}</p>{{end}}
+        <form method="POST" action="/dashboard/apps/new">
+          <input type="hidden" name="csrf_token" value="{{.Data.CreateAppConfirmToken}}">
+          <input type="hidden" name="installation_id" value="{{.Data.PreFilledInstallID}}">
 
           <label>
             Repository
@@ -90,28 +104,17 @@
           </label>
 
           <label>
-            Starting template
-            <select name="template_name">
-              {{range .Data.Templates}}
-                <option value="{{.Name}}">{{.Name}} — {{.Description}}</option>
-              {{end}}
-            </select>
-            <small class="muted">Pick a starter; you can customise after the first deploy.</small>
-          </label>
-
-          <label>
             App slug
-            <input type="text" name="slug" value="my-app" placeholder="my-app" pattern="[a-z0-9-]+" required>
+            <input type="text" name="slug" value="{{.Data.PreFilledSlug}}" placeholder="my-app" pattern="[a-z0-9-]+" required>
             <small class="muted">Lowercase letters, digits, and dashes only. The slug becomes the public hostname prefix.</small>
           </label>
 
-          <button type="submit" class="btn-cta">Bind and create app</button>
+          <button type="submit" class="btn-cta">Create app and connect repository</button>
         </form>
       {{end}}
 
       <p class="muted" style="margin-top:1rem">
-        Or from a project directory:
-        <code>gregale deploy --template=hello-node</code>
+        Prefer the CLI? Run <code>gregale init --template=hello-node</code>, then <code>gregale deploy --repo OWNER/NAME --ref main</code>.
       </p>
     </section>
   </main>

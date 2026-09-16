@@ -116,6 +116,35 @@ func TestParseBoolEnvRejectsInvalidValue(t *testing.T) {
 	}
 }
 
+func TestValidateHostingSmokeConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		required   bool
+		baseURL    string
+		appsDomain string
+		wantErr    string
+	}{
+		{name: "optional unset"},
+		{name: "required complete", required: true, baseURL: "https://gregale.dev", appsDomain: "gregale.dev"},
+		{name: "required missing origin", required: true, appsDomain: "gregale.dev", wantErr: "FAAS_API_HOSTING_SMOKE_URL"},
+		{name: "required missing tenant domain", required: true, baseURL: "https://gregale.dev", wantErr: "FAAS_APPS_DOMAIN"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateHostingSmokeConfig(tt.required, tt.baseURL, tt.appsDomain)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateHostingSmokeConfig() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateHostingSmokeConfig() = %v, want error containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestPrestageOnlyFromEnv(t *testing.T) {
 	for _, tc := range []struct {
 		raw  string

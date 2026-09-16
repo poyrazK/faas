@@ -2047,6 +2047,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/{req_id}/evidence", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRequestEvidenceHandler))))
 	// ADR-127 PR-B: regression banner feed (dashboard + CLI).
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/regressions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRegressionsHandler))))
+	// ADR-127 debugger lifecycle: operator workflow state is separate from
+	// deployment traffic state and is protected as a debugger write.
+	mux.HandleFunc("PATCH /v1/apps/{slug}/debug/regressions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.debugRegressionActionHandler)))))
 	// ADR-127 PR-B: deployment-vs-deployment compare (POST body
 	// holds the two deployment_ids + optional route filter).
 	mux.HandleFunc("POST /v1/apps/{slug}/debug/compare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugCompareHandler))))
@@ -2684,6 +2687,11 @@ func (s *server) handler() http.Handler {
 	// session-cookie auth, and the redirect URL is hit by a
 	// browser.
 	mux.Handle("GET "+oauthCallbackPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderOAuthCallback))))
+	// Dashboard new-app wizard. The POST is a browser form adapter around
+	// the existing app creation and GitHub binding lifecycle; it has its own
+	// named CSRF envelope so the installation picker cannot be confused with
+	// the account-level Connect GitHub action.
+	mux.Handle("POST /dashboard/apps/new", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.createAppFromGitHubWizard))))
 	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 

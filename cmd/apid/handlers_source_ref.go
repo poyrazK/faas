@@ -87,12 +87,16 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			"Unsupported format", "format must be '"+fieldNameTarball+"' (PR-A)"))
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx}
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
 	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if p := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
@@ -257,6 +261,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		PRNumber:               ann.PRNumber,
 		TrafficPercent:         rollout.TrafficPercent,
 		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
+		RollbackOn5xx:          rollout.RollbackOn5xx,
 		CanaryPreset:           rollout.CanaryPreset,
 		CanaryStep:             rollout.CanaryStep,
 		CanaryTotalSteps:       rollout.CanaryTotalSteps,

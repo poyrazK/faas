@@ -483,10 +483,14 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	smokeURL := strings.TrimSpace(getenv("FAAS_API_HOSTING_SMOKE_URL"))
+	appsDomain := strings.Trim(strings.TrimSpace(getenv("FAAS_APPS_DOMAIN")), ".")
+	if err := validateHostingSmokeConfig(smokeRequired, smokeURL, appsDomain); err != nil {
+		return err
+	}
 	h.WithHostingSmokeRequired(smokeRequired)
 	if smokeURL != "" || smokeRequired {
 		verifier := apihostingreceipt.Verifier{
-			BaseURL: smokeURL, AppsDomain: getenv("FAAS_APPS_DOMAIN"), Timeout: 10 * time.Second, Required: smokeRequired,
+			BaseURL: smokeURL, AppsDomain: appsDomain, Timeout: 10 * time.Second, Required: smokeRequired,
 			Authorize: func(ctx context.Context, deploymentID, token string, expiresAt time.Time) error {
 				dep, err := store.DeploymentByID(ctx, deploymentID)
 				if err != nil {
@@ -796,6 +800,19 @@ func parseBoolEnv(name, raw string) (bool, error) {
 		return false, fmt.Errorf("imaged: %s must be a boolean", name)
 	}
 	return value, nil
+}
+
+func validateHostingSmokeConfig(required bool, baseURL, appsDomain string) error {
+	if !required {
+		return nil
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		return fmt.Errorf("imaged: required public hosting smoke is missing FAAS_API_HOSTING_SMOKE_URL")
+	}
+	if strings.Trim(strings.TrimSpace(appsDomain), ".") == "" {
+		return fmt.Errorf("imaged: required public hosting smoke is missing FAAS_APPS_DOMAIN")
+	}
+	return nil
 }
 
 // builderBaseRefFromEnv resolves the builder image reference. Single-box

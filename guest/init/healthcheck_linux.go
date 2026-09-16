@@ -162,7 +162,7 @@ func runStartupHealthcheck(manifest api.AppManifest, env []string, dir, root str
 		return nil
 	}
 	if root != "" {
-		argv[0] = resolveSidecarCommandPath(root, argv[0], env)
+		argv[0] = resolveWorkloadCommandPath(root, argv[0], env)
 	}
 	_, timeout, _, _ := healthcheckDefaults(manifest.Healthcheck)
 	report := execHealthcheckWithOptions(context.Background(), argv, timeout, uid, env, dir, procAttr, log)

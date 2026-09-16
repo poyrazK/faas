@@ -129,6 +129,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		devSource      devSourceMetadata
 		trafficPercent *int
 		canarySpec     *api.CanaryPresetSpec
+		rollbackOn5xx  *bool
 		ann            annotationForm
 	)
 	defer func() {
@@ -238,6 +239,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			canarySpec = &spec
+		case "rollback_on_5xx":
+			value := isFlagSet(part)
+			rollbackOn5xx = &value
 		case "reason":
 			b, _ := io.ReadAll(io.LimitReader(part, 2048))
 			ann.Reason = string(b)
@@ -280,12 +284,16 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -418,6 +426,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			PRNumber:               ann.PRNumber,
 			TrafficPercent:         rollout.TrafficPercent,
 			TrafficPercentExplicit: rollout.TrafficPercentExplicit,
+			RollbackOn5xx:          rollout.RollbackOn5xx,
 			CanaryPreset:           rollout.CanaryPreset,
 			CanaryStep:             rollout.CanaryStep,
 			CanaryTotalSteps:       rollout.CanaryTotalSteps,

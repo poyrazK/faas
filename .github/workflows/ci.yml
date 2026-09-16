@@ -1104,7 +1104,37 @@ jobs:
           set -euo pipefail
           pip install --quiet 'ansible-core==2.21.2'
           cd deploy/ansible
-          ansible-galaxy collection install -r requirements.yml
+          COLLECTIONS_PATH="${RUNNER_TEMP}/ansible-collections"
+          export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_PATH}"
+          echo "ANSIBLE_COLLECTIONS_PATH=${COLLECTIONS_PATH}" >> "${GITHUB_ENV}"
+          # ansible-core can retain a malformed Galaxy response cache on a
+          # hosted runner. Do not let that cache turn this repository contract
+          # into an unrelated infrastructure failure.
+          galaxy_ok=0
+          for attempt in 1 2 3; do
+            if ansible-galaxy collection install \
+              --no-cache --timeout 30 \
+              --collections-path "${COLLECTIONS_PATH}" \
+              -r requirements.yml; then
+              galaxy_ok=1
+              break
+            fi
+            if [ "${attempt}" != "3" ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [ "${galaxy_ok}" != "1" ]; then
+            echo "::warning::Ansible Galaxy unavailable; using pinned GitHub collection sources"
+            rm -rf -- "${COLLECTIONS_PATH}/ansible_collections"
+            mkdir -p "${COLLECTIONS_PATH}/ansible_collections/ansible"
+            mkdir -p "${COLLECTIONS_PATH}/ansible_collections/community"
+            git clone --depth 1 --branch 2.2.2 --single-branch \
+              https://github.com/ansible-collections/ansible.posix.git \
+              "${COLLECTIONS_PATH}/ansible_collections/ansible/posix"
+            git clone --depth 1 --branch 5.0.0 --single-branch \
+              https://github.com/ansible-collections/community.postgresql.git \
+              "${COLLECTIONS_PATH}/ansible_collections/community/postgresql"
+          fi
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook

@@ -10,13 +10,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -90,6 +94,11 @@ func TestRenderAppNew_GitHubDegradedDegrades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
+	if err := store.UpsertGitHubInstall(t.Context(), state.GitHubInstall{
+		AccountID: acct.ID, InstallationID: 42, AuditGithubLogin: "alice", SealedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed GitHub install: %v", err)
+	}
 	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
@@ -141,6 +150,11 @@ func TestRenderAppNew_PreFillsRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
+	if err := store.UpsertGitHubInstall(t.Context(), state.GitHubInstall{
+		AccountID: acct.ID, InstallationID: 42, AuditGithubLogin: "alice", SealedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed GitHub install: %v", err)
+	}
 	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
@@ -163,14 +177,14 @@ func TestRenderAppNew_PreFillsRepo(t *testing.T) {
 	}
 	body := rec.Body.String()
 	// <h1>{{.Title}}</h1> renders "New app"; the wizard's
-	// distinctive copy is "Pick installation, repo, template" inside
+	// distinctive copy is "Choose GitHub installation" inside
 	// the form section. Both must be present so a regression in
 	// the dispatch routing (a future refactor that drops the
 	// literal-equal case) fails this test.
 	if !strings.Contains(body, "New app") {
 		t.Errorf("body missing wizard heading\n--- body ---\n%s", body)
 	}
-	if !strings.Contains(body, "Pick installation") {
+	if !strings.Contains(body, "Choose GitHub installation") {
 		t.Errorf("body missing form section heading — did the Form path fall through to the Connect CTA?\n--- body ---\n%s", body)
 	}
 	// Both repos must be in the dropdown; the prefilled repo must
@@ -211,5 +225,93 @@ func TestRenderAppNew_DispatchRouteIsMounted(t *testing.T) {
 	}
 	if !strings.Contains(body, "Connect GitHub") {
 		t.Errorf("body missing the Connect-first CTA — the dispatcher sent /apps/new elsewhere\n--- body ---\n%s", body)
+	}
+}
+
+func newGitHubWizardPostServer(t *testing.T, gh GithubdClient) (http.Handler, *state.MemStore, *session.Manager, state.Account, string) {
+	t.Helper()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(t.Context(), "alice@example.com", "free")
+	if err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	if err != nil {
+		t.Fatalf("session manager: %v", err)
+	}
+	rawCookie, err := mgr.Issue(acct.ID)
+	if err != nil {
+		t.Fatalf("issue session: %v", err)
+	}
+	return newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").handler(), store, mgr, acct, stampCookie(t, mgr, rawCookie, "alice")
+}
+
+func TestCreateAppFromGitHubWizard_CreatesAndBinds(t *testing.T) {
+	gh := &appsNewFake{repos: []Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
+	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice", defaultBranch: "main", bindReturn: "bind-created"}
+	h, store, mgr, acct, sessionValue := newGitHubWizardPostServer(t, gh)
+
+	csrf, err := middleware.IssueForAuthenticatedNamed(mgr, githubWizardCreateAction, acct.ID, githubWizardCreateCSRFCookie)
+	if err != nil {
+		t.Fatalf("issue wizard csrf: %v", err)
+	}
+	form := url.Values{
+		"csrf_token":        {csrf},
+		"installation_id":   {"42"},
+		"repo_full_name":    {"octocat/hello"},
+		"production_branch": {"main"},
+		"slug":              {"created-app"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/apps/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: sessionValue})
+	req.AddCookie(&http.Cookie{Name: githubWizardCreateCSRFCookie, Value: csrf})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("code = %d, want 303\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/dashboard/apps/created-app?github=connected" {
+		t.Fatalf("Location = %q, want connected app detail", got)
+	}
+	if _, err := store.AppBySlug(t.Context(), "created-app"); err != nil {
+		t.Fatalf("created app lookup: %v", err)
+	}
+	if gh.bindCalls != 1 {
+		t.Fatalf("BindAppRepo calls = %d, want 1", gh.bindCalls)
+	}
+	if gh.gotInstallID != 42 || gh.gotExpectedLogin != "" {
+		t.Fatalf("VerifyInstallation = (%d, %q), want (42, empty expected login)", gh.gotInstallID, gh.gotExpectedLogin)
+	}
+}
+
+func TestCreateAppFromGitHubWizard_RejectsMissingCSRF(t *testing.T) {
+	gh := &appsNewFake{repos: []Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
+	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice"}
+	h, store, _, _, sessionValue := newGitHubWizardPostServer(t, gh)
+	form := url.Values{
+		"installation_id":   {"42"},
+		"repo_full_name":    {"octocat/hello"},
+		"production_branch": {"main"},
+		"slug":              {"created-app"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/apps/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: sessionValue})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("code = %d, want 303\nbody = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Location"), "form+expired") {
+		t.Fatalf("Location = %q, want expired-form error", rec.Header().Get("Location"))
+	}
+	if _, err := store.AppBySlug(t.Context(), "created-app"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("created app lookup error = %v, want not found", err)
+	}
+	if gh.bindCalls != 0 {
+		t.Fatalf("BindAppRepo calls = %d, want 0", gh.bindCalls)
 	}
 }

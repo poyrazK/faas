@@ -64,6 +64,9 @@ type Querier interface {
 	//                      by pkg/meter/pusher_shadow_test.go::TestPushHour_ExcludesTailSeconds)
 	AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParams) error
 	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
+	// Change only the debugger workflow state for one app-scoped observation.
+	// The handler maps reopen to active before calling this query.
+	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
 	// issue #667 / ADR-078 — atomically apply delta to the instance's
@@ -292,6 +295,9 @@ type Querier interface {
 	// first-use auto-create path (PR-A) and the dashboard's Refine
 	// form (PR-C).
 	GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTrustPolicyParams) (GetOIDCTrustPolicyRow, error)
+	// Read the row after a detector upsert so the notification reflects a
+	// preserved acknowledgement/dismissal rather than assuming active state.
+	GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error)
 	// Direct request drill-down for the customer debugger. The app_id
 	// predicate is the database-side tenant boundary; the handler has
 	// already resolved the slug through the caller's account.
@@ -989,6 +995,10 @@ type Querier interface {
 	// for requests dropped before persistence, so the API must not invent a
 	// capture percentage.
 	RequestTelemetryCoverage(ctx context.Context, db DBTX, arg RequestTelemetryCoverageParams) (RequestTelemetryCoverageRow, error)
+	// A detector pass that no longer sees a regression resolves the previous
+	// observation. Returning rows lets apid publish one account-scoped event per
+	// lifecycle transition without a second read.
+	ResolveStaleRegressionObservations(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]DebugRegressionObservation, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
 	RevokeAllSessions(ctx context.Context, db DBTX, arg RevokeAllSessionsParams) ([]pgtype.UUID, error)

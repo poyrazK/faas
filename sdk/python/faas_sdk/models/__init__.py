@@ -345,7 +345,11 @@ from .debug_guest_execution_evidence import DebugGuestExecutionEvidence
 from .debug_guest_execution_evidence_error_class import DebugGuestExecutionEvidenceErrorClass
 from .debug_guest_execution_evidence_outcome import DebugGuestExecutionEvidenceOutcome
 from .debug_guest_execution_evidence_runtime import DebugGuestExecutionEvidenceRuntime
+from .debug_regression_action_request import DebugRegressionActionRequest
+from .debug_regression_action_request_action import DebugRegressionActionRequestAction
+from .debug_regression_action_response import DebugRegressionActionResponse
 from .debug_regression_item import DebugRegressionItem
+from .debug_regression_item_state import DebugRegressionItemState
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_response import DebugReplayResponse
 from .debug_replay_response_status import DebugReplayResponseStatus
@@ -1442,7 +1446,11 @@ __all__ = (
     "DebugGuestExecutionEvidenceErrorClass",
     "DebugGuestExecutionEvidenceOutcome",
     "DebugGuestExecutionEvidenceRuntime",
+    "DebugRegressionActionRequest",
+    "DebugRegressionActionRequestAction",
+    "DebugRegressionActionResponse",
     "DebugRegressionItem",
+    "DebugRegressionItemState",
     "DebugRegressionsResponse",
     "DebugReplayResponse",
     "DebugReplayResponseStatus",

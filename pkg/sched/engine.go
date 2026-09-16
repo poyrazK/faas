@@ -3216,13 +3216,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// transition — the class is metadata, not the boot path.
 	if out.Characterization.ObservedClass != "" {
 		observedClass := state.WorkloadClass(out.Characterization.ObservedClass)
-		if shouldPersistObservedClass(bootInput.appType, observedClass) {
+		if shouldPersistObservedClass(bootInput.appType, bootInput.spec.ExecutionMode, observedClass) {
 			if _, err := e.store.SetAppWorkloadClass(ctx, bootInput.appID, observedClass, "observed"); err != nil {
 				e.log.Warn("wake: SetAppWorkloadClass", "app", bootInput.appID, "err", err)
 			}
 		} else {
-			e.log.Warn("wake: ignoring incompatible function characterization",
-				"app", bootInput.appID, "observed_class", observedClass)
+			e.log.Warn("wake: ignoring incompatible characterization",
+				"app", bootInput.appID, "app_type", bootInput.appType,
+				"execution_mode", bootInput.spec.ExecutionMode, "observed_class", observedClass)
 		}
 		// PR-D review finding #6: emit an `app.characterized` audit
 		// row so an operator tailing events can pin the observed
@@ -3442,14 +3443,25 @@ type bootInput struct {
 	atCapacity bool
 }
 
-// shouldPersistObservedClass prevents a managed function from losing its
-// request-serving route when a failed or incomplete cold-boot probe sees no
-// listening socket and reports a worker-shaped process. Server-shaped
-// refinements remain valid for functions, while ordinary apps keep the full
-// characterization contract, including job and worker classes.
-func shouldPersistObservedClass(appType state.AppType, observed state.WorkloadClass) bool {
+// shouldPersistObservedClass prevents a request-serving workload from losing
+// its route when the shorter characterization window reports a no-bind
+// worker/job before the normal readiness deadline succeeds. Explicit worker
+// and job modes retain their characterization contract. Managed functions
+// additionally accept only server-shaped refinements.
+func shouldPersistObservedClass(appType state.AppType, executionMode string, observed state.WorkloadClass) bool {
 	if observed == "" {
 		return false
+	}
+	// Request and service wakes have already passed the server readiness
+	// probe when this code runs. A worker/job report can only mean the
+	// shorter characterization window expired before the listener appeared;
+	// persisting it would turn a successful slow HTTP boot into a permanent
+	// public-routing failure on the next request.
+	if executionMode == api.ExecutionModeRequest || executionMode == api.ExecutionModeService {
+		switch observed {
+		case state.WorkloadClassWorker, state.WorkloadClassJob:
+			return false
+		}
 	}
 	if appType != state.AppTypeFunction {
 		return true

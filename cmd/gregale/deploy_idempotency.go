@@ -37,6 +37,7 @@ type deployIdempotencyIntent struct {
 	CanaryPreset   string `json:"canary_preset,omitempty"`
 	CanaryStages   string `json:"canary_stages,omitempty"`
 	Environment    string `json:"environment,omitempty"`
+	RollbackOn5xx  *bool  `json:"rollback_on_5xx,omitempty"`
 	NoTriggers     bool   `json:"no_triggers,omitempty"`
 	ProjectSlug    string `json:"project_slug,omitempty"`
 	DeployOnly     string `json:"deploy_only,omitempty"`
