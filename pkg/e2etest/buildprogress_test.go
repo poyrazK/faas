@@ -111,15 +111,26 @@ func TestDefaults_StallWindowIsWellUnderTheCeiling(t *testing.T) {
 	}
 }
 
+// The window must clear the slowest build actually observed on the acceptance
+// node, or healthy builds are reported as stalls — which is what a 3-minute
+// window did to all 16 builds in gate run 35137856640.
+func TestDefaults_StallWindowClearsTheSlowestObservedBuild(t *testing.T) {
+	const slowestObserved = 271 * time.Second // enqueue→imaged, run 35137856640
+	if DefaultBuildStallWindow <= slowestObserved {
+		t.Fatalf("stall window %s does not clear the slowest observed build (%s); "+
+			"a healthy build would be reported as wedged", DefaultBuildStallWindow, slowestObserved)
+	}
+}
+
 // The tail is the diagnosis a stall report carries; each unreadable case must
 // say so rather than print nothing.
 func TestBuildLogTail(t *testing.T) {
 	dir := t.TempDir()
 
-	if got := buildLogTail(state.Build{}); !strings.Contains(got, "no build log path") {
+	if got := buildLogTail(state.Deployment{}, state.Build{}); !strings.Contains(got, "no build log path") {
 		t.Errorf("no path: %q", got)
 	}
-	if got := buildLogTail(state.Build{LogPath: filepath.Join(dir, "missing.log")}); !strings.Contains(got, "unreadable") {
+	if got := buildLogTail(state.Deployment{}, state.Build{LogPath: filepath.Join(dir, "missing.log")}); !strings.Contains(got, "unreadable") {
 		t.Errorf("missing file: %q", got)
 	}
 
@@ -127,7 +138,7 @@ func TestBuildLogTail(t *testing.T) {
 	if err := os.WriteFile(empty, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := buildLogTail(state.Build{LogPath: empty}); !strings.Contains(got, "is empty") {
+	if got := buildLogTail(state.Deployment{}, state.Build{LogPath: empty}); !strings.Contains(got, "is empty") {
 		t.Errorf("empty file: %q", got)
 	}
 
@@ -135,11 +146,36 @@ func TestBuildLogTail(t *testing.T) {
 	if err := os.WriteFile(big, []byte(strings.Repeat("x", 10000)+"LAST-LINE"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := buildLogTail(state.Build{LogPath: big})
+	got := buildLogTail(state.Deployment{}, state.Build{LogPath: big})
 	if !strings.HasSuffix(got, "LAST-LINE") || len(got) > 4096+200 {
 		t.Errorf("large file was not trimmed to a tail ending in the last line (len=%d)", len(got))
 	}
-	if size := buildLogSize(state.Build{LogPath: big}); size != 10009 {
+	if size := buildLogSize(state.Deployment{}, state.Build{LogPath: big}); size != 10009 {
 		t.Errorf("buildLogSize = %d, want 10009", size)
+	}
+}
+
+// The progress signal must read the DEPLOYMENT row's log path: that is where
+// builderd streams lines. Reading the build row's (empty) path reported every
+// healthy build as a stall with log=0 bytes.
+func TestBuildLogSize_ReadsTheDeploymentLogPath(t *testing.T) {
+	dir := t.TempDir()
+	depLog := filepath.Join(dir, "build.log")
+	if err := os.WriteFile(depLog, []byte("detected framework: node\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dep := state.Deployment{LogPath: depLog}
+	build := state.Build{} // builderd leaves this empty during the build
+
+	if got := buildLogSize(dep, build); got != 25 {
+		t.Fatalf("buildLogSize = %d, want 25: the signal is reading the build row's "+
+			"empty LogPath instead of the deployment's, so a healthy build looks silent", got)
+	}
+	if got := buildLogTail(dep, build); !strings.Contains(got, "detected framework") {
+		t.Fatalf("tail did not come from the deployment log: %q", got)
+	}
+	// Fall back to the build row only when the deployment has no path.
+	if got := buildLogSize(state.Deployment{}, state.Build{LogPath: depLog}); got != 25 {
+		t.Fatalf("fallback to build.LogPath = %d, want 25", got)
 	}
 }

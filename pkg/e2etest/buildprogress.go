@@ -36,9 +36,19 @@ import (
 )
 
 // DefaultBuildStallWindow is how long a build may go without any observable
-// progress before it is reported as wedged. buildctl and Railpack print
-// progress continuously; three silent minutes is a stall, not a slow step.
-const DefaultBuildStallWindow = 3 * time.Minute
+// progress before it is reported as wedged.
+//
+// Sized from measurement, not assumption. The first version assumed buildctl
+// output streams to the host log and set 3 minutes; in fact builderd writes
+// only its own bracket lines ("allocated builder slot", "build started",
+// "dependency cache cold — installing dependencies", ...) and the in-VM run
+// between them is silent on the host. In gate run 35137856640 the whole
+// enqueue→imaged span was 131–271s per build, which bounds that silent
+// stretch at about 4.5 minutes. Five minutes clears the slowest observed
+// build with margin and still reports a wedge in a third of the old fixed
+// deadline. If builds get slower than this on the acceptance node, that is
+// itself the finding — raise it with the number, not by feel.
+const DefaultBuildStallWindow = 5 * time.Minute
 
 // DefaultBuildCeiling bounds a build that keeps writing but never finishes.
 // It is the platform's own in-guest budget: a build that outlives it would
@@ -138,23 +148,23 @@ func WaitForSourceDeployment(ctx context.Context, t T, pool *pgxpool.Pool, deplo
 		case state.DeployLive:
 			return dep, build, nil
 		case state.DeployFailed:
-			return dep, build, fmt.Errorf("deployment %s failed: %s%s", deploymentID, dep.Error, buildLogTail(build))
+			return dep, build, fmt.Errorf("deployment %s failed: %s%s", deploymentID, dep.Error, buildLogTail(dep, build))
 		}
 		switch build.Status {
 		case state.BuildFailed, state.BuildCancelled:
 			return dep, build, fmt.Errorf("build %s %s (failure_class=%q) while deployment %s was %s%s",
-				build.ID, build.Status, build.FailureClass, deploymentID, dep.Status, buildLogTail(build))
+				build.ID, build.Status, build.FailureClass, deploymentID, dep.Status, buildLogTail(dep, build))
 		}
 
 		now := time.Now()
-		sig := buildSignature{deployment: dep.Status, build: build.Status, logBytes: buildLogSize(build)}
+		sig := buildSignature{deployment: dep.Status, build: build.Status, logBytes: buildLogSize(dep, build)}
 		switch perr := tracker.observe(now, sig); {
 		case errors.Is(perr, errBuildStalled):
 			return dep, build, fmt.Errorf("%w: no progress for %s (deployment=%s build=%s log=%d bytes)%s",
-				errBuildStalled, tracker.silentFor(now).Round(time.Second), dep.Status, build.Status, sig.logBytes, buildLogTail(build))
+				errBuildStalled, tracker.silentFor(now).Round(time.Second), dep.Status, build.Status, sig.logBytes, buildLogTail(dep, build))
 		case errors.Is(perr, errBuildCeiling):
 			return dep, build, fmt.Errorf("%w: still not live after %s (deployment=%s build=%s log=%d bytes)%s",
-				errBuildCeiling, ceiling, dep.Status, build.Status, sig.logBytes, buildLogTail(build))
+				errBuildCeiling, ceiling, dep.Status, build.Status, sig.logBytes, buildLogTail(dep, build))
 		}
 
 		select {
@@ -174,14 +184,32 @@ func WaitForSourceDeployment(ctx context.Context, t T, pool *pgxpool.Pool, deplo
 	}
 }
 
+// buildLogPath is where builderd streams the build log on this host.
+//
+// It is the DEPLOYMENT row's LogPath: builderd's appendLogBounded resolves
+// the build to its deployment and appends every line there. The build row
+// has a LogPath column too, but builderd never fills it during the build, so
+// watching it reads 0 bytes for the whole build. That is exactly what the
+// first version of this wait did — every one of 16 builds in gate run
+// 35137856640 was reported as "build stalled ... log=0 bytes" while the
+// enqueue→imaged timestamps show they completed in 131–271s. The signal was
+// blind, not the builds.
+func buildLogPath(dep state.Deployment, build state.Build) string {
+	if dep.LogPath != "" {
+		return dep.LogPath
+	}
+	return build.LogPath
+}
+
 // buildLogSize is the progress signal: bytes written to the build log so far.
 // A missing or unreadable log counts as zero, which is "no progress" — the
 // stall clock then does the right thing without a separate error path.
-func buildLogSize(build state.Build) int64 {
-	if build.LogPath == "" {
+func buildLogSize(dep state.Deployment, build state.Build) int64 {
+	path := buildLogPath(dep, build)
+	if path == "" {
 		return 0
 	}
-	info, err := os.Stat(build.LogPath)
+	info, err := os.Stat(path)
 	if err != nil {
 		return 0
 	}
@@ -190,20 +218,21 @@ func buildLogSize(build state.Build) int64 {
 
 // buildLogTail renders the last 4 KiB of the build log for a failure report,
 // or an explanation of why it could not.
-func buildLogTail(build state.Build) string {
-	if build.LogPath == "" {
+func buildLogTail(dep state.Deployment, build state.Build) string {
+	path := buildLogPath(dep, build)
+	if path == "" {
 		return "\n(no build log path recorded yet)"
 	}
-	data, err := os.ReadFile(build.LogPath)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Sprintf("\n(build log %s unreadable: %v)", build.LogPath, err)
+		return fmt.Sprintf("\n(build log %s unreadable: %v)", path, err)
 	}
 	if len(data) == 0 {
-		return fmt.Sprintf("\n(build log %s is empty)", build.LogPath)
+		return fmt.Sprintf("\n(build log %s is empty)", path)
 	}
 	const keep = 4096
 	if len(data) > keep {
 		data = data[len(data)-keep:]
 	}
-	return fmt.Sprintf("\nbuild log tail (%s, last %d bytes):\n%s", build.LogPath, len(data), data)
+	return fmt.Sprintf("\nbuild log tail (%s, last %d bytes):\n%s", path, len(data), data)
 }
