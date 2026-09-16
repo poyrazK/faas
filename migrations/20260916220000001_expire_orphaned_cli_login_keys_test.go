@@ -20,10 +20,7 @@ func TestMigrations_ExpireOnlyOrphanedCLILoginKeys(t *testing.T) {
 		t.Fatalf("initial migrate: %v", err)
 	}
 	accountID := seedAccount(t, ctx, pool)
-	var orgID string
-	if err := pool.QueryRow(ctx, `select id from orgs where personal_owner_account_id=$1`, accountID).Scan(&orgID); err != nil {
-		t.Fatalf("personal org: %v", err)
-	}
+	orgID := seedPersonalOrg(t, ctx, pool, accountID)
 	keyOrdinal := byte(0)
 	insert := func(label string, expires *time.Time) string {
 		t.Helper()

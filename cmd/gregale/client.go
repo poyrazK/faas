@@ -204,11 +204,3 @@ func validateSingleJSONDocument(r io.Reader) error {
 	}
 	return nil
 }
-
-// osWriteFile0600 writes data to outPath with mode 0600 (owner RW only).
-// GDPR export bundles can carry plaintext secret ciphertext — world-
-// readable on a multi-user box would be a leak; the file mode keeps the
-// blast radius to the calling user.
-func osWriteFile0600(outPath string, data []byte) error {
-	return os.WriteFile(outPath, data, 0o600)
-}
