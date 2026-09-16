@@ -6,13 +6,10 @@
 // pkg/api/dto.go::EdgeRuleJWTAction.Validate (lines 3537-3566) has
 // TWO guards: (1) JWKSURL must start with https://, (2) closed-list
 // prefix check rejects https://127.* / 10.* / 192.168.* / etc.
-// httptest.NewServer serves http://127.0.0.1:<port> (fails both
-// guards). Even httptest.NewTLSServer serves https://127.0.0.1:<port>
-// (fails the second guard). The wire-compatible workaround is to
-// seed the rule directly via h.Pool.Exec with a `https://127.0.0.1:
-// <port>` URL — the gateway compiles the rule from PG without
-// re-running the validator, and pkg/edgejwks fetches the JWKS over
-// plain HTTP (the URL string is opaque to the HTTP client).
+// httptest.NewTLSServer serves https://127.0.0.1:<port>, which fails
+// the private-address guard. The test seeds that rule directly and
+// gives the gateway subprocess a one-certificate trust store, preserving
+// the production HTTPS fetch path without reaching the public network.
 
 package e2e_test
 
@@ -22,8 +19,11 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -90,26 +90,32 @@ func TestEdgeRulesJWT_E2E(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Gatewayd, nil)
-	key := h.SeedAccount(context.Background(), api.PlanHobby)
-	accountID := accountIDFromKey(t, context.Background(), pool, key)
-
 	// RSA keypair (RS256). RSA-2048 keygen is ~5 ms wall.
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("rsa.GenerateKey: %v", err)
 	}
 
-	// httptest.NewServer serves the JWKS over plain HTTP. The
-	// gateway's pkg/edgejwks verifier fetches whatever URL the rule
-	// has — the protocol is opaque to it.
-	jwksSrv := httptest.NewServer(jwksHandler(&priv.PublicKey))
+	// Use a real TLS endpoint because the gateway compiler rejects a
+	// non-HTTPS JWKS URL even for directly seeded rows. Trust only this
+	// test server's certificate in the daemon subprocess.
+	jwksSrv := httptest.NewTLSServer(jwksHandler(&priv.PublicKey))
 	defer jwksSrv.Close()
-	jwksURL := "https://127.0.0.1:" + strings.TrimPrefix(jwksSrv.URL, "http://127.0.0.1:") + "/"
+	certPath := filepath.Join(t.TempDir(), "jwks-ca.pem")
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: jwksSrv.Certificate().Raw})
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatalf("write JWKS test CA: %v", err)
+	}
+
+	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Gatewayd,
+		[]string{"SSL_CERT_FILE=" + certPath})
+	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	accountID := accountIDFromKey(t, context.Background(), pool, key)
+	jwksURL := jwksSrv.URL + "/"
 
 	slug := "jwt-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}
@@ -159,11 +165,9 @@ func TestEdgeRulesJWT_E2E(t *testing.T) {
 		"sub": "user-1",
 		"exp": time.Now().Add(5 * time.Minute).Unix(),
 	})
-	_, _, status = doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil,
+	_, body, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil,
 		map[string]string{"Authorization": "Bearer " + tok})
-	if status != http.StatusNotFound {
-		t.Errorf("kind=jwt valid token: status=%d, want 404 (Backend.Pick miss after JWT pass)", status)
-	}
+	assertBackendFallthrough(t, status, body)
 
 	// Negative path: bad signature. Generate a different RSA key,
 	// sign with it — gateway's JWKS lookup uses the kid to find the

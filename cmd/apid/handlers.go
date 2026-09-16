@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -175,11 +174,15 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
 	}
+	if api.IsReservedAppSlug(req.Slug) {
+		return state.App{}, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Reserved slug", fmt.Sprintf("app slug %q is reserved for a Gregale service", req.Slug))
+	}
 	typ := state.AppType(orDefault(req.Type, string(state.AppTypeApp)))
 	if typ != state.AppTypeApp && typ != state.AppTypeFunction {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid type", "type must be app or function")
 	}
-	if typ == state.AppTypeFunction && req.Runtime != "node22" && req.Runtime != "python312" && req.Runtime != "go124" && req.Runtime != "go124-alpine" && req.Runtime != "node24" && req.Runtime != "python313" {
+	if typ == state.AppTypeFunction && !api.ValidFunctionRuntime(req.Runtime) {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid runtime", "functions require runtime node22, python312, go124, go124-alpine, node24, or python313")
 	}
@@ -470,6 +473,10 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, &req); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if len(req.Workflows) > 0 {
 		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
 			api.WriteProblem(w, p)
@@ -550,6 +557,9 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// closed-set CHECK on deployed_via (migration 00303) rejects
 	// any out-of-set value the helper chain might emit.
 	stampDeploymentActor(&dep, acct, r)
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
 	d, err := s.store.CreateDeployment(r.Context(), dep)
 	if err != nil {
 		// ADR-091 / PR-D: per-deployment scope collision. mapErr
@@ -658,6 +668,7 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 			Env:              a.Manifest.Env,
 			WorkingDir:       a.Manifest.WorkingDir,
 			Port:             a.Manifest.Port,
+			Ports:            append([]api.WorkloadPort(nil), a.Manifest.Ports...),
 			Healthz:          a.Manifest.Healthz,
 			User:             a.Manifest.User,
 			ExecutionMode:    a.Manifest.ExecutionMode,
@@ -798,6 +809,11 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 		// reasons as EgressAllowlist above.
 		CORSDefaultEnabled: a.CORSDefaultEnabled,
 		CORSDefaultOrigins: cORSOriginsList(a.CORSDefaultOrigins),
+		// ADR-091 amendment: surface the persisted coarse maintenance
+		// gate on create, get, list, and PATCH responses. The store already
+		// writes and reads this column; omitting it here made a successful
+		// PATCH appear to remain false to API clients.
+		MaintenanceMode: a.MaintenanceMode,
 	}
 }
 
@@ -936,6 +952,7 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 			VCPU:                        l.VCPU,
 			MaxConcurrency:              l.MaxConcurrency,
 			DeployedApps:                l.DeployedApps,
+			DeploysPerHour:              l.DeploysPerHour,
 			DeveloperApps:               l.DeveloperApps,
 			IncludedGBHours:             int64(l.IncludedGBHours),
 			AppLayerMaxMB:               l.AppLayerMaxMB,
@@ -995,15 +1012,10 @@ func validSlug(s string) bool { return api.ValidAppSlug(s) }
 // let any non-OCI prefix through (including control chars / whitespace /
 // extra @-separators). The host charset forbids control chars and
 // whitespace explicitly, so the entire accepted string is printable OCI.
-var digestPinnedRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
-
 // parseImageDigest requires a digest-pinned reference (spec gap G1: public
 // registries, digest-pinned) and returns the digest portion (sha256:...).
 func parseImageDigest(ref string) (string, bool) {
-	if !digestPinnedRE.MatchString(ref) {
-		return "", false
-	}
-	return ref[strings.Index(ref, "@"):], true
+	return api.DeploymentImageDigest(ref)
 }
 
 // isDigestPinned reports whether ref is a digest-pinned reference (the form
@@ -1011,7 +1023,7 @@ func parseImageDigest(ref string) (string, bool) {
 // parse the full ref via oci.ParseReference so they can dial the right
 // registry host.
 func isDigestPinned(ref string) bool {
-	return digestPinnedRE.MatchString(ref)
+	return api.ValidDeploymentImage(ref)
 }
 
 func orDefault(v, def string) string {

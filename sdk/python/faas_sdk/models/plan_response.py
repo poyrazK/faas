@@ -37,6 +37,12 @@ class PlanResponse:
     plan_token: str
     """base64-JSON plan token; pass back as ?plan_token= on /v1/projects to skip the second extract."""
     repo_full_name: str | Unset = UNSET
+    environment: str | Unset = UNSET
+    """Registered project environment targeted by this plan"""
+    environment_protected: bool | Unset = UNSET
+    """Whether applying this plan requires protected-environment approval"""
+    environment_config_hash: str | Unset = UNSET
+    """Hash of the non-secret environment configuration bound into this plan"""
     warnings: list[str] | Unset = UNSET
     crons_not_allowed: bool | Unset = UNSET
     can_apply_pre_exclude: bool | Unset = UNSET
@@ -85,6 +91,12 @@ class PlanResponse:
         plan_token = self.plan_token
 
         repo_full_name = self.repo_full_name
+
+        environment = self.environment
+
+        environment_protected = self.environment_protected
+
+        environment_config_hash = self.environment_config_hash
 
         warnings: list[str] | Unset = UNSET
         if not isinstance(self.warnings, Unset):
@@ -153,6 +165,12 @@ class PlanResponse:
         )
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if environment_protected is not UNSET:
+            field_dict["environment_protected"] = environment_protected
+        if environment_config_hash is not UNSET:
+            field_dict["environment_config_hash"] = environment_config_hash
         if warnings is not UNSET:
             field_dict["warnings"] = warnings
         if crons_not_allowed is not UNSET:
@@ -227,6 +245,12 @@ class PlanResponse:
 
         repo_full_name = d.pop("repo_full_name", UNSET)
 
+        environment = d.pop("environment", UNSET)
+
+        environment_protected = d.pop("environment_protected", UNSET)
+
+        environment_config_hash = d.pop("environment_config_hash", UNSET)
+
         warnings = cast(list[str], d.pop("warnings", UNSET))
 
         crons_not_allowed = d.pop("crons_not_allowed", UNSET)
@@ -284,6 +308,9 @@ class PlanResponse:
             can_apply=can_apply,
             plan_token=plan_token,
             repo_full_name=repo_full_name,
+            environment=environment,
+            environment_protected=environment_protected,
+            environment_config_hash=environment_config_hash,
             warnings=warnings,
             crons_not_allowed=crons_not_allowed,
             can_apply_pre_exclude=can_apply_pre_exclude,

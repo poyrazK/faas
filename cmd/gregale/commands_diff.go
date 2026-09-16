@@ -8,7 +8,7 @@
 //
 // The diff is read-only: it never calls CreateApp, Deploy, or
 // DeployTarball. The only network traffic is five GETs (apps +
-// deployments + envs + crons + edge-rules) plus the schema-break
+// app-scoped deployments + envs + crons + edge-rules) plus the schema-break
 // detection (text-only in PR-0; structural OpenAPI walk in PR-2).
 //
 // Exit codes:
@@ -30,10 +30,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/deploydiff"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
@@ -56,7 +58,12 @@ type diffCLIOptions struct {
 	Manifest *api.AppManifest
 	// BuildPlan is the resolved source/workload intent. It keeps a fresh
 	// preview meaningful when resource flags use server defaults.
-	BuildPlan *api.BuildPlan
+	BuildPlan      *api.BuildPlan
+	TrafficPercent *int
+	Canary         *api.CanaryPresetSpec
+	Workflows      []api.WorkflowSpec
+	PRNumber       int
+	NoTriggers     bool
 	// Crons is the post-deploy cron list (full-replacement).
 	// Populated from the gregale.yaml triggers fan-out so the diff
 	// shows "would create cron X" rows.
@@ -83,11 +90,23 @@ func normalizeDeployPreviewFlags(dryRun, diff bool) (bool, error) {
 	return dryRun || diff, nil
 }
 
+// deployPreviewRequested folds all read-only preview spellings into the
+// single diff path. In particular, --server-diff is a transport selector,
+// not a permission to deploy: using it by itself must still short-circuit
+// before any mutating endpoint is reached.
+func deployPreviewRequested(dryRun, diff, serverDiff bool) (bool, error) {
+	preview, err := normalizeDeployPreviewFlags(dryRun, diff)
+	if err != nil {
+		return false, err
+	}
+	return preview || serverDiff, nil
+}
+
 // buildDiffOptions projects the parsed cmdDeployTarball flag set
 // into the diff CLI options. Called from cmdDeployTarball's
 // --diff short-circuit path so the diff sees the same flags a real
 // deploy would.
-func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string, requireAuthnPtr *bool, appProtocolPtr *string, resourceProfile string) diffCLIOptions {
+func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string, requireAuthnPtr *bool, appProtocolPtr *string, resourceProfile string, vcpu int) diffCLIOptions {
 	opts := diffCLIOptions{
 		Slug:     slug,
 		AppShape: sh,
@@ -95,6 +114,10 @@ func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string
 		Handler:  handler,
 		Image:    image,
 		Cwd:      cwd,
+	}
+	if vcpu != 0 {
+		value := vcpu
+		opts.AppConfig.VCPU = &value
 	}
 	if requireAuthnPtr != nil {
 		v := *requireAuthnPtr
@@ -117,7 +140,7 @@ func buildDiffOptions(slug string, sh shape, runtime, handler, image, cwd string
 // buildPreviewBuildPlan projects the same source signals used by the deploy
 // path into the diff request. The source digest identifies the exact archive
 // already prepared for upload; no source contents cross the preview API.
-func buildPreviewBuildPlan(srcDir string, sh shape, runtime, handler, sourceSHA256 string, imageDeploy bool) *api.BuildPlan {
+func buildPreviewBuildPlan(srcDir string, sh shape, runtime, handler, sourceSHA256 string, imageDeploy, dockerfile bool) *api.BuildPlan {
 	plan := &api.BuildPlan{
 		Framework:    string(fwUnknown),
 		Runtime:      runtime,
@@ -129,13 +152,22 @@ func buildPreviewBuildPlan(srcDir string, sh shape, runtime, handler, sourceSHA2
 		plan.Framework = string(frameworkForRuntime(runtime))
 	} else {
 		plan.Class = "app"
+		if dockerfile {
+			plan.Framework = string(fwDocker)
+			return plan
+		}
 		// Image deploys have no local source tree to inspect. Keep the
 		// framework explicit as unknown rather than accidentally sniffing
 		// the operator's current working directory.
 		if !imageDeploy && srcDir != "" {
-			fw := detectFramework(srcDir)
-			plan.Framework = string(fw)
-			plan.Version = detectFrameworkVersion(srcDir, fw)
+			if profile, err := frameworkprofile.AnalyzeDir(srcDir); err == nil {
+				plan.Framework = profile.Framework
+				plan.Version = profile.FrameworkVer
+				plan.Entrypoint = profile.StartCommand
+				plan.Port = profile.Port
+				plan.HealthPath = profile.HealthPath
+				plan.ConfigFile = profile.ConfigFile
+			}
 		}
 	}
 	return plan
@@ -169,9 +201,9 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	}
 
 	// 1. Baseline snapshot.
-	baseline, err := buildBaseline(ctx, client, opts.Slug)
-	if err != nil {
-		return printErr("Could not read baseline", err)
+	baseline, baselineErr := buildBaseline(ctx, client, opts.Slug)
+	if baselineErr != nil && !opts.Lenient {
+		return printErr("Could not read baseline", baselineErr)
 	}
 
 	// 2. Pending projection. The gregale.yaml triggers fan-out
@@ -184,16 +216,31 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	// false-fire on every Hobby/Pro/Scale customer's existing config
 	// (see code-review finding #1 / #6). The plan value is passed
 	// into Compute so d.Plan is set in one place.
-	plan, limits, planKnown := inferPlanAndLimits(ctx, client, baseline)
+	plan, limits, accountAppCount, planKnown := inferPlanAndLimits(ctx, client, baseline)
 
 	// 4. Run the engine. The quota gate is a separate pass — the
 	// engine itself doesn't read pkg/api/limits.go; the caller
 	// supplies QuotaConfig.
 	d := deploydiff.Compute(opts.Slug, plan, baseline, pending)
+	appendDeployPreviewAnnotationIntent(&d, opts)
+	if baselineErr != nil {
+		// Lenient mode may still show the partial projection, but it must
+		// be explicit that the result is incomplete. Keeping this as a
+		// warning break makes the condition visible in both text and JSON
+		// output without turning --lenient into an authoritative approval.
+		d.Breaks = append(d.Breaks, deploydiff.Break{
+			Code:     "baseline_unavailable",
+			Severity: deploydiff.SeverityWarn,
+			Reason:   fmt.Sprintf("baseline read failed; preview is incomplete: %v", baselineErr),
+			Field:    "baseline",
+		})
+	}
 
 	if planKnown {
 		breaks := deploydiff.Quota(plan, baseline, pending, deploydiff.QuotaConfig{
 			Limits:               limits,
+			AccountAppCount:      accountAppCount,
+			AccountAppCountKnown: true,
 			AccountCronCount:     accountCronCount(ctx, client, opts.Slug),
 			AccountEdgeRuleCount: 0, // per-account edge-rule count not
 			// currently capped; pass 0.
@@ -230,11 +277,13 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	return 0
 }
 
-// validateDeployDiffManifest rejects manifest declarations that the diff
-// projection cannot represent. In particular, workflow definitions must not
-// disappear from either the local or server diff request while the runtime
-// deployment persistence surface is still staged.
+// validateDeployDiffManifest applies the same intrinsic manifest validation as
+// deployment. Plan-specific workflow validation runs through
+// loadWorkflowManifestForDeploy before the preview request is built.
 func validateDeployDiffManifest(cwd string) error {
+	if cwd == "" {
+		return nil
+	}
 	m, ok, err := gregalemanifest.Load(cwd)
 	if err != nil {
 		return err
@@ -242,60 +291,41 @@ func validateDeployDiffManifest(cwd string) error {
 	if !ok || m == nil {
 		return nil
 	}
-	if len(m.Workflows) > 0 {
-		return errors.New("workflow declarations are not supported by deploy --diff until workflow runtime deployment persistence is enabled")
-	}
 	return m.Validate()
 }
 
 // buildBaseline reads the live state for the slug. Missing app is
 // not an error — a fresh deploy that would create-app has a
-// zero-value baseline.
+// zero-value baseline. Once the app exists, deployment history is
+// read from the app-scoped route; history failures are returned
+// instead of being mistaken for a never-deployed app.
 func buildBaseline(ctx context.Context, client *api.Client, slug string) (deploydiff.Baseline, error) {
 	out := deploydiff.EmptyBaseline()
 	app, err := client.GetApp(ctx, slug)
 	switch {
 	case err == nil:
 		out.App = &app
-		// Latest deployment: ListDeployments is account-scoped
-		// (no ?app= filter today), so a single page can return
-		// another app's most-recent row. Bound-paginate until we
-		// find a row with AppID == app.ID, or until the cursor
-		// (NextBefore) goes empty. The bound (maxDeploymentPages)
-		// keeps the worst-case bounded so an account with hundreds
-		// of apps doesn't loop forever; missing the match leaves
-		// LatestDeployment nil — same shape as a never-deployed
-		// app, which is the safe default.
-		const pageSize = 20
-		const maxDeploymentPages = 10 // ≤ 200 rows scanned worst-case
-		cursor := ""
-		pagesScanned := 0
-		for pagesScanned < maxDeploymentPages {
-			page, derr := client.ListDeployments(ctx, cursor, pageSize)
-			if derr != nil {
-				break // surface no error — LatestDeployment
-				// staying nil is the safe default
-			}
-			for i := range page.Items {
-				if page.Items[i].AppID == app.ID {
-					latest := page.Items[i]
-					out.LatestDeployment = &latest
-					// SAFE-RELEASES production-leveling Stream
-					// E: pin the scope of the latest deployment
-					// so the engine can emit a `scope_mismatch`
-					// SeverityWarn break when the pending deploy
-					// targets a different scope (cross-env
-					// promotion). The field is already on the
-					// wire via DeploymentResponse (ADR-091).
-					out.LatestScope = latest.Scope
-					break
-				}
-			}
-			if out.LatestDeployment != nil || page.NextBefore == "" {
-				break
-			}
-			cursor = page.NextBefore
-			pagesScanned++
+		// The account-wide ListDeployments route is not a safe baseline
+		// source: unrelated apps can crowd the first 200 rows, and a
+		// request failure used to look identical to an app with no
+		// deployment history. The app-scoped route returns the newest
+		// deployment directly and lets us distinguish an empty history
+		// from an unavailable history.
+		page, derr := client.ListAppDeployments(ctx, slug, "", 1)
+		if derr != nil && !isNotFound(derr) {
+			return out, derr
+		}
+		if derr == nil && len(page.Items) > 0 {
+			latest := page.Items[0]
+			out.LatestDeployment = &latest
+			// SAFE-RELEASES production-leveling Stream
+			// E: pin the scope of the latest deployment
+			// so the engine can emit a `scope_mismatch`
+			// SeverityWarn break when the pending deploy
+			// targets a different scope (cross-env
+			// promotion). The field is already on the
+			// wire via DeploymentResponse (ADR-091).
+			out.LatestScope = latest.Scope
 		}
 	case isNotFound(err):
 		// Fresh deploy — leave baseline.App == nil.
@@ -329,7 +359,11 @@ func buildBaseline(ctx context.Context, client *api.Client, slug string) (deploy
 // a [deploydiff.Pending]. The cron fan-out mirrors
 // [deployManifestTriggers] but reads rather than writes.
 func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, baseline deploydiff.Baseline) deploydiff.Pending {
-	p := deploydiff.Pending{AppConfig: opts.AppConfig, BuildPlan: opts.BuildPlan}
+	p := deploydiff.Pending{
+		AppConfig: opts.AppConfig, BuildPlan: opts.BuildPlan,
+		TrafficPercent: opts.TrafficPercent, Canary: opts.Canary,
+		Workflows: opts.Workflows,
+	}
 	// Manifest: PR-0 synthesises a placeholder from the CLI flags
 	// (image / handler). Real manifest extraction from the tarball
 	// is the imaged contract — PR-0 keeps the diff text-only so
@@ -339,7 +373,9 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 	}
 	// gregale.yaml triggers → crons. Keep this projection shared with
 	// --server-diff so both preview modes send the same pending list.
-	p.Crons = previewCronsFromManifest(opts.Cwd, opts.Slug)
+	if !opts.NoTriggers {
+		p.Crons = previewCronsFromManifest(opts.Cwd, opts.Slug)
+	}
 	return p
 }
 
@@ -348,6 +384,9 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 // helper is reached, so a best-effort empty result keeps the adapter safe for
 // unit callers and preserves the existing read-only behaviour.
 func previewCronsFromManifest(cwd, slug string) []api.CreateCronRequest {
+	if cwd == "" {
+		return nil
+	}
 	m, ok, err := gregalemanifest.Load(cwd)
 	if err != nil || !ok || m == nil {
 		return nil
@@ -368,9 +407,11 @@ func previewCronsFromManifest(cwd, slug string) []api.CreateCronRequest {
 			enabled = *trigger.Enabled
 		}
 		crons = append(crons, api.CreateCronRequest{
-			Schedule: trigger.Schedule,
-			Path:     trigger.Path,
-			Enabled:  &enabled,
+			Schedule:      trigger.Schedule,
+			Path:          trigger.Path,
+			Enabled:       &enabled,
+			Timezone:      trigger.Timezone,
+			SkipIfRunning: trigger.SkipIfRunning,
 		})
 	}
 	return crons
@@ -387,21 +428,21 @@ func previewCronsFromManifest(cwd, slug string) []api.CreateCronRequest {
 // PR-1 will replace this with a server-side `GET /v1/account/limits`
 // endpoint that returns the full quota table directly. Until then,
 // Whoami is the canonical source for the plan tier.
-func inferPlanAndLimits(ctx context.Context, client *api.Client, baseline deploydiff.Baseline) (api.Plan, api.Limits, bool) {
+func inferPlanAndLimits(ctx context.Context, client *api.Client, baseline deploydiff.Baseline) (api.Plan, api.Limits, int, bool) {
 	acct, err := client.Whoami(ctx)
 	if err != nil {
-		return "", api.Limits{}, false
+		return "", api.Limits{}, 0, false
 	}
 	if acct.Plan == "" {
-		return "", api.Limits{}, false
+		return "", api.Limits{}, 0, false
 	}
 	plan := api.Plan(acct.Plan)
 	if !plan.Valid() {
-		return "", api.Limits{}, false
+		return "", api.Limits{}, 0, false
 	}
 	limits := api.MustLimitsFor(plan)
 	_ = baseline // reserved for PR-1's per-app upgrade
-	return plan, limits, true
+	return plan, limits, acct.AppCount, true
 }
 
 // accountCronCount reads the per-account cron count for the quota
@@ -450,7 +491,7 @@ func isNotFound(err error) bool {
 //     GetApp 404 → isNotFound branch. The wire is the source of
 //     truth here too.
 func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
-	if opts.Crons == nil {
+	if opts.Crons == nil && !opts.NoTriggers {
 		opts.Crons = previewCronsFromManifest(opts.Cwd, opts.Slug)
 	}
 	req := diffRequestFromCLI(opts)
@@ -462,6 +503,7 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 	// path renders Diff (the engine type). Wrap the inner Diff
 	// through a synthetic Diff so the same renderers work.
 	synthetic := syntheticDiffFromResponse(resp)
+	appendDeployPreviewAnnotationIntent(&synthetic, opts)
 	if opts.JSON {
 		if err := deploydiff.RenderJSON(osStdout, synthetic); err != nil {
 			return printErr("Could not encode diff", err)
@@ -475,6 +517,17 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 	return 0
 }
 
+func appendDeployPreviewAnnotationIntent(d *deploydiff.Diff, opts diffCLIOptions) {
+	if d == nil || opts.PRNumber <= 0 {
+		return
+	}
+	d.Changes = append(d.Changes, deploydiff.Change{
+		Field: "deployment.pr_number",
+		Kind:  deploydiff.ChangeAdd,
+		After: deploydiff.AsAny(opts.PRNumber),
+	})
+}
+
 // diffRequestFromCLI projects the CLI flag set onto the wire
 // DiffRequest. Mirrors the apid handler's diffPendingFromRequest
 // (cmd/apid/handlers_diff.go) but with CLI-side signal sources
@@ -485,7 +538,13 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 // profiles, so the local and server preview adapters cannot silently drift
 // as new deploy flags are added.
 func diffRequestFromCLI(opts diffCLIOptions) api.DiffRequest {
-	req := api.DiffRequest{ImageRef: opts.Image, BuildPlan: opts.BuildPlan}
+	req := api.DiffRequest{
+		ImageRef: opts.Image, BuildPlan: opts.BuildPlan,
+		TrafficPercent: opts.TrafficPercent, Canary: opts.Canary,
+	}
+	if opts.Workflows != nil {
+		req.Workflows = append([]api.WorkflowSpec{}, opts.Workflows...)
+	}
 	// Preserve every pointer in the local patch. In particular, resource
 	// profiles populate RAMMB/CPUMillicores; dropping those fields here made
 	// --server-diff disagree with the local preview for the same command.
@@ -501,6 +560,7 @@ func diffRequestFromCLI(opts diffCLIOptions) api.DiffRequest {
 func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPatch {
 	patch := &api.DiffAppConfigPatch{
 		RAMMB:               p.RAMMB,
+		VCPU:                p.VCPU,
 		CPUMillicores:       p.CPUMillicores,
 		IdleTimeoutS:        p.IdleTimeoutS,
 		MaxConcurrency:      p.MaxConcurrency,
@@ -516,7 +576,7 @@ func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPa
 		EvictionPriority:    p.EvictionPriority,
 		AppProtocol:         p.AppProtocol,
 	}
-	if patch.RAMMB == nil && patch.CPUMillicores == nil &&
+	if patch.RAMMB == nil && patch.VCPU == nil && patch.CPUMillicores == nil &&
 		patch.IdleTimeoutS == nil && patch.MaxConcurrency == nil &&
 		patch.MinInstances == nil && patch.EgressAllowlist == nil &&
 		patch.AutoscaleTargetRPS == nil && patch.AutoscaleTargetCP == nil &&

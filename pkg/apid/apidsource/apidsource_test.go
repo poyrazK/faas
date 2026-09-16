@@ -248,6 +248,63 @@ func TestEnqueue_UsesExplicitFunctionRuntimeForMarkerlessSource(t *testing.T) {
 	}
 }
 
+func TestEnqueue_ExplicitDockerfileOverridesLanguageProfile(t *testing.T) {
+	st := state.NewMemStore()
+	app := mustSeedApp(t, st)
+	path := filepath.Join(t.TempDir(), "source.tar.gz")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	for name, body := range map[string]string{
+		"Dockerfile":   "FROM node:22\nCOPY . /app\n",
+		"package.json": `{"scripts":{"start":"node index.js"}}`,
+		"index.js":     "console.log('ok')\n",
+	} {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Enqueue(context.Background(), st, &recordingNotifier{}, EnqueueParams{
+		AppID: app.ID, Kind: state.DeploymentKindDockerfile,
+		SourcePath: path, SourceBytes: info.Size(),
+		LogSpool: t.TempDir(), Log: quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	dep, err := st.DeploymentByID(context.Background(), result.DeploymentID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	var profile frameworkprofile.Profile
+	if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil {
+		t.Fatalf("decode inferred profile: %v", err)
+	}
+	if profile.Framework != "docker" || profile.Inferred || profile.StartCommand != "" {
+		t.Fatalf("profile = %+v, want explicit docker pipeline", profile)
+	}
+}
+
 func TestEnqueue_ReportsPrivacySafeSourceDetectionTiming(t *testing.T) {
 	st := state.NewMemStore()
 	app := mustSeedApp(t, st)

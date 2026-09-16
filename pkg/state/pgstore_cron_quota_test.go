@@ -168,3 +168,20 @@ func TestPgStore_CreateCronIfUnderQuota_AppDeletedReturnsNotFound(t *testing.T) 
 		t.Errorf("expected ErrNotFound for soft-deleted app, got %v", err)
 	}
 }
+
+func TestPgStore_CreateCronRetryIsIdempotentAtQuota(t *testing.T) {
+	s, ctx := pgStore(t)
+	_, app, _ := seedLiveDeploy(t, s, ctx)
+	limits := api.Limits{CronLimitPerApp: 1, CronLimitPerAccount: 1}
+	first, err := s.CreateCronIfUnderQuotaWithOptions(ctx, app, "0 3 * * *", "/tick", true, limits, state.CronOptions{Timezone: "UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := s.CreateCronIfUnderQuotaWithOptions(ctx, app, "0 3 * * *", "/tick", true, limits, state.CronOptions{Timezone: "UTC"})
+	if err != nil {
+		t.Fatalf("identical retry at quota: %v", err)
+	}
+	if retry.ID != first.ID {
+		t.Fatalf("retry ID = %q, want existing %q", retry.ID, first.ID)
+	}
+}

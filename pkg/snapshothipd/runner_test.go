@@ -187,6 +187,27 @@ func TestRunnerTickPrepositionsCompleteRestoreClosure(t *testing.T) {
 	}
 }
 
+func TestRunnerRevalidationDoesNotChangeInitialFanoutMetrics(t *testing.T) {
+	store := &fakeReplicaStore{job: state.SnapshotReplicaJob{
+		SnapshotID: "snap-revalidate", DeploymentID: "dep-revalidate", NodeID: "node-2", Region: "europe-west3",
+		StorageKey: "snap/dep-revalidate/mem", VMStateStorageKey: "snap/dep-revalidate/vmstate",
+		Attempts: 1, Revalidation: true, QueuedAt: time.Now(),
+	}}
+	backend := &fakeBackend{objects: map[string][]byte{
+		"snap/dep-revalidate/mem":     []byte("memory"),
+		"snap/dep-revalidate/vmstate": []byte("vmstate"),
+	}}
+	metrics := &fakeMetrics{}
+	New(store, backend, "node-2", slog.Default()).WithMetrics(metrics).runTick(context.Background())
+
+	if !store.ready {
+		t.Fatal("revalidated snapshot replica was not marked ready")
+	}
+	if len(metrics.outcomes) != 0 || len(metrics.latencies) != 0 {
+		t.Fatalf("revalidation changed initial fan-out metrics: outcomes=%v latencies=%v", metrics.outcomes, metrics.latencies)
+	}
+}
+
 func TestRunnerDefaultIntervalFitsPrepositionedWakeBudget(t *testing.T) {
 	if DefaultInterval >= 200*time.Millisecond {
 		t.Fatalf("DefaultInterval = %s, want < 200ms prepositioned-wake budget", DefaultInterval)

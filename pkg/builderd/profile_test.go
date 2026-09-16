@@ -53,6 +53,19 @@ func TestPersistedProfileFrameworkFallsBackForUnknownVersion(t *testing.T) {
 	}
 }
 
+func TestPersistedDockerfilePath(t *testing.T) {
+	raw, err := json.Marshal(frameworkprofile.Profile{
+		Version: frameworkprofile.Version, Framework: "docker", DockerfilePath: "deploy/Dockerfile.production",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := persistedDockerfilePath(state.Deployment{InferredProfile: raw})
+	if !ok || got != "deploy/Dockerfile.production" {
+		t.Fatalf("persisted Dockerfile path = %q, %t", got, ok)
+	}
+}
+
 func TestFunctionRuntimeFramework(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {

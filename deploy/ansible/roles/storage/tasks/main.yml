@@ -427,6 +427,128 @@
     - sigs
     - snap
 
+# OCI artifacts are cached outside /srv/fc for daemon compatibility. The
+# path must still live on the fast XFS filesystem: vmmd stages drive images
+# from this cache and a cross-filesystem copy adds about one second to every
+# restore. Existing nodes may have populated the compatibility path on their
+# boot disk, so stop every cache writer and migrate the data before mounting.
+- name: storage — ensure the compute OCI cache target exists
+  ansible.builtin.file:
+    path: "{{ faas_storage_mount }}/cache"
+    state: directory
+    group: faas
+    mode: "2770"
+  when: "'compute_nodes' in group_names"
+
+- name: storage — ensure the compute OCI cache mountpoint exists
+  ansible.builtin.file:
+    path: "{{ faas_storage_cache_mount }}"
+    state: directory
+    group: faas
+    mode: "2770"
+  when: "'compute_nodes' in group_names"
+
+- name: storage — inspect the compute OCI cache contract
+  ansible.builtin.shell: |
+    set -euo pipefail
+    mountpoint -q "{{ faas_storage_cache_mount }}"
+    test "$(stat -c %d "{{ faas_storage_cache_mount }}")" = "$(stat -c %d "{{ faas_storage_mount }}")"
+    test "$(findmnt -n -o FSTYPE --mountpoint "{{ faas_storage_cache_mount }}")" = xfs
+  args:
+    executable: /bin/bash
+  register: faas_storage_cache_contract
+  changed_when: false
+  failed_when: false
+  when: "'compute_nodes' in group_names"
+
+- name: storage — inspect whether the compute OCI cache is a conflicting mount
+  ansible.builtin.command:
+    argv:
+      - mountpoint
+      - -q
+      - "{{ faas_storage_cache_mount }}"
+  register: faas_storage_cache_is_mount
+  changed_when: false
+  failed_when: false
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_cache_contract.rc != 0
+
+- name: storage — refuse to replace a conflicting compute OCI cache mount
+  ansible.builtin.assert:
+    that:
+      - faas_storage_cache_is_mount.rc != 0
+    fail_msg: >-
+      {{ faas_storage_cache_mount }} is already a mountpoint but does not use
+      the {{ faas_storage_mount }} XFS device. Refusing to hide or unmount an
+      operator-managed filesystem automatically.
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_cache_contract.rc != 0
+
+- name: storage — install the idempotent cache migration tool
+  ansible.builtin.apt:
+    name: rsync
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_cache_contract.rc != 0
+
+- name: storage — stop compute cache writers before migration
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for unit in faas-vmmd faas-schedd faas-realtimed faas-gatewayd-internal faas-builderd faas-imaged; do
+      if systemctl list-unit-files --type=service --no-legend "${unit}.service" 2>/dev/null | grep -q .; then
+        systemctl stop "${unit}.service"
+      fi
+    done
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_cache_contract.rc != 0
+
+- name: storage — migrate the compute OCI cache onto fast storage
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - --archive
+      - --hard-links
+      - --acls
+      - --xattrs
+      - --numeric-ids
+      - "{{ faas_storage_cache_mount }}/"
+      - "{{ faas_storage_mount }}/cache/"
+  changed_when: true
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_cache_contract.rc != 0
+
+- name: storage — bind the compute OCI cache to fast storage
+  ansible.posix.mount:
+    path: "{{ faas_storage_cache_mount }}"
+    src: "{{ faas_storage_mount }}/cache"
+    fstype: none
+    opts: "bind,x-systemd.requires-mounts-for={{ faas_storage_mount }}/cache"
+    dump: "0"
+    passno: "0"
+    state: mounted
+  when: "'compute_nodes' in group_names"
+
+- name: storage — verify the compute OCI cache is on fast XFS storage
+  ansible.builtin.shell: |
+    set -euo pipefail
+    mountpoint -q "{{ faas_storage_cache_mount }}"
+    test "$(stat -c %d "{{ faas_storage_cache_mount }}")" = "$(stat -c %d "{{ faas_storage_mount }}")"
+    test "$(findmnt -n -o FSTYPE --mountpoint "{{ faas_storage_cache_mount }}")" = xfs
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: "'compute_nodes' in group_names"
+
 - name: storage — verify final filesystem contract
   ansible.builtin.command:
     argv:

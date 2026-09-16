@@ -94,6 +94,14 @@ type LocalArtifactLister interface {
 	List(ctx context.Context, prefix string) ([]string, error)
 }
 
+// SnapshotRepositoryIndexer is an optional capability for backends that map
+// snapshots across per-deployment repositories. The caller supplies the
+// authoritative deployment IDs so an upgrade can make repositories created by
+// older daemons durably discoverable without a registry catalog.
+type SnapshotRepositoryIndexer interface {
+	ReconcileSnapshotRepositoryIndex(ctx context.Context, deploymentIDs []string) error
+}
+
 // ErrNotFound is the canonical sentinel for a missing key. Callers
 // across the imaged + vmmdgrpc packages used errors.Is(err, os.ErrNotExist)
 // in single-box mode; the local backend still wraps os.ErrNotExist
@@ -110,10 +118,21 @@ var ErrNotFound = errors.New("storage: key not found")
 var ErrInvalidKey = errors.New("storage: invalid key")
 
 // ErrDeleteUnsupported reports that a backend can read and write artifacts
-// but its remote service does not implement deletion. Callers should still
-// evict local caches and rely on the service's retention policy for the
-// remote object.
+// but its remote service does not implement deletion. Callers must retain a
+// durable cleanup record and retry through a supported retention mechanism;
+// this error never means the remote object is gone.
 var ErrDeleteUnsupported = errors.New("storage: delete unsupported")
+
+// ErrDeleteQuarantined reports a remote service refusal that will not change
+// on retry. Callers may move the object to a manual-retention disposition only
+// after recording a durable audit event; the remote object may still exist.
+var ErrDeleteQuarantined = errors.New("storage: delete quarantined")
+
+// ErrIncompleteEnumeration reports that a backend cannot prove a prefix list
+// is complete. Callers must not interpret the accompanying empty key set as an
+// authoritative inventory. OCI snapshot storage uses this while upgrading
+// registries that predate its durable repository index.
+var ErrIncompleteEnumeration = errors.New("storage: incomplete enumeration")
 
 // IsNotFound reports whether err is (or wraps) ErrNotFound. Use this
 // in cold-boot-fallback code paths so callers stay agnostic of the

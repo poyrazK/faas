@@ -39,6 +39,10 @@ export type CreateDeploymentRequest = {
    */
   scope?: string | null;
   /**
+   * Registered project environment to resolve to the deployment scope. Requires the app to belong to the project; omitted preserves legacy scope behavior.
+   */
+  environment?: string;
+  /**
    * Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280.
    */
   reason?: string | null;
@@ -54,10 +58,6 @@ export type CreateDeploymentRequest = {
    * PR number (when known). 0 / NULL collapses to NULL on the row (DB CHECK rejects 0).
    */
   pr_number?: number | null;
-  /**
-   * Per-deployment auto-rollback opt-in (issue #961 leaf 8 / ADR-118 / Mega-C PR-2). Pro+ only. nil = server default false.
-   */
-  rollback_on_5xx?: boolean | null;
   /**
    * Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'. For preset='custom', stages carries the customer ladder.
    */

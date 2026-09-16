@@ -179,7 +179,7 @@ var orgRoleForPatchVocab = api.AllowedOrgDirectPatchRoles
 // --- org CRUD leaves -------------------------------------------------------
 
 func cmdOrgsLs(args []string) int {
-	fs := flag.NewFlagSet("orgs ls", flag.ContinueOnError)
+	fs := newFlagSet("orgs ls", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -213,10 +213,13 @@ func cmdOrgsLs(args []string) int {
 }
 
 func cmdOrgsCreate(args []string) int {
-	fs := flag.NewFlagSet("orgs create", flag.ContinueOnError)
+	fs := newFlagSet("orgs create", flag.ContinueOnError)
 	slug := fs.String("slug", "", "org slug (required; lowercase alphanumeric + dashes)")
 	name := fs.String("name", "", "display name (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *name == "" {
@@ -239,7 +242,7 @@ func cmdOrgsCreate(args []string) int {
 }
 
 func cmdOrgsInfo(args []string) int {
-	fs := flag.NewFlagSet("orgs info", flag.ContinueOnError)
+	fs := newFlagSet("orgs info", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -270,7 +273,7 @@ func cmdOrgsInfo(args []string) int {
 }
 
 func cmdOrgsRm(args []string) int {
-	fs := flag.NewFlagSet("orgs rm", flag.ContinueOnError)
+	fs := newFlagSet("orgs rm", flag.ContinueOnError)
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -305,7 +308,7 @@ func cmdOrgsRm(args []string) int {
 // --- members ---------------------------------------------------------------
 
 func cmdOrgsMembersLs(args []string) int {
-	fs := flag.NewFlagSet("orgs members ls", flag.ContinueOnError)
+	fs := newFlagSet("orgs members ls", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -332,11 +335,14 @@ func cmdOrgsMembersLs(args []string) int {
 }
 
 func cmdOrgsMembersInvite(args []string) int {
-	fs := flag.NewFlagSet("orgs members invite", flag.ContinueOnError)
+	fs := newFlagSet("orgs members invite", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	email := fs.String("email", "", "invitee email (required)")
 	role := fs.String("role", "developer", "role: admin|developer|viewer|billing (owner is rejected)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *email == "" {
@@ -367,11 +373,14 @@ func cmdOrgsMembersInvite(args []string) int {
 }
 
 func cmdOrgsMembersChangeRole(args []string) int {
-	fs := flag.NewFlagSet("orgs members change-role", flag.ContinueOnError)
+	fs := newFlagSet("orgs members change-role", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	userID := fs.String("user", "", "user-id (required)")
 	role := fs.String("role", "", "new role: admin|developer|viewer|billing (owner is rejected)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *userID == "" || *role == "" {
@@ -393,10 +402,13 @@ func cmdOrgsMembersChangeRole(args []string) int {
 }
 
 func cmdOrgsMembersRm(args []string) int {
-	fs := flag.NewFlagSet("orgs members rm", flag.ContinueOnError)
+	fs := newFlagSet("orgs members rm", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	userID := fs.String("user", "", "user-id (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *userID == "" {
@@ -417,10 +429,13 @@ func cmdOrgsMembersRm(args []string) int {
 // --- org-level invitations -------------------------------------------------
 
 func cmdOrgsInvitationsLs(args []string) int {
-	fs := flag.NewFlagSet("orgs invitations list", flag.ContinueOnError)
+	fs := newFlagSet("orgs invitations list", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	limit := fs.Int("limit", 50, "max rows (1..200; server caps at 200)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" {
@@ -445,10 +460,13 @@ func cmdOrgsInvitationsLs(args []string) int {
 }
 
 func cmdOrgsInvitationsRevoke(args []string) int {
-	fs := flag.NewFlagSet("orgs invitations revoke", flag.ContinueOnError)
+	fs := newFlagSet("orgs invitations revoke", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	invID := fs.String("invitation", "", "invitation-id (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *invID == "" {
@@ -469,10 +487,13 @@ func cmdOrgsInvitationsRevoke(args []string) int {
 // --- ownership + seats -----------------------------------------------------
 
 func cmdOrgsTransferOwnership(args []string) int {
-	fs := flag.NewFlagSet("orgs transfer-ownership", flag.ContinueOnError)
+	fs := newFlagSet("orgs transfer-ownership", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	to := fs.String("to", "", "user-id of the new owner (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *to == "" {
@@ -491,9 +512,12 @@ func cmdOrgsTransferOwnership(args []string) int {
 }
 
 func cmdOrgsSeatUsage(args []string) int {
-	fs := flag.NewFlagSet("orgs seat-usage", flag.ContinueOnError)
+	fs := newFlagSet("orgs seat-usage", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" {
@@ -520,7 +544,7 @@ func cmdOrgsSeatUsage(args []string) int {
 // --- standalone invitations (token-based, no slug context) ----------------
 
 func cmdInvitationsPeek(args []string) int {
-	fs := flag.NewFlagSet("invitations peek", flag.ContinueOnError)
+	fs := newFlagSet("invitations peek", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -549,7 +573,7 @@ func cmdInvitationsPeek(args []string) int {
 }
 
 func cmdInvitationsAccept(args []string) int {
-	fs := flag.NewFlagSet("invitations accept", flag.ContinueOnError)
+	fs := newFlagSet("invitations accept", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -575,14 +599,14 @@ func cmdInvitationsAccept(args []string) int {
 
 // cmdOrgsMe fetches GET /v1/orgs/me (Tier B audit gap, IAM-6
 // follow-up). Returns the caller's currently-active org plus their
-// role on it, or {org:null} when no X-Active-Org hint was sent (the
-// caller is operating in the account scope). CI scripts that switch
+// role on it. Without an X-Active-Org hint, the server returns the caller's
+// personal organization. CI scripts that switch
 // orgs need this to introspect which org they're currently scoped
 // to without re-parsing env vars.
 //
 // Auth: self, no admin scope required.
 func cmdOrgsMe(args []string) int {
-	fs := flag.NewFlagSet("orgs me", flag.ContinueOnError)
+	fs := newFlagSet("orgs me", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -651,9 +675,12 @@ func cmdOrgsKeys(args []string) int {
 // rows (per pkg/api/dto.go:1264-1272); to see revoked rows the
 // operator runs --json and filters client-side.
 func cmdOrgsKeysList(args []string) int {
-	fs := flag.NewFlagSet("orgs keys list", flag.ContinueOnError)
+	fs := newFlagSet("orgs keys list", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" {
@@ -688,11 +715,14 @@ func cmdOrgsKeysList(args []string) int {
 // immediately and never persists it (consistent with the
 // cmdKeysAdd contract).
 func cmdOrgsKeysAdd(args []string) int {
-	fs := flag.NewFlagSet("orgs keys add", flag.ContinueOnError)
+	fs := newFlagSet("orgs keys add", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	label := fs.String("label", "", "key label (required)")
 	scopesCSV := fs.String("scopes", "", "comma-separated scopes (default: [admin])")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" || *label == "" {
@@ -731,7 +761,7 @@ func cmdOrgsKeysAdd(args []string) int {
 // pkg/api/dto.go:1196-1197) — the renderer sticks to id/prefix/
 // label/scopes/status.
 func cmdOrgsKeysInfo(args []string) int {
-	fs := flag.NewFlagSet("orgs keys info", flag.ContinueOnError)
+	fs := newFlagSet("orgs keys info", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -772,7 +802,7 @@ func cmdOrgsKeysInfo(args []string) int {
 
 // cmdOrgsKeysRm mirrors cmdKeysRm: 204 No Content on success.
 func cmdOrgsKeysRm(args []string) int {
-	fs := flag.NewFlagSet("orgs keys rm", flag.ContinueOnError)
+	fs := newFlagSet("orgs keys rm", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -800,7 +830,7 @@ func cmdOrgsKeysRm(args []string) int {
 // `gregale keys grace-window` — that's account-scoped and
 // applies to org-scoped rotations too).
 func cmdOrgsKeysRotate(args []string) int {
-	fs := flag.NewFlagSet("orgs keys rotate", flag.ContinueOnError)
+	fs := newFlagSet("orgs keys rotate", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	label := fs.String("label", "", "new label (empty = inherit)")
 	if err := fs.Parse(args); err != nil {
@@ -835,9 +865,12 @@ func cmdOrgsKeysRotate(args []string) int {
 // short-page so we surface pagination errors verbatim. --json emits
 // a bare slice (no envelope) so jq pipelines stay clean.
 func cmdOrgsInvitationsListAll(args []string) int {
-	fs := flag.NewFlagSet("orgs invitations list-all", flag.ContinueOnError)
+	fs := newFlagSet("orgs invitations list-all", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" {
@@ -887,11 +920,14 @@ func cmdOrgsInvitationsListAll(args []string) int {
 // (the server returns the post-patch state for both, but echoing
 // the input keeps the result visible without re-reading).
 func cmdOrgsUpdate(args []string) int {
-	fs := flag.NewFlagSet("orgs update", flag.ContinueOnError)
+	fs := newFlagSet("orgs update", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required, OrgSlugPattern)")
 	name := fs.String("name", "", "new display name (1..120 chars; non-empty)")
 	plan := fs.String("plan", "", "new plan (free|hobby|pro|scale)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if !validateOrgsUpdateFlags(slug, name, plan) {

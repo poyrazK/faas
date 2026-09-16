@@ -1,0 +1,11 @@
+description: Data reads from the production PostgreSQL backup bucket.
+filter: >-
+  resource.type="gcs_bucket" AND
+  resource.labels.bucket_name="gregale-pg-backups-5ae37259" AND
+  log_id("cloudaudit.googleapis.com/data_access") AND
+  (protoPayload.methodName="storage.objects.get" OR
+   protoPayload.methodName="storage.objects.list")
+metricDescriptor:
+  metricKind: DELTA
+  valueType: INT64
+  unit: "1"

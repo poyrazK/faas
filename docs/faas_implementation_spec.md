@@ -69,7 +69,7 @@ One control-plane node runs everything today; the architecture below extends to 
 
 **Request path (hot):** TLS → `gatewayd-public` → `gatewayd-internal` → routing cache hit → proxy to instance IP:8080 → response. Budget: < 2 ms added latency.
 
-**Request path (cold wake):** `gatewayd-public` accepts TLS, hands to `gatewayd-internal` which sees app has no running instance → holds the request → asks `schedd` → admission check (RAM headroom, plan concurrency) → `vmmd` restores snapshot into fresh netns/TAP → guest resumes (app already initialized in snapshot memory) → readiness ping → proxy. The platform-only snapshot wake gate is p95 < 350 ms through RUNNING (§6.3). First-byte and public-request timings include separate proxy, application, Cloudflare, network, and distance costs.
+**Request path (cold wake):** `gatewayd-public` accepts TLS, hands to `gatewayd-internal` which sees app has no running instance → holds the request → asks `schedd` → admission check (RAM headroom, plan concurrency) → `vmmd` restores snapshot into fresh netns/TAP → guest resumes (app already initialized in snapshot memory) → readiness ping → proxy. The platform-only snapshot wake gate is p95 < 350 ms from capacity admission/boot start through the first upstream byte (§6.3). Cloudflare, public network and client distance remain separate end-to-end costs.
 
 **Deploy path:** `apid` accepts source (≤ 100 MB) or OCI reference → `builderd` runs the build in an ephemeral builder microVM → OCI image → `imaged` converts it to a per-app **app layer** over a shared read-only base (two-drive scheme, §4.6) + injects `guest-init` → boots once, waits ready, pauses, snapshots → app state = `PARKED`. First deploy of an app is also its first snapshot.
 
@@ -109,7 +109,7 @@ As of Tier A7 (ADR-070), this section describes the two split daemons. Pre-Tier-
 - Listeners: `:443` (HTTPS, HTTP/1.1 + h2), `:80` (redirect + ACME HTTP-01). Bound by `gatewayd-public` only; `gatewayd-internal` is reached only via the unix socket on the node.
 - TLS: CertMagic (owned by `gatewayd-public`). Wildcard cert for `*.gregale.dev` via DNS-01 (provider-pluggable; the reference deploy uses Hetzner DNS). Exact custom domains (Pro+): on-demand HTTP-01 with an allowlist check against `custom_domains` before issuance. Customer-owned wildcard domains (`*.zone`) are Pro/Scale-only, prove ownership at `_faas-verify.zone`, and mint through the existing Hetzner/Cloud DNS-01 solver; see ADR-167.
 - Routing: hostname → `app_id` via in-memory cache (LRU, 10k entries) backed by Postgres `LISTEN app_routes_changed` (owned by `gatewayd-internal`). Cache miss = one indexed PG lookup.
-- Wake-blocking: if app has no `RUNNING` instance, `gatewayd-internal` enqueues the request (per-app queue, cap 512 requests / 30 s TTL, then `503 + Retry-After`), calls `schedd.EnsureInstance(app_id)`, streams queued requests once readiness passes.
+- Wake-blocking: if app has no `RUNNING` instance, `gatewayd-internal` enqueues the request, calls `schedd.EnsureInstance(app_id)`, and streams queued requests once readiness passes. The per-app waiter cap is plan-aware (Free/Hobby 16, Pro 64, Scale 128); Free waits at most 10 s and paid plans at most 30 s. An admission timeout or full queue returns `503 + Retry-After`. When a snapshot invalidation is already rebuilding an app, the first request returns `202 wake_in_progress` rather than a generic failure so clients can retry without treating the rebuild as an outage.
 - **Fan-out across `max_concurrency` (issue #168):** the routing cache is a per-app set of `Target{NodeID, InstanceID, WakeID}` (size ≤ plan's effective `max_concurrency`), picked via atomic round-robin so the hot path is allocation-free. `Backend.Admit(ctx, app_id, max_concurrency)` is the scale-out admission primitive; it atomically checks `HealthyCount < max_concurrency` before the gRPC round-trip so concurrent callers cannot collectively over-admit past the cap. At-capacity refusals surface as a typed `atCapacity=true` result (no gRPC status); `gatewayd-internal` treats them as a benign no-op when it already has ≥1 cached target. On every proxied request the handler stamps `x-faas-instance` with the picked `InstanceID`, overwriting any inbound header (trust model), and stamps the single-value `x-faas-client-ip` from the public listener's sanitized X-Forwarded-For hop (ambiguous or invalid chains remove the header). Per-instance `last_request_at` is keyed by `instance_id` directly — the addr→instance resolver hop is gone.
 - **Rate limits (ADR-040 / issues #292 and #1680):** `gatewayd-internal` runs two token buckets per request in series, both before the wake gate so abuse doesn't burn the schedd gRPC admission queue. The **per-account** bucket (`RateLimitPerAccountRPM` — Free 300/min, Hobby 1200/min, Pro 6000/min, Scale 30000/min; key = `apps.account_id` joined in `pgRouter.toApp`) runs first and bounds attacks spread across one customer's apps. Every plan obeys `RateLimitPerAccountRPM >= 60 * RateLimitRPS`, so the shared account boundary can sustain at least one app at its advertised per-app rate. The **per-app** bucket (`RateLimitRPS`/`RateLimitBurst`) runs second as the inner cap. Each 429 carries `Retry-After: 1` and `x-faas-rate-limit-scope: {account,app}` so observability tooling can split the two populations. The counter is `gateway_per_account_rate_limited_total{account_id, plan}`, pre-instantiated under `__other__`; the `FaasPerAccountRateLimitSpike` alert fires above 300 rejected requests/min fleet-wide for 5 minutes.
 - **Per-deployment `require_authn` opt-in (issue #560):** an app may opt into per-deployment authentication by setting `apps.require_authn=true` (PATCH via `UpdateAppRequest`; Pro/Scale only). When set, the routing layer in `gatewayd-internal` requires a valid `Authorization: Bearer <token>` header on every incoming request — tokens are account-scoped API keys (`fp_live_…`, SHA-256 verified through `pkg/auth.Middleware.RequireSession`). The check runs **after** Host→app resolution (so the app's `require_authn` flag is known) and **before** the wake gate / forwarder (so unauthenticated traffic cannot trigger cold-boot on a token-gated app). Cross-account tokens — token valid for *any* account other than the app's owning account — receive 403 `insufficient_scope` and never reach the wake path. Audit rows: `app.authn_required` on the PATCH that flips the flag on, `app.authn_disabled` on the true→false transition, and `instances.authn_missing` / `instances.authn_invalid` / `instances.authn_scope` per denied request. The default is `false`; every existing customer is unaffected.
@@ -400,7 +400,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 **Owns:** the build queue and ephemeral builder microVMs. Full pipeline in §9.
 
 - Builder VM: 2 vCPU, **2048 MB**, 8 GB scratch ext4 (thrown away), 4 GB per-app cache volume (kept, quota'd), rootfs = our `builder-base` image containing BuildKit (rootless inside the VM — inside a VM it may as well be root), Railpack, git, and the OCI exporter. No inbound network; outbound via the build egress policy (§7).
-- Semaphore: **1 guaranteed slot; a 2nd opportunistic slot** granted only when tenant resident RAM < 60 % of target (schedd admission). Queue is FIFO per account with global fairness (no account holds both slots).
+- Semaphore: **1 builder slot** per 5 GiB parent cgroup. A second ordinary 2816 MiB builder can exceed that fence, and a snapshot builder can approach it alone, so local overcommit is disabled. Queue is FIFO per account with global fairness. Additional capacity comes from another eligible compute node.
 - Timeouts: 10 min build, 15 min end-to-end. On timeout/OOM (VM hits its own wall — host unaffected): kill VM, mark build `failed(reason)`, requeue once if `oom` and slot was opportunistic.
 - Source in: scratch disk pre-loaded with the tarball. Image out: OCI layout written to the cache volume, hash-addressed; host copies it out after VM exit (no live channel needed — keeps the surface tiny).
 
@@ -1027,17 +1027,23 @@ Timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s then FA
 | snapshot load (file-backed, NVMe) + resume | 150–250 |
 | guest resume hook (entropy, clock) + readiness | 40 |
 | schedd records the ready instance as RUNNING | 5 |
+| internal gateway proxy to first byte | included |
 | **Platform snapshot wake p95 target** | **< 350** |
-| internal gateway proxy to first byte (diagnostic, not the restore gate) | ≤ 800 p95 |
 
 The sub-350 ms release gate is platform-only on the reference SSD node under
 normal traffic and bursts within host capacity. Its boundary is
-`wake.boot_started` through `wake.boot_completed`, corroborated by
-`wake.restore_breakdown.total_ms` from VMMD entry through the first successful
-readiness probe. It excludes proxy first byte, application response time,
-Cloudflare, the public Internet, client location, and physical distance.
-`gateway_wake_latency_seconds` and public probes remain useful end-to-end
-diagnostics, but they cannot pass or fail the snapshot-restore gate.
+gateway capacity admission/`wake.boot_started` through the first
+`wake.proxy_first_byte`, corroborated by `wake.restore_breakdown.total_ms` from
+VMMD entry through the first successful readiness probe. It excludes the rest
+of the application response, Cloudflare, the public Internet, client location,
+and physical distance. `gateway_platform_wake_latency_seconds` is the canonical
+fleet series; public probes remain separate end-to-end diagnostics.
+
+`wake.proxy_first_byte.data.latency_ms` records request/queue acceptance to
+the first upstream byte. `data.proxy_latency_ms` separately records the final
+gateway-to-instance bridge hop. Rows created before September 2026 used the
+proxy-only interval in `latency_ms` and do not contain `proxy_latency_ms`;
+historical rows are not rewritten.
 
 The schedd-side wake path is decomposed into three `schedd_wake_rpc_duration_seconds{app, phase}` histograms (ADR-097, P1B) so operators can attribute a p95 regression to a specific phase without re-running the wake under a profiler:
 
@@ -1383,7 +1389,7 @@ Phases, all rows on `builds`/`deployments`:
 6. **Prime snapshot**: cold-boot once (readiness gate) → pause → snapshot → destroy → `PARKED`, deployment `live`, previous deployment `superseded` (the live deployment plus two previous generations remain restoreable for fast rollback; older snapshot material is reclaimed by GC).
 7. **Failure taxonomy** → `failure_class`: `user_error` (their code/config, full log shown), `oom` (VM hit 2 GB — message suggests smaller deps or Pro), `timeout`, `infra` (ours — auto-requeue once, alert).
 
-Concurrency and RAM interaction (the R1 discipline, mechanized): builder VMs are admitted through the same headroom guard as tenant wakes, from the *headroom side* of the ledger — 1 guaranteed slot budgeted permanently in §13; the opportunistic 2nd slot exists only when tenant residency < 60 %. Builds can therefore never push tenant admission into refusal: tenants evict builds, never vice versa.
+Concurrency and RAM interaction (the R1 discipline, mechanized): each compute node admits one builder VM within the 5 GiB `faas-cp-build.slice` fence. Two ordinary child scopes request more than that parent budget, so local overcommit is disabled. Builder capacity scales by adding eligible compute nodes; tenant wake admission retains priority.
 
 ---
 
@@ -1772,7 +1778,7 @@ request therefore does not create an instance transition or resident usage.
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
 | `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 256 · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,304 → **1 guaranteed builder VM (2,048 + 8) lives here** |
 | `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits only to 47,600 MB** (85 % of the model's 56 GB budget) |
-| headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | spike absorption; opportunistic 2nd builder VM may borrow ≤ 2 GB of it only below 60 % tenant residency |
+| headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
 `memory.max` on each slice makes the ledger real: a control-plane leak OOMs the control plane, never tenants — and vice versa.
 
@@ -1978,7 +1984,7 @@ Every row is an experiment with a pre-committed pass threshold. Run V1–V5 on a
 | # | Assumption at risk | Experiment | Pass threshold | When |
 |---|---|---|---|---|
 | V1 | 130 MB avg snapshot (C-grade) | Deploy 10 representative apps (Express, Next.js, Flask, FastAPI+pandas, Go static, …); park; measure mem+vmstate+app-layer per plan | Plan-weighted avg ≤ 130 MB, p95 ≤ 300 MB | pre-M1 |
-| V2 | Platform snapshot wake p95 < 350 ms | 100 park→wake cycles per app class on NVMe, file-backed restore; `wake.boot_started` through `wake.boot_completed` | p95 < 350 ms; public edge and first byte excluded | pre-M1 |
+| V2 | Platform snapshot wake p95 < 350 ms | 100 park→wake cycles per app class on NVMe, file-backed restore; capacity admission/`wake.boot_started` through first upstream byte | p95 < 350 ms; CDN, Internet and client distance excluded | pre-M1 |
 | V3 | 8 MB per-VM overhead | Boot 120 × 128 MB VMs; host RSS delta ÷ 120 | ≤ 8 MB incl. TAP/jailer | pre-M1 |
 | V4 | Density / CPU overcommit 8× | 120 resident VMs + synthetic load on 20; measure p95 latency degradation | < 20 % degradation | pre-M1 |
 | V5 | 2 GB builder VM suffices | Build top-20 OSS starter repos (Node/Python) under the cap | ≥ 90 % succeed without OOM | pre-M6 |

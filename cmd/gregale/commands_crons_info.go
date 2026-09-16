@@ -37,7 +37,7 @@ import (
 //	$ gregale crons info 0123...cdef --json
 //	{"id":"0123...cdef","app_id":"4567...89ab","schedule":"*/5 * * * *","path":"/cleanup","enabled":true,"last_fired_at":"2026-08-10T09:00:00Z","created_at":"2026-08-01T12:00:00Z"}
 func cmdCronsInfo(args []string) int {
-	fs := flag.NewFlagSet("crons-info", flag.ContinueOnError)
+	fs := newFlagSet("crons-info", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -75,6 +75,9 @@ func renderCronInfo(w io.Writer, c api.CronResponse) {
 	_, _ = fmt.Fprintf(w, "  schedule: %s\n", c.Schedule)
 	_, _ = fmt.Fprintf(w, "  path:     %s\n", c.Path)
 	_, _ = fmt.Fprintf(w, "  enabled:  %t\n", c.Enabled)
+	if c.SuspendedReason != "" {
+		_, _ = fmt.Fprintf(w, "  suspended: %s (deploy the app to reactivate this schedule)\n", c.SuspendedReason)
+	}
 	_, _ = fmt.Fprintf(w, "  timezone: %s\n", c.Timezone)
 	_, _ = fmt.Fprintf(w, "  skip_if_running: %t\n", c.SkipIfRunning)
 	_, _ = fmt.Fprintf(w, "  app:      %s\n", c.AppID)

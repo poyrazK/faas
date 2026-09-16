@@ -47,6 +47,48 @@
   register: pg_svc
   failed_when: false  # CI/chroot may not have systemd
 
+- name: postgres — allow metrics collector to publish node_exporter textfiles
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: postgres
+    group: node_exporter
+    mode: "0755"
+
+- name: postgres — install ordinary-connection capacity collector
+  ansible.builtin.copy:
+    src: faas-postgres-connection-metrics
+    dest: /usr/local/bin/faas-postgres-connection-metrics
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: postgres — install connection metrics service
+  ansible.builtin.copy:
+    src: faas-postgres-connection-metrics.service
+    dest: /etc/systemd/system/faas-postgres-connection-metrics.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload postgres
+
+- name: postgres — install connection metrics timer
+  ansible.builtin.copy:
+    src: faas-postgres-connection-metrics.timer
+    dest: /etc/systemd/system/faas-postgres-connection-metrics.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: daemon-reload postgres
+
+- name: postgres — enable connection metrics timer
+  ansible.builtin.systemd:
+    name: faas-postgres-connection-metrics.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  failed_when: false
+
 - name: postgres — inspect existing system user `faas`
   ansible.builtin.getent:
     database: passwd
@@ -220,6 +262,16 @@
   failed_when: false
   notify: restart postgresql
 
+# CAUTION (observed on the live control plane, 2026-09-12): this host's
+# postgresql.auto.conf already contains an `archive_command` written by a past
+# `ALTER SYSTEM`. auto.conf is read AFTER postgresql.conf and wins, so the
+# lineinfile edit below is currently shadowed — changing
+# `off_host_backup_wal_path` here would converge the role while having no
+# effect on the running server. Check `pg_file_settings` (`applied` column)
+# after any change to a role-managed setting, and clear the override with
+# `ALTER SYSTEM RESET <name>` if postgresql.conf should own it. Not fixed in
+# this change: the two values happen to agree today.
+#
 # Issue #250: archive_command rewrites WAL → local archive first,
 # then best-effort mirrors it to the provider-neutral off-host remote.
 # The local copy is authoritative for PostgreSQL: a remote outage or a
@@ -233,10 +285,49 @@
   ansible.builtin.lineinfile:
     path: "{{ postgres_config_dir }}/postgresql.conf"
     regexp: "^#?archive_command\\s*="
-    line: "archive_command = 'if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx ''[{{ off_host_backup_remote | default('offhostbox', true) }}]'' /var/lib/pgsql/backup-rclone.conf; then rclone copyto /var/lib/pgsql/archive/%f \"{{ off_host_backup_remote | default('offhostbox', true) }}:{{ off_host_backup_wal_path | default('faas-pg-wal', true) }}/%f\" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet || echo \"off-host WAL push failed for %f\" >&2; fi; exit 0'"
+    line: "archive_command = 'if test ! -f /var/lib/pgsql/archive/%f; then cp %p /var/lib/pgsql/archive/%f || exit 1; fi; if test -r /var/lib/pgsql/backup-rclone.conf && grep -Fqx ''[{{ off_host_backup_remote | default('offhostbox', true) }}]'' /var/lib/pgsql/backup-rclone.conf; then /usr/local/lib/faas/faas-rclone-backup-identity.py copyto /var/lib/pgsql/archive/%f \"{{ off_host_backup_remote | default('offhostbox', true) }}:{{ off_host_backup_wal_path | default('faas-pg-wal', true) }}/%f\" --config=/var/lib/pgsql/backup-rclone.conf --stats=0 --quiet || echo \"off-host WAL push failed for %f\" >&2; fi; exit 0'"
     create: false
   register: pg_archive_cmd
   failed_when: false
+  notify: reload postgresql
+
+# `ALTER SYSTEM` writes postgresql.auto.conf, which PostgreSQL reads after
+# postgresql.conf. A stale value there silently shadows the role-managed
+# archive_command and can send live WAL to a different namespace than the
+# restore and prune paths. Once the cluster is reachable, clear that override
+# when the effective command does not contain the canonical remote/path. The
+# lineinfile above remains the single source of truth for the replacement.
+- name: postgres — read effective archive_command for namespace guard
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - -c
+      - SHOW archive_command
+  become: true
+  become_user: postgres
+  register: pg_effective_archive_command
+  changed_when: false
+  failed_when: false
+
+- name: postgres — clear stale ALTER SYSTEM archive_command override
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -c
+      - ALTER SYSTEM RESET archive_command
+  become: true
+  become_user: postgres
+  register: pg_archive_override_reset
+  changed_when: pg_archive_override_reset.rc == 0
+  failed_when: false
+  when:
+    - pg_effective_archive_command.rc == 0
+    - (pg_effective_archive_command.stdout | trim) != ''
+    - (off_host_backup_remote | default('offhostbox', true)) ~ ':' ~ (off_host_backup_wal_path | default('faas-pg-wal', true)) ~ '/%f' not in pg_effective_archive_command.stdout
   notify: reload postgresql
 
 - name: postgres — bound WAL senders (reload-only, 3 = basebackup + 2 drill slack)
@@ -246,6 +337,39 @@
     line: "max_wal_senders = 3"
     create: false
   register: pg_wal_senders
+  failed_when: false
+  notify: reload postgresql
+
+# TCP keepalives — reap backends whose client host vanished.
+#
+# Without these, Postgres inherits the OS default (tcp_keepalives_idle 7200 s)
+# and a backend belonging to a powered-off node holds its connection slot for
+# two hours. On 2026-09-12 the control-plane cluster hit max_connections with
+# 88 of 96 backends idle; 10 of them belonged to compute-node-2, which CI had
+# stopped 1h40m earlier. Both native gates (builder-native.yml, e2e-native.yml)
+# start and stop that node nightly, so CI itself strands slots on every cycle.
+#
+# 60 s idle + 6 probes × 10 s detects a dead peer in ~2 min instead of ~2 h.
+# Reload-only: the values are read when a connection is established, so they
+# apply to new connections, not existing ones.
+#
+# DO NOT add idle_session_timeout here. pkg/db/notify.go:Subscribe parks one
+# dedicated connection per watcher in LISTEN state for the daemon's lifetime —
+# those connections are idle BY DESIGN, and an idle session timeout would
+# silently kill every watcher in the fleet.
+- name: postgres — TCP keepalives so dead peers free their slots (reload-only)
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?{{ item.name }}\\s*="
+    line: "{{ item.name }} = {{ item.value }}"
+    create: false
+  loop:
+    - { name: "tcp_keepalives_idle", value: 60 }
+    - { name: "tcp_keepalives_interval", value: 10 }
+    - { name: "tcp_keepalives_count", value: 6 }
+  loop_control:
+    label: "{{ item.name }}"
+  register: pg_keepalives
   failed_when: false
   notify: reload postgresql
 

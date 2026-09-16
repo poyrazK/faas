@@ -49,6 +49,7 @@ import (
 type sidecarPayload struct {
 	Repo           string                `json:"repo,omitempty"`
 	Ref            string                `json:"ref,omitempty"`
+	Environment    string                `json:"environment,omitempty"`
 	Reason         string                `json:"reason,omitempty"`
 	Tag            string                `json:"tag,omitempty"`
 	DeployedBy     string                `json:"deployed_by,omitempty"`
@@ -138,7 +139,11 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary}
+	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -197,6 +202,9 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 
 	sourceURL := "local-tar://" + sidecar.Repo
 	commitSHA := sidecar.Ref // informational only; not used by the build pipeline
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
 
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 		AppID:           app.ID,
@@ -205,6 +213,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		SourceBytes:     spoolBytes,
 		SourceURL:       sourceURL,
 		CommitSHA:       commitSHA,
+		Scope:           rollout.Scope,
 		FunctionRuntime: functionRuntimeForApp(app),
 		LogSpool:        spoolRoot(),
 		Log:             s.log,

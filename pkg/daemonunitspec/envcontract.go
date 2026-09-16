@@ -1,5 +1,7 @@
 package daemonunitspec
 
+import "strings"
+
 // EnvContract is the single registry of every FAAS_* environment variable
 // a platform daemon (or a deploy-side script) reads, together with HOW a
 // production host is expected to deliver it. It exists because three
@@ -137,6 +139,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_BASE_EXTRACT_ROOT", Owners: []string{"shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_BASE_STAGING_ROOT", Owners: []string{"shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_BASE_TMP_ROOT", Owners: []string{"shared"}, Source: EnvSourceUnit},
+	{Name: "FAAS_BILLING_MODE", Owners: []string{"apid", "meterd", "shared"}, Source: EnvSourceUnit, Default: "live", Note: "disabled pauses provider delivery and reconciliation paging; the public-beta control-plane role overrides the unit default to disabled"},
 	{Name: "FAAS_BILLING_PORTAL_URL", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_BILLING_PROVIDER", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_BRIDGE_HEADERS", Owners: []string{"vmmd-stream-bridge"}, Source: EnvSourceInternal, Note: "set by vmmd for the per-request stream-bridge subprocess"},
@@ -174,7 +177,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DEPLOY_BASE_REF_NODE24", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_DEPLOY_BASE_REF_PYTHON312", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_DEPLOY_BASE_REF_PYTHON313", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
-	{Name: "FAAS_DEV", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
+	{Name: "FAAS_DEV", Owners: []string{"shared", "apid"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_DEV_TOKEN", Owners: []string{"apid"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_DNS_API_URL", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DNS_PROVIDER", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceDefault},
@@ -182,15 +185,19 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DNS_ZONE", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DOMAIN_DOCTOR_ENABLED", Owners: []string{"apid", "shared"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_DOMAIN_DOCTOR_TTL_SECONDS", Owners: []string{"apid"}, Source: EnvSourceRuntimeConfig},
-	{Name: "FAAS_DPA_PATH", Owners: []string{"apid"}, Source: EnvSourceDefault},
+	{Name: "FAAS_DPA_PATH", Owners: []string{"apid"}, Source: EnvSourceUnit},
 	{Name: "FAAS_DUNNING_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_E2E_API_HOSTING_SMOKE", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
+	{Name: "FAAS_E2E_BIN_DIR", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host"},
+	{Name: "FAAS_E2E_VMMD_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host"},
 	{Name: "FAAS_EGRESS_ALLOW_LOOPBACK", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_ENVIRONMENT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value"},
 	{Name: "FAAS_EXECUTION_", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1"},
 	{Name: "FAAS_EXECUTION_API_ENABLED", Owners: []string{"apid"}, Source: EnvSourceUnit, Note: "explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes"},
 	{Name: "FAAS_EXECUTION_DISPATCH", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired"},
+	{Name: "FAAS_FLEET_AGE_IDENTITY_PATH", Owners: []string{"apid"}, Source: EnvSourceUnit},
+	{Name: "FAAS_FLEET_AGE_RECIPIENT_PATH", Owners: []string{"apid"}, Source: EnvSourceUnit},
 	{Name: "FAAS_FLOOR_INTERVAL_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
 	{Name: "FAAS_FUNCTION_RUNNER_GO124_ALPINE", Owners: []string{"imaged"}, Source: EnvSourceUnit, Required: true, Validate: EnvValidationPathExists},
@@ -214,7 +221,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GC_INTERVAL", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GEOIP_AUTO_REFRESH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "0; the geoip role owns refresh through re-bootstrap"},
 	{Name: "FAAS_GEOIP_DB_PATH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it"},
-	{Name: "FAAS_GITHUBD_LOOPBACK", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
+	{Name: "FAAS_GITHUBD_LOOPBACK", Owners: []string{"apid", "gatewayd-internal", "gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GITHUBD_ROLE", Owners: []string{"githubd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_GITHUBD_SOCKET", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GITHUBD_WORK_DIR", Owners: []string{"apid", "githubd"}, Source: EnvSourceDefault},
@@ -230,8 +237,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GUEST_INIT", Owners: []string{"imaged", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_HOST_AGE_IDENTITY_PATH", Owners: []string{"apid", "githubd", "imaged", "meterd", "s3-gatewayd", "schedd", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_HOST_AGE_KEY", Owners: []string{"githubd"}, Source: EnvSourceDefault},
-	{Name: "FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH", Owners: []string{"s3-gatewayd"}, Source: EnvSourceUnit, Note: "optional systemd credential path during host-age rotation overlap"},
-	{Name: "FAAS_HOST_AGE_PUB", Owners: []string{"githubd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_HOST_AGE_PUB", Owners: []string{"githubd"}, Source: EnvSourceUnit},
 	{Name: "FAAS_HOST_AGE_RECIPIENT_PATH", Owners: []string{"apid", "vmmd", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_HOST_BRIDGE_CIDR", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; same tenant bridge network used by the Ansible nftables policy"},
 	{Name: "FAAS_HOST_HMAC_KEY_PATH", Owners: []string{"apid", "shared"}, Source: EnvSourceUnit},
@@ -239,6 +245,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_HSTS_ENABLED", Owners: []string{"apid", "shared"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_IMAGED_METRICS_ADDR", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_IMAGED_NODE_NAME", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_IMAGED_PRESTAGE_ONLY", Owners: []string{"imaged"}, Source: EnvSourceDropin, Note: "release rollout one-shot exits after staging every assigned runtime base before node drain"},
 	{Name: "FAAS_IMAGED_ROLE", Owners: []string{"imaged", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_INTERNAL_H2C", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_INTERNAL_SOCKET", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
@@ -252,6 +259,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_LEADER_REDIRECT_TLS_CA", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LEADER_REDIRECT_TLS_CERT", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LEADER_REDIRECT_TLS_KEY", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
+	{Name: "FAAS_LOG_ARCHIVE_AUTH_MODE", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional environment override; production metadata auth is normally loaded from the archive credential envelope"},
 	{Name: "FAAS_LOG_ARCHIVE_BUCKET", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_CREDS_PATH", Owners: []string{"shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_LOG_ARCHIVE_ENDPOINT", Owners: []string{"shared"}, Source: EnvSourceDefault},
@@ -346,9 +354,11 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PRIVATE_INGRESS_TCP_PORTS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; exact compute service ports reachable from the control plane"},
 	{Name: "FAAS_PROMETHEUS_URL", Owners: []string{"apid", "meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_PUBLIC_CONTROL_ADDR", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
-	{Name: "FAAS_PUBLIC_IFACE", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible"},
+	{Name: "FAAS_PUBLIC_IFACE", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDropin, Note: "vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; \"shared\" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement)"},
 	{Name: "FAAS_PUBLIC_LISTEN_ADDR", Owners: []string{"gatewayd-public"}, Source: EnvSourceEnvFile},
+	{Name: "FAAS_PUBLIC_STATUS_LAUNCH_AT", Owners: []string{"apid"}, Source: EnvSourceDropin, Note: "public-beta launch boundary rendered by the control-plane deployment"},
 	{Name: "FAAS_QUOTA_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_REALTIME_CALLBACK_OUTBOX", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_CALLBACK_TIMEOUT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HEALTH_LISTEN", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HEARTBEAT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
@@ -358,7 +368,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_OUTBOUND_QUEUE", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_PONG_WAIT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_ROLE", Owners: []string{"realtimed", "shared"}, Source: EnvSourceDropin},
-	{Name: "FAAS_REALTIME_SOCKET", Owners: []string{"gatewayd-internal", "realtimed", "shared"}, Source: EnvSourceUnit},
+	{Name: "FAAS_REALTIME_SOCKET", Owners: []string{"apid", "gatewayd-internal", "realtimed", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_REALTIME_WRITE_WAIT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REBALANCE_COOLDOWN_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REBALANCE_MAX_PER_TICK", Owners: []string{"schedd"}, Source: EnvSourceDefault},
@@ -390,7 +400,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SCHEDD_SOCKET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin},
 	{Name: "FAAS_SESSION_KEY", Owners: []string{"apid", "gatewayd-internal", "shared"}, Source: EnvSourceUnit, Note: "LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service"},
 	{Name: "FAAS_SIGN_KEY", Owners: []string{"imaged"}, Source: EnvSourceDefault},
-	{Name: "FAAS_SIGN_PUB", Owners: []string{"schedd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_SIGN_PUB", Owners: []string{"schedd"}, Source: EnvSourceUnit},
 	{Name: "FAAS_SKIP_PG_TESTS", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_SKIP_SOCKET_GROUP", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_SNAPSHOT_FANOUT_INTERVAL", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments"},
@@ -407,7 +417,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_STORAGE_CACHE_SERVE_STALE", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_STORAGE_LOCAL_PREFIXES", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_STORAGE_ROLLUP_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
-	{Name: "FAAS_STORAGE_ROOT", Owners: []string{"imaged", "vmmd", "shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_STORAGE_ROOT", Owners: []string{"builderd", "imaged", "vmmd", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STORAGE_SNAPSHOT_COMPRESSION", Owners: []string{"shared"}, Source: EnvSourceEnvFile, Note: "remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165)"},
 	{Name: "FAAS_STREAM_BRIDGE_PERSISTENT", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STREAM_BRIDGE_VERSION", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "rollback lever, see docs/ops/h2c-rollback.md"},
@@ -488,6 +498,56 @@ func EnvContractForDaemon(daemon string) []EnvVar {
 				out = append(out, v)
 				break
 			}
+		}
+	}
+	return out
+}
+
+// artifactStorageOwners are the daemons that resolve runtime bases, layers,
+// snapshots and scan sidecars through pkg/storage. A storage row owned by
+// none of them configures something else that merely shares the prefix
+// (FAAS_STORAGE_ROLLUP_INTERVAL is meterd's billing rollup cadence).
+var artifactStorageOwners = []string{"builderd", "imaged", "vmmd", "shared"}
+
+// ArtifactStorageEnvNames returns the contract rows that select and configure
+// the artifact storage backend: which backend to use, where its cache lives,
+// and the registry credentials an OCI backend needs.
+//
+// It exists so callers can forward a host's storage configuration without
+// restating the variable names. A test harness that boots daemons as
+// subprocesses must hand them the SAME storage route the node's own units
+// use; a harness that silently keeps pkg/storage's local default while the
+// node runs OCI looks up artifacts in a directory imaged never wrote to. On
+// an OCI-backed node that surfaces as vmmd's issue #299 gate refusing every
+// cold boot with "scan sidecar missing" — the sidecar exists, just not in the
+// store the harness asked.
+//
+// Dev-only rows are never returned: forwarding FAAS_OCI_INSECURE would let a
+// harness quietly downgrade registry transport security.
+func ArtifactStorageEnvNames() []string {
+	var out []string
+	for _, v := range EnvContract {
+		if v.Source == EnvSourceDevOnly {
+			continue
+		}
+		if !strings.HasPrefix(v.Name, "FAAS_STORAGE_") &&
+			!strings.HasPrefix(v.Name, "FAAS_OCI_") {
+			continue
+		}
+		owned := false
+		for _, owner := range v.Owners {
+			for _, want := range artifactStorageOwners {
+				if owner == want {
+					owned = true
+					break
+				}
+			}
+			if owned {
+				break
+			}
+		}
+		if owned {
+			out = append(out, v.Name)
 		}
 	}
 	return out

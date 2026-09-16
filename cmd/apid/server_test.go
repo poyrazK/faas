@@ -291,6 +291,31 @@ func TestCreateAppInvalidSlug(t *testing.T) {
 	}
 }
 
+func TestCreateAppReservedSlug(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	for _, slug := range []string{
+		"account", "admin", "api", "assets", "billing", "cdn", "console",
+		"dashboard", "docs", "help", "login", "logout", "mail", "operations",
+		"security", "signup", "static", "status", "support", "www",
+	} {
+		rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
+		assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
+		var problem api.Problem
+		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+			t.Fatalf("decode reserved-slug problem: %v", err)
+		}
+		if !strings.Contains(problem.Detail, "reserved") {
+			t.Errorf("slug %q detail = %q, want reserved reason", slug, problem.Detail)
+		}
+	}
+	for _, slug := range []string{"status-page", "my-admin"} {
+		rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("near-miss slug %q status = %d, want 201; body=%s", slug, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 // TestQuotaMatrix is the M5 acceptance: plan quotas enforced before work, across
 // every plan (RAM cap, concurrency cap, deployed-app count).
 func TestQuotaMatrix(t *testing.T) {
@@ -498,7 +523,8 @@ func TestHealthz(t *testing.T) {
 }
 
 // observeWrap is the outermost middleware on every route; assert
-// it tags successes as code="ok" and 4xx as code="err", and uses
+// it tags handler outcomes for ops while keeping 4xx out of the platform
+// error-rate counter, and uses
 // the route template (not the URL) for the op label so cardinality
 // stays bounded.
 func TestObserveWrap_OKAndErrRoutes(t *testing.T) {
@@ -546,6 +572,13 @@ func TestObserveWrap_OKAndErrRoutes(t *testing.T) {
 		if !strings.Contains(body, w) {
 			t.Errorf("metrics body missing %q:\n%s", w, body)
 		}
+	}
+	requestTotal := fmt.Sprintf(`apid_test_request_total{account_id=%q,code="ok",route="POST /v1/apps"} 2`, e.acct.ID)
+	if !strings.Contains(body, requestTotal) {
+		t.Errorf("metrics body missing 409-as-non-platform-error series %q:\n%s", requestTotal, body)
+	}
+	if strings.Contains(body, fmt.Sprintf(`apid_test_request_total{account_id=%q,code="err",route="POST /v1/apps"} 1`, e.acct.ID)) {
+		t.Errorf("409 response entered the platform/server error-rate series:\n%s", body)
 	}
 }
 

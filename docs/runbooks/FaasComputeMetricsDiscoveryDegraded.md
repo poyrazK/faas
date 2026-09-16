@@ -8,6 +8,13 @@ returning healthy targets that Prometheus cannot scrape. Prometheus itself may
 still be up while remote `gatewayd-internal`, vmmd, imaged, builderd or
 Promtail metrics are frozen, incomplete, or absent.
 
+The customer-facing app routes and automatic OpenAPI surfaces read the
+fleet-wide `gateway_requests_by_route_total` aggregate from this Prometheus
+instance. They report `source=partial` while some expected
+`gatewayd-internal` targets are down and `source=unavailable` when no expected
+collector is healthy or the query fails. A healthy fleet with no route series
+is a valid no-traffic state (`source=live`, `routes=[]`).
+
 The producer is apid's loopback-only endpoint. It reads active
 `compute_nodes` rows with a configured `gateway_target_url`; it does not read
 Ansible inventory. A successful empty response is valid when there are no
@@ -53,6 +60,20 @@ rejects a larger configured registry snapshot with an explicit discovery
 failure. This prevents a fleet expansion from silently creating an unbounded
 scrape set.
 
+For an affected app, compare the exact inputs used by the fleet route reader:
+
+```text
+max by (node_id) (up{job="gatewayd-internal"})
+max by (node_id, route) (gateway_requests_by_route_total{app="<app-id>"})
+```
+
+Then call `gregale app <slug> routes --json`. The response's
+`collectors_healthy` must match the healthy expected node IDs and
+`collectors_expected` must match the active, scrape-ready compute registry.
+The same provenance is embedded in automatic OpenAPI documents under
+`x-faas-observed-routes`, so it survives an apid restart and remains visible
+to `gregale inspect`.
+
 Check the Prometheus target view for the node-level error:
 
 ```sh
@@ -64,11 +85,11 @@ On the control-plane host, verify that apid's internal endpoint is reachable
 from the Prometheus user. The endpoint is deliberately loopback-only:
 
 ```sh
-curl -fsS http://127.0.0.1:8081/v1/internal/metrics/targets
-curl -fsS http://127.0.0.1:8081/v1/internal/metrics/vmmd-targets
-curl -fsS http://127.0.0.1:8081/v1/internal/metrics/imaged-targets
-curl -fsS http://127.0.0.1:8081/v1/internal/metrics/builderd-targets
-curl -fsS http://127.0.0.1:8081/v1/internal/metrics/promtail-targets
+curl -fsS http://127.0.0.1:9101/v1/internal/metrics/targets
+curl -fsS http://127.0.0.1:9101/v1/internal/metrics/vmmd-targets
+curl -fsS http://127.0.0.1:9101/v1/internal/metrics/imaged-targets
+curl -fsS http://127.0.0.1:9101/v1/internal/metrics/builderd-targets
+curl -fsS http://127.0.0.1:9101/v1/internal/metrics/promtail-targets
 ```
 
 If either request returns `503`, inspect apid and PostgreSQL:

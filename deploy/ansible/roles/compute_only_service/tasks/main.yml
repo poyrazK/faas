@@ -26,6 +26,58 @@
       deploy/ansible/bootstrap.yml; verify host_vars/faas-fsn-N.yml
       sets faas_box_role correctly for this host.
 
+# A control-plane image can retain the distro PostgreSQL cluster when it is
+# adopted as compute-only. Compute daemons use /etc/faas/compute-db.env and
+# must never wait for, reserve memory for, or expose that local database.
+- name: compute_only_service — stop inherited local PostgreSQL services
+  ansible.builtin.shell: |
+    set -euo pipefail
+    units="$(systemctl list-unit-files --type=service --no-legend 'postgresql*' 2>/dev/null | awk '{print $1}')"
+    for unit in $units; do
+      systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    done
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: compute_only_service — mask inherited PostgreSQL units
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - mask
+      - postgresql.service
+      - postgresql@.service
+  changed_when: false
+  failed_when: false
+
+- name: compute_only_service — archive inherited PostgreSQL data directory
+  ansible.builtin.stat:
+    path: /var/lib/postgresql
+  register: faas_local_postgresql_dir
+
+- name: compute_only_service — inspect PostgreSQL data archive destination
+  ansible.builtin.stat:
+    path: /var/lib/postgresql.disabled
+  register: faas_local_postgresql_archive_dir
+
+- name: compute_only_service — move inherited PostgreSQL data out of service path
+  ansible.builtin.command:
+    argv:
+      - mv
+      - /var/lib/postgresql
+      - /var/lib/postgresql.disabled
+  args:
+    creates: /var/lib/postgresql.disabled
+  when:
+    - faas_local_postgresql_dir.stat.exists
+    - faas_local_postgresql_dir.stat.isdir
+    - not faas_local_postgresql_archive_dir.stat.exists
+  register: faas_local_postgresql_archive
+
+- name: compute_only_service — reload systemd after PostgreSQL cleanup
+  ansible.builtin.systemd:
+    daemon_reload: true
+
 # M9 / ADR-062: every compute node owns a schedd alongside vmmd. The
 # control-plane role still installs the central schedd; this copy gives the
 # native pair a node-local scheduler without bringing apid or meterd onto the
@@ -41,7 +93,7 @@
 - name: compute_only_service — install node-local schedd unit (M9)
   notify: restart faas-schedd
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/roles/control_plane_service/files/faas-schedd.service"
+    src: faas-schedd.service
     dest: /etc/systemd/system/faas-schedd.service
     owner: root
     group: root

@@ -105,6 +105,22 @@ type StreamingStatus string
 // and for deterministic tests — do not reorder.
 var Plans = []Plan{PlanFree, PlanHobby, PlanPro, PlanScale}
 
+// CustomDomainLimitsFor is the canonical pending-domain abuse budget.
+func CustomDomainLimitsFor(p Plan) (perApp, perAccount int, ok bool) {
+	switch p {
+	case PlanFree:
+		return 2, 5, true
+	case PlanHobby:
+		return 5, 20, true
+	case PlanPro:
+		return 20, 100, true
+	case PlanScale:
+		return 100, 500, true
+	default:
+		return 0, 0, false
+	}
+}
+
 // PlanResourceShape is the canonical RAM/vCPU pair advertised for a plan.
 // Guest vCPU topology is plan-derived in v1 (ADR-014 and ADR-152); it is not
 // a persisted per-app override. RAM can still be selected below the plan cap
@@ -278,6 +294,9 @@ type Limits struct {
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
+	// DeploysPerHour is the account-wide number of deployment admissions in a
+	// fixed one-hour window. It applies across every app and source path.
+	DeploysPerHour int
 	// DeveloperApps is the separate cap for expiring `gregale dev`
 	// environments. These sessions do not consume DeployedApps slots.
 	DeveloperApps      int
@@ -1570,11 +1589,12 @@ type Limits struct {
 	WorkflowMaxWaitDays int
 }
 
-// EphemeralDiskMaxMB returns the maximum writable runtime disk capacity
-// represented by the per-app drive1 ext4 image. The storage contract has
-// historically exposed this boundary as AppLayerMaxMB because the same cap
-// is checked while building the image. Keep one source of truth while giving
-// runtime and API callers the storage-specific name.
+// EphemeralDiskMaxMB returns the total logical capacity of the per-app
+// writable ext4 filesystem, including application content and filesystem
+// metadata. The storage contract historically exposed this boundary as
+// AppLayerMaxMB because the same cap is checked while building the image.
+// Keep one source of truth while giving runtime and API callers the
+// storage-specific name.
 func (l Limits) EphemeralDiskMaxMB() int {
 	return l.AppLayerMaxMB
 }
@@ -1629,6 +1649,7 @@ var planLimits = map[Plan]Limits{
 	PlanFree: {
 		Plan:           PlanFree,
 		DeployedApps:   1,
+		DeploysPerHour: 10,
 		DeveloperApps:  1,
 		MaxConcurrency: 1,
 		RAMMB:          128,
@@ -1983,6 +2004,7 @@ var planLimits = map[Plan]Limits{
 	PlanHobby: {
 		Plan:                  PlanHobby,
 		DeployedApps:          5,
+		DeploysPerHour:        50,
 		DeveloperApps:         2,
 		MaxConcurrency:        2,
 		RAMMB:                 256,
@@ -2361,6 +2383,7 @@ var planLimits = map[Plan]Limits{
 	PlanPro: {
 		Plan:                  PlanPro,
 		DeployedApps:          25,
+		DeploysPerHour:        250,
 		DeveloperApps:         5,
 		MaxConcurrency:        5,
 		RAMMB:                 512,
@@ -2707,6 +2730,7 @@ var planLimits = map[Plan]Limits{
 	PlanScale: {
 		Plan:                  PlanScale,
 		DeployedApps:          100,
+		DeploysPerHour:        1000,
 		DeveloperApps:         10,
 		MaxConcurrency:        20,
 		RAMMB:                 1024,
@@ -3255,7 +3279,10 @@ const (
 	// not grow separate copies of customer limits. Priority is intentionally
 	// equal across plans; plan-aware priority would let sustained paid
 	// traffic starve other customers.
-	GatewayWakeAdmissionFreeMaxWaiters  = 4
+	// A waiter costs no additional VM admission because WakeGate coalesces the
+	// whole app generation. Keep enough room for an ordinary first burst after
+	// snapshot invalidation instead of rejecting siblings behind the one boot.
+	GatewayWakeAdmissionFreeMaxWaiters  = 16
 	GatewayWakeAdmissionHobbyMaxWaiters = 16
 	GatewayWakeAdmissionProMaxWaiters   = 64
 	GatewayWakeAdmissionScaleMaxWaiters = 128
@@ -4196,13 +4223,19 @@ const (
 	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
 	FreeTierColdEvictDays = 14
 
-	// Instance retention (spec §17 follow-up, PR #74): STOPPED/FAILED
-	// rows are DELETED by pkg/sched.Retention this long after entering
-	// the terminal state. Tunable in cmd/schedd config; this default is
-	// the spec baseline (30 days). Retention only touches terminal
-	// instances — it never affects quota/RAM/concurrency counts because
-	// those only sum non-terminal rows (state/machine.go CountsFor*).
+	// Instance retention (spec §17 follow-up, PR #74; issue #2415):
+	// STOPPED/FAILED rows are deleted from their terminal_at anchor and
+	// PARKED wake-history rows are deleted from their parked_at anchor.
+	// Tunable in cmd/schedd config; this default is the public baseline
+	// (30 days). The parked cleanup is safe because every wake creates a
+	// fresh instance row and the reusable artifact lives in snapshots.
+	// Retention never selects resident or in-flight lifecycle states.
 	DefaultInstanceRetention = 30 * 24 * time.Hour
+	// DefaultInstanceHistoryLimit is the maximum number of newest rows
+	// returned by GET /v1/apps/{slug}/instances?history=true and by
+	// `gregale ps --all`. This is a documented recent-history view rather
+	// than an implicit full-history promise.
+	DefaultInstanceHistoryLimit = 100
 	// DefaultRetentionInterval is how often the retention sweep actually
 	// runs. Once per hour is plenty — the sweep itself reads now-30d, so
 	// hourly cadence means a row that just crossed 30d is deleted within
@@ -4354,9 +4387,10 @@ const (
 	ExecutionPlaintextFieldMaxBytes = 1 << 20
 	ExecutionPIDsMax                = 64
 	// ExecutionSealedPayloadMaxBytes is the storage-layer ceiling for the
-	// encrypted source+input envelope. It leaves bounded room above the two
-	// admitted 1 MiB plaintext fields for envelope and age-recipient overhead;
-	// it is not a customer-visible allowance.
+	// encrypted source/input envelope, including an optional multi-file bundle.
+	// It leaves bounded room above the admitted 1 MiB source and input fields for
+	// JSON/base64 encoding and age-recipient overhead; it is not a
+	// customer-visible allowance.
 	ExecutionSealedPayloadMaxBytes = 3 << 20
 )
 
@@ -6225,6 +6259,16 @@ func (p Plan) RateLimitPerAccountRPM() int {
 		return 0
 	}
 	return l.RateLimitPerAccountRPM
+}
+
+// DeploysPerHour returns the account-wide deploy admission budget for the
+// plan. Unknown plans fail closed.
+func (p Plan) DeploysPerHour() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.DeploysPerHour
 }
 
 // ScaleUpTargetRPSAllowed reports whether the plan may set

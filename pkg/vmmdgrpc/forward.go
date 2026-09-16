@@ -1501,11 +1501,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	reqCtx, reqCancel := context.WithCancel(ctx)
 	defer reqCancel()
 
-	method := reqInit.GetMethod()
-	if method == "" {
-		method = "POST"
-	}
-	httpReq, err := http.NewRequestWithContext(reqCtx, method, "http://unix"+reqInit.GetRequestUri(), bodyPr)
+	httpReq, err := newForwardHTTPRequest(reqCtx, reqInit, bodyPr)
 	if err != nil {
 		return status.Errorf(codes.Internal, "build H2C request: %v", err)
 	}
@@ -1768,6 +1764,31 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		return streamErr
 	}
 	return nil
+}
+
+// newForwardHTTPRequest preserves the gateway's request-body framing across
+// the gRPC hop. In particular, http.NoBody closes the H2 stream in its initial
+// headers so the bridge can pass a known-empty body to the guest transport.
+func newForwardHTTPRequest(ctx context.Context, init *vmmdpb.ForwardHTTPRequestInit, body io.Reader) (*http.Request, error) {
+	method := init.GetMethod()
+	if method == "" {
+		method = "POST"
+	}
+	if init.GetContentLengthKnown() && init.GetContentLength() < 0 {
+		return nil, fmt.Errorf("known content length cannot be negative")
+	}
+	requestBody := body
+	if init.GetContentLengthKnown() && init.GetContentLength() == 0 {
+		requestBody = http.NoBody
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://unix"+init.GetRequestUri(), requestBody)
+	if err != nil {
+		return nil, err
+	}
+	if init.GetContentLengthKnown() {
+		req.ContentLength = init.GetContentLength()
+	}
+	return req, nil
 }
 
 // newGuestHTTPClient returns guest redirects to the customer unchanged.

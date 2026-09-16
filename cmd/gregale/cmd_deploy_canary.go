@@ -26,7 +26,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -38,34 +37,39 @@ import (
 // flag pair and returns an *api.CanaryPresetSpec ready for the
 // CreateDeploymentRequest wire. Empty preset → nil (no canary,
 // fast-default zero-value on the server). A bad preset name or a
-// malformed stage triggers PrintFail + exit 2 so the customer
-// sees the error pre-flight.
-func buildCanarySpec(preset, stages string) *api.CanaryPresetSpec {
+// malformed stage returns an error so the command can render one structured
+// problem and still run its deferred cleanup.
+func buildCanarySpec(preset, stages string) (*api.CanaryPresetSpec, error) {
 	if preset == "" {
+		if strings.TrimSpace(stages) != "" {
+			return nil, fmt.Errorf("--canary-stages requires --canary-preset=custom")
+		}
 		// Fast path: no flag → no canary. Mirrors the pre-PR
 		// behaviour (nil Canary on the request → server stamps
 		// canary_preset='none', canary_total_steps=0).
-		return nil
+		return nil, nil
 	}
 	if !canary.AllowedCanaryPreset(preset) {
-		PrintFail(os.Stderr, fmt.Sprintf(
-			"--canary-preset=%q is not in the closed set %v", preset, canary.AllowedCanaryPresets))
-		os.Exit(2)
+		return nil, fmt.Errorf("--canary-preset=%q is not in the closed set %v", preset, canary.AllowedCanaryPresets)
+	}
+	if preset != "custom" && strings.TrimSpace(stages) != "" {
+		return nil, fmt.Errorf("--canary-stages is only valid with --canary-preset=custom")
 	}
 	spec := &api.CanaryPresetSpec{Preset: preset}
 	if preset == "custom" {
 		parsed, err := parseCanaryStages(stages)
 		if err != nil {
-			PrintFail(os.Stderr, fmt.Sprintf("--canary-stages=%q: %s", stages, err))
-			os.Exit(2)
+			return nil, fmt.Errorf("--canary-stages=%q: %w", stages, err)
 		}
 		if len(parsed) == 0 {
-			PrintFail(os.Stderr, "--canary-preset=custom requires a non-empty --canary-stages list")
-			os.Exit(2)
+			return nil, fmt.Errorf("--canary-preset=custom requires a non-empty --canary-stages list")
+		}
+		if _, err := canary.LookupCustomPreset(parsed); err != nil {
+			return nil, fmt.Errorf("--canary-stages=%q: %w", stages, err)
 		}
 		spec.Stages = parsed
 	}
-	return spec
+	return spec, nil
 }
 
 // parseCanaryStages splits a comma-separated "percent@duration"

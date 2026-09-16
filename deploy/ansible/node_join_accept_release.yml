@@ -1,0 +1,29 @@
+---
+- name: Accept the activated compute release SBOM baseline
+  hosts: compute_nodes
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require the controller-selected release to be active
+      ansible.builtin.command:
+        argv:
+          - readlink
+          - -f
+          - /opt/faas/current
+      register: faas_active_release
+      changed_when: false
+      failed_when: >-
+        faas_active_release.rc != 0 or
+        faas_active_release.stdout | trim !=
+        ('/opt/faas/releases/' ~ faas_join_release_git_sha)
+
+    - name: Accept the verified active release as the persistent KGV
+      ansible.builtin.command:
+        argv:
+          - /opt/faas/current/bin/gregalectl
+          - release
+          - kgv
+          - rotate
+          - --git-sha
+          - "{{ faas_join_release_git_sha }}"
+      changed_when: true

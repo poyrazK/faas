@@ -12,6 +12,10 @@ export type CronResponse = {
   path: string;
   enabled: boolean;
   /**
+   * Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment.
+   */
+  suspended_reason?: 'no_live_deployment';
+  /**
    * IANA timezone used to evaluate the schedule; defaults to UTC.
    */
   timezone: string;

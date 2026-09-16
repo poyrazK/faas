@@ -12,12 +12,17 @@ T = TypeVar("T", bound="StatusUptimeBucket")
 
 @_attrs_define
 class StatusUptimeBucket:
-    """Daily public status uptime point."""
+    """Daily platform-availability point. Successful and total count available and observed complete five-minute platform
+    intervals; customer workload outcomes are excluded.
+
+    """
 
     date: datetime.datetime
     uptime_pct: float
     successful: int
+    """Complete five-minute platform intervals that were available."""
     total: int
+    """Complete five-minute platform intervals with telemetry."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -5,6 +5,7 @@ package grpcerr_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -63,6 +64,9 @@ func TestRoundTrip_StableCodes(t *testing.T) {
 			}
 			if got.Code != tc.code {
 				t.Errorf("code round-trip: %q → %q", tc.code, got.Code)
+			}
+			if got.Detail == "" || !strings.Contains(got.Detail, "we hit the cap") {
+				t.Errorf("detail round-trip: %q", got.Detail)
 			}
 			if got.DocsURL != "https://docs.gregale.dev/plans" {
 				t.Errorf("docs_url round-trip: %q", got.DocsURL)

@@ -42,21 +42,27 @@ const (
 // cover everything guest-init needs to run one build to completion without
 // further host contact.
 type BuildManifest struct {
-	SchemaVersion int            `json:"schema_version"`
-	BuildID       string         `json:"build_id"`
-	TenantID      string         `json:"tenant_id"`
-	DeploymentID  string         `json:"deployment_id"`
-	SourceTarPath string         `json:"source_tar_path"`         // absolute path on drive1
-	BuildContext  string         `json:"build_context,omitempty"` // extracted repository context
-	Workdir       string         `json:"workdir"`                 // default /build/src
-	OutDir        string         `json:"out_dir"`                 // default /build/out
-	Framework     BuildFramework `json:"framework"`
+	SchemaVersion  int            `json:"schema_version"`
+	BuildID        string         `json:"build_id"`
+	TenantID       string         `json:"tenant_id"`
+	DeploymentID   string         `json:"deployment_id"`
+	SourceTarPath  string         `json:"source_tar_path"`           // absolute path on drive1
+	BuildContext   string         `json:"build_context,omitempty"`   // extracted repository context
+	Workdir        string         `json:"workdir"`                   // default /build/src
+	DockerfilePath string         `json:"dockerfile_path,omitempty"` // relative to Workdir; empty = Dockerfile
+	OutDir         string         `json:"out_dir"`                   // default /build/out
+	Framework      BuildFramework `json:"framework"`
 	// Runtime and RuntimeBaseRef make the builder output reproducible with
 	// imaged's deployment layer. Railpack otherwise chooses its own mutable
 	// runtime base (currently railpack-runtime), which cannot be consumed by
 	// the pinned Gregale runner base used during image materialisation.
 	Runtime        string `json:"runtime,omitempty"`
 	RuntimeBaseRef string `json:"runtime_base_ref,omitempty"`
+	// Function identifies source builds whose public contract is a handler
+	// rather than a long-running process. The guest uses this bit to provide a
+	// deterministic copy-only plan for handler-only Node/Python sources that
+	// intentionally have no package manifest for Railpack to detect.
+	Function bool `json:"function,omitempty"`
 	// DependencyCache enables the developer-session BuildKit cache exporter.
 	// Import is set only when builderd successfully staged a prior cache into
 	// this otherwise-ephemeral builder VM. Production builds leave both false.

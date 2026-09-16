@@ -13,6 +13,41 @@
 # base and Postgres, so any of them SKIPPING means a fixture regressed — which
 # the pass/skip tally alone would report as a smaller green run. Names can only
 # leave this list by editing it, which is the point.
+# native_e2e_metal_tests prints the top-level test names declared in the
+# metal-tagged files of cmd/e2e, one per line.
+#
+# The gate runs exactly this set. It is DERIVED FROM SOURCE rather than listed,
+# so a newly added metal test is picked up with no edit here and the set cannot
+# quietly diverge from what carries the build tag.
+#
+# Why not simply run the whole package: `-tags metal` compiles the metal files
+# alongside ~300 non-metal e2e tests, and on 2026-09-12 running all of them on
+# the 4-vCPU acceptance node starved the ones that need hardware — apid could
+# not bind inside the harness's 10 s budget, and all seven required tests failed
+# with "did not accept within 10s". CI already runs the non-metal e2e tests
+# sharded across four dedicated runners, so repeating them here buys nothing and
+# costs the signal this gate exists for.
+native_e2e_metal_tests() {
+  local repo_root="$1" file
+  # Read the file list rather than splitting it: an unquoted expansion here
+  # behaves differently under zsh (no word splitting), and a path with a space
+  # would break it under bash. One grep per file is plenty at this scale.
+  grep -l '^//go:build metal' "${repo_root}"/cmd/e2e/*_test.go 2>/dev/null |
+    while IFS= read -r file; do
+      [[ -n "${file}" ]] || continue
+      # `|| true` is load-bearing: a metal-tagged file may legitimately declare
+      # no top-level Test func (cmd/e2e/fixtures_test.go is fixtures only), and
+      # grep exits 1 there. The runner sets `set -Eeuo pipefail`, so when such a
+      # file was LAST in the list the while loop's status became the pipeline's
+      # status, the command substitution failed, and the gate died three seconds
+      # in with no output at all. It passed local testing only because that file
+      # sorted elsewhere under a different grep implementation.
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${file}" || true
+    done |
+    sed -E 's/^func //; s/\($//' |
+    sort -u
+}
+
 NATIVE_E2E_REQUIRED_TESTS=(
   TestDeployWakeMetal
   TestSourceDeployWakeMetal
@@ -74,4 +109,44 @@ native_e2e_verdict() {
 
   echo "native e2e: required chain executed; ${passed} passed, ${skipped} skipped"
   return 0
+}
+
+# native_e2e_phase_tally reports one phase's result.
+#
+# Deliberately NOT native_e2e_verdict: the required-test contract is a
+# whole-suite claim (its eight tests span several phases), so applying it per
+# phase would fail every phase for tests it was never asked to run. The
+# workflow's final verdict step owns that contract across the phases' logs.
+#
+# What still holds per phase: a phase that executed nothing is a failure. That
+# is the retired metal job's exact failure mode — a filter that matches no test
+# reports "ok" and looks green.
+native_e2e_phase_tally() {
+  local log="$1" phase="$2"
+  local rc=0 passed skipped failed
+
+  if [[ ! -r "${log}" ]]; then
+    echo "native e2e: phase ${phase}: test log is unreadable: ${log}" >&2
+    return 1
+  fi
+
+  passed="$(grep -cE '^--- PASS: ' "${log}" || true)"
+  skipped="$(grep -cE '^--- SKIP: ' "${log}" || true)"
+  failed="$(grep -cE '^--- FAIL: ' "${log}" || true)"
+  echo "native e2e: phase ${phase} — ${passed} passed, ${skipped} skipped, ${failed} failed"
+
+  if [[ "${failed}" -gt 0 ]]; then
+    echo "native e2e: phase ${phase} failures:"
+    grep -E '^--- FAIL: ' "${log}" | sed 's/^/  /'
+  fi
+  if [[ "${skipped}" -gt 0 ]]; then
+    echo "native e2e: phase ${phase} skips (each names the fixture it wants):"
+    grep -E '^--- SKIP: ' "${log}" | sed 's/^/  /'
+  fi
+
+  if [[ "${passed}" -eq 0 && "${skipped}" -eq 0 && "${failed}" -eq 0 ]]; then
+    echo "native e2e: phase ${phase} executed no test at all; its -run filter matched nothing" >&2
+    rc=1
+  fi
+  return "${rc}"
 }

@@ -508,7 +508,7 @@ func TestReportCapacity_BadSignatureIncrementsCounter(t *testing.T) {
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 	loader := &stubKeyLoader{rows: []sched.NodeKeyRow{
-		{KeyID: registeredKeyID, PublicKeyPEM: string(pemBytes)},
+		{ComputeNodeID: "node-1", KeyID: registeredKeyID, PublicKeyPEM: string(pemBytes)},
 	}}
 	keys := sched.NewNodeKeyRegistry(loader, nil)
 	if n := keys.ReplaceAll(loader.rows); n != 1 {

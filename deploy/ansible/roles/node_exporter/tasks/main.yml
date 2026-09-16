@@ -9,6 +9,13 @@
   ansible.builtin.debug:
     var: node_exporter_version
 
+- name: node_exporter — select the host-scoped scrape listener
+  ansible.builtin.set_fact:
+    node_exporter_listen_addr: >-
+      {{ (faas_private_dns_address | default(ansible_default_ipv4.address)) ~ ':9100'
+         if (faas_box_role | default('single-box')) == 'compute-only'
+         else '127.0.0.1:9100' }}
+
 - name: node_exporter — create system user
   ansible.builtin.user:
     name: node_exporter
@@ -66,6 +73,14 @@
   notify:
     - daemon-reload
     - restart node_exporter
+
+- name: node_exporter — create textfile collector directory
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: node_exporter
+    group: node_exporter
+    mode: "0755"
 
 - name: node_exporter — read rendered systemd unit
   ansible.builtin.slurp:

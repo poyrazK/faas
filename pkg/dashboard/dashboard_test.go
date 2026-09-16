@@ -747,7 +747,7 @@ func TestRender_DeploymentDetail_StatelessViolation(t *testing.T) {
 		"<strong>port:</strong> 3000",
 		"<strong>health:</strong> /healthz",
 		// The docs link uses the typed code (NOT a hardcoded URL).
-		`href="https://docs.gregale.dev/errors/stateless_only_violation"`,
+		`href="https://gregale.dev/docs/errors/stateless_only_violation"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\n--- body ---\n%s", want, body)

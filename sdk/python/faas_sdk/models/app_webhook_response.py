@@ -32,7 +32,7 @@ class AppWebhookResponse:
         Example:
             {'id': '0123456789abcdef0123456789abcdef', 'app_id': 'fedcba9876543210fedcba9876543210', 'account_id':
                 '8b1f5e5d-273e-5a18-ae00-58fceba4fe6c', 'target_url': 'https://example.com/hook',
-                'webhook_secret_sealed_masked': '***', 'event_filter': ['cron.fired', 'app.created'], 'retry_policy': 'default',
+                'webhook_secret_sealed_masked': '***', 'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default',
                 'enabled': True, 'created_at': '2026-08-06T10:00:00Z', 'updated_at': '2026-08-06T10:00:00Z'}
 
     """

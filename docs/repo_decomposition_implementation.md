@@ -343,9 +343,9 @@ Reconcile guards (ADR-050), all three ship in this phase:
 
 Then fan out the builds: rebuild a member iff a changed path falls under its
 `root_dir`; a root-level change outside every member rebuilds all; a truncated
-payload (GitHub caps at 20 commits / 3000 files) rebuilds all. Builds enqueue
-against the 1-guaranteed + 1-opportunistic builder slots and never outrank
-tenant wakes.
+   payload (GitHub caps at 20 commits / 3000 files) rebuilds all. Builds enqueue
+against the single memory-fenced builder slot on each eligible compute node and
+never outrank tenant wakes.
 
 > **Post-#432 phase 5 flip:** path-filter is the default posture
 > (`githubd_path_filter_total{mode="paths"}` on credentialed boxes). The

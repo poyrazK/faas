@@ -51,11 +51,14 @@ import (
 // fallback at the runbook
 // (docs/runbooks/GithubWebhookSecretRotation.md).
 func githubWebhookSecretSet(args []string) int {
-	fs := flag.NewFlagSet("github-webhook-secret set", flag.ContinueOnError)
+	fs := newFlagSet("github-webhook-secret set", flag.ContinueOnError)
 	installationID := fs.Int64("installation-id", 0, "GitHub App installation_id for the secret")
 	secret := fs.String("secret", "", "secret hex (must be 32-64 hex chars; --from-stdin reads the same)")
 	fromStdin := fs.Bool("from-stdin", false, "read the secret hex from stdin (one line)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *installationID == 0 {

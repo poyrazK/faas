@@ -498,6 +498,24 @@ func TestAuditEvents_ListEndpointReturnsCronFired(t *testing.T) {
 // reads), different kind, same dashboard contract.
 func TestAuditEvents_ListEndpointRespectsStatelessAdvisoryKindPrefix(t *testing.T) {
 	e := setup(t, api.PlanPro)
+	ownedAnonApp, err := e.store.CreateApp(context.Background(), state.App{
+		AccountID: e.acct.ID, Slug: "audit-anon-owned", Type: state.AppTypeFunction,
+		Runtime: "node22", RAMMB: 256, CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create owned app: %v", err)
+	}
+	otherAccount, err := e.store.CreateAccount(context.Background(), "audit-other@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("create other account: %v", err)
+	}
+	otherApp, err := e.store.CreateApp(context.Background(), state.App{
+		AccountID: otherAccount.ID, Slug: "audit-anon-other", Type: state.AppTypeFunction,
+		Runtime: "node22", RAMMB: 256, CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create other app: %v", err)
+	}
 
 	// Seed an anonymous-row variant (subject=NULL) for the
 	// include_anonymous path. Order matters: account-scoped first,
@@ -518,7 +536,7 @@ func TestAuditEvents_ListEndpointRespectsStatelessAdvisoryKindPrefix(t *testing.
 	}
 	anonPayload, err := json.Marshal(map[string]any{
 		"instance": "i-anon",
-		"app_id":   "a-deleted",
+		"app_id":   ownedAnonApp.ID,
 		"count":    1,
 		"events": []map[string]any{
 			{"path": "/data/orphan", "mask": "create", "pid": 99, "ts_unix_ms": 1700000001000},
@@ -529,6 +547,10 @@ func TestAuditEvents_ListEndpointRespectsStatelessAdvisoryKindPrefix(t *testing.
 	}
 	if err := e.store.AppendEvent(context.Background(), "apid", "stateless.advisory", nil, anonPayload); err != nil {
 		t.Fatalf("AppendEvent anon: %v", err)
+	}
+	otherPayload, _ := json.Marshal(map[string]any{"app_id": otherApp.ID, "instance": "cross-tenant"})
+	if err := e.store.AppendEvent(context.Background(), "apid", "stateless.advisory", nil, otherPayload); err != nil {
+		t.Fatalf("AppendEvent cross-tenant anon: %v", err)
 	}
 
 	// 1) kind_prefix=stateless. returns ONLY stateless.advisory rows.
@@ -605,6 +627,9 @@ func TestAuditEvents_ListEndpointRespectsStatelessAdvisoryKindPrefix(t *testing.
 			continue
 		}
 		if ev.Subject == "" {
+			if eventDataHasAppID([]byte(ev.Data), otherApp.ID) {
+				t.Fatalf("cross-tenant anonymous event leaked: %+v", ev)
+			}
 			anonSeen = true
 		} else {
 			accountedSeen = true

@@ -159,14 +159,3 @@ func (e errReconcileScanSourceDowngrade) Error() string {
 // production-branch-guard trips. Callers (githubd) check
 // errors.Is(err, reconcile.ErrIgnored) and return 200-ignored.
 var ErrIgnored = errors.New("reconcile: ignored")
-
-// worklo loadKey just exposes the underlying pair so diff.go can
-// reuse the comparator without making it the primary type.
-type workloadKey = struct {
-	RootDir string
-	Name    string
-}
-
-// keep the import live for future Phase-N work that walks the
-// reposcan package directly from the reconcile package.
-var _ = reposcan.Workload{}

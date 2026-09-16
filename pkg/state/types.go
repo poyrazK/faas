@@ -118,6 +118,15 @@ const (
 // DeploymentStatus tracks a deployment through the pipeline (spec §5, §9).
 type DeploymentStatus string
 
+// DeploymentOutcomeCounts is the fleet-wide authoritative status-window
+// aggregate used by the public status evaluator. User-code build failures are
+// excluded from both fields; Failed represents platform-attributable terminal
+// deployments across build, scan, snapshot, and readiness stages.
+type DeploymentOutcomeCounts struct {
+	Succeeded int
+	Failed    int
+}
+
 const (
 	DeployPending      DeploymentStatus = "pending"
 	DeployBuilding     DeploymentStatus = "building"
@@ -819,7 +828,7 @@ type APIKey struct {
 	Hash          []byte
 	Label         string
 	Scopes        []string
-	LastUsedAt    time.Time
+	LastUsedAt    *time.Time
 	CreatedAt     time.Time
 	ExpiresAt     *time.Time
 	Status        string
@@ -1326,6 +1335,16 @@ type App struct {
 	CreatedAt          time.Time
 }
 
+// AppDeletionArtifact is a durable artifact owned exclusively by an app that
+// is waiting for permanent deletion. Shared keys are excluded by the Store so
+// the grace sweeper can remove every returned key without breaking another
+// app. Bytes is the best available physical allocation and is used for the
+// overdue-artifact gauge; zero means the writer predates byte accounting.
+type AppDeletionArtifact struct {
+	Key   string
+	Bytes int64
+}
+
 // DeclaredRoute is the persisted explicit route-list shape used by the
 // only-declared-routes policy. Path parameters use OpenAPI's `{name}` segment
 // syntax and Methods contains uppercase HTTP verbs.
@@ -1406,23 +1425,33 @@ type ServiceReplicas struct {
 // as jsonb in Postgres; lifecycle fields are overlaid onto each deployment's
 // image manifest before it is written into the snapshot for guest-init.
 type AppManifest struct {
-	Entrypoint       []string          `json:"entrypoint,omitempty"`
-	Env              map[string]string `json:"env,omitempty"`
-	WorkingDir       string            `json:"working_dir,omitempty"`
-	Port             int               `json:"port,omitempty"`
-	Healthz          string            `json:"healthz,omitempty"`
-	User             string            `json:"user,omitempty"`
-	ExecutionMode    string            `json:"execution_mode,omitempty"`
-	RestartPolicy    string            `json:"restart_policy,omitempty"`
-	StartupDeadlineS int               `json:"startup_deadline_s,omitempty"`
-	MaxRetries       int               `json:"max_retries,omitempty"`
-	ServiceReplicas  *ServiceReplicas  `json:"service_replicas,omitempty"`
-	Favicon          []byte            `json:"favicon,omitempty"`
-	RobotsTxt        string            `json:"robots_txt,omitempty"`
-	HeadWakes        bool              `json:"head_wakes,omitempty"`
-	CrawlerPolicy    string            `json:"crawler_policy,omitempty"`
-	HealthPath       string            `json:"health_path,omitempty"`
-	HealthPathWakes  bool              `json:"health_path_wakes,omitempty"`
+	Entrypoint []string          `json:"entrypoint,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+	// ProjectSourceSHA256 and BuildDockerfile are project-reconcile build
+	// metadata. They persist the exact source subtree and Dockerfile choice
+	// that produced the approved plan so a reapply can detect source-only
+	// edits and retries select the same build strategy.
+	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
+	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
+	WorkingDir          string `json:"working_dir,omitempty"`
+	Port                int    `json:"port,omitempty"`
+	// Ports is the app-owned listener declaration. It is merged into every
+	// deployment manifest so the gateway can expose named TCP listeners while
+	// UDP listeners remain available to workloads through guest discovery.
+	Ports            []api.WorkloadPort `json:"ports"`
+	Healthz          string             `json:"healthz,omitempty"`
+	User             string             `json:"user,omitempty"`
+	ExecutionMode    string             `json:"execution_mode,omitempty"`
+	RestartPolicy    string             `json:"restart_policy,omitempty"`
+	StartupDeadlineS int                `json:"startup_deadline_s,omitempty"`
+	MaxRetries       int                `json:"max_retries,omitempty"`
+	ServiceReplicas  *ServiceReplicas   `json:"service_replicas,omitempty"`
+	Favicon          []byte             `json:"favicon,omitempty"`
+	RobotsTxt        string             `json:"robots_txt,omitempty"`
+	HeadWakes        bool               `json:"head_wakes,omitempty"`
+	CrawlerPolicy    string             `json:"crawler_policy,omitempty"`
+	HealthPath       string             `json:"health_path,omitempty"`
+	HealthPathWakes  bool               `json:"health_path_wakes,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -1440,13 +1469,30 @@ func (m AppManifest) EffectiveCrawlerPolicy() string {
 // It keeps the legacy empty-manifest JSON shape while allowing lifecycle-only
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
-	return m.Entrypoint == nil && m.Env == nil && m.WorkingDir == "" &&
-		m.Port == 0 && m.Healthz == "" && m.User == "" &&
+	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
+		m.BuildDockerfile == "" && m.WorkingDir == "" &&
+		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 &&
 		m.ServiceReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" &&
 		m.HealthPath == "" && !m.HealthPathWakes
+}
+
+func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
+	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
+	existing.BuildDockerfile = desired.BuildDockerfile
+	if len(desired.Env) > 0 {
+		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
+		for key, value := range existing.Env {
+			merged[key] = value
+		}
+		for key, value := range desired.Env {
+			merged[key] = value
+		}
+		existing.Env = merged
+	}
+	return existing
 }
 
 // ScalingPolicy is the per-app autoscaling configuration (issue #462 /
@@ -2091,11 +2137,14 @@ type Deployment struct {
 // are applied by the store so an operator cannot accidentally load the full
 // deployment history into apid.
 type OperatorDeploymentFilter struct {
-	AccountID string
-	AppID     string
-	Statuses  []DeploymentStatus
-	Limit     int
-	Offset    int
+	AccountID      string
+	AppID          string
+	Statuses       []DeploymentStatus
+	IncludeDeleted bool
+	CreatedBefore  time.Time
+	OldestFirst    bool
+	Limit          int
+	Offset         int
 }
 
 // OpenAPISnapshot is the projected-customer-OpenAPI snapshot
@@ -2213,7 +2262,7 @@ type StageStateItem struct {
 	StartedAt  *time.Time `json:"started_at"`
 	EndedAt    *time.Time `json:"ended_at"`
 	DurationMs int64      `json:"duration_ms"`
-	Status     string     `json:"status"` // "completed" | "failed"
+	Status     string     `json:"status"` // "completed" | "failed" | "cancelled"
 	Reason     string     `json:"reason,omitempty"`
 }
 
@@ -2349,7 +2398,10 @@ type CustomDomain struct {
 	// CertFailureEmailAt is the in-memory mirror of the durable 24-hour
 	// notification cooldown. PgStore keeps this value in its column and does
 	// not need to expose it on customer-facing domain responses.
-	CertFailureEmailAt time.Time
+	CertFailureEmailAt      time.Time
+	VerificationNextCheckAt time.Time
+	VerificationExpiresAt   time.Time
+	VerificationAttempts    int
 }
 
 // Verified reports whether the TXT challenge has been satisfied.
@@ -2383,16 +2435,22 @@ type DomainDoctorObservation struct {
 
 // Cron is a scheduled synthetic POST through gatewayd-internal (spec §4.3).
 type Cron struct {
-	ID            string
-	AppID         string
-	Schedule      string // cron expression
-	Path          string
-	Enabled       bool
-	Timezone      string // IANA timezone; empty is normalized to UTC
-	SkipIfRunning bool   // skip a scheduled fire while a prior cron run is active
-	CreatedAt     time.Time
-	LastFiredAt   time.Time // zero until first fire; updated by MarkCronFired
+	ID       string
+	AppID    string
+	Schedule string // cron expression
+	Path     string
+	Enabled  bool
+	// SuspendedReason is set by the scheduler when customer intent remains
+	// enabled but the app has no live deployment. A later successful deploy
+	// clears it without re-enabling a cron the customer disabled explicitly.
+	SuspendedReason string
+	Timezone        string // IANA timezone; empty is normalized to UTC
+	SkipIfRunning   bool   // skip a scheduled fire while a prior cron run is active
+	CreatedAt       time.Time
+	LastFiredAt     time.Time // zero until first fire; updated by MarkCronFired
 }
+
+const CronSuspendedNoLiveDeployment = "no_live_deployment"
 
 // CronOptions controls the optional scheduling behavior persisted with a cron.
 // Timezone is an IANA location name; an empty value means UTC. SkipIfRunning
@@ -2947,6 +3005,52 @@ type AppWebhook struct {
 	Enabled      bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// ManagedRealtimeEndpoint is the durable control-plane description of one
+// managed WebSocket endpoint (ADR-156). The realtime daemon owns live sockets;
+// apid owns this row and synchronizes it to the daemon. Credentials are age
+// sealed and are never returned by the API.
+type ManagedRealtimeEndpoint struct {
+	ID                      string
+	AppID                   string
+	AccountID               string
+	CallbackURL             string
+	ConnectPath             string
+	MessagePath             string
+	DisconnectPath          string
+	CallbackAuthTokenSealed []byte
+	AuthTokenSealed         []byte
+	Enabled                 bool
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+type UpdateManagedRealtimeEndpointParams struct {
+	CallbackURL             *string
+	ConnectPath             *string
+	MessagePath             *string
+	DisconnectPath          *string
+	CallbackAuthTokenSealed *[]byte
+	AuthTokenSealed         *[]byte
+	Enabled                 *bool
+}
+
+type ManagedRealtimeEndpointQuotaScope string
+
+const (
+	ManagedRealtimeEndpointQuotaScopeApp     ManagedRealtimeEndpointQuotaScope = "app"
+	ManagedRealtimeEndpointQuotaScopeAccount ManagedRealtimeEndpointQuotaScope = "account"
+)
+
+type ManagedRealtimeEndpointQuotaError struct {
+	Scope    ManagedRealtimeEndpointQuotaScope
+	Limit    int
+	Observed int
+}
+
+func (e *ManagedRealtimeEndpointQuotaError) Error() string {
+	return fmt.Sprintf("state: managed realtime endpoint quota exceeded (scope=%s, limit=%d, observed=%d)", e.Scope, e.Limit, e.Observed)
 }
 
 // AppWebhookDelivery is one (event × target) ledger row. The
@@ -3888,6 +3992,19 @@ func (l NodeLifecycle) IsAdmitting() bool {
 	return l == NodeLifecycleActive || l == NodeLifecycleRecovering
 }
 
+// UsesRecoveryController reports whether the durable recovery runner owns
+// live instance transitions for this lifecycle. The dead-node billing
+// reconciler must not terminalize app instances while a handoff is in flight.
+func (l NodeLifecycle) UsesRecoveryController() bool {
+	switch l {
+	case NodeLifecycleDraining, NodeLifecycleForceDraining,
+		NodeLifecycleUnavailable, NodeLifecycleRecovering:
+		return true
+	default:
+		return false
+	}
+}
+
 // RecoveryInstance is the per-instance view returned by
 // InstanceListByNodeForRecovery — the minimum tuple the arbiter
 // needs to make a live-migrate-vs-recreate decision. Wider context
@@ -3899,6 +4016,7 @@ type RecoveryInstance struct {
 	State        string // 'running' | 'cold_booting' | 'waking' | ...
 	AppID        string
 	DeploymentID string
+	Kind         string
 }
 
 // ComputeNodeHeartbeat is one row in the append-only
@@ -3931,6 +4049,15 @@ type ComputeNodeHeartbeat struct {
 	// scratchpad at heartbeat-mint time (PR #4). Nil when the row
 	// predates the migration or vmmd hadn't sampled yet.
 	DiskUsedBytes *int64
+}
+
+// ComputeNodeHeartbeatMaintenanceResult reports one bounded raw-history
+// maintenance transaction. Deleted raw samples have already been folded into
+// durable hourly buckets when this value is returned.
+type ComputeNodeHeartbeatMaintenanceResult struct {
+	Deleted       int64
+	RollupBuckets int64
+	OldestRawAt   time.Time
 }
 
 // ComputeNodeHeartbeatStats is the read shape for LatestHeartbeatStats
@@ -4873,9 +5000,10 @@ type Snapshot struct {
 	// test fixtures that bypass the storage contract. Wake sends
 	// StorageKey on the wire; vmmd resolves it through the
 	// configured StorageBackend.
-	StorageKey string
-	Stale      bool
-	CreatedAt  time.Time
+	StorageKey    string
+	Stale         bool
+	DeletePending bool
+	CreatedAt     time.Time
 }
 
 // Snapshot tier constants (issue #470 / ADR-055). Use these rather
@@ -4923,7 +5051,11 @@ type SnapshotForGC struct {
 	Tier       string
 	StorageKey string
 	Stale      bool
-	CreatedAt  time.Time
+	// DeletePending distinguishes a GC tombstone from an ordinary stale
+	// snapshot retained for Firecracker or base-image rollback. Only imaged's
+	// artifact GC sets it before attempting remote deletion.
+	DeletePending bool
+	CreatedAt     time.Time
 	// AppWarmSnapshotEnabled (issue #470 / PR C / ADR-072) projects
 	// apps.warm_snapshot_enabled from the JOIN so the GC policy can
 	// apply the two-tier rollback window only on apps that opted in to warm.
@@ -5401,6 +5533,47 @@ type Project struct {
 	ScanSource       ProjectScanSource
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+}
+
+// ProjectEnvironment is a durable, account-scoped environment registry entry.
+// It intentionally does not own workloads yet; that attachment is a later
+// promotion step. The registry makes environment identity and protection
+// policy explicit without changing deploy or routing behavior.
+type ProjectEnvironment struct {
+	ID        string
+	AccountID string
+	ProjectID string
+	Slug      string
+	Protected bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// ProjectEnvironmentApproval binds a short-lived approval credential to the
+// exact plan and environment it authorizes.
+type ProjectEnvironmentApproval struct {
+	ID                string
+	AccountID         string
+	ProjectSlug       string
+	EnvironmentSlug   string
+	PlanTokenHash     string
+	ApprovalTokenHash string
+	ExpiresAt         time.Time
+	CreatedAt         time.Time
+}
+
+// ProjectEnvironmentConfig is one immutable, canonical non-secret
+// configuration snapshot for a project environment. Version zero represents
+// the implicit empty configuration before the first write and is not stored.
+type ProjectEnvironmentConfig struct {
+	ID              string
+	AccountID       string
+	ProjectID       string
+	EnvironmentSlug string
+	Version         int64
+	ConfigHash      string
+	Values          json.RawMessage
+	CreatedAt       time.Time
 }
 
 // IsZero reports whether this is an unset Project (Go zero value).
@@ -6730,6 +6903,7 @@ type StatusIncident struct {
 	ScheduledStartAt *time.Time
 	ScheduledEndAt   *time.Time
 	UpdatedAt        time.Time
+	EditedAt         *time.Time
 	Updates          []StatusIncidentUpdate
 }
 
@@ -6738,6 +6912,9 @@ type StatusIncidentUpdate struct {
 	State          publicstatus.Lifecycle
 	Message        string
 	At             time.Time
+	EditedAt       *time.Time
+	Impact         *publicstatus.State
+	Components     []publicstatus.Component
 	Actor          string
 	IdempotencyKey string
 }
@@ -6762,6 +6939,20 @@ type StatusEventUpdateInput struct {
 	State          publicstatus.Lifecycle
 	Message        string
 	At             time.Time
+	Impact         *publicstatus.State
+	Components     []publicstatus.Component
+}
+
+type StatusEventTitleEditInput struct {
+	Actor string
+	Title string
+	At    time.Time
+}
+
+type StatusUpdateMessageEditInput struct {
+	Actor   string
+	Message string
+	At      time.Time
 }
 
 type StatusEventListOptions struct {
@@ -6821,10 +7012,11 @@ func legacyIncidentTitle(message string) string {
 	return title
 }
 
-// StatusUptimeBucket is the daily terminal-invocation rollup used by the
-// public status page. It deliberately lives in state so both PgStore and
-// MemStore can expose the same optional read seam without widening Store's
-// large compatibility interface.
+// StatusUptimeBucket is the daily platform-observation rollup used by the
+// legacy public status page. Successful and Total count complete five-minute
+// intervals, not customer workload outcomes. It deliberately lives in state
+// so both PgStore and MemStore can expose the same optional read seam without
+// widening Store's large compatibility interface.
 type StatusUptimeBucket struct {
 	Day        time.Time
 	Successful int64

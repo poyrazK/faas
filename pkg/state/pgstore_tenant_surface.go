@@ -45,6 +45,11 @@ const tenantHostnameCols = `id, surface_id, hostname, challenge_token,
 	coalesce(last_check_at, 'epoch'::timestamptz),
 	coalesce(last_error, '')`
 
+const tenantHostnameColsQ = `h.id, h.surface_id, h.hostname, h.challenge_token,
+	coalesce(h.verified_at, 'epoch'::timestamptz),
+	coalesce(h.last_check_at, 'epoch'::timestamptz),
+	coalesce(h.last_error, '')`
+
 // scanTenantSurface is the single row helper for tenant_surfaces.
 // Defense-in-depth: the closed CHECK constraint on cert_kind / status
 // is the SQL-side gate, but a row that bypassed the CHECK (manual fix,
@@ -647,7 +652,7 @@ func (s *PgStore) DeleteTenantHostname(ctx context.Context, hostname string) err
 // delete flips status, not the hostname row.
 func (s *PgStore) GetTenantHostnameByName(ctx context.Context, hostname string) (TenantHostname, error) {
 	row := s.pool.QueryRow(ctx,
-		`select `+tenantHostnameCols+` from tenant_hostnames h
+		`select `+tenantHostnameColsQ+` from tenant_hostnames h
 		    join tenant_surfaces s on s.id = h.surface_id
 		  where h.hostname = $1
 		    and s.status <> 'deleted'`,

@@ -7,8 +7,8 @@
 // produced app layer to imaged via the existing snapshot_prime handshake.
 //
 // Build slots (CLAUDE.md "Builder slots"):
-//   - 1 guaranteed slot — lives in faas-cp.slice.
-//   - 1 opportunistic slot — only when tenant residency < 60%.
+//   - 1 slot — lives in the 5 GiB faas-cp-build.slice parent fence.
+//   - Local overcommit is disabled; another compute node adds capacity.
 //
 // The VM spawn itself is `//go:build metal`; this file holds the pure-Go
 // orchestration so the slot/cache/log/detect logic is unit-tested without
@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,9 +42,9 @@ type Notifier interface {
 }
 
 // ResidencyProbe reports live tenant-RAM residency. schedd's Ledger is the
-// authoritative source; builderd consults it before allocating the
-// opportunistic 2nd slot. A nil probe is treated as "no extra slot" — safer
-// default than "always allow".
+// authoritative source; builderd retains this probe for admission telemetry
+// and future capacity-aware placement. A nil probe is safe for the current
+// single-slot allocator.
 type ResidencyProbe interface {
 	ResidentMB() int
 }
@@ -60,7 +61,7 @@ type ResidencyProbe interface {
 var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in unit tests")
 
 // ErrNoSlot is returned when the slot allocator (DecideSlot) rules
-// the build out — the 1 + 1 opportunistic builder budget is fully
+// the build out — the single local builder slot is fully
 // consumed by other in-flight builds (spec §14). processClaimedBuild
 // REQUEUES the row (preserving FIFO position) before returning
 // ErrNoSlot, so the durability-net worker (cmd/builderd/main.go::workerLoop)
@@ -98,7 +99,7 @@ type Config struct {
 	// in New — the legacy instant-fail behaviour is gone.
 	SourceWaitTimeout time.Duration `toml:"source_wait_timeout"`
 	// ResidentProbeSocket is where builderd reaches schedd's residency
-	// reporting. Empty disables the opportunistic 2nd slot.
+	// reporting. Empty uses the safe no-headroom sentinel.
 	ResidentProbeSocket string `toml:"resident_probe_socket"`
 	// MetricsAddr is the bind address for /metrics. Empty disables it.
 	MetricsAddr string `toml:"metrics_addr"`
@@ -160,10 +161,9 @@ type Builderd struct {
 	// ResidencyProbe rig. nil falls back to DecideSlot(b.resid, …)
 	// inside processClaimedBuild.
 	slotDecide func(ResidencyProbe, int) SlotDecision
-	// slotMu and activeSlots enforce the process-wide 1 guaranteed +
-	// 1 opportunistic builder budget. DecideSlot only evaluates tenant
-	// residency; it cannot account for another build racing through the
-	// LISTEN path or the durable worker.
+	// slotMu and activeSlots enforce the process-wide single builder budget
+	// required by the 5 GiB production parent cgroup. DecideSlot still reports
+	// future opportunistic eligibility but cannot bypass this host fence.
 	slotMu      sync.Mutex
 	activeSlots int
 	// sourceStorage is the optional remote source handoff used by split-box
@@ -298,7 +298,7 @@ func (b *Builderd) prepareWarmBuilder(ctx context.Context, slot SlotDecision, re
 		b.log.Warn("builderd: warm builder disabled; lifecycle start failed", "err", err)
 		return nil, "", WarmSnapshot{}, false
 	}
-	if snapshot.StorageKey != "" && (result != WarmRestoreHit || snapshot.ScopeKey == "" || snapshot.ScopeKey != req.WarmScopeKey) {
+	if snapshot.hasCleanupTarget() && (result != WarmRestoreHit || snapshot.ScopeKey == "" || snapshot.ScopeKey != req.WarmScopeKey) {
 		// cleanupWarmSnapshot logs failures; this path must continue with a cold builder.
 		_ = b.cleanupWarmSnapshot(ctx, warmVM, snapshot)
 		snapshot = WarmSnapshot{}
@@ -320,7 +320,7 @@ func (b *Builderd) cleanupWarmSnapshot(ctx context.Context, warmVM WarmVM, snaps
 }
 
 func (b *Builderd) cleanupWarmSnapshotLocked(ctx context.Context, warmVM WarmVM, snapshot WarmSnapshot) error {
-	if warmVM == nil || snapshot.StorageKey == "" {
+	if warmVM == nil || !snapshot.hasCleanupTarget() {
 		return nil
 	}
 	if err := warmVM.DeleteWarmSnapshot(context.WithoutCancel(ctx), snapshot); err != nil {
@@ -544,20 +544,34 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 	return b.processClaimedBuild(ctx, build)
 }
 
-// stopIfBuildCancelled rejects all terminal or unobservable claims. The final
-// CompleteBuild transaction also fences the claim's started_at, closing the
+// stopIfBuildCancelled rejects claims that are no longer running. If the
+// status lookup is unavailable, recover the claim before returning. This
+// prevents a transient store error from leaving it running until the
+// stuck-build reaper fires. The final CompleteBuild transaction also fences
+// the claim's started_at, closing the
 // check-to-publication race with cancellation, reaping, and requeueing.
-func (b *Builderd) stopIfBuildCancelled(ctx context.Context, buildID string) bool {
-	current, err := b.store.BuildByID(ctx, buildID)
+func (b *Builderd) stopIfBuildCancelled(ctx context.Context, claim state.Build) bool {
+	current, err := b.store.BuildByID(ctx, claim.ID)
 	if err != nil {
-		b.log.Warn("builderd: cannot verify running build", "build", buildID, "err", err)
+		b.log.Warn("builderd: cannot verify running build", "build", claim.ID, "err", err)
+		b.recoverClaimAfterLookupFailure(ctx, claim, "verify running build", err)
 		return true
 	}
 	if current.Status == state.BuildRunning {
 		return false
 	}
-	b.emitBuildLog(ctx, buildID, "build no longer running — stopping\n")
+	b.emitBuildLog(ctx, claim.ID, "build no longer running — stopping\n")
 	return true
+}
+
+// requeueClaim returns a worker-owned claim to the durable queue. Production
+// stores implement the claim-fenced capability; the legacy fallback preserves
+// compatibility with older state.Store implementations.
+func (b *Builderd) requeueClaim(ctx context.Context, claim state.Build) error {
+	if fenced, ok := b.store.(state.BuildClaimRecoveryStore); ok {
+		return fenced.RequeueBuildIfClaim(ctx, claim)
+	}
+	return b.store.RequeueBuild(ctx, claim.ID)
 }
 
 // processClaimedBuild runs the canonical pipeline for a build that
@@ -593,7 +607,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.recoverClaimAfterLookupFailure(ctx, build, "load account", acctErr)
 		return BuildResult{}, fmt.Errorf("builderd: load account: %w", acctErr)
 	}
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 	lim, known := api.LimitsFor(acct.Plan)
@@ -685,7 +699,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			return BuildResult{}, err
 		}
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source storage unavailable — requeued (%v)\n", err))
-		if rerr := b.store.RequeueBuild(ctx, build.ID); rerr != nil {
+		if rerr := b.requeueClaim(ctx, build); rerr != nil {
 			b.log.Warn("builderd: requeue on source-storage failure", "build", build.ID, "err", rerr)
 		}
 		return BuildResult{}, err
@@ -697,13 +711,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 				return BuildResult{}, err
 			}
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source spool lag — requeued (%v)\n", err))
-			if rerr := b.store.RequeueBuild(ctx, build.ID); rerr != nil {
+			if rerr := b.requeueClaim(ctx, build); rerr != nil {
 				b.log.Warn("builderd: requeue on source-lag", "build", build.ID, "err", rerr)
 			}
 			return BuildResult{}, err
 		}
 	}
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 	if _, err := validateSourceFile(dep.SourcePath, b.cfg.SourceSpoolDir, validationBytes, maxSourceBytes); err != nil {
@@ -738,6 +752,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if ver != "" {
 		b.emitBuildLog(ctx, build.ID, "inferred source-declared version: "+ver+"\n")
 	}
+	dockerfilePath := app.Manifest.BuildDockerfile
+	if persistedPath, ok := persistedDockerfilePath(dep); ok {
+		dockerfilePath = persistedPath
+	}
 
 	// Railpack must build FROM the same immutable runtime base that imaged
 	// will use when it materialises the deployment layer. Without this handoff
@@ -753,12 +771,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// The cache recipe includes the selected member as well as the complete
 	// source context. Sibling apps can share archive bytes without sharing
 	// their produced artifact. Keep srcHash itself for source provenance.
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 	recipe := BuildCacheRecipe{
 		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
-		Framework: fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
+		DockerfilePath: dockerfilePath,
+		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
+		Function: app.Type == state.AppTypeFunction,
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
 	if cacheAvailable {
@@ -772,7 +792,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	cached, cacheOutcome, cacheHit := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID)
 	b.observeCacheOutcome(ctx, build.ID, cacheOutcome, cacheKeySHA256)
 	if cacheHit {
-		if b.stopIfBuildCancelled(ctx, build.ID) {
+		if b.stopIfBuildCancelled(ctx, build) {
 			b.cache.ReleaseLease(cached.Path)
 			return BuildResult{}, nil
 		}
@@ -810,7 +830,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// running state with no live owner; the worker will
 		// never see it again. PR-C follow-up: stuck-running
 		// sweep (ADR-031).
-		if err := b.store.RequeueBuild(ctx, build.ID); err != nil {
+		if err := b.requeueClaim(ctx, build); err != nil {
 			b.log.Warn("builderd: requeue on no-slot", "build", build.ID, "err", err)
 		}
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("no slot (%s) — requeued\n", slot.Reason))
@@ -818,7 +838,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	defer releaseSlot()
 	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("allocated builder slot (%s)\n", slot.Label))
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 
@@ -851,9 +871,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DeploymentID:       dep.ID,
 		SourcePath:         dep.SourcePath,
 		SourceRoot:         dep.SourceRoot,
+		DockerfilePath:     dockerfilePath,
 		Framework:          fw,
 		Runtime:            runtimeName,
 		RuntimeBaseRef:     runtimeBaseRef,
+		Function:           app.Type == state.AppTypeFunction,
 		DependencyCacheKey: dependencyCacheKey,
 		LogPath:            dep.LogPath,
 		RAMMB:              api.BuildVMRAMMB,
@@ -885,14 +907,18 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if warmStarted && warmResult == WarmRestoreHit {
 		handle, err = warmVM.RestoreWarmBuilder(vmCtx, vmReq, warmSnapshot)
 		if err != nil {
-			// The lifecycle found a reusable snapshot, but the transport
-			// rejected it. This build takes the cold fallback path, so the
-			// customer-visible restore outcome is a miss.
-			b.observeWarmRestore(WarmRestoreMiss)
-			b.log.Warn("builderd: warm restore failed; retrying cold", "build", build.ID, "err", err)
-			// cleanupWarmSnapshot logs failures; the cold retry remains authoritative.
-			_ = b.cleanupWarmSnapshot(ctx, warmVM, warmSnapshot)
-			handle, err = b.vm.Spawn(vmCtx, vmReq)
+			var oomErr *builderSliceOOMError
+			if !errors.As(err, &oomErr) {
+				// The lifecycle found a reusable snapshot, but the transport
+				// rejected it. This build takes the cold fallback path, so the
+				// customer-visible restore outcome is a miss. A parent-cgroup OOM
+				// is terminal: retrying immediately can cross the same fence again.
+				b.observeWarmRestore(WarmRestoreMiss)
+				b.log.Warn("builderd: warm restore failed; retrying cold", "build", build.ID, "err", err)
+				// cleanupWarmSnapshot logs failures; the cold retry remains authoritative.
+				_ = b.cleanupWarmSnapshot(ctx, warmVM, warmSnapshot)
+				handle, err = b.vm.Spawn(vmCtx, vmReq)
+			}
 		} else {
 			b.observeWarmRestore(WarmRestoreHit)
 			// A successful restore has consumed the old memory/vmstate pair.
@@ -908,6 +934,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		handle, err = b.vm.Spawn(vmCtx, vmReq)
 	}
 	if err != nil {
+		var oomErr *builderSliceOOMError
+		if errors.As(err, &oomErr) {
+			b.ops.ObserveBuilderSliceOOMKills(oomErr.Delta)
+			b.log.Error("builderd: parent builder slice OOM-killed build during spawn",
+				"build", build.ID,
+				"deployment", build.DeploymentID,
+				"node", b.builderNodeID,
+				"instance", handle.Instance,
+				"oom_kills", oomErr.Delta)
+			b.markFailedEx(ctx, build, state.FailureOOM, api.CodeBuildOOM, "", err.Error(), buildStart)
+			cancel()
+			return BuildResult{}, err
+		}
 		// Translate a context-deadline to timeout-class; everything else is infra.
 		fc := state.FailureInfra
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -995,7 +1034,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
 	}
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if out.BuilderSliceOOMKills > 0 {
+		b.ops.ObserveBuilderSliceOOMKills(out.BuilderSliceOOMKills)
+		b.log.Error("builderd: parent builder slice OOM-killed build",
+			"build", build.ID,
+			"deployment", build.DeploymentID,
+			"node", b.builderNodeID,
+			"instance", out.InstanceID,
+			"oom_kills", out.BuilderSliceOOMKills)
+	}
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 	if out.DependencyCacheStoreError != "" {
@@ -1003,6 +1051,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next sync may reinstall dependencies\n")
 	} else if out.DependencyCacheStored {
 		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next developer sync\n")
+	}
+	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
+		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")
 	}
 	if out.ExitCode != 0 {
 		// Prefer the failure class the guest-init captured in build-done.json
@@ -1021,11 +1072,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		case "FailureTimeout":
 			fc = state.FailureTimeout
 		case "":
-			switch out.ExitCode {
-			case 137:
+			switch {
+			case out.ExitCode == 137:
 				fc = state.FailureOOM
-			case 124:
+			case out.ExitCode == 124:
 				fc = state.FailureTimeout
+			case out.ExitCode < 0:
+				// No exit status: the VM never ran, so the customer's source
+				// was never evaluated. Mirrors classifyBuildFailure; see the
+				// note there (#2577).
+				fc = state.FailureInfra
 			}
 		}
 		// Error-explanations cluster (spec §6.4 amendment 1): when
@@ -1062,7 +1118,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureUserError, msg, buildStart)
 		return BuildResult{}, errors.New("builderd: " + msg)
 	}
-	if b.stopIfBuildCancelled(ctx, build.ID) {
+	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
 	if warmStarted {
@@ -1433,7 +1489,7 @@ func (b *Builderd) requeueClaimAfterCancellation(ctx context.Context, claim stat
 	if current.Status != state.BuildRunning || !current.StartedAt.Equal(claim.StartedAt) {
 		return
 	}
-	if err := b.store.RequeueBuild(recoveryCtx, claim.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+	if err := b.requeueClaim(recoveryCtx, claim); err != nil && !errors.Is(err, state.ErrNotFound) {
 		b.log.Warn("builderd: requeue cancelled claim", "build", claim.ID, "err", err)
 		return
 	}
@@ -1461,7 +1517,7 @@ func (b *Builderd) recoverClaimAfterLookupFailure(ctx context.Context, claim sta
 		return
 	}
 	if err := retryStateMutation(ctx, func() error {
-		return b.store.RequeueBuild(ctx, claim.ID)
+		return b.requeueClaim(ctx, claim)
 	}); err != nil && !errors.Is(err, state.ErrNotFound) {
 		b.log.Warn("builderd: requeue after claim lookup failure", "build", claim.ID, "phase", phase, "err", err)
 	}
@@ -1497,12 +1553,18 @@ func retryStateMutation(ctx context.Context, op func() error) error {
 	return err
 }
 
-// emitBuildLog appends a line to the build log file (lazily opened) and fans
-// out a build_log notification so any SSE subscriber sees it (UX spec §2.4).
-// Best-effort: a failure here is logged but never blocks the build.
+// emitBuildLog persists a line in the control-plane database, mirrors it to
+// the node-local bounded file, and fans out a notification for live SSE
+// subscribers. The database row is the durable cross-host source of truth;
+// builderd and apid do not share a filesystem in production.
 func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
+	if build, err := b.store.BuildByID(ctx, buildID); err != nil {
+		b.log.Warn("builderd: resolve durable build log", "build", buildID, "err", err)
+	} else if _, err := b.store.AppendDeploymentLog(ctx, build.DeploymentID, "build", line); err != nil {
+		b.log.Warn("builderd: persist build log", "build", buildID, "deployment", build.DeploymentID, "err", err)
+	}
 	if err := appendLogBounded(ctx, b.store, buildID, line, b.cfg.SourceSpoolDir, b.cfg.BuildLogMaxBytes); err != nil {
-		b.log.Warn("builderd: append log", "build", buildID, "err", err)
+		b.log.Warn("builderd: append node-local log", "build", buildID, "err", err)
 	}
 	if b.notif == nil {
 		return
@@ -1511,6 +1573,19 @@ func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
 	if err := b.notif.Notify(ctx, db.NotifyBuildLog, payload); err != nil {
 		b.log.Warn("builderd: notify log", "build", buildID, "err", err)
 	}
+}
+
+// boundedGuestBuildLogTail keeps the diagnostic recovered from build-done in
+// the durable customer build log while staying below PostgreSQL NOTIFY's 8 KiB
+// payload ceiling after JSON escaping. The guest already bounds its source
+// tail; this tighter transport cap retains the newest, usually actionable,
+// Railpack or BuildKit lines.
+func boundedGuestBuildLogTail(raw string) string {
+	const maxBytes = 3 * 1024
+	if len(raw) > maxBytes {
+		raw = raw[len(raw)-maxBytes:]
+	}
+	return strings.TrimSpace(strings.ToValidUTF8(raw, "\uFFFD"))
 }
 
 // materializeSource preserves the package-local helper used by older tests;

@@ -146,6 +146,11 @@ func NewArbiter(lm MigrationDispatcher, rp RecreateDispatcher) *Arbiter {
 // admit a replacement on a healthy node. Healthy draining/recovering nodes
 // retain retry semantics because their source VM is still trusted.
 func (a *Arbiter) Decide(node state.ComputeNode, instance state.RecoveryInstance) Decision {
+	// Job-task instances intentionally have no app/deployment row. They cannot
+	// use the app snapshot handoff; their lease and stuck-task reaper own retry.
+	if instance.Kind == "job_task" {
+		return DecisionNone
+	}
 	instanceState := strings.ToLower(instance.State)
 	switch instanceState {
 	case "parked", "failed", "terminated":

@@ -39,7 +39,10 @@ type Loop struct {
 	cpu    CPUSource
 	parker ScheddParker
 	pusher billing.Provider
-	notif  Notifier
+	// billingDisabled keeps sampling, quota enforcement, and the billing
+	// health heartbeat active while provider delivery is intentionally paused.
+	billingDisabled bool
+	notif           Notifier
 	// mailer is the customer-facing email sender (spec §171 "dunning +
 	// quota mails reference email"). Shared with the dunning timer —
 	// both loops hand off the same Sender via DunningSender's local
@@ -168,6 +171,21 @@ func (l *Loop) WithEgress(egress EgressSource) *Loop {
 	return l
 }
 
+// WithBillingEnabled applies the deployment billing switch. Disabled ticks
+// still record a successful heartbeat so /healthz remains truthful and green.
+func (l *Loop) WithBillingEnabled(enabled bool) *Loop {
+	l.billingDisabled = !enabled
+	return l
+}
+
+func (l *Loop) pushBillingOnce(ctx context.Context, pusher *Pusher) error {
+	if l.billingDisabled {
+		return nil
+	}
+	_, err := pusher.PushPending(ctx, l.cfg.BillingLookback)
+	return err
+}
+
 // WithProbe attaches the ADR-098 PR-C connection-aware probe
 // driver. cmd/meterd wires it unconditionally so the durable
 // data-placement flag can enable it without a restart; the probe
@@ -292,8 +310,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	go func() { errc <- l.runQuotaTicks(ctx) }()
 	go func() {
 		errc <- l.runTicks(ctx, l.cfg.StripeInterval, func(c context.Context) error {
-			_, err := pusher.PushPending(c, l.cfg.BillingLookback)
-			return err
+			return l.pushBillingOnce(c, pusher)
 		}, "stripe")
 	}()
 	if l.dunning != nil {

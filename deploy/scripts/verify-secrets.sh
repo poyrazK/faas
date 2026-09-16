@@ -74,6 +74,24 @@ check "sealed.env does NOT contain FAAS_SESSION_KEY" bash -c '
     && ! grep -q "^FAAS_SESSION_KEY=" /etc/faas/sealed.env
 '
 
+# Production dev-bootstrap variables are forbidden even when their values are
+# empty. Match and report names only; credential values must never enter CI,
+# SSH, or operator logs.
+check "sealed.env does NOT contain dev-only auth/bootstrap variables" bash -c '
+  [[ -f /etc/faas/sealed.env ]] \
+    && ! grep -qE "^FAAS_(DEV|DEV_TOKEN)=" /etc/faas/sealed.env
+'
+
+# Report the synthetic-principal shape without reading key hashes. The data
+# migration revokes/suspends historical rows; this check prevents a later
+# operator or restore from silently reintroducing them.
+dev_principal_counts="$(sudo -u postgres psql -X -A -t -F '|' -d faas -c \
+  "select (select count(*) from accounts where email = 'dev@local'), (select count(*) from accounts where email = 'dev@local' and status = 'active'), (select count(*) from api_keys k join accounts a on a.id = k.account_id where a.email = 'dev@local' and k.status in ('active','grace'))" \
+  2>/dev/null || true)"
+IFS='|' read -r dev_accounts dev_active_accounts dev_usable_keys <<< "$dev_principal_counts"
+echo "  dev@local audit: accounts=${dev_accounts:-unknown}, active_accounts=${dev_active_accounts:-unknown}, usable_keys=${dev_usable_keys:-unknown}"
+check "database has no usable dev@local principal" test "${dev_active_accounts:-}|${dev_usable_keys:-}" = "0|0"
+
 # 3. faas-apid's environment carries FAAS_SESSION_KEY (systemd
 #    LoadCredential → Environment= substitution). The shape of the
 #    value (PATH-shaped: starts with /run/credentials/, OR
@@ -113,7 +131,10 @@ check "faas-apid.service loads the host HMAC credential" bash -c '
   grep -q "^LoadCredential=faas_host_hmac_key:" /etc/systemd/system/faas-apid.service
 '
 
-# 6. Public-release billing provider mode.
+# 6. Public-release billing provider mode. The systemd drop-in is the
+# authoritative source because it overrides sealed.env for both apid and
+# meterd. Billing-disabled beta releases intentionally retain provider
+# configuration for later activation without requiring those credentials now.
 # Polar is the production billing provider, so
 # FAAS_POLAR_ACCESS_TOKEN is mandatory on every PRODUCTION-tagged node.
 # The Stripe legacy opt-in (FAAS_BILLING_PROVIDER=stripe) still boots;
@@ -130,13 +151,55 @@ check "faas-apid.service loads the host HMAC credential" bash -c '
 # explicitly set FAAS_BILLING_PROVIDER=stripe when it does not have a
 # Polar account, or provide complete Polar sandbox credentials. The
 # CLAUDE.md local loop does not run this script against Lima guests.
-if [[ -f /etc/faas/sealed.env ]]; then
-  if grep -q "^FAAS_BILLING_PROVIDER=stripe" /etc/faas/sealed.env; then
+effective_billing_mode="$(
+  systemctl show faas-apid -p Environment --value 2>/dev/null \
+    | tr ' ' '\n' \
+    | sed -n 's/^FAAS_BILLING_MODE=//p' \
+    | tail -n 1
+)"
+if [[ -z "${effective_billing_mode}" ]] && [[ -f /etc/faas/sealed.env ]]; then
+  effective_billing_mode="$(sed -n 's/^FAAS_BILLING_MODE=//p' /etc/faas/sealed.env | tail -n 1)"
+fi
+effective_billing_mode="${effective_billing_mode:-live}"
+
+effective_billing_provider="$(
+  systemctl show faas-apid -p Environment --value 2>/dev/null \
+    | tr ' ' '\n' \
+    | sed -n 's/^FAAS_BILLING_PROVIDER=//p' \
+    | tail -n 1
+)"
+if [[ -z "${effective_billing_provider}" ]] && [[ -f /etc/faas/sealed.env ]]; then
+  effective_billing_provider="$(sed -n 's/^FAAS_BILLING_PROVIDER=//p' /etc/faas/sealed.env | tail -n 1)"
+fi
+if [[ -z "${effective_billing_provider}" ]] && [[ -f /etc/faas/apid.toml ]]; then
+  effective_billing_provider="$(awk '
+    /^[[:space:]]*\[billing\][[:space:]]*$/ { in_billing=1; next }
+    /^[[:space:]]*\[/ { in_billing=0 }
+    in_billing && /^[[:space:]]*provider[[:space:]]*=/ {
+      value=$0
+      sub(/^[^=]*=[[:space:]]*/, "", value)
+      sub(/[[:space:]]*#.*/, "", value)
+      gsub(/^[[:space:]\"]+|[[:space:]\"]+$/, "", value)
+      print value
+      exit
+    }
+  ' /etc/faas/apid.toml)"
+fi
+effective_billing_provider="${effective_billing_provider:-polar}"
+
+check "effective billing mode is supported" bash -c \
+  '[[ "$1" == "disabled" || "$1" == "live" ]]' _ "${effective_billing_mode}"
+check "effective billing provider is supported" bash -c \
+  '[[ "$1" == "polar" || "$1" == "paddle" || "$1" == "stripe" ]]' _ "${effective_billing_provider}"
+
+if [[ "${effective_billing_mode}" == "disabled" ]]; then
+  echo "  billing provider credential checks skipped (billing disabled)"
+elif [[ -f /etc/faas/sealed.env ]]; then
+  if [[ "${effective_billing_provider}" == "stripe" ]]; then
     # Legacy opt-in path. Provider checks are skipped because the
     # node-level operator has explicitly selected the rollback surface.
     :
-  elif grep -q "^FAAS_BILLING_PROVIDER=polar" /etc/faas/sealed.env \
-    || ! grep -q "^FAAS_BILLING_PROVIDER=" /etc/faas/sealed.env; then
+  elif [[ "${effective_billing_provider}" == "polar" ]]; then
     check "sealed.env has FAAS_POLAR_ACCESS_TOKEN" bash -c '
       grep -q "^FAAS_POLAR_ACCESS_TOKEN=." /etc/faas/sealed.env
     '
@@ -154,7 +217,7 @@ if [[ -f /etc/faas/sealed.env ]]; then
           || grep -qsE \"^[[:space:]]*${polar_product}_product_id[[:space:]]*=[[:space:]]+\\\"[^\\\"]+\\\"\" /etc/faas/apid.toml /etc/faas/meterd.toml 2>/dev/null
       "
     done
-  elif grep -q "^FAAS_BILLING_PROVIDER=paddle" /etc/faas/sealed.env; then
+  elif [[ "${effective_billing_provider}" == "paddle" ]]; then
     check "sealed.env has FAAS_PADDLE_API_KEY" bash -c '
       grep -q "^FAAS_PADDLE_API_KEY=pdl_" /etc/faas/sealed.env
     '

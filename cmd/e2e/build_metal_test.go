@@ -112,10 +112,32 @@ func TestBuildMetal(t *testing.T) {
 	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
 	h := e2etest.Start(t, pool, e2etest.All)
 
-	// One account, three apps (one per framework). Each subtest mints its
-	// own app so deploys don't share state. We seed the account once at
-	// the top because SeedAccount is idempotent and ~50 ms.
-	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	// One account, one app per subtest. Each subtest mints its own app so
+	// deploys don't share state. We seed the account once at the top because
+	// SeedAccount is idempotent and ~50 ms.
+	//
+	// The plan must allow every one of those apps. Hobby's DeployedApps limit
+	// is 5 and there are 6 subtests, so the last one died on
+	//
+	//	create app goalpapp: status=403
+	//
+	// in 0.01 s — after the five real builds ahead of it had already spent
+	// ~15 minutes. It read as a build failure in the slowest phase of the
+	// gate; it was an account that had run out of app slots.
+	//
+	// The plan is not load-bearing here: every assertion is about the build
+	// pipeline reaching Live, which is plan-independent. Pro is the smallest
+	// plan that fits.
+	const buildMetalApps = 6 // keep in step with the t.Run list below
+	plan := api.PlanPro
+	if limits, ok := api.LimitsFor(plan); !ok {
+		t.Fatalf("no limits for plan %v", plan)
+	} else if limits.DeployedApps < buildMetalApps {
+		t.Fatalf("plan %v allows %d deployed apps but this test builds %d; "+
+			"the last create would 403 after the earlier builds had already run",
+			plan, limits.DeployedApps, buildMetalApps)
+	}
+	key := h.SeedAccount(context.Background(), plan)
 
 	t.Run("node-tarball", func(t *testing.T) {
 		result := runBuildSubtest(t, h, pool, key, "nodeapp", "node-app", NodeFixture(t), false)
@@ -207,7 +229,19 @@ func TestBuildMetal(t *testing.T) {
 func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug, _ string, sourceTar []byte, isDockerfile bool) buildResult {
 	t.Helper()
 	store := state.NewPgStore(pool)
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	// Derived from the platform's own budget, never a smaller constant. The
+	// build VM is granted api.BuildTimeoutSeconds (900 s, "cold rootless
+	// Railpack export needs headroom"), so a test that gives up at 6 minutes
+	// fails builds that are entirely within spec. It did: on a cold acceptance
+	// node every go124 subtest died at exactly 360.00 s with the deployment
+	// still `building`, while the guest console showed buildkit healthy and
+	// pulling the Railpack frontend from ghcr.io.
+	//
+	// The poll must outlast the platform cap so the BUILD's own timeout fires
+	// first — then the failure is reported as a failed build with its log,
+	// rather than as a test deadline with no diagnosis.
+	buildPoll := api.BuildTimeoutSeconds*time.Second + time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), buildPoll+5*time.Minute)
 	defer cancel()
 
 	public := false
@@ -223,13 +257,13 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, 
 	depID, buildID := parseQueuedDeployment(t, depBody)
 
 	// build_queued -> builderd picks up -> vm.Spawn -> in-VM build ->
-	// OCI image produced -> UpdateBuildStatus(succeeded). The whole round
-	// trip is ~60-180 s on Lima (buildctl cold cache; the dockerfile path
-	// is faster because FROM busybox is in the builder VM). 6 min is the
-	// outer deadline; the poll loop uses 5 min so a hung daemon still
-	// leaves us room to report the last build state cleanly.
+	// OCI image produced -> UpdateBuildStatus(succeeded). ~60-180 s on Lima
+	// with a warm buildctl cache; a genuinely cold node pulling the Railpack
+	// frontend takes far longer, which is what api.BuildTimeoutSeconds budgets
+	// for. The outer ctx adds headroom on top so a hung daemon still leaves
+	// room to report the last build state cleanly.
 	build, err := e2etest.WaitForBuildStatus(ctx, t, pool, buildID,
-		state.BuildSucceeded, 5*time.Minute)
+		state.BuildSucceeded, buildPoll)
 	if err != nil {
 		// Best-effort dump of the build row + log so a CI failure has
 		// the in-VM buildctl/railpack stderr inline. The log file lives
@@ -269,7 +303,7 @@ func runBuildSubtest(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, 
 	// emits a build_queued-done notify; imaged picks up the OCI image,
 	// primes a snapshot, and MarkDeploymentLive fires. The deployment
 	// row advances Building -> Live via deployment_changed.
-	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 4*time.Minute)
+	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline())
 	if err != nil {
 		// Surface the last deployment status so a CI failure shows
 		// whether we hung in 'building' or 'failed'.
@@ -545,21 +579,28 @@ func postMultipartDeploymentWithOverrides(t *testing.T, h *e2etest.Harness, key,
 // in this file).
 func parseQueuedDeployment(t *testing.T, body []byte) (deploymentID, buildID string) {
 	t.Helper()
-	// Minimal decode — CreateDeploymentResponse has more fields but we
-	// only need two. Avoids importing the entire api surface here.
-	var resp struct {
-		ID     string `json:"id"`
-		Build  string `json:"build"`
-		Status string `json:"status"`
-	}
+	// Decode the REAL response type rather than a hand-rolled subset.
+	//
+	// This used to be a local struct with `json:"build"` and a comment saying
+	// it "avoids importing the entire api surface". The field is and was
+	// build_id (pkg/api.DeploymentResponse, pkg/api/build.go, the apid
+	// handlers), so the decode silently produced an empty value and every
+	// build-path test failed with "deployment response missing id/build" —
+	// including on the first native e2e run that got far enough to reach it
+	// (2026-09-14), where the build itself had actually succeeded.
+	//
+	// A hand-rolled shape cannot be caught by the compiler when the API
+	// renames a field. Using api.DeploymentResponse makes the next rename a
+	// build failure here instead of a confusing runtime assertion.
+	var resp api.DeploymentResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		t.Fatalf("decode deployment response: %v body=%s", err, body)
 	}
-	if resp.ID == "" || resp.Build == "" {
-		t.Fatalf("deployment response missing id/build: %s", body)
+	if resp.ID == "" || resp.BuildID == "" {
+		t.Fatalf("deployment response missing id/build_id: %s", body)
 	}
 	if !strings.EqualFold(resp.Status, "queued") {
 		t.Logf("deployment %s status=%q (not 'queued' — apid may have started building already)", resp.ID, resp.Status)
 	}
-	return resp.ID, resp.Build
+	return resp.ID, resp.BuildID
 }

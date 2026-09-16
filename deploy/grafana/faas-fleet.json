@@ -11,7 +11,7 @@
   "panels": [
     {
       "type": "timeseries",
-      "title": "Wake latency (p50 / p95)",
+      "title": "Wake latency (ingress and platform gate)",
       "id": 1,
       "gridPos": {
         "h": 8,
@@ -31,8 +31,13 @@
         },
         {
           "expr": "histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p95",
+          "legendFormat": "ingress p95",
           "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "platform p95",
+          "refId": "C"
         }
       ],
       "fieldConfig": {
@@ -2329,6 +2334,28 @@
         "tooltip": {"show": true, "yHistogram": false},
         "yAxis": {"axisPlacement": "left", "reverse": false, "unit": "s"}
       }
+    },
+    {
+      "id": 417,
+      "type": "timeseries",
+      "title": "Host and builder OOM kills",
+      "description": "New host OOM kills and the subset attributed to the sole active builder operation. Builder identity is in the correlated builderd structured log.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 262},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (node) (increase(node_vmstat_oom_kill[$__rate_interval]))",
+          "legendFormat": "host / {{node}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (node) (increase(builderd_builder_slice_oom_kills_total[$__rate_interval]))",
+          "legendFormat": "builder / {{node}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     }
   ],
   "refresh": "30s",

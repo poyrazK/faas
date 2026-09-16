@@ -21,9 +21,8 @@ import (
 var conventionDirs = []string{"services", "apps", "packages", "cmd"}
 
 // detectConventionImpl walks each present convention dir and emits
-// one workloadSeed per member directory that hasMarker()s. Members
-// without a marker are skipped silently — they're typically
-// shared libraries or sub-namespaces that aren't runnable.
+// one workloadSeed per runnable member. Members without a runnable target are
+// skipped so package libraries do not become public HTTP applications.
 //
 // Tier-3 result is always class=ClassUnknown (Phase 4
 // characterization corrects the hint). RootDir is the full member
@@ -53,25 +52,24 @@ func detectConventionImpl(fsys fs.FS) ([]workloadSeed, []string, error) {
 				continue
 			}
 			seen[member] = true
-			if !hasMarker(fsys, member) {
-				// Sub-namespace or shared lib — not a workload.
-				continue
-			}
 			name := e.Name()
 			if name == "" || strings.HasPrefix(name, ".") || name == "*" {
 				continue
 			}
-			seeds = append(seeds, workloadSeed{
-				name:    name,
-				rootDir: member,
-				source:  "convention: " + member,
-			})
+			seed, runnable, reason := runnableWorkspaceSeed(fsys, member, "convention", false)
+			if !runnable {
+				if reason != "" {
+					warnings = append(warnings, reason)
+				}
+				continue
+			}
+			seeds = append(seeds, seed)
 		}
 	}
 	// Also handle the bare-repo Tier-4 floor; pushed into Scan()
 	// itself rather than this detector because the floor is a
 	// tier-wide concern.
 	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })
-	_ = warnings // reserved for future
-	return seeds, nil, nil
+	sort.Strings(warnings)
+	return seeds, warnings, nil
 }

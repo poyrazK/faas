@@ -30,6 +30,14 @@ type LogFilter struct {
 	Level string
 }
 
+// ArchiveLogSelector identifies one UTC day of durable logs for a single
+// instance. Archived logs use the same SSE event shape as live logs, so callers
+// can consume both streams with Decoder.
+type ArchiveLogSelector struct {
+	InstanceID string
+	Date       string
+}
+
 // StreamAppLogs opens the GET /v1/apps/{slug}/logs stream and returns
 // its raw response body. The response is text/event-stream; callers
 // parse frames themselves with bufio.Scanner.
@@ -69,6 +77,17 @@ func (c *Client) StreamAppLogs(ctx context.Context, slug, deploymentID string, f
 	if opts.Level != "" {
 		q.Set("level", opts.Level)
 	}
+	return c.stream(ctx, "/v1/apps/"+url.PathEscape(slug)+"/logs?"+q.Encode())
+}
+
+// StreamAppArchivedLogs opens the durable log archive for one instance and UTC
+// day. The server validates instance ownership and plan retention before
+// reading the archive. Date must use YYYY-MM-DD.
+func (c *Client) StreamAppArchivedLogs(ctx context.Context, slug string, selector ArchiveLogSelector) (io.ReadCloser, error) {
+	q := url.Values{}
+	q.Set("archive", "1")
+	q.Set("date", selector.Date)
+	q.Set("instance", selector.InstanceID)
 	return c.stream(ctx, "/v1/apps/"+url.PathEscape(slug)+"/logs?"+q.Encode())
 }
 

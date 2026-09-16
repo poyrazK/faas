@@ -89,11 +89,34 @@ type (
 	InstanceResponse = api.InstanceResponse
 
 	// Usage.
-	UsageResponse                = api.UsageResponse
-	UsageSummaryResponse         = api.UsageSummaryResponse
-	AccountUsageResponse         = api.AccountUsageResponse
-	ObjectStorageUsageResponse   = api.ObjectStorageUsageResponse
-	ManagedPostgresUsageResponse = api.ManagedPostgresUsageResponse
+	UsageResponse                 = api.UsageResponse
+	UsageSummaryResponse          = api.UsageSummaryResponse
+	ExecutionUsageSummaryResponse = api.ExecutionUsageSummaryResponse
+	AccountUsageResponse          = api.AccountUsageResponse
+	ObjectStorageUsageResponse    = api.ObjectStorageUsageResponse
+	ManagedPostgresUsageResponse  = api.ManagedPostgresUsageResponse
+
+	// Disposable agent executions. Source and input are accepted only by
+	// CreateExecutionRequest and are never returned in execution receipts.
+	ExecutionRuntime         = api.ExecutionRuntime
+	ExecutionNetworkMode     = api.ExecutionNetworkMode
+	ExecutionNetworkPolicy   = api.ExecutionNetworkPolicy
+	ExecutionLimitRequest    = api.ExecutionLimitRequest
+	ExecutionFile            = api.ExecutionFile
+	CreateExecutionRequest   = api.CreateExecutionRequest
+	ResolvedExecutionLimits  = api.ResolvedExecutionLimits
+	ExecutionUsage           = api.ExecutionUsage
+	ExecutionFailure         = api.ExecutionFailure
+	ExecutionStatus          = api.ExecutionStatus
+	ExecutionResponse        = api.ExecutionResponse
+	ExecutionListResponse    = api.ExecutionListResponse
+	ExecutionEventType       = api.ExecutionEventType
+	ExecutionEventData       = api.ExecutionEventData
+	ExecutionEvent           = api.ExecutionEvent
+	ExecutionEventParseError = api.ExecutionEventParseError
+	WatchExecutionOptions    = api.WatchExecutionOptions
+	ExecutionWatcher         = api.ExecutionWatcher
+	RunOptions               = api.RunOptions
 
 	// Auth (password).
 	PasswordLoginRequest  = api.PasswordLoginRequest
@@ -173,4 +196,25 @@ const (
 	ResourceProfileXLarge    = api.ResourceProfileXLarge
 	ConsumerAuthModeOptional = api.ConsumerAuthModeOptional
 	ConsumerAuthModeRequired = api.ConsumerAuthModeRequired
+
+	ExecutionRuntimeNode22    = api.ExecutionRuntimeNode22
+	ExecutionRuntimeNode24    = api.ExecutionRuntimeNode24
+	ExecutionRuntimePython312 = api.ExecutionRuntimePython312
+	ExecutionRuntimePython313 = api.ExecutionRuntimePython313
+	ExecutionNetworkNone      = api.ExecutionNetworkNone
+
+	ExecutionStatusQueued      = api.ExecutionStatusQueued
+	ExecutionStatusRestoring   = api.ExecutionStatusRestoring
+	ExecutionStatusRunning     = api.ExecutionStatusRunning
+	ExecutionStatusSucceeded   = api.ExecutionStatusSucceeded
+	ExecutionStatusFailed      = api.ExecutionStatusFailed
+	ExecutionStatusTimedOut    = api.ExecutionStatusTimedOut
+	ExecutionStatusOutOfMemory = api.ExecutionStatusOutOfMemory
+	ExecutionStatusCancelled   = api.ExecutionStatusCancelled
+
+	ExecutionEventStatus   = api.ExecutionEventStatus
+	ExecutionEventStdout   = api.ExecutionEventStdout
+	ExecutionEventStderr   = api.ExecutionEventStderr
+	ExecutionEventTerminal = api.ExecutionEventTerminal
+	ExecutionEventError    = api.ExecutionEventError
 )

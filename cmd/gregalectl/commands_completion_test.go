@@ -27,6 +27,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 	dispatchConsts := map[string]string{
 		"dispatchOperatorAuth": "auth",
 		"dispatchHostAge":      "host-age",
+		"dispatchFleetSeal":    "fleet-seal",
 		"dispatchPKI":          "pki",
 		"dispatchSignKeys":     "sign-keys",
 		"dispatchNodeKey":      "node-key",
@@ -40,6 +41,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchDeploy":       "deploy",        // PR-B (multi-host scale-out gap #2)
 		"dispatchInstances":    "instances",     // P2 of operator-obs mega-PR (Commit 5b)
 		"dispatchAccounts":     "accounts",      // authenticated tenant support + lifecycle controls
+		"dispatchBilling":      "billing",       // operator billing catalog + reconciliation diagnostics
 		"dispatchConfig":       "config",        // zero-downtime runtime configuration controls
 		"dispatchAudit":        "audit",         // exact operator trace correlation
 		"dispatchBuilds":       "builds",        // P2c of operator-obs mega-PR (Commit 5c)

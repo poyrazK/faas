@@ -21,8 +21,9 @@ class AppEffectiveLimits:
     plan_memory_max_mb: int
     """Largest memory limit the current plan permits for an app instance, in MB."""
     ephemeral_disk_max_mb: int
-    """Maximum writable ephemeral app-disk capacity for this app, in MB. This is the same physical drive1 cap
-    historically named app_layer_max_mb."""
+    """Total logical capacity of this app's writable ephemeral filesystem, in MB, including application content and
+    filesystem metadata. Free scratch space is this value minus deployed content and overhead. This is the same
+    physical drive1 cap historically named app_layer_max_mb."""
     guest_vcpus: int
     """Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit."""
     cpu_limit_millicores: int

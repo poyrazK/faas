@@ -34,6 +34,11 @@ import {
   type Problem,
 } from './errors.js';
 import { isMutating, mintIdempotencyKey, type IdempotencyKey } from './idempotency.js';
+import {
+  watchExecution as watchExecutionEvents,
+  type ExecutionEvent,
+  type WatchExecutionOptions,
+} from './executions.js';
 
 /** Minimal logger contract — the SDK doesn't bind to `console` or a
  *  third-party logger. Customers can pass `console`, pino, winston,
@@ -178,6 +183,15 @@ export class FaaSClient {
     const headers = readHeaders();
     headers['Idempotency-Key'] = key;
     OpenAPI.HEADERS = headers;
+  }
+
+  /** Stream one disposable execution until its terminal event. The
+   *  iterator resumes automatically after transient disconnects. */
+  watchExecution(
+    executionID: string,
+    options: WatchExecutionOptions = {},
+  ): AsyncGenerator<ExecutionEvent, void, void> {
+    return watchExecutionEvents(executionID, options);
   }
 
   /** Build the wrapped fetch. Exported via `install()` above; the

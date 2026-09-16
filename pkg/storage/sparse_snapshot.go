@@ -9,14 +9,16 @@ import (
 	"strings"
 )
 
-// copyArtifactContext preserves zero-filled snapshot pages as file holes. dst
-// must be a fresh, empty temporary file. Publication still uses the caller's
-// fsync and atomic rename, and the returned size counts logical bytes for the
-// per-artifact logical-size safety gate. The aggregate cache budget counts
-// allocated disk bytes so sparse holes do not evict unrelated artifacts.
-// Readers see exactly the original snapshot bytes.
+// copyArtifactContext preserves zero-filled regions in large sparse artifacts
+// as file holes. Snapshot memory and app ext4 images both contain long zero
+// runs; materializing those runs would turn a 256 MiB logical app filesystem
+// into 256 MiB of host disk usage. dst must be a fresh, empty temporary file.
+// Publication still uses the caller's fsync and atomic rename, and the returned
+// size counts logical bytes for the per-artifact logical-size safety gate. The
+// aggregate cache budget counts allocated disk bytes so sparse holes do not
+// evict unrelated artifacts. Readers see exactly the original bytes.
 func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key string) (int64, error) {
-	if !strings.HasPrefix(key, "snap/") || !strings.HasSuffix(key, "/mem") {
+	if !isSparseArtifactKey(key) {
 		return copyContext(ctx, dst, src)
 	}
 	const quantum = 256 * 1024
@@ -41,7 +43,7 @@ func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key s
 			}
 			if isZero {
 				if _, err := dst.Seek(int64(end-start), io.SeekCurrent); err != nil {
-					return written, fmt.Errorf("seek snapshot hole: %w", err)
+					return written, fmt.Errorf("seek artifact hole: %w", err)
 				}
 				written += int64(end - start)
 			} else {
@@ -59,7 +61,7 @@ func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key s
 		if readErr == io.EOF { //nolint:errorlint // Reader must return EOF itself; a wrapped source failure must prevent publication.
 			// Seek does not extend a file when the snapshot ends with zeros.
 			if err := dst.Truncate(written); err != nil {
-				return written, fmt.Errorf("size sparse snapshot: %w", err)
+				return written, fmt.Errorf("size sparse artifact: %w", err)
 			}
 			return written, nil
 		}
@@ -67,6 +69,11 @@ func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key s
 			return written, readErr
 		}
 	}
+}
+
+func isSparseArtifactKey(key string) bool {
+	return (strings.HasPrefix(key, "snap/") && strings.HasSuffix(key, "/mem")) ||
+		(strings.HasPrefix(key, "apps/") && strings.HasSuffix(key, ".ext4"))
 }
 
 // Fill a quantum without hiding a source error that accompanies its last bytes.

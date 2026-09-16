@@ -97,8 +97,9 @@ func ApplyLayerWithOverlayWhiteouts(dst string, tr *tar.Reader) error {
 }
 
 type layerApplyOptions struct {
-	resolver          Resolver
-	preserveWhiteouts bool
+	resolver               Resolver
+	preserveWhiteouts      bool
+	skipRuntimeMountpoints bool
 }
 
 func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
@@ -119,6 +120,15 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 		opaque := strings.HasSuffix(archiveName, whiteoutOpaque)
 		if opaque {
 			archiveName = strings.TrimSuffix(archiveName, whiteoutOpaque) + ".wh.opq"
+		}
+		// The optimized app artifact is layered over the shared base. The
+		// guest owns these pseudo-filesystem mountpoints, so image entries
+		// beneath them must never be materialized in the app upper. In
+		// particular, a scanner or builder can expose /proc as a mount in
+		// the staging namespace; attempting to rename that path later would
+		// fail under the imaged daemon's restricted capabilities.
+		if opts.skipRuntimeMountpoints && isRuntimeMountpointPath(archiveName) {
+			continue
 		}
 
 		// Keep all filesystem operations inside the positive validation
@@ -202,6 +212,17 @@ func ApplyLayerGzWithOverlayWhiteouts(dst string, r io.Reader) error {
 	return applyLayerGz(dst, r, layerApplyOptions{preserveWhiteouts: true})
 }
 
+// applyLayerGzForApp applies one OCI layer to the optimized two-drive app
+// artifact. The shared base and guest-init provide /dev, /proc, /sys, and
+// /tmp, so retaining image-owned entries at those paths is both unnecessary
+// and unsafe when one of them is mounted in the staging namespace.
+func applyLayerGzForApp(dst string, r io.Reader) error {
+	return applyLayerGz(dst, r, layerApplyOptions{
+		preserveWhiteouts:      true,
+		skipRuntimeMountpoints: true,
+	})
+}
+
 func applyLayerGz(dst string, r io.Reader, opts layerApplyOptions) error {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
@@ -215,6 +236,22 @@ const (
 	whiteoutPrefix = ".wh."
 	whiteoutOpaque = ".wh..wh..opq"
 )
+
+func isRuntimeMountpointPath(name string) bool {
+	for strings.HasPrefix(name, "./") {
+		name = strings.TrimPrefix(name, "./")
+	}
+	if name == "" || strings.HasPrefix(name, "/") {
+		return false
+	}
+	first, _, _ := strings.Cut(name, "/")
+	switch first {
+	case "dev", "proc", "sys", "tmp":
+		return true
+	default:
+		return false
+	}
+}
 
 func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver) error {
 	switch hdr.Typeflag {

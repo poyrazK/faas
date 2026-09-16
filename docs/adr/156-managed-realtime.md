@@ -1,6 +1,6 @@
 # ADR-156 — Managed realtime connections
 
-Status: accepted — first implementation slice (2026-09-12)
+Status: accepted — control-plane endpoint resources (2026-09-12)
 
 ## Decision
 
@@ -45,7 +45,17 @@ ordinary HTTP handlers. `data` is JSON's base64 representation of the frame
 bytes; `binary` preserves the WebSocket frame kind. Connect is accepted only
 when the callback returns a 2xx response. Applications receive a stable
 `connection_id` and can call the management API to send or close that
-connection. Channel membership is explicit and publish is endpoint-scoped.
+connection. Channel membership is explicit and publish is endpoint-scoped. The
+built-in HTTP callback hook retries network failures and 408/429/5xx responses
+up to three total attempts with a bounded exponential backoff; a caller can
+set `MaxAttempts` to one when a custom hook owns delivery policy.
+
+When `realtimed` uses the built-in hook, message and disconnect callbacks are
+also written to its node-local callback outbox before delivery. Unacknowledged
+files are replayed after process restart; delivery is at-least-once and events
+that exhaust the bounded replay budget are retained as dead letters. The
+outbox location defaults to `/run/faas/realtime-callbacks` and is configurable
+with `FAAS_REALTIME_CALLBACK_OUTBOX`.
 
 Management examples:
 
@@ -60,8 +70,10 @@ POST /internal/endpoints/{endpoint}/channels/{channel}:publish
 ```
 
 The Unix socket is mode `0660` and owned by `faas:faas`; it is not a public
-HTTP surface. Deployments must authorize endpoint registration and management
-at the caller boundary. The bootstrap `auth_token` field is intended only for
+HTTP surface. The loopback health listener exposes only `/healthz` and
+`/readyz`, never `/internal/*` management routes. Deployments must authorize
+endpoint registration and management at the caller boundary. The bootstrap
+`auth_token` field is intended only for
 controlled single-node deployments; production endpoint registration should
 install an app-specific authorizer.
 
@@ -71,15 +83,34 @@ The daemon defaults to 10,000 concurrent connections, 1 MiB frames, a 64
 message per-connection output queue, 30 second heartbeats, 10 second pong
 wait, a 5 second write deadline, and a 24 hour maximum connection age. These
 are configurable with `FAAS_REALTIME_*` environment variables. `/internal/stats`
-exposes process-local accepted/rejected connection, message, byte, and queue
-drop and callback-error counters for metering and alerting; aggregate across nodes because the
-registry is intentionally node-local.
+exposes process-local accepted/rejected connection, message, byte, queue-drop,
+callback-error, callback-pending, and callback-dead-letter counters for
+metering and alerting; aggregate across nodes because the registry and outbox
+are intentionally node-local.
 
 ## Follow-up work
 
-The first slice provides the socket owner, gateway routing, callbacks, and
-bounded management API. A production control-plane integration still needs a
-durable endpoint/resource table, leased cross-node registry or deterministic
-node routing, and the authenticated customer-facing API in `apid`. Those
-pieces should reuse the existing `pkg/dispatch` retry/lease contracts rather
-than writing Postgres rows from `realtimed`.
+The socket owner, gateway routing, callbacks, durable endpoint/resource table,
+authenticated `apid` CRUD API, and authenticated customer-facing
+send/close/subscribe/publish operations are shipped. Endpoint configuration is
+now fanned out to every active compute node through its private
+`gateway_target_url`. Connection operations use the durable
+`managed_realtime_connection_owners` directory: API replicas discover a live
+connection once, claim a short CAS lease, renew it while operating, and release
+it on close. A failed or expired owner lease is rediscovered rather than guessed;
+publish broadcasts to all active nodes because channel membership is node-local.
+The directory is written by apid/control-plane code only—`realtimed` continues
+to own sockets and never writes Postgres.
+
+The apid control plane also runs a bounded periodic endpoint reconciler. It
+replays the durable endpoint rows (including disabled rows) to the active-node
+registrar immediately at boot and every 30 seconds thereafter. This repairs a
+node that restarts or becomes active after a mutation-time fan-out, while
+keeping endpoint credentials and customer state in the control plane. A
+temporary node or database failure is logged and retried on the next pass; it
+does not prevent apid from serving requests.
+
+Connection-owner leases are ephemeral routing hints. A separate apid cleanup
+loop deletes expired rows in bounded batches (immediately at boot and every
+minute), so crashes cannot grow `managed_realtime_connection_owners` without
+limit. Live leases are never touched.

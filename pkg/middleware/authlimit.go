@@ -39,6 +39,12 @@ type AuthLimitConfig struct {
 	// where anti-enumeration returns 200 even for unknown emails, so
 	// a true 401/403-only limiter would miss the brute-force signal.
 	CountStatuses []int
+	// OnLimited overrides the default plain-text 429 response after the
+	// shared IP bucket is exhausted. Authentication stacks use it to validate
+	// the presented credential and admit a valid principal behind a shared
+	// NAT, while retaining the limiter's single IP bucket for invalid calls.
+	// It must emit the complete response and must not call the wrapped handler.
+	OnLimited http.HandlerFunc
 }
 
 // CountEveryAttempt is the sentinel status for CountStatuses meaning
@@ -280,6 +286,10 @@ func AuthLimitWithLimiter(cfg AuthLimitConfig, lim *Limiter) func(http.Handler) 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := cfg.ClientIPFn(r)
 			if lim.inner.isLimited(ip, cfg.Now()) {
+				if cfg.OnLimited != nil {
+					cfg.OnLimited(w, r)
+					return
+				}
 				w.Header().Set("Retry-After", "60")
 				http.Error(w, "too many failed login attempts; try again in 60 seconds", http.StatusTooManyRequests)
 				cfg.Log.Warn("auth_limit blocked",

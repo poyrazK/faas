@@ -19,11 +19,9 @@ import (
 // surface subcommands (`gregale build logs`, `gregale build sbom` from
 // Phase 3) land here without touching main.go's switch.
 //
-// build id shape mirrors deploymentIDPattern: 32-hex UUID without
-// dashes. The server-side `text -> uuid` cast accepts the unhyphenated
-// form; the dashboard / CLI tooling expects the compact shape so
-// customers can paste a row id from the dashboard into `gregale build
-// provenance <id>` without manual fixing-up.
+// Build IDs are UUIDs. Keep accepting the legacy compact 32-hex spelling so
+// existing scripts remain compatible, while help documents the canonical
+// hyphenated form returned by `gregale build list`.
 var buildIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // dispatchBuild is the registered parent command name. Mirrors the
@@ -79,7 +77,7 @@ func cmdBuildSbom(args []string) int {
 	}
 	id := args[0]
 	if !buildIDPattern.MatchString(id) {
-		PrintUsage(os.Stderr, "usage: gregale build sbom <id>   (id is 32 hex chars)", "build")
+		PrintUsage(os.Stderr, "usage: gregale build sbom <id>   (id is a UUID)", "build")
 		return 1
 	}
 	client, err := authedClient()
@@ -124,7 +122,7 @@ func cmdBuildProvenance(args []string) int {
 	}
 	id := args[0]
 	if !buildIDPattern.MatchString(id) {
-		PrintUsage(os.Stderr, "usage: gregale build provenance <id>   (id is 32 hex chars)", "build")
+		PrintUsage(os.Stderr, "usage: gregale build provenance <id>   (id is a UUID)", "build")
 		return 1
 	}
 	client, err := authedClient()
@@ -201,7 +199,7 @@ func cmdBuildStatus(args []string) int {
 	}
 	id := args[0]
 	if !buildIDPattern.MatchString(id) {
-		PrintUsage(os.Stderr, "usage: gregale build status <id>   (id is 32 hex chars)", "build")
+		PrintUsage(os.Stderr, "usage: gregale build status <id>   (id is a UUID)", "build")
 		return 1
 	}
 	client, err := authedClient()
@@ -258,6 +256,7 @@ func printBuildStatus(w io.Writer, b api.BuildResponse) {
 		{"enqueued_at", b.EnqueuedAt},
 		{"started_at", b.StartedAt},
 		{"finished_at", b.FinishedAt},
+		{"cancelled_at", b.CancelledAt},
 		// duration_seconds is rendered only when the build reached
 		// a terminal status (server stamps 0 + omitempty otherwise).
 		// Showing a literal `0` here would suggest "this build took
@@ -297,7 +296,7 @@ func formatBuildCacheSummary(status, key string) string {
 // the buildkit_version + framework_version columns (DEPLOY-PROV-5,
 // PR #736).
 func durationSecondsForDisplay(b api.BuildResponse) string {
-	if b.Status != buildStatusSucceeded && b.Status != buildStatusFailed {
+	if !isTerminalBuildStatus(b.Status) {
 		return ""
 	}
 	return strconv.Itoa(b.DurationSeconds)
@@ -341,9 +340,9 @@ func renderBuildListRow(w io.Writer, b api.BuildResponse) {
 // automation can re-issue the cursor — mirrors cmdDeployments'
 // deliberate break from the apps/crons/keys NDJSON convention.
 func cmdBuildList(args []string) int {
-	fs := flag.NewFlagSet("build-list", flag.ContinueOnError)
+	fs := newFlagSet("build-list", flag.ContinueOnError)
 	app := fs.String("app", "", "filter to one app slug")
-	status := fs.String("status", "", "filter to status (queued|running|succeeded|failed)")
+	status := fs.String("status", "", "filter to status (queued|running|succeeded|failed|cancelled)")
 	limit := fs.Int("limit", 50, "page size (1-200)")
 	before := fs.String("before", "", "pagination cursor (opaque token from NextBefore)")
 	all := fs.Bool("all", false, "walk every page (ignores --limit/--before)")
@@ -357,10 +356,10 @@ func cmdBuildList(args []string) int {
 	if *status != "" {
 		switch *status {
 		case api.BuildStatusQueued, api.BuildStatusRunning,
-			api.BuildStatusSucceeded, api.BuildStatusFailed:
+			api.BuildStatusSucceeded, api.BuildStatusFailed, api.BuildStatusCancelled:
 			// ok
 		default:
-			PrintUsage(os.Stderr, "usage: gregale build list --status (queued|running|succeeded|failed)", "build")
+			PrintUsage(os.Stderr, "usage: gregale build list --status (queued|running|succeeded|failed|cancelled)", "build")
 			return 1
 		}
 	}

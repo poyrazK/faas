@@ -1,3 +1,4 @@
+// adr: 127
 package gateway
 
 import (
@@ -156,5 +157,26 @@ func TestAcceptsWakePageRequiresNavigationWhenFetchMetadataPresent(t *testing.T)
 				t.Fatalf("acceptsWakePage = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestClaimWakeFirstByteStartPreservesOriginalBrowserBoundary(t *testing.T) {
+	h := &Handler{wakePageCycles: make(map[string]*wakePageCycle)}
+	acceptedAt := time.Now().Add(-2 * time.Second).UTC()
+	h.beginWakePageCycle("app-browser", acceptedAt)
+	h.finishWakePageCycle(context.Background(), "app-browser", "wake-browser")
+
+	req := httptest.NewRequest(http.MethodGet, "http://app.example/", nil)
+	firstReq, firstTarget := h.armWakeFirstByte(req, "app-browser", Target{AppID: "app-browser", WakeID: "wake-browser"}, "")
+	if firstTarget.WakeID != "wake-browser" {
+		t.Fatalf("first target wake ID = %q, want wake-browser", firstTarget.WakeID)
+	}
+	got := wakeTimelineStart(firstReq)
+	if !got.Equal(acceptedAt) {
+		t.Fatalf("first-byte start = %v, want %v", got, acceptedAt)
+	}
+	_, secondTarget := h.armWakeFirstByte(req, "app-browser", Target{AppID: "app-browser", WakeID: "wake-browser"}, "wake-browser")
+	if secondTarget.WakeID != "" {
+		t.Fatalf("second target reused wake metadata: %q", secondTarget.WakeID)
 	}
 }

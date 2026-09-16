@@ -51,7 +51,7 @@ const sloAccountCmdDocsTopic = "account-slo"
 // positional slug + one flag, JSON single record, human
 // multi-line detail block.
 func cmdSLO(args []string) int {
-	fs := flag.NewFlagSet("slo", flag.ContinueOnError)
+	fs := newFlagSet("slo", flag.ContinueOnError)
 	window := fs.String("window", "24h", "SLO window (1h, 24h, 7d)")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
@@ -80,7 +80,7 @@ func cmdSLO(args []string) int {
 // cmdAccountSLO implements `gregale account slo [--window 24h]`.
 // No slug — the rollup is account-wide. Mirrors cmdSLO above.
 func cmdAccountSLO(args []string) int {
-	fs := flag.NewFlagSet("account slo", flag.ContinueOnError)
+	fs := newFlagSet("account slo", flag.ContinueOnError)
 	window := fs.String("window", "24h", "SLO window (1h, 24h, 7d)")
 	if err := fs.Parse(args); err != nil {
 		return 1

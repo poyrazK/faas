@@ -63,6 +63,7 @@ type Querier interface {
 	//                      draining waitUntil tasks; INFORMATIONAL ONLY — pinned
 	//                      by pkg/meter/pusher_shadow_test.go::TestPushHour_ExcludesTailSeconds)
 	AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParams) error
+	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
 	// issue #667 / ADR-078 — atomically apply delta to the instance's
@@ -220,6 +221,7 @@ type Querier interface {
 	ExecutionGetForAccount(ctx context.Context, db DBTX, arg ExecutionGetForAccountParams) (Execution, error)
 	ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionInsertParams) (Execution, error)
 	ExecutionListForAccount(ctx context.Context, db DBTX, arg ExecutionListForAccountParams) ([]Execution, error)
+	ExecutionListForAccountStatus(ctx context.Context, db DBTX, arg ExecutionListForAccountStatusParams) ([]Execution, error)
 	ExecutionLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (ExecutionLockAccountRow, error)
 	ExecutionLockForAccount(ctx context.Context, db DBTX, arg ExecutionLockForAccountParams) (Execution, error)
 	ExecutionLockForLease(ctx context.Context, db DBTX, arg ExecutionLockForLeaseParams) (Execution, error)
@@ -233,6 +235,11 @@ type Querier interface {
 	ExecutionRenewLease(ctx context.Context, db DBTX, arg ExecutionRenewLeaseParams) (int64, error)
 	ExecutionRequestCancel(ctx context.Context, db DBTX, arg ExecutionRequestCancelParams) (Execution, error)
 	ExecutionRequeueExpiredRestores(ctx context.Context, db DBTX, arg ExecutionRequeueExpiredRestoresParams) ([]Execution, error)
+	ExecutionUsageByAccount(ctx context.Context, db DBTX, arg ExecutionUsageByAccountParams) (ExecutionUsageByAccountRow, error)
+	// The execution ID is the idempotency key. Recording from the terminal
+	// execution row keeps usage and the lifecycle projection in lockstep and
+	// makes retries/recovery harmless.
+	ExecutionUsageRecord(ctx context.Context, db DBTX, executionID pgtype.UUID) error
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
 	// Marks a single session as expired after the reaper removes its
 	// .part file. Split into a separate query from ReapExpiredUploadSessions
@@ -735,8 +742,9 @@ type Querier interface {
 	//   'unavailable'  → heartbeat gap detected; instances stranded.
 	//   'recovering'   → first post-failure ping succeeded; sweep to
 	//                    confirm zero stranded instances.
-	// Caller is the recovery arbiter; one tick enumerates both classes
-	// and applies the same decision matrix.
+	// Unavailable rows age out of active polling after 24 hours. They remain in
+	// inventory for audit; a returning vmmd re-registers through the heartbeat
+	// path and becomes active again.
 	NodeListRecoverable(ctx context.Context, db DBTX) ([]NodeListRecoverableRow, error)
 	// Stamps drain_completed_at + flips lifecycle='maintenance'. Called once
 	// the drain arbiter confirms zero live instances remain on the node.
@@ -929,6 +937,7 @@ type Querier interface {
 	// original deployment_id. ON CONFLICT DO NOTHING (rather than
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
+	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
 	// Top-N customer analytics grouped by one of the bounded dimensions. Rows
 	// outside the top-N are folded into __other__ so a customer cannot turn this
 	// endpoint into an unbounded cardinality surface. Counts and percentiles use

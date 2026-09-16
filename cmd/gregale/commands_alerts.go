@@ -17,13 +17,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -71,9 +74,12 @@ func cmdAlerts(args []string) int {
 // cmdAlertList mirrors cmdWebhookList. The SDK returns a flat slice;
 // human-mode renders name | metric | threshold | window | state.
 func cmdAlertList(args []string) int {
-	fs := flag.NewFlagSet("alerts list", flag.ContinueOnError)
+	fs := newFlagSet("alerts list", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" {
@@ -105,7 +111,7 @@ func cmdAlertList(args []string) int {
 // locally, then sends the request. failure-source is required iff
 // metric == failed_invocations (constraint: alert_rules_failure_source_xor_chk).
 func cmdAlertAdd(args []string) int {
-	fs := flag.NewFlagSet("alerts add", flag.ContinueOnError)
+	fs := newFlagSet("alerts add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
 	metric := fs.String("metric", "", "metric (closed set; one of error_rate_pct|latency_p50_ms|latency_p95_ms|latency_p99_ms|cold_start_pct|request_count|failed_invocations)")
@@ -114,11 +120,18 @@ func cmdAlertAdd(args []string) int {
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
 	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke) — required iff --metric=failed_invocations")
 	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
-	webhookSecret := fs.String("webhook-secret", "", "webhook secret (required, ≤256 bytes)")
+	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
+	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the webhook secret from stdin")
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown window in minutes (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	enabled := fs.Bool(flagNameEnabled, true, "whether the rule is enabled")
 	if err := fs.Parse(args); err != nil {
 		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
+	if err := resolveAlertSecret(webhookSecret, *webhookSecretStdin); err != nil {
+		return printErr("Invalid webhook secret input", err)
 	}
 	if code, ok := requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhookURL, webhookSecret, threshold, cooldown); !ok {
 		return code
@@ -164,7 +177,7 @@ func cmdAlertAdd(args []string) int {
 func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhookURL, webhookSecret *string, threshold *float64, cooldown *int) (int, bool) {
 	if *slug == "" || *name == "" || *metric == "" || *comparison == "" ||
 		*windowSpec == "" || *webhookURL == "" || *webhookSecret == "" || math.IsNaN(*threshold) {
-		PrintUsage(os.Stderr, "usage: gregale alerts add --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> --webhook-url <url> --webhook-secret <s> [--failure-source <s>] [--cooldown-minutes N] [--enabled=false]", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alerts add --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> --webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) [--failure-source <s>] [--cooldown-minutes N] [--enabled=false]", "alerts")
 		return 1, false
 	}
 	if *cooldown < api.AlertRuleCooldownMinMinutes || *cooldown > api.AlertRuleCooldownMaxMinutes {
@@ -201,7 +214,7 @@ func validateAlertClosedSets(metric, comparison, windowSpec, failureSource *stri
 // cmdAlertInfo mirrors cmdAuditEventsGet — single id, multi-line
 // labelled block, --json output.
 func cmdAlertInfo(args []string) int {
-	fs := flag.NewFlagSet("alerts info", flag.ContinueOnError)
+	fs := newFlagSet("alerts info", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -251,7 +264,7 @@ func cmdAlertInfo(args []string) int {
 // server's alert_rules_failure_source_xor_chk fires if it violates
 // the constraint (alerts.go:118-123).
 func cmdAlertUpdate(args []string) int {
-	fs := flag.NewFlagSet("alerts update", flag.ContinueOnError)
+	fs := newFlagSet("alerts update", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	name := fs.String("name", "", "rule name (3..120 chars)")
 	enabled := fs.Bool(flagNameEnabled, true, "enable/disable the rule")
@@ -260,14 +273,20 @@ func cmdAlertUpdate(args []string) int {
 	threshold := fs.Float64("threshold", math.NaN(), "threshold (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL")
-	webhookSecret := fs.String("webhook-secret", "", "webhook secret (≤256 bytes)")
+	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
+	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the replacement webhook secret from stdin")
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts update --app <slug> [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--webhook-url <url>] [--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alerts update --app <slug> [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
 		return 1
+	}
+	if *webhookSecretStdin || *webhookSecret != "" {
+		if err := resolveAlertSecret(webhookSecret, *webhookSecretStdin); err != nil {
+			return printErr("Invalid webhook secret input", err)
+		}
 	}
 	id := fs.Arg(0)
 	if !alertIDPattern.MatchString(id) {
@@ -345,9 +364,41 @@ func validateAlertUpdateFlags(metric, comparison, windowSpec *string, threshold 
 	return true
 }
 
+func resolveAlertSecret(secret *string, fromStdin bool) error {
+	if fromStdin && *secret != "" {
+		return fmt.Errorf("--webhook-secret and --webhook-secret-stdin are mutually exclusive")
+	}
+	if fromStdin {
+		body, err := io.ReadAll(io.LimitReader(osStdin, int64(api.AlertRuleWebhookSecretMaxBytes)+2))
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+		*secret = strings.TrimSuffix(strings.TrimSuffix(string(body), "\n"), "\r")
+		if len(*secret) > api.AlertRuleWebhookSecretMaxBytes {
+			return fmt.Errorf("secret exceeds %d bytes", api.AlertRuleWebhookSecretMaxBytes)
+		}
+		if *secret == "" {
+			return fmt.Errorf("stdin did not contain a secret")
+		}
+		return nil
+	}
+	if *secret == "" && stdinIsTTY() {
+		value, err := readInteractivePassword(bufio.NewReader(osStdin), "Webhook signing secret: ")
+		if err != nil {
+			return fmt.Errorf("read secret: %w", err)
+		}
+		*secret = value
+		return nil
+	}
+	if *secret != "" {
+		PrintWarn(osStderr, "--webhook-secret is visible to shell history and process inspection; prefer --webhook-secret-stdin")
+	}
+	return nil
+}
+
 // cmdAlertRm mirrors cmdWebhookRm — 204 No Content on success.
 func cmdAlertRm(args []string) int {
-	fs := flag.NewFlagSet("alerts rm", flag.ContinueOnError)
+	fs := newFlagSet("alerts rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -379,28 +430,46 @@ func cmdAlertRm(args []string) int {
 // in the webhook receiver out-of-band (same wording as the Tier B
 // webhook fix).
 func cmdAlertRotateSecret(args []string) int {
-	fs := flag.NewFlagSet("alerts rotate-secret", flag.ContinueOnError)
+	fs := newFlagSet("alerts rotate-secret", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
+	fromStdin := fs.Bool("from-stdin", false, "read the replacement secret from stdin")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts rotate-secret --app <slug> <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alerts rotate-secret --app <slug> --from-stdin <alert-id>", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)
 	if !alertIDPattern.MatchString(id) {
 		return printErr("Invalid alert id", fmt.Errorf("must be a 32-hex-char UUID; got %q", id))
 	}
+	if !*fromStdin {
+		return printErr("Missing secret", fmt.Errorf("--from-stdin is required"))
+	}
+	body, err := io.ReadAll(io.LimitReader(osStdin, int64(api.AlertRuleWebhookSecretMaxBytes)+2))
+	if err != nil {
+		return printErr("Could not read secret", err)
+	}
+	secret := strings.TrimSuffix(strings.TrimSuffix(string(body), "\n"), "\r")
+	if len(secret) > api.AlertRuleWebhookSecretMaxBytes {
+		return printErr("Invalid secret", fmt.Errorf("secret exceeds %d bytes", api.AlertRuleWebhookSecretMaxBytes))
+	}
+	if secret == "" {
+		return printErr("Missing secret", fmt.Errorf("stdin did not contain a secret"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	out, err := client.RotateAlertRuleSecret(context.Background(), *slug, id)
+	out, err := client.RotateAlertRuleSecret(context.Background(), *slug, id, api.RotateAlertRuleSecretRequest{WebhookSecret: secret})
 	if err != nil {
 		return printErr("Rotate failed", err)
 	}
-	PrintOK(osStdout, "Alert rule %s secret rotated at %s (sealed=%s). Plaintext is server-minted and not retrievable; provision the new secret in the webhook receiver out-of-band.",
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	PrintOK(osStdout, "Alert rule %s secret rotated at %s (sealed=%s). Cutover is immediate; the receiver must already have the replacement.",
 		id, out.RotatedAt, out.WebhookSecretSealedMasked)
 	return 0
 }

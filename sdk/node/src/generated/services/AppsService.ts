@@ -840,6 +840,9 @@ export class AppsService {
    * `gb_hours` are zeroed and `source` is
    * `"degraded: postgres unavailable"`.
    *
+   * This is a Hobby+ per-app observability surface. Free
+   * accounts receive 402 before the app slug is resolved.
+   *
    * @returns AppSLOResponse The SLO panel.
    * @throws ApiError
    */
@@ -868,6 +871,7 @@ export class AppsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
@@ -1582,10 +1586,12 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
     });
   }
@@ -1996,7 +2002,9 @@ export class AppsService {
    *
    * PromQL cost: 6 round-trips regardless of N apps (vs. 7N
    * for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
-   * and `Client.QueryBuckets`.
+   * and `Client.QueryBuckets`. This rollup exposes the same
+   * Hobby+ signals as the per-app endpoint, so Free accounts
+   * receive 402.
    *
    * @returns AppsMetricsResponse The rollup.
    * @throws ApiError
@@ -2018,6 +2026,7 @@ export class AppsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
@@ -2035,11 +2044,19 @@ export class AppsService {
    * `wake.boot_failed`) are joined in alongside the success
    * path so a single GET shows the whole lifecycle.
    *
+   * For `wake.proxy_first_byte`, `data.latency_ms` is measured from
+   * request/queue acceptance through the first upstream byte. New rows
+   * also include `data.proxy_latency_ms` for the final bridge hop. Rows
+   * written before this contract correction contain the former
+   * proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+   *
    * The endpoint is a sub-resource of `/v1/apps/{slug}`;
    * auth and rate-limit share the §12 per-app budget with
    * logs/metrics/wake. Cross-account access 404s the
    * same way unknown slugs do (forge-proof: every row's
    * `data.app_id` is verified to match the resolved app).
+   * Wake narratives are a Hobby+ observability surface; Free
+   * accounts receive 402 before slug or wake lookup.
    *
    * @returns WakeTimelineResponse Wake-timeline frames.
    * @throws ApiError
@@ -2087,6 +2104,7 @@ export class AppsService {
       errors: {
         400: `Malformed query parameter on the wake-timeline read — \`since\` not RFC 3339 or \`limit\` out of range.`,
         401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         404: `No such app (slug) or wake_id is unknown.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).

@@ -62,7 +62,6 @@ var cspStyleHosts = []string{"https://unpkg.com"}
 // anticipates Stripe Checkout / Billing Portal onboarding.
 var cspFormActionHosts = []string{
 	"https://*.stripe.com",
-	"https://billing.faas.example",
 }
 
 // buildCSP returns the Content-Security-Policy header value for the

@@ -242,13 +242,13 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 	if req.GetInstance() == "" {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#create")
+			WithDocs(wire.DocsBaseURL + "/vmmd#create")
 	}
 	app := req.GetApp()
 	if app == nil {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing app", "AppSpec is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#appspec")
+			WithDocs(wire.DocsBaseURL + "/vmmd#appspec")
 	}
 	snap := req.GetSnapshot()
 	wr := fcvm.WakeRequest{
@@ -375,7 +375,7 @@ func toMigrationWakeRequest(ctx context.Context, req *vmmdpb.AdoptMigratedInstan
 	if req == nil {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing request", "request is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#adopt")
+			WithDocs(wire.DocsBaseURL + "/vmmd#adopt")
 	}
 	wr, err := toWakeRequest(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance:  req.GetInstanceId(),
@@ -404,13 +404,13 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 	if req.GetInstance() == "" {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#create")
+			WithDocs(wire.DocsBaseURL + "/vmmd#create")
 	}
 	app := req.GetApp()
 	if app == nil {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing app", "AppSpec is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#appspec")
+			WithDocs(wire.DocsBaseURL + "/vmmd#appspec")
 	}
 	return fcvm.WakeRequest{
 		Instance: req.GetInstance(),

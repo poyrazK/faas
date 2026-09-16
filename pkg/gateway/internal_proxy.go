@@ -48,6 +48,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
+	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
@@ -530,6 +531,12 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		if isHopByHop(k) {
 			continue
 		}
+		// gatewayd-public's outer httpsec.Static middleware is the only
+		// wire owner for these headers. Copying gatewayd-internal's copy
+		// with Header.Add would emit duplicate policy values.
+		if httpsec.IsStaticHeader(k) {
+			continue
+		}
 		// Only this proxy may emit the private edge transport marker. An
 		// application response cannot opt itself into status decoding.
 		if strings.EqualFold(k, edgeOriginalStatusHeader) {
@@ -775,6 +782,15 @@ func (p *InternalReverseProxy) logger() *slog.Logger {
 }
 
 func (p *InternalReverseProxy) forwardingContext(r *http.Request) (string, string) {
+	return CanonicalForwardingContext(r, p.TrustedIngressCIDRs)
+}
+
+// CanonicalForwardingContext returns the one client address and scheme that a
+// downstream trusted hop may consume. Forwarded values are accepted only from
+// configured ingress peers and only when each header is unambiguous. Both the
+// compute-data proxy and the control-plane proxy use this function so their
+// security and audit identities cannot drift apart.
+func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Prefix) (string, string) {
 	peer := remoteAddrIP(r.RemoteAddr)
 	peerText := ""
 	if peer.IsValid() {
@@ -784,7 +800,7 @@ func (p *InternalReverseProxy) forwardingContext(r *http.Request) (string, strin
 	if r.TLS != nil {
 		proto = "https"
 	}
-	if !p.trustsIngressPeer(peer) {
+	if !trustsIngressPeer(peer, trustedIngressCIDRs) {
 		return peerText, proto
 	}
 
@@ -805,11 +821,11 @@ func (p *InternalReverseProxy) forwardingContext(r *http.Request) (string, strin
 	return clientIP.String(), proto
 }
 
-func (p *InternalReverseProxy) trustsIngressPeer(peer netip.Addr) bool {
+func trustsIngressPeer(peer netip.Addr, trustedIngressCIDRs []netip.Prefix) bool {
 	if !peer.IsValid() {
 		return false
 	}
-	for _, prefix := range p.TrustedIngressCIDRs {
+	for _, prefix := range trustedIngressCIDRs {
 		if prefix.Contains(peer) {
 			return true
 		}

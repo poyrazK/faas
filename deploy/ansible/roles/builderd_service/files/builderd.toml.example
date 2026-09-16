@@ -44,6 +44,16 @@ drv = "vmmd"
 # it to fetch the cache hit. The dir must be writable by faas-builderd.
 build_staging_root = "/srv/fc/builder"
 
+# VM exports are a node-local handoff, separate from the build cache. imaged's
+# durable rootfs_path reference protects an artifact across restart/retry and a
+# shared file lease protects an active reader. Released exports are removed on
+# the next sweep. Legacy orphans receive a one-hour grace period under the 8
+# GiB cap; every handoff expires after 24h so this tree cannot grow forever.
+build_export_max_bytes = 8589934592
+build_export_max_age = "24h"
+build_export_orphan_min_age = "1h"
+build_export_sweep_interval = "5m"
+
 # Split-box source archives are retained in the configured object store until
 # this age. Queued and running builds are protected; terminal and orphaned
 # uploads are removed by builderd's daily source sweep.

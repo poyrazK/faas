@@ -101,10 +101,13 @@ func cmdEdgeRules(args []string) int {
 // account-wide endpoint; with --app it hits the per-app endpoint.
 // Both produce the same DTO shape; the JSON envelope is identical.
 func cmdEdgeRulesList(args []string) int {
-	fs := flag.NewFlagSet("edge-rules list", flag.ContinueOnError)
+	fs := newFlagSet("edge-rules list", flag.ContinueOnError)
 	slug := fs.String("app", "", "filter to a single app slug")
 	kind := fs.String("kind", "", "filter to a single kind (route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *kind != "" && !isEdgeRuleKind(*kind) {
@@ -159,7 +162,7 @@ func cmdEdgeRulesList(args []string) int {
 // before the round-trip (e.g. --rewrite-from passed with
 // --kind=cors).
 func cmdEdgeRulesCreate(args []string) int {
-	fs := flag.NewFlagSet("edge-rules create", flag.ContinueOnError)
+	fs := newFlagSet("edge-rules create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle (required)")
 	matchHost := fs.String("match-host", "", "host to match (required)")
@@ -281,6 +284,9 @@ func cmdEdgeRulesCreate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" || *kind == "" || *matchHost == "" {
 		PrintUsage(os.Stderr, "usage: gregale edge-rules create --app <slug> --kind <K> --match-host <H> [--match-path <P>] [--match-method M]... [--priority N] [--enabled] <kind-specific flags>", "edge-rules")
 		return 1
@@ -363,7 +369,7 @@ func cmdEdgeRulesCreate(args []string) int {
 
 // cmdEdgeRulesGet fetches a single edge rule by ID.
 func cmdEdgeRulesGet(args []string) int {
-	fs := flag.NewFlagSet("edge-rules get", flag.ContinueOnError)
+	fs := newFlagSet("edge-rules get", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -405,7 +411,9 @@ func cmdEdgeRulesGet(args []string) int {
 // passed with empty value" (send zero value). The triple-state
 // enabled flag is tracked via an enabledSet boolean.
 func cmdEdgeRulesUpdate(args []string) int {
-	fs := flag.NewFlagSet("edge-rules update", flag.ContinueOnError)
+	flags, positional := splitArgsForFlags(args, "enable", "disable", "cors-allow-credentials")
+	args = append(flags, positional...)
+	fs := newFlagSet("edge-rules update", flag.ContinueOnError)
 	matchHost := fs.String("match-host", "", "new host to match")
 	matchPath := fs.String("match-path", "", "new path to match")
 	var matchMethods multiFlag
@@ -616,7 +624,9 @@ func cmdEdgeRulesUpdate(args []string) int {
 // for CI/scripted paths (issue #312 pattern). Returns 1 if the
 // user cancels (per requireTyped semantics).
 func cmdEdgeRulesRm(args []string) int {
-	fs := flag.NewFlagSet("edge-rules rm", flag.ContinueOnError)
+	flags, positional := splitArgsForFlags(args, "quiet")
+	args = append(flags, positional...)
+	fs := newFlagSet("edge-rules rm", flag.ContinueOnError)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
 	if err := fs.Parse(args); err != nil {
 		return 1

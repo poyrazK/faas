@@ -186,13 +186,16 @@ jobs:
 // slug from --name or cwd before the short-circuit fires, so a
 // missing --app is a programmer error — the CLI boundary defence).
 func cmdDeployGithubSnippet(args []string) int {
-	fs := flag.NewFlagSet("deploy --github", flag.ContinueOnError)
+	fs := newFlagSet("deploy --github", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug (required)")
 	repo := fs.String("repo", "", "override snippet repo (default: ${{ github.repository }} or GITHUB_REPOSITORY)")
 	ref := fs.String("ref", "", "override snippet ref (default: ${{ github.sha }} or GITHUB_SHA)")
 	pinnedSHA := fs.String("pinned-sha", "", "optional Action commit SHA for the `# pin:` comment line")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, "usage: gregale deploy --github [--app SLUG] [--repo OWNER/NAME] [--ref REF] [--pinned-sha SHA]", "deploy")
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *app == "" {

@@ -34,7 +34,7 @@ func TestCacheClassifyBuildInvalidated(t *testing.T) {
 	if got := c.ClassifyBuild(recipe); got != cacheOutcomeHit {
 		t.Fatalf("valid entry classified as %q", got)
 	}
-	if err := os.Remove(filepath.Join(root, "recipe-v2-"+mustRecipeKey(t, recipe)+".node.pro", "artifact.sha256")); err != nil {
+	if err := os.Remove(filepath.Join(root, mustRecipeKey(t, recipe)+".node.pro", "artifact.sha256")); err != nil {
 		t.Fatal(err)
 	}
 	if got := c.ClassifyBuild(recipe); got != cacheOutcomeInvalidated {
@@ -48,5 +48,5 @@ func mustRecipeKey(t *testing.T, recipe BuildCacheRecipe) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.TrimPrefix(key, "recipe-v2-")
+	return key
 }

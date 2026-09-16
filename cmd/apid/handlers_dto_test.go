@@ -23,10 +23,19 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestAppResponseSurfacesMaintenanceMode(t *testing.T) {
+	s := &server{}
+	got := s.appResponse(state.App{MaintenanceMode: true}, api.PlanHobby)
+	if !got.MaintenanceMode {
+		t.Fatal("MaintenanceMode = false, want persisted true value")
+	}
+}
 
 // writeTarball creates a gzipped tarfile at `dir/file` containing the
 // given entries + bodies. Returns the absolute path. Used by the

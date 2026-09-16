@@ -39,12 +39,15 @@ func cmdWorkflows(args []string) int {
 }
 
 func cmdWorkflowsList(args []string) int {
-	fs := flag.NewFlagSet("workflows-list", flag.ContinueOnError)
+	fs := newFlagSet("workflows-list", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug")
 	limit := fs.Int("limit", 50, "page size (1..100)")
 	offset := fs.Int("offset", 0, "page offset")
 	status := fs.String("status", "", "filter by status (pending|running|awaiting_event|succeeded|failed|dead)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 
@@ -58,6 +61,10 @@ func cmdWorkflowsList(args []string) int {
 	}
 	if err := validateCLIOffset("offset", *offset); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale workflows list --app <slug> [--limit N] [--offset N] (offset >= 0)", "workflows")
+		return 1
+	}
+	if !api.ValidWorkflowRunStatus(*status) {
+		PrintUsage(os.Stderr, fmt.Sprintf("invalid workflow status %q; want pending, running, awaiting_event, succeeded, failed, or dead", *status), "workflows")
 		return 1
 	}
 
@@ -86,10 +93,13 @@ func cmdWorkflowsRun(args []string) int {
 	}
 	workflowName := args[0]
 
-	fs := flag.NewFlagSet("workflows-run", flag.ContinueOnError)
+	fs := newFlagSet("workflows-run", flag.ContinueOnError)
 	appSlug := fs.String("app", "", "app slug")
 	inputStr := fs.String("input", "{}", "JSON input payload for the workflow")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 
@@ -233,7 +243,7 @@ func cmdWorkflowsEvents(args []string) int {
 		return 1
 	}
 
-	fs := flag.NewFlagSet("workflows-events-send", flag.ContinueOnError)
+	fs := newFlagSet("workflows-events-send", flag.ContinueOnError)
 	payloadStr := fs.String("payload", "{}", "JSON payload for the event")
 	flags, posArgs := splitArgsForFlags(args[1:])
 	if err := fs.Parse(flags); err != nil {

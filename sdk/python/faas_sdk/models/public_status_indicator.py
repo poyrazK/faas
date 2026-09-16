@@ -21,6 +21,8 @@ class PublicStatusIndicator:
     id: PublicStatusIndicatorId
     label: str
     value: float | None
+    sample_status: str
+    """Distinguishes an observed value, a successful query with insufficient samples, and a telemetry failure."""
     unit: str
     target: float
     comparison: PublicStatusIndicatorComparison
@@ -32,6 +34,8 @@ class PublicStatusIndicator:
 
         value: float | None
         value = self.value
+
+        sample_status = self.sample_status
 
         unit = self.unit
 
@@ -46,6 +50,7 @@ class PublicStatusIndicator:
                 "id": id,
                 "label": label,
                 "value": value,
+                "sample_status": sample_status,
                 "unit": unit,
                 "target": target,
                 "comparison": comparison,
@@ -68,6 +73,8 @@ class PublicStatusIndicator:
 
         value = _parse_value(d.pop("value"))
 
+        sample_status = d.pop("sample_status")
+
         unit = d.pop("unit")
 
         target = d.pop("target")
@@ -78,6 +85,7 @@ class PublicStatusIndicator:
             id=id,
             label=label,
             value=value,
+            sample_status=sample_status,
             unit=unit,
             target=target,
             comparison=comparison,

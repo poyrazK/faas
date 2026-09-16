@@ -58,9 +58,10 @@ import (
 
 // release subcommands.
 const (
-	subReleaseBundle  = "bundle"
-	subReleaseInstall = "install"
-	subReleaseKGV     = "kgv"
+	subReleaseBundle    = "bundle"
+	subReleaseInstall   = "install"
+	subReleaseKGV       = "kgv"
+	subReleaseReconcile = "reconcile"
 
 	// Canonical release asset names. These are the names attached to a
 	// GitHub Release and retained under each installed release directory.
@@ -82,11 +83,13 @@ func cmdReleaseDispatch(args []string) int {
 		return cmdReleaseInstall(args[1:])
 	case subReleaseKGV:
 		return cmdReleaseKGV(args[1:])
+	case subReleaseReconcile:
+		return cmdReleaseReconcile(args[1:])
 	case flagHelpShort, flagHelpLong:
 		printReleaseUsage(os.Stderr)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl release: unknown subcommand %q (expected: bundle | install | kgv)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl release: unknown subcommand %q (expected: bundle | install | kgv | reconcile)\n", args[0])
 		return 1
 	}
 }
@@ -100,6 +103,7 @@ Subcommands:
             INSERTs a row into release_bundles.
   install   Install a release on the local box (atomic symlink flip +
             release_bundles.applied_at first-write-wins stamp).
+  reconcile Remove retained database rows for superseded failed rollouts.
 
 Flags (bundle):
   --bin-dir PATH        Path to the directory holding the daemon binaries
@@ -118,6 +122,11 @@ Flags (install):
                         installs use NAME.faas).
   --role ROLE            control-plane or compute-only role template.
   --defer-activation     keep a compute row drained until readiness passes.
+
+Flags (reconcile):
+  --releases-root PATH  Releases root (default: /opt/faas/releases).
+  --retention DURATION  Minimum abandoned-row age (default: 24h).
+  --dry-run             Report eligible rows without deleting them.
 
 Exit codes:
   0  success
@@ -436,10 +445,8 @@ func cmdReleaseInstall(args []string) int {
 	// Three states, fail-closed posture (review finding #3):
 	//
 	//   (a) SBoM file absent  → skip gate (legacy operators continue).
-	//   (b) SBoM file present but 0 bytes → skip gate with a log
-	//       message (canary partial-failure mode — review finding #8:
-	//       distinguish "not yet ready" from "malformed" so operators
-	//       don't get a misleading parse error).
+	//   (b) SBoM file present but 0 bytes → fail activation. A partial
+	//       canary write is a malformed release artifact.
 	//   (c) SBoM file present and parseable → run Diff vs baseline.
 	//       Baseline MUST exist (fail-closed: missing baseline is
 	//       ErrNilBaseline wrapped; the operator must run
@@ -454,16 +461,28 @@ func cmdReleaseInstall(args []string) int {
 			return 3
 		}
 		if len(sbomBody) == 0 {
-			// Review finding #8: 0-byte SBoM is the canary
-			// partial-failure mode (canary wrote a file but
-			// syft didn't finish). Skip the gate with a log
-			// line so the operator doesn't see a misleading
-			// 'malformed' error.
-			_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: warning: SBoM is empty, skipping CVE-baseline gate (canary partial-failure; retry install once SBoM is non-empty)\n")
+			_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: SBoM is empty; refusing to activate a partially written release artifact\n")
+			return 3
 		} else {
 			counts, parseErr := releaseinstall.ParseSPDXv2_3(sbomBody)
 			if parseErr != nil {
 				_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: parse sbom: %v\n", parseErr)
+				return 3
+			}
+			var sbomDoc struct {
+				DocumentNamespace string `json:"documentNamespace"`
+				Name              string `json:"name"`
+			}
+			if decodeErr := json.Unmarshal(sbomBody, &sbomDoc); decodeErr != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: decode SBoM envelope: %v\n", decodeErr)
+				return 3
+			}
+			stamped := sbomDoc.DocumentNamespace
+			if stamped == "" {
+				stamped = sbomDoc.Name
+			}
+			if stamped != "" && !sbomDocMatchesGitSHA(stamped, *gitSHA) {
+				_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: SBoM documentNamespace=%q does not reference --git-sha=%q; refusing a stale SBoM\n", stamped, *gitSHA)
 				return 3
 			}
 			baseline, baseErr := releaseinstall.ReadBaseline(*releasesRoot, *gitSHA)
@@ -480,11 +499,11 @@ func cmdReleaseInstall(args []string) int {
 				if errors.Is(baseErr, releaseinstall.ErrNilBaseline) {
 					_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: SBoM gate requires a prior baseline (none at %s).\n"+
 						"  run: gregalectl release kgv rotate --git-sha %s [--from-zero]\n",
-						releaseinstall.SBOMBaselinePath(releaseinstall.BundleRoot(*releasesRoot, *gitSHA)), *gitSHA)
+						releaseinstall.AcceptedSBOMBaselinePath(*releasesRoot), *gitSHA)
 					return 3
 				}
 				_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: read SBoM baseline at %s: %v\n",
-					releaseinstall.SBOMBaselinePath(releaseinstall.BundleRoot(*releasesRoot, *gitSHA)), baseErr)
+					releaseinstall.AcceptedSBOMBaselinePath(*releasesRoot), baseErr)
 				return 3
 			}
 			if _, diffErr := baseline.Diff(counts); diffErr != nil {

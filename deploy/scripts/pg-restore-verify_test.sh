@@ -32,7 +32,10 @@ for tok in "accounts" "apps" "instances" \
            "ROW_COUNT_THRESHOLD" "T_DAYS_BACK" \
            "RESTORE_TEST_ROOT" "RESTORE_PG_PORT" \
            "OFF_HOST_BACKUP_BASEBACKUP_PATH" "OFF_HOST_BACKUP_WAL_PATH" \
-           "rclone" "offhostbox" "pg_is_in_recovery"; do
+           "rclone" "offhostbox" "pg_is_in_recovery" \
+           "max_connections" "max_prepared_transactions" \
+           "max_locks_per_transaction" "max_wal_senders" \
+           "max_worker_processes" "trap cleanup_restore EXIT"; do
   grep -q "$tok" "$SCRIPT" || { echo "FAIL: missing token '$tok' in $SCRIPT"; exit 1; }
 done
 echo "OK: required tokens present in verify script"
@@ -43,3 +46,26 @@ for hdr in "0/5 Pre-flight" "1/5 rclone lsd" "2/5 rclone copy" \
   grep -q "$hdr" "$SCRIPT" || { echo "FAIL: missing step header '$hdr'"; exit 1; }
 done
 echo "OK: step headers present"
+
+# 4. Exercise the recovery-settings writer. This is the production failure
+# mode from #2507: a primary max_connections above initdb's default must be
+# written into the throwaway cluster before recovery starts.
+# shellcheck disable=SC1090,SC1091
+PG_RESTORE_VERIFY_LIBRARY_ONLY=1 source "$SCRIPT"
+TEST_CONFIG=$(mktemp)
+trap 'rm -f "$TEST_CONFIG"' EXIT
+append_recovery_sensitive_settings "$TEST_CONFIG" \
+  max_connections 160 \
+  max_prepared_transactions 0 \
+  max_locks_per_transaction 64 \
+  max_wal_senders 10 \
+  max_worker_processes 8
+grep -qx 'max_connections = 160' "$TEST_CONFIG" \
+  || { echo "FAIL: elevated primary max_connections not rendered"; exit 1; }
+grep -qx 'max_worker_processes = 8' "$TEST_CONFIG" \
+  || { echo "FAIL: complete recovery-sensitive setting set not rendered"; exit 1; }
+if append_recovery_sensitive_settings "$TEST_CONFIG" shared_buffers 1024 2>/dev/null; then
+  echo "FAIL: unsupported recovery setting accepted"
+  exit 1
+fi
+echo "OK: recovery-sensitive primary settings rendered safely"

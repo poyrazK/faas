@@ -5,6 +5,7 @@
 set -euo pipefail
 
 endpoint="${PUBLIC_ENDPOINT_URL:-}"
+platform_api="${PUBLIC_PLATFORM_API_URL:-https://api.gregale.dev}"
 http_endpoint="${PUBLIC_HTTP_URL:-}"
 probe_path="${PUBLIC_ENDPOINT_PATH:-/status}"
 min_hsts_age="${PUBLIC_MIN_HSTS_MAX_AGE:-31536000}"
@@ -32,9 +33,13 @@ esac
 if [[ "$endpoint" == */ ]]; then
   endpoint="${endpoint%/}"
 fi
+if [[ "$platform_api" == */ ]]; then
+  platform_api="${platform_api%/}"
+fi
 url="${endpoint}${probe_path}"
 headers="$(mktemp)"
-trap 'rm -f "$headers"' EXIT
+metrics_body="$(mktemp)"
+trap 'rm -f "$headers" "$metrics_body"' EXIT
 
 status="$(curl --silent --show-error --location --max-time 20 \
   --proto '=https' --tlsv1.2 \
@@ -82,7 +87,7 @@ if [[ -n "$http_endpoint" ]]; then
       ;;
   esac
   http_headers="$(mktemp)"
-  trap 'rm -f "$headers" "$http_headers"' EXIT
+  trap 'rm -f "$headers" "$http_headers" "$metrics_body"' EXIT
   redirect_status="$(curl --silent --show-error --max-time 20 --max-redirs 0 \
     --dump-header "$http_headers" --output /dev/null --write-out '%{http_code}' \
     "$http_endpoint${probe_path}")" || true
@@ -103,8 +108,35 @@ if [[ -n "$http_endpoint" ]]; then
   esac
 fi
 
+# Public edge regression gate: the platform API must return its normal 404
+# rather than a daemon registry. On a customer hostname /metrics belongs to
+# the workload and may legitimately be Prometheus text, so reject only the
+# platform's distinctive metric families there.
+platform_metrics_status="$(curl --silent --show-error --location --max-time 20 \
+  --proto '=https' --tlsv1.2 --max-filesize 2097152 \
+  --output "$metrics_body" --write-out '%{http_code}' \
+  "${platform_api}/metrics")"
+if [[ "$platform_metrics_status" != "404" ]]; then
+  echo "public-endpoint-check: ${platform_api}/metrics returned HTTP ${platform_metrics_status}; want 404" >&2
+  exit 1
+fi
+if grep -Eq '^(gateway_requests_total|gateway_request_duration_seconds|gatewayd_[A-Za-z0-9_:]+)' "$metrics_body"; then
+  echo "public-endpoint-check: ${platform_api}/metrics exposed gateway daemon metrics" >&2
+  exit 1
+fi
+
+: >"$metrics_body"
+curl --silent --show-error --location --max-time 20 \
+  --proto '=https' --tlsv1.2 --max-filesize 2097152 \
+  --output "$metrics_body" "${endpoint}/metrics"
+if grep -Eq '^(gateway_requests_total|gateway_request_duration_seconds|gatewayd_[A-Za-z0-9_:]+)' "$metrics_body"; then
+  echo "public-endpoint-check: ${endpoint}/metrics exposed gateway daemon metrics instead of the customer workload" >&2
+  exit 1
+fi
+
 echo "public-endpoint-check: OK endpoint=${endpoint} status=${status} hsts_max_age=${hsts_age}"
 echo "public-endpoint-check: OK api_client_user_agent=Python-urllib/3.13 status=${api_client_status}"
+echo "public-endpoint-check: OK public_metrics_isolation platform_status=${platform_metrics_status}"
 if [[ -n "$http_endpoint" ]]; then
   echo "public-endpoint-check: OK http_redirect=${http_endpoint} status=${redirect_status}"
 fi

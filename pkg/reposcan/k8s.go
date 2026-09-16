@@ -12,9 +12,8 @@ import (
 
 // k8sManifest is the minimal subset of a k8s YAML resource we read.
 // apiVersion + kind + metadata.name are the routing decisions;
-// spec.schedule is for CronJob only; spec.template.spec.containers
-// carries command/env/ports for Deployment (the stateless workload
-// we actually provision).
+// spec.schedule/suspend and spec.jobTemplate carry CronJob desired state;
+// spec.template.spec.containers carries Deployment execution metadata.
 type k8sManifest struct {
 	APIVersion string `yaml:"apiVersion"`
 	Kind       string `yaml:"kind"`
@@ -23,7 +22,17 @@ type k8sManifest struct {
 	} `yaml:"metadata"`
 	Spec struct {
 		// CronJob-only
-		Schedule string `yaml:"schedule"`
+		Schedule    string `yaml:"schedule"`
+		Suspend     *bool  `yaml:"suspend"`
+		JobTemplate struct {
+			Spec struct {
+				Template struct {
+					Spec struct {
+						Containers []k8sContainer `yaml:"containers"`
+					} `yaml:"spec"`
+				} `yaml:"template"`
+			} `yaml:"spec"`
+		} `yaml:"jobTemplate"`
 		// Deployment / StatefulSet
 		Template struct {
 			Spec struct {
@@ -102,17 +111,31 @@ func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 				}
 				var m k8sManifest
 				if err := yaml.Unmarshal([]byte(doc), &m); err != nil {
-					warnings = append(warnings, fmt.Sprintf(
-						"reposcan: parse %s document %d: %v", p, docIndex+1, err))
-					continue
+					return fmt.Errorf("reposcan: parse %s document %d: %w", p, docIndex+1, err)
 				}
 				switch m.Kind {
 				case "Deployment":
+					if len(m.Spec.Template.Spec.Containers) == 0 ||
+						strings.TrimSpace(m.Spec.Template.Spec.Containers[0].Image) == "" {
+						return fmt.Errorf("reposcan: %s Deployment %q requires a first container image", p, m.Metadata.Name)
+					}
 					// Stateless → http. The first container's
 					// command/args/env/ports/apply. (We don't
 					// model initContainers / sidecars here.)
-					seeds = append(seeds, k8sDeploymentSeed(p, m))
+					seed := k8sDeploymentSeed(p, m)
+					if hint, ok := denylistKind(seed.image); ok {
+						managed = append(managed, Managed{
+							Name: m.Metadata.Name, Kind: imageBase(seed.image),
+							EnvHint: hint, Source: seed.source, Image: seed.image,
+						})
+						continue
+					}
+					seeds = append(seeds, seed)
 				case "CronJob":
+					containers := m.Spec.JobTemplate.Spec.Template.Spec.Containers
+					if len(containers) == 0 || strings.TrimSpace(containers[0].Image) == "" {
+						return fmt.Errorf("reposcan: %s CronJob %q requires a first container image", p, m.Metadata.Name)
+					}
 					seeds = append(seeds, k8sCronJobSeed(p, m))
 				case "StatefulSet":
 					warnings = append(warnings, "reposcan: "+p+
@@ -183,32 +206,41 @@ func k8sDeploymentSeed(src string, m k8sManifest) workloadSeed {
 		class:  ClassHTTP,
 	}
 	if len(m.Spec.Template.Spec.Containers) > 0 {
-		c := m.Spec.Template.Spec.Containers[0]
-		if len(c.Command) > 0 {
-			s.command = append(s.command, c.Command...)
-		}
-		if len(c.Args) > 0 {
-			s.command = append(s.command, c.Args...)
-		}
-		for _, e := range c.Env {
-			s.envKeys = append(s.envKeys, e.Name)
-		}
-		for _, p := range c.Ports {
-			if p.ContainerPort != 0 {
-				s.ports = append(s.ports, p.ContainerPort)
-			}
-		}
-		sort.Ints(s.ports)
-		sort.Strings(s.envKeys)
+		applyK8sContainer(&s, m.Spec.Template.Spec.Containers[0])
 	}
 	return s
 }
 
 func k8sCronJobSeed(src string, m k8sManifest) workloadSeed {
-	return workloadSeed{
-		name:     m.Metadata.Name,
-		source:   src + ": " + m.Metadata.Name,
-		class:    ClassJob,
-		schedule: m.Spec.Schedule,
+	enabled := m.Spec.Suspend == nil || !*m.Spec.Suspend
+	s := workloadSeed{
+		name:      m.Metadata.Name,
+		source:    src + ": " + m.Metadata.Name,
+		class:     ClassJob,
+		schedule:  m.Spec.Schedule,
+		schedules: []CronSchedule{{Expression: m.Spec.Schedule, Enabled: enabled}},
 	}
+	containers := m.Spec.JobTemplate.Spec.Template.Spec.Containers
+	if len(containers) > 0 {
+		applyK8sContainer(&s, containers[0])
+	}
+	return s
+}
+
+func applyK8sContainer(s *workloadSeed, c k8sContainer) {
+	s.image = strings.TrimSpace(c.Image)
+	s.command = append(s.command, c.Command...)
+	s.command = append(s.command, c.Args...)
+	for _, e := range c.Env {
+		if e.Name != "" {
+			s.envKeys = append(s.envKeys, e.Name)
+		}
+	}
+	for _, p := range c.Ports {
+		if p.ContainerPort != 0 {
+			s.ports = append(s.ports, p.ContainerPort)
+		}
+	}
+	sort.Ints(s.ports)
+	sort.Strings(s.envKeys)
 }

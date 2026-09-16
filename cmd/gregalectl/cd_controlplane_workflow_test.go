@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 )
 
 func TestCDControlPlanePromotesActiveReleaseCLI(t *testing.T) {
@@ -24,6 +26,25 @@ func TestCDControlPlanePromotesActiveReleaseCLI(t *testing.T) {
 	}
 	if got := strings.Count(workflow, "/usr/local/bin/gregalectl"); got != 1 {
 		t.Fatalf("control-plane workflow has %d canonical CLI destinations, want exactly 1", got)
+	}
+}
+
+func TestCDControlPlaneVerifiesSBOMBeforeActivationAndAcceptsAfterHealth(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	verify := strings.Index(workflow, "release kgv verify --git-sha ${RELEASE_ID}")
+	activate := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	health := strings.Index(workflow, "Converge Prometheus config and rules")
+	acceptStep := strings.Index(workflow, "Accept activated release SBOM baseline")
+	accept := strings.Index(workflow, `release kgv rotate --git-sha '${RELEASE_ID}'`)
+	if verify < 0 || activate < 0 || health < 0 || acceptStep < 0 || accept < 0 {
+		t.Fatalf("control-plane workflow is missing KGV lifecycle: verify=%d activate=%d health=%d acceptStep=%d accept=%d", verify, activate, health, acceptStep, accept)
+	}
+	if !(verify < activate && activate < health && health < acceptStep && acceptStep < accept) {
+		t.Fatalf("KGV lifecycle must verify before activation and accept only after health: verify=%d activate=%d health=%d acceptStep=%d accept=%d", verify, activate, health, acceptStep, accept)
 	}
 }
 
@@ -65,5 +86,98 @@ func TestCDControlPlanePromotesVersionedStatusPage(t *testing.T) {
 	}
 	if !(bundle < seal && seal < deploy && deploy < stage && stage < promote) {
 		t.Fatalf("status page must be sealed before deployment and promoted after activation: bundle=%d seal=%d deploy=%d stage=%d promote=%d", bundle, seal, deploy, stage, promote)
+	}
+}
+
+func TestCDControlPlaneBundlesEveryCanonicalControlPlaneDaemon(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	start := strings.Index(workflow, "for unit in")
+	if start < 0 {
+		t.Fatalf("control-plane workflow is missing its bundled unit loop")
+	}
+	end := strings.Index(workflow[start:], "; do")
+	if end < 0 {
+		t.Fatalf("control-plane workflow has an unterminated bundled unit loop")
+	}
+	unitList := workflow[start : start+end]
+	for _, daemon := range daemonunitspec.DaemonsForRole(daemonunitspec.RoleControlPlane) {
+		unit := "faas-" + daemon + ".service"
+		if !strings.Contains(unitList, unit) {
+			t.Errorf("control-plane workflow does not bundle canonical unit %s", unit)
+		}
+	}
+}
+
+func TestCDControlPlaneConvergesOutbounddAndPublicBetaBilling(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	for _, required := range []string{
+		"host-config/outboundd.toml",
+		"FAAS_OUTBOUNDD_ROLE=control-plane",
+		"FAAS_BILLING_MODE=disabled",
+		"/etc/faas/secrets/outboundd/outboundd.env",
+		"faas_map  faas-outboundd  faas",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("control-plane workflow is missing convergence contract %q", required)
+		}
+	}
+	prerequisites := strings.Index(workflow, "outboundd was added after the original")
+	deploy := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	if prerequisites < 0 || deploy < 0 || prerequisites > deploy {
+		t.Fatalf("outboundd prerequisites must converge before deployctl activation: prerequisites=%d deploy=%d", prerequisites, deploy)
+	}
+}
+
+func TestCDControlPlaneAcceptsIdleWakeWindow(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	if !strings.Contains(workflow, "wake is None or valid(wake)") {
+		t.Fatal("control-plane rollout gate must accept wake_p95_ms=null during an idle window")
+	}
+}
+
+func TestCDControlPlaneVerifiesPostgresBackupContractAfterActivation(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	bundle := strings.Index(workflow, "host-config/faas-pg-backup-contract-preflight.sh")
+	deploy := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	verify := strings.Index(workflow, "Verify PostgreSQL backup namespace contract")
+	run := strings.Index(workflow, "/opt/faas/current/host-config/faas-pg-backup-contract-preflight.sh")
+	if bundle < 0 || deploy < 0 || verify < 0 || run < 0 {
+		t.Fatalf("control-plane workflow is missing PostgreSQL backup contract verification: bundle=%d deploy=%d verify=%d run=%d", bundle, deploy, verify, run)
+	}
+	if !(bundle < deploy && deploy < verify && verify < run) {
+		t.Fatalf("PostgreSQL backup contract must be bundled and checked after activation: bundle=%d deploy=%d verify=%d run=%d", bundle, deploy, verify, run)
+	}
+}
+
+func TestCDControlPlanePromotesDPAArtifactWithRelease(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-controlplane.yml"))
+	if err != nil {
+		t.Fatalf("read cd-controlplane workflow: %v", err)
+	}
+	workflow := string(body)
+	bundle := strings.Index(workflow, `install -m 0644 docs/DPA.md "${BUNDLE_ROOT}/host-config/dpa.md"`)
+	deploy := strings.Index(workflow, "deployctl deploy ${RELEASE_ID}")
+	install := strings.Index(workflow, "${release_dir}/host-config/dpa.md /etc/faas/.dpa.md-${RELEASE_ID}")
+	if bundle < 0 || deploy < 0 || install < 0 {
+		t.Fatalf("control-plane workflow is missing versioned DPA handling: bundle=%d deploy=%d install=%d", bundle, deploy, install)
+	}
+	if !(bundle < deploy && deploy < install) {
+		t.Fatalf("DPA must be bundled before activation and installed after it: bundle=%d deploy=%d install=%d", bundle, deploy, install)
 	}
 }

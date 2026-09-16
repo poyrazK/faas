@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,7 +60,7 @@ func newTestProxyWithReplay(t *testing.T, secret []byte) (http.Handler, *atomic.
 	srv := httptest.NewServer(upstreamHandler)
 	t.Cleanup(srv.Close)
 	auditor := newFakeAuditStore()
-	proxy := newGithubdProxy(srv.URL, secret, http.NewServeMux(), slog.New(slog.NewTextHandler(io.Discard, nil)), newGatewaydAuditor(auditor, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	proxy := newGithubdProxy(srv.URL, secret, "", http.NewServeMux(), slog.New(slog.NewTextHandler(io.Discard, nil)), newGatewaydAuditor(auditor, slog.New(slog.NewTextHandler(io.Discard, nil))))
 	return proxy, &upstreamHits, auditor
 }
 
@@ -131,7 +132,7 @@ func newTestProxy(t *testing.T, secret []byte, upstream http.Handler) (http.Hand
 	// Issue #294: tests that pre-date the replay check pass nil for
 	// the auditor; the proxy forwards every HMAC-verified request,
 	// matching pre-#294 behaviour.
-	proxy := newGithubdProxy(srv.URL, secret, http.NewServeMux(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	proxy := newGithubdProxy(srv.URL, secret, "", http.NewServeMux(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	return proxy, &upstreamHits
 }
 
@@ -163,6 +164,49 @@ func TestGithubdProxy_VerifiesAndForwards(t *testing.T) {
 	}
 	if got := rr.Header().Get("X-Echo-Path"); got != githubWebhookPath {
 		t.Errorf("X-Echo-Path = %q, want %q", got, githubWebhookPath)
+	}
+}
+
+func TestGithubdProxy_InterceptsOnlyPlatformHosts(t *testing.T) {
+	webhookdedupe.ResetForTest()
+	secret := []byte("test-webhook-secret")
+	var upstreamHits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamHits.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(upstream.Close)
+	var customerHits atomic.Int32
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		customerHits.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	proxy := newGithubdProxy(upstream.URL, secret, "gregale.dev", next,
+		slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+
+	tests := []struct {
+		host       string
+		wantStatus int
+	}{
+		{host: "gregale.dev", wantStatus: http.StatusAccepted},
+		{host: "api.gregale.dev:443", wantStatus: http.StatusAccepted},
+		{host: "customer.gregale.dev", wantStatus: http.StatusNoContent},
+		{host: "api.customer.example", wantStatus: http.StatusNoContent},
+	}
+	for i, tt := range tests {
+		body := []byte(`{"zen":"keep it logically awesome"}`)
+		req := httptest.NewRequest(http.MethodPost, githubWebhookPath, bytes.NewReader(body))
+		req.Host = tt.host
+		req.Header.Set("X-Hub-Signature-256", sign(body, secret))
+		req.Header.Set("X-GitHub-Delivery", "host-scope-"+strconv.Itoa(i))
+		rr := httptest.NewRecorder()
+		proxy.ServeHTTP(rr, req)
+		if rr.Code != tt.wantStatus {
+			t.Errorf("host %q status = %d, want %d", tt.host, rr.Code, tt.wantStatus)
+		}
+	}
+	if upstreamHits.Load() != 2 || customerHits.Load() != 2 {
+		t.Fatalf("upstream hits = %d, customer hits = %d; want 2 each", upstreamHits.Load(), customerHits.Load())
 	}
 }
 
@@ -215,7 +259,7 @@ func TestGithubdProxy_EmptySecretRejectsEverything(t *testing.T) {
 	})
 	srv := httptest.NewServer(upstreamHandler)
 	defer srv.Close()
-	proxy := newGithubdProxy(srv.URL, nil /* secret unset */, http.NewServeMux(),
+	proxy := newGithubdProxy(srv.URL, nil /* secret unset */, "", http.NewServeMux(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
 	body := []byte(`{"ref":"refs/heads/main"}`)
@@ -245,7 +289,7 @@ func TestGithubdProxy_NonWebhookPathsFallThrough(t *testing.T) {
 	})
 	// Build the proxy over a fallthrough handler directly to
 	// observe "did the request reach next?".
-	proxy2 := newGithubdProxy("http://127.0.0.1:1", secret, mux, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	proxy2 := newGithubdProxy("http://127.0.0.1:1", secret, "", mux, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
 	for _, p := range []string{"/dashboard/", "/oauth/callback", "/api/v1/deployments", "/v1/apps"} {
 		req := httptest.NewRequest(http.MethodGet, p, nil)
@@ -311,7 +355,7 @@ func TestGithubdProxy_PreservesCorrelationID(t *testing.T) {
 func TestGithubdProxy_UpstreamDownReturns502(t *testing.T) {
 	secret := []byte("test-webhook-secret")
 	// Point at a closed port so RoundTrip fails immediately.
-	proxy := newGithubdProxy("http://127.0.0.1:1", secret, http.NewServeMux(),
+	proxy := newGithubdProxy("http://127.0.0.1:1", secret, "", http.NewServeMux(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 
 	body := []byte(`{"ref":"refs/heads/main","after":"abc"}`)
@@ -408,7 +452,7 @@ func TestGithubdProxy_Non2xxReleasesReplayClaim(t *testing.T) {
 		http.Error(w, "rotating secret", http.StatusUnauthorized)
 	}))
 	t.Cleanup(upstream.Close)
-	proxy := newGithubdProxy(upstream.URL, secret, http.NewServeMux(),
+	proxy := newGithubdProxy(upstream.URL, secret, "", http.NewServeMux(),
 		slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	body := []byte(`{"ref":"refs/heads/main"}`)
 	for i := 0; i < 2; i++ {

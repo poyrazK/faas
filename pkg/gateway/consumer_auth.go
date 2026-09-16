@@ -100,9 +100,9 @@ func (t *consumerKeyToucher) touch(store ConsumerAuthStore, keyID string) {
 
 // enforceConsumerAuth applies ADR-120's app-level consumer-key matrix. It
 // returns true when the request may continue and false after writing the
-// customer-facing problem response. A present-but-malformed credential is
-// always rejected, even in optional mode; only an absent credential is
-// anonymous pass-through in that mode.
+// customer-facing problem response. Optional mode reserves only the
+// unambiguous `Bearer ck_...` consumer-key shape; application-owned Basic,
+// Token, and other Authorization schemes pass through unchanged.
 func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
 	mode := app.ConsumerAuthMode
 	if mode == "" {
@@ -134,7 +134,16 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 	}
 
 	token := bearerTokenFromHeader(raw)
-	if token == "" || !api.ValidConsumerKeyFormat(token) {
+	if token == "" || !strings.HasPrefix(token, api.ConsumerKeyPrefix) {
+		if mode == api.ConsumerAuthModeOptional {
+			return true
+		}
+		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
+		rec.status = http.StatusUnauthorized
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
+	if !api.ValidConsumerKeyFormat(token) {
 		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
 		rec.status = http.StatusUnauthorized
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

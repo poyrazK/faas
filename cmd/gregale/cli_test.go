@@ -418,7 +418,7 @@ func TestCmdDeploy_HappyPath(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 0 {
 		t.Errorf("cmdDeploy happy = %d, want 0", code)
 	}
 }
@@ -455,7 +455,7 @@ func TestCmdDeploy_HappyPath_PrintsColdWakeSentence(t *testing.T) {
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 0 {
 		t.Fatalf("cmdDeploy exit = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -512,7 +512,7 @@ func TestCmdDeploy_HappyPath_PrintsHostingReceipt(t *testing.T) {
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 0 {
 		t.Fatalf("cmdDeploy exit = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -550,7 +550,7 @@ func TestCmdDeploy_JSON_WaitsByDefault_ReturnsHostingReceipt(t *testing.T) {
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 0 {
 		t.Fatalf("cmdDeploy --json exit = %d, want 0", code)
 	}
 	var receipt struct {
@@ -598,7 +598,7 @@ func TestCmdDeploy_AppAlreadyExists(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "existing"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "existing"}); code != 0 {
 		t.Errorf("cmdDeploy with existing app = %d, want 0", code)
 	}
 }
@@ -640,7 +640,7 @@ func TestCmdDeploy_JSON_DeployErrorEmitsRFC7807OnStderr(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	jsonOutput = true
 	defer func() { resetJSONOutput() }()
-	code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"})
+	code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"})
 	_ = w.Close()
 	data, _ := io.ReadAll(r)
 
@@ -693,7 +693,7 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 
 		t.Setenv("FAAS_API", srv.URL)
 		t.Setenv("FAAS_TOKEN", "fp_live_x")
-		if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+		if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 0 {
 			t.Errorf("recovered live = %d, want 0", code)
 		}
 	})
@@ -725,7 +725,7 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 
 		t.Setenv("FAAS_API", srv.URL)
 		t.Setenv("FAAS_TOKEN", "fp_live_x")
-		if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 1 {
+		if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 1 {
 			t.Errorf("recovered failed/oom = %d, want 1", code)
 		}
 	})
@@ -767,7 +767,7 @@ func TestCmdDeploy_StreamOpenFailsRecoversViaGetDeployment(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 0 {
 		t.Errorf("recovered live after stream-open failure = %d, want 0", code)
 	}
 }
@@ -902,7 +902,7 @@ func TestCmdDeploy_JSON_NoWaitReturnsQueuedReceipt(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	jsonOutput = true
 	defer func() { resetJSONOutput() }()
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app", "--no-wait"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app", "--no-wait"}); code != 0 {
 		t.Fatalf("cmdDeploy --json --no-wait = %d, want 0", code)
 	}
 	out := strings.TrimRight(buf.String(), "\n")
@@ -1513,7 +1513,7 @@ func TestCmdDeploy_Recovery_PrintsColdWakeSentence(t *testing.T) {
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 0 {
 		t.Fatalf("cmdDeploy recovery exit = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -1573,7 +1573,7 @@ func TestCmdDeploy_RequireAuthn_CarryThrough(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	if code := cmdDeployTarball([]string{
-		"--image", "registry.x/app@sha256:abc",
+		"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"--name", "authn-app",
 		"--require-authn",
 	}); code != 0 {
@@ -1622,7 +1622,7 @@ func TestCmdDeploy_NoRequireAuthn_OpensPublicURL(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	if code := cmdDeployTarball([]string{
-		"--image", "registry.x/app@sha256:abc",
+		"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"--name", "public-app",
 		"--no-require-authn",
 	}); code != 0 {
@@ -1652,7 +1652,7 @@ func TestCmdDeploy_RequireAuthn_Mutex(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	if code := cmdDeployTarball([]string{
-		"--image", "registry.x/app@sha256:abc",
+		"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"--name", "mutex-app",
 		"--require-authn",
 		"--no-require-authn",
@@ -1719,14 +1719,14 @@ func TestCmdDeploy_RequireAuthn_ExistingAppPATCH(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	if code := cmdDeployTarball([]string{
-		"--image", "registry.x/app@sha256:abc",
+		"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"--name", "existing-app",
 		"--require-authn",
 	}); code != 0 {
 		t.Fatalf("cmdDeploy existing-app exit = %d, want 0", code)
 	}
-	if !sawCreate {
-		t.Errorf("expected POST /v1/apps (got 409), but server never saw it")
+	if sawCreate {
+		t.Errorf("owned app redeploy must not POST /v1/apps")
 	}
 	if !sawPatch {
 		t.Errorf("expected PATCH /v1/apps/existing-app after 409 to mirror --require-authn onto existing app; got nothing")

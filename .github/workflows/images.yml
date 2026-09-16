@@ -195,6 +195,7 @@ jobs:
     env:
       IMAGE_NAME: ghcr.io/poyrazk/builder-base
       BUILDKIT_VERSION: "0.32.2"
+      BUILDKIT_REVISION: "991535e0973488b6a429096d21fa13f81f2d89d8"
       RAILPACK_VERSION: "0.38.0"
     steps:
       - uses: actions/checkout@v7
@@ -264,6 +265,7 @@ jobs:
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --build-arg BUILDKIT_VERSION \
+            --build-arg BUILDKIT_REVISION \
             --build-arg RAILPACK_VERSION \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
@@ -291,6 +293,7 @@ jobs:
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --build-arg BUILDKIT_VERSION \
+            --build-arg BUILDKIT_REVISION \
             --build-arg RAILPACK_VERSION \
             --tag "localhost:5000/pr-${GITHUB_SHA::12}" \
             --push \
@@ -359,6 +362,20 @@ jobs:
               exit 1
             }
             echo "OK: ${REF}@${DIGEST} contains ${ARCH} faas-guest-init"
+            BUILDKIT_OUTPUT=$(docker run --rm \
+              --platform "linux/${ARCH}" \
+              --entrypoint /usr/local/bin/buildctl \
+              "${REF}@${DIGEST}" --version)
+            if grep -Eq '0\.0\.0\+unknown|(^|[[:space:]])unknown($|[[:space:]])' <<<"${BUILDKIT_OUTPUT}" || \
+               ! grep -Fq "v${BUILDKIT_VERSION}" <<<"${BUILDKIT_OUTPUT}"; then
+              echo "::error::buildctl has invalid provenance on ${ARCH}: ${BUILDKIT_OUTPUT}"
+              exit 1
+            fi
+            if ! grep -Fq "${BUILDKIT_REVISION}" <<<"${BUILDKIT_OUTPUT}"; then
+              echo "::error::buildctl revision mismatch on ${ARCH}: ${BUILDKIT_OUTPUT}"
+              exit 1
+            fi
+            echo "OK: ${REF}@${DIGEST} reports ${BUILDKIT_OUTPUT}"
           done
 
       - name: Install pinned Grype

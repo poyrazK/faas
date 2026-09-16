@@ -5,10 +5,10 @@ Metrics: `*_faas_deploy_version` and `*_daemon_build_info`. Severity: warn.
 
 ## Symptom
 
-Prometheus has observed more than one daemon release version for 10 minutes.
-This normally means a rollout is still in progress, stopped halfway, or
-left one host serving an older build. Readiness can remain green during this
-condition, so this alert complements `FaasDaemonNotReady`.
+Prometheus has observed more than one daemon release version. This normally
+means a rollout is in progress, stopped halfway, or left one host serving an
+older build. Readiness can remain green during this condition, so the alert
+fires without a hold duration and complements `FaasDaemonNotReady`.
 
 ## Verify
 
@@ -19,6 +19,12 @@ curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=count(count%20by%20(version)
 # Which daemon and host report each build?
 curl -fsS 'http://127.0.0.1:9095/api/v1/query?query={__name__%3D~%22.*_daemon_build_info%22}'
 
+# Which active nodes have reached the desired release and have fresh liveness?
+gregalectl compute-nodes release-status \
+  --desired-release <40-character-git-sha> \
+  --timeout 2m \
+  --json
+
 # On an affected host, confirm the active unit and release link.
 systemctl status 'faas-*.service' --no-pager
 readlink -f /usr/local/bin/faas-<daemon>
@@ -28,6 +34,11 @@ Use `daemon_build_info{daemon,instance,version,git_sha,build_time}` to map the
 skew to a host and exact commit. A deployment that is actively rolling out
 may legitimately trigger this alert; it should clear once every scrape
 target reports the same release.
+
+Use the `cd-platform` workflow for production releases. It runs the
+control-plane stage, then the required compute stage, and always publishes the
+`release-status` report in the workflow summary. A successful stage workflow
+alone is not a successful platform rollout.
 
 ## Recover
 

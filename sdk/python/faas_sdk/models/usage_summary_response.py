@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.daily_usage_point import DailyUsagePoint
+    from ..models.execution_usage_summary_response import ExecutionUsageSummaryResponse
 
 
 T = TypeVar("T", bound="UsageSummaryResponse")
@@ -56,6 +57,9 @@ class UsageSummaryResponse:
     cold_boots: int | Unset = UNSET
     """Per-month sum of WAKE_RESTORE→WAKE_COLD_BOOT transitions across every app on the account (informational; not
     billed). ADR-048."""
+    executions: ExecutionUsageSummaryResponse | Unset = UNSET
+    """Account-level usage roll-up for terminal disposable executions in one UTC calendar month. Payload cleanup
+    does not remove these ledger-backed facts."""
     daily: list[DailyUsagePoint] | Unset = UNSET
     """Trailing 30 UTC calendar days, oldest first, grouped across the account. Empty when no daily rollup rows
     exist. issue #308."""
@@ -94,6 +98,10 @@ class UsageSummaryResponse:
 
         cold_boots = self.cold_boots
 
+        executions: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.executions, Unset):
+            executions = self.executions.to_dict()
+
         daily: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.daily, Unset):
             daily = []
@@ -130,6 +138,8 @@ class UsageSummaryResponse:
             field_dict["used_ingress_gb"] = used_ingress_gb
         if cold_boots is not UNSET:
             field_dict["cold_boots"] = cold_boots
+        if executions is not UNSET:
+            field_dict["executions"] = executions
         if daily is not UNSET:
             field_dict["daily"] = daily
 
@@ -138,6 +148,7 @@ class UsageSummaryResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.daily_usage_point import DailyUsagePoint
+        from ..models.execution_usage_summary_response import ExecutionUsageSummaryResponse
 
         d = dict(src_dict)
         month = d.pop("month")
@@ -178,6 +189,13 @@ class UsageSummaryResponse:
 
         cold_boots = d.pop("cold_boots", UNSET)
 
+        _executions = d.pop("executions", UNSET)
+        executions: ExecutionUsageSummaryResponse | Unset
+        if isinstance(_executions, Unset):
+            executions = UNSET
+        else:
+            executions = ExecutionUsageSummaryResponse.from_dict(_executions)
+
         _daily = d.pop("daily", UNSET)
         daily: list[DailyUsagePoint] | Unset = UNSET
         if _daily is not UNSET:
@@ -202,6 +220,7 @@ class UsageSummaryResponse:
             egress_millicents_per_gb=egress_millicents_per_gb,
             used_ingress_gb=used_ingress_gb,
             cold_boots=cold_boots,
+            executions=executions,
             daily=daily,
         )
 

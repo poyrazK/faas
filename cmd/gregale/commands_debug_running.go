@@ -16,7 +16,7 @@ import (
 // still running?". Human output emphasizes observed causes; --json keeps the
 // complete evidence shape for automation.
 func cmdDebugRunning(args []string) int {
-	fs := flag.NewFlagSet("debug running", flag.ContinueOnError)
+	fs := newFlagSet("debug running", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	limit := fs.Int("limit", 20, "max recent observations (1..100)")
 	flagArgs, positional := normalizeDebugFlagArgs(args, map[string]bool{"since": true, "limit": true})

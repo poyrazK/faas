@@ -93,22 +93,39 @@ func init() {
 }
 
 func run(args []string) (status int) {
+	previousJSON, previousUsageHelp := jsonOutput, jsonUsageHelp
+	defer func() {
+		jsonOutput = previousJSON
+		jsonUsageHelp = previousUsageHelp
+	}()
 	// Issue #64 D1: every command accepts --json (top-level). Strip
 	// it before dispatch and set jsonOutput so per-command printers
 	// switch to NDJSON/indented JSON. FAAS_JSON=1 env also works.
 	args = applyJSONFlag(args)
+	jsonUsageHelp = hasHelpFlag(args)
 	if len(args) == 0 {
 		fmt.Print(topLevelUsage(false))
 		return 0
 	}
-	// Resolve parent-command help before dispatch. These commands otherwise
-	// interpret --help as a subcommand or resource identifier and may perform
-	// authentication or a resource lookup. Nested help remains with the leaf
-	// dispatcher so it can render its more specific usage.
+	// Resolve help before dispatch at every command depth. Several positional
+	// leaves historically interpreted --help as an app, job, or key id and made
+	// an authenticated production request. The manifest is the safe local source
+	// of truth; leaf-specific parsers remain responsible for normal invocations.
 	if len(args) == 2 && hasHelpFlag(args[1:]) {
 		if command, ok := lookupCliCommand(args[0]); ok {
 			printLocalCommandHelp(osStdout, command)
 			return 0
+		}
+	}
+	if len(args) >= 3 && hasHelpFlag(args[2:]) && shouldResolveNestedHelp(args[0], args[1]) {
+		if command, ok := lookupCliCommand(args[0]); ok {
+			for _, sub := range command.Subcommands {
+				if sub.Name != args[1] {
+					continue
+				}
+				printLocalSubcommandHelp(osStdout, command, sub)
+				return 0
+			}
 		}
 	}
 	switch args[0] {
@@ -172,6 +189,8 @@ func run(args []string) (status int) {
 		// transactional apply path lives in cmdDeployTarball when
 		// --yes/--json/--only/--project-slug are set.
 		return cmdScan(args[1:])
+	case "projects":
+		return cmdProjects(args[1:])
 	case "init":
 		return cmdInit(args[1:])
 	case "connect":
@@ -306,6 +325,8 @@ func run(args []string) (status int) {
 		return cmdMirror(args[1:])
 	case "cache":
 		return cmdCache(args[1:])
+	case dispatchUploadCache:
+		return cmdUploadCache(args[1:])
 	case "domains":
 		return cmdDomains(args[1:])
 	case "tenant-surfaces":
@@ -504,9 +525,22 @@ func run(args []string) (status int) {
 		// flipping the box to FAAS_MAIL_TRANSPORT=resend.
 		return cmdMail(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale: unknown command %q\nRun 'gregale help' for usage.\n", args[0])
-		return 1
+		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", args[0]))
 	}
+}
+
+func shouldResolveNestedHelp(command, subcommand string) bool {
+	unsafeLeaves := map[string]struct{}{
+		"queue tail":     {},
+		"jobs runs":      {},
+		"traffic status": {},
+		"orgs members":   {},
+		"cors rm":        {},
+		"keys rm":        {},
+		"keys rotate":    {},
+	}
+	_, ok := unsafeLeaves[command+" "+subcommand]
+	return ok
 }
 
 func printLocalCommandHelp(w io.Writer, command cliCommand) {
@@ -523,11 +557,14 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 		return
 	}
 	usage := "gregale " + command.Name
+	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals {
+		usage += " <" + command.subcommandChoice() + ">"
+	}
 	for _, positional := range command.Positionals {
 		usage += " " + positional
 	}
-	if len(command.Subcommands) > 0 {
-		usage += " <command>"
+	if len(command.Subcommands) > 0 && command.SubcommandsAfterPositionals {
+		usage += " <" + command.subcommandChoice() + ">"
 	}
 	if len(command.Flags) > 0 {
 		usage += " [flags]"
@@ -542,6 +579,21 @@ func printLocalCommandHelp(w io.Writer, command cliCommand) {
 	if len(command.Flags) > 0 {
 		_, _ = fmt.Fprintln(w, "\nFlags:")
 		for _, flag := range command.Flags {
+			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
+		}
+	}
+	_, _ = fmt.Fprintf(w, "\nDocs: %s/%s\n", docsURL, command.DocSlug)
+}
+
+func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {
+	usage := "gregale " + command.Name + " " + sub.Name
+	if len(sub.Flags) > 0 {
+		usage += " [flags]"
+	}
+	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", sub.Short, usage)
+	if len(sub.Flags) > 0 {
+		_, _ = fmt.Fprintln(w, "\nFlags:")
+		for _, flag := range sub.Flags {
 			_, _ = fmt.Fprintf(w, "  --%-16s %s\n", flag.Name, flag.Short)
 		}
 	}

@@ -407,6 +407,50 @@ func TestCmdTrafficSet_MissingArgs(t *testing.T) {
 	}
 }
 
+func TestCmdTrafficStatusListsOnlyLiveDeploymentWeights(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo/deployments" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
+			{ID: "dep-live-a", Status: statusLive, TrafficPercent: 75},
+			{ID: "dep-live-b", Status: statusLive, TrafficPercent: 25},
+			{ID: "dep-old", Status: "superseded", TrafficPercent: 0},
+		}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdTraffic([]string{"status", "demo"}); code != 0 {
+		t.Fatalf("traffic status exit = %d", code)
+	}
+	output := out.String()
+	for _, want := range []string{"dep-live-a", "75%", "dep-live-b", "25%", "Total\t\t100%"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q: %s", want, output)
+		}
+	}
+	if strings.Contains(output, "dep-old") {
+		t.Fatalf("superseded deployment shown in traffic status: %s", output)
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("request count = %d, want 1", hits)
+	}
+}
+
+func TestCmdTrafficStatusRequiresExactlyOneSlug(t *testing.T) {
+	for _, args := range [][]string{{"status"}, {"status", "one", "two"}} {
+		if code := cmdTraffic(args); code == 0 {
+			t.Fatalf("cmdTraffic(%v) exit = 0", args)
+		}
+	}
+}
+
 // TestCmdTrafficSet_DefaultIsProportional (issue #556 / PR-C) pins
 // the CLI's default behaviour post-C7: a bare `faas traffic set
 // --deployment <id> --percent N` performs a proportional
@@ -1508,6 +1552,16 @@ func TestMapFailureMessage_BuildLimitsDocsLinks(t *testing.T) {
 	})
 }
 
+func TestMapFailureMessage_PostBuildFailureDoesNotClaimBuildFailed(t *testing.T) {
+	got := mapFailureMessage("build function layer: app_layer_too_large")
+	if !strings.Contains(got, "Deploy failed:") {
+		t.Fatalf("post-build failure copy = %q, want deployment phase", got)
+	}
+	if strings.Contains(got, "Build failed:") {
+		t.Fatalf("post-build failure copy mislabels a successful build: %q", got)
+	}
+}
+
 // TestCmdOpenDocs pins the open docs subcommand (Tier A8.1):
 //   - command topics resolve to the consolidated /docs/cli page
 //   - curated page slugs resolve to their /docs/<slug> route
@@ -1806,6 +1860,19 @@ func TestPollBuildStatus_FailedBranch(t *testing.T) {
 	}
 }
 
+func TestPollBuildStatus_CancelledBranch(t *testing.T) {
+	fastBuildPoll(t)
+	srv, dep, _ := pollBuildStubCounting(t, "queued", "running", "cancelled")
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	c := api.NewClient(srv.URL, "fp_live_x")
+	b, ok := pollBuildStatus(c, dep, 4*time.Second)
+	if !ok || b.Status != api.BuildStatusCancelled {
+		t.Fatalf("pollBuildStatus = (%+v, %v), want cancelled terminal", b, ok)
+	}
+}
+
 // TestPollBuildStatus_DeadlineElapses pins: when the server
 // never returns a terminal status, pollBuildStatus returns
 // (zero, false) after the deadline. The 200ms deadline is
@@ -2095,8 +2162,8 @@ func TestStreamDeployLogs_DrivesStageTicker(t *testing.T) {
 	}
 }
 
-// TestCreateOrFetchApp_HappyPath pins the no-conflict fast-path:
-// CreateApp succeeds, no GetApp round-trip, helper returns nil.
+// TestCreateOrFetchApp_HappyPath pins the new-app path: the ownership probe
+// misses, CreateApp succeeds, and the helper returns nil.
 func TestCreateOrFetchApp_HappyPath(t *testing.T) {
 	var sawGet bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2118,20 +2185,20 @@ func TestCreateOrFetchApp_HappyPath(t *testing.T) {
 	if err := createOrFetchApp(context.Background(), c, api.CreateAppRequest{Slug: "ok-app"}, nil, nil, nil); err != nil {
 		t.Fatalf("createOrFetchApp happy path = %v, want nil", err)
 	}
-	if sawGet {
-		t.Errorf("GetApp round-trip should not fire on a successful CreateApp")
+	if !sawGet {
+		t.Errorf("GetApp ownership probe should run before CreateApp")
 	}
 }
 
-// TestCreateOrFetchApp_409SameAccount_PATCHes pins the hybrid probe
-// same-account branch: CreateApp 409 → GetApp 200 → helper mirrors
-// --require-authn via PATCH (and --app-protocol, when set), then
-// returns nil. Critical contract for issue #560 / #1182.
+// TestCreateOrFetchApp_409SameAccount_PATCHes pins exact-cap redeploy:
+// GetApp resolves the owned app without attempting a quota-gated create, then
+// the helper mirrors --require-authn and --app-protocol via PATCH.
 func TestCreateOrFetchApp_409SameAccount_PATCHes(t *testing.T) {
-	var sawGet, sawPatch, patchBodyOK bool
+	var sawGet, sawCreate, sawPatch, patchBodyOK bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
+			sawCreate = true
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(api.Problem{Status: 409, Code: api.CodeConflict, Title: "Conflict", Detail: "app exists"})
 		case r.URL.Path == "/v1/apps/existing" && r.Method == http.MethodGet:
@@ -2161,7 +2228,10 @@ func TestCreateOrFetchApp_409SameAccount_PATCHes(t *testing.T) {
 		t.Fatalf("createOrFetchApp same-account = %v, want nil", err)
 	}
 	if !sawGet {
-		t.Errorf("expected GetApp round-trip after CreateApp 409")
+		t.Errorf("expected GetApp ownership probe")
+	}
+	if sawCreate {
+		t.Errorf("owned app redeploy must not attempt CreateApp")
 	}
 	if !sawPatch {
 		t.Errorf("expected UpdateApp PATCH to mirror --require-authn / --app-protocol on existing app")
@@ -2238,11 +2308,8 @@ func TestCreateOrFetchApp_409OtherAccount_FailsHard(t *testing.T) {
 	}
 }
 
-// TestCreateOrFetchApp_Non409ErrorPropagates pins that non-409 errors
-// (validation, server-side capacity, etc.) bubble up unchanged
-// instead of being misclassified as a slug conflict. The helper
-// returns the APIError unwrapped so the caller's single printErr
-// prefix is the user-facing message — no double-wrap.
+// TestCreateOrFetchApp_Non409ErrorPropagates pins that a create error after
+// the ownership probe misses bubbles up unchanged.
 func TestCreateOrFetchApp_Non409ErrorPropagates(t *testing.T) {
 	var sawGet bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2252,6 +2319,7 @@ func TestCreateOrFetchApp_Non409ErrorPropagates(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.Problem{Status: 400, Code: api.CodeValidation, Title: "Validation", Detail: "bad slug"})
 		case r.URL.Path == "/v1/apps/x" && r.Method == http.MethodGet:
 			sawGet = true
+			http.Error(w, "no such app", http.StatusNotFound)
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -2265,8 +2333,8 @@ func TestCreateOrFetchApp_Non409ErrorPropagates(t *testing.T) {
 	if err == nil {
 		t.Fatalf("non-409 error should propagate, got nil")
 	}
-	if sawGet {
-		t.Errorf("GetApp probe should NOT fire on a non-409 CreateApp error")
+	if !sawGet {
+		t.Errorf("GetApp ownership probe should run before CreateApp")
 	}
 	// The bare APIError renders as "<code>: <detail>" (apierror.go:21);
 	// the caller prefixes it once with "Could not create or fetch app".

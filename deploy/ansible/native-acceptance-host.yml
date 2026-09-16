@@ -1,0 +1,236 @@
+# Provision a node designated for the disruptive native CI gates
+# (builder-native.yml, e2e-native.yml). Dedicated playbook; never included by
+# bootstrap.yml or node_join.yml — see roles/native_acceptance_host/README.md.
+#
+# The inventory must define a `native_acceptance` group. Keep the host out of
+# `compute_nodes` in any inventory that also runs the normal bootstrap, or a
+# routine converge will fight the acceptance provisioning.
+#
+#   ansible-playbook -i inventory/native-acceptance.ini native-acceptance-host.yml
+#
+# This provisions a host from SCRATCH. It used to install only the runner
+# tooling, the e2e Postgres cluster and the designation marker, which silently
+# assumed the host had already been through bootstrap.yml as a compute node —
+# true for the first acceptance host, and false for a dedicated one. Running it
+# against a fresh VM produced a host that passed the playbook and then failed
+# the gate's own pre-flight on firecracker, jailer, the guest kernel and
+# br-tenants. The infrastructure roles below close that gap; all are idempotent,
+# so a host that was already bootstrapped converges unchanged.
+- name: Provision the designated native acceptance host
+  hosts: native_acceptance
+  become: true
+  gather_facts: true
+  serial: 1
+  max_fail_percentage: 0
+
+  pre_tasks:
+    # bootstrap.yml gets the faas identity from the `storage` role, which also
+    # does LVM and filesystem work a dedicated acceptance host does not want —
+    # its artifact store is a single dedicated disk mounted at /srv/fc. Create
+    # just the identity, which the firecracker role chowns /srv/fc/{base,kernel}
+    # to. Without it that role fails with "chgrp failed: failed to look up
+    # group faas".
+    - name: native acceptance — ensure 'faas' group exists (socket auth group, ADR-015)
+      ansible.builtin.group:
+        name: faas
+        state: present
+        system: true
+
+    - name: native acceptance — ensure 'faas' system user exists
+      ansible.builtin.user:
+        name: faas
+        group: faas
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: false
+        password: "*"
+
+    # vmmd refuses to start without a fleet identity:
+    #
+    #   vmmd: load host identities (/etc/faas/secrets):
+    #     secretbox: load fleet identity: secretbox: host key not found
+    #
+    # and the harness then fails every metal test with "vmmd.sock not listening
+    # within 10s" — a startup refusal that reads like load. vmmd self-generates
+    # the per-host host.age on first boot (loadOrGenerateHostIdentity), but
+    # fleet.age is mandatory and operator-provisioned; no role creates it.
+    #
+    # This host gets its OWN identity, deliberately NOT the fleet's. fleet.age
+    # is "the identity shared by every control-plane and compute node"
+    # (pkg/secretbox/hostkey.go) — copying it would put the fleet's shared
+    # sealing key on a disposable test box that CI starts, stops and may
+    # recreate. The acceptance suite seals and unseals only secrets it creates
+    # during a run, so a node-local identity is sufficient; the trade is that
+    # this host cannot decrypt fleet ciphertext, which is the point.
+    - name: native acceptance — install age (fleet identity generation)
+      ansible.builtin.apt:
+        name: age
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: native acceptance — look for an existing fleet identity
+      ansible.builtin.stat:
+        path: /etc/faas/secrets/fleet.age
+      register: nah_fleet_identity
+
+    # Never rotate: regenerating would silently invalidate anything already
+    # sealed to the old recipient. Absent-only, like hostage-gen.
+    - name: native acceptance — generate a node-local fleet identity
+      when: not nah_fleet_identity.stat.exists
+      block:
+        - name: native acceptance — ensure /etc/faas/secrets exists
+          ansible.builtin.file:
+            path: /etc/faas/secrets
+            state: directory
+            owner: root
+            group: root
+            mode: "0710"
+
+        # secretbox.LoadHostKeys passes the WHOLE file to
+        # age.ParseX25519Identity, so the file must contain the bare key line
+        # and nothing else. `age-keygen -o` writes a "# created:" / "# public
+        # key: age1..." header, and the lowercase header mixed with the
+        # uppercase AGE-SECRET-KEY- line makes bech32 reject it:
+        #
+        #   secretbox: parse host key ".../fleet.age": malformed secret key:
+        #   mixed case
+        #
+        # The trailing newline matters too: LoadHostKeys does NOT trim, so a
+        # file ending in \n fails with
+        #
+        #   malformed secret key: invalid character data part: s[58]=10
+        #
+        # (10 being \n). A fleet-provisioned host's file is exactly 74 bytes
+        # with no final newline; `tr -d` reproduces that shape byte-for-byte.
+        #
+        # vmmd then exits at boot. Strip to the key line, matching the shape a
+        # fleet-provisioned host already has.
+        - name: native acceptance — write fleet.age (bare key, no comment header)
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail &&
+              umask 077 &&
+              age-keygen 2>/dev/null
+              | grep -m1 '^AGE-SECRET-KEY-'
+              | tr -d '\n'
+              > /etc/faas/secrets/fleet.age
+            creates: /etc/faas/secrets/fleet.age
+          args:
+            executable: /bin/bash
+
+        - name: native acceptance — derive fleet.age.pub
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail &&
+              age-keygen -y /etc/faas/secrets/fleet.age
+              > /etc/faas/secrets/fleet.age.pub
+            creates: /etc/faas/secrets/fleet.age.pub
+          args:
+            executable: /bin/bash
+
+    # imaged refuses to start without the build-attestation signing key:
+    #
+    #   imaged: sign key "/etc/faas/secrets/sign.key": ...
+    #     (run `faas sign-keys init` to provision)
+    #
+    # and a dead imaged means nothing advances a deployment from `building` to
+    # `live`. Every TestBuildMetal subtest then burned its full 4-minute
+    # deployment deadline — six of them, which is most of a 30-minute build
+    # phase — while the builds themselves had succeeded. The symptom was a slow
+    # build phase; the cause was a daemon that never came up.
+    #
+    # ECDSA P-256, PKCS8 PEM: pkg/cosign.GenerateKeyPair's on-disk shape.
+    # Perms match a fleet-provisioned host (0440 root:faas so imaged and the
+    # faas group can read; the public half 0444).
+    #
+    # Node-local and absent-only, for the same reason as fleet.age: rotating
+    # would invalidate every attestation already signed with the old key.
+    - name: native acceptance — look for an existing attestation signing key
+      ansible.builtin.stat:
+        path: /etc/faas/secrets/sign.key
+      register: nah_sign_key
+
+    - name: native acceptance — generate the attestation signing key
+      when: not nah_sign_key.stat.exists
+      block:
+        - name: native acceptance — write sign.key (ECDSA P-256, PKCS8 PEM)
+          ansible.builtin.command:
+            cmd: >-
+              openssl genpkey -algorithm EC
+              -pkeyopt ec_paramgen_curve:P-256
+              -out /etc/faas/secrets/sign.key
+            creates: /etc/faas/secrets/sign.key
+
+        - name: native acceptance — derive sign-pub.pem
+          ansible.builtin.command:
+            cmd: >-
+              openssl pkey -in /etc/faas/secrets/sign.key
+              -pubout -out /etc/faas/secrets/sign-pub.pem
+            creates: /etc/faas/secrets/sign-pub.pem
+
+    - name: native acceptance — pin attestation key permissions
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: root
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /etc/faas/secrets/sign.key, group: faas, mode: "0440"}
+        - {path: /etc/faas/secrets/sign-pub.pem, group: root, mode: "0444"}
+
+    # vmmd writes each microVM's serial console to
+    # /var/log/faas/vm-<instance>.console. That file is the ONLY view inside a
+    # guest — it is what identified "guest-init: build failed: registry DNS
+    # preflight: signal: killed" as the real cause of every builder failure,
+    # after three host-side fixes had each removed a real defect without
+    # touching it. The directory is not created by any role, so on a dedicated
+    # host every builder VM ran blind and a stalled build looked identical to a
+    # hung one.
+    - name: native acceptance — ensure /var/log/faas exists (guest serial consoles)
+      ansible.builtin.file:
+        path: /var/log/faas
+        state: directory
+        owner: root
+        group: faas
+        mode: "0750"
+
+    # Asserted by roles/_shared/tasks/sealed_env_split_perm_asserts.yml, and
+    # applied unconditionally so a hand-provisioned host converges too.
+    - name: native acceptance — pin fleet identity permissions
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /etc/faas/secrets/fleet.age, mode: "0400"}
+        - {path: /etc/faas/secrets/fleet.age.pub, mode: "0444"}
+
+  # Order is load-bearing. native_acceptance_host writes the designation marker
+  # LAST, and the runners treat that marker as "this host consents to having its
+  # daemons stopped and microVMs booted on it". Everything the gate needs must
+  # therefore be installed BEFORE it, so a half-provisioned host is never
+  # designated.
+  roles:
+    # cgroups v2 is required, not preferred: Firecracker snapshot restore is
+    # slow on v1 (CLAUDE.md "Gotchas"), which would make every restore timing
+    # measured on this host meaningless.
+    - role: cgroups_v2
+    # firecracker + jailer binaries and the pinned guest kernel at
+    # /srv/fc/base/vmlinux-<version>. The runner pre-flights all three.
+    - role: firecracker
+    # faas-cp.slice / faas-tenant.slice. builderd's VMs run in the control-plane
+    # slice (spec §13), which is what keeps a builder OOM from killing a tenant.
+    - role: systemd_slices
+    # grype: imaged writes the Grype scan sidecar that vmmd's issue #299
+    # admission gate refuses to boot without.
+    - role: supply_chain_scanners
+    # br-tenants, the masquerade rule and the tenant egress policy. Without this
+    # a builder microVM boots and then has no egress, dying at guest-init's DNS
+    # preflight — which reads like a broken build, not a missing bridge.
+    - role: nftables
+    - role: canary_artifact_retention
+    - role: native_acceptance_host
+      vars:
+        nah_enabled: true

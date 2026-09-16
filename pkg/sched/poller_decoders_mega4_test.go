@@ -1,3 +1,4 @@
+// adr: 100
 // poller_decoders_mega4_test.go — Coverage Mega-PR #4 cluster 7:
 // fill pkg/sched coverage on the pure config decoders + small pure
 // helpers in poller_*.go + engine.go that the existing
@@ -408,6 +409,24 @@ func TestHealthcheckPathFromDep_Mega4(t *testing.T) {
 	got = healthcheckPathFromDep(state.Deployment{OverrideHealthcheck: []byte(`{"path":"/healthz"}`)})
 	if got != "/healthz" {
 		t.Errorf("got %q", got)
+	}
+	profile := json.RawMessage(`{"version":"v1","framework":"node","port":3000,"health_path":"/readyz","inferred":true}`)
+	if got := healthcheckPathFromDep(state.Deployment{InferredProfile: profile}); got != "/readyz" {
+		t.Errorf("inferred profile path = %q, want /readyz", got)
+	}
+	receipt := json.RawMessage(`{"profile":{"version":"v1","framework":"node","port":3000,"health_path":"/receiptz","inferred":true}}`)
+	if got := healthcheckPathFromDep(state.Deployment{APIHostingReceipt: receipt, InferredProfile: profile}); got != "/receiptz" {
+		t.Errorf("hosting receipt path = %q, want /receiptz", got)
+	}
+	if got := healthcheckPathFromDep(state.Deployment{
+		OverrideHealthcheck: json.RawMessage(`{"path":"/overridez"}`),
+		APIHostingReceipt:   receipt,
+		InferredProfile:     profile,
+	}); got != "/overridez" {
+		t.Errorf("override path = %q, want /overridez", got)
+	}
+	if got := healthcheckPathFromDep(state.Deployment{InferredProfile: json.RawMessage(`{"version":"v1","health_path":"/ok\nheader"}`)}); got != "" {
+		t.Errorf("unsafe health path = %q, want empty", got)
 	}
 }
 

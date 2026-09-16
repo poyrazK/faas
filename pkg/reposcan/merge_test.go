@@ -66,6 +66,49 @@ func TestMerge_ComposeFillsProcfileClass(t *testing.T) {
 	}
 }
 
+func TestMerge_ComposeInfersClassAfterExplicitHints(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		seeds []workloadSeed
+		want  Class
+	}{
+		{
+			name: "published port is HTTP",
+			seeds: []workloadSeed{{
+				tier: TierCompose, det: detCompose, source: "compose.yaml: api",
+				name: "api", ports: []int{8080},
+			}},
+			want: ClassHTTP,
+		},
+		{
+			name: "no published port is worker",
+			seeds: []workloadSeed{{
+				tier: TierCompose, det: detCompose, source: "compose.yaml: jobs",
+				name: "jobs",
+			}},
+			want: ClassWorker,
+		},
+		{
+			name: "explicit Procfile class wins",
+			seeds: []workloadSeed{
+				{tier: TierCompose, det: detCompose, source: "compose.yaml: web", name: "web"},
+				{tier: TierCompose, det: detProcfile, source: "Procfile: web", name: "web", class: ClassHTTP},
+			},
+			want: ClassHTTP,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := mergeByKey(tc.seeds)
+			if len(got) != 1 || got[0].Class != tc.want {
+				t.Fatalf("mergeByKey() = %#v, want one %q workload", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestMerge_HighestTierWins — when two seeds with the same
 // (RootDir, Name) come from different tiers, the higher tier
 // wins identity. Compose (8) > convention (3): the merged workload

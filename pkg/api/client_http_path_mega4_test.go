@@ -257,6 +257,9 @@ func TestClient_DoReq_UnstructuredErrorsPreserveStatusAndRetryAfter(t *testing.T
 			if got := apiErr.Problem.HasHeader("Retry-After"); len(got) != 1 || got[0] != "7" {
 				t.Fatalf("Retry-After = %v", got)
 			}
+			if apiErr.Problem.RetryAfterSeconds == nil || *apiErr.Problem.RetryAfterSeconds != 7 {
+				t.Fatalf("retry_after_seconds = %v, want 7", apiErr.Problem.RetryAfterSeconds)
+			}
 		})
 	}
 }

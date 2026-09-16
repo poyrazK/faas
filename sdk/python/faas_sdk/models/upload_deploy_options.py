@@ -26,6 +26,8 @@ class UploadDeployOptions:
     """Informational repository provenance URL; never fetched by apid."""
     commit_sha: str | Unset = UNSET
     """Lowercase hexadecimal Git commit identifier."""
+    environment: str | Unset = UNSET
+    """Registered project environment to resolve at upload commit."""
     reason: str | Unset = UNSET
     tag: str | Unset = UNSET
     deployed_by: str | Unset = UNSET
@@ -44,6 +46,8 @@ class UploadDeployOptions:
         source_url = self.source_url
 
         commit_sha = self.commit_sha
+
+        environment = self.environment
 
         reason = self.reason
 
@@ -75,6 +79,8 @@ class UploadDeployOptions:
             field_dict["source_url"] = source_url
         if commit_sha is not UNSET:
             field_dict["commit_sha"] = commit_sha
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if reason is not UNSET:
             field_dict["reason"] = reason
         if tag is not UNSET:
@@ -105,6 +111,8 @@ class UploadDeployOptions:
 
         commit_sha = d.pop("commit_sha", UNSET)
 
+        environment = d.pop("environment", UNSET)
+
         reason = d.pop("reason", UNSET)
 
         tag = d.pop("tag", UNSET)
@@ -129,6 +137,7 @@ class UploadDeployOptions:
             source_root=source_root,
             source_url=source_url,
             commit_sha=commit_sha,
+            environment=environment,
             reason=reason,
             tag=tag,
             deployed_by=deployed_by,

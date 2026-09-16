@@ -494,7 +494,7 @@ func newAppLogDrainUnsealer(hostKeyDir string) (func([]byte) (string, error), er
 	if hostKeyDir == "" {
 		return nil, nil
 	}
-	identities, err := secretbox.LoadHostKeys(hostKeyDir)
+	identities, err := secretbox.LoadFleetAndHostKeys(hostKeyDir)
 	if err != nil {
 		return nil, err
 	}

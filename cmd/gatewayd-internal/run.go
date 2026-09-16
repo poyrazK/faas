@@ -94,6 +94,27 @@ var scheddSocket = envOrGateway("FAAS_SCHEDD_SOCKET", "/run/faas/schedd.sock")
 // per-test path without needing /run/faas on the host (PR #203).
 var gatewaydInternalSocket = envOrGateway("FAAS_GATEWAY_SYNTH_SOCKET", "/run/faas/gatewayd-internal.sock")
 
+const internalGatewayHealthHost = "gatewayd-internal.faas"
+
+// internalHealthRoute reserves the synthetic health response only for direct
+// infrastructure probes. App-host requests, including unknown and parked
+// hosts, continue through the normal host router so /healthz reflects the
+// selected deployment instead of the gateway process.
+func internalHealthRoute(infrastructure, app http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.TrimSpace(r.Host)
+		if parsed, _, err := net.SplitHostPort(host); err == nil {
+			host = parsed
+		}
+		host = strings.TrimSuffix(strings.ToLower(strings.Trim(host, "[]")), ".")
+		if r.URL.Path == "/healthz" && (host == internalGatewayHealthHost || host == "localhost" || net.ParseIP(host) != nil) {
+			infrastructure.ServeHTTP(w, r)
+			return
+		}
+		app.ServeHTTP(w, r)
+	})
+}
+
 // publicListenOffSentinel is the value of FAAS_GATEWAY_LISTEN that
 // disables the public listener entirely — used by
 // faas-gatewayd-internal.service in production (ADR-068 / ADR-070
@@ -594,6 +615,12 @@ func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string,
 	if a.forward == nil {
 		return inv, 0, fmt.Errorf("gateway synth: invocation forwarder is not wired")
 	}
+	// Schedd's pre-woken response identifies the instance and node, while the
+	// invocation request remains authoritative for the app. Keep that identity
+	// on the target so the shared forwarding path can attribute
+	// wake.proxy_first_byte events just like an ordinary HTTP wake.
+	target.AppID = appID
+	inv.AppID = appID
 	inv.InstanceID = target.InstanceID
 	return a.forwardInvocationWithStatus(ctx, target, inv)
 }
@@ -1009,7 +1036,7 @@ func defaultServer(addr string, handler http.Handler) *http.Server {
 // package; the `prod` prefix was the placeholder-era workaround so
 // the two `run` symbols could coexist in `package main`).
 func run(ctx context.Context, log *slog.Logger) error {
-	pool, err := db.Open(ctx, "")
+	pool, err := db.OpenWithAppName(ctx, "", "faas-gatewayd-internal")
 	if err != nil {
 		return fmt.Errorf("gatewayd: open db: %w", err)
 	}
@@ -1139,7 +1166,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return gateway.App{}, false, err
 			}
 			favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
-			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return gateway.App{ID: app.ID, AccountID: acct.ID, Type: gateway.AppType(app.Type), Plan: acct.Plan, MaxConcurrency: app.MaxConcurrency, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, Slug: app.Slug, StreamingEnabled: app.StreamingEnabled, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -1170,6 +1197,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 					continue
 				}
 				targets = append(targets, gateway.Target{
+					AppID:        appID,
 					InstanceID:   instance.ID,
 					NodeID:       instance.NodeID,
 					WakeID:       instance.WakeID,
@@ -1314,6 +1342,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// schedd can StampInstanceInvocation; without it the meter's
 		// per-instance count lands on 0.
 		invoke: func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error) {
+			acceptedAt := time.Now()
+			ctx = gateway.WithStartTime(ctx, acceptedAt)
+			ctx = gateway.WithWakeTimelineStart(ctx, acceptedAt)
 			app, err := pgStore.AppByID(ctx, appID)
 			if err != nil {
 				return inv, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
@@ -1327,6 +1358,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return inv, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
 			target := gateway.Target{
+				AppID:        appID,
 				InstanceID:   instanceID,
 				NodeID:       nodeID,
 				DeploymentID: deploymentID,
@@ -1338,6 +1370,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return synth.forwardInvocation(ctx, target, inv)
 		},
 		invokeWithStatus: func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+			acceptedAt := time.Now()
+			ctx = gateway.WithStartTime(ctx, acceptedAt)
+			ctx = gateway.WithWakeTimelineStart(ctx, acceptedAt)
 			app, err := pgStore.AppByID(ctx, appID)
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
@@ -1350,7 +1385,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke wake %s: %w", appID, err)
 			}
-			target := gateway.Target{InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}
+			target := gateway.Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			return synth.forwardInvocationWithStatus(ctx, target, inv)
@@ -1623,6 +1658,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// outside unit tests).
 	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
 	deps.requireAuthnAudit = newGatewaydAuditor(deps.pgStore, log)
+	// Build the validate adapter before the edge-rule matcher captures it.
+	// Assigning a nil *edgeValidateAdapter to the validateCompiler interface
+	// produces a non-nil interface whose first CompileSchema call panics.
+	deps.edgeValidateAdapter = newEdgeValidateAdapter(log)
 	// ADR-089 / issue #561 PR 3 — build the edge-rule matcher
 	// next to the requireAuthn chain so the per-host cache +
 	// audit thin wrapper share the same auditor. The matcher
@@ -1681,13 +1720,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// with a 5s fetch timeout so an IdP outage can't block the
 	// gateway hot path.
 	deps.edgeJWKSAdapter = newEdgeJWKSAdapter(log)
-	// PR-B — build the kind=validate adapter backed by
-	// pkg/edgevalidate.NewManager (sha256-keyed LRU + Draft
-	// 2020-12 compile + JSON-Schema validate). The loader
-	// (loadHost) calls CompileSchema through this adapter for
-	// every kind=validate rule; the applier (handler.go) calls
-	// Validate through it on every matched rule.
-	deps.edgeValidateAdapter = newEdgeValidateAdapter(log)
 	// Issue #477 / ADR-079: build the unsealed basic-auth
 	// credential cache + the secretbox unsealer closure.
 	// The cache is shared between the Handler (read path)
@@ -1701,7 +1733,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// the apid + meterd daemons load.
 	deps.publicAuthCache = gateway.NewPublicAuthCache()
 	if deps.hostKeyDir != "" {
-		if identities, loadErr := secretbox.LoadHostKeys(deps.hostKeyDir); loadErr != nil {
+		if identities, loadErr := secretbox.LoadFleetAndHostKeys(deps.hostKeyDir); loadErr != nil {
 			log.Warn("gatewayd-internal: LoadHostKeys (rotation overlap) failed; basic-auth will be unseal-disabled until next boot",
 				"dir", deps.hostKeyDir, "err", loadErr.Error())
 		} else {
@@ -1818,6 +1850,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		s3c, s3Err := logarchive.NewS3Client(
 			archiveCfg.Endpoint, archiveCfg.Region, archiveCfg.Bucket,
 			archiveCfg.KeyID, archiveCfg.Secret,
+			archiveCfg.AuthMode,
 		)
 		if s3Err != nil {
 			log.Warn("gatewayd-internal: S3 client build failed; archive read-back disabled", "err", s3Err)
@@ -1897,6 +1930,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log)
+	var realtimeControlProxy http.Handler
 	// Managed realtime is an opt-in data plane. When the local realtimed
 	// daemon socket is configured, reserve its namespace before ordinary
 	// host lookup/wake so a quiet client connection does not keep an app VM
@@ -1907,6 +1941,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			handler.WithManagedRealtime(proxy)
 			log.Info("gatewayd-internal: managed realtime proxy armed", "socket", socket)
 		}
+		realtimeControlProxy = newRealtimedControlProxy(socket, log)
 	}
 	// The backend above owns invalidation; the handler owns lookup/store. Both
 	// sides intentionally share deps.responseCache so a deploy or rule update
@@ -2006,15 +2041,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the target's own routing resolves its own sidecars on the
 	// next request to its own hostname.
 	//
-	// Plan: state.App does not carry Plan (the apps table
-	// doesn't denormalize it; Plan lives on accounts). The
-	// routed App returned here has Plan="", which surfaces as
-	// an empty `plan` label on gateway_requests_total for
-	// routed requests — bounded cardinality, distinguishable
-	// from non-routed (plan=Free|Hobby|Pro|Scale). Populating
-	// Plan properly is PR 8 (denormalize on apps row OR
-	// back-to-back AccountByID join — both deferred; the
-	// metrics label gap is acceptable for a v1 surface).
+	// state.App does not carry Plan because it lives on accounts. Route
+	// substitution therefore uses pgRouter.toApp below, including its account
+	// lookup, so the account and app limiters receive the same plan as the
+	// ordinary hostname path. An empty plan fails both limiters closed.
 	//
 	// Error classification (review fix R2): state.ErrNotFound
 	// is a clean miss (the target app row was deleted) — silent
@@ -2039,37 +2069,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return gateway.App{}, false
 		}
-		favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
-		return gateway.App{
-			ID:                 app.ID,
-			AccountID:          app.AccountID,
-			Type:               gateway.AppType(app.Type),
-			MaxConcurrency:     app.MaxConcurrency,
-			AutoscaleTargetRPS: app.AutoscaleTargetRPS,
-			Slug:               app.Slug,
-			RequireAuthn:       app.RequireAuthn,
-			ConsumerAuthMode:   string(app.ConsumerAuthMode),
-			PublicAuth:         gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist},
-			StreamingEnabled:   app.StreamingEnabled,
-			WebSocketEnabled:   app.WebSocketEnabled,
-			// ADR-093: per-route observability opt-in. Mirrors
-			// the WebSocketEnabled plumbing above — the same
-			// routeSetFor gate in Handler.ServeHTTP reads this
-			// alongside the operator kill-switch.
-			RouteMetricsEnabled:     app.RouteMetricsEnabled,
-			OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
-			DeclaredRoutes:          gatewayDeclaredRoutes(app.DeclaredRoutes),
-			// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
-			// maintenance flag (apps.maintenance_mode).
-			MaintenanceMode: app.MaintenanceMode,
-			NodeID:          app.NodeID,
-			Favicon:         favicon,
-			RobotsTxt:       robotsTxt,
-			HeadWakes:       headWakes,
-			CrawlerPolicy:   crawlerPolicy,
-			HealthPath:      healthPath,
-			HealthPathWakes: healthPathWakes,
-		}, true
+		resolved, ok, err := (pgRouter{store: deps.pgStore}).toApp(ctx, app)
+		if err != nil {
+			if log != nil {
+				log.Warn("edge rule target account lookup failed", "slug", slug, "err", err)
+			}
+			if deps.edgeRulesAudit != nil {
+				subject := slug
+				deps.edgeRulesAudit.Emit(ctx, "edge_rule.route_loader_error", &subject, map[string]any{
+					"slug": slug,
+					"err":  err.Error(),
+				})
+			}
+			return gateway.App{}, false
+		}
+		return resolved, ok
 	}, deps.edgeRulesAudit)
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
@@ -2146,7 +2160,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if !isUnixSocketPath(egressGRPCSocket) && deps.egressTLS == nil {
 		return fmt.Errorf("gatewayd: egress target %q is non-unix but egress_tls_* is empty (set egress_tls_cert_path / key_path / ca_path or point the target at a unix socket for single-box mode)", egressGRPCSocket)
 	}
-	egressGRPCSrv := egressgrpc.NewServer(egressSink, log)
+	egressGRPCSrv, err := egressgrpc.NewPersistentServer(egressSink, log, egressgrpc.DefaultPendingPath)
+	if err != nil {
+		return fmt.Errorf("gatewayd: open durable egress replay ledger: %w", err)
+	}
 	deps.egressGRPC = newEgressGRPCListener(egressGRPCSocket, deps.egressTLS, egressGRPCSrv, log)
 	// Best-effort start, mirroring the synth listener pattern
 	// (runWithDeps internal RPC). If the unix socket can't bind
@@ -2583,12 +2600,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		githubdTarget = "http://127.0.0.1:8083"
 	}
 	githubdSecret := loadGithubWebhookSecret(osGetenv)
+	platformDomain := osGetenv("FAAS_APPS_DOMAIN")
+	if platformDomain == "" {
+		platformDomain = cfg.AppsDomain
+	}
 	// Issue #294: wire the githubd proxy with the dedupe check and
 	// the audit emitter. The replay interface is satisfied by
 	// *state.PgStore; the auditStore interface is also satisfied by
 	// *state.PgStore (compile-time checked in audit.go). Tests with a nil store
 	// use the proxy's in-process fallback.
-	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, apidHandler, log, newGatewaydAuditor(deps.pgStore, log), deps.pgStore)
+	publicHandler := newGithubdProxy(githubdTarget, githubdSecret, platformDomain, apidHandler, log, newGatewaydAuditor(deps.pgStore, log), deps.pgStore)
 
 	// ADR-096: customer-facing automatic error grouping writer
 	// path. gatewayd-internal records every 4xx/5xx response on
@@ -2780,6 +2801,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		controlMux = gateway.ControlMux(handler.Metrics(), readyProbe.ReadyFunc(), deps.drain)
 	}
+	// Test and operator cache reset for direct database repairs. The control
+	// listener is loopback-only; ordinary mutations still invalidate through
+	// the edge_rule_changed notification.
+	controlMux.HandleFunc("/admin/edge-rules/reset", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if deps.edgeRulesMatcher != nil {
+			deps.edgeRulesMatcher.Reset()
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	// Finding 6 (issue #314): mount the dashboard quota endpoint on the
 	// control mux so an in-box caller (operator's curl today, future
 	// apid-side dial) can read per-app bucket state without going through
@@ -2881,7 +2915,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (`deps.synth`) serves. The mux routes:
 	//   /v1/synthesize           → synth handler (existing, M7)
 	//   /v1/invocations:dispatch → synth handler (existing, Move 1)
-	//   /healthz                 → synth handler
+	//   /healthz on an infrastructure Host → synth handler
+	//   /healthz on an app Host  → customer publicHandler
 	//   everything else          → customer publicHandler (NEW — issue #675)
 	//
 	// Production (FAAS_GATEWAY_LISTEN=off) routes ALL customer traffic
@@ -2906,6 +2941,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// without also updating the unified-mux test in
 		// pkg/gateway/synth_test.go (TestSynthServer_UnifiedMux_RoutesPathsCorrectly).
 		unifiedMux.Handle("/", publicHandler)
+		if realtimeControlProxy != nil {
+			unifiedMux.Handle("/v1/internal/realtime/", realtimeControlProxy)
+		}
 		// Pull the synth mux out of the SynthServer via a small
 		// accessor; the server exposes SetHandler so the caller
 		// owns the unified mux. The synth mux itself carries
@@ -2932,12 +2970,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// intended GET handler. Audit round 2 finding #3 (PR
 		// #910).
 		unifiedMux.Handle("POST /v1/invocations:dispatch_batch", deps.synth.Mux())
-		unifiedMux.Handle("/healthz", deps.synth.Mux())
+		unifiedMux.Handle("/healthz", internalHealthRoute(deps.synth.Mux(), publicHandler))
 		// The compute data-plane listener is private: the generated nftables
-		// policy admits port 8080 only from the control plane. Expose the
-		// control metrics there so the control-plane Prometheus can scrape
-		// every compute node without a provider-specific IP, second Prometheus
-		// installation, or an unauthenticated 0.0.0.0:9090 control bind.
+		// policy admits port 8080 only from the control plane. Expose metrics at
+		// a private platform path so Prometheus can scrape every compute node
+		// without stealing a customer's ordinary /metrics application route.
 		// Do not install this route on the single-box/public role.
 		installComputeMetricsRoute(unifiedMux, cfg.Role, controlMux)
 		// Wrap with h2c so the in-process unix-socket hop negotiates
@@ -2957,6 +2994,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// is gone.
 		deps.synth.SetHandler(unifiedMux)
 		publicListenerHandler = unifiedMux
+	} else if realtimeControlProxy != nil {
+		// Legacy/test wiring without SynthServer still needs the private
+		// control hop; keep ordinary customer routing as the catch-all.
+		mux := http.NewServeMux()
+		mux.Handle("/", publicHandler)
+		mux.Handle("/v1/internal/realtime/", realtimeControlProxy)
+		publicListenerHandler = mux
 	}
 	// addSrv is the closure for the public :8080 + control listeners
 	// below; declared above so the unified-mux block above can run
@@ -3341,16 +3385,26 @@ func serviceDiscoveryUpstreams() []string {
 	return upstreams
 }
 
-// installComputeMetricsRoute exposes only /metrics on a compute node's
+const computeMetricsPath = "/v1/internal/metrics"
+
+// installComputeMetricsRoute exposes only the private metrics path on a compute node's
 // private data-plane listener. The listener is admitted from the control
 // plane by the generated firewall; the single-box/public role never gets
-// this route, so an accidentally public application listener cannot expose
-// daemon metrics.
+// this route. The ordinary /metrics path remains customer-owned, including
+// when gatewayd-public forwards an app-host request over its private hop.
 func installComputeMetricsRoute(mux *http.ServeMux, boxRole role.Role, control http.Handler) {
 	if mux == nil || control == nil || boxRole != role.RoleComputeOnly {
 		return
 	}
-	mux.Handle("/metrics", control)
+	mux.Handle(computeMetricsPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The private data-plane path is deliberately different from the
+		// control listener's /metrics path. Rewrite it before dispatching into
+		// ControlMux; handing the original path to that mux returns its 404.
+		cloned := r.Clone(r.Context())
+		cloned.URL.Path = "/metrics"
+		cloned.URL.RawPath = ""
+		control.ServeHTTP(w, cloned)
+	}))
 }
 
 // weightsStoreAdapter (issue #556 / PR-B) adapts pkg/state.PgStore to

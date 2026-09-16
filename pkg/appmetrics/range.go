@@ -229,8 +229,8 @@ func FetchRange(ctx context.Context, fetcher RangeFetcher, log *slog.Logger, app
 	// Error rate — single series. Mirrors the scalar's
 	// ratio of [45]xx over all requests, multiplied by 100.
 	errQ := PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q,code=~"[45].."}[%s]))`, appID, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, appID, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"[45]xx"}[%s]))`, appID, window),
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, window))
 	if rows, err := fetcher.QueryRange(ctx, errQ, startStr, endStr, step); err == nil && len(rows) > 0 {
 		out.ErrorRate = seriesToPoints(rows[0].Values)
 	} else {
@@ -240,7 +240,7 @@ func FetchRange(ctx context.Context, fetcher RangeFetcher, log *slog.Logger, app
 	// Cold-boot rate — single series.
 	coldQ := PercentRatioQuery(
 		fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, window),
-		fmt.Sprintf(`sum(rate(gateway_requests_total{app=%q}[%s]))`, appID, window))
+		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, window))
 	if rows, err := fetcher.QueryRange(ctx, coldQ, startStr, endStr, step); err == nil && len(rows) > 0 {
 		out.ColdBootRate = seriesToPoints(rows[0].Values)
 	} else {

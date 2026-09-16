@@ -35,7 +35,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 	for _, app := range accountApps {
 		bySlug[app.Slug] = app
 	}
-	seen := make(map[string]struct{}, len(workloads))
+	seen := make(map[string]string, len(workloads))
 	var reasons []string
 	for _, workload := range workloads {
 		if workload.DetectedBy.Detector == "serverless" {
@@ -43,20 +43,39 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 				"workload %q is a Serverless function without an execution adapter; create a function app and deploy the handler explicitly",
 				workload.Name))
 		}
+		if workload.Image != "" {
+			reasons = append(reasons, fmt.Sprintf(
+				"workload %q uses prebuilt image %q; project apply currently supports source builds only; add a Dockerfile/build context or deploy the image as a container app",
+				workload.Name, workload.Image))
+		}
 		if !api.ValidAppSlug(workload.Name) {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q has invalid app slug %q; use 3-40 lowercase letters, digits, or hyphens",
 				workload.Name, workload.Name))
 			continue
 		}
-		if _, duplicate := seen[workload.Name]; duplicate {
-			reasons = append(reasons, fmt.Sprintf("workload %q produces a duplicate app slug", workload.Name))
+		if api.IsReservedAppSlug(workload.Name) {
+			// Do not strand a project that already owns a reserved collision:
+			// it must remain deployable while the operator migrates it. Only a
+			// fresh allocation (or a collision outside this exact member) is
+			// rejected.
+			app, exists := bySlug[workload.Name]
+			if !exists || projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name {
+				reasons = append(reasons, fmt.Sprintf(
+					"workload %q uses app slug %q reserved for a Gregale service",
+					workload.Name, workload.Name))
+				continue
+			}
+		}
+		if firstRoot, duplicate := seen[workload.Name]; duplicate {
+			reasons = append(reasons, fmt.Sprintf(
+				"workload %q produces a duplicate app slug for roots %q and %q; use distinct declared package names",
+				workload.Name, firstRoot, workload.RootDir))
 			continue
 		}
-		seen[workload.Name] = struct{}{}
+		seen[workload.Name] = workload.RootDir
 		if app, exists := bySlug[workload.Name]; exists &&
-			(projectID == "" || app.ProjectID != projectID ||
-				app.RootDir != workload.RootDir || app.WorkloadName != workload.Name) {
+			(projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name) {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q conflicts with existing app slug %q outside this project member",
 				workload.Name, app.Slug))

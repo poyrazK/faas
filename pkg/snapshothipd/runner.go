@@ -164,7 +164,9 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 			if storage.IsNotFound(err) {
 				err = state.PermanentSnapshotReplicaError(err)
 			}
-			r.metricsObserve("failed", job.Region)
+			if !job.Revalidation {
+				r.metricsObserve("failed", job.Region)
+			}
 			if markErr := r.markReplicaFailed(ctx, job, err); markErr != nil {
 				r.log.Warn("snapshothipd: mark failed", "snapshot_id", job.SnapshotID, "node_id", job.NodeID, "err", markErr)
 			}
@@ -172,14 +174,18 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 			continue
 		}
 		if err := r.markReplicaReady(ctx, job); err != nil {
-			r.metricsObserve("failed", job.Region)
+			if !job.Revalidation {
+				r.metricsObserve("failed", job.Region)
+			}
 			r.log.Warn("snapshothipd: mark ready failed", "snapshot_id", job.SnapshotID, "node_id", job.NodeID, "err", err)
 			continue
 		}
-		r.metricsObserve("ready", job.Region)
-		if !job.QueuedAt.IsZero() {
-			if latency := time.Since(job.QueuedAt); latency >= 0 {
-				r.metricsObserveLatency(job.Region, latency)
+		if !job.Revalidation {
+			r.metricsObserve("ready", job.Region)
+			if !job.QueuedAt.IsZero() {
+				if latency := time.Since(job.QueuedAt); latency >= 0 {
+					r.metricsObserveLatency(job.Region, latency)
+				}
 			}
 		}
 		r.log.Debug("snapshothipd: snapshot prepositioned", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "node_id", job.NodeID, "attempt", job.Attempts)

@@ -600,11 +600,18 @@ The §12 dashboard pipeline is wired end-to-end:
 
 #### Status page history contract
 
-- `uptime_30d_pct` is the weighted terminal-invocation success rate for the
-  last 30 UTC calendar days. `uptime_30d` always contains 30 daily points;
-  each point carries `successful`, `total`, and `uptime_pct`. Pending work is
-  excluded, and a day with no terminal traffic is shown as no traffic rather
-  than as a failure.
+- `uptime_30d_pct` is the time-weighted availability of complete five-minute
+  platform observations for the last 30 UTC calendar days. It is derived from
+  the same component telemetry and operator incident overlays as the public
+  status endpoint; customer function results, timeouts, dead letters, and
+  cancellations never lower platform uptime.
+- `uptime_30d` always contains 30 daily points. The compatibility fields
+  `successful` and `total` count available and observed five-minute platform
+  intervals. A day with no complete platform telemetry has `total: 0` and
+  `uptime_pct: null`, so missing coverage is not published as an outage.
+- The switch to platform observations intentionally resets the legacy 30-day
+  history to the observation-bucket retention window. Historical customer
+  invocation failures are not backfilled into the new series.
 - `incidents` contains incidents posted in the last 30 days, plus any still-
   open older incident. The public projection includes `started_at`,
   `resolved_at`, `severity`, `summary`, and the affected `component`.
@@ -717,13 +724,10 @@ ADR-075 / issue #475 / migration 00138.
   (per-app / per-account → 422 `plan_webhook_quota`). Closed enum
   drift on `retry_policy` and `event_filter` surfaces as 400
   `app_webhook_invalid` BEFORE the row is created.
-- **Event vocabulary (issue #1395 B5 + API consumer billing delivery)** — the closed event set is shared by
-  state, API/OpenAPI, CLI, SDK, and the delivery-ledger CHECK: `cron.fired`,
-  `cron.fired.manually`, `app.created`, `app.deleted`, `app.deployed`,
-  `app.scaled`, `app.parked`, `app.woken`, `build.succeeded`,
-  `build.failed`, `deployment.failed`, `rollout.aborted`, `error.new`,
-  `job.finished`, `preview.created`, `budget.threshold`, and
-  `usage_statement.finalized`. Producers call
+- **Event vocabulary (issue #2444)** — new subscriptions expose only the
+  producer-backed events `app.parked`, `app.woken`, and
+  `usage_statement.finalized`. The delivery ledger retains its historical
+  closed set so old delivery rows remain readable across upgrades. Producers call
   `pkg/webhook.Emit` after their source mutation commits; it stores the raw
   JSON payload in one durable row per enabled matching subscription, so the
   existing retry endpoint can replay every event. OpenAPI carries a payload
@@ -1020,13 +1024,12 @@ explicitly open issues that the doc otherwise implies are closed.
   `cmd/gatewayd-public/main.go`; three alert rules land in `faas.rules.yml`;
   operator runbook at `docs/ops/gatewayd-public-tls-cutover.md` (the legacy `docs/ops/gatewayd-tls-cutover.md` retains the pre-PR-A cut-over steps; current process lives in the public-edge runbook).
 - **§14 V2 latency driver** — 100 platform-only park→wake cycles per app class,
-  p95 < 350 ms from `wake.boot_started` through `wake.boot_completed` on
-  the reference SSD node. The internal gateway first-byte cohort now also
-  enforces p99 ≤ 500 ms and p999 ≤ 800 ms in
-  `TestDeployWakeMetal/wake-latency-p99-100cycles`; its per-phase p99/p999
-  view is the `Wake phase latency (p99 / p999)` dashboard panel. The gate is
-  wired via `pkg/fcvm/TestMetalParkWakeCycle`; the internal gateway cohort
-  remains a separate diagnostic. Reference-SSD execution is recorded here
+  p95 < 350 ms from capacity admission/`wake.boot_started` through the first
+  upstream byte on the reference SSD node. The reusable
+  `scripts/ops/wake_performance_gate.py` reports the full-wake and raw-restore
+  p50/p90/p95/p99 distributions and rejects incomplete runtime cohorts. CDN,
+  Internet and client-distance timing stays outside this gate. Reference-SSD
+  execution is recorded here
   when the metal acceptance run is available. Runs on
   `make metal-lima RUN_ARGS='-run TestDeployWakeMetal'`.
 - **Documented timed restore drill** — §14 M8: PG + one app back
@@ -1068,9 +1071,12 @@ explicitly open issues that the doc otherwise implies are closed.
   (ADR-168), and a tenant-bridge guest listener with HostIP caller binding
   (ADR-169). ADR-170 adds node-local DNS for `<slug>.svc.gregale`, backed by
   the same `HostBridgeIP:10080` proxy; the netns firewall admits DNS and proxy
-  traffic before the lateral-movement deny. Host ports and public multi-port
-  routing remain separate follow-ups; loopback discovery within one task remains
-  supported (ADR-164 and ADR-165).
+  traffic before the lateral-movement deny. Named TCP public multi-port routing
+  now uses the `app--port-<name>` selector and the existing vmmd bridge
+  (ADR-176); durable node-local host-port leasing now reserves declared TCP
+  and UDP listeners (ADR-177). Direct socket binding, UDP ingress, and custom
+  per-port TLS remain separate follow-ups. Loopback discovery within one task remains supported
+  (ADR-164 and ADR-165).
 - **Resource and cost isolation** — named RAM/CPU profiles, per-node vCPU
   admission, ephemeral disk ceilings, and the account-level compute + S3 +
   managed-PostgreSQL usage projection are present; runtime per-container
@@ -1080,8 +1086,8 @@ explicitly open issues that the doc otherwise implies are closed.
   64 MiB default for inherited profiles. ADR-175 adds a customer-selectable
   16..512 MiB sidecar scratch quota and named per-workload guest `io.weight`
   policies (`low`, `standard`, `high`); omitted values preserve the inherited
-  defaults. Persistent volumes, host-port allocation, and public multi-port
-  routing remain follow-up work.
+  defaults. Persistent volumes remain follow-up work; public named TCP listeners
+  are now covered by ADR-176 and host-port allocation by ADR-177.
 
 ### Open security & infrastructure issues
 

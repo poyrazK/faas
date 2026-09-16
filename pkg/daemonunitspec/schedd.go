@@ -60,13 +60,16 @@ func UnitSchedd() daemonunit.Unit {
 			// the Hobby / no-quota plan shape (ADR-118 §9).
 			`/opt/faas/current/bin/schedd-brokerq-apply`,
 		},
-		ExecStart:          `/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml`,
-		Restart:            "on-failure",
-		RestartSec:         "2s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		ExecStart:  `/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml`,
+		Restart:    "on-failure",
+		RestartSec: "2s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
+		// Read-only conntrack enumeration uses nfnetlink, which the kernel
+		// gates behind CAP_NET_ADMIN. Keep the unit and capsDecl identical.
+		CapabilityBoundingSet: []string{"CAP_NET_ADMIN"},
+		AmbientCapabilities:   []string{"CAP_NET_ADMIN"},
 
 		// Issue #585 / ADR-127: sealed.env dropped; per-daemon
 		// schedd.env (FAAS_INTERNAL_SVC_KEY_SEALED_BLOB=<base64>)
@@ -81,6 +84,7 @@ func UnitSchedd() daemonunit.Unit {
 		Environment: []daemonunit.KV{
 			{Key: "TMPDIR", Value: "/var/lib/faas/oci-tmp"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/host.age"},
+			{Key: "FAAS_SIGN_PUB", Value: "%d/faas_sign_pub"},
 			// ADR-143: public-beta units enable the runtimes that their API
 			// and CLI advertise. The vmmd JobColdBoot RPC and durable workflow
 			// executor are both wired before the loop starts.
@@ -88,8 +92,10 @@ func UnitSchedd() daemonunit.Unit {
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "fleet.age", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
 			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
+			{Name: "faas_sign_pub", Path: "/etc/faas/secrets/sign-pub.pem"},
 		},
 
 		NoNewPrivileges:       true,

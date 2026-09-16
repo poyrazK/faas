@@ -116,12 +116,13 @@ type GenerateFromAppMeta struct {
 // pkg/appmetrics-style Source string. The dashboard surfaces
 // these directly to the customer.
 const (
-	SourceAuto             = "auto"
-	SourceDegradedRoutes   = "degraded: routes_unavailable"
-	SourceDegradedRules    = "degraded: rules_unavailable"
-	SourceDegradedImport   = "degraded: import_unavailable"
-	SourceEmptyImport      = "empty: no_import"
-	SourceEmptyImportRules = "empty: no_import_no_rules"
+	SourceAuto                  = "auto"
+	SourceDegradedRoutes        = "degraded: routes_unavailable"
+	SourceDegradedRoutesPartial = "degraded: routes_partial"
+	SourceDegradedRules         = "degraded: rules_unavailable"
+	SourceDegradedImport        = "degraded: import_unavailable"
+	SourceEmptyImport           = "empty: no_import"
+	SourceEmptyImportRules      = "empty: no_import_no_rules"
 )
 
 // ErrImportMissing is returned when the imported doc is nil/empty

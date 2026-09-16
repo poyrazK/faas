@@ -222,6 +222,9 @@ func (p Preset) Validate() error {
 				return fmt.Errorf("canary preset %q stage %d: mirror_clean.window_s must be positive", p.Name, i)
 			}
 		}
+		if i > 0 && s.Percent <= p.Stages[i-1].Percent {
+			return fmt.Errorf("canary preset %q stage %d: percent %d must be greater than previous stage percent %d", p.Name, i, s.Percent, p.Stages[i-1].Percent)
+		}
 	}
 	// The terminal stage must reach 100% (rollback safety: if the
 	// ladder caps below 100 the deployment is stuck at less than

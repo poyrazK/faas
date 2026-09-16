@@ -66,7 +66,11 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 		return fmt.Errorf("deploycontroller: read current release: %w", err)
 	}
 	if previous == releaseRoot {
-		return errors.New("deploycontroller: release is already active")
+		// The immutable bundle was verified above before we trusted the
+		// current pointer. Treat an exact active release as converged so a CD
+		// rerun can continue with its independent post-activation gates after
+		// one of those gates failed on the first attempt.
+		return nil
 	}
 	// Never replace a usable release when the current pointer names a
 	// directory that cannot be verified for rollback. A dangling legacy

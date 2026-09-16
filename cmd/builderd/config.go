@@ -70,6 +70,16 @@ type Config struct {
 	// Destroy. It shares the builder staging root for the same systemd
 	// namespace contract.
 	BuildExportDir string `toml:"build_export_dir"`
+	// BuildExportMaxBytes bounds reclaimable completed/legacy exports on this
+	// compute node. Active rootfs_path handoffs remain protected until consumed.
+	BuildExportMaxBytes int64 `toml:"build_export_max_bytes"`
+	// BuildExportMaxAge is the hard recovery window for an unconsumed handoff.
+	// BuildExportOrphanMinAge protects freshly discovered pre-upgrade output
+	// from byte-pressure cleanup. BuildExportSweepInterval controls both the
+	// startup recovery loop and its subsequent cadence.
+	BuildExportMaxAge        time.Duration `toml:"build_export_max_age"`
+	BuildExportOrphanMinAge  time.Duration `toml:"build_export_orphan_min_age"`
+	BuildExportSweepInterval time.Duration `toml:"build_export_sweep_interval"`
 	// BuildTimeoutSeconds is the guest build wall-clock budget. Zero keeps
 	// the platform default from pkg/api/limits.go. The host-side export
 	// headroom is added separately by the metal VM driver.
@@ -229,6 +239,21 @@ func (c *Config) normalizeConfig() {
 	if c.StuckBuildThreshold < minimum {
 		c.StuckBuildThreshold = minimum
 	}
+	if c.BuildExportMaxBytes <= 0 {
+		c.BuildExportMaxBytes = builderdpkg.DefaultBuildExportMaxBytes
+	}
+	if c.BuildExportMaxAge <= 0 {
+		c.BuildExportMaxAge = builderdpkg.DefaultBuildExportMaxAge
+	}
+	if c.BuildExportOrphanMinAge <= 0 {
+		c.BuildExportOrphanMinAge = builderdpkg.DefaultBuildExportOrphanMinAge
+	}
+	if c.BuildExportOrphanMinAge > c.BuildExportMaxAge {
+		c.BuildExportOrphanMinAge = c.BuildExportMaxAge
+	}
+	if c.BuildExportSweepInterval <= 0 {
+		c.BuildExportSweepInterval = builderdpkg.DefaultBuildExportSweepInterval
+	}
 	if c.WarmIdle <= 0 {
 		c.WarmIdle = builderdpkg.DefaultWarmIdle
 	}
@@ -256,16 +281,20 @@ func (c *Config) applyEnvironmentOverrides() {
 // file is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
-		VMMDSocket:       "/run/faas/vmmd.sock",
-		CacheDir:         "/var/cache/faas/builds",
-		SourceSpoolDir:   envOr("FAAS_SPOOL_ROOT", "/var/spool/faas/builds"),
-		BuildLogMaxBytes: 8 << 20,
-		BuilderBase:      "/srv/fc/base/runner-builder-" + runtime.GOARCH + ".ext4",
-		BuildDriveDir:    "/srv/fc/builder/drive",
-		BuildExportDir:   "/srv/fc/builder/out",
-		MetricsAddr:      "127.0.0.1:9105",
-		ScheddMetricsURL: "http://127.0.0.1:9090/metrics/fcvm",
-		PollInterval:     2 * time.Second,
+		VMMDSocket:               "/run/faas/vmmd.sock",
+		CacheDir:                 "/var/cache/faas/builds",
+		SourceSpoolDir:           envOr("FAAS_SPOOL_ROOT", "/var/spool/faas/builds"),
+		BuildLogMaxBytes:         8 << 20,
+		BuilderBase:              "/srv/fc/base/runner-builder-" + runtime.GOARCH + ".ext4",
+		BuildDriveDir:            "/srv/fc/builder/drive",
+		BuildExportDir:           "/srv/fc/builder/out",
+		BuildExportMaxBytes:      builderdpkg.DefaultBuildExportMaxBytes,
+		BuildExportMaxAge:        builderdpkg.DefaultBuildExportMaxAge,
+		BuildExportOrphanMinAge:  builderdpkg.DefaultBuildExportOrphanMinAge,
+		BuildExportSweepInterval: builderdpkg.DefaultBuildExportSweepInterval,
+		MetricsAddr:              "127.0.0.1:9105",
+		ScheddMetricsURL:         "http://127.0.0.1:9090/metrics/fcvm",
+		PollInterval:             2 * time.Second,
 		// B2.2 (issue #196): 30s fairness window — wide enough to
 		// distinguish a deploy burst from steady-state traffic,
 		// narrow enough that one customer's idle window rescues the

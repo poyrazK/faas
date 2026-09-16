@@ -53,8 +53,6 @@ func TestApidProxy_ForwardsApidPaths(t *testing.T) {
 		"/logout", "/logout/",
 		// /status
 		"/status", "/status/", "/status/slo.json",
-		// /healthz (CD probe target, issue #85)
-		"/healthz",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -183,6 +181,37 @@ func TestApidProxy_PassesThroughNonApidPaths(t *testing.T) {
 	}
 }
 
+func TestInternalHealthRouteDoesNotShadowAppHealth(t *testing.T) {
+	infrastructure := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("infrastructure"))
+	})
+	app := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("app"))
+	})
+	h := internalHealthRoute(infrastructure, app)
+
+	for _, tc := range []struct {
+		host string
+		path string
+		want string
+	}{
+		{host: internalGatewayHealthHost, path: "/healthz", want: "infrastructure"},
+		{host: "127.0.0.1:8080", path: "/healthz", want: "infrastructure"},
+		{host: "nonexistent.gregale.dev", path: "/healthz", want: "app"},
+		{host: "healthy.gregale.dev", path: "/healthz", want: "app"},
+		{host: internalGatewayHealthHost, path: "/healthz/details", want: "app"},
+	} {
+		t.Run(tc.host+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+tc.path, nil)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if got := rec.Body.String(); got != tc.want {
+				t.Fatalf("body = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestIsApidPath_TableDriven is the unit-test coverage for the
 // issue #85 path-set. Pin both positive (every prefix the apid
 // public surface needs) and negative (review-finding-#6-style
@@ -286,9 +315,9 @@ func TestIsApidPath_TableDriven(t *testing.T) {
 		{"/status/slo.json", true},
 		{"/status.json", false}, // NOT under /status/
 
-		// /healthz (issue #85: CD probe)
-		{"/healthz", true},
-		{"/healthz/", true},
+		// App health paths are host-routed, never stolen by the apid proxy.
+		{"/healthz", false},
+		{"/healthz/", false},
 		{"/healthzz", false},
 
 		// Generic
@@ -345,9 +374,8 @@ func TestApidProxy_UpstreamDown(t *testing.T) {
 		t.Error("next should not be called for apid paths")
 	}), log)
 
-	// /healthz is the canonical public probe (issue #85).
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/whoami", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
@@ -358,39 +386,6 @@ func TestApidProxy_UpstreamDown(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "apid_unavailable") {
 		t.Errorf("body = %q, want apid_unavailable problem code", rec.Body.String())
-	}
-}
-
-// TestApidProxy_HealthzEndToEnd exercises the full path that the
-// cd-digitalocean.yml smoke test relies on (issue #85): real
-// httptest upstream serving /healthz, apidProxy in front, request
-// arrives via the public surface.
-func TestApidProxy_HealthzEndToEnd(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/healthz" {
-			t.Errorf("upstream path = %q, want /healthz", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	}))
-	t.Cleanup(upstream.Close)
-
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := newApidProxy(upstream.URL, http.NewServeMux(), log)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("code = %d, want 200", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
-		t.Errorf("content-type = %q, want application/json", ct)
-	}
-	if !strings.Contains(rec.Body.String(), `"status":"ok"`) {
-		t.Errorf("body = %q, want JSON status:ok", rec.Body.String())
 	}
 }
 

@@ -19,6 +19,8 @@ import os
 
 
 async def handler(event, ctx):
+    # Do not log or echo event: it can contain cookies, API keys,
+    # authorization headers, and customer payloads.
     ctx.log.info(
         "function invoked",
         extra={"invocation_id": ctx.invocation_id, "runtime": os.environ.get("FAAS_RUNTIME")},
@@ -31,7 +33,6 @@ async def handler(event, ctx):
                 "ok": True,
                 "invocation_id": ctx.invocation_id,
                 "runtime": os.environ.get("FAAS_RUNTIME"),
-                "received": event,
             }
         ),
     }

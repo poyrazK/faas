@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -328,6 +329,14 @@ type PGBackend struct {
 	// for every app until a rule is poked (test seam; production
 	// wires this from cmd/gatewayd-internal).
 	mirrorStore mirrorRulesStore
+
+	smokeMu         sync.Mutex
+	smokeChallenges map[string]deploymentSmokeChallenge
+}
+
+type deploymentSmokeChallenge struct {
+	token     string
+	expiresAt time.Time
 }
 
 // recordScope (issue #272 / ADR-095 PR-B) is the test seam that
@@ -548,7 +557,9 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 	if err != nil {
 		return "", WakeMethodUnspecified, false, err
 	}
+	markWakeAdmissionStarted(ctx)
 	instanceID, nodeID, deploymentID, wakeID, rawMethod, port, err := sched.EnsureWake(ctx, appID, trigger)
+	markWakeSchedulerComplete(ctx)
 	if err != nil {
 		return "", WakeMethodUnspecified, false, err
 	}
@@ -562,6 +573,7 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 		Port:         port,
 		DeploymentID: deploymentID,
 	})
+	markWakeTargetPublished(ctx)
 	return wakeID, scheddWakeMethodToGateway(rawMethod), false, nil
 }
 
@@ -590,15 +602,53 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		log = slog.Default()
 	}
 	return &PGBackend{
-		router:       router,
-		sched:        sched,
-		log:          log,
-		routes:       NewRouteCache(RouteCacheCap),
-		apps:         map[string]App{},
-		appsPicker:   map[string]*appPicker{},
-		mirrorRules:  map[string][]MirrorRuleRow{},
-		staleTargets: map[string]time.Time{},
+		router:          router,
+		sched:           sched,
+		log:             log,
+		routes:          NewRouteCache(RouteCacheCap),
+		apps:            map[string]App{},
+		appsPicker:      map[string]*appPicker{},
+		mirrorRules:     map[string][]MirrorRuleRow{},
+		staleTargets:    map[string]time.Time{},
+		smokeChallenges: map[string]deploymentSmokeChallenge{},
 	}
+}
+
+func smokeChallengeKey(appID, deploymentID string) string { return appID + "\x00" + deploymentID }
+
+// AuthorizeDeploymentSmoke installs one short-lived challenge delivered over
+// the private database notification channel. Tokens are memory-only and may
+// be replayed only until expiresAt.
+func (b *PGBackend) AuthorizeDeploymentSmoke(appID, deploymentID, token string, expiresAt time.Time) {
+	if b == nil || appID == "" || deploymentID == "" || token == "" || !expiresAt.After(time.Now()) {
+		return
+	}
+	b.smokeMu.Lock()
+	defer b.smokeMu.Unlock()
+	now := time.Now()
+	for key, challenge := range b.smokeChallenges {
+		if !challenge.expiresAt.After(now) {
+			delete(b.smokeChallenges, key)
+		}
+	}
+	b.smokeChallenges[smokeChallengeKey(appID, deploymentID)] = deploymentSmokeChallenge{token: token, expiresAt: expiresAt}
+}
+
+// ValidateDeploymentSmoke authenticates the edge-health bypass. A valid token
+// is bound to both app and deployment, so it cannot authorize another tenant.
+func (b *PGBackend) ValidateDeploymentSmoke(appID, deploymentID, token string) bool {
+	if b == nil || token == "" {
+		return false
+	}
+	b.smokeMu.Lock()
+	defer b.smokeMu.Unlock()
+	key := smokeChallengeKey(appID, deploymentID)
+	challenge, ok := b.smokeChallenges[key]
+	if !ok || !challenge.expiresAt.After(time.Now()) {
+		delete(b.smokeChallenges, key)
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(challenge.token), []byte(token)) == 1
 }
 
 // appPicker (PR-B / issue #556) is the per-app picker state the
@@ -905,6 +955,9 @@ func (b *PGBackend) RecordTarget(appID string, target Target) {
 	if b == nil || appID == "" || target.InstanceID == "" || target.NodeID == "" {
 		return
 	}
+	if target.AppID == "" {
+		target.AppID = appID
+	}
 	if target.AddedAt.IsZero() {
 		target.AddedAt = time.Now()
 	}
@@ -1060,7 +1113,9 @@ func (b *PGBackend) admitSynchronous(ctx context.Context, appID, deploymentID, s
 	// live deployment the picker landed on. Empty falls through
 	// to schedd's default (newest live deployment) — the legacy
 	// single-deployment path.
+	markWakeAdmissionStarted(ctx)
 	instanceID, nodeID, returnedDeploymentID, wakeID, rawMethod, atCapacity, port, err := sched.AdmitInstance(ctx, appID, deploymentID, scope, trigger)
+	markWakeSchedulerComplete(ctx)
 	// NOTE: ADR-098's `EnsureWake(ctx, appID)` is the new single-flight
 	// hot-path primitive on the gateway's Wake flow (pkg/gateway/pgbackend.go
 	// Wake method, issue #854 / PR #854 / 93059ff4). EnsureWake does NOT yet
@@ -1146,6 +1201,7 @@ func (b *PGBackend) recordAdmission(ctx context.Context, appID, deploymentID, in
 		picker.cum = []int{100}
 	}
 	set.add(Target{
+		AppID:        appID,
 		NodeID:       nodeID,
 		InstanceID:   instanceID,
 		WakeID:       wakeID,
@@ -1154,6 +1210,7 @@ func (b *PGBackend) recordAdmission(ctx context.Context, appID, deploymentID, in
 		DeploymentID: deploymentID,
 	})
 	b.tgtMu.Unlock()
+	markWakeTargetPublished(ctx)
 	return wakeID, method, false, nil
 }
 
@@ -1503,7 +1560,7 @@ func (b *PGBackend) ScheduleMirrorTarget(ctx context.Context, appID, mirrorDeplo
 		if deploymentID == "" {
 			deploymentID = mirrorDeploymentID
 		}
-		return Target{InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}, nil
+		return Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port}, nil
 	}
 	instanceID, wakeID, err := sched.AdmitMirrorInstance(ctx, appID, mirrorDeploymentID, mirrorRuleID)
 	if err != nil {

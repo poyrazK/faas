@@ -1,7 +1,18 @@
 name: e2e-native
 
 # End-to-end platform gate on real hardware: the whole ./cmd/e2e suite with the
-# metal build tag, on faas-compute-node-2, against /dev/kvm and Firecracker.
+# metal build tag, on faas-acceptance-1, against /dev/kvm and Firecracker.
+#
+# faas-acceptance-1 is a DEDICATED acceptance node. This gate stops every
+# production daemon on its host for the duration of a run, and leakcheck asserts
+# zero netns/TAP/jail afterwards. Both are safe only on a host that serves no
+# tenants. It previously ran on faas-compute-node-2, which is a live compute
+# node: runs collided with real workloads (a dispatch was refused outright by
+# the "Firecracker workloads are active" pre-flight), leakcheck reported the
+# production pre-warm netns pool as leaks, and the harness inherited that host's
+# production configuration in ways that produced failures looking like product
+# defects (see #2572, #2579, #2602). Point this at a serving node again and all
+# of that returns.
 #
 # builder-native.yml proves the builder image and the pkg/fcvm package work on
 # metal. This workflow proves the product does: source upload -> apid ->
@@ -22,11 +33,21 @@ on:
     # flock, so an overrun waits rather than collides.
     - cron: "43 4 * * *"
   workflow_dispatch:
+    inputs:
+      keep_node_running:
+        description: >-
+          Leave faas-acceptance-1 running after the gate finishes, to debug on
+          the host. Costs money until someone stops it by hand — the default
+          stops the node on every exit path, including cancellation.
+        type: boolean
+        default: false
 
 concurrency:
-  # Deliberately the same group builder-native.yml uses: all native gates stop
-  # services on this one node and must never overlap.
-  group: builder-native-compute-node-2
+  # Per-host group. builder-native.yml still runs on faas-compute-node-2, so
+  # the two gates no longer contend and must not serialize behind each other.
+  # The host flock (/var/lock/faas-builder-acceptance.lock) remains the real
+  # mutual exclusion if both are ever pointed at the same node again.
+  group: e2e-native-faas-acceptance-1
   cancel-in-progress: false
 
 permissions:
@@ -37,7 +58,7 @@ env:
   GO_VERSION: "1.25.13"
   GCP_PROJECT: project-5ae37259-04cf-4070-bef
   GCP_ZONE: europe-west3-c
-  GCP_INSTANCE: faas-compute-node-2
+  GCP_INSTANCE: faas-acceptance-1
   GCP_WORKLOAD_IDENTITY_PROVIDER: projects/811654175645/locations/global/workloadIdentityPools/github-actions/providers/gregale-builder-native
   GCP_SERVICE_ACCOUNT: gregale-builder-ci@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com
 
@@ -92,7 +113,7 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v3
 
-      - name: Start compute node 2 when CI owns its lifecycle
+      - name: Start the acceptance node when CI owns its lifecycle
         id: compute-node
         run: |
           set -euo pipefail
@@ -103,19 +124,20 @@ jobs:
           )"
           case "$status" in
             RUNNING)
-              echo "Compute node 2 was already running; this workflow will leave it running."
-              echo "started=false" >> "$GITHUB_OUTPUT"
+              echo "Acceptance node was already running; a previous run left it up."
               ;;
             TERMINATED)
-              echo "started=true" >> "$GITHUB_OUTPUT"
               gcloud compute instances start "$GCP_INSTANCE" --quiet \
                 --project "$GCP_PROJECT" --zone "$GCP_ZONE"
               ;;
             *)
-              echo "::error::compute node 2 is in unexpected state: ${status:-missing}" >&2
+              echo "::error::acceptance node is in unexpected state: ${status:-missing}" >&2
               exit 1
               ;;
           esac
+
+          scripts/ci/gcp-oslogin-preflight.sh \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" --instance "$GCP_INSTANCE"
 
           # RUNNING precedes sshd readiness. Bound the wait so a broken boot
           # fails this job instead of consuming credits until its timeout.
@@ -125,33 +147,198 @@ jobs:
               --command true >/dev/null 2>&1; then
               exit 0
             fi
-            echo "Waiting for compute node 2 SSH readiness (${attempt}/24)."
+            echo "Waiting for acceptance node SSH readiness (${attempt}/24)."
             sleep 5
           done
-          echo "::error::compute node 2 did not become SSH-ready within 120 seconds" >&2
+          echo "::error::acceptance node did not become SSH-ready within 120 seconds" >&2
           exit 1
 
-      - name: Run the platform e2e suite on compute node 2
+      - name: Stage source and toolchain on the acceptance node
         env:
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          unit="faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "mkdir -p '$remote_root'"
+            --command "mkdir -p '$remote_root' && sudo /usr/local/sbin/faas-canary-artifacts register --path '$remote_root' --run-id '${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --kind native-e2e"
           gcloud compute scp "$RUNNER_TEMP/native-e2e-bundle.tar.gz" \
             "$GCP_INSTANCE:$remote_root/bundle.tar.gz" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE"
-          # The remote command runs as a transient systemd service: losing the
-          # GitHub SSH connection must not kill cleanup halfway through, with
-          # production daemons still stopped. The DSN is NOT passed here — the
-          # node owns it in /etc/faas/e2e-acceptance.env, so it never appears
-          # in the node's process list.
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go' && sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=120m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' /bin/bash scripts/ci/run-native-e2e.sh"
+            --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go'"
+
+      - name: Phase 1 — fixtures (app shape checks, no microVM)
+        id: phase_fixtures
+        if: always() && steps.compute-node.conclusion == 'success'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: fixtures
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          # Each phase is its own transient systemd unit: losing the GitHub SSH
+          # connection must not kill cleanup halfway through with the host still
+          # quiesced. The DSN is NOT passed here — the node owns it in
+          # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=20m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Phase 2 — build (source → builderd → builder microVM)
+        id: phase_build
+        if: always() && steps.compute-node.conclusion == 'success'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: build
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          # Each phase is its own transient systemd unit: losing the GitHub SSH
+          # connection must not kill cleanup halfway through with the host still
+          # quiesced. The DSN is NOT passed here — the node owns it in
+          # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=70m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Phase 3 — deploy (image, tarball, healthcheck, secrets)
+        id: phase_deploy
+        if: always() && steps.compute-node.conclusion == 'success'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: deploy
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          # Each phase is its own transient systemd unit: losing the GitHub SSH
+          # connection must not kill cleanup halfway through with the host still
+          # quiesced. The DSN is NOT passed here — the node owns it in
+          # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=30m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Phase 4 — wake (timeline, dedup, CPU fairness)
+        id: phase_wake
+        if: always() && steps.compute-node.conclusion == 'success'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: wake
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          # Each phase is its own transient systemd unit: losing the GitHub SSH
+          # connection must not kill cleanup halfway through with the host still
+          # quiesced. The DSN is NOT passed here — the node owns it in
+          # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=20m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Phase 5 — streaming (response streaming, h2c inner leg)
+        id: phase_streaming
+        if: always() && steps.compute-node.conclusion == 'success'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: streaming
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          # Each phase is its own transient systemd unit: losing the GitHub SSH
+          # connection must not kill cleanup halfway through with the host still
+          # quiesced. The DSN is NOT passed here — the node owns it in
+          # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=30m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Phase 6 — logs (app log SSE)
+        id: phase_logs
+        if: always() && steps.compute-node.conclusion == 'success'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: logs
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          # Each phase is its own transient systemd unit: losing the GitHub SSH
+          # connection must not kill cleanup halfway through with the host still
+          # quiesced. The DSN is NOT passed here — the node owns it in
+          # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=20m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Phase 7 — security fences (§11, ship-blocking)
+        id: phase_security
+        if: always() && steps.compute-node.conclusion == 'success'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: security
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          # Each phase is its own transient systemd unit: losing the GitHub SSH
+          # connection must not kill cleanup halfway through with the host still
+          # quiesced. The DSN is NOT passed here — the node owns it in
+          # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=20m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Phase 8 — two-node (recovery arbiter, drain, drills)
+        id: phase_twonode
+        if: always() && steps.compute-node.conclusion == 'success'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: twonode
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          # Each phase is its own transient systemd unit: losing the GitHub SSH
+          # connection must not kill cleanup halfway through with the host still
+          # quiesced. The DSN is NOT passed here — the node owns it in
+          # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=30m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Phase 9 — jobs (unimplemented stubs, #2569)
+        id: phase_jobs
+        if: always() && steps.compute-node.conclusion == 'success'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: jobs
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          # Each phase is its own transient systemd unit: losing the GitHub SSH
+          # connection must not kill cleanup halfway through with the host still
+          # quiesced. The DSN is NOT passed here — the node owns it in
+          # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=20m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
 
       - name: Refresh GCP authentication for cleanup
         if: always() && steps.auth.outcome == 'success'
@@ -163,8 +350,12 @@ jobs:
 
       - name: Collect log and remove remote transfer bundle
         if: always() && steps.auth.outcome == 'success'
+        env:
+          SOURCE_SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
           remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup_state="${{ job.status }}"
           log="$RUNNER_TEMP/native-e2e.log"
           gcloud compute scp "$GCP_INSTANCE:$remote_root/native-e2e.log" "$log" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
@@ -173,7 +364,78 @@ jobs:
           fi
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "sudo rm -rf '$remote_root'" || true
+            --command "sudo /usr/local/sbin/faas-canary-artifacts finish --path '$remote_root' --state '$cleanup_state'"
+          # The stage root is shared by every phase (guest-init, and the
+          # daemons compiled once for all of them), so no single phase may
+          # remove it — see the phase branch in run-native-e2e.sh's cleanup.
+          # The run owns it, here, on every exit path.
+          stage_root="/srv/fc/acceptance/e2e-${SOURCE_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo rm -rf '$stage_root'" || true
+
+      # Every phase runs with continue-on-error so one broken layer cannot hide
+      # the state of the others — that is the whole point of the split. This
+      # step is what actually fails the job, and it is also where the
+      # WHOLE-SUITE required-test contract is applied: those eight tests span
+      # several phases, so no single phase can check it.
+      - name: Verdict
+        if: always() && steps.compute-node.conclusion == 'success'
+        env:
+          PHASE_OUTCOMES: >-
+            fixtures=${{ steps.phase_fixtures.outcome }}
+            build=${{ steps.phase_build.outcome }}
+            deploy=${{ steps.phase_deploy.outcome }}
+            wake=${{ steps.phase_wake.outcome }}
+            streaming=${{ steps.phase_streaming.outcome }}
+            logs=${{ steps.phase_logs.outcome }}
+            security=${{ steps.phase_security.outcome }}
+            twonode=${{ steps.phase_twonode.outcome }}
+            jobs=${{ steps.phase_jobs.outcome }}
+        run: |
+          set -uo pipefail
+          # jobs is the only non-blocking phase: its 11 tests are unimplemented
+          # stubs (#2569). Reported, never fatal, so 11 known failures cannot
+          # bury a real regression in another phase. Flip it to blocking when
+          # the stubs are implemented.
+          nonblocking="jobs"
+
+          rc=0
+          {
+            echo "| phase | result |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for kv in $PHASE_OUTCOMES; do
+            name="${kv%%=*}"; outcome="${kv#*=}"
+            mark="OK"
+            case "$outcome" in
+              success) mark="pass" ;;
+              skipped) mark="did not run" ;;
+              *)
+                if [[ " $nonblocking " == *" $name "* ]]; then
+                  mark="FAIL (non-blocking, #2569)"
+                else
+                  mark="FAIL"
+                  rc=1
+                fi
+                ;;
+            esac
+            printf '| %s | %s |\n' "$name" "$mark" >> "$GITHUB_STEP_SUMMARY"
+            printf '%-10s %s\n' "$name" "$mark"
+          done
+
+          log="$RUNNER_TEMP/native-e2e.log"
+          if [[ -f "$log" ]]; then
+            # shellcheck source=scripts/ci/native-e2e-verdict.sh
+            source scripts/ci/native-e2e-verdict.sh
+            native_e2e_verdict "$log" || rc=1
+          else
+            echo "::error::no combined log was collected; cannot apply the required-test contract"
+            rc=1
+          fi
+
+          exit "$rc"
 
       - name: Upload e2e log
         if: always()
@@ -184,10 +446,27 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Stop compute node 2
-        # Only when this run started it: a node that was already running
-        # belongs to whoever started it.
-        if: always() && steps.compute-node.outputs.started == 'true'
+      - name: Stop the acceptance node
+        # Stop it whoever started it.
+        #
+        # This used to stop the node only when THIS run started it, on the
+        # reasoning that a node found already running belonged to whoever
+        # started it. That reasoning leaks: the first run to be cancelled
+        # mid-flight leaves the node up, and every run after it then observes
+        # RUNNING, sets started=false, and declines to stop it too. The node
+        # bills until a human notices. That is what happened between runs
+        # 35010949241 and 35016399564 — three consecutive runs each skipped
+        # the stop step and the node stayed up for hours.
+        #
+        # faas-acceptance-1 is a dedicated CI box with no tenants and no other
+        # owner, so "somebody else's node" is not a real case here; the gate is
+        # the only thing that ever runs on it. Stop it unconditionally instead,
+        # and give the one legitimate exception — debugging on the host — an
+        # explicit opt-in rather than an accident.
+        #
+        # always() so cancellation and failure still stop it; that is the exact
+        # path that leaked.
+        if: always() && inputs.keep_node_running != true
         run: |
           set -euo pipefail
           gcloud compute instances stop "$GCP_INSTANCE" --quiet \

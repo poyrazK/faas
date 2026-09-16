@@ -17,6 +17,7 @@ export type PublicStatusEvent = {
   scheduled_start_at?: string;
   scheduled_end_at?: string;
   updated_at: string;
+  edited_at?: string;
   resolved_at?: string;
   updates: Array<PublicStatusUpdate>;
 };

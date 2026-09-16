@@ -43,6 +43,8 @@ done
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/ci/native-e2e-verdict.sh
 source "${repo_root}/scripts/ci/native-e2e-verdict.sh"
+# shellcheck source=scripts/ci/native-e2e-phases.sh
+source "${repo_root}/scripts/ci/native-e2e-phases.sh"
 marker_sha="$(tr -d '\n' < "${repo_root}/.faas-e2e-source-sha")"
 [[ "${marker_sha}" == "${FAAS_E2E_SOURCE_SHA}" ]] ||
   die "source archive marker ${marker_sha} does not match ${FAAS_E2E_SOURCE_SHA}"
@@ -85,8 +87,99 @@ if [[ -f "${e2e_env_file}" ]]; then
     die "${e2e_env_file} must be root-owned mode 0600 (found: ${env_perms})"
   # shellcheck disable=SC1090
   source "${e2e_env_file}"
+  # If the host bothered to write this file, its DSN wins — falling back to the
+  # default would point the suite at a DIFFERENT cluster than the operator
+  # chose, silently. Observed for real on 2026-09-12: the DSN contains an
+  # unescaped `&`, and written unquoted it makes the shell background the
+  # assignment in a subshell, so the variable arrives here EMPTY. Quote the
+  # value in the env file.
+  [[ -n "${FAAS_E2E_DATABASE_URL:-}" ]] ||
+    die "${e2e_env_file} exists but FAAS_E2E_DATABASE_URL is empty after sourcing it.
+  The value must be quoted — the DSN contains an '&', and unquoted the shell
+  parses it as a background job plus a stray command:
+    FAAS_E2E_DATABASE_URL='postgres:///faas_e2e?host=/run/postgresql&user=faas'"
 fi
 database_url="${FAAS_E2E_DATABASE_URL:-${DATABASE_URL:-postgres:///faas_e2e?host=/run/postgresql&user=faas}}"
+
+# Artifact storage: the harness daemons MUST resolve runtime bases the way the
+# node's own daemons do. Without this the harness falls back to pkg/storage's
+# default local backend rooted at /srv/fc — and on an OCI-backed node that
+# directory holds no scan sidecars at all, so vmmd's issue #299 admission gate
+# refuses every cold boot with "scan sidecar missing". Observed on 2026-09-14:
+# /srv/fc/scans was empty while the builder base's sidecar sat in the node's
+# OCI store, correctly staged and CRITICAL-clean. The base was never missing;
+# the harness was simply looking in a different store than the one imaged
+# staged into.
+#
+# Export rather than re-derive: these are the same values the production units
+# load via EnvironmentFile, so the harness exercises the real storage route
+# (OCI + read-through cache) instead of a test-only one. Secrets stay in the
+# process environment exactly as systemd delivers them — never on a command
+# line, never logged. Only key NAMES are printed below.
+storage_env_file=/etc/faas/storage.env
+if [[ -f "${storage_env_file}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${storage_env_file}"
+  set +a
+  # Same failure shape as the DSN above: a value containing '&' written
+  # unquoted makes the shell background the assignment, and the variable
+  # arrives here empty. Fail loudly rather than silently falling back to the
+  # local backend, which is precisely the bug this block exists to prevent.
+  [[ -n "${FAAS_STORAGE_BACKEND:-}" ]] ||
+    die "${storage_env_file} exists but FAAS_STORAGE_BACKEND is empty after sourcing it;
+  quote any value containing '&' or '#'"
+  echo "native e2e: storage backend for harness daemons: ${FAAS_STORAGE_BACKEND}"
+  echo "native e2e: storage keys exported: $(cut -d= -f1 "${storage_env_file}" | grep -E '^FAAS_' | paste -sd, -)"
+else
+  echo "native e2e: no ${storage_env_file}; harness daemons use the default local backend at /srv/fc"
+fi
+
+# Outward NIC for tenant egress NAT. vmmd defaults this to "eth0"
+# (pkg/netns.DefaultHostPolicy.PublicIface); production overrides it per host
+# through a systemd drop-in, because the name is provider-specific — this node
+# has no eth0 at all, its NIC is ens4. Without the override the harness's vmmd
+# installs its masquerade rule against an interface that does not exist, so a
+# builder microVM boots correctly and then has no egress. It dies at guest-init's
+# 5s DNS preflight:
+#
+#   guest-init: build failed: registry DNS preflight: signal: killed
+#
+# which reads like a broken build (0-byte build.log, failure_class=user_error)
+# rather than a NAT rule pointed at a missing NIC. Observed 2026-09-14 on every
+# build of dispatch 34904036016.
+#
+# Prefer the value production uses on THIS host; fall back to the interface the
+# default route actually leaves by, which is what the setting means.
+#
+# The `|| true` is load-bearing, not defensive noise. A DEDICATED acceptance
+# host runs no vmmd service, so /etc/systemd/system/faas-vmmd.service.d does
+# not exist; grep exits 1, `set -o pipefail` propagates that out of the command
+# substitution, and `set -e` kills the runner before a single test runs. That
+# is exactly what happened on faas-acceptance-1's first dispatch (34954126133,
+# exit code 2, two lines of log). The dual-use node hid it because the
+# directory exists there.
+if [[ -z "${FAAS_PUBLIC_IFACE:-}" ]]; then
+  FAAS_PUBLIC_IFACE="$(
+    {
+      grep -rhoE 'FAAS_PUBLIC_IFACE=[A-Za-z0-9._-]+' \
+        /etc/systemd/system/faas-vmmd.service.d/ 2>/dev/null || true
+    } | head -1 | cut -d= -f2
+  )"
+fi
+if [[ -z "${FAAS_PUBLIC_IFACE:-}" ]]; then
+  # Same guard, same reason: a host with no default route must reach the die
+  # below with an actionable message, not exit 2 with none.
+  FAAS_PUBLIC_IFACE="$(
+    { ip route show default 2>/dev/null || true; } | awk '{print $5; exit}'
+  )"
+fi
+[[ -n "${FAAS_PUBLIC_IFACE}" ]] ||
+  die "cannot determine the outward NIC; set FAAS_PUBLIC_IFACE or give the host a default route"
+ip link show "${FAAS_PUBLIC_IFACE}" >/dev/null 2>&1 ||
+  die "FAAS_PUBLIC_IFACE=${FAAS_PUBLIC_IFACE} does not exist on this host; tenant egress NAT would silently do nothing"
+export FAAS_PUBLIC_IFACE
+echo "native e2e: tenant egress NIC: ${FAAS_PUBLIC_IFACE}"
 
 mkdir -p /var/lock
 # Same lock as the builder and metal gates: all three stop services on this
@@ -99,11 +192,70 @@ mkdir -p "${stage_root}" "${cache_root}/go-build" "${cache_root}/go-mod" \
   "${cache_root}/home"
 : > "${active_services}"
 
+# reap_test_microvms destroys microVMs this run left behind, plus the host
+# resources that outlive them.
+#
+# A builder VM that wedges rides out its timeout, and the test that owns it
+# gives up and moves on — but nothing destroys the VM. It then survives the
+# whole run, and the NEXT run's pre-flight refuses the node outright:
+#
+#   native e2e: Firecracker workloads are active; drain the designated
+#   acceptance node before retrying
+#
+# Observed on 2026-09-15: two builder VMs orphaned by run 34964279616 (one had
+# been alive 15m52s against a 10-minute budget) made every phase of the next
+# run fail in three seconds. The pre-flight is right to refuse — a dirty node
+# makes leakcheck meaningless — so the fix is to not leave it dirty.
+#
+# Scoped to build-* instances: those belong to this suite. A VM the operator
+# is running for another reason is not ours to kill, and on a DEDICATED
+# acceptance host there should be none anyway.
+reap_test_microvms() {
+  local reaped=0 ns m c d
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    kill -TERM "${pid}" 2>/dev/null && reaped=$((reaped + 1))
+  done < <(pgrep -f 'firecracker-v[0-9]' 2>/dev/null)
+  [[ "${reaped}" -eq 0 ]] || sleep 3
+  pkill -KILL -f 'firecracker-v[0-9]' 2>/dev/null
+
+  while IFS= read -r ns; do
+    [[ -n "${ns}" ]] || continue
+    ip netns delete "${ns}" 2>/dev/null
+  done < <(ip netns list 2>/dev/null | awk '/^fc-/{print $1}')
+
+  # Lazy umount, deepest first: a jail chroot cannot be removed while its
+  # bind mounts are live, and they nest.
+  while IFS= read -r m; do
+    [[ -n "${m}" ]] || continue
+    umount -l "${m}" 2>/dev/null
+  done < <(awk '/firecracker-v[0-9]/{print $2}' /proc/mounts | sort -r)
+
+  rm -rf /srv/fc/jail/firecracker-v*/build-* 2>/dev/null
+
+  for c in /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/build-*; do
+    [[ -d "${c}" ]] && rmdir "${c}" 2>/dev/null
+  done
+
+  while IFS= read -r d; do
+    [[ -n "${d}" ]] || continue
+    ip link delete "${d}" 2>/dev/null
+  done < <(ip -brief link show 2>/dev/null | awk '/^vh[0-9]/{print $1}' | cut -d@ -f1)
+
+  [[ "${reaped}" -eq 0 ]] ||
+    echo "native e2e: reaped ${reaped} microVM(s) this run left running"
+}
+
 cleanup() {
   local rc=$?
   local restore_failed=0
   trap - EXIT HUP INT TERM
   set +e
+
+  # Before leakcheck, not after: leakcheck is the ASSERTION that the node is
+  # clean. Reaping afterwards would make it permanently unable to fail.
+  reap_test_microvms
 
   if ! bash "${repo_root}/deploy/scripts/leakcheck.sh"; then
     echo "native e2e: final leak check failed" >&2
@@ -121,10 +273,23 @@ cleanup() {
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
 
-  rm -rf "${stage_root}"
-  if [[ -n "${transfer_root}" ]]; then
-    systemd-run --quiet --collect --unit="faas-native-e2e-clean-${run_id}" \
-      --on-active=5m /usr/bin/find "${transfer_root}" -depth -delete >/dev/null 2>&1
+  # In phase mode these are SHARED with the phases that follow: the transfer
+  # root holds the source tree and the pinned Go toolchain, and the stage root
+  # holds the guest-init and the daemons compiled once for every phase to
+  # reuse. A per-phase cleanup that removes them destroys the run.
+  #
+  # It did exactly that. Phase 1 (fixtures) finishes in about a minute and
+  # scheduled `find <transfer_root> -delete` for five minutes later; by the
+  # time the build phase was underway the source tree was gone. The workflow's
+  # own finish step owns both paths across the whole run.
+  if [[ -n "${FAAS_E2E_PHASE:-}" ]]; then
+    echo "native e2e: phase ${FAAS_E2E_PHASE} leaves shared staging for the run to clean"
+  else
+    rm -rf "${stage_root}"
+    if [[ -n "${transfer_root}" ]]; then
+      systemd-run --quiet --collect --unit="faas-native-e2e-clean-${run_id}" \
+        --on-active=5m /usr/bin/find "${transfer_root}" -depth -delete >/dev/null 2>&1
+    fi
   fi
 
   if [[ "${rc}" -eq 0 ]]; then
@@ -158,8 +323,18 @@ bash "${repo_root}/deploy/scripts/leakcheck.sh"
 # a green check. A missing fixture is a broken gate, not a smaller gate.
 # ---------------------------------------------------------------------------
 [[ -r "${kernel}" ]] || die "kernel is unreadable: ${kernel} (stage it, or set FAAS_TEST_KERNEL)"
-[[ -r "${builder_base}" ]] ||
-  die "builder base is unreadable: ${builder_base}; start faas-imaged once so EnsureBaseExt4 stages it, or set FAAS_BUILDER_BASE_PATH"
+# The builder base is only a local FILE on a local-backend node. With an OCI
+# backend, builderd resolves it through storage.LocalPathResolver into the
+# read-through cache (see resolveBuilderBasePath in cmd/builderd/main.go) and
+# nothing is required to exist under /srv/fc/base at all — demanding a file
+# there would fail a correctly pre-staged node. Note also that the legacy
+# builder-base.ext4 spelling below is deliberately NOT the canonical key:
+# builderd rewrites it to runner-builder-<arch>.ext4, so this path is an
+# identity hint, never the drive vmmd attaches.
+if [[ "${FAAS_STORAGE_BACKEND:-local}" == "local" ]]; then
+  [[ -r "${builder_base}" ]] ||
+    die "builder base is unreadable: ${builder_base}; start faas-imaged once so EnsureBaseExt4 stages it, or set FAAS_BUILDER_BASE_PATH"
+fi
 ip link show br-tenants >/dev/null 2>&1 || die "tenant bridge br-tenants is unavailable"
 [[ "$(cat /proc/sys/net/ipv4/ip_forward)" == "1" ]] || die "IPv4 forwarding is disabled"
 
@@ -231,27 +406,103 @@ export FAAS_BUILDER_BASE_PATH="${builder_base}"
 # (docs/ops/builder-native-ci.md).
 export FAAS_TEST_REFERENCE_SSD=0
 
-# The whole ./cmd/e2e package, both build tags' worth of tests, in one binary.
+# The metal-tagged tests in ./cmd/e2e — the ones that need this hardware.
 #
-# -run is deliberately absent. The self-hosted `metal` job this family replaces
-# executed exactly one test for 100 consecutive dispatches; a -run added "just
-# to triage a flake" is how that happens again. The required-test contract
-# below is the narrower lever: it names the tests that must actually execute,
-# so the suite can grow without the gate silently shrinking.
-echo "native e2e: run the ./cmd/e2e suite with the metal build tag"
+# The filter is DERIVED FROM SOURCE (every func in a //go:build metal file), not
+# hand-listed, so it cannot quietly shrink: a `-run` naming one test would have
+# to survive the enumeration checks below and run-native-e2e_test.sh, which
+# executes the same derivation against the tree. That is the guarantee the old
+# "no -run at all" rule was reaching for; running all ~330 tests on a 4-vCPU
+# node turned out to defeat the gate instead (see native-e2e-verdict.sh).
+metal_tests="$(native_e2e_metal_tests "${repo_root}")"
+[[ -n "${metal_tests}" ]] ||
+  die "no metal-tagged tests found in cmd/e2e; the build tag or the derivation is wrong"
+metal_test_count="$(printf '%s\n' "${metal_tests}" | wc -l | tr -d ' ')"
+
+# Every required test must be in the derived set. A required test that loses its
+# metal tag would otherwise silently stop being run AND stop being required.
+for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
+  printf '%s\n' "${metal_tests}" | grep -qx "${required}" ||
+    die "required test ${required} is not in the metal-tagged set; it lost its //go:build metal tag or was renamed"
+done
+
+# Passed to make through the ENVIRONMENT, never through RUN_ARGS: Make eats the
+# trailing `$` and the shell then chokes on the unquoted `(` and `|`, which ran
+# zero tests on 2026-09-13 while every guard reported healthy.
+# Phases must be an exact partition of the derived set. Checked on every run,
+# not just in the contract test: a metal file added without a phase would
+# otherwise never execute while the suite still reported 50 tests.
+native_e2e_assert_phase_partition "${repo_root}" ||
+  die "the metal phases are not a partition of the metal suite"
+
+# FAAS_E2E_PHASE selects one phase; unset runs the whole suite as before, which
+# keeps `bash scripts/ci/run-native-e2e.sh` usable by hand.
+phase="${FAAS_E2E_PHASE:-}"
+if [[ -n "${phase}" ]]; then
+  printf '%s\n' "${NATIVE_E2E_PHASES[@]}" | grep -qx "${phase}" ||
+    die "unknown phase ${phase}; known: ${NATIVE_E2E_PHASES[*]}"
+  RUN_REGEX="$(native_e2e_phase_regex "${phase}" "${repo_root}")"
+  run_count="$(native_e2e_phase_tests "${phase}" "${repo_root}" | grep -c . || true)"
+  echo "native e2e: phase ${phase} — ${run_count} of ${metal_test_count} metal tests"
+  native_e2e_phase_tests "${phase}" "${repo_root}" | sed 's/^/  - /'
+  e2e_log="${FAAS_E2E_TRANSFER_ROOT:-/var/tmp}/cmd-e2e-${phase}.log"
+  # Per-phase budget. The whole-suite 75m was one opaque ceiling; a phase that
+  # wedges now fails its own step instead of consuming the run's remaining
+  # time. build is the outlier — real builder microVMs, 10 min each.
+  case "${phase}" in
+    # Six subtests, each granted the platform's own build budget
+    # (api.BuildTimeoutSeconds = 900 s) plus headroom. Only the first is
+    # genuinely cold — it pulls the Railpack frontend — and the rest hit the
+    # buildctl cache, so the realistic wall is well under this. The ceiling
+    # exists so a wedged builder fails THIS step rather than the whole run.
+    build) phase_timeout=60m ;;
+    # streaming is a build phase in disguise: five of its ten tests upload
+    # SOURCE and run a real builder microVM apiece. At 25m it fit only because
+    # those deploys used to fail in seconds for unrelated reasons (a rejected
+    # base, a dead imaged). Now that they build, ~6 min each on this node makes
+    # 25m too tight, and the step would time out mid-build with no verdict.
+    streaming) phase_timeout=60m ;;
+    twonode | deploy) phase_timeout=25m ;;
+    *) phase_timeout=15m ;;
+  esac
+else
+  # Passed to make through the ENVIRONMENT, never through RUN_ARGS: Make eats the
+  # trailing `$` and the shell then chokes on the unquoted `(` and `|`, which ran
+  # zero tests on 2026-09-13 while every guard reported healthy.
+  RUN_REGEX="^($(printf '%s\n' "${metal_tests}" | paste -sd'|' -))$"
+  echo "native e2e: run ${metal_test_count} metal-tagged tests from ./cmd/e2e"
+  e2e_log="${FAAS_E2E_TRANSFER_ROOT:-/var/tmp}/cmd-e2e.log"
+  phase_timeout=75m
+fi
+export RUN_REGEX
+
+# Compile the daemons once into a stage-owned directory and let every phase
+# reuse them. The link is per process and is NOT covered by the Go build cache,
+# so without this each phase would re-link all eight binaries.
+export FAAS_E2E_BIN_DIR="${stage_root}/bin"
+mkdir -p "${FAAS_E2E_BIN_DIR}"
+
 # Distinct from the transient unit's own native-e2e.log: the unit already
 # appends this script's stdout there, and tee-ing into the same file would
 # interleave every line with itself and corrupt the tally greps below.
-e2e_log="${FAAS_E2E_TRANSFER_ROOT:-/var/tmp}/cmd-e2e.log"
 set +e
 make GO="${FAAS_E2E_GO}" PKGS=./cmd/e2e/... \
-  RUN_ARGS='-timeout=75m -v' test-metal 2>&1 | tee "${e2e_log}"
+  RUN_ARGS="-timeout=${phase_timeout} -v" test-metal 2>&1 | tee "${e2e_log}"
 e2e_rc="${PIPESTATUS[0]}"
 set -e
 
 # Tally + required-test contract. The rules live in native-e2e-verdict.sh so
 # run-native-e2e_test.sh can drive them with synthetic go-test output instead
 # of grepping this file for its own strings.
-native_e2e_verdict "${e2e_log}" || e2e_rc=1
+#
+# The required-test contract is a WHOLE-SUITE claim: no single phase contains
+# all eight required tests, so applying it per phase would fail every phase for
+# tests it was never meant to run. In phase mode report the phase's own tally
+# and let the workflow's final verdict step own the contract.
+if [[ -n "${phase}" ]]; then
+  native_e2e_phase_tally "${e2e_log}" "${phase}" || e2e_rc=1
+else
+  native_e2e_verdict "${e2e_log}" || e2e_rc=1
+fi
 
 exit "${e2e_rc}"

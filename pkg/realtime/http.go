@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+)
+
+const (
+	defaultCallbackAttempts     = 3
+	defaultCallbackRetryBackoff = 100 * time.Millisecond
+	maxCallbackRetryBackoff     = 5 * time.Second
 )
 
 // HTTPHooks turns lifecycle events into ordinary POST callbacks. It is kept
@@ -19,6 +27,25 @@ import (
 type HTTPHooks struct {
 	Client  *http.Client
 	Headers func(Event) http.Header
+	// DurableQueue persists message and disconnect callbacks before the first
+	// HTTP attempt. Connect callbacks remain synchronous because their result
+	// decides whether the WebSocket handshake is admitted.
+	DurableQueue *CallbackOutbox
+	// MaxAttempts is the total number of callback requests, including the
+	// initial attempt. Zero uses the production default of three attempts.
+	MaxAttempts int
+	// RetryBackoff is the base delay for transient callback failures. Delays
+	// grow exponentially and are capped at five seconds. Zero uses 100ms.
+	RetryBackoff time.Duration
+}
+
+// OutboxStats exposes durable callback counters to Manager. Custom Hooks do
+// not need to implement this optional observation seam.
+func (h HTTPHooks) OutboxStats() CallbackOutboxStats {
+	if h.DurableQueue == nil {
+		return CallbackOutboxStats{}
+	}
+	return h.DurableQueue.Stats()
 }
 
 func (h HTTPHooks) Connect(ctx context.Context, event Event) (bool, error) {
@@ -36,6 +63,33 @@ func (h HTTPHooks) Message(ctx context.Context, event Event) error {
 	if event.CallbackURL == "" || event.CallbackPath == "" {
 		return nil
 	}
+	if h.DurableQueue != nil {
+		claimed, err := h.DurableQueue.EnqueueAndClaim(event)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			return nil
+		}
+		err = h.deliverMessage(ctx, event)
+		if err != nil {
+			if ctx.Err() != nil {
+				h.DurableQueue.Release(event.ID)
+			} else if failErr := h.DurableQueue.Fail(event.ID); failErr != nil {
+				return errors.Join(err, fmt.Errorf("persist callback failure: %w", failErr))
+			}
+			return err
+		}
+		if err := h.DurableQueue.Ack(event.ID); err != nil {
+			h.DurableQueue.Release(event.ID)
+			return err
+		}
+		return nil
+	}
+	return h.deliverMessage(ctx, event)
+}
+
+func (h HTTPHooks) deliverMessage(ctx context.Context, event Event) error {
 	status, err := h.deliver(ctx, event)
 	if err != nil {
 		return err
@@ -50,6 +104,33 @@ func (h HTTPHooks) Disconnect(ctx context.Context, event Event) error {
 	if event.CallbackURL == "" || event.CallbackPath == "" {
 		return nil
 	}
+	if h.DurableQueue != nil {
+		claimed, err := h.DurableQueue.EnqueueAndClaim(event)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			return nil
+		}
+		err = h.deliverDisconnect(ctx, event)
+		if err != nil {
+			if ctx.Err() != nil {
+				h.DurableQueue.Release(event.ID)
+			} else if failErr := h.DurableQueue.Fail(event.ID); failErr != nil {
+				return errors.Join(err, fmt.Errorf("persist callback failure: %w", failErr))
+			}
+			return err
+		}
+		if err := h.DurableQueue.Ack(event.ID); err != nil {
+			h.DurableQueue.Release(event.ID)
+			return err
+		}
+		return nil
+	}
+	return h.deliverDisconnect(ctx, event)
+}
+
+func (h HTTPHooks) deliverDisconnect(ctx context.Context, event Event) error {
 	status, err := h.deliver(ctx, event)
 	if err != nil {
 		return err
@@ -58,6 +139,35 @@ func (h HTTPHooks) Disconnect(ctx context.Context, event Event) error {
 		return fmt.Errorf("realtime: disconnect callback returned HTTP %d", status)
 	}
 	return nil
+}
+
+// Deliver sends one persisted message or disconnect event without touching a
+// durable queue. It is used by CallbackOutbox.Run after a process restart.
+func (h HTTPHooks) Deliver(ctx context.Context, event Event) error {
+	if event.CallbackURL == "" || event.CallbackPath == "" {
+		return nil
+	}
+	status, err := h.deliver(ctx, event)
+	if err != nil {
+		return err
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return &CallbackHTTPError{StatusCode: status}
+	}
+	return nil
+}
+
+// CallbackHTTPError reports a non-2xx callback response to the durable
+// replay loop while preserving the status for diagnostics.
+type CallbackHTTPError struct {
+	StatusCode int
+}
+
+func (e *CallbackHTTPError) Error() string {
+	if e == nil {
+		return "realtime: callback returned a non-2xx response"
+	}
+	return fmt.Sprintf("realtime: callback returned HTTP %d", e.StatusCode)
 }
 
 func (h HTTPHooks) deliver(ctx context.Context, event Event) (int, error) {
@@ -74,23 +184,21 @@ func (h HTTPHooks) deliver(ctx context.Context, event Event) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("realtime: encode callback: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), strings.NewReader(string(body)))
-	if err != nil {
-		return 0, fmt.Errorf("realtime: build callback request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Gregale-Realtime-Event-ID", event.ID)
-	req.Header.Set("X-Gregale-Realtime-Connection-ID", event.ConnectionID)
-	req.Header.Set("X-Gregale-Realtime-Event-Type", string(event.Type))
+	target := base.String()
+	headers := make(http.Header)
+	headers.Set("Content-Type", "application/json")
+	headers.Set("X-Gregale-Realtime-Event-ID", event.ID)
+	headers.Set("X-Gregale-Realtime-Connection-ID", event.ConnectionID)
+	headers.Set("X-Gregale-Realtime-Event-Type", string(event.Type))
 	if h.Headers != nil {
 		for key, values := range h.Headers(event) {
 			for _, value := range values {
-				req.Header.Add(key, value)
+				headers.Add(key, value)
 			}
 		}
 	}
 	if event.CallbackAuthToken != "" {
-		req.Header.Set("Authorization", "Bearer "+event.CallbackAuthToken)
+		headers.Set("Authorization", "Bearer "+event.CallbackAuthToken)
 	}
 	client := h.Client
 	if client == nil {
@@ -101,21 +209,74 @@ func (h HTTPHooks) deliver(ctx context.Context, event Event) (int, error) {
 			return http.ErrUseLastResponse
 		}}
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("realtime: callback request: %w", err)
+	attempts := h.MaxAttempts
+	if attempts <= 0 {
+		attempts = defaultCallbackAttempts
 	}
-	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-	return resp.StatusCode, nil
+	backoff := h.RetryBackoff
+	if backoff <= 0 {
+		backoff = defaultCallbackRetryBackoff
+	}
+	var status int
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 {
+			if err := waitCallbackRetry(ctx, backoff, attempt-2); err != nil {
+				return 0, fmt.Errorf("realtime: callback request: %w", err)
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+		if err != nil {
+			return 0, fmt.Errorf("realtime: build callback request: %w", err)
+		}
+		req.Header = headers.Clone()
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil || attempt == attempts {
+				return 0, fmt.Errorf("realtime: callback request: %w", err)
+			}
+			continue
+		}
+		status = resp.StatusCode
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		_ = resp.Body.Close()
+		if !retryableCallbackStatus(status) || attempt == attempts {
+			return status, nil
+		}
+	}
+	return status, nil
 }
 
-// HTTPHandler returns the daemon's combined handler. The public managed path
-// is intentionally mounted beside private /internal management routes; the
-// latter should be served only on a DAC-protected Unix socket.
-func (m *Manager) HTTPHandler() http.Handler {
+func retryableCallbackStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
+}
+
+func waitCallbackRetry(ctx context.Context, base time.Duration, retry int) error {
+	delay := base
+	for i := 0; i < retry && delay < maxCallbackRetryBackoff; i++ {
+		if delay > maxCallbackRetryBackoff/2 {
+			delay = maxCallbackRetryBackoff
+			break
+		}
+		delay *= 2
+	}
+	if delay > maxCallbackRetryBackoff {
+		delay = maxCallbackRetryBackoff
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// HealthHandler returns the handler for the daemon's health listener. It
+// intentionally exposes only liveness/readiness probes; management routes
+// must remain behind the DAC-protected Unix socket returned by HTTPHandler.
+func (m *Manager) HealthHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle(ManagedPathPrefix, m)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		if m == nil || m.closed.Load() {
 			http.Error(w, "unhealthy", http.StatusServiceUnavailable)
@@ -132,6 +293,18 @@ func (m *Manager) HTTPHandler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ready\n")
 	})
+	return mux
+}
+
+// HTTPHandler returns the daemon's combined handler. The public managed path
+// is intentionally mounted beside private /internal management routes; the
+// latter should be served only on a DAC-protected Unix socket.
+func (m *Manager) HTTPHandler() http.Handler {
+	mux := http.NewServeMux()
+	health := m.HealthHandler()
+	mux.Handle(ManagedPathPrefix, m)
+	mux.Handle("/healthz", health)
+	mux.Handle("/readyz", health)
 	mux.Handle("/internal/", m.internalHandler())
 	return mux
 }

@@ -38,6 +38,8 @@ type joinFleetResult struct {
 	Errors  map[string]string  `json:"errors,omitempty"`
 }
 
+const defaultJoinFleetMaxParallel = 4
+
 func cmdDeployJoinFleet(args []string) int {
 	fs := flag.NewFlagSet("deploy join-fleet", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -54,9 +56,11 @@ func cmdDeployJoinFleet(args []string) int {
 	computeDBEnv := fs.String("compute-db-env", "", "root-only compute DB environment")
 	storageEnv := fs.String("storage-env", "", "shared OCI storage.env source")
 	runtimeBasesEnv := fs.String("runtime-bases-env", "", "release-bound digest-pinned runtime base refs")
+	fleetAgeKey := fs.String("fleet-age-key", "", "shared fleet.age identity")
+	fleetAgeRecipient := fs.String("fleet-age-recipient", "", "matching fleet.age.pub recipient")
 	ansibleVars := fs.String("ansible-vars-file", "", "optional provider/overlay Ansible vars")
 	repoRoot := fs.String("repo-root", "", "path to the faas repository")
-	maxParallel := fs.Int("max-parallel", 4, "maximum number of nodes converged at once")
+	maxParallel := fs.Int("max-parallel", defaultJoinFleetMaxParallel, "maximum number of nodes converged at once")
 	skipPreflight := fs.Bool("skip-fleet-preflight", false, "skip the one shared complete-fleet preflight")
 	resume := fs.Bool("resume", false, "resume failed/interrupted jobs")
 	timeout := fs.Duration("timeout", 20*time.Minute, "maximum time per node")
@@ -88,6 +92,7 @@ func cmdDeployJoinFleet(args []string) int {
 	if *repoRoot == "" {
 		*repoRoot = defaultRepoRoot()
 	}
+	workers := joinFleetWorkerCount(*maxParallel, len(file.Nodes))
 	opts := make([]deployJoinOptions, 0, len(file.Nodes))
 	reports := make([]deployJoinReport, 0, len(file.Nodes))
 	seen := make(map[string]bool)
@@ -116,8 +121,10 @@ func cmdDeployJoinFleet(args []string) int {
 			CosignBinary: *cosignBinary, PKISource: *pkiSource,
 			SignKeySource: *signKey, VerifyKeySource: *verifyKey,
 			ComputeDBEnvSource: *computeDBEnv, StorageEnvSource: *storageEnv, RuntimeBasesEnvSource: *runtimeBasesEnv, ArtifactDir: *artifactDir,
+			FleetAgeKeySource: *fleetAgeKey, FleetAgeRecipientSource: *fleetAgeRecipient,
 			AnsibleVarsFile: *ansibleVars, RepoRoot: *repoRoot,
-			SkipFleetPreflight: *skipPreflight, Resume: *resume,
+			PostgresOverlapNodes: workers,
+			SkipFleetPreflight:   *skipPreflight, Resume: *resume,
 			Timeout: *timeout, LeaseTTL: *leaseTTL, DryRun: *dryRun, Yes: *yes,
 			JSON: *jsonOut || jsonOutput,
 		}
@@ -160,10 +167,6 @@ func cmdDeployJoinFleet(args []string) int {
 	var mu sync.Mutex
 	stopAfterFailure := false
 	queue := make(chan int)
-	workers := *maxParallel
-	if workers > len(opts) {
-		workers = len(opts)
-	}
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
@@ -207,6 +210,13 @@ func cmdDeployJoinFleet(args []string) int {
 		return 3
 	}
 	return 0
+}
+
+func joinFleetWorkerCount(maxParallel, nodeCount int) int {
+	if maxParallel < nodeCount {
+		return maxParallel
+	}
+	return nodeCount
 }
 
 func loadJoinFleetFile(path string) (joinFleetFile, error) {
@@ -277,8 +287,15 @@ func runJoinFleetPreflight(ctx context.Context, opts []deployJoinOptions) error 
 	if opts[0].AnsibleVarsFile != "" {
 		args = append(args, "-e", "@"+opts[0].AnsibleVarsFile)
 	}
-	args = append(args, filepath.Join(opts[0].RepoRoot, "deploy/ansible", "preflight.yml"))
-	return ansiblePlaybookRunner(ctx, filepath.Join(opts[0].RepoRoot, "deploy/ansible"), args)
+	overlapArg := fmt.Sprintf("faas_postgres_rollout_overlap_nodes=%d", opts[0].PostgresOverlapNodes)
+	args = append(args, "-e", overlapArg)
+	ansibleDir := filepath.Join(opts[0].RepoRoot, "deploy/ansible")
+	capacityArgs := append(append([]string{}, args...), "--check", filepath.Join(ansibleDir, "scale_check.yml"))
+	if err := ansiblePlaybookRunner(ctx, ansibleDir, capacityArgs); err != nil {
+		return fmt.Errorf("PostgreSQL capacity for %d concurrent joins: %w", opts[0].PostgresOverlapNodes, err)
+	}
+	preflightArgs := append(append([]string{}, args...), filepath.Join(ansibleDir, "preflight.yml"))
+	return ansiblePlaybookRunner(ctx, ansibleDir, preflightArgs)
 }
 
 func joinErrString(code int, err error) string {

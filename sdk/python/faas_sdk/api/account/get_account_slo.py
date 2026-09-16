@@ -53,6 +53,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 402:
+        response_402 = Problem.from_dict(response.json())
+
+        return response_402
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -92,7 +97,8 @@ def sync_detailed(
 
     `window` is the same closed vocabulary as the per-app
     endpoint: `1h` | `24h` (default) | `7d`. Auth chain:
-    `usage:read` scope + MFA.
+    `usage:read` scope + MFA. The SLO rollup is a Hobby+
+    observability surface; Free accounts receive 402.
 
     On Prometheus failure the endpoint returns 200 with
     zeroed fields and `source: \"degraded: <reason>\"`. When
@@ -139,7 +145,8 @@ def sync(
 
     `window` is the same closed vocabulary as the per-app
     endpoint: `1h` | `24h` (default) | `7d`. Auth chain:
-    `usage:read` scope + MFA.
+    `usage:read` scope + MFA. The SLO rollup is a Hobby+
+    observability surface; Free accounts receive 402.
 
     On Prometheus failure the endpoint returns 200 with
     zeroed fields and `source: \"degraded: <reason>\"`. When
@@ -181,7 +188,8 @@ async def asyncio_detailed(
 
     `window` is the same closed vocabulary as the per-app
     endpoint: `1h` | `24h` (default) | `7d`. Auth chain:
-    `usage:read` scope + MFA.
+    `usage:read` scope + MFA. The SLO rollup is a Hobby+
+    observability surface; Free accounts receive 402.
 
     On Prometheus failure the endpoint returns 200 with
     zeroed fields and `source: \"degraded: <reason>\"`. When
@@ -226,7 +234,8 @@ async def asyncio(
 
     `window` is the same closed vocabulary as the per-app
     endpoint: `1h` | `24h` (default) | `7d`. Auth chain:
-    `usage:read` scope + MFA.
+    `usage:read` scope + MFA. The SLO rollup is a Hobby+
+    observability surface; Free accounts receive 402.
 
     On Prometheus failure the endpoint returns 200 with
     zeroed fields and `source: \"degraded: <reason>\"`. When

@@ -14,6 +14,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -63,6 +64,20 @@ func TestStore_CancelDeploymentTx_Pending_Happy(t *testing.T) {
 	}
 	if d.CancelReason != string(CancelReasonUser) {
 		t.Errorf("CancelReason = %q, want %q", d.CancelReason, CancelReasonUser)
+	}
+	if d.TrafficPercent != 0 || d.RolloutState != "aborted" || d.RolloutAbortedAt == nil || d.RolloutCompletedAt != nil {
+		t.Errorf("cancelled release state = traffic %d rollout %q aborted_at %v completed_at %v",
+			d.TrafficPercent, d.RolloutState, d.RolloutAbortedAt, d.RolloutCompletedAt)
+	}
+	var stages StageState
+	if err := json.Unmarshal(d.StageState, &stages); err != nil {
+		t.Fatalf("decode stage state: %v", err)
+	}
+	if stages.Current != "" || stages.CurrentStartedAt != nil {
+		t.Errorf("cancelled stage still active: %+v", stages)
+	}
+	if len(stages.History) != 1 || stages.History[0].Status != stageHistoryStatusCancelled {
+		t.Errorf("cancelled stage history = %+v, want one cancelled entry", stages.History)
 	}
 	if len(cascaded) != 1 || cascaded[0] != buildID {
 		t.Errorf("cascaded build IDs = %v, want [%s]", cascaded, buildID)

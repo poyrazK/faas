@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -81,6 +82,9 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 	sessionKeyPath := filepath.Join(socketDir, "session.key")
 	hostHMACPath := filepath.Join(socketDir, "host.hmac.key")
 	hostAgePath := filepath.Join(socketDir, "host.age")
+	hostAgeRecipientPath := filepath.Join(socketDir, "host.age.pub")
+	fleetAgePath := filepath.Join(socketDir, "fleet.age")
+	fleetAgeRecipientPath := filepath.Join(socketDir, "fleet.age.pub")
 	writeBootKey(t, sessionKeyPath, []byte(randomHexKey(t)), 0o400)
 	writeBootKey(t, hostHMACPath, randomBytes(t, 32), 0o400)
 	identity, err := age.GenerateX25519Identity()
@@ -91,6 +95,9 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 	// newline; keep the boot fixture byte-for-byte equivalent because the
 	// production loader intentionally parses the credential strictly.
 	writeBootKey(t, hostAgePath, []byte(identity.String()), 0o400)
+	writeBootKey(t, hostAgeRecipientPath, []byte(identity.Recipient().String()), 0o444)
+	writeBootKey(t, fleetAgePath, []byte(identity.String()), 0o400)
+	writeBootKey(t, fleetAgeRecipientPath, []byte(identity.Recipient().String()), 0o444)
 
 	mainAddr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
@@ -126,7 +133,7 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 		"FAAS_PADDLE_API_KEY=pdl_test_boot_contract",
 		"FAAS_PADDLE_WEBHOOK_SECRET=whk_test_boot_contract",
 	}
-	env = append(env, renderedUnitEnvironment(t, unit, sessionKeyPath, hostAgePath, hostHMACPath, advisorySocket, renderRoot)...)
+	env = append(env, renderedUnitEnvironment(t, unit, sessionKeyPath, hostAgePath, hostAgeRecipientPath, fleetAgePath, fleetAgeRecipientPath, hostHMACPath, advisorySocket, renderRoot)...)
 
 	proc := exec.Command(apidBinary, "--config", configPath)
 	proc.Env = env
@@ -167,6 +174,48 @@ func TestBootContract_APIDRenderedConfigAndProductionListeners(t *testing.T) {
 		"spans-writer":      spansSocket,
 	} {
 		assertUnixAccepts(t, name, path, &logs)
+	}
+}
+
+// A production-role process must reject the synthetic principal before it
+// opens PostgreSQL or binds an authentication listener. The database assertion
+// proves the rejected token cannot recreate dev@local as a side effect.
+func TestBootContract_APIDProductionRejectsDevPrincipal(t *testing.T) {
+	pool := pgtest.Open(t)
+	if pool == nil {
+		t.Skip("pgtest.Open skipped")
+	}
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatalf("migrate isolated boot-contract schema: %v", err)
+	}
+	token := "faas_" + strings.Repeat("a", 48)
+	procCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	proc := exec.CommandContext(procCtx, apidBinary, "--config", filepath.Join(t.TempDir(), "missing.toml"))
+	proc.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"DATABASE_URL=" + poolDSN(pool),
+		"FAAS_APID_ROLE=control-plane",
+		"FAAS_DEV_TOKEN=" + token,
+	}
+	var logs syncBuffer
+	proc.Stdout = &logs
+	proc.Stderr = &logs
+	err := proc.Run()
+	if err == nil {
+		t.Fatal("production apid accepted FAAS_DEV_TOKEN")
+	}
+	output := logs.String()
+	if !strings.Contains(output, "production role forbids dev-only environment variables: FAAS_DEV_TOKEN") {
+		t.Fatalf("unexpected production rejection:\n%s", output)
+	}
+	if strings.Contains(output, token) {
+		t.Fatal("production rejection logged the token value")
+	}
+	if _, err := state.NewPgStore(pool).AccountByEmail(ctx, "dev@local"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("rejected production boot created dev@local: %v", err)
 	}
 }
 
@@ -228,11 +277,13 @@ func TestBootContract_ImagedRenderedConfigAndFunctionRunners(t *testing.T) {
 
 	fixtureRoot := t.TempDir()
 	hostAgePath := filepath.Join(fixtureRoot, "host.age")
+	fleetAgePath := filepath.Join(fixtureRoot, "fleet.age")
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatalf("generate host age identity: %v", err)
 	}
 	writeBootKey(t, hostAgePath, []byte(identity.String()), 0o400)
+	writeBootKey(t, fleetAgePath, []byte(identity.String()), 0o400)
 
 	guestInitPath := filepath.Join(fixtureRoot, "guest-init")
 	guestInitBody := []byte("#!/bin/sh\nexit 0\n")
@@ -272,7 +323,7 @@ func TestBootContract_ImagedRenderedConfigAndFunctionRunners(t *testing.T) {
 		// imaged must accept the already-provisioned base.
 		"FAAS_BUILDER_BASE_REF=" + strings.TrimPrefix(registry.URL, "http://") + "/builder-base@sha256:" + strings.Repeat("0", 64),
 	}
-	env = append(env, renderedImagedUnitEnvironment(t, unit, fixtureRoot, hostAgePath)...)
+	env = append(env, renderedImagedUnitEnvironment(t, unit, fixtureRoot, hostAgePath, fleetAgePath)...)
 
 	proc := exec.Command(buildBootContractBinary(t, "cmd/imaged"), "--config", configPath)
 	proc.Env = env
@@ -397,7 +448,7 @@ func relocateRenderedMetricsAddr(t *testing.T, configPath, addr string) {
 	}
 }
 
-func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hostAgePath string) []string {
+func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hostAgePath, fleetAgePath string) []string {
 	t.Helper()
 	const wantEnvironmentFiles = "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/runtime-bases.env -/etc/faas/otel.env"
 	if unit.EnvironmentFile != wantEnvironmentFiles {
@@ -429,6 +480,9 @@ func renderedImagedUnitEnvironment(t *testing.T, unit daemonunit.Unit, root, hos
 		}
 		if kv.Key == "FAAS_HOST_AGE_IDENTITY_PATH" {
 			value = hostAgePath
+		}
+		if kv.Key == "FAAS_FLEET_AGE_IDENTITY_PATH" {
+			value = fleetAgePath
 		}
 		if _, ok := runnerKeys[kv.Key]; ok {
 			runnerKeys[kv.Key] = true
@@ -512,19 +566,22 @@ func relocateRenderedDBURL(t *testing.T, configPath, dsn string) {
 	}
 }
 
-func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath, hostAgePath, hostHMACPath, advisorySocket, root string) []string {
+func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath, hostAgePath, hostAgeRecipientPath, fleetAgePath, fleetAgeRecipientPath, hostHMACPath, advisorySocket, root string) []string {
 	t.Helper()
 	const wantEnvironmentFiles = "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/otel.env"
 	if unit.EnvironmentFile != wantEnvironmentFiles {
 		t.Fatalf("EnvironmentFile = %q, want %q", unit.EnvironmentFile, wantEnvironmentFiles)
 	}
 	want := map[string]string{
-		"FAAS_SESSION_KEY":            sessionKeyPath,
-		"FAAS_HOST_AGE_IDENTITY_PATH": hostAgePath,
-		"FAAS_HOST_HMAC_KEY_PATH":     hostHMACPath,
-		"FAAS_LOG_ARCHIVE_CREDS_PATH": filepath.Join(root, "optional-archive-creds.json"),
-		"FAAS_APID_ADVISORY_SOCK":     advisorySocket,
-		"FAAS_STATUSPAGE_PATH":        filepath.Join(bootContractRepoRoot(t), "deploy", "statuspage", "index.html"),
+		"FAAS_SESSION_KEY":              sessionKeyPath,
+		"FAAS_HOST_AGE_IDENTITY_PATH":   hostAgePath,
+		"FAAS_FLEET_AGE_IDENTITY_PATH":  fleetAgePath,
+		"FAAS_FLEET_AGE_RECIPIENT_PATH": fleetAgeRecipientPath,
+		"FAAS_HOST_AGE_RECIPIENT_PATH":  hostAgeRecipientPath,
+		"FAAS_HOST_HMAC_KEY_PATH":       hostHMACPath,
+		"FAAS_LOG_ARCHIVE_CREDS_PATH":   filepath.Join(root, "optional-archive-creds.json"),
+		"FAAS_APID_ADVISORY_SOCK":       advisorySocket,
+		"FAAS_STATUSPAGE_PATH":          filepath.Join(bootContractRepoRoot(t), "deploy", "statuspage", "index.html"),
 	}
 	seen := make(map[string]bool, len(want))
 	var env []string

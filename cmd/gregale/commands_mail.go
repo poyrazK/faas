@@ -64,8 +64,8 @@ func cmdMail(args []string) int {
 // so a dry-run never reads customer PII. The output is one JSON
 // object per template so an operator can pipe it through `jq`.
 func cmdMailDryRun(args []string) int {
-	fs := flag.NewFlagSet("mail dry-run", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	fs := newFlagSet("mail dry-run", flag.ContinueOnError)
+	setFlagOutput(fs, os.Stderr)
 	unsub := fs.String("unsubscribe-url", "", "List-Unsubscribe URL (RFC 8058); empty disables the header")
 	if err := fs.Parse(args); err != nil {
 		return 1

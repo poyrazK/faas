@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -74,6 +76,104 @@ func TestBuildHelpListsEveryImplementedSubcommand(t *testing.T) {
 	for _, sub := range []string{"status", "list", "provenance", "sbom"} {
 		if !strings.Contains(out.String(), "  "+sub) {
 			t.Errorf("build help missing %q:\n%s", sub, out.String())
+		}
+	}
+}
+
+func TestKeysAddHelpNeverCreatesCredential(t *testing.T) {
+	resetJSONOut(t)
+	for _, help := range []string{"-h", "--help"} {
+		t.Run(help, func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				http.Error(w, "mutation must not run", http.StatusInternalServerError)
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			var stdout bytes.Buffer
+			oldOut := osStdout
+			osStdout = &stdout
+			t.Cleanup(func() { osStdout = oldOut })
+			if code := run([]string{"keys", "add", help}); code != 0 {
+				t.Fatalf("keys add %s = %d, want 0", help, code)
+			}
+			if calls != 0 {
+				t.Fatalf("keys add %s made %d API request(s)", help, calls)
+			}
+			if !strings.Contains(stdout.String(), "gregale keys add <label>") {
+				t.Fatalf("help output = %q", stdout.String())
+			}
+		})
+	}
+}
+
+func TestNestedHelpNeverMakesProductionRequests(t *testing.T) {
+	for _, args := range [][]string{
+		{"queue", "tail", "--help"},
+		{"jobs", "runs", "--help"},
+		{"traffic", "status", "--help"},
+		{"orgs", "members", "--help"},
+		{"cors", "rm", "--help"},
+		{"keys", "rm", "--help"},
+		{"keys", "rotate", "--help"},
+	} {
+		t.Run(strings.Join(args[:2], "-"), func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			oldOut := osStdout
+			osStdout = io.Discard
+			t.Cleanup(func() { osStdout = oldOut })
+			if code := run(args); code != 0 {
+				t.Fatalf("run(%v) = %d", args, code)
+			}
+			if calls != 0 {
+				t.Fatalf("run(%v) made %d API request(s)", args, calls)
+			}
+		})
+	}
+}
+
+func TestGeneratedHelpUsesDispatcherArgumentOrder(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		want    string
+		reject  string
+	}{
+		{command: "github", want: "gregale github <status|sync|repos|bind|disconnect> <slug>", reject: "gregale github <slug> <"},
+		{command: "debug", want: "gregale debug <requests|coverage|running|regressions|compare|bundle> [flags] <slug> [<request-id>]", reject: "gregale debug <slug> <"},
+		{command: "audit-events", want: "gregale audit-events <list|get> [<id>]", reject: "gregale audit-events <id> <"},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			var stdout bytes.Buffer
+			oldOut := osStdout
+			osStdout = &stdout
+			t.Cleanup(func() { osStdout = oldOut })
+			if code := run([]string{tc.command, "--help"}); code != 0 {
+				t.Fatalf("%s --help = %d", tc.command, code)
+			}
+			if got := stdout.String(); !strings.Contains(got, tc.want) || strings.Contains(got, tc.reject) {
+				t.Fatalf("help output = %q, want %q and not %q", got, tc.want, tc.reject)
+			}
+		})
+	}
+}
+
+func TestLogsHelpDocumentsRequiredSlugAndFilters(t *testing.T) {
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	t.Cleanup(func() { osStdout = oldOut })
+	if code := run([]string{"logs", "--help"}); code != 0 {
+		t.Fatalf("logs --help = %d", code)
+	}
+	for _, want := range []string{"gregale logs <slug>", "--deployment", "--grep", "--since", "--level", "--explain", "--follow"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("logs help missing %q:\n%s", want, stdout.String())
 		}
 	}
 }

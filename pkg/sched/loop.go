@@ -1687,6 +1687,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	case db.NotifyDeploymentChanged:
 		var p struct {
 			DeploymentID string `json:"deployment_id"`
+			AppID        string `json:"app_id"`
 			To           string `json:"to"`
 			Status       string `json:"status"`
 		}
@@ -1700,6 +1701,17 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			deploymentID = p.To
 		}
 		if deploymentID != "" && p.Status != "" {
+			if p.Status == string(state.DeploySuperseded) {
+				// Stable cutovers and rollbacks retire the old deployment
+				// atomically in Postgres, but its already-hot request/function
+				// instances are still owned by schedd. Drain them before the
+				// next request sees the new live revision; otherwise a Free
+				// one-instance plan can return plan_limit_concurrency.
+				go func(id string) {
+					reconcileCtx := context.WithoutCancel(ctx)
+					l.engine.drainDeploymentInstances(reconcileCtx, id, true)
+				}(deploymentID)
+			}
 			// Live activates the new mode. Failed/superseded/cancelled signals
 			// drain a worker that may have proved readiness immediately before
 			// activation failed, while preserving the prior live generation.
@@ -3124,6 +3136,14 @@ func (l *Loop) runCronTick(ctx context.Context) {
 	}
 	now := l.now()
 	for _, c := range crons {
+		app, appErr := store.AppByID(ctx, c.AppID)
+		if appErr != nil {
+			l.log.Warn("cron: resolve owner", "cron_id", c.ID, "app_id", c.AppID, "err", appErr)
+			continue
+		}
+		if !l.engine.ownsApp(app) {
+			continue
+		}
 		l.dispatchOneCron(ctx, c, now)
 	}
 }
@@ -3181,6 +3201,11 @@ type CronRun struct {
 }
 
 func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time) {
+	// Store queries filter disabled rows, but keep the guard at the
+	// dispatch boundary so a stale row can never fire after disable/delete.
+	if !c.Enabled {
+		return
+	}
 	sched, err := ParseScheduleWithTimezone(c.Schedule, c.Timezone)
 	if err != nil {
 		l.log.Warn("cron: bad schedule", "cron_id", c.ID, "err", err)
@@ -3342,6 +3367,26 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		wakeBootTrigger = TriggerCronManual
 	}
 	if _, err := l.engine.EnsureWake(ctx, c.AppID, wakeBootTrigger); err != nil {
+		// A cron for an app with no live deployment cannot recover by retrying
+		// on every scheduler cadence. Suspend it with a machine-readable reason;
+		// MarkDeploymentLive clears the reason after a successful redeploy.
+		// Parked apps still have a live deployment, so they remain schedulable.
+		if errors.Is(err, ErrPermanentWake) {
+			_, liveErr := l.engine.Store().LiveDeployment(ctx, c.AppID)
+			switch {
+			case errors.Is(liveErr, state.ErrNotFound):
+				if suspender, ok := l.engine.Store().(state.CronSuspensionStore); ok {
+					count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+					if suspendErr != nil {
+						l.log.Warn("cron: suspend after missing live deployment", "cron_id", c.ID, "app_id", c.AppID, "err", suspendErr)
+					} else if count > 0 {
+						l.log.Info("cron: suspended until app redeploy", "app_id", c.AppID, "reason", state.CronSuspendedNoLiveDeployment, "count", count)
+					}
+				}
+			case liveErr != nil:
+				l.log.Warn("cron: verify live deployment after permanent wake failure", "cron_id", c.ID, "app_id", c.AppID, "err", liveErr)
+			}
+		}
 		l.log.Warn("cron: wake", "cron_id", c.ID, "err", err)
 		return CronRun{}, true
 	}
@@ -3378,7 +3423,10 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	// the drain's next tick (which filters state='pending').
 	if enq.ID != "" {
 		if _, err := l.engine.Store().ClaimInvocation(ctx, enq.ID, "", 60); err != nil {
-			l.log.Warn("cron: claim invocation", "cron_id", c.ID, "err", err)
+			// The general drain won pending -> dispatching. It now owns
+			// delivery, so invoking from this path would duplicate the fire.
+			l.log.Debug("cron: invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID, "err", err)
+			return CronRun{InvocationID: enq.ID}, true
 		}
 	}
 	if l.gateway != nil {

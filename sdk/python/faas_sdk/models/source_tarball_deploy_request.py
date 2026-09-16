@@ -34,6 +34,8 @@ class SourceTarballDeployRequest:
     ref: None | str | Unset = UNSET
     """40-char lowercase SHA from `git rev-parse HEAD`. Informational only; the build pipeline does NOT pin to this
     SHA."""
+    environment: str | Unset = UNSET
+    """Registered project environment to target for this local tarball deployment."""
     reason: str | Unset = UNSET
     """Free-form operator note on the tarball deploy request (≤280 chars). Example: 'Emergency rollback after
     payment provider incident'."""
@@ -67,6 +69,8 @@ class SourceTarballDeployRequest:
         else:
             ref = self.ref
 
+        environment = self.environment
+
         reason = self.reason
 
         tag: str | Unset = UNSET
@@ -98,6 +102,8 @@ class SourceTarballDeployRequest:
             field_dict["repo"] = repo
         if ref is not UNSET:
             field_dict["ref"] = ref
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if reason is not UNSET:
             field_dict["reason"] = reason
         if tag is not UNSET:
@@ -136,6 +142,8 @@ class SourceTarballDeployRequest:
             return cast(None | str | Unset, data)
 
         ref = _parse_ref(d.pop("ref", UNSET))
+
+        environment = d.pop("environment", UNSET)
 
         reason = d.pop("reason", UNSET)
 
@@ -179,6 +187,7 @@ class SourceTarballDeployRequest:
         source_tarball_deploy_request = cls(
             repo=repo,
             ref=ref,
+            environment=environment,
             reason=reason,
             tag=tag,
             deployed_by=deployed_by,

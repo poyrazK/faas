@@ -289,6 +289,12 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 const (
 	NotifyAppChanged        = "app_changed"
 	NotifyDeploymentChanged = "deployment_changed"
+	// NotifyDeploymentSmokeChallenge carries a short-lived, random challenge
+	// from imaged to every public gateway. It is deliberately separate from
+	// deployment_changed: account SSE subscribers must never receive the token.
+	// Payload: {"app_id":uuid,"deployment_id":uuid,"token":string,
+	//           "expires_at":RFC3339}
+	NotifyDeploymentSmokeChallenge = "deployment_smoke_challenge"
 	// NotifyGithubDeploymentChanged is emitted by the deployment status
 	// trigger for githubd's Check Run projector. It is intentionally separate
 	// from NotifyDeploymentChanged so existing scheduler/gateway consumers do

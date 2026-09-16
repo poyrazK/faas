@@ -1,3 +1,4 @@
+// spec: §4.1
 package gateway
 
 import (
@@ -21,7 +22,7 @@ func TestWakeAdmissionPolicyForPlan(t *testing.T) {
 		wait     time.Duration
 		priority int
 	}{
-		{api.PlanFree, 4, 10 * time.Second, 1},
+		{api.PlanFree, 16, 10 * time.Second, 1},
 		{api.PlanHobby, 16, 30 * time.Second, 1},
 		{api.PlanPro, 64, 30 * time.Second, 1},
 		{api.PlanScale, 128, 30 * time.Second, 1},

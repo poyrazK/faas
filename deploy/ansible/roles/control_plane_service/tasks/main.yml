@@ -25,6 +25,12 @@
 # imaged's tripwires (sign.key, sign-pub.pem, imaged's ReadWritePaths=,
 # /srv/fc/snap, /srv/fc/sigs) are now in compute_only_service.
 
+- name: control_plane_service — validate billing mode
+  ansible.builtin.assert:
+    that:
+      - faas_billing_mode in ['disabled', 'live']
+    fail_msg: "faas_billing_mode must be disabled or live"
+
 - name: control_plane_service — ensure per-daemon users exist (non-root, no shell)
   ansible.builtin.user:
     name: "{{ item }}"
@@ -160,6 +166,29 @@
     - faas-schedd
     - faas-apid
     - faas-meterd
+
+- name: control_plane_service — set public-beta billing mode
+  notify:
+    - restart faas-apid
+    - restart faas-meterd
+  ansible.builtin.template:
+    src: zz-faas-billing-mode.conf.j2
+    dest: "/etc/systemd/system/{{ item }}.service.d/zz-faas-billing-mode.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-apid
+    - faas-meterd
+
+- name: control_plane_service — set public status launch boundary
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-public-status.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-public-status.conf
+    owner: root
+    group: root
+    mode: "0644"
 
 # Mega-PR-A (issue #911 / ADR-110 PR-1): drop the FAAS_NODE_NAME
 # env line into every control-plane unit so the multi-box identity
@@ -363,6 +392,15 @@
     group: faas
     mode: "0644"
 
+- name: control_plane_service — install public DPA artifact
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../../docs/DPA.md"
+    dest: /etc/faas/dpa.md
+    owner: root
+    group: faas
+    mode: "0644"
+  notify: restart faas-apid
+
 - name: control_plane_service — note for operators (NOT auto-enabled)
   ansible.builtin.debug:
     msg: >-
@@ -393,6 +431,26 @@
       or faas_session_key_stat.stat.mode != "0400"
       or faas_session_key_stat.stat.pw_name != "root"
       or faas_session_key_stat.stat.gr_name != "root"
+
+- name: control_plane_service — validate dedicated session credential before legacy scrub
+  ansible.builtin.shell: |
+    set -euo pipefail
+    key="$(tr -d '\n' </etc/faas/secrets/session.key)"
+    test "$(printf '%s' "$key" | wc -c)" -eq 64
+    printf '%s' "$key" | grep -Eq '^[0-9a-fA-F]{64}$'
+    grep -q '^Environment=FAAS_SESSION_KEY=%d/faas_session_key$' /etc/systemd/system/faas-apid.service
+    grep -q '^LoadCredential=faas_session_key:/etc/faas/secrets/session.key$' /etc/systemd/system/faas-apid.service
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: control_plane_service — remove legacy shared session key after credential validation
+  ansible.builtin.lineinfile:
+    path: /etc/faas/sealed.env
+    regexp: '^FAAS_SESSION_KEY='
+    state: absent
+  no_log: true
+  notify: restart faas-apid
 
 # ADR-117 PR-C: scope the per-host value-hash HMAC key to apid through
 # systemd LoadCredential. The source file remains root:root 0400 on disk;
@@ -681,10 +739,29 @@
     executable: /bin/bash
   changed_when: false
   register: faas_polar_soft_assert
+  when: faas_billing_mode == 'live'
 - name: control_plane_service — debug Polar soft assert
   ansible.builtin.debug:
     msg: "{{ faas_polar_soft_assert.stdout }}"
-  when: faas_polar_soft_assert.stdout != ""
+  when:
+    - faas_billing_mode == 'live'
+    - (faas_polar_soft_assert.stdout | default('')) != ''
+
+# Issue #2411: control-plane service convergence is a production operation.
+# Reject dev auth/bootstrap names before any unit restart and never print the
+# corresponding values.
+- name: control_plane_service — reject dev-only auth/bootstrap variables
+  ansible.builtin.shell: |
+    set -euo pipefail
+    sealed=/etc/faas/sealed.env
+    test -f "$sealed"
+    if grep -qE '^FAAS_(DEV|DEV_TOKEN)=' "$sealed"; then
+      echo "FAIL: production sealed.env contains a forbidden dev-only auth/bootstrap variable"
+      exit 1
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
 
 # Issue #246 / ADR-115 / spec G4 closure — mail transport must
 # be selected (or dev-mode explicit) before the daemon boots in
@@ -698,8 +775,7 @@
 # Belt-and-braces: a literal `FAAS_MAIL_TRANSPORT=log` is also
 # asserted here, because the operator almost certainly meant
 # `resend` (or `postmark`) and silently booting with a journal-
-# only sender in production will miss every dunning + quota
-# notice. The dev-mode escape hatch is FAAS_DEV=1.
+# only sender in production will miss every dunning + quota notice.
 - name: control_plane_service — assert FAAS_MAIL_TRANSPORT selected (issue # 246 / ADR-115)
   ansible.builtin.shell: |
     set -euo pipefail
@@ -709,14 +785,6 @@
       exit 1
     fi
     transport="$(grep -E '^FAAS_MAIL_TRANSPORT=' "$sealed" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    dev="$(grep -E '^FAAS_DEV=' "$sealed" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-    # PR #1191 fixup: trim + lowercase the FAAS_DEV value before the
-    # literal match so the playbook accepts the same truthy set the
-    # Go side does — pkg/mail.IsDevMode accepts 1/true/yes/on
-    # case-insensitively (devTruthyLiterals). An operator setting
-    # FAAS_DEV=true used to see this playbook FAIL even though the
-    # daemon would have booted. Empty / "0" / unset stay production.
-    dev_norm="$(printf '%s' "${dev:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
     case "$transport" in
       resend|postmark|noop)
         # live transport — credentials are the operator's responsibility.
@@ -725,15 +793,8 @@
         echo "mail transport = $transport (prod)"
         ;;
       log|"")
-        case "$dev_norm" in
-          1|true|yes|on)
-            echo "mail transport = ${transport:-unset} + FAAS_DEV=$dev (dev)"
-            ;;
-          *)
-            echo "FAIL: FAAS_MAIL_TRANSPORT=${transport:-unset} on a non-dev box — apid + meterd will refuse to boot. Set FAAS_MAIL_TRANSPORT=resend (or postmark / noop) or FAAS_DEV=1 (or true/yes/on)."
-            exit 1
-            ;;
-        esac
+        echo "FAIL: FAAS_MAIL_TRANSPORT=${transport:-unset} on a production control plane — apid + meterd will refuse to boot. Set FAAS_MAIL_TRANSPORT=resend (or postmark / noop)."
+        exit 1
         ;;
       *)
         echo "FAIL: FAAS_MAIL_TRANSPORT=$transport is not a known transport (resend|postmark|log|noop). apid will refuse to boot."

@@ -14,6 +14,8 @@ const (
 	cliDocsURL              = docsSiteURL + "/cli"
 	storageDocsURL          = docsSiteURL + "/storage"
 	deployFromSourceDocsURL = docsSiteURL + "/deploy-from-source"
+	functionsDocsURL        = docsSiteURL + "/functions"
+	eventDrivenDocsURL      = docsSiteURL + "/event-driven"
 )
 
 // docsPageSlugs are the stable, publicly routed pages in faas-web. Command

@@ -1,6 +1,6 @@
 [Unit]
 Description=onebox-faas vmmd — microVM supervisor (the only root component, spec §4.4)
-Documentation=https://docs.gregale.dev/ops/vmmd
+Documentation=https://gregale.dev/docs/ops/vmmd
 After=faas-tenant.slice faas-cp.slice
 Wants=faas-tenant.slice faas-cp.slice
 

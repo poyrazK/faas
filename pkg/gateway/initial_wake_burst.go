@@ -42,15 +42,21 @@ func (b *PGBackend) EnsureWarmCapacity(ctx context.Context, appID, scope, trigge
 	var firstWake string
 	method := WakeMethodUnspecified
 	found := false
+	markWakeAdmissionStarted(ctx)
 	err = capacity.EnsureWakeCapacity(ctx, appID, trigger, desired, func(instanceID, nodeID, deploymentID, wakeID string, rawMethod int32, port int) {
+		// The callback begins only after the schedd response arrives. Stamp that
+		// boundary before publishing the first returned target.
+		markWakeSchedulerComplete(ctx)
 		if instanceID == "" || nodeID == "" {
 			return
 		}
 		b.RecordTarget(appID, Target{InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port})
+		markWakeTargetPublished(ctx)
 		if !found {
 			firstWake, method, found = wakeID, scheddWakeMethodToGateway(rawMethod), true
 		}
 	})
+	markWakeSchedulerComplete(ctx)
 	return firstWake, method, !found && err == nil, err
 }
 

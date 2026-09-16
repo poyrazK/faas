@@ -21,11 +21,17 @@ class ProjectScanRequest:
     """tar.gz of the repo root."""
     project_slug: str | Unset = UNSET
     """kebab slug; default = repo dir basename"""
+    repo_full_name: str | Unset = UNSET
+    """GitHub owner/name to persist for push reconciliation"""
     production_branch: str | Unset = UNSET
     install_id: int | Unset = UNSET
-    """GitHub install id (with --repo); 0 for unbound repos"""
+    """GitHub installation id (with --repository or --repo); 0 for unbound repos"""
     only: str | Unset = UNSET
     """CSV of workload names to include (others skipped)"""
+    environment: str | Unset = UNSET
+    """Environment slug used to scope all discovered workloads"""
+    no_triggers: bool | Unset = False
+    """Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,11 +39,17 @@ class ProjectScanRequest:
 
         project_slug = self.project_slug
 
+        repo_full_name = self.repo_full_name
+
         production_branch = self.production_branch
 
         install_id = self.install_id
 
         only = self.only
+
+        environment = self.environment
+
+        no_triggers = self.no_triggers
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -48,12 +60,18 @@ class ProjectScanRequest:
         )
         if project_slug is not UNSET:
             field_dict["project_slug"] = project_slug
+        if repo_full_name is not UNSET:
+            field_dict["repo_full_name"] = repo_full_name
         if production_branch is not UNSET:
             field_dict["production_branch"] = production_branch
         if install_id is not UNSET:
             field_dict["install_id"] = install_id
         if only is not UNSET:
             field_dict["only"] = only
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if no_triggers is not UNSET:
+            field_dict["no_triggers"] = no_triggers
 
         return field_dict
 
@@ -65,6 +83,9 @@ class ProjectScanRequest:
         if not isinstance(self.project_slug, Unset):
             files.append(("project_slug", (None, str(self.project_slug).encode(), "text/plain")))
 
+        if not isinstance(self.repo_full_name, Unset):
+            files.append(("repo_full_name", (None, str(self.repo_full_name).encode(), "text/plain")))
+
         if not isinstance(self.production_branch, Unset):
             files.append(("production_branch", (None, str(self.production_branch).encode(), "text/plain")))
 
@@ -73,6 +94,12 @@ class ProjectScanRequest:
 
         if not isinstance(self.only, Unset):
             files.append(("only", (None, str(self.only).encode(), "text/plain")))
+
+        if not isinstance(self.environment, Unset):
+            files.append(("environment", (None, str(self.environment).encode(), "text/plain")))
+
+        if not isinstance(self.no_triggers, Unset):
+            files.append(("no_triggers", (None, str(self.no_triggers).encode(), "text/plain")))
 
         for prop_name, prop in self.additional_properties.items():
             files.append((prop_name, (None, str(prop).encode(), "text/plain")))
@@ -86,18 +113,27 @@ class ProjectScanRequest:
 
         project_slug = d.pop("project_slug", UNSET)
 
+        repo_full_name = d.pop("repo_full_name", UNSET)
+
         production_branch = d.pop("production_branch", UNSET)
 
         install_id = d.pop("install_id", UNSET)
 
         only = d.pop("only", UNSET)
 
+        environment = d.pop("environment", UNSET)
+
+        no_triggers = d.pop("no_triggers", UNSET)
+
         project_scan_request = cls(
             source=source,
             project_slug=project_slug,
+            repo_full_name=repo_full_name,
             production_branch=production_branch,
             install_id=install_id,
             only=only,
+            environment=environment,
+            no_triggers=no_triggers,
         )
 
         project_scan_request.additional_properties = d

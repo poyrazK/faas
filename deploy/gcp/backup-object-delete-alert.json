@@ -1,0 +1,22 @@
+{
+  "displayName": "Gregale backup object deletion",
+  "documentation": {
+    "content": "A production PostgreSQL backup object was deleted or overwritten. Identify the principal in the Cloud Audit Log and verify that the backup retention policy is intact.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "enabled": true,
+  "conditions": [
+    {
+      "displayName": "Backup object was deleted or overwritten",
+      "conditionThreshold": {
+        "filter": "resource.type=\"gcs_bucket\" AND metric.type=\"logging.googleapis.com/user/gregale_backup_object_delete\"",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_SUM"}],
+        "trigger": {"count": 1}
+      }
+    }
+  ]
+}

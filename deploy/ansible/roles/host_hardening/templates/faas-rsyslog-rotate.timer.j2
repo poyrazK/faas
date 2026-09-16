@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Gregale host log bounds hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=faas-rsyslog-rotate.service
+
+[Install]
+WantedBy=timers.target

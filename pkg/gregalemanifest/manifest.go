@@ -34,6 +34,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -155,6 +156,11 @@ type Trigger struct {
 	// kind requires at least one non-empty field).
 	Config  map[string]any `yaml:"config,omitempty"`
 	Enabled *bool          `yaml:"enabled,omitempty"`
+	// Timezone and SkipIfRunning mirror the cron API's scheduling controls.
+	// Empty timezone uses the API default (UTC); the pointer on
+	// SkipIfRunning preserves absent versus explicit false in the manifest.
+	Timezone      string `yaml:"timezone,omitempty"`
+	SkipIfRunning *bool  `yaml:"skip_if_running,omitempty"`
 }
 
 // FilterOp is the closed vocabulary of comparison operators a
@@ -559,6 +565,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		// customer-facing error rather than letting the row insert
 		// fail at the DB layer. The cron kind ignores these fields.
 		if t.Kind != TriggerKindCron {
+			if t.Timezone != "" || t.SkipIfRunning != nil {
+				return fmt.Errorf("trigger[%d]: timezone and skip_if_running are only valid for kind=cron", i)
+			}
 			if t.BatchSizeMax != 0 && (t.BatchSizeMax < 1 || t.BatchSizeMax > 5000) {
 				return fmt.Errorf("trigger[%d]: batch_size_max=%d out of range [1, 5000]", i, t.BatchSizeMax)
 			}
@@ -647,6 +656,11 @@ func (t Trigger) validateKindConfig(idx int) error {
 		}
 		if !strings.HasPrefix(t.Path, "/") {
 			return fmt.Errorf("trigger[%d]: path must start with '/' (got %q)", idx, t.Path)
+		}
+		if t.Timezone != "" {
+			if _, err := time.LoadLocation(t.Timezone); err != nil {
+				return fmt.Errorf("trigger[%d]: timezone %q is not a valid IANA location", idx, t.Timezone)
+			}
 		}
 		return nil
 	case TriggerKindKafka:

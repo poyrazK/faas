@@ -206,9 +206,10 @@ func (g *WakeGate) WaitWithPolicy(
 		return nil
 	}
 
-	//nolint:contextcheck // leader goroutine deliberately detaches from the
-	// caller's ctx via context.Background() — the wake must outlive the
-	// triggering request so other queued waiters get the same instance.
+	//nolint:contextcheck // leader goroutine deliberately detaches cancellation
+	// and deadlines from the caller while retaining request-scoped values. The
+	// wake must outlive the triggering request so other queued waiters get the
+	// same instance, but its correlation envelope must survive admission.
 	// This is the load-bearing single-flight coalescing invariant (spec §4.1).
 	//
 	// ADR-098 C7: bootstrap-cap abort. When shouldAbort is non-nil, the
@@ -239,8 +240,9 @@ func (g *WakeGate) WaitWithPolicy(
 	// the follower's own ctx to fire on budget expiry (correct).
 	// The leader's detached ctx continues to drive the wake to
 	// completion. See ADR-093 §Consequences.
+	detached := context.WithoutCancel(ctx)
 	go func() {
-		ectx, cancel := context.WithTimeout(context.Background(), g.ttl)
+		ectx, cancel := context.WithTimeout(detached, g.ttl)
 		defer cancel()
 
 		// Optional bootstrap-cap poller. Lifecycle:

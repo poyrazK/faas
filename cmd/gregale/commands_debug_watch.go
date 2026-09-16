@@ -38,7 +38,7 @@ type debugWatchEvent struct {
 // tracks row fingerprints so collapsed rows that change count/latency are
 // emitted again while unchanged rows stay quiet.
 func cmdDebugRequestsWatch(args []string) int {
-	fs := flag.NewFlagSet("debug requests watch", flag.ContinueOnError)
+	fs := newFlagSet("debug requests watch", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	route := fs.String("route", "", "route filter (exact match)")
 	deploymentID := fs.String("deployment-id", "", "deployment UUID filter")
@@ -148,7 +148,7 @@ func runDebugRequestsWatch(ctx context.Context, client *api.Client, slug string,
 // cmdDebugRegressionsWatch watches active regression observations and emits
 // updates plus explicit clear events when an observation disappears.
 func cmdDebugRegressionsWatch(args []string) int {
-	fs := flag.NewFlagSet("debug regressions watch", flag.ContinueOnError)
+	fs := newFlagSet("debug regressions watch", flag.ContinueOnError)
 	since := fs.String("since", "", "lookback window (e.g. 30m, 24h, 3d)")
 	interval := fs.Duration("interval", debugWatchDefaultInterval, "poll interval (250ms..1h)")
 	once := fs.Bool("once", false, "poll once and exit (useful for scripts and tests)")

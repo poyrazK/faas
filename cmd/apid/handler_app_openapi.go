@@ -54,25 +54,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// openAPIImportDialTimeout bounds the apid→gatewayd-internal
-// observed-routes hop. Matches the existing routesDialTimeout
-// contract (in-box, single-machine, fast).
-const openAPIImportDialTimeout = 2 * time.Second
-
-// openAPIImportEndpoint is the observed-routes URL the auto-gen
-// reads from. Uses the existing /v1/internal/apps/{slug}/routes
-// endpoint (cmd/gatewayd-internal/routes_handler.go) which
-// returns the bounded route label set, not the
-// pkg/gateway/control_routes.go shape from the pre-merge PR #1011
-// draft (item #2 review-fix: the separate file was dropped on the
-// rebuild branch because the production endpoint already serves
-// the data apid needs; Count/P50MS/etc. fields default to zero
-// for the auto-gen annotation since the per-route histogram
-// surface lives in a separate /metrics scrape).
-func openAPIImportEndpoint(gatewaydControlURL, appID string) string {
-	return gatewaydControlURL + "/v1/internal/apps/" + appID + "/routes"
-}
-
 // getAppOpenAPI handles GET /v1/apps/{slug}/openapi.
 //
 // Two modes (selected via ?source=):
@@ -142,7 +123,8 @@ func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	observed, observedAvailable := s.fetchObservedRoutesWithStatus(r.Context(), app.ID)
+	observedSnapshot := s.collectObservedRoutes(r.Context(), app.ID, app.Slug)
+	observed := observedSnapshot.rows()
 	rules, err := s.store.ListEdgeRulesForApp(r.Context(), app.ID)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
@@ -170,14 +152,19 @@ func (s *server) getAppOpenAPIPolicyPreview(w http.ResponseWriter, r *http.Reque
 	}
 
 	source := "preview"
-	if len(raw) == 0 {
-		source = "empty: no_import"
-	} else if !observedAvailable {
+	if observedSnapshot.Source == api.AppRoutesSourceUnavailable {
 		source = "degraded: routes_unavailable"
+	} else if observedSnapshot.Source == api.AppRoutesSourcePartial {
+		source = openapidiff.SourceDegradedRoutesPartial
+	} else if len(raw) == 0 {
+		source = "empty: no_import"
 	}
 	resp := api.AppOpenAPIPolicyPreviewResponse{
-		AppID: app.ID, Source: source, ObservedAvailable: observedAvailable,
-		Routes: outRoutes,
+		AppID: app.ID, Source: source, ObservedAvailable: observedSnapshot.available(),
+		ObservedSource:     observedSnapshot.Source,
+		CollectorsExpected: observedSnapshot.CollectorsExpected,
+		CollectorsHealthy:  observedSnapshot.CollectorsHealthy,
+		Routes:             outRoutes,
 	}
 	if spec != nil {
 		resp.OpenAPIVersion = spec.OpenAPIVersion()
@@ -434,36 +421,40 @@ func writeAutoSpecHeaders(w http.ResponseWriter, source, cacheState string, anno
 // equality is pinned by pkg/openapidiff tests.
 func (s *server) loadAutoGenInputs(w http.ResponseWriter, r *http.Request, app state.App) (
 	doc []byte, observed []openapidiff.RouteRow, rules []state.EdgeRule,
-	docSHA, routesSHA, rulesSHA [32]byte, ok bool,
+	docSHA, routesSHA, rulesSHA [32]byte, observation observedRoutesSnapshot, ok bool,
 ) {
 	var docErr error
 	doc, _, docErr = s.store.GetAppOpenAPIDoc(r.Context(), app.ID, app.AccountID)
 	if docErr != nil && !errors.Is(docErr, state.ErrNotFound) {
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
 			"failed to read imported doc", docErr.Error()))
-		return nil, nil, nil, [32]byte{}, [32]byte{}, [32]byte{}, false
+		return nil, nil, nil, [32]byte{}, [32]byte{}, [32]byte{}, observedRoutesSnapshot{}, false
 	}
-	observed = s.fetchObservedRoutes(r.Context(), app.ID)
+	observation = s.collectObservedRoutes(r.Context(), app.ID, app.Slug)
+	observed = observation.rows()
 	var rulesErr error
 	rules, rulesErr = s.store.ListEdgeRulesForApp(r.Context(), app.ID)
 	if rulesErr != nil {
 		s.log.Debug("getAppOpenAPI ListEdgeRulesForApp", "err", rulesErr.Error())
 		rules = nil
+	} else if rules == nil {
+		// GenerateFromApp reserves nil for a failed rules read. Preserve a
+		// successful empty result as a non-nil slice so route availability,
+		// rather than Go's zero slice representation, determines provenance.
+		rules = []state.EdgeRule{}
 	}
 	if len(doc) > 0 {
 		docSHA = openapidiff.SumSHA256(doc)
 	}
-	if len(observed) > 0 {
-		routesSHA = openapidiff.HashRoutes(observed)
-	}
+	routesSHA = observation.cacheSHA()
 	if len(rules) > 0 {
 		rulesSHA = openapidiff.HashRules(rules)
 	}
-	return doc, observed, rules, docSHA, routesSHA, rulesSHA, true
+	return doc, observed, rules, docSHA, routesSHA, rulesSHA, observation, true
 }
 
 func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app state.App) {
-	doc, observed, rules, docSHA, routesSHA, rulesSHA, ok := s.loadAutoGenInputs(w, r, app)
+	doc, observed, rules, docSHA, routesSHA, rulesSHA, observation, ok := s.loadAutoGenInputs(w, r, app)
 	if !ok {
 		return
 	}
@@ -471,10 +462,14 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 	// entirely; write the pre-rendered body and headers.
 	if s.specCache != nil {
 		if hit, ok := s.specCache.Get(app.ID, docSHA, routesSHA, rulesSHA); ok {
-			writeAutoSpecHeaders(w, hit.Source, "hit", hit.AnnotationsCount)
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(hit.Body)
-			return
+			if err := validateRenderedOpenAPISpec(hit.Body); err == nil {
+				writeAutoSpecHeaders(w, hit.Source, "hit", hit.AnnotationsCount)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(hit.Body)
+				return
+			}
+			s.specCache.InvalidateByApp(app.ID)
+			s.log.Warn("discarding invalid cached auto OpenAPI document", "app_id", app.ID)
 		}
 	}
 
@@ -487,16 +482,35 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 	})
 	if genErr != nil {
 		if errors.Is(genErr, openapidiff.ErrImportMissing) {
-			writeAutoSpecHeaders(w, openapidiff.SourceEmptyImportRules, "miss", 0)
+			source := autoOpenAPISource(openapidiff.SourceEmptyImportRules, observation, len(doc) > 0)
+			rendered := renderOpenAPISpecJSON(nil, openapidiff.GenerateFromAppMeta{Source: source}, app, observation)
+			if err := validateRenderedOpenAPISpec(rendered); err != nil {
+				api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+					"failed to generate valid OpenAPI doc", err.Error()))
+				return
+			}
+			writeAutoSpecHeaders(w, source, "miss", 0)
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"openapi":"3.1.0","info":{"title":"","version":""},"paths":{}}`))
+			_, _ = w.Write(rendered)
 			return
 		}
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
 			"failed to generate OpenAPI doc", genErr.Error()))
 		return
 	}
-	rendered := renderOpenAPISpecJSON(genSpec, genMeta, app)
+	genMeta.Source = autoOpenAPISource(genMeta.Source, observation, len(doc) > 0)
+	// The route-list hash alone cannot represent fleet completeness. Use the
+	// coverage-aware key calculated by loadAutoGenInputs for both lookup and
+	// insertion so a partial/live transition invalidates the cached document.
+	genMeta.DocSHA256 = docSHA
+	genMeta.RoutesSHA256 = routesSHA
+	genMeta.RulesSHA256 = rulesSHA
+	rendered := renderOpenAPISpecJSON(genSpec, genMeta, app, observation)
+	if err := validateRenderedOpenAPISpec(rendered); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
+			"failed to generate valid OpenAPI doc", err.Error()))
+		return
+	}
 	if s.specCache != nil {
 		s.specCache.Put(app.ID, genMeta.DocSHA256, genMeta.RoutesSHA256, genMeta.RulesSHA256,
 			rendered, genMeta.Source, len(genMeta.Annotations), time.Now())
@@ -506,6 +520,28 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 	_, _ = w.Write(rendered)
 }
 
+func autoOpenAPISource(generated string, observation observedRoutesSnapshot, hasImport bool) string {
+	// A rules read failure remains the primary source failure because route
+	// provenance is also carried explicitly in x-faas-observed-routes.
+	if generated == openapidiff.SourceDegradedRules {
+		return generated
+	}
+	switch observation.Source {
+	case api.AppRoutesSourceUnavailable:
+		return openapidiff.SourceDegradedRoutes
+	case api.AppRoutesSourcePartial:
+		return openapidiff.SourceDegradedRoutesPartial
+	case api.AppRoutesSourceLive:
+		if generated == openapidiff.SourceDegradedRoutes {
+			if hasImport {
+				return openapidiff.SourceAuto
+			}
+			return openapidiff.SourceEmptyImport
+		}
+	}
+	return generated
+}
+
 // renderOpenAPISpecJSON is the small helper that emits the
 // *Spec + per-operation annotations to the wire JSON. The
 // pkg/openapidiff package stays schema-shape-only; the apid
@@ -513,16 +549,19 @@ func (s *server) serveOpenAPIDocAuto(w http.ResponseWriter, r *http.Request, app
 // rendered JSON. Falls back to an empty-spec stub when the
 // spec is nil (defensive — GenerateFromApp returns nil only
 // for the ErrImportMissing case which is handled earlier).
-func renderOpenAPISpecJSON(spec *openapidiff.Spec, genMeta openapidiff.GenerateFromAppMeta, app state.App) []byte {
-	if spec == nil {
-		return []byte(`{"openapi":"3.1.0","info":{"title":"","version":""},"paths":{}}`)
-	}
+func renderOpenAPISpecJSON(spec *openapidiff.Spec, genMeta openapidiff.GenerateFromAppMeta, app state.App, observations ...observedRoutesSnapshot) []byte {
 	out := map[string]any{
-		"openapi": spec.OpenAPIVersion(),
+		"openapi": "3.1.0",
 		"info":    map[string]any{"title": app.Slug, "version": "1"},
-		"paths":   renderPathsJSON(spec.Paths),
+		"paths":   map[string]any{},
 	}
-	if len(spec.Components) > 0 {
+	if spec != nil {
+		if version := strings.TrimSpace(spec.OpenAPIVersion()); supportedOpenAPIVersion(version) {
+			out["openapi"] = version
+		}
+		out["paths"] = renderPathsJSON(spec.Paths)
+	}
+	if spec != nil && len(spec.Components) > 0 {
 		schemas := make(map[string]any, len(spec.Components))
 		for name, schema := range spec.Components {
 			schemas[name] = renderSchemaJSON(schema)
@@ -532,11 +571,51 @@ func renderOpenAPISpecJSON(spec *openapidiff.Spec, genMeta openapidiff.GenerateF
 	if len(genMeta.Annotations) > 0 {
 		out["x-faas-edge-rules"] = genMeta.Annotations
 	}
+	if len(observations) > 0 {
+		observation := observations[0]
+		out["x-faas-observed-routes"] = map[string]any{
+			"source":              observation.Source,
+			"available":           observation.available(),
+			"collectors_expected": observation.CollectorsExpected,
+			"collectors_healthy":  observation.CollectorsHealthy,
+		}
+	}
 	b, err := json.Marshal(out)
 	if err != nil {
 		return []byte(`{"openapi":"3.1.0","info":{"title":"","version":""},"paths":{}}`)
 	}
 	return b
+}
+
+func supportedOpenAPIVersion(version string) bool {
+	return version == "3.0" || version == "3.1" ||
+		strings.HasPrefix(version, "3.0.") || strings.HasPrefix(version, "3.1.")
+}
+
+func validateRenderedOpenAPISpec(body []byte) error {
+	var doc struct {
+		OpenAPI string          `json:"openapi"`
+		Info    json.RawMessage `json:"info"`
+		Paths   json.RawMessage `json:"paths"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return fmt.Errorf("rendered document is not JSON: %w", err)
+	}
+	if !supportedOpenAPIVersion(strings.TrimSpace(doc.OpenAPI)) {
+		return fmt.Errorf("rendered document has unsupported OpenAPI version %q", doc.OpenAPI)
+	}
+	var info struct {
+		Title   string `json:"title"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(doc.Info, &info); err != nil || strings.TrimSpace(info.Title) == "" || strings.TrimSpace(info.Version) == "" {
+		return errors.New("rendered document requires non-empty info.title and info.version")
+	}
+	var paths map[string]json.RawMessage
+	if err := json.Unmarshal(doc.Paths, &paths); err != nil || paths == nil {
+		return errors.New("rendered document requires a paths object")
+	}
+	return nil
 }
 
 // renderPathsJSON converts the *PathItem.Methods map into the
@@ -606,59 +685,6 @@ func cloneOpenAPIObject(in map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
-}
-
-// fetchObservedRoutes calls out to the gatewayd-internal
-// /v1/internal/apps/{appID}/routes bridge (the production
-// endpoint added in PR #1026, item #2 review-fix). Returns nil
-// on any failure so GenerateFromApp degrades gracefully
-// (Source: "degraded: routes_unavailable"). The wire shape
-// is {Slug, AppID, Routes []string, CapHit bool}; we synthesise
-// RouteRow from each label with Count/P50/P95/P99/ErrorPct
-// zero (the per-route histogram surface lives in a separate
-// /metrics scrape, not on this control-listener endpoint).
-func (s *server) fetchObservedRoutes(ctx context.Context, appID string) []openapidiff.RouteRow {
-	rows, _ := s.fetchObservedRoutesWithStatus(ctx, appID)
-	return rows
-}
-
-func (s *server) fetchObservedRoutesWithStatus(ctx context.Context, appID string) ([]openapidiff.RouteRow, bool) {
-	if s.gatewaydControlURL == "" {
-		return nil, false
-	}
-	dialCtx, cancel := context.WithTimeout(ctx, openAPIImportDialTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(dialCtx, http.MethodGet, openAPIImportEndpoint(s.gatewaydControlURL, appID), nil)
-	if err != nil {
-		return nil, false
-	}
-	client := &http.Client{Timeout: openAPIImportDialTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		s.log.Debug("apid→gatewayd observed-routes dial failed", "err", err.Error(), "app_id", appID)
-		return nil, false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, false
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, false
-	}
-	var env struct {
-		Slug   string   `json:"slug"`
-		AppID  string   `json:"app_id"`
-		Routes []string `json:"routes"`
-	}
-	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, false
-	}
-	rows := make([]openapidiff.RouteRow, 0, len(env.Routes))
-	for _, label := range env.Routes {
-		rows = append(rows, openapidiff.RouteRow{Route: label})
-	}
-	return rows, true
 }
 
 // readAndValidateImportBody is the shared body-read + size-cap +

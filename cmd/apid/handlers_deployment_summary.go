@@ -120,7 +120,6 @@ func deploymentChanges(before, after api.DeploymentResponse) []api.DeploymentCha
 		{field: "traffic_percent", before: before.TrafficPercent, after: after.TrafficPercent},
 		{field: "has_overrides", before: before.HasOverrides, after: after.HasOverrides},
 		{field: "canary_preset", before: before.CanaryPreset, after: after.CanaryPreset},
-		{field: "rollback_on_5xx", before: before.RollbackOn5xx, after: after.RollbackOn5xx},
 		{field: "rollout_state", before: before.RolloutState, after: after.RolloutState},
 	}
 	changes := make([]api.DeploymentChange, 0, len(candidates))

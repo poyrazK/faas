@@ -24,13 +24,13 @@
 // path uses an atomic.Pointer[ed25519.PrivateKey] swap so the
 // rotation lands without dropping an in-flight synth.
 //
-// Multi-box unseal model: the operator bootstraps a shared
-// host.age identity onto every box (the same key that initially
-// sealed the cluster key). Every schedd's secretbox.LoadHostKeys
-// returns that identity, and secretbox.OpenBytesMulti accepts
-// it. A box whose host.age chain cannot unseal the cluster blob
-// logs a loud error and falls back to the per-host disk path
-// (the single-box dev + operator-migration window).
+// Multi-box unseal model: the operator bootstraps a dedicated
+// fleet.age identity onto every box while retaining a distinct
+// host.age identity on each host. Every schedd loads fleet.age
+// first and may use host.age only to open legacy ciphertext during
+// migration. A populated cluster-key row that fleet.age cannot
+// open fails closed; only an empty table may use the single-box
+// development fallback.
 
 package main
 
@@ -54,14 +54,16 @@ import (
 )
 
 // ErrClusterKeyUnavailable is returned by loadClusterInternalSvcKey
-// when neither the PG row nor any host.age identity on this box
+// when neither the PG row nor the fleet identity on this box
 // can produce the unsealed private key. The minter-side caller
 // (loadSchedInternalSvcKey) translates this into the existing
 // fallback chain (per-host disk path / generated-on-boot path).
 // The sentinel is exported so tests can match on the specific
 // failure mode ("no row" vs "row but unseal failed") without
 // parsing error strings.
-var ErrClusterKeyUnavailable = errors.New("schedd: cluster_signing_keys row missing or host.age cannot unseal")
+var ErrClusterKeyUnavailable = errors.New("schedd: cluster_signing_keys row missing or fleet.age cannot unseal")
+var ErrClusterKeyMissing = errors.New("schedd: cluster_signing_keys row missing")
+var ErrClusterKeyUnsealable = errors.New("schedd: cluster_signing_keys row cannot be opened with fleet.age")
 
 // loadClusterInternalSvcKey is the PG-side path of the schedd
 // minter loader (PR-3). Returns the unsealed Ed25519 private key
@@ -95,36 +97,33 @@ func loadClusterInternalSvcKey(
 			// yet, OR this is a single-box dev install. The
 			// fallback chain in loadSchedInternalSvcKey picks
 			// up the per-host disk path here.
-			return nil, "", ErrClusterKeyUnavailable
+			return nil, "", fmt.Errorf("%w: %w", ErrClusterKeyUnavailable, ErrClusterKeyMissing)
 		}
 		return nil, "", fmt.Errorf("schedd: load cluster_signing_keys: %w", err)
 	}
 
-	identities, err := secretbox.LoadHostKeys(scheddHostAgeKeyDir())
+	identities, err := secretbox.LoadFleetAndHostKeys(scheddHostAgeKeyDir())
 	if err != nil {
-		// No host.age on this box at all — single-box dev
-		// without an unseal key. Fall back to the per-host
-		// disk path so the box still boots.
-		log.Warn("schedd: cannot load host.age identities for cluster key unseal",
+		// A populated cluster-key row without a usable fleet identity
+		// is unsafe: fail closed instead of minting with a host-local key.
+		log.Warn("schedd: cannot load fleet.age identity for cluster key unseal",
 			"err", err.Error())
-		return nil, "", ErrClusterKeyUnavailable
+		return nil, "", fmt.Errorf("%w: %w", ErrClusterKeyUnavailable, ErrClusterKeyUnsealable)
 	}
 	if len(identities) == 0 {
-		return nil, "", ErrClusterKeyUnavailable
+		return nil, "", fmt.Errorf("%w: %w", ErrClusterKeyUnavailable, ErrClusterKeyUnsealable)
 	}
 
 	plaintext, err := unsealClusterKey(row.SealedBlob, identities)
 	if err != nil {
-		// Row exists but no identity on this box can open it.
-		// This is the cross-box bootstrap mistake: the operator
-		// forgot to distribute the sealing host.age to this
-		// box. Loud warn; the fallback chain picks up the
-		// per-host disk path so this box still boots in dev.
+		// Row exists but no identity on this box can open it. This is
+		// either an incomplete fleet migration or a bad join artifact.
+		// The caller treats it as fatal and cannot use a host-local key.
 		log.Warn("schedd: cluster_signing_keys sealed_blob is not unsealable on this box",
 			"kid", row.KeyID,
 			"identities_loaded", len(identities),
 			"err", err.Error())
-		return nil, "", ErrClusterKeyUnavailable
+		return nil, "", fmt.Errorf("%w: %w", ErrClusterKeyUnavailable, ErrClusterKeyUnsealable)
 	}
 
 	priv, err := parseClusterPrivPEM(plaintext)
@@ -269,7 +268,7 @@ var _ = os.Getenv
 //     returns the error; main.go logs + continues with the
 //     boot-time key. Rotation just doesn't auto-propagate until
 //     the next daemon restart.
-//   - re-load fails on a delivery (e.g. host.age rotated out
+//   - re-load fails on a delivery (e.g. fleet.age rotated out
 //     and the new cluster blob can't be unsealed): logs a
 //     warning and keeps the previous minter in place. The
 //     rotation eventually lands when the operator fixes the

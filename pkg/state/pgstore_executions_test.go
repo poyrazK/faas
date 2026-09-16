@@ -94,6 +94,20 @@ func TestPgStoreExecutionLifecycleAndAtomicAdmission(t *testing.T) {
 	if completed.Status != api.ExecutionStatusSucceeded || pgExecutionPayloadCount(t, pool, ctx, created.ID) != 0 {
 		t.Fatalf("completion = %#v payload_count=%d", completed, pgExecutionPayloadCount(t, pool, ctx, created.ID))
 	}
+	var ledgerRows int
+	if err := pool.QueryRow(ctx, `select count(*) from execution_usage_ledger where execution_id=$1::uuid`, created.ID).Scan(&ledgerRows); err != nil {
+		t.Fatalf("count execution usage ledger: %v", err)
+	}
+	if ledgerRows != 1 {
+		t.Fatalf("execution usage ledger rows = %d, want 1", ledgerRows)
+	}
+	usage, err := store.ExecutionUsageByAccount(ctx, account.ID, base)
+	if err != nil {
+		t.Fatalf("ExecutionUsageByAccount: %v", err)
+	}
+	if usage.Runs != 1 || usage.WallTimeMS != 2 || usage.CPUTimeMS != 1 || usage.PeakMemoryMB != 10 || usage.Succeeded != 1 {
+		t.Fatalf("execution usage = %+v, want one succeeded ledger row", usage)
+	}
 	if _, err := store.CompleteExecution(ctx, state.CompleteExecutionParams{
 		ID: created.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusFailed,
 		FinishedAt: base.Add(4 * time.Millisecond),
@@ -190,5 +204,12 @@ func TestPgStoreExecutionSweepRecovery(t *testing.T) {
 		pgExecutionPayloadCount(t, pool, ctx, running.ID) != 0 ||
 		pgExecutionPayloadCount(t, pool, ctx, restore.ID) != 1 {
 		t.Fatal("sweep payload retention diverged from lifecycle state")
+	}
+	usage, err := store.ExecutionUsageByAccount(ctx, account.ID, base)
+	if err != nil {
+		t.Fatalf("ExecutionUsageByAccount: %v", err)
+	}
+	if usage.Runs != 2 || usage.TimedOut != 1 || usage.Failed != 1 || usage.Succeeded != 0 {
+		t.Fatalf("sweep usage = %+v, want timed_out=1 failed=1 exactly once", usage)
 	}
 }

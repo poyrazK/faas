@@ -83,10 +83,13 @@ func cmdSecrets(args []string) int {
 // --- list ------------------------------------------------------------------
 
 func secretsList(args []string) int {
-	fs := flag.NewFlagSet("secrets list", flag.ContinueOnError)
+	fs := newFlagSet("secrets list", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope filter (omit for default; '__all__' returns nested secrets_by_scope)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *app == "" {
@@ -160,7 +163,7 @@ func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse)
 // --- set -------------------------------------------------------------------
 
 func secretsSet(args []string) int {
-	fs := flag.NewFlagSet("secrets set", flag.ContinueOnError)
+	fs := newFlagSet("secrets set", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to write into (omit for default)")
@@ -434,10 +437,36 @@ func setDeploySecrets(ctx context.Context, client *Client, app string, pairs []s
 	return nil
 }
 
+// setProjectDeploySecrets applies a validated deploy bundle to each workload
+// in a project plan. Project plans can contain duplicate names only when a
+// detector has merged the same workload, so de-duplicate by the API slug to
+// avoid issuing duplicate writes. Values remain in memory and are passed only
+// to the existing sealed app-secret endpoint; they are never logged.
+func setProjectDeploySecrets(ctx context.Context, client *Client, workloads []api.PlanWorkload, pairs []secretsPair) (int, error) {
+	seen := make(map[string]struct{}, len(workloads))
+	configured := 0
+	for _, workload := range workloads {
+		app := strings.TrimSpace(workload.Name)
+		if app == "" {
+			continue
+		}
+		key := strings.ToLower(app)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if err := setDeploySecrets(ctx, client, app, pairs); err != nil {
+			return configured, fmt.Errorf("workload %s: %w", app, err)
+		}
+		configured++
+	}
+	return configured, nil
+}
+
 // --- unset -----------------------------------------------------------------
 
 func secretsUnset(args []string) int {
-	fs := flag.NewFlagSet("secrets unset", flag.ContinueOnError)
+	fs := newFlagSet("secrets unset", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to delete from (omit for default)")
 	if err := fs.Parse(args); err != nil {
@@ -483,10 +512,13 @@ func scopeOrDefault(scope string) string {
 // so this leaf is safe for log + JSON output. Pagination via the
 // (slug, key) cursor — same convention as /v1/invoices.
 func secretsListAll(args []string) int {
-	fs := flag.NewFlagSet("secrets list-all", flag.ContinueOnError)
+	fs := newFlagSet("secrets list-all", flag.ContinueOnError)
 	before := fs.String("before", "", "pagination cursor from a previous call's next_before (slug|key)")
 	limit := fs.Int("limit", 100, "page size (1..200; server caps at 200)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {

@@ -1,3 +1,4 @@
+// adr: 025
 // paths_pure_extra_test.go — fill the remaining gaps in
 // pkg/sched/paths.go beyond what paths_test.go covers. SnapDir
 // override (via SetSnapDirForTesting), AppLayerKey,
@@ -18,17 +19,17 @@ import (
 // --- SnapDir -------------------------------------------------------
 
 func TestPathsExtra_SnapDirOverride(t *testing.T) {
-	prev := snapDir
-	t.Cleanup(func() { snapDir = prev })
+	prev := SnapDir()
+	t.Cleanup(func() { SetSnapDirForTesting(prev) })
 
 	SetSnapDirForTesting("/tmp/override-snap")
 	if got := SnapDir(); got != "/tmp/override-snap" {
 		t.Errorf("after override: got %q", got)
 	}
 
-	snapDir = prev // restore
-	if got := SnapDir(); got != "/srv/fc/snap" {
-		t.Errorf("after restore: got %q, want /srv/fc/snap", got)
+	SetSnapDirForTesting(prev) // restore
+	if got := SnapDir(); got != prev {
+		t.Errorf("after restore: got %q, want %q", got, prev)
 	}
 }
 

@@ -213,13 +213,12 @@ func TestE2E_SeatUsageEndpoint(t *testing.T) {
 	h := e2etest.Start(t, pool, e2etest.APID)
 	ctx := context.Background()
 	store := state.NewPgStore(h.Pool)
+	key := h.SeedAccount(ctx, api.PlanFree, "pr7-seat")
 	ownerID := mustAccountIDForSeed(t, h, api.PlanFree, "pr7-seat")
 	personal, err := store.OrgByPersonalAccount(ctx, ownerID)
 	if err != nil {
 		t.Fatalf("OrgByPersonalAccount: %v", err)
 	}
-	key := h.SeedAccount(ctx, api.PlanFree, "pr7-seat")
-
 	// Subcase 1: Free personal org → limit=0 fail-closed.
 	raw, status := doReq(t, h, key, http.MethodGet,
 		"/v1/orgs/"+personal.Slug+"/seat_usage", nil,

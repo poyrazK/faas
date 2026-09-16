@@ -41,7 +41,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel/attribute"
@@ -753,6 +755,11 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		return nil, fmt.Errorf("sched: default-local compute_node %q has empty id", state.DefaultLocalNodeName)
 	}
 	e.defaultLocalNodeID = node.ID
+	if leaseStore, ok := store.(state.HostPortLeaseStore); ok {
+		if err := leaseStore.ReconcileHostPortLeases(bootCtx); err != nil {
+			return nil, fmt.Errorf("sched: reconcile container host-port leases: %w", err)
+		}
+	}
 	return e, nil
 }
 
@@ -1165,6 +1172,47 @@ func (e *Engine) createInstanceWithWakeRetry(ctx context.Context, appID, deploym
 	}
 	return state.Instance{}, err
 }
+
+func hostPortRequestsForManifest(manifest state.AppManifest) []hostport.Request {
+	if len(manifest.Ports) == 0 {
+		return nil
+	}
+	requests := make([]hostport.Request, 0, len(manifest.Ports))
+	for _, port := range manifest.Ports {
+		requests = append(requests, hostport.Request{
+			Name:      port.Name,
+			Protocol:  hostport.Protocol(port.EffectiveProtocol()),
+			GuestPort: port.Port,
+		})
+	}
+	return requests
+}
+
+func (e *Engine) acquireHostPortLeases(ctx context.Context, nodeID, instanceID string, requests []hostport.Request) error {
+	if len(requests) == 0 {
+		return nil
+	}
+	store, ok := e.store.(state.HostPortLeaseStore)
+	if !ok {
+		return fmt.Errorf("sched: host-port lease store is not configured")
+	}
+	_, err := store.AcquireHostPortLeases(ctx, nodeID, instanceID, requests)
+	return err
+}
+
+func (e *Engine) releaseHostPortLeases(ctx context.Context, nodeID, instanceID string) {
+	if nodeID == "" || instanceID == "" {
+		return
+	}
+	store, ok := e.store.(state.HostPortLeaseStore)
+	if !ok {
+		return
+	}
+	if err := store.ReleaseHostPortLeases(ctx, nodeID, instanceID); err != nil {
+		e.log.Warn("sched: release host-port leases", "instance", instanceID, "node", nodeID, "err", err)
+	}
+}
+
 func (e *Engine) WithLivenessWindow(w *LivenessWindow) *Engine {
 	if e == nil {
 		return e
@@ -1801,7 +1849,11 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 			appID, app.NodeID, e.ownerNodeID,
 		)
 	}
-	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutFor(ctx, appID))
+	var loadedApp *state.App
+	if err == nil {
+		loadedApp = &app
+	}
+	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutForApp(ctx, appID, loadedApp))
 	if err != nil {
 		return CoordOutcome{}, err
 	}
@@ -1817,13 +1869,14 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	// the in-flight boot. The deferred Complete is the single
 	// decrement site for all five completion paths inside e.Wake.
 	//
-	//nolint:contextcheck // leader's ensure deliberately detaches from the
-	// caller's ctx via context.Background() + TTL — the wake must outlive
-	// the triggering request so other queued waiters get the same instance.
-	// This is the load-bearing coordinated-wake invariant (spec
-	// §4.1, ADR-098 §Decision). Mirror of pkg/gateway/gate.go Wait
-	// goroutine detach.
-	leaderCtx, cancel := context.WithTimeout(context.Background(), e.wakeCoord.TTL())
+	// Detach cancellation and the caller deadline while retaining request-scoped
+	// correlation values. Using context.Background here dropped the request ID
+	// after the gateway -> schedd gRPC hop, so queue/admit/boot events could not
+	// be joined to the customer-visible x-faas-request-id. The wake still
+	// outlives the triggering request and remains bounded by the coordinator TTL.
+	//
+	//nolint:contextcheck // detachment is the coordinated-wake invariant.
+	leaderCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), e.wakeCoord.TTL())
 	defer cancel()
 	// The coordinator deliberately detaches from the triggering request, but
 	// preserves the restart correlation id while doing so.
@@ -1833,12 +1886,7 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 		call.Complete(out)
 		e.wakeCoord.Release(appID, call)
 	}()
-	//nolint:contextcheck // leader's ensure deliberately detaches from the
-	// caller's ctx via context.Background() + TTL — the wake must outlive
-	// the triggering request so other queued waiters get the same instance.
-	// This is the load-bearing coordinated-wake invariant (spec
-	// §4.1, ADR-098 §Decision). Mirror of pkg/gateway/gate.go Wait
-	// goroutine detach.
+	//nolint:contextcheck // leader wake uses the detached, TTL-bounded context.
 	results, err := e.wakeInitialCapacity(leaderCtx, appID, trigger, desired)
 	if err != nil {
 		out.Err = err
@@ -2539,6 +2587,19 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
 	}
+	// Reserve declared listeners before the ledger and vmmd admission. The
+	// mapping is node-local and durable, so a failed boot can release it from
+	// the same state-transition path and a scheduler restart can recover the
+	// mapping without guessing which host port was in use.
+	hostPortRequests := hostPortRequestsForManifest(app.Manifest)
+	if err := e.acquireHostPortLeases(ctx, placement.NodeID, ins.ID, hostPortRequests); err != nil {
+		_ = e.store.DeleteInstance(ctx, ins.ID)
+		release()
+		if errors.Is(err, hostport.ErrExhausted) {
+			return WakeResult{}, api.ErrCapacity("no host ports are available on the selected compute node")
+		}
+		return WakeResult{}, err
+	}
 	e.emitInstanceChanged(ctx, ins.ID, appID, initState, wakeID)
 
 	if err := e.ledger.Admit(Request{
@@ -2578,6 +2639,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				e.log.Warn("admit: delete unattached row after concurrency cap",
 					"app", appID, "instance", ins.ID, "err", delErr)
 			}
+			e.releaseHostPortLeases(ctx, placement.NodeID, ins.ID)
 			release()
 			e.IncAtCapacity(appID, "wake")
 			return WakeResult{AtCapacity: true}, nil
@@ -2852,6 +2914,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				e.ledger.Release(bootInput.insID)
 				return WakeResult{}, err
 			}
+			if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrInvalidKey) {
+				problem := e.markRuntimeArtifactMissing(ctx, dep.ID, spec.LayerKey, err)
+				e.log.Error("wake: live deployment artifact is unavailable",
+					"app", appID, "deployment", dep.ID, "layer", spec.LayerKey, "err", err)
+				e.transitionWithKind(ctx, bootInput.insID, appID, state.StateFailed, "wake_boot_error", "artifact_missing")
+				e.ledger.Release(bootInput.insID)
+				return WakeResult{}, errors.Join(ErrPermanentWake, problem)
+			}
 			// Transient I/O — fail the boot but don't mark the
 			// layer compromised. Same shape as the vmmd
 			// round-trip failure path below: transition + release.
@@ -2909,6 +2979,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		AppID:              appID,
 		DeploymentID:       bootInput.depID,
 		InstanceID:         bootInput.insID,
+		NodeID:             bootInput.nodeID,
 		WakeID:             wakeID,
 		Trigger:            bootInput.trigger,
 		TriggerClass:       inboundCorr.TriggerClass,
@@ -3080,30 +3151,26 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// capture to scope rpc_to_running.
 	rpcEndedAt := time.Now().UTC()
 
-	// Re-read the row. If a watchdog (commit 3) or a Park or another
-	// Wake moved it out of initState during Phase 3, abort: this Wake
-	// is no longer the canonical owner. Free the reservation and
-	// destroy the VM we just booted.
-	fresh, fresErr := e.store.InstanceByID(ctx, bootInput.insID)
-	if fresErr != nil {
-		// Couldn't re-read — take the conservative path. Destroy and
-		// release; the transition will fail (no row), but the original
-		// row must already be gone too (otherwise re-read wouldn't
-		// fail).
+	// Publish the runtime identity and RUNNING state in one conditional write.
+	// The old success path paid for InstanceByID, SetInstanceRuntime, another
+	// InstanceByID inside transition, and UpdateInstanceState. Besides adding
+	// control-plane latency after a fast SSD restore, that load-then-write shape
+	// left a race between the watchdog check and the state update. The CAS makes
+	// a stolen state a failure without adding a read to the successful path.
+	fresh, publishErr := e.store.PublishInstanceRuntime(ctx, bootInput.insID, string(bootInput.initState), out.Netns, out.HostIP, int(out.LeaseUID))
+	if errors.Is(publishErr, state.ErrConflict) {
 		e.ledger.Release(bootInput.insID)
 		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
-		return WakeResult{}, fmt.Errorf("sched: wake: re-read instance %s: %w", bootInput.insID, fresErr)
-	}
-	if fresh.State != string(bootInput.initState) {
-		e.ledger.Release(bootInput.insID)
-		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
+		actual := "changed or deleted"
+		if current, err := e.store.InstanceByID(ctx, bootInput.insID); err == nil {
+			actual = current.State
+		}
 		e.log.Warn("wake: state stolen during boot, aborting",
 			"app", bootInput.appID, "instance", bootInput.insID, "wake_id", bootInput.wakeID,
-			"expected", bootInput.initState, "got", fresh.State)
-		return WakeResult{}, fmt.Errorf("sched: wake: state stolen by another transition: was %s, now %s", bootInput.initState, fresh.State)
+			"expected", bootInput.initState, "got", actual)
+		return WakeResult{}, fmt.Errorf("sched: wake: state stolen by another transition: was %s, now %s", bootInput.initState, actual)
 	}
-
-	if err := e.store.SetInstanceRuntime(ctx, bootInput.insID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
+	if publishErr != nil {
 		// Booted but unrecordable — destroy to avoid a resource leak,
 		// then fail. Best-effort with a hard ceiling: a hung
 		// Firecracker can't pin the Wake goroutine forever.
@@ -3136,7 +3203,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			e.ops.WakeFailure("", bootInput.appID, "record_runtime_failed").Inc()
 		}
 		e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
-		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", err)
+		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", publishErr)
 	}
 
 	// ADR-051 Phase 4 / PR-D: persist the workload class the
@@ -3181,13 +3248,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		}
 	}
 
-	e.transition(ctx, bootInput.insID, bootInput.appID, state.StateRunning)
+	e.recordCommittedInstanceTransition(ctx, fresh, bootInput.initState, state.StateRunning, bootInput.appID, "state_transition", "")
 	// A completed wake proves that the deployment can boot again. Clear any
 	// expired snapshot-miss backoff so a later miss starts a fresh sequence;
-	// this is idempotent for deployments that never had a backoff row.
-	if err := e.ClearSnapshotBackoff(ctx, bootInput.depID); err != nil {
-		e.log.Warn("wake: clear snapshot backoff after successful boot", "deployment_id", bootInput.depID, "err", err)
-	}
+	// this is idempotent for deployments that never had a backoff row and does
+	// not need to delay the newly routable target.
+	e.clearSnapshotBackoffAfterWake(ctx, bootInput.depID)
 
 	// ADR-097 (P1B): observe the three schedd-side wake phases.
 	//   - admit_to_rpc = rpcStartedAt - bootInput.startedAt.
@@ -3202,8 +3268,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	//     RPC. Cross-process boundary; the only phase that crosses
 	//     a node-local socket.
 	//   - rpc_to_running = time.Since(rpcEndedAt).
-	//     Covers the bootInput re-read + SetInstanceRuntime +
-	//     audit emit + e.transition work.
+	//     Covers the atomic runtime/RUNNING publish plus notification and
+	//     audit emission.
 	//
 	// All three are observed on the success path only — the error
 	// branches above (engine.go:1795-1838) do not produce a
@@ -3275,6 +3341,32 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	}
 
 	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount}, nil
+}
+
+// markRuntimeArtifactMissing closes a live deployment that cannot ever boot
+// because its immutable rootfs or signature key is absent. Retrying the same
+// content-addressed key cannot heal it; a redeploy is the customer action.
+// The write is detached from a cancelled request and bounded so the durable
+// state does not depend on the caller keeping its HTTP connection open.
+func (e *Engine) markRuntimeArtifactMissing(ctx context.Context, deploymentID, layer string, cause error) *api.Problem {
+	problem := api.NewProblem(503, api.CodeDeployFailed,
+		"Deployment artifact unavailable",
+		fmt.Sprintf("the live deployment artifact %q is missing from platform storage", layer))
+	problem.Hint = "Redeploy the app to publish a new immutable runtime artifact."
+	problem.Why = "The deployment still referenced content that no longer exists in the platform artifact store."
+	problem.Fix = "Run gregale deploy again from the app source or image."
+
+	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	message := problem.Detail
+	if cause != nil {
+		message += ": " + cause.Error()
+	}
+	if _, err := e.store.SetDeploymentFailedEx(markCtx, deploymentID, problem.Code, message,
+		problem.Hint, problem.Why, problem.Fix, nil); err != nil {
+		e.log.Error("wake: mark missing-artifact deployment failed", "deployment", deploymentID, "err", err)
+	}
+	return problem
 }
 
 // bootInput is the immutable bundle of values needed across the
@@ -3709,6 +3801,15 @@ func (e *Engine) RebalanceOrphanedApps(ctx context.Context, deadNodeID string) e
 		// synthetic default-local is the only active owner); do
 		// nothing and let the next cold-boot stamp clean rows.
 		e.log.Info("sched: rebalance skipped — no owner_node_id",
+			"dead_node_id", deadNodeID)
+		return nil
+	}
+	// Every schedd receives the same compute_node_changed notification. The
+	// scheduler on the node being drained must not race its healthy peers and
+	// reassign the orphan back to itself; that keeps public routing pinned to
+	// the node which is about to stop. Live migration already has this guard.
+	if deadNodeID != "" && deadNodeID == e.ownerNodeID {
+		e.log.Info("sched: rebalance skipped — source node cannot reclaim its own apps",
 			"dead_node_id", deadNodeID)
 		return nil
 	}
@@ -4273,9 +4374,19 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: app by id: %w", err)
 	}
-	dep, err := e.store.LiveDeployment(ctx, ins.AppID)
-	if err != nil {
-		return AppSpec{}, fmt.Errorf("sched: build app spec: live deployment: %w", err)
+	var dep state.Deployment
+	if ins.DeploymentID != "" {
+		dep, err = e.store.DeploymentByID(ctx, ins.DeploymentID)
+		if err != nil {
+			return AppSpec{}, fmt.Errorf("sched: build app spec: instance deployment by id: %w", err)
+		}
+	} else {
+		// Legacy instance rows created before deployment correlation was
+		// required retain the previous best-effort live-deployment lookup.
+		dep, err = e.store.LiveDeployment(ctx, ins.AppID)
+		if err != nil {
+			return AppSpec{}, fmt.Errorf("sched: build app spec: live deployment: %w", err)
+		}
 	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
@@ -4729,12 +4840,12 @@ func (e *Engine) dispatchRecovery(ctx context.Context, node state.ComputeNode, i
 // verdict would terminate instances on a node that is merely slow.
 //
 // Per-row safety comes from the conditional UPDATE in
-// FailRunningInstanceOnDeadNode (state = 'running' AND node_id = $2).
-// If the node recovered, or a peer already parked/evicted/migrated the
-// row, RowsAffected() is 0, the store returns ErrConflict, and we count
-// it as a peer-wins no-op rather than second-guessing the state
-// machine. That is the same race-safety contract as
-// ReconcileExpiredMigrations.
+// FailRunningInstanceOnDeadNode: it rechecks state, owner, node liveness,
+// and whether the recovery controller owns the lifecycle. If the node
+// recovered, recovery began, or a peer already parked/evicted/migrated the
+// row, RowsAffected() is 0, the store returns ErrConflict, and we count it
+// as a peer-wins no-op rather than second-guessing the state machine. That
+// is the same race-safety contract as ReconcileExpiredMigrations.
 //
 // FAILED (not PARKED) is the correct terminal state: no snapshot was
 // taken, because the VM died with its host. Claiming PARKED would
@@ -4771,7 +4882,7 @@ func (e *Engine) ReconcileDeadNodeInstances(ctx context.Context) (int, error) {
 
 	reconciled := 0
 	for _, ins := range rows {
-		recErr := e.store.FailRunningInstanceOnDeadNode(ctx, ins.ID, ins.NodeID)
+		recErr := e.store.FailRunningInstanceOnDeadNode(ctx, ins.ID, ins.NodeID, threshold)
 		switch {
 		case recErr == nil:
 			// Release the admission reservation so a replacement
@@ -6576,29 +6687,6 @@ func envSecretsFromDep(dep state.Deployment) map[string]string {
 	return out
 }
 
-// healthcheckPathFromDep (issue #460 / ADR-053, ADR-057 / PR-D) unmarshals
-// dep.OverrideHealthcheck (jsonb column) and returns the readiness probe
-// path. Returns "" when the column is nil (pre-PR-A deployments), when
-// the path field is empty (legacy no-healthcheck), or when the column is
-// malformed (fail-soft to the legacy TCP-accept on :8080). The mirror of
-// envSecretsFromDep above: defensive against a malformed column rather
-// than fail-the-wake, because the apid validator already enforces the
-// shape at INSERT time — a tampered column would need a direct DB write
-// behind the spec's role separation.
-//
-// Returned string is owned by the caller; mutating it does not affect
-// the deployment row.
-func healthcheckPathFromDep(dep state.Deployment) string {
-	if len(dep.OverrideHealthcheck) == 0 {
-		return ""
-	}
-	var hc api.DeploymentHealthcheck
-	if err := json.Unmarshal(dep.OverrideHealthcheck, &hc); err != nil {
-		return ""
-	}
-	return hc.Path
-}
-
 // loadAPIEnv is the plaintext sibling of loadSealedEnv (issue #395 /
 // ADR-045). Reads the per-app app_envs rows for the given scope and
 // flattens them into the fcvm shape Manager.Wake consumes. Same
@@ -7481,6 +7569,7 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 		e.log.Warn("workload_oom: write terminal state",
 			"instance", instanceID, "err", err)
 	}
+	e.releaseHostPortLeases(ctx, freshLocked.NodeID, instanceID)
 	e.emitInstanceChanged(ctx, instanceID, appID, state.StateStopped, "") // wake_id already on the row; the direct-write path doesn't re-load it.
 	if freshLocked.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, deploymentID)
@@ -7693,24 +7782,16 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 	} else if err := updateInstanceStateCAS(ctx, e.store, instanceID, string(from), string(to)); err != nil {
 		return false, err
 	}
-	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
-	// Recovery recreates use this CAS-aware transition to park a
-	// service replica whose source node is gone. Keep the desired-count
-	// reconciler on the same notification path as the non-CAS transition
-	// helper so a no-snapshot recovery does not leave a service below its
-	// configured replica target until an unrelated event arrives.
+	if to == state.StateParked || to == state.StateStopped || to == state.StateFailed {
+		e.releaseHostPortLeases(ctx, ins.NodeID, instanceID)
+	}
+	e.recordCommittedInstanceTransition(ctx, ins, from, to, appID, kind, reason)
+	// Recovery recreates use this CAS-aware transition to park a service
+	// replica whose source node is gone. The ordinary transition helper does
+	// not reconcile intentional PARKED edges, so retain this recovery-only
+	// desired-count notification here.
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
-	}
-	subject := instanceID
-	data, _ := json.Marshal(map[string]any{
-		"from": string(from), "to": string(to), "reason": reason, "ts": time.Now().UTC().Format(time.RFC3339Nano),
-	})
-	if err := e.store.AppendEvent(ctx, "schedd", kind, &subject, data); err != nil {
-		e.log.Warn("transition: append event", "instance", instanceID, "from", from, "to", to, "kind", kind, "err", err)
-		if e.ops != nil {
-			e.ops.EventsWriteFailures().Inc()
-		}
 	}
 	return true, nil
 }
@@ -7753,15 +7834,19 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 		e.log.Warn("transition: write", "instance", instanceID, "to", to, "err", err)
 		return
 	}
-	// Surface the row's wake_id in the SSE payload. The audit-log
-	// caller loaded `ins` at the top of this function precisely to
-	// validate the from→to edge, so reusing it here avoids an extra
-	// round-trip — wake_id is on the row already. Review finding #3
-	// (gaps analysis 2026-07-23): previously the payload carried
-	// wake_id="" for every transition, which meant dashboards
-	// subscribed to instance_changed saw the column go empty as
-	// soon as the instance entered RUNNING.
-	e.emitInstanceChanged(ctx, instanceID, appID, to, ins.WakeID)
+	if to == state.StateParked || to == state.StateStopped || to == state.StateFailed {
+		e.releaseHostPortLeases(ctx, ins.NodeID, instanceID)
+	}
+	e.recordCommittedInstanceTransition(ctx, ins, from, to, appID, kind, reason)
+}
+
+// recordCommittedInstanceTransition runs the notification, reconciliation,
+// and audit side effects after the caller has committed a legal state edge.
+// Keeping these effects separate from the state write lets Wake publish its
+// runtime identity and RUNNING state with one store CAS while preserving the
+// same observable transition contract as transitionWithKind.
+func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins state.Instance, from, to state.State, appID, kind, reason string) {
+	e.emitInstanceChanged(ctx, ins.ID, appID, to, ins.WakeID)
 	if (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
 		ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
@@ -7772,12 +7857,12 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 	// Audit-log emission (spec §6.1). Best-effort: a failure logs
 	// and counts, never rolls back the transition. The state row is
 	// the source of truth; this is observation.
-	subject := instanceID
+	subject := ins.ID
 	data, _ := json.Marshal(map[string]any{
 		"from": string(from), "to": string(to), "reason": reason, "ts": time.Now().UTC().Format(time.RFC3339Nano),
 	})
 	if err := e.store.AppendEvent(ctx, "schedd", kind, &subject, data); err != nil {
-		e.log.Warn("transition: append event", "instance", instanceID, "from", from, "to", to, "kind", kind, "err", err)
+		e.log.Warn("transition: append event", "instance", ins.ID, "from", from, "to", to, "kind", kind, "err", err)
 		if e.ops != nil {
 			e.ops.EventsWriteFailures().Inc()
 		}

@@ -118,7 +118,7 @@ const (
 	jobManifestMaxTimeoutSec  = 5400
 )
 
-func validateJobManifest(m JobManifest) error {
+func validateJobManifest(m JobManifest) error { //nolint:unused // called by the Linux guest supervisor.
 	if m.Kind != "job" {
 		return fmt.Errorf("kind=%q, want job", m.Kind)
 	}
@@ -164,7 +164,7 @@ func validateJobManifest(m JobManifest) error {
 // itself for logging + observability. Matches the precedence
 // rules in runAppWithEnv (systemEnv ⊕ job.Env ⊕ run.env_overrides,
 // with systemEnv winning on conflict).
-var jobEnvBaseline = map[string]string{
+var jobEnvBaseline = map[string]string{ //nolint:unused // consumed by the Linux guest supervisor.
 	"FAAS_JOB":          "1",
 	"FAAS_RUNTIME_KIND": "job",
 }
@@ -181,7 +181,7 @@ var jobEnvBaseline = map[string]string{
 // Returns the merged map converted to the []string form
 // syscall.Exec wants (KEY=VAL pairs, no shell quoting needed
 // because exec.Command takes the argv directly).
-func buildEnvForJob(m JobManifest) []string {
+func buildEnvForJob(m JobManifest) []string { //nolint:unused // called by the Linux guest supervisor.
 	merged := make(map[string]string, len(os.Environ())+len(m.Env)+len(jobEnvBaseline))
 	for _, kv := range os.Environ() {
 		if eq := strings.IndexByte(kv, '='); eq > 0 {
@@ -232,7 +232,7 @@ func buildEnvForJob(m JobManifest) []string {
 // POSIX exit code 128+N convention is what shells return for
 // signal death; if the supervisor captured a signal, that's the
 // authoritative story.
-func mapExitToErrorClass(exitCode int32, signal int32) string {
+func mapExitToErrorClass(exitCode int32, signal int32) string { //nolint:unused // called by the Linux guest supervisor.
 	if exitCode == 0 {
 		return "succeeded"
 	}
@@ -257,4 +257,4 @@ func mapExitToErrorClass(exitCode int32, signal int32) string {
 // per-task manifest to on drive1. Mirror of the literal in
 // pkg/fcvm/job_vmm.go::stageJobManifest. Drift here is a parse
 // error on first cold boot.
-const jobManifestPath = "etc/faas/job.json"
+const jobManifestPath = "etc/faas/job.json" //nolint:unused // opened by the Linux guest supervisor.

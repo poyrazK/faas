@@ -81,7 +81,7 @@ func cmdAuditEvents(args []string) int {
 // [--include-anonymous] [--verbose]`. Returns 0 on success, 2 on
 // operator error (bad flags), 1 on transport / 5xx.
 func cmdAuditEventsList(args []string) int {
-	fs := flag.NewFlagSet("audit-events list", flag.ContinueOnError)
+	fs := newFlagSet("audit-events list", flag.ContinueOnError)
 	kindPrefix := fs.String("kind-prefix", "", "filter by `kind` prefix (e.g. stateless.advisory)")
 	appID := fs.String("app-id", "", "filter to one app's events (matches data.app_id)")
 	since := fs.String("since", "", "RFC 3339 lower bound on `at`")
@@ -136,7 +136,7 @@ func cmdAuditEventsList(args []string) int {
 // mortem needs this — the list is newest-first capped at 100, so a
 // deeply old row is unreachable via scrolling.
 func cmdAuditEventsGet(args []string) int {
-	fs := flag.NewFlagSet("audit-events get", flag.ContinueOnError)
+	fs := newFlagSet("audit-events get", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

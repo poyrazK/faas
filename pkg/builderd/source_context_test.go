@@ -28,3 +28,18 @@ func TestBuildWorkdir(t *testing.T) {
 		t.Fatal("buildWorkdir accepted an escaping source root")
 	}
 }
+
+func TestBuildDockerfilePath(t *testing.T) {
+	t.Parallel()
+	for input, want := range map[string]string{"": "", "Dockerfile": "Dockerfile", "deploy/Dockerfile.production": "deploy/Dockerfile.production"} {
+		got, err := buildDockerfilePath(input)
+		if err != nil || got != want {
+			t.Fatalf("buildDockerfilePath(%q) = %q, %v; want %q", input, got, err, want)
+		}
+	}
+	for _, input := range []string{".", "../Dockerfile", "deploy/../Dockerfile", `/tmp/Dockerfile`, `deploy\\Dockerfile`} {
+		if got, err := buildDockerfilePath(input); err == nil {
+			t.Fatalf("buildDockerfilePath(%q) = %q, want error", input, got)
+		}
+	}
+}

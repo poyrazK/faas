@@ -18,7 +18,12 @@ import (
 
 const catalogPath = "docs/customer-pages.json"
 
-var docsURLRE = regexp.MustCompile(`https://(?:gregale\.dev/docs|docs\.gregale\.dev)(/[A-Za-z0-9._~/%-]*)?`)
+var docsURLRE = regexp.MustCompile(`https://gregale\.dev/docs(/[A-Za-z0-9._~/%-]*)?`)
+
+// Keep the obsolete origin split in source so the checker does not match its
+// own guard. pkg/wire retains the bare host solely to normalize responses from
+// older servers; no production surface may emit this URL anymore.
+const legacyDocsURL = "https://docs." + "gregale.dev"
 
 type catalog struct {
 	Version int     `json:"version"`
@@ -131,7 +136,7 @@ func matchRoute(routes []route, path string) (route, bool) {
 
 func collectLinks() ([]link, error) {
 	var links []link
-	for _, root := range []string{"api", "cmd", "pkg", "docs"} {
+	for _, root := range []string{"api", "cmd", "pkg", "docs", "deploy", "sdk"} {
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -143,12 +148,17 @@ func collectLinks() ([]link, error) {
 				return nil
 			}
 			ext := filepath.Ext(path)
-			if ext != ".go" && ext != ".yaml" && ext != ".yml" && ext != ".md" && ext != ".json" {
+			switch ext {
+			case ".go", ".yaml", ".yml", ".md", ".json", ".mjs", ".js", ".ts", ".py", ".html", ".service", ".toml", ".txt":
+			default:
 				return nil
 			}
 			b, readErr := os.ReadFile(path)
 			if readErr != nil {
 				return readErr
+			}
+			if isProductionSurface(path) && strings.Contains(string(b), legacyDocsURL) {
+				return fmt.Errorf("%s emits obsolete documentation origin %q", path, legacyDocsURL)
 			}
 			for _, match := range docsURLRE.FindAllStringSubmatch(string(b), -1) {
 				route := strings.Trim(match[1], "/")
@@ -162,4 +172,14 @@ func collectLinks() ([]link, error) {
 		}
 	}
 	return links, nil
+}
+
+func isProductionSurface(path string) bool {
+	if path == "pkg/wire/docs.go" || strings.HasSuffix(path, "_test.go") {
+		return false
+	}
+	if strings.HasPrefix(path, "docs/") || strings.Contains(path, "/testdata/") {
+		return false
+	}
+	return true
 }

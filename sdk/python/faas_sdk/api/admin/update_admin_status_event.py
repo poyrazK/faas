@@ -114,8 +114,8 @@ def sync_detailed(
         public_id (UUID):
         idempotency_key (str):
         faas_sid (str | Unset):
-        body (AdminStatusEventUpdateRequest): Operator request to append a plain-text lifecycle
-            update.
+        body (AdminStatusEventUpdateRequest): Operator request to append a lifecycle update and
+            optionally re-rate its impact or affected components.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -155,8 +155,8 @@ def sync(
         public_id (UUID):
         idempotency_key (str):
         faas_sid (str | Unset):
-        body (AdminStatusEventUpdateRequest): Operator request to append a plain-text lifecycle
-            update.
+        body (AdminStatusEventUpdateRequest): Operator request to append a lifecycle update and
+            optionally re-rate its impact or affected components.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -191,8 +191,8 @@ async def asyncio_detailed(
         public_id (UUID):
         idempotency_key (str):
         faas_sid (str | Unset):
-        body (AdminStatusEventUpdateRequest): Operator request to append a plain-text lifecycle
-            update.
+        body (AdminStatusEventUpdateRequest): Operator request to append a lifecycle update and
+            optionally re-rate its impact or affected components.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -230,8 +230,8 @@ async def asyncio(
         public_id (UUID):
         idempotency_key (str):
         faas_sid (str | Unset):
-        body (AdminStatusEventUpdateRequest): Operator request to append a plain-text lifecycle
-            update.
+        body (AdminStatusEventUpdateRequest): Operator request to append a lifecycle update and
+            optionally re-rate its impact or affected components.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

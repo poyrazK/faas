@@ -1,4 +1,6 @@
 # .github/workflows/cd-compute.yml — adopt or roll a compute-only host.
+# Production platform releases are orchestrated by cd-platform.yml; this is a
+# reusable stage and an independently dispatchable repair path.
 #
 # This workflow is deliberately provider-neutral. The provider creates the
 # machine and supplies its SSH address; the existing gregalectl join pipeline
@@ -13,6 +15,72 @@
 name: cd-compute
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Existing signed pre-1.0 release tag"
+        required: true
+        type: string
+      claim_file:
+        description: "Path to a ComputeNodeClaim in the selected release source"
+        required: false
+        default: ""
+        type: string
+      fleet_bundle_url:
+        description: "HTTPS URL for a privately hosted, signed FleetEnrollmentBundle"
+        required: false
+        default: ""
+        type: string
+      fleet_bundle_signature_url:
+        description: "HTTPS URL for the FleetEnrollmentBundle signature"
+        required: false
+        default: ""
+        type: string
+      fleet_bundle_sha256:
+        description: "sha256 digest of the FleetEnrollmentBundle"
+        required: false
+        default: ""
+        type: string
+      node:
+        description: "Manifest compute node name"
+        required: false
+        default: ""
+        type: string
+      ssh_host:
+        description: "Provider SSH address for a legacy dispatch"
+        required: false
+        default: ""
+        type: string
+      ssh_user:
+        description: "SSH user"
+        required: false
+        default: root
+        type: string
+      ssh_port:
+        description: "SSH port"
+        required: false
+        default: "22"
+        type: string
+      ssh_host_key_sha256:
+        description: "Expected OpenSSH host-key fingerprint"
+        required: false
+        default: ""
+        type: string
+      storage_device:
+        description: "Optional stable storage device path"
+        required: false
+        default: ""
+        type: string
+      format_storage:
+        description: "Format the explicitly supplied blank storage device as XFS"
+        required: false
+        default: false
+        type: boolean
+      skip_fleet_preflight:
+        description: "Reuse a recent successful full-fleet preflight"
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       release_tag:
@@ -104,6 +172,7 @@ jobs:
       format_storage: ${{ steps.resolve_bundle.outputs.format_storage || steps.resolve_claim.outputs.format_storage || steps.resolve_legacy.outputs.format_storage }}
     env:
       COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+      COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
       COMPUTE_DATABASE_URL: ${{ secrets.COMPUTE_DATABASE_URL }}
       COMPUTE_STORAGE_ENV: ${{ secrets.COMPUTE_STORAGE_ENV }}
       COMPUTE_PKI_TARBALL_B64: ${{ secrets.COMPUTE_PKI_TARBALL_B64 }}
@@ -333,7 +402,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in COMPUTE_SSH_KEY COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV \
+          for name in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV \
             COMPUTE_PKI_TARBALL_B64 COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::production secret $name is not configured" >&2
@@ -419,6 +488,7 @@ jobs:
       # These are environment secrets, not repository files. The runner
       # must be trusted and should be ephemeral or dedicated to deployments.
       COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+      COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
       COMPUTE_DATABASE_URL: ${{ secrets.COMPUTE_DATABASE_URL }}
       # The operator CLI registers the release and activates the node from
       # the runner, so it also needs the same DSN in its process environment.
@@ -432,6 +502,8 @@ jobs:
       COMPUTE_BOX_AGE_KEY: ${{ secrets.COMPUTE_BOX_AGE_KEY }}
       COMPUTE_RCLONE_ENVELOPE_B64: ${{ secrets.COMPUTE_RCLONE_ENVELOPE_B64 }}
       COMPUTE_ARCHIVE_ENVELOPE_B64: ${{ secrets.COMPUTE_ARCHIVE_ENVELOPE_B64 }}
+      FLEET_AGE_KEY: ${{ secrets.FLEET_AGE_KEY }}
+      FLEET_AGE_RECIPIENT: ${{ secrets.FLEET_AGE_RECIPIENT }}
 
     steps:
       - name: Check out the release source and Ansible roles
@@ -554,8 +626,9 @@ jobs:
       - name: Assemble the standard join artifact directory
         run: |
           set -euo pipefail
-          for required in COMPUTE_SSH_KEY COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV \
-            COMPUTE_PKI_TARBALL_B64 COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY; do
+          for required in COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS COMPUTE_DATABASE_URL COMPUTE_STORAGE_ENV \
+            COMPUTE_PKI_TARBALL_B64 COMPUTE_SIGN_KEY COMPUTE_VERIFY_KEY \
+            FLEET_AGE_KEY FLEET_AGE_RECIPIENT; do
             [[ -n "${!required:-}" ]] || {
               echo "::error::production secret $required is not configured" >&2
               exit 1
@@ -581,6 +654,11 @@ jobs:
 
           umask 077
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$ARTIFACT_DIR/compute-ssh-key"
+          # Pin every stable fleet endpoint from one operator-owned trust set.
+          # join-node adds the selected provider endpoint only after checking
+          # its separately authorized fingerprint.
+          printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$ARTIFACT_DIR/compute-known-hosts"
+          chmod 0600 "$ARTIFACT_DIR/compute-known-hosts"
           printf '%s\n' "DATABASE_URL=$COMPUTE_DATABASE_URL" > "$ARTIFACT_DIR/compute-db.env"
           # vmmd intentionally reads its explicit split-box override while
           # the operator CLI and the other compute daemons use DATABASE_URL.
@@ -590,6 +668,12 @@ jobs:
           printf '%s\n' "$COMPUTE_STORAGE_ENV" > "$ARTIFACT_DIR/storage.env"
           printf '%s\n' "$COMPUTE_SIGN_KEY" > "$ARTIFACT_DIR/sign.key"
           printf '%s\n' "$COMPUTE_VERIFY_KEY" > "$ARTIFACT_DIR/sign-pub.pem"
+          # Keep the age identity byte-exact: the strict fleet-seal parser
+          # rejects a trailing newline in the secret key.
+          printf '%s' "$FLEET_AGE_KEY" > "$ARTIFACT_DIR/fleet.age"
+          printf '%s' "$FLEET_AGE_RECIPIENT" > "$ARTIFACT_DIR/fleet.age.pub"
+          chmod 0400 "$ARTIFACT_DIR/fleet.age"
+          chmod 0444 "$ARTIFACT_DIR/fleet.age.pub"
 
           printf '%s' "$COMPUTE_PKI_TARBALL_B64" | base64 --decode > "$RUNNER_TEMP/compute-pki.tar.gz"
           if tar -tzf "$RUNNER_TEMP/compute-pki.tar.gz" | grep -Eq '(^/|(^|/)\.\./)'; then
@@ -700,6 +784,7 @@ jobs:
             --manifest-file "$ARTIFACT_DIR/production-manifest.yaml"
             --node "$NODE"
             --ssh-key "$ARTIFACT_DIR/compute-ssh-key"
+            --ssh-known-hosts-file "$ARTIFACT_DIR/compute-known-hosts"
             --release-tarball "$ARTIFACT_DIR/release.tar.gz"
             --artifact-dir "$ARTIFACT_DIR"
             --repo-root "$GITHUB_WORKSPACE"
@@ -755,6 +840,17 @@ jobs:
           fi
           "$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"
 
+      - name: Verify compute OCI cache uses fast storage after activation
+        run: |
+          set -euo pipefail
+          ssh -i "$ARTIFACT_DIR/compute-ssh-key" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ARTIFACT_DIR/compute-known-hosts" \
+            "${SSH_USER}@${SSH_HOST}" \
+            "sudo -n bash -ceu 'mountpoint -q /var/lib/faas/cache; test \"\$(stat -c %d /var/lib/faas/cache)\" = \"\$(stat -c %d /srv/fc)\"; test \"\$(findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache)\" = xfs; xfs_info /srv/fc | grep -Eq \"(^|[[:space:]])reflink=1(\$|[[:space:]])\"'"
+
       - name: Verify private compute gateway reachability
         run: |
           set -euo pipefail
@@ -779,8 +875,26 @@ jobs:
           curl --fail --silent --show-error \
             --retry 10 --retry-delay 1 --retry-all-errors \
             --connect-timeout 2 --max-time 3 \
-            --header 'Host: health-probe.invalid' \
+            --header 'Host: gatewayd-internal.faas' \
             "http://${gateway_host}:8080/healthz" >/dev/null
+
+          metrics_body="$RUNNER_TEMP/compute-gateway-metrics.prom"
+          curl --fail --silent --show-error \
+            --retry 10 --retry-delay 1 --retry-all-errors \
+            --connect-timeout 2 --max-time 3 \
+            --header 'Host: gatewayd-internal.faas' \
+            "http://${gateway_host}:8080/v1/internal/metrics" >"$metrics_body"
+          grep -q '^# HELP gateway_compute_node_changed_subscriber_alive ' "$metrics_body" || {
+            echo "::error::compute gateway metrics endpoint returned no gatewayd metric family" >&2
+            exit 1
+          }
+
+          # Meterd dials schedd telemetry directly on the private network.
+          # Prove the newly allowed listener before declaring the node ready.
+          if ! timeout 3 bash -c "</dev/tcp/${gateway_host}/9091"; then
+            echo "::error::compute schedd telemetry port 9091 is unreachable from the fleet runner" >&2
+            exit 1
+          fi
 
       - name: Show post-join identity without exposing secrets
         if: always()

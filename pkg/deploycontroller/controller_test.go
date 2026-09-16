@@ -90,6 +90,31 @@ func TestDeployAcceptsSBOMBaselineInCurrentRelease(t *testing.T) {
 	}
 }
 
+func TestDeployExactActiveReleaseIsIdempotentAfterVerification(t *testing.T) {
+	root := t.TempDir()
+	release := makeRelease(t, root, "current")
+	current := filepath.Join(root, "active")
+	if err := os.Symlink(release, current); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeRuntime{}
+	controller := newController(t, root, current, runtime)
+
+	if err := controller.Deploy(context.Background(), "current"); err != nil {
+		t.Fatalf("idempotent Deploy: %v", err)
+	}
+	if len(runtime.calls) != 0 {
+		t.Fatalf("runtime calls = %v, want no activation work for exact active release", runtime.calls)
+	}
+
+	if err := os.WriteFile(filepath.Join(release, "bin", "apid"), []byte("tampered"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.Deploy(context.Background(), "current"); err == nil || !strings.Contains(err.Error(), "verify release") {
+		t.Fatalf("tampered active Deploy error = %v, want verification failure", err)
+	}
+}
+
 func TestDeployRollsBackOnHealthFailure(t *testing.T) {
 	root := t.TempDir()
 	makeRelease(t, root, "new")

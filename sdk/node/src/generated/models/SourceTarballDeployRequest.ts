@@ -16,6 +16,10 @@ export type SourceTarballDeployRequest = {
    */
   ref?: string | null;
   /**
+   * Registered project environment to target for this local tarball deployment.
+   */
+  environment?: string;
+  /**
    * Free-form operator note on the tarball deploy request (≤280 chars). Example: 'Emergency rollback after payment provider incident'.
    */
   reason?: string;

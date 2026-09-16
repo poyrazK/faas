@@ -1,4 +1,6 @@
 # cd-controlplane.yml — deploy a selected signed release to the control plane.
+# Production platform releases are orchestrated by cd-platform.yml; this is a
+# reusable stage and an independently dispatchable repair path.
 #
 # Prerequisites (GitHub repo Settings → Secrets):
 #   CP_SSH_KEY (or DO_SSH_KEY) — ed25519 private key (PR-1: previously generated
@@ -22,6 +24,12 @@
 name: cd-controlplane
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Existing pre-1.0 release tag published by release.yml"
+        required: true
+        type: string
   workflow_dispatch:  # manual trigger for deliberate deployment
     inputs:
       release_tag:
@@ -210,9 +218,11 @@ jobs:
           for unit in \
             faas-apid.service \
             faas-cp.slice \
+            faas-gatewayd-public.socket \
             faas-gatewayd-public.service \
             faas-githubd.service \
             faas-meterd.service \
+            faas-outboundd.service \
             faas-schedd.service; do
             # Look up the unit in the v2 role files/ trees. The role
             # ownership is the source of truth for the CP subset; deployctl
@@ -237,12 +247,40 @@ jobs:
             fi
             install -m 0644 "${src}" "${BUNDLE_ROOT}/systemd/${unit}"
           done
+          # Files required before deployctl can activate outboundd. Keep the
+          # role/billing overrides inside the signed bundle so the standalone
+          # control-plane path applies the same public-beta posture as Ansible.
+          install -d -m 0755 "${BUNDLE_ROOT}/host-config"
+          install -m 0644 \
+            deploy/ansible/roles/control_plane_service/files/outboundd.toml.example \
+            "${BUNDLE_ROOT}/host-config/outboundd.toml"
+          install -d -m 0755 \
+            "${BUNDLE_ROOT}/systemd/faas-outboundd.service.d" \
+            "${BUNDLE_ROOT}/systemd/faas-apid.service.d" \
+            "${BUNDLE_ROOT}/systemd/faas-meterd.service.d"
+          cat > "${BUNDLE_ROOT}/systemd/faas-outboundd.service.d/99-faas-role.conf" <<'EOF'
+          [Service]
+          Environment=FAAS_OUTBOUNDD_ROLE=control-plane
+          EOF
+          for service in faas-apid faas-meterd; do
+            cat > "${BUNDLE_ROOT}/systemd/${service}.service.d/zz-faas-billing-mode.conf" <<'EOF'
+          [Service]
+          Environment=FAAS_BILLING_MODE=disabled
+          EOF
+          done
+          cat > "${BUNDLE_ROOT}/systemd/faas-apid.service.d/zz-faas-public-status.conf" <<'EOF'
+          [Service]
+          Environment=FAAS_PUBLIC_STATUS_LAUNCH_AT=2026-09-14T00:00:00Z
+          EOF
           # Tier A7 split: faas-gatewayd.service (the v1 monolithic unit)
           # was removed in PR-A (ADR-070). The CD refuses to ship a
           # leftover copy.
           test ! -e "${BUNDLE_ROOT}/systemd/faas-gatewayd.service"
           install -m 0644 deploy/ansible/roles/control_plane_service/files/faas.conf \
             "${BUNDLE_ROOT}/tmpfiles.d/faas.conf"
+          install -m 0755 deploy/scripts/faas-pg-backup-contract-preflight.sh \
+            "${BUNDLE_ROOT}/host-config/faas-pg-backup-contract-preflight.sh"
+          install -m 0644 docs/DPA.md "${BUNDLE_ROOT}/host-config/dpa.md"
           install -m 0644 deploy/statuspage/index.html \
             "${BUNDLE_ROOT}/statuspage/index.html"
           "${BUNDLE_ROOT}/bin/deployctl" bundle-create "${BUNDLE_ROOT}" "${RELEASE_ID}" "${RELEASE_ID}" "linux/amd64"
@@ -291,6 +329,114 @@ jobs:
             syft version
           '
 
+      - name: Reject production dev bootstrap variables
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" 'bash -se' <<'REMOTE'
+          sealed=/etc/faas/sealed.env
+          test -f "$sealed"
+          if grep -qE '^FAAS_(DEV|DEV_TOKEN)=' "$sealed"; then
+            echo "production sealed.env contains a forbidden dev-only auth/bootstrap variable" >&2
+            exit 1
+          fi
+          archive=/etc/faas/secrets/storage-box/archive-creds.json
+          test -s "$archive" || {
+            echo "production log archive credentials are missing" >&2
+            exit 1
+          }
+          python3 - "$archive" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              data = json.load(stream)
+          assert all(isinstance(data.get(key), str) and data[key].strip() for key in ("endpoint", "bucket"))
+          hmac = all(isinstance(data.get(key), str) and data[key].strip() for key in ("key_id", "secret"))
+          metadata = data.get("auth_mode") == "gcp_metadata" and not data.get("key_id") and not data.get("secret")
+          assert hmac or metadata
+          PY
+          REMOTE
+
+      - name: Stage the shared fleet seal identity
+        env:
+          FLEET_AGE_KEY: ${{ secrets.FLEET_AGE_KEY }}
+          FLEET_AGE_RECIPIENT: ${{ secrets.FLEET_AGE_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          [[ -n "${FLEET_AGE_KEY:-}" && -n "${FLEET_AGE_RECIPIENT:-}" ]] || {
+            echo "::error::production secrets FLEET_AGE_KEY and FLEET_AGE_RECIPIENT are required" >&2
+            exit 1
+          }
+          stage="$RUNNER_TEMP/fleet-age"
+          install -d -m 0700 "$stage"
+          # Age identities are byte-exact single-line values. A trailing
+          # newline makes the strict fleet-seal parser reject the key.
+          printf '%s' "$FLEET_AGE_KEY" > "$stage/fleet.age"
+          printf '%s' "$FLEET_AGE_RECIPIENT" > "$stage/fleet.age.pub"
+          chmod 0400 "$stage/fleet.age"
+          chmod 0444 "$stage/fleet.age.pub"
+          remote_stage="/tmp/gregale-fleet-age-${GITHUB_RUN_ID}"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" "install -d -m 0700 '$remote_stage'"
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "$stage/fleet.age" "$stage/fleet.age.pub" \
+            "root@${{ env.CP_HOST }}:${remote_stage}/"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" "bash -s -- '$remote_stage'" <<'REMOTE'
+          set -euo pipefail
+          stage="$1"
+          trap 'rm -rf -- "$stage"' EXIT
+          grep -qE '^AGE-SECRET-KEY-1[0-9A-Z]+$' "$stage/fleet.age"
+          grep -qE '^age1[0-9a-z]+$' "$stage/fleet.age.pub"
+          install -d -o root -g root -m 0700 /etc/faas/secrets
+          for file in fleet.age fleet.age.pub; do
+            if [[ -e "/etc/faas/secrets/$file" ]] && ! cmp -s "$stage/$file" "/etc/faas/secrets/$file"; then
+              echo "existing $file differs; use the coordinated fleet-seal rotation procedure" >&2
+              exit 1
+            fi
+          done
+          install -o root -g root -m 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
+          install -o root -g root -m 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
+
+          # Keep both the incoming release and an older rollback release able
+          # to read the public recipients while /etc/faas/secrets stays 0700.
+          # This drop-in is host state, so deployctl preserves it across the
+          # release unit install and any rollback.
+          install -d -o root -g root -m 0755 /etc/systemd/system/faas-apid.service.d
+          cat > /etc/faas/apid-age-recipients.env <<'RECIPIENTS'
+          FAAS_FLEET_AGE_RECIPIENT_PATH=/run/credentials/faas-apid.service/cd_fleet_age_recipient
+          FAAS_HOST_AGE_RECIPIENT_PATH=/run/credentials/faas-apid.service/cd_host_age_recipient
+          RECIPIENTS
+          chown root:root /etc/faas/apid-age-recipients.env
+          chmod 0644 /etc/faas/apid-age-recipients.env
+          cat > /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf <<'CREDENTIALS'
+          [Service]
+          LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
+          LoadCredential=cd_host_age_recipient:/etc/faas/secrets/host.age.pub
+          EnvironmentFile=/etc/faas/apid-age-recipients.env
+          CREDENTIALS
+          chmod 0644 /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf
+
+          install -d -o root -g root -m 0755 /etc/systemd/system/faas-schedd.service.d
+          cat > /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf <<'CREDENTIALS'
+          [Service]
+          LoadCredential=cd_sign_pub:/etc/faas/secrets/sign-pub.pem
+          Environment=FAAS_SIGN_PUB=%d/cd_sign_pub
+          CREDENTIALS
+          chmod 0644 /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf
+
+          install -d -o root -g root -m 0755 /etc/systemd/system/faas-githubd.service.d
+          cat > /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf <<'CREDENTIALS'
+          [Service]
+          LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
+          LoadCredential=cd_github_app_key:/etc/faas/secrets/githubd/app.pem
+          Environment=FAAS_HOST_AGE_PUB=%d/cd_fleet_age_recipient
+          Environment=FAAS_GITHUB_APP_KEY_PATH=%d/cd_github_app_key
+          CREDENTIALS
+          chmod 0644 /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf
+          REMOTE
+
       - name: Upload and activate immutable release
         run: |
           set -euo pipefail
@@ -315,15 +461,71 @@ jobs:
             scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -r \
               "${BUNDLE_ROOT}/." "root@${{ env.CP_HOST }}:${release_dir}/"
           fi
+          # outboundd was added after the original controller-managed host
+          # bootstrap. Converge its least-privilege runtime prerequisites
+          # before deployctl enables the release's authoritative unit set.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} "bash -s -- '${release_dir}'" <<'REMOTE'
+          set -euo pipefail
+          release_dir="$1"
+          getent group faas >/dev/null
+          if ! id faas-outboundd >/dev/null 2>&1; then
+            useradd --system --gid faas --shell /usr/sbin/nologin \
+              --no-create-home faas-outboundd
+          fi
+          if [[ ! -f /etc/faas/outboundd.toml ]]; then
+            install -o root -g faas -m 0640 \
+              "$release_dir/host-config/outboundd.toml" \
+              /etc/faas/outboundd.toml
+          fi
+          install -d -o root -g root -m 0700 /etc/faas/secrets/outboundd
+          outbound_env="$(mktemp /etc/faas/secrets/outboundd/.outboundd.env.XXXXXX)"
+          trap 'rm -f "$outbound_env"' EXIT
+          grep -E '^DATABASE_URL=.+' /etc/faas/sealed.env > "$outbound_env"
+          [[ "$(wc -l < "$outbound_env")" -eq 1 ]]
+          chown root:root "$outbound_env"
+          chmod 0400 "$outbound_env"
+          mv -f "$outbound_env" /etc/faas/secrets/outboundd/outboundd.env
+          trap - EXIT
+
+          ident_file="$(sudo -u postgres psql -X -A -t -c 'show ident_file')"
+          if ! grep -qE '^faas_map[[:space:]]+faas-outboundd[[:space:]]+faas$' "$ident_file"; then
+            printf 'faas_map  faas-outboundd  faas\n' >> "$ident_file"
+            systemctl reload postgresql@16-main.service
+          fi
+          REMOTE
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             root@${{ env.CP_HOST }} \
             "${release_dir}/bin/deployctl bundle-check ${release_dir} &&
+             if test ! -s /opt/faas/releases/sbom-baseline.json; then
+               current_release=\$(readlink -f /opt/faas/current 2>/dev/null || true);
+               if test -n \"\$current_release\" && test -s \"\$current_release/release.sbom.json\"; then
+                 baseline_sha=\$(basename \"\$current_release\");
+               else
+                 baseline_sha=${RELEASE_ID};
+               fi;
+               ${release_dir}/bin/gregalectl release kgv rotate --git-sha \"\$baseline_sha\";
+             fi &&
+             ${release_dir}/bin/gregalectl release kgv verify --git-sha ${RELEASE_ID} &&
+             ${release_dir}/bin/gregalectl fleet-seal migrate --fleet-key /etc/faas/secrets/fleet.age --legacy-host-dir /etc/faas/secrets --db-env /etc/faas/sealed.env --json &&
+             verify_json=\$(${release_dir}/bin/gregalectl fleet-seal verify --fleet-key /etc/faas/secrets/fleet.age --host-key /etc/faas/secrets/host.age --db-env /etc/faas/sealed.env --metrics-file /var/lib/node_exporter/textfile_collector/faas_fleet_seal.prom --json) &&
+             test \"\$(printf '%s' \"\$verify_json\" | jq -r .fleet_recipient)\" = \"\$(tr -d '\\r\\n' </etc/faas/secrets/fleet.age.pub)\" &&
+             printf '%s\\n' \"\$verify_json\" &&
              ${release_dir}/bin/deployctl deploy ${RELEASE_ID} &&
              install -d -o faas-apid -g faas -m 0770 /etc/faas/statuspage &&
              install -o root -g faas -m 0644 ${release_dir}/statuspage/index.html /etc/faas/statuspage/.index.html-${RELEASE_ID} &&
              mv -Tf /etc/faas/statuspage/.index.html-${RELEASE_ID} /etc/faas/statuspage/index.html &&
+             install -o root -g faas -m 0644 ${release_dir}/host-config/dpa.md /etc/faas/.dpa.md-${RELEASE_ID} &&
+             mv -Tf /etc/faas/.dpa.md-${RELEASE_ID} /etc/faas/dpa.md &&
              ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID} &&
              mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl"
+
+      - name: Verify PostgreSQL backup namespace contract
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "root@${{ env.CP_HOST }}" \
+            "/opt/faas/current/host-config/faas-pg-backup-contract-preflight.sh"
 
       - name: Converge Prometheus config and rules
         run: |
@@ -391,10 +593,15 @@ jobs:
             exit 1
           fi
 
+          # A platform rollout deliberately updates the control plane before
+          # compute. During that mixed-version window, compute-only scrape
+          # jobs can be down because their endpoint or firewall change has not
+          # landed yet. Gate every control-plane target here; cd-platform runs
+          # the complete target and metering gate after cd-compute succeeds.
           targets_healthy=0
           for _ in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:9095/api/v1/targets |
-              python3 -c 'import json,sys; targets=json.load(sys.stdin)["data"]["activeTargets"]; raise SystemExit(0 if targets and all(t.get("health") == "up" for t in targets) else 1)'; then
+              python3 -c 'import json,sys; compute={"gatewayd-internal","vmmd","imaged","builderd","node-compute","promtail-compute"}; targets=json.load(sys.stdin)["data"]["activeTargets"]; control=[t for t in targets if t.get("labels",{}).get("job") not in compute]; raise SystemExit(0 if control and all(t.get("health") == "up" for t in control) else 1)'; then
               targets_healthy=1
               break
             fi
@@ -410,7 +617,10 @@ jobs:
           status_valid=0
           for _ in $(seq 1 10); do
             if curl -fsS http://127.0.0.1:8080/status/slo.json -o "$status_body" &&
-              python3 -c 'import json,math,sys; d=json.load(open(sys.argv[1])); values=[d["api_availability_pct"],d["wake_p95_ms"],d["build_success_pct"]]; raise SystemExit(0 if all(isinstance(v,(int,float)) and math.isfinite(v) for v in values) else 1)' "$status_body"; then
+              # An idle window has no wake sample and correctly reports null.
+              # API/build metrics are always required; a reported wake value
+              # must be numeric and finite.
+              python3 -c 'import json,math,sys; d=json.load(open(sys.argv[1])); required=[d["api_availability_pct"],d["build_success_pct"]]; wake=d["wake_p95_ms"]; valid=lambda v:isinstance(v,(int,float)) and math.isfinite(v); raise SystemExit(0 if all(valid(v) for v in required) and (wake is None or valid(wake)) else 1)' "$status_body"; then
               status_valid=1
               break
             fi
@@ -440,5 +650,12 @@ jobs:
             done
             journalctl -u faas-s3-gatewayd.service -n 100 --no-pager >&2
             exit 1'
+
+      - name: Accept activated release SBOM baseline
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            root@${{ env.CP_HOST }} \
+            "/opt/faas/current/bin/gregalectl release kgv rotate --git-sha '${RELEASE_ID}'"
 
       # Legacy mutable upload/restart steps removed; deployment is handled by the immutable release controller above.

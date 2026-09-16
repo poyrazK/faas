@@ -29,11 +29,14 @@ import (
 // init-tier targets delete SnapMemKey + SnapVMStateKey. The shared per-app
 // ext4 is deleted only after the deployment has no remaining snapshot tier.
 type deleteTarget struct {
-	StorageKey   string
-	ID           string
-	DeploymentID string
-	AppSlug      string
-	Tier         string
+	StorageKey       string
+	ID               string
+	DeploymentID     string
+	AppID            string
+	AccountID        string
+	AppSlug          string
+	DeploymentStatus state.DeploymentStatus
+	Tier             string
 }
 
 // perAppKeepTierFloor (issue #470 / PR C / ADR-074) returns the
@@ -206,11 +209,14 @@ func perAppKeepRollbackWindow(rows []state.SnapshotForGC, keepDeployments int) [
 
 func targetForSnapshot(r state.SnapshotForGC) deleteTarget {
 	return deleteTarget{
-		ID:           r.ID,
-		DeploymentID: r.DeploymentID,
-		StorageKey:   r.StorageKey,
-		AppSlug:      r.AppSlug,
-		Tier:         r.Tier,
+		ID:               r.ID,
+		DeploymentID:     r.DeploymentID,
+		AppID:            r.AppID,
+		AccountID:        r.AccountID,
+		StorageKey:       r.StorageKey,
+		AppSlug:          r.AppSlug,
+		DeploymentStatus: r.DeploymentStatus,
+		Tier:             r.Tier,
 	}
 }
 

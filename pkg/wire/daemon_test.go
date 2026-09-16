@@ -91,6 +91,40 @@ func TestDaemon_HelpFlag(t *testing.T) {
 	}
 }
 
+func TestDaemonDoesNotStampProcessGlobalRequestID(t *testing.T) {
+	if os.Getenv("WIRE_REQUEST_ID_CHILD") == "1" {
+		wire.Daemon("testd", func(_ context.Context, log *slog.Logger) error {
+			log.Info("request one", "request_id", "request-1")
+			log.Info("request two", "request_id", "request-2")
+			return nil
+		})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestDaemonDoesNotStampProcessGlobalRequestID")
+	cmd.Env = append(os.Environ(), "WIRE_REQUEST_ID_CHILD=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("child failed: %v\n%s", err, out)
+	}
+	var requestLines []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.Contains(line, `"msg":"request `) {
+			requestLines = append(requestLines, line)
+		}
+		if !strings.Contains(line, `"msg":"request `) && strings.Contains(line, `"request_id":`) {
+			t.Errorf("background daemon log inherited request_id: %s", line)
+		}
+	}
+	if len(requestLines) != 2 {
+		t.Fatalf("request log lines = %v", requestLines)
+	}
+	for i, want := range []string{"request-1", "request-2"} {
+		if strings.Count(requestLines[i], `"request_id":`) != 1 || !strings.Contains(requestLines[i], `"request_id":"`+want+`"`) {
+			t.Errorf("request line %d has ambiguous id: %s", i, requestLines[i])
+		}
+	}
+}
+
 func TestLogger_JSONToStderr(t *testing.T) {
 	// Redirect stderr to capture slog output for the duration of the call.
 	r, w, err := os.Pipe()

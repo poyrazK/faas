@@ -6,7 +6,6 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
-| [`admin`](#admin) | Operator-only billing ops (admin credit\|refund\|consume-credits) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`apps`](#apps) | List your apps |
@@ -31,7 +30,6 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync the dirty working tree to a stable remote developer environment |
 | [`preview`](#preview) | Manage preview environments (Mega-C PR-1 / issue #961 leaf 3) |
-| [`tenant-surfaces`](#tenant-surfaces) | Manage tenant surfaces (multi-hostname SAN bundle per app) |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
 | [`env`](#env) | Pull/push .env &lt;-&gt; sealed secrets (--app &lt;slug&gt;) |
@@ -48,7 +46,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`login`](#login) | Authenticate this machine (--token for CI) |
 | [`logout`](#logout) | Remove the stored token |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
-| [`logs`](#logs) | Tail app or deployment logs (--follow) |
+| [`logs`](#logs) | Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the follow alias) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (gregale metrics &lt;slug&gt; [--range 5m] \| --account) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
@@ -57,15 +55,13 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances) |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
-| [`postgres`](#postgres) | Operator preview: manage PostgreSQL databases and bindings |
 | [`ps`](#ps) | Show live instances + state for an app |
 | [`queue`](#queue) | Inspect the wake-queue depth (queue tail\|send\|receive\|state\|peek\|dead-letter\|ack) |
 | [`registry`](#registry) | Per-app private container registry credentials (registry list\|set\|rm --app &lt;slug&gt;) |
 | [`rollback`](#rollback) | Re-promote the previous deployment |
-| [`rollouts`](#rollouts) | Operator manual rollout recovery (rollouts recover &lt;slug&gt; --action advance\|promote\|abort --reason &lt;text&gt;) |
+| [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
 | [`secrets`](#secrets) | Manage env secrets (secrets list\|set\|unset\|list-all\|rotate) |
-| [`github-webhook-secret`](#github-webhook-secret) | Manage legacy installation-scoped webhook secrets (admin) |
 | [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]) |
 | [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
 | [`tail`](#tail) | Live tail of the unified event stream |
@@ -75,11 +71,11 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`config`](#config) | Manage non-secret local CLI settings (config get\|set\|list) |
 | [`wake-timeline`](#wake-timeline) | Walk the per-wake event stream (wake-timeline &lt;slug&gt; &lt;wake-id&gt; [--since RFC3339] [--limit N] [--all]) |
 | [`throttle-suggestions`](#throttle-suggestions) | Per-route throttle recommendations + dry-run preview (gregale throttle-suggestions &lt;slug&gt; [--range 5m] [--dry-run --candidate-rps N --candidate-burst N]) |
-| [`mail`](#mail) | Mail operator dry-run (issue #246 acceptance item 6): `gregale mail dry-run [--unsubscribe-url URL]` renders every production template against a fixture account + day and writes the wire payload as JSON. The eyeball gate before flipping a box to FAAS_MAIL_TRANSPORT=resend. |
 | [`wake`](#wake) | Wake a parked app (pulls out of snapshot) |
 | [`traffic`](#traffic) | Manage deployment traffic split (issue #556; Pro/Scale only) |
 | [`mirror`](#mirror) | Manage traffic mirroring (mirror list\|create\|info\|update\|rm\|summary --app &lt;slug&gt;; issue #72 / ADR-124; Pro/Scale only) |
 | [`cache`](#cache) | Manage response cache (cache purge &lt;slug&gt; [--path GLOB]) |
+| [`upload-cache`](#upload-cache) | Inspect or clean resumable source-upload recovery state |
 | [`webhooks`](#webhooks) | Manage outbound webhooks (webhooks list\|add\|info\|update\|rm\|deliveries\|retry\|rotate-secret) |
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Print a shell completion script (bash\|zsh\|fish\|powershell) |
@@ -123,34 +119,6 @@ Show feature maturity and plan availability
 `gregale capabilities`
 
 
-## admin
-
-Operator-only billing ops (admin credit|refund|consume-credits)
-
-`gregale admin [<subcommand>] <uuid> <cents>`
-
-### admin credit
-
-Issue a billing credit
-
-| Flag | Meaning | |
-|---|---|---|
-| `--reason <text>` | credit reason text | required |
-
-### admin refund
-
-Refund a paid Polar invoice
-
-| Flag | Meaning | |
-|---|---|---|
-| `--reason <text>` | refund reason text | required |
-| `--idempotency-key <key>` | stable provider retry key |  |
-
-### admin consume-credits
-
-Consume credits against an invoice
-
-
 ## alerts
 
 Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset --app &lt;slug&gt;)
@@ -173,6 +141,10 @@ List alert rules
 
 Add an alert rule
 
+| Flag | Meaning | |
+|---|---|---|
+| `--webhook-secret-stdin` | read the webhook secret from stdin |  |
+
 ### alerts info
 
 Show one alert rule
@@ -181,6 +153,10 @@ Show one alert rule
 
 Update one alert rule
 
+| Flag | Meaning | |
+|---|---|---|
+| `--webhook-secret-stdin` | read the replacement webhook secret from stdin |  |
+
 ### alerts rm
 
 Delete one alert rule
@@ -188,6 +164,11 @@ Delete one alert rule
 ### alerts rotate-secret
 
 Rotate the alert&#39;s webhook secret
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--from-stdin` | read the replacement secret from stdin |  |
 
 ### alerts preset
 
@@ -198,7 +179,7 @@ Alert preset catalog (preset list|enable --app &lt;slug&gt;)
 
 Audit-log query (audit-events list|get &lt;id&gt;)
 
-`gregale audit-events [<subcommand>] <id>`
+`gregale audit-events [<subcommand>] [<id>]`
 
 ### audit-events list
 
@@ -213,12 +194,11 @@ Show one audit event
 
 List your apps
 
-`gregale apps [<subcommand>] [--q] [--quiet]`
+`gregale apps [<subcommand>] [--quiet]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--q` | delete one app |  |
-| `--quiet` | delete one app |  |
+| `--quiet` | delete one app without prompting (short form: -q) |  |
 
 ### apps ls
 
@@ -249,7 +229,7 @@ Delete one app (positional: &lt;slug&gt;)
 
 Get/update one app (gregale app &lt;slug&gt; [scale|rename &lt;new&gt;|restart|--profile NAME|--ram N|…])
 
-`gregale app [<subcommand>] <slug> [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>] [--only-declared-routes] [--no-only-declared-routes]`
+`gregale app <slug> [<subcommand>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--max-concurrency <N>] [--require-signed <value>] [--only-declared-routes] [--no-only-declared-routes]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -311,22 +291,6 @@ Show the card on file
 
 Show subscription status
 
-### billing price-catalog
-
-Inspect the price catalog (admin)
-
-### billing reconcile
-
-Reconcile an invoice with the provider (admin)
-
-### billing reconcile-paddle-overage
-
-Reconcile Paddle overage charges (admin)
-
-### billing webhook-test
-
-Send a signed test webhook (operator)
-
 
 ## canary
 
@@ -356,6 +320,14 @@ Show the current status of one build
 ### build list
 
 List builds and discover build IDs
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | filter to one app |  |
+| `--status <STATUS>` | filter by lifecycle status | one of `queued` · `running` · `succeeded` · `failed` · `cancelled` |
+| `--limit <N>` | page size (1..200) |  |
+| `--before <CURSOR>` | pagination cursor |  |
+| `--all` | walk every page |  |
 
 ### build provenance
 
@@ -781,7 +753,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--github] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <PROFILE>] [--vcpu <N>] [--function] [--app] [--yes] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--require-authn] [--no-require-authn] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <SECONDS>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--dry-run] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -790,6 +762,9 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--path <DIR>` | deploy a selected local source directory (relative to the current directory) |  |
 | `--worktree` | deploy the selected source directory from the working tree, including local changes |  |
 | `--repo <OWNER/NAME>` | deploy from a GitHub repo |  |
+| `--repository <OWNER/NAME>` | GitHub owner/name to bind to a project |  |
+| `--install-id <N>` | GitHub installation id for a project binding |  |
+| `--production-branch <BRANCH>` | production branch for a project binding |  |
 | `--ref <REF>` | git ref for --repo (branch, tag, or 40-char SHA) |  |
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` |
@@ -802,10 +777,11 @@ Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWN
 | `--function` | deploy as a function; skip shape auto-detection |  |
 | `--app` | deploy as an app; skip shape auto-detection |  |
 | `--yes` | skip the apply confirmation prompt |  |
-| `--only <SLUGS>` | workloads to apply (comma-separated; project apply path) |  |
+| `--only <SLUGS>` | workloads to apply; retain unselected project workloads (comma-separated) |  |
 | `--project` | deploy all detected workloads as one project (slug defaults from --name or source) |  |
+| `--environment <SLUG>` | deploy to a registered project environment |  |
 | `--reason <text>` | free-text deploy reason (≤280 chars) |  |
-| `--tag <TAG>` | annotation tag | one of `incident_recovery` · `hotfix` · `scheduled_maintenance` · `compliance_hold` · `partner_request` |
+| `--tag <TAG>` | annotation tag (incident_recovery\|hotfix\|scheduled_maintenance\|compliance_hold\|partner_request) | one of `incident_recovery` · `hotfix` · `scheduled_maintenance` · `compliance_hold` · `partner_request` |
 | `--deployed-by <NAME>` | operator label (auto-resolved from git config user.name) |  |
 | `--pr-number <N>` | GitHub PR number (positive int; 0 = absent). CI paths stamp via the GitHub Action. |  |
 | `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
@@ -900,37 +876,6 @@ Manage preview environments (Mega-C PR-1 / issue #961 leaf 3)
 ### preview destroy
 
 Tear down a preview app (POST /v1/preview/{slug}/destroy)
-
-
-## tenant-surfaces
-
-Manage tenant surfaces (multi-hostname SAN bundle per app)
-
-`gregale tenant-surfaces [<subcommand>] [--app <slug>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <slug>` | app slug |  |
-
-### tenant-surfaces list
-
-List tenant surfaces on an app
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <slug>` | app slug (required) |  |
-
-### tenant-surfaces add
-
-Add a tenant surface (with seed hostnames)
-
-### tenant-surfaces rm
-
-Remove a tenant surface (cascades hostnames)
-
-### tenant-surfaces hostname
-
-Manage hostnames on a surface (add|rm)
 
 
 ## edge-rules
@@ -1092,7 +1037,7 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-])
 
 Run untrusted code in an isolated disposable microVM
 
-`gregale run [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--wait] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1106,6 +1051,7 @@ Run untrusted code in an isolated disposable microVM
 | `--ephemeral-disk-mb <N>` | ephemeral scratch size |  |
 | `--max-output-bytes <N>` | combined output cap |  |
 | `--wait` | wait for terminal result |  |
+| `--watch` | stream live output while waiting |  |
 | `--poll-interval <D>` | status polling interval with --wait |  |
 | `--wait-timeout <D>` | maximum client wait duration |  |
 
@@ -1115,6 +1061,16 @@ Run untrusted code in an isolated disposable microVM
 Inspect or cancel isolated disposable runs
 
 `gregale runs [<subcommand>] <id>`
+
+### runs list
+
+List runs
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | maximum number of runs (1..200) |  |
+| `--offset <N>` | number of matching runs to skip |  |
+| `--status <STATUS>` | filter by lifecycle status | one of `queued` · `restoring` · `running` · `succeeded` · `failed` · `timed_out` · `out_of_memory` · `cancelled` |
 
 ### runs get
 
@@ -1148,7 +1104,7 @@ Show one invocation
 
 Production debugger (ADR-127)
 
-`gregale debug [<subcommand>] <slug>`
+`gregale debug [<subcommand>] [flags] <slug> [<request-id>]`
 
 ### debug requests
 
@@ -1256,13 +1212,21 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 ## logs
 
-Tail app or deployment logs (--follow)
+Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the follow alias)
 
-`gregale logs [--follow]`
+`gregale logs <slug> [--follow] [--deployment <ID>] [--grep <SUBSTR>] [--since <RFC3339>] [--level <LEVEL>] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--follow` | stream logs until interrupted |  |
+| `--deployment <ID>` | deployment id (default: latest) |  |
+| `--grep <SUBSTR>` | only show lines containing this substring |  |
+| `--since <RFC3339>` | only show lines at or after this RFC3339 timestamp |  |
+| `--level <LEVEL>` | only show lines at this level | one of `info` · `warn` · `error` |
+| `--explain` | summarize the last failure and common error patterns |  |
+| `--archive` | read durable logs for one instance and UTC day |  |
+| `--instance <ID>` | instance id for --archive |  |
+| `--date <YYYY-MM-DD>` | UTC day for --archive |  |
 
 
 ## metrics
@@ -1404,61 +1368,15 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 `gregale plan`
 
 
-## postgres
-
-Operator preview: manage PostgreSQL databases and bindings
-
-`gregale postgres [<subcommand>]`
-
-### postgres list
-
-List managed PostgreSQL databases
-
-### postgres usage
-
-Show monthly managed PostgreSQL usage and guardrail state
-
-### postgres create
-
-Create a managed PostgreSQL database
-
-| Flag | Meaning | |
-|---|---|---|
-| `--region <REGION>` | provider-neutral region | required |
-| `--postgres-major <N>` | PostgreSQL major version |  |
-| `--class <CLASS>` | service class | one of `development` · `burstable` · `production` |
-| `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
-| `--scale-to-zero` | suspend compute when idle |  |
-| `--storage-bytes <N>` | storage limit in bytes |  |
-| `--restore-window-seconds <N>` | point-in-time restore window |  |
-
-### postgres get
-
-Show one managed PostgreSQL database
-
-### postgres delete
-
-Delete a managed PostgreSQL database
-
-### postgres restore
-
-Restore a database to a new database
-
-| Flag | Meaning | |
-|---|---|---|
-| `--name <NAME>` | name for the restored database | required |
-| `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
-
-### postgres bindings
-
-Manage app database bindings
-
-
 ## ps
 
 Show live instances + state for an app
 
-`gregale ps`
+`gregale ps [--all]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | include the newest 100 retained history rows (parked rows expire after 30d by default) |  |
 
 
 ## queue
@@ -1518,6 +1436,13 @@ List registry credentials
 
 Set a registry credential
 
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--registry <host>` | registry host | required |
+| `--user <user>` | registry username | required |
+| `--password-stdin` | read the registry password/token from stdin |  |
+
 ### registry rm
 
 Remove a registry credential
@@ -1535,33 +1460,59 @@ Re-promote the previous deployment
 | `--json` | machine-readable output |  |
 
 
-## rollouts
+## projects
 
-Operator manual rollout recovery (rollouts recover &lt;slug&gt; --action advance|promote|abort --reason &lt;text&gt;)
+Inspect and recover repository projects
 
-`gregale rollouts [<subcommand>] <slug> --action <value> [--reason <text>]`
+`gregale projects [<subcommand>] <project-slug>`
+
+### projects list
+
+List projects in this account
+
+### projects info
+
+Show a project and its workloads
+
+### projects environments
+
+Manage project environments (list|create|protect|unprotect|preview)
+
+### projects update
+
+Update repository or production branch
 
 | Flag | Meaning | |
 |---|---|---|
-| `--action <value>` | recover action | required; one of `advance` · `promote` · `abort` |
-| `--reason <text>` | operator-supplied reason (logged to deployment_audit) |  |
+| `--repo <OWNER/NAME>` | GitHub repository owner/name; empty unbinds |  |
+| `--branch <BRANCH>` | production branch |  |
 
-### rollouts recover
+### projects rm
 
-Manually advance / promote / abort a stuck rollout (operator escape hatch)
+Preview or delete a project
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview affected state |  |
+| `--yes` | confirm project deletion |  |
 
 
 ## scan
 
 Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 
-`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
+`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--project-slug <SLUG>] [--environment <SLUG>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--tarball <PATH>` | scan a source tarball |  |
 | `--path <DIR>` | scan a local directory |  |
-| `--repo <OWNER/NAME>` | scan a GitHub repo |  |
+| `--repo <OWNER/NAME>` | scan a GitHub repo after gregale connect |  |
+| `--repository <OWNER/NAME>` | GitHub owner/name to bind to the project (defaults to --repo) |  |
+| `--install-id <N>` | optional GitHub installation id; normally resolved from the connected account |  |
+| `--production-branch <BRANCH>` | production branch for the project |  |
+| `--project-slug <SLUG>` | kebab slug; default = repo dir basename |  |
+| `--environment <SLUG>` | registered project environment to scan |  |
 | `--exclude <SLUGS>` | omit workloads (slug, comma-separated; mutex with --only; ADR-124) |  |
 | `--show-affected` | render the WillDeploy + Unaffected tables (ADR-124) |  |
 | `--explain` | show why each workload was detected (detector, marker, priority) |  |
@@ -1593,17 +1544,6 @@ List every secret across apps
 ### secrets rotate
 
 Re-seal one secret under the current host key
-
-
-## github-webhook-secret
-
-Manage legacy installation-scoped webhook secrets (admin)
-
-`gregale github-webhook-secret [<subcommand>]`
-
-### github-webhook-secret set
-
-Rotate the secret for one installation_id
 
 
 ## slo
@@ -1732,21 +1672,6 @@ Per-route throttle recommendations + dry-run preview (gregale throttle-suggestio
 | `--candidate-burst <N>` | candidate burst for the dry-run preview |  |
 
 
-## mail
-
-Mail operator dry-run (issue #246 acceptance item 6): `gregale mail dry-run [--unsubscribe-url URL]` renders every production template against a fixture account + day and writes the wire payload as JSON. The eyeball gate before flipping a box to FAAS_MAIL_TRANSPORT=resend.
-
-`gregale mail [<subcommand>] [--unsubscribe-url <URL>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--unsubscribe-url <URL>` | List-Unsubscribe URL (RFC 8058); empty disables the header |  |
-
-### mail dry-run
-
-render every mail template against a fixture; print wire JSON
-
-
 ## wake
 
 Wake a parked app (pulls out of snapshot)
@@ -1768,6 +1693,10 @@ Set the traffic split for a deployment
 |---|---|---|
 | `--deployment <ID>` | deployment id to set the traffic split on | required |
 | `--percent <N>` | traffic weight in [0, 100]; -1 = unset (server default 100) | required |
+
+### traffic status
+
+Show live deployment traffic weights for an app
 
 
 ## mirror
@@ -1855,6 +1784,27 @@ Purge cached responses for an app
 | Flag | Meaning | |
 |---|---|---|
 | `--path <GLOB>` | optional normalized request path glob |  |
+
+
+## upload-cache
+
+Inspect or clean resumable source-upload recovery state
+
+`gregale upload-cache [<subcommand>]`
+
+### upload-cache list
+
+List resumable, stale, and orphaned cache entries
+
+### upload-cache cleanup
+
+Remove stale and excess state safely
+
+| Flag | Meaning | |
+|---|---|---|
+| `--older-than <D>` | maximum recovery-state age |  |
+| `--max-entries <N>` | maximum recovery records to retain |  |
+| `--dry-run` | show actions without deleting files |  |
 
 
 ## webhooks

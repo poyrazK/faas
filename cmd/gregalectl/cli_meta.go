@@ -57,7 +57,7 @@ type cliFlag struct {
 //
 // Operator-side surface (PR-6.5):
 //   - manifest        (validate | render | ansible)
-//   - release         (bundle | install | kgv rotate | kgv init [alias])
+//   - release         (bundle | install | kgv verify | kgv rotate | kgv init [alias] | reconcile)
 //   - doctor          (read-only cluster diagnostic)
 //   - host-age        (init | rotate | status | prune-previous)
 //   - pki             (init | status | rotate | list)
@@ -84,6 +84,17 @@ type cliFlag struct {
 // boundary — adding a customer command to gregalectl or an operator
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
+	{
+		Name:    dispatchBilling,
+		DocSlug: "billing",
+		Short:   "Operator billing catalog, reconciliation, and webhook diagnostics",
+		Subcommands: []cliSub{
+			{Name: "price-catalog", Short: "List, sync, or reset the provider catalog"},
+			{Name: "reconcile", Short: "Reconcile usage for one account"},
+			{Name: "reconcile-paddle-overage", Short: "Check Paddle overage schema readiness"},
+			{Name: "webhook-test", Short: "Send a locally signed Paddle or Stripe webhook"},
+		},
+	},
 	{
 		Name:    "status",
 		DocSlug: "status",
@@ -189,6 +200,16 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchFleetSeal,
+		DocSlug: "fleet-seal",
+		Short:   "Provision, migrate, and verify the fleet-wide sealed-secret identity",
+		Subcommands: []cliSub{
+			{Name: "init", Short: "Create fleet.age and fleet.age.pub", Flags: []cliFlag{{Name: "dir", Short: "fleet identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal cluster and customer material to fleet.age", Flags: []cliFlag{{Name: "fleet-key", Short: "fleet.age identity"}, {Name: "legacy-host-dir", Short: "legacy host identity directory"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "verify", Short: "Prove customer probe and shared-kid JWT access", Flags: []cliFlag{{Name: "fleet-key", Short: "staged fleet.age identity"}, {Name: "host-key", Short: "per-host host.age identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
 		// PR-911 image rollout (PR #929 mega; ADR-110 + ADR-111). Operator
 		// surfaces draining + activation of compute_nodes rows so the
 		// deployctl upgrade-node orchestrator can reason about which box
@@ -198,7 +219,7 @@ var cliCommands = []cliCommand{
 		// tier-1-scaleout pair).
 		Name:    dispatchComputeNodes,
 		DocSlug: "compute-nodes",
-		Short:   "Compute-node state machine (compute-nodes add|list|show|drain|drain-status|activate|force-drain|retire)",
+		Short:   "Compute-node state machine (compute-nodes add|list|show|release-status|drain|drain-status|activate|force-drain|retire)",
 		Subcommands: []cliSub{
 			{
 				Name:  "add",
@@ -235,6 +256,18 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "node", Short: "fqdn / short-hostname of the node to show (required)"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
+					{Name: "break-glass-db", Short: "read directly during an apid outage"},
+				},
+			},
+			{
+				Name:  "release-status",
+				Short: "Wait for every active node to observe a desired release with a fresh heartbeat",
+				Flags: []cliFlag{
+					{Name: "desired-release", Short: "40-character lowercase release git SHA", Req: true},
+					{Name: "timeout", Short: "maximum convergence wait; zero performs one observation"},
+					{Name: "poll-interval", Short: "interval between fleet observations"},
+					{Name: "heartbeat-staleness", Short: "maximum age of a ready node heartbeat"},
+					{Name: "json", Short: "emit desired and observed release state per node"},
 					{Name: "break-glass-db", Short: "read directly during an apid outage"},
 				},
 			},
@@ -330,7 +363,7 @@ var cliCommands = []cliCommand{
 					{Name: "nodes-file", Short: "provider connection list (alternative to claim-file)"},
 					{Name: "manifest-file", Short: "signed production manifest (required)"},
 					{Name: "release-tag", Short: "signed release tag (required)"},
-					{Name: "secrets-dir", Short: "directory containing join secrets and pki/ (required)"},
+					{Name: "secrets-dir", Short: "directory containing fleet.age, fleet.age.pub, join secrets, and pki/ (required)"},
 					{Name: "output-dir", Short: "prepared artifact directory (required)"},
 					{Name: "cache-dir", Short: "persistent public artifact cache"},
 					{Name: "cosign-binary", Short: "Linux/amd64 cosign binary to stage"},
@@ -347,6 +380,8 @@ var cliCommands = []cliCommand{
 					{Name: "manifest-file", Short: "split-box manifest (required)"},
 					{Name: "artifact-dir", Short: "standard shared join assets"},
 					{Name: "runtime-bases-env", Short: "release-bound digest-pinned runtime base refs"},
+					{Name: "fleet-age-key", Short: "shared fleet.age identity"},
+					{Name: "fleet-age-recipient", Short: "matching fleet.age.pub recipient"},
 					{Name: "max-parallel", Short: "bounded concurrent joins (default 4)"},
 					{Name: "skip-fleet-preflight", Short: "skip one shared fleet preflight"},
 					{Name: "resume", Short: "resume failed/interrupted joins"},
@@ -374,6 +409,7 @@ var cliCommands = []cliCommand{
 					{Name: "node", Short: "manifest compute-only host name (required)"},
 					{Name: "ssh-host", Short: "SSH address of the already-created machine (required)"},
 					{Name: "ssh-host-key-sha256", Short: "expected OpenSSH SHA256 host-key fingerprint"},
+					{Name: "ssh-known-hosts-file", Short: "verified complete-fleet known_hosts file"},
 					{Name: "ssh-user", Short: "SSH user (default root)"},
 					{Name: "ssh-port", Short: "SSH port (default 22)"},
 					{Name: "ssh-key", Short: "optional SSH private key"},
@@ -391,6 +427,8 @@ var cliCommands = []cliCommand{
 					{Name: "storage-env", Short: "shared OCI storage environment"},
 					{Name: "runtime-bases-env", Short: "release-bound digest-pinned runtime base refs"},
 					{Name: "storage-device", Short: "optional dedicated fast-root block device"},
+					{Name: "fleet-age-key", Short: "shared fleet.age identity"},
+					{Name: "fleet-age-recipient", Short: "matching fleet.age.pub recipient"},
 					{Name: "format-storage", Short: "explicitly format a supplied blank device as XFS"},
 					{Name: "box-age-key", Short: "optional box-age identity source"},
 					{Name: "rclone-envelope", Short: "encrypted rclone.conf envelope"},
@@ -636,6 +674,11 @@ var cliCommands = []cliCommand{
 				{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
 				{Name: "yes", Short: "acknowledge enqueueing customer deployment work", Req: true},
 			}},
+			{Name: "repair-stale", Short: "Dry-run or cancel stale nonterminal deployments without active builds", Flags: []cliFlag{
+				{Name: "older-than", Short: "minimum deployment age (default 2h)"},
+				{Name: "limit", Short: "maximum deployments (1..200)"},
+				{Name: "yes", Short: "apply cancellation; omit for dry-run"},
+			}},
 		},
 	},
 	{
@@ -680,7 +723,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "release",
 		DocSlug: "release",
-		Short:   "Cluster-shipped release bundle (release bundle|install|kgv --git-sha SHA; PR-3 / ADR-110, PR-B / ADR-113)",
+		Short:   "Cluster-shipped release bundle (release bundle|install|kgv|reconcile; PR-3 / ADR-110, PR-B / ADR-113)",
 		Subcommands: []cliSub{
 			{
 				Name:  subReleaseBundle,
@@ -708,14 +751,25 @@ var cliCommands = []cliCommand{
 				// fail-closed SBoM CVE-baseline gate. The KGV is the
 				// "known good version" baseline the install path compares
 				// against; rotate re-stamps it from the on-disk release
-				// SBoM (or KGVZero with --from-zero). The KGV is
-				// operator-confirmed, never auto-rotated.
+				// SBoM (or KGVZero with --from-zero). CD verifies the
+				// candidate before activation and accepts it only after
+				// all host health gates pass.
 				Name:  subReleaseKGV,
-				Short: "Refresh sbom-baseline.json (release kgv rotate --git-sha SHA [--from-zero]); operator escape hatch from ADR-113's fail-closed SBoM gate",
+				Short: "Verify a candidate SBoM against the canonical accepted baseline, or accept an activated release with release kgv rotate",
 				Flags: []cliFlag{
 					{Name: "git-sha", Short: "40-char lowercase hex git SHA (required)", Req: true},
 					{Name: "releases-root", Short: "releases root (default /opt/faas/releases)"},
 					{Name: "from-zero", Short: "write KGVZero (zero CRITICAL/HIGH) without parsing the on-disk SBoM"},
+					{Name: "json", Short: "emit structured JSON to stdout"},
+				},
+			},
+			{
+				Name:  subReleaseReconcile,
+				Short: "Remove stale unapplied release rows after a newer release succeeds",
+				Flags: []cliFlag{
+					{Name: "releases-root", Short: "releases root (default /opt/faas/releases)"},
+					{Name: "retention", Short: "minimum abandoned-row age (default 24h)"},
+					{Name: "dry-run", Short: "report eligible rows without deleting"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
 				},
 			},
@@ -739,12 +793,70 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchPKI,
 		DocSlug: "pki",
-		Short:   "Operator local-dev PKI bootstrap (pki init|status|list|rotate)",
+		Short:   "Operator PKI bootstrap and scheduled host-bundle renewal",
 		Subcommands: []cliSub{
 			{Name: subPKIInit, Short: "Initialise the local PKI"},
 			{Name: subPKIStatus, Short: "Show PKI status"},
 			{Name: subPKIList, Short: "List PKI leaves + CA (--json; --daemon NAME; --box-role ROLE)"},
 			{Name: subPKIRotate, Short: "Rotate the PKI"},
+			{
+				Name:  subPKIExportBundle,
+				Short: "Export a validated trust-only active bundle",
+				Flags: []cliFlag{
+					{Name: "source-root", Short: "active trust root"},
+					{Name: "output-dir", Short: "fresh trust-only export destination", Req: true},
+					{Name: "box-role", Short: "target host role", Req: true, ClosedSet: []string{"control-plane", "compute-only"}},
+					{Name: "cn", Short: "compute node identity"},
+					{Name: "transport-san", Short: "target node transport DNS name or IP"},
+				},
+			},
+			{
+				Name:  subPKIIssueBundle,
+				Short: "Issue a node-scoped trust-only renewal bundle",
+				Flags: []cliFlag{
+					{Name: "issuer-root", Short: "operator PKI root containing the CA private key", Req: true},
+					{Name: "active-root", Short: "exported active bundle whose safe leaves are preserved"},
+					{Name: "output-dir", Short: "trust-only bundle destination", Req: true},
+					{Name: "changed-file", Short: "JSON list of renewed leaf roles"},
+					{Name: "box-role", Short: "target host role", Req: true, ClosedSet: []string{"control-plane", "compute-only"}},
+					{Name: "cn", Short: "compute node identity"},
+					{Name: "transport-san", Short: "target node transport DNS name or IP"},
+				},
+			},
+			{
+				Name:  subPKIFingerprint,
+				Short: "Print the canonical SHA-256 certificate fingerprint",
+				Flags: []cliFlag{
+					{Name: "cert", Short: "certificate path", Req: true},
+				},
+			},
+			{
+				Name:  subPKIInstallBundle,
+				Short: "Transactionally install a node-scoped renewal bundle",
+				Flags: []cliFlag{
+					{Name: "bundle-dir", Short: "candidate trust-only bundle", Req: true},
+					{Name: "root-dir", Short: "active PKI root"},
+					{Name: "box-role", Short: "target host role", Req: true, ClosedSet: []string{"control-plane", "compute-only"}},
+					{Name: "cn", Short: "compute node identity"},
+					{Name: "transport-san", Short: "target node transport DNS name or IP"},
+				},
+			},
+			{
+				Name:  subPKIRecoverInstall,
+				Short: "Recover an interrupted trust bundle installation",
+				Flags: []cliFlag{{Name: "root-dir", Short: "active PKI root"}},
+			},
+			{
+				Name:  subPKIMetrics,
+				Short: "Export active leaf expiry and renewal state for node_exporter",
+				Flags: []cliFlag{
+					{Name: "root-dir", Short: "active PKI root"},
+					{Name: "box-role", Short: "host role", Req: true, ClosedSet: []string{"control-plane", "compute-only"}},
+					{Name: "host", Short: "bounded host label", Req: true},
+					{Name: "output", Short: "node_exporter textfile destination"},
+					{Name: "renewal-state", Short: "scheduled renewal state JSON"},
+				},
+			},
 		},
 	},
 	{
@@ -795,6 +907,7 @@ var cliCommands = []cliCommand{
 			{Name: "host", Short: "compute_nodes.name to stamp (default: hostname)"},
 			{Name: "role", Short: "compute_nodes.role to stamp (default: empty)"},
 			{Name: "pg-dsn", Short: "PostgreSQL DSN (default: $FAAS_PG_DSN or $DATABASE_URL)"},
+			{Name: "expected-fingerprint", Short: "CAS guard for certificate attestation rotation"},
 			{Name: "no-db", Short: "skip the compute_nodes.cert_fingerprint write"},
 			{Name: "force", Short: "overwrite existing secret files (default false)"},
 		},

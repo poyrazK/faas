@@ -203,13 +203,12 @@ func clonePortSet(m map[string]struct{}) map[string]struct{} {
 //
 // ADR-141 §Decision 3: when the strict-prefix check fails, the function
 // returns ErrLayersNotAboveBase via fmt.Errorf("%w: …") so the imaged
-// dispatch in buildImageLayer can branch on errors.Is. Today the
-// dispatch surfaces this as today-equivalent failure (customers must
-// `faas deploy --full-rootfs` to opt into the full-rootfs path).
-// Auto-fallback on paid plans lands in commit 6.
+// dispatch in buildImageLayer can branch on errors.Is and apply the
+// deployment's full-rootfs policy without string-matching pull errors.
 func LayersAboveBase(baseDiffIDs, appDiffIDs []string) ([]string, error) {
 	if len(baseDiffIDs) > len(appDiffIDs) {
-		return nil, fmt.Errorf("oci: base has more layers (%d) than app (%d)", len(baseDiffIDs), len(appDiffIDs))
+		return nil, fmt.Errorf("%w: base has more layers (%d) than app (%d)",
+			ErrLayersNotAboveBase, len(baseDiffIDs), len(appDiffIDs))
 	}
 	for i, d := range baseDiffIDs {
 		if appDiffIDs[i] != d {

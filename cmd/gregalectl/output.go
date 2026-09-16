@@ -104,12 +104,12 @@ var testOnlyTTY *bool
 // docsURLBase is the canonical root for the operator-side CLI docs.
 // Mirrors cmd/gregale/output.go:139. Operator topics
 // (manifest, release, host-age, pki, ...) land at
-// docs.gregale.dev/cli/<topic> until PR-7 splits the docs site
+// gregale.dev/docs/cli/<topic> until the docs site splits
 // into /cli/ vs /operator/.
-const docsURLBase = "https://" + wire.DocsHost + "/cli/"
+const docsURLBase = wire.DocsBaseURL + "/cli/"
 
 // PrintUsage emits a one-line "usage:" hint followed by a "Docs:" line
-// pointing at docs.gregale.dev/cli/<topic>. Mirrors cmd/gregale/output.go:177
+// pointing at gregale.dev/docs/cli/<topic>. Mirrors cmd/gregale/output.go:177
 // byte-for-byte.
 func PrintUsage(w io.Writer, usage, topic string) {
 	_, _ = fmt.Fprintf(w, "%s\n", usage)

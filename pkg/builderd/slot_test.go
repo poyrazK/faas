@@ -58,23 +58,18 @@ func TestSlot_ZeroCeilingFallsBack(t *testing.T) {
 	}
 }
 
-func TestBuilderSlots_EnforceOneGuaranteedPlusOneOpportunistic(t *testing.T) {
+func TestBuilderSlots_EnforceParentCgroupSafeSingleSlot(t *testing.T) {
 	b := &Builderd{resid: fakeResid{mb: 0}}
 
 	first, releaseFirst, ok := b.acquireSlot()
 	if !ok || first.Label != "guaranteed" {
 		t.Fatalf("first slot = %+v, acquired=%v; want guaranteed", first, ok)
 	}
-	second, releaseSecond, ok := b.acquireSlot()
-	if !ok || second.Label != "opportunistic" {
-		t.Fatalf("second slot = %+v, acquired=%v; want opportunistic", second, ok)
-	}
-	third, _, ok := b.acquireSlot()
-	if ok || third.Allowed {
-		t.Fatalf("third slot = %+v, acquired=%v; want denial", third, ok)
+	second, _, ok := b.acquireSlot()
+	if ok || second.Allowed {
+		t.Fatalf("second slot = %+v, acquired=%v; want denial at the 5 GiB parent fence", second, ok)
 	}
 
-	releaseSecond()
 	releaseFirst()
 	if _, release, ok := b.acquireSlot(); !ok {
 		t.Fatal("slot should be reusable after releases")

@@ -9,6 +9,10 @@ export type PublicStatusIndicator = {
   id: 'api_availability' | 'wake_p95' | 'build_success';
   label: string;
   value: number | null;
+  /**
+   * Distinguishes an observed value, a successful query with insufficient samples, and a telemetry failure.
+   */
+  sample_status: string;
   unit: string;
   target: number;
   comparison: 'gte' | 'lte';

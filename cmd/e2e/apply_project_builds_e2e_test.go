@@ -11,7 +11,7 @@
 //     apid tarball path at cmd/apid/deploy_inputs.go).
 //   - Per-workload staged tarball exists under
 //     FAAS_SPOOL_ROOT/projects/<acct>/<project>/<appID>.tar.gz and
-//     is rooted at RootDir (not the repo root).
+//     preserves the repository tree; SourceRoot selects the workload.
 //   - build_queued pg_notify fires (Pattern A from
 //     waiters.go:22-67).
 //   - project.build.enqueued audit row (the audit taxonomy the
@@ -37,6 +37,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -48,15 +49,15 @@ import (
 // (compose-detected api + worker) so the build-enqueue loop runs
 // the per-app path at least twice. The per-service Dockerfile +
 // index.js live at the repo root with .api/.worker suffixes so
-// the convention detector does NOT also emit (RootDir="services/api",
-// Name="api") which would collide on apps_slug_key with the
+// the convention detector does NOT also emit (RootDir="services/backend",
+// Name="backend") which would collide on apps_slug_key with the
 // compose-detected workload.
 func buildProjectFixture(t *testing.T) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{"faas-build/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n  worker:\n    build: { context: . }\n"},
-		{"faas-build/Dockerfile.api", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"faas-build/index.api.js", "exports.handler = () => 'api';\n"},
+		{"faas-build/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n  worker:\n    build: { context: . }\n"},
+		{"faas-build/Dockerfile.backend", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"faas-build/index.backend.js", "exports.handler = () => 'api';\n"},
 		{"faas-build/Dockerfile.worker", "FROM alpine:3.19\nCMD [\"./worker\"]\n"},
 		{"faas-build/index.worker.js", "exports.handler = () => 'worker';\n"},
 	}
@@ -159,6 +160,61 @@ func TestApplyProject_Builds_KindTarball(t *testing.T) {
 	}
 }
 
+func TestApplyProject_Builds_CustomDockerfileSelection(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		return
+	}
+	if err := dbMigrateUp(t, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	h := e2etest.Start(t, pool, e2etest.APID)
+	key := h.SeedAccount(context.Background(), api.PlanPro)
+
+	entries := []struct{ name, body string }{
+		{"custom-dockerfile/compose.yaml", "services:\n  backend:\n    build:\n      context: services/backend\n      dockerfile: deploy/Dockerfile.production\n"},
+		{"custom-dockerfile/services/backend/deploy/Dockerfile.production", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"custom-dockerfile/services/backend/api", "#!/bin/sh\necho api\n"},
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, entry := range entries {
+		header := &tar.Header{Name: entry.name, Mode: 0o644, Size: int64(len(entry.body)), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(entry.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	result := applyProjectMultipart(t, h, key, "custom-dockerfile", "", buf.Bytes())
+	if len(result.Apps) != 1 || len(result.Builds) != 1 || result.Builds[0].Error != "" {
+		t.Fatalf("apply result = %#v", result)
+	}
+	var deploymentKind, buildKind, sourceRoot, appDockerfilePath, deploymentDockerfilePath string
+	err := pool.QueryRow(context.Background(), `
+		select d.kind, b.kind, d.source_root, a.manifest->>'build_dockerfile', d.inferred_profile->>'dockerfile_path'
+		from deployments d
+		join builds b on b.deployment_id = d.id
+		join apps a on a.id = d.app_id
+		where d.id = $1`, result.Builds[0].DeploymentID).Scan(&deploymentKind, &buildKind, &sourceRoot, &appDockerfilePath, &deploymentDockerfilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deploymentKind != "dockerfile" || buildKind != "dockerfile" || sourceRoot != "services/backend" ||
+		appDockerfilePath != "deploy/Dockerfile.production" || deploymentDockerfilePath != appDockerfilePath {
+		t.Fatalf("custom Dockerfile round trip = kind %q/%q root %q app path %q deployment path %q", deploymentKind, buildKind, sourceRoot, appDockerfilePath, deploymentDockerfilePath)
+	}
+}
+
 // collectAppIDs is a tiny adapter that turns the ApplyResponse apps
 // slice into a pgx-friendly []string.
 func collectAppIDs(apps []api.ApplyResponseApp) []string {
@@ -199,17 +255,16 @@ func TestApplyProject_Builds_DeploymentStatusBuilding(t *testing.T) {
 	}
 }
 
-// TestApplyProject_Builds_StagedTarballRootedAtRootDir pins that
-// the per-workload tarball is rooted at RootDir, not the repo
-// root. Without this, the staging would produce identical tarballs
-// for every workload and the workload-isolation guarantee would
-// be lost.
+// TestApplyProject_Builds_StagedTarballPreservesRepository pins that
+// every workload receives the repository-relative tree while its
+// deployment SourceRoot selects the build context. Workspace package
+// managers need root manifests and sibling packages in addition to the
+// selected workload directory.
 //
-// Strategy: build a tarball with a sentinel file at RootDir that
-// ONLY that workload's tarball should contain, plus a shared file
-// at the repo root. After apply, find each workload's staged
-// tarball and check the sentinel is present.
-func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
+// Strategy: build a tarball with per-workload sentinel files plus a
+// shared file at the repo root. After apply, find each workload's
+// staged tarball and check the complete repository is present.
+func TestApplyProject_Builds_StagedTarballPreservesRepository(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
 		return
@@ -223,14 +278,14 @@ func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
 	})
 	key := h.SeedAccount(context.Background(), api.PlanPro)
 
-	// Fixture: api's RootDir is "services/api" so the per-app
-	// tarball should include only files under that prefix. Sentinel
-	// markers per workload make it possible to assert.
+	// Fixture: api and worker live below services/. Root and sibling
+	// sentinels make it possible to assert that the archive preserves
+	// the workspace rather than rebasing one workload to archive root.
 	entries := []struct{ name, body string }{
-		{"root-marker.txt", "this-is-the-repo-root"},
-		{"faas-root/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n"},
-		{"faas-root/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"faas-root/services/api/API_ONLY.txt", "api-only-sentinel"},
+		{"faas-root/root-marker.txt", "this-is-the-repo-root"},
+		{"faas-root/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n"},
+		{"faas-root/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"faas-root/services/backend/API_ONLY.txt", "api-only-sentinel"},
 		{"faas-root/services/worker/Dockerfile", "FROM alpine:3.19\nCMD [\"./worker\"]\n"},
 		{"faas-root/services/worker/WORKER_ONLY.txt", "worker-only-sentinel"},
 	}
@@ -251,9 +306,8 @@ func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
 		t.Fatalf("need at least 2 apps, got %d", len(ar.Apps))
 	}
 
-	// Walk spoolRoot and find each app's tarball; verify the
-	// matching sentinel file is inside and the cross-sentinel is
-	// absent.
+	// Walk spoolRoot and find each app's tarball; every full-repository
+	// archive should contain the root marker and both workload sentinels.
 	var tarballs []string
 	_ = filepath.Walk(spoolRoot, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() && strings.HasSuffix(path, ".tar.gz") && strings.Contains(path, "/projects/") {
@@ -264,8 +318,9 @@ func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
 	if len(tarballs) < len(ar.Apps) {
 		t.Fatalf("staged tarballs on disk: %d, want >= %d", len(tarballs), len(ar.Apps))
 	}
-	// Each tarball should contain exactly one of the per-workload
-	// sentinel files (or the root marker, if RootDir is "").
+	// Each tarball should contain the repository root and both workload
+	// sentinel files. SourceRoot (persisted on the deployment) supplies
+	// the workload boundary to builderd.
 	containsSentinel := func(path, sentinel string) bool {
 		// Vetted-id path: the spool tarball was just written by
 		// the harness under FAAS_SPOOL_ROOT — not a customer
@@ -300,12 +355,9 @@ func TestApplyProject_Builds_StagedTarballRootedAtRootDir(t *testing.T) {
 	for _, path := range tarballs {
 		hasAPI := containsSentinel(path, "API_ONLY.txt")
 		hasWorker := containsSentinel(path, "WORKER_ONLY.txt")
-		// Exactly one of the two sentinels should be present
-		// per workload's tarball. None of the tarballs should
-		// contain BOTH sentinels (that would mean RootDir wasn't
-		// honoured).
-		if hasAPI && hasWorker {
-			t.Fatalf("tarball %s contains both sentinels — RootDir was not honoured", path)
+		if !hasAPI || !hasWorker || !containsSentinel(path, "root-marker.txt") {
+			t.Fatalf("tarball %s does not preserve repository workspace (api=%v worker=%v root=%v)",
+				path, hasAPI, hasWorker, containsSentinel(path, "root-marker.txt"))
 		}
 	}
 }
@@ -392,7 +444,7 @@ func TestApplyProject_Builds_ApplyResponseBuildsSlice(t *testing.T) {
 // must continue and enqueue the other workloads.
 //
 // Strategy: include a workload name 'ghost' (via compose) but no
-// matching directory. RepackageRootTree walks a non-existent path
+// matching directory. ValidateRootDir walks a non-existent path
 // and returns ErrNotExist. The apply loop's per-app Error path
 // catches it and continues.
 func TestApplyProject_Builds_PartialFailureLeavesOthersIntact(t *testing.T) {
@@ -411,9 +463,9 @@ func TestApplyProject_Builds_PartialFailureLeavesOthersIntact(t *testing.T) {
 	// the compose file, so this passes scanning; the apply-time
 	// staging walk is where it breaks.
 	entries := []struct{ name, body string }{
-		{"faas-partial/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n  ghost:\n    build: { context: does-not-exist }\n"},
-		{"faas-partial/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"faas-partial/services/api/index.js", "exports.handler = () => 1;\n"},
+		{"faas-partial/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n  ghost:\n    build: { context: does-not-exist }\n"},
+		{"faas-partial/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"faas-partial/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -498,14 +550,12 @@ func TestApplyProject_Builds_BuildIDIsUUIDv7(t *testing.T) {
 
 	ar := applyProjectMultipart(t, h, key, "uuid", "", buildProjectFixture(t))
 	for _, b := range ar.Builds {
-		if len(b.BuildID) != 32 {
-			t.Fatalf("build id %q is not 32 hex chars (UUID without dashes)", b.BuildID)
+		id, err := uuid.Parse(b.BuildID)
+		if err != nil {
+			t.Fatalf("build id %q is not a UUID: %v", b.BuildID, err)
 		}
-		// Every char must be hex.
-		for _, c := range b.BuildID {
-			if c < '0' || c > '9' && c < 'a' || c > 'f' {
-				t.Fatalf("build id %q contains non-hex char %q", b.BuildID, c)
-			}
+		if id.Version() != uuid.Version(7) {
+			t.Fatalf("build id %q version=%d want UUIDv7", b.BuildID, id.Version())
 		}
 	}
 }

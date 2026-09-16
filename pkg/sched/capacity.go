@@ -260,7 +260,7 @@ func VerifyNodeSignature(r CapacityReport, sig []byte, keys nodeKeyLookup) error
 	if keys == nil {
 		return ErrUnknownNodeKey
 	}
-	pub, ok := keys.PublicKey(r.NodeKeyID)
+	pub, ok := keys.PublicKeyForNode(r.NodeID, r.NodeKeyID)
 	if !ok {
 		return ErrUnknownNodeKey
 	}

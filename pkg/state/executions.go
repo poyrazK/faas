@@ -11,6 +11,38 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// ExecutionEventType is the bounded event vocabulary exposed by the
+// resumable execution stream. Events never contain source or input.
+type ExecutionEventType string
+
+const (
+	ExecutionEventStatus   ExecutionEventType = "status"
+	ExecutionEventStdout   ExecutionEventType = "stdout"
+	ExecutionEventStderr   ExecutionEventType = "stderr"
+	ExecutionEventTerminal ExecutionEventType = "terminal"
+	ExecutionEventMaxBytes                    = 64 * 1024
+)
+
+// ExecutionEvent is a control-plane event for one disposable execution.
+// Sequence is globally monotonic so clients can reconnect with the value of
+// the last SSE id they received. Payload is already JSON encoded and bounded.
+type ExecutionEvent struct {
+	ExecutionID string
+	AccountID   string
+	Sequence    int64
+	Type        ExecutionEventType
+	Payload     json.RawMessage
+	CreatedAt   time.Time
+}
+
+// ExecutionEventStore is optional so older Store test doubles remain source
+// compatible. Production PgStore and MemStore implement it; callers must
+// type-assert before using the event stream.
+type ExecutionEventStore interface {
+	AppendExecutionEvent(ctx context.Context, accountID, executionID string, eventType ExecutionEventType, payload json.RawMessage, at time.Time) (ExecutionEvent, error)
+	ListExecutionEvents(ctx context.Context, accountID, executionID string, afterSequence int64, limit int) ([]ExecutionEvent, error)
+}
+
 // Execution is the durable, payload-free projection of one disposable
 // one-shot execution. Source and input deliberately live in ExecutionClaim
 // only, after a scheduler has acquired the row's lease.
@@ -80,6 +112,10 @@ type CompleteExecutionParams struct {
 	FailureMessage  *string
 	Usage           api.ExecutionUsage
 	FinishedAt      time.Time
+	// OutputEventsPersisted is true when stdout/stderr were appended by the
+	// live execution stream. Terminalization must not append the same bytes a
+	// second time; false preserves the unary execution behavior.
+	OutputEventsPersisted bool
 }
 
 // ExecutionSweepResult reports the recovery work completed in one bounded
@@ -91,6 +127,32 @@ type ExecutionSweepResult struct {
 	FinishedRestores int
 	FinishedRuns     int
 	PayloadsDeleted  int
+}
+
+// ExecutionUsageSummary is the account-scoped aggregate of terminal
+// disposable executions in one UTC calendar month. It is backed by the
+// append-only execution usage ledger rather than the payload-bearing
+// execution row so payload cleanup cannot remove billing facts.
+type ExecutionUsageSummary struct {
+	AccountID    string
+	Month        time.Time
+	Runs         int64
+	WallTimeMS   int64
+	CPUTimeMS    int64
+	PeakMemoryMB int64
+	OutputBytes  int64
+	Succeeded    int64
+	Failed       int64
+	TimedOut     int64
+	OutOfMemory  int64
+	Cancelled    int64
+}
+
+// ExecutionUsageStore is deliberately narrower than Store. The scheduler
+// writes the ledger inside its terminalization transaction; customer reads
+// use this optional seam so older Store test doubles remain source-compatible.
+type ExecutionUsageStore interface {
+	ExecutionUsageByAccount(ctx context.Context, accountID string, month time.Time) (ExecutionUsageSummary, error)
 }
 
 // ExecutionQuotaError is returned when atomic admission observes the active
@@ -123,6 +185,7 @@ type ExecutionStore interface {
 	CreateExecution(ctx context.Context, params CreateExecutionParams) (Execution, error)
 	ExecutionByID(ctx context.Context, accountID, executionID string) (Execution, error)
 	ListExecutions(ctx context.Context, accountID string, limit, offset int) ([]Execution, error)
+	ListExecutionsByStatus(ctx context.Context, accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error)
 	ClaimExecution(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error)
 	MarkExecutionRunning(ctx context.Context, executionID, leaseToken string, startedAt time.Time) (Execution, error)
 	RenewExecutionLease(ctx context.Context, executionID, leaseToken string, renewedAt time.Time, leaseDuration time.Duration) error

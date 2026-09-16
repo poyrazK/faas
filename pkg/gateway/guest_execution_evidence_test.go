@@ -37,8 +37,9 @@ func TestForwardedResponseHeaderStripsEvidence(t *testing.T) {
 	r := httptestRequestWithGuestEvidence()
 	dst := make(http.Header)
 	forwardedResponseHeader(r.Context(), dst, "X-Faas-Guest-Runtime", "go124")
+	forwardedResponseHeader(r.Context(), dst, "X-Faas-Deployment-Id", "guest-forged")
 	forwardedResponseHeader(r.Context(), dst, "X-Customer-Header", "safe")
-	if dst.Get("X-Faas-Guest-Runtime") != "" || dst.Get("X-Customer-Header") != "safe" {
+	if dst.Get("X-Faas-Guest-Runtime") != "" || dst.Get("X-Faas-Deployment-Id") != "" || dst.Get("X-Customer-Header") != "safe" {
 		t.Fatalf("forwarded headers = %v", dst)
 	}
 }

@@ -80,18 +80,25 @@ func validCLISlug(s string) bool {
 // are rendered as "sleeping" because that's how the dashboard badge
 // (§6) talks about them to humans — the wire value stays unchanged.
 func cmdPS(args []string) int {
-	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale ps <app>", "ps")
+	fs := newFlagSet("ps", flag.ContinueOnError)
+	setFlagOutput(fs, os.Stderr)
+	history := fs.Bool("all", false, "include the newest 100 retained history rows (parked rows expire after 30d by default)")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale ps [--all] <app>", "ps")
 		return 1
 	}
-	slug := args[0]
+	slug := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ins, err := client.ListInstances(context.Background(), slug)
+	ins, err := client.ListInstancesWithHistory(context.Background(), slug, *history)
 	if err != nil {
 		return printErr("Could not list instances", err)
+	}
+	if *history && len(ins) == api.DefaultInstanceHistoryLimit {
+		_, _ = fmt.Fprintf(osStderr, "Showing the newest %d retained instance rows; parked history expires after %d days by default.\n",
+			api.DefaultInstanceHistoryLimit, api.DefaultInstanceRetention/(24*time.Hour))
 	}
 	if jsonOutput {
 		// NDJSON: empty slice renders as zero lines (no header), which
@@ -152,7 +159,7 @@ func humanizeInstanceState(state string) string {
 // jq the SLO numbers. JSON tag set lives on the struct in
 // pkg/api/dto.go — renames there propagate here automatically.
 func cmdStatus(args []string) int {
-	fs := flag.NewFlagSet(statusLiteral, flag.ContinueOnError)
+	fs := newFlagSet(statusLiteral, flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit raw api.StatusPage as JSON (issue #63 §2)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -178,8 +185,12 @@ func cmdStatus(args []string) int {
 		return jsonOut(writeJSON(page))
 	}
 	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
-	_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", page.WakeP95MS)
-	_, _ = fmt.Fprintf(osStdout, "builds ok:    %.2f%%\n", page.BuildSuccessPct)
+	if page.WakeP95MS == nil {
+		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (no observations)")
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
+	}
+	_, _ = fmt.Fprintf(osStdout, "deployments ok: %.2f%%\n", page.BuildSuccessPct)
 	_, _ = fmt.Fprintf(osStdout, "as of:        %s\n", page.AsOf.Format("2006-01-02 15:04:05 UTC"))
 	_, _ = fmt.Fprintf(osStdout, "source:       %s\n", page.Source)
 	return 0
@@ -217,10 +228,13 @@ func cmdEnv(args []string) int {
 }
 
 func envPull(args []string) int {
-	fs := flag.NewFlagSet("env pull", flag.ContinueOnError)
+	fs := newFlagSet("env pull", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	out := fs.String("o", ".env", "output file (default .env)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *app == "" {
@@ -290,7 +304,7 @@ func envAssignmentKeys(data []byte) map[string]struct{} {
 }
 
 func envPush(args []string) int {
-	fs := flag.NewFlagSet("env push", flag.ContinueOnError)
+	fs := newFlagSet("env push", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	in := fs.String("f", ".env", "input file (default .env)")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE pairs from stdin (one per line)")
@@ -303,6 +317,9 @@ func envPush(args []string) int {
 	// --secret-scan=off for local-dev sandbox keys (e.g. sk_test_…).
 	secretScan := fs.String("secret-scan", "on", "scan pairs for known credential patterns before pushing (on|off|strict|source-tree; default on)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	secretScanMode, secretScanErr := parseSecretScanFlag(*secretScan)
@@ -617,7 +634,7 @@ func cmdAppScale(slug string, args []string) int {
 		PrintUsage(osStdout, appScaleUsage, "apps")
 		return 0
 	}
-	fs := flag.NewFlagSet("app scale", flag.ContinueOnError)
+	fs := newFlagSet("app scale", flag.ContinueOnError)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
 	profile := fs.String("profile", "", "update named resource profile: micro|small|medium|large|xlarge")
@@ -651,6 +668,9 @@ func cmdAppScale(slug string, args []string) int {
 	// value = no change. Free + grpc = 403 server-side.
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to leave unchanged)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *warm && *noWarm {
@@ -988,7 +1008,7 @@ func cmdPlan(args []string) int {
 // would make CI scripts and `&&`-chained shell commands treat a
 // missing $DISPLAY as a hard failure, which is the wrong signal.
 func cmdDashboard(args []string) int {
-	fs := flag.NewFlagSet("dashboard", flag.ContinueOnError)
+	fs := newFlagSet("dashboard", flag.ContinueOnError)
 	stateless := fs.Bool("stateless", false, "open the stateless-advisory landing page instead of the account page")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -1073,7 +1093,7 @@ func cmdQueueDispatch(args []string) int {
 // cmdQueueSend enqueues one payload. Mirrors cmdInvoke's
 // --payload semantics (inline JSON / @file / stdin).
 func cmdQueueSend(args []string) int {
-	fs := flag.NewFlagSet("queue send", flag.ContinueOnError)
+	fs := newFlagSet("queue send", flag.ContinueOnError)
 	payload := fs.String("payload", "", "JSON payload (inline | @file | -)")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
@@ -1108,7 +1128,7 @@ func cmdQueueSend(args []string) int {
 // `empty`. Mirrors the existing cmdQueueTail long-poll framing —
 // same signal.NotifyContext wiring.
 func cmdQueueReceive(args []string) int {
-	fs := flag.NewFlagSet("queue receive", flag.ContinueOnError)
+	fs := newFlagSet("queue receive", flag.ContinueOnError)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -1166,7 +1186,7 @@ func cmdQueueReceive(args []string) int {
 // cmdQueueState returns the depth + cap without acquiring a lease.
 // Read-only; safe to call on a hot path.
 func cmdQueueState(args []string) int {
-	fs := flag.NewFlagSet("queue state", flag.ContinueOnError)
+	fs := newFlagSet("queue state", flag.ContinueOnError)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -1201,7 +1221,7 @@ func cmdQueueState(args []string) int {
 // cmdQueuePeek inspects up to N rows without acquiring a lease.
 // Cursor pagination via --before mirrors cmdAuditEventsList.
 func cmdQueuePeek(args []string) int {
-	fs := flag.NewFlagSet("queue peek", flag.ContinueOnError)
+	fs := newFlagSet("queue peek", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
 	flags, pos := splitArgsForFlags(args)
@@ -1241,7 +1261,7 @@ func cmdQueuePeek(args []string) int {
 // cmdQueueDeadLetter lists rows that exhausted attempts. Same
 // pagination shape as cmdQueuePeek (cursor via --before).
 func cmdQueueDeadLetter(args []string) int {
-	fs := flag.NewFlagSet("queue dead-letter", flag.ContinueOnError)
+	fs := newFlagSet("queue dead-letter", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor")
 	flags, pos := splitArgsForFlags(args)
@@ -1278,7 +1298,7 @@ func cmdQueueDeadLetter(args []string) int {
 // ids — server returns 200. Use after cmdQueueReceive to free the
 // row before the lease expires.
 func cmdQueueAck(args []string) int {
-	fs := flag.NewFlagSet("queue ack", flag.ContinueOnError)
+	fs := newFlagSet("queue ack", flag.ContinueOnError)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -1423,7 +1443,7 @@ func indexByte(s string, c byte) int {
 // is watching invocations, and advisory frames are noisy (one per
 // debounce window per state-shaped path).
 func cmdTail(args []string) int {
-	fs := flag.NewFlagSet("tail", flag.ContinueOnError)
+	fs := newFlagSet("tail", flag.ContinueOnError)
 	onlySlug := fs.String("app", "", "filter to a single app slug (optional)")
 	includeStateless := fs.Bool("include-stateless", false, "also print stateless.advisory frames (default: hide)")
 	if err := fs.Parse(args); err != nil {

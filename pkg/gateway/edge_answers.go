@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -82,6 +83,20 @@ func (h *Handler) healthSnapshotFor(app App) healthSnapshot {
 		}
 	}
 	return healthSnapshot{reason: "unknown"}
+}
+
+type deploymentSmokeValidator interface {
+	ValidateDeploymentSmoke(appID, deploymentID, token string) bool
+}
+
+func (h *Handler) authorizedDeploymentSmoke(r *http.Request, app App) bool {
+	if h == nil || h.backend == nil || r.Header.Get(apihostingreceipt.PlatformSmokeHeader) != "1" {
+		return false
+	}
+	deploymentID := strings.TrimSpace(r.Header.Get(apihostingreceipt.PlatformSmokeDeploymentHeader))
+	token := strings.TrimSpace(r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader))
+	validator, ok := h.backend.(deploymentSmokeValidator)
+	return ok && validator.ValidateDeploymentSmoke(app.ID, deploymentID, token)
 }
 
 // edgeHeadHeaderCache is intentionally small and process-local. Header values
@@ -182,7 +197,7 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 	// expose a bounded wake value. Edge answers do not consult a VM at all.
 	w.Header().Del(wire.WakeHeader)
 
-	if r.URL.Path == normalizeHealthPath(app.HealthPath) && !app.HealthPathWakes {
+	if r.URL.Path == normalizeHealthPath(app.HealthPath) && !app.HealthPathWakes && !h.authorizedDeploymentSmoke(r, app) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			return false
 		}

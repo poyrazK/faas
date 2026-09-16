@@ -1,14 +1,10 @@
 //go:build linux
 
-// Host-side DGRAM recv loop for the framework-ready signal (issue
-// #470 / PR #470-FU-B) AND the sidecar events channel
-// (issue #463 / ADR-069 / ADR-071 / PR-C). The guest-init proxy
-// (see guest/init/framework_ready_proxy_linux.go) dials CID=2
-// (VMADDR_CID_HOST) port 1027 with a DGRAM datagram; this loop
-// binds the same port on CID=2 and parses each receipt,
-// resolving the source instance via the per-DGRAM peer CID
-// (each Firecracker guest has a unique CID derived from
-// Lease.Slot, see pkg/fcvm.GuestVsockCID).
+// Host-side receiver for framework and lifecycle events. guest-init opens a
+// fresh AF_VSOCK STREAM to CID 2, port 1027. Firecracker forwards that stream
+// to the sending instance's <vsock.sock>_1027 Unix listener, which JailerVMM
+// prepared before boot/restore. The listener supplies the trusted instance id;
+// no outer-host AF_VSOCK bind or peer-CID lookup is involved.
 //
 // The wire shape (mirrored from
 // guest/init/{framework_ready,sidecar_events}_proxy_linux.go):
@@ -34,34 +30,27 @@
 // closed set {0x01, 0x02, 0x03, 0x04, 0x05, 0x06} is dropped with a
 // Warn (forward-compatible with future event classes).
 //
-// Concurrency: one goroutine reads the DGRAM fd. Each receipt
-// is parsed and dispatched to the Manager synchronously. A
-// misframed datagram is warn-logged and dropped; the loop never
-// crashes on a bad peer.
+// Each connection carries one EOF-delimited frame capped at 1024 bytes. Frames
+// are parsed and dispatched synchronously inside a bounded listener worker.
 package main
 
 import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"log/slog"
-	"sync/atomic"
-
-	"golang.org/x/sys/unix"
+	"net"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
 // VsockFrameworkReadyHostPort mirrors the guest-side
-// VsockFrameworkReadyPort (issue #470 / PR #470-FU-B). The host
-// binds VMADDR_CID_HOST=2 on this port; the guest-init proxy
-// dials VMADDR_CID_HOST=2 on the same port. Must match on both
-// sides. (guest/init/framework_ready_proxy_linux.go defines the
-// guest-side constant `VsockFrameworkReadyPort`; cmd/vmmd does
-// not import guest/init so the constant is duplicated here.)
-const VsockFrameworkReadyHostPort uint32 = 1027
+// VsockFrameworkReadyPort. guest-init dials CID 2 on this port and
+// Firecracker forwards it to the per-instance Unix listener.
+const VsockFrameworkReadyHostPort uint32 = fcvm.VsockGuestEventHostPort
 
 // VsockFrameworkReadyHostTypeReady is the discriminator byte for
 // the "ready" message type. Issue #463 / ADR-069 / ADR-071 / PR-C
@@ -75,22 +64,21 @@ const (
 	VsockFrameworkReadyHostTypeRestart  byte = 0x03
 	// VsockFrameworkReadyHostTypeTail (issue #667 / ADR-078)
 	// is the discriminator byte for the waitUntil(post-response
-	// tail) terminal-event envelope. Same DGRAM port 1027
+	// tail) terminal-event envelope. Same STREAM port 1027
 	// channel as framework_ready / sidecar events; the
 	// guest-init proxy (guest/init/sidecar_events_proxy_linux.go)
 	// emits a 16-byte fixed-size body following the type byte.
-	// The host resolves instance identity from the DGRAM peer
-	// CID (same join the other three types use); the
+	// JailerVMM supplies instance identity from the listener; the
 	// elapsed_ms payload feeds the telemetry histogram (PR 5).
 	VsockFrameworkReadyHostTypeTail byte = 0x04
 	// VsockFrameworkReadyHostTypeWorkloadOOM (Cluster C /
 	// ADR-121) is the discriminator byte for the workload-OOM
 	// signal emitted by the guest-init cgroup.events listener
 	// (guest/init/cgroup_partition_linux.go::WatchOOM). Same
-	// DGRAM port 1027 channel as the four closed-set siblings;
+	// STREAM port 1027 channel as the four closed-set siblings;
 	// the body is a small UTF-8 JSON envelope
 	// {"peak_mb":N,"plan_mb":N}. The host resolves instance
-	// identity from the DGRAM peer CID (same join) and
+	// identity from the per-instance listener and
 	// forwards the (peakMB, planMB) tuple to
 	// Manager.ReportWorkloadOOM → schedd
 	// Engine.DestroyForWorkloadOOMFailure → whycopy
@@ -109,7 +97,7 @@ const (
 // file is //go:build linux; the dispatch consumes the
 // constants from the platform-neutral file.
 
-// frameworkReadyMaxDatagram is the upper bound on the DGRAM
+// frameworkReadyMaxDatagram is the upper bound on the STREAM
 // body the host will accept. The guest-side wire for type=0x01 is
 // at most 5 bytes (1B type + 4B BE uint32 warmup_ms + NUL) plus
 // the runtime string (≤ 32 bytes — bounded by the guest runner id
@@ -118,23 +106,12 @@ const (
 // envelope that the guest-init proxy caps at
 // guest/init::sidecarMaxDatagram = 512 bytes; we read up to
 // frameworkReadyMaxDatagram for ALL types so the host bound is
-// the larger of the two. The Linux vsock DGRAM max is well
-// above 4 KiB on a stock kernel; 1024 is a generous future-proof
-// margin that still pinpoints a runaway sender (4+ KiB frames
-// from guest-init are a bug).
+// the larger of the two. 1024 is a generous future-proof margin
+// that still pinpoints a runaway sender.
 const frameworkReadyMaxDatagram = 1024
 
-// FrameworkReadyReceiver is the host-side DGRAM listener. It
-// owns the bound AF_VSOCK DGRAM socket and the read loop. The
-// receiver is held by the vmmd main loop and torn down on
-// context cancellation.
-//
-// fd is an atomic.Int32 (not a plain int) because Close() writes
-// to it from the main path while loop() reads it on every
-// recv call. Using a plain int trips `go test -race` between
-// the two goroutines (CRIT-related review feedback on PR
-// #470-FU-B). The zero value is meaningless; Close publishes
-// the sentinel -1 to break the loop.
+// FrameworkReadyReceiver parses and dispatches the per-instance streams owned
+// by JailerVMM.
 //
 // emitter (issue #463 / ADR-069 / ADR-071 / PR-C) is the
 // audit sink for the sidecar event classes (init_exit /
@@ -146,132 +123,67 @@ const frameworkReadyMaxDatagram = 1024
 // state.Store).
 type FrameworkReadyReceiver struct {
 	ctx     context.Context
-	fd      atomic.Int32
 	log     *slog.Logger
 	mgr     *fcvm.Manager
 	emitter SidecarEventEmitter
 }
 
-// StartFrameworkReadyReceiver binds the host-side DGRAM
-// listener on CID=2:VsockFrameworkReadyHostPort and spawns the
-// read loop. Returns an error if the bind fails (which means
-// vmmd is running on a host without AF_VSOCK — the host kernel
-// doesn't have vsock loaded, or the vmmd binary is missing
-// CAP_NET_RAW). The error is fatal at the cmd main() level —
-// the framework-ready receipt is required for the warm-tier
-// path, so the cmd path aborts if it can't come up.
-//
-// The Manager is the destination for every receipt. The
-// receiver stores a pointer (not a value) so a Manager
-// reinstalled by the cmd main loop after a config reload is
-// reflected without restarting the listener. sidecarEmitter
-// is the audit sink for the sidecar event classes; nil = the
-// no-op default (no audit, but the dispatch never blocks).
-func StartFrameworkReadyReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager) (*FrameworkReadyReceiver, error) {
+// StartFrameworkReadyReceiver registers the event channel with JailerVMM.
+// JailerVMM binds <vsock.sock>_1027 separately for every instance before
+// cold boot or restore. The compute node is itself a nested guest and cannot
+// bind CID 2, so a daemon-wide host AF_VSOCK socket is not a valid endpoint.
+func StartFrameworkReadyReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager, jailer *fcvm.JailerVMM) (*FrameworkReadyReceiver, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("framework_ready receiver: context is required")
+	}
+	if jailer == nil {
+		return nil, fmt.Errorf("framework_ready receiver: jailer is required")
+	}
 	if log == nil {
 		log = slog.Default()
 	}
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return nil, fmt.Errorf("framework_ready DGRAM socket: %w", err)
-	}
-	addr := &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: VsockFrameworkReadyHostPort}
-	if err := unix.Bind(fd, addr); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("framework_ready DGRAM bind port %d: %w", VsockFrameworkReadyHostPort, err)
-	}
 	r := &FrameworkReadyReceiver{ctx: ctx, log: log, mgr: mgr, emitter: noopSidecarEventEmitter{}}
-	r.fd.Store(int32(fd))
-	go r.loop()
-	log.Info("framework_ready receiver started", "vsock_host_port", VsockFrameworkReadyHostPort)
+	if err := jailer.RegisterGuestVsockStreamHandler(VsockFrameworkReadyHostPort, r.handleGuestStream); err != nil {
+		return nil, fmt.Errorf("framework_ready receiver register port %d: %w", VsockFrameworkReadyHostPort, err)
+	}
+	log.Info("framework_ready receiver registered", "vsock_host_port", VsockFrameworkReadyHostPort, "transport", "firecracker_uds")
 	return r, nil
 }
 
-// Close releases the DGRAM socket. Safe to call multiple times.
-// Synchronises with the loop() reader via atomic.Int32.Load:
-// the loop checks r.fd < 0 on every iteration and exits when
-// Close publishes the sentinel.
-func (r *FrameworkReadyReceiver) Close() {
-	if r == nil {
-		return
-	}
-	old := r.fd.Swap(-1)
-	if old < 0 {
-		return
-	}
-	_ = unix.Close(int(old))
-}
+// Close is a no-op. Per-instance listeners are owned by JailerVMM and close
+// with the VM; daemon shutdown closes them through the existing Kill path.
+func (r *FrameworkReadyReceiver) Close() {}
 
-// loop reads datagrams in a tight loop. Each receipt is parsed
-// and dispatched to the Manager (type=0x01) or to the
-// sidecar-event emitter (type=0x02/0x03). The loop terminates
-// when the fd is closed (Close) or the kernel returns a syscall
-// error (typically the VM exiting — the kernel may close the
-// vsock proxy on the host side).
-func (r *FrameworkReadyReceiver) loop() {
-	buf := make([]byte, frameworkReadyMaxDatagram)
-	for {
-		// Atomic load: a concurrent Close publishes -1
-		// here. The check runs on every iteration so the
-		// loop exits within one recv of a Close call.
-		if r.fd.Load() < 0 {
-			return
-		}
-		n, from, err := unix.Recvfrom(int(r.fd.Load()), buf, 0)
-		if err != nil {
-			// EBADF is the expected terminal error when Close()
-			// publishes the -1 sentinel between the inner Load
-			// and the kernel entering the syscall. Log at Debug
-			// to keep the Info channel clean on graceful
-			// shutdown (MED-6 review feedback on PR #543).
-			// Other errors (EINTR, EAGAIN under non-blocking,
-			// ENOTCONN if the vsock device unloads) are also
-			// terminal for this loop — keep the Debug level so
-			// a noisy kernel doesn't alarm the operator.
-			r.log.Debug("framework_ready recv loop ended", "err", err, "ebadf", errors.Is(err, unix.EBADF))
-			return
-		}
-		sa, ok := from.(*unix.SockaddrVM)
-		if !ok {
-			r.log.Warn("framework_ready non-vsock peer", "from", from)
-			continue
-		}
-		msg, perr := parseFrameworkReadyDatagram(buf[:n])
-		if perr != nil {
-			r.log.Warn("framework_ready parse", "err", perr, "len", n, "peer_cid", sa.CID)
-			continue
-		}
-		// Resolve the peer CID → instance id via the live map.
-		// The Manager owns the CID↔instance join (it knows each
-		// instance's Lease.Slot which derives the CID via
-		// pkg/fcvm.GuestVsockCID). A fresh lookup on every
-		// receipt keeps the loop stateless across churn.
-		instance, lookupErr := r.mgr.InstanceByCID(sa.CID)
-		if lookupErr != nil {
-			// Expected during instance churn (a DGRAM racing
-			// a wake-park cycle). Log at Debug. Closed for
-			// ALL types so a sidecar_init_exit / restart
-			// datagram from a guest that just parked isn't
-			// a noisy Warn.
-			r.log.Debug("framework_ready-scope DGRAM for unknown CID",
-				"peer_cid", sa.CID, "type", msg.TypeLabel())
-			continue
-		}
-		switch msg.Kind {
-		case parseFWReadyKindOK:
-			r.dispatchFrameworkReady(instance, msg.WarmupMs)
-		case parseFWReadyKindInitExit:
-			r.dispatchSidecarInitExit(instance, msg.InitExit)
-		case parseFWReadyKindRestart:
-			r.dispatchSidecarRestart(instance, msg.Restart)
-		case parseFWReadyKindTail:
-			r.dispatchTailEvent(instance, msg.Tail)
-		case parseFWReadyKindWorkloadOOM:
-			r.dispatchWorkloadOOM(instance, msg.WorkloadOOM)
-		case parseFWReadyKindDisk:
-			r.dispatchDiskUsage(instance, msg.Disk)
-		}
+func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Conn) (string, error) {
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return "read", fmt.Errorf("framework_ready set deadline: %w", err)
 	}
+	body, err := io.ReadAll(io.LimitReader(conn, frameworkReadyMaxDatagram+1))
+	if err != nil {
+		return "read", fmt.Errorf("framework_ready read: %w", err)
+	}
+	if len(body) > frameworkReadyMaxDatagram {
+		return "protocol", fmt.Errorf("framework_ready frame %d bytes exceeds limit %d", len(body), frameworkReadyMaxDatagram)
+	}
+	msg, err := parseFrameworkReadyDatagram(body)
+	if err != nil {
+		return "protocol", fmt.Errorf("framework_ready parse: %w", err)
+	}
+	switch msg.Kind {
+	case parseFWReadyKindOK:
+		r.dispatchFrameworkReady(instance, msg.WarmupMs)
+	case parseFWReadyKindInitExit:
+		r.dispatchSidecarInitExit(instance, msg.InitExit)
+	case parseFWReadyKindRestart:
+		r.dispatchSidecarRestart(instance, msg.Restart)
+	case parseFWReadyKindTail:
+		r.dispatchTailEvent(instance, msg.Tail)
+	case parseFWReadyKindWorkloadOOM:
+		r.dispatchWorkloadOOM(instance, msg.WorkloadOOM)
+	case parseFWReadyKindDisk:
+		r.dispatchDiskUsage(instance, msg.Disk)
+	}
+	return "", nil
 }
 
 // dispatchFrameworkReady (extracted from the loop body, issue
@@ -307,7 +219,7 @@ func (r *FrameworkReadyReceiver) dispatchFrameworkReady(instance string, warmupM
 //
 // PR-B AC #1: deploymentID is resolved via the new
 // InstanceDeploymentIDAndAppID helper (single lock-held
-// read so a Park racing the DGRAM recv returns a consistent
+// read so a Park racing the STREAM recv returns a consistent
 // pair). Empty deploymentID (legacy pre-PR-B wake) is
 // tolerated — the emitter skips the deploy-row flip on "",
 // but the audit row still lands.
@@ -398,7 +310,7 @@ func (r *FrameworkReadyReceiver) dispatchTailEvent(instance string, wire parseFW
 // dispatchWorkloadOOM (Cluster C / ADR-121) is the type=0x05
 // dispatch path. The guest-init cgroup.events listener
 // detected an oom_kill on the per-VM workload cgroup v2 leaf
-// and emitted the (peakMB, planMB) tuple over DGRAM. The host
+// and emitted the (peakMB, planMB) tuple over STREAM. The host
 // forwards the tuple to the Manager's optional workload-OOM
 // sink (wired in cmd/vmmd/main.go via fcvm.WithWorkloadOOMSink),
 // which in turn relays it to the schedd via the
@@ -493,7 +405,7 @@ const (
 // ADR-121) fills WorkloadOOM's peak_mb + plan_mb; type=0x06 fills Disk's
 // used_bytes + capacity_bytes. The
 // instance id is NOT on the wire — the host resolves it from
-// the DGRAM peer CID.
+// the STREAM peer CID.
 type parseFWReadyMsg struct {
 	Kind     parseFWKind
 	WarmupMs int64
@@ -583,12 +495,12 @@ func (m parseFWReadyMsg) TypeLabel() string {
 	}
 }
 
-// parseFrameworkReadyDatagram parses one DGRAM body into the
+// parseFrameworkReadyDatagram parses one STREAM body into the
 // typed parseFWReadyMsg union. Closed type set: 0x01
 // (framework_ready), 0x02 (sidecar_init_exit), 0x03
 // (sidecar_restart), 0x04 (tail_event, issue #667 / ADR-078).
 // The instance id is NOT on the wire — the host resolves it
-// from the DGRAM peer CID instead.
+// from the STREAM peer CID instead.
 func parseFrameworkReadyDatagram(b []byte) (parseFWReadyMsg, error) {
 	var msg parseFWReadyMsg
 	if len(b) == 0 {
@@ -634,12 +546,12 @@ func parseFrameworkReadyDatagram(b []byte) (parseFWReadyMsg, error) {
 		// Total: 15 bytes of payload. The reserved 6 bytes
 		// stay 0x00 in PR 3 — reserved for a future
 		// wire-level instance_id (the host currently
-		// resolves instance identity via the DGRAM peer CID).
+		// resolves instance identity via the STREAM peer CID).
 		// Short-read tolerance: any missing trailing bytes
 		// surface as 0 (the runner-side emit guarantees the
 		// full 15 bytes — a short read means the kernel
-		// truncated the DGRAM, which is logged at Debug and
-		// dropped via the loop's existing per-DGRAM error
+		// truncated the STREAM, which is logged at Debug and
+		// dropped via the loop's existing per-STREAM error
 		// handling).
 		msg.Kind = parseFWReadyKindTail
 		if len(rest) < 1 {

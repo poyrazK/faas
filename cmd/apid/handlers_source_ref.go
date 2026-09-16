@@ -87,7 +87,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			"Unsupported format", "format must be '"+fieldNameTarball+"' (PR-A)"))
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{TrafficPercent: req.TrafficPercent, Canary: req.Canary}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary}
+	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if p := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -177,6 +181,32 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, prob)
 		return
 	}
+	manifest, manifestProblem := loadSourceRefManifest(spoolPath, app, acct.Plan)
+	if manifestProblem != nil {
+		api.WriteProblem(w, manifestProblem)
+		return
+	}
+	var workflowDefs []api.WorkflowSpec
+	if manifest != nil {
+		workflowDefs = manifest.Workflows
+	}
+	stagedManifest := sourceRefManifestStaged{appID: app.ID}
+	manifestCommitted := false
+	defer func(ctx context.Context) {
+		if manifestCommitted || (len(stagedManifest.cronIDs) == 0 && len(stagedManifest.triggerIDs) == 0) {
+			return
+		}
+		if rollbackErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), stagedManifest); rollbackErr != nil {
+			s.log.Warn("source-ref manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
+		}
+	}(r.Context())
+	if !req.NoTriggers {
+		stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest)
+		if manifestProblem != nil {
+			api.WriteProblem(w, manifestProblem)
+			return
+		}
+	}
 
 	// Issue #977 / ADR-116: validate annotation fields carried on
 	// the JSON body. The source-ref path uses the JSON wire (vs the
@@ -189,6 +219,9 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, prob)
 		return
 	}
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
 
 	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
@@ -196,8 +229,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		Kind:            state.DeploymentKindGitHub,
 		SourcePath:      spoolPath,
 		SourceBytes:     spoolBytes,
+		SourceRoot:      app.RootDir,
 		SourceURL:       fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
 		CommitSHA:       resolvedSHA,
+		Scope:           rollout.Scope,
 		FunctionRuntime: functionRuntimeForApp(app),
 		LogSpool:        spoolRoot(),
 		Log:             s.log,
@@ -227,12 +262,14 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		CanaryTotalSteps:       rollout.CanaryTotalSteps,
 		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
 		CanaryStages:           rollout.CanaryStages,
+		Workflows:              marshalWorkflowDefinitions(workflowDefs),
 		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService && req.TrafficPercent == nil && req.Canary == nil,
 	})
 	if err != nil {
 		s.writeDeploymentCreateError(w, err)
 		return
 	}
+	manifestCommitted = true
 	sourceAccepted = true
 	s.auditSourceRefDeploy(r.Context(), acct, app, res, prev, req, resolvedSHA, installID, ann)
 	// Reload the deployment row so the response carries the
@@ -246,30 +283,68 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
 }
 
-// resolveInstallToken reads the durable install row from
-// state.Store (state.ErrNotFound → 404 code=github_install_not_found).
-// githubd repeats the account/install binding check and owns token
-// minting inside StreamSourceRef, so the raw token never crosses
-// the apid process boundary.
+// resolveInstallToken prefers an exact app/repository binding. For an unbound
+// repository it checks every account-owned installation's repository catalog
+// and accepts exactly one match. This avoids the old recency fallback, which
+// could send an organization repository through an unrelated installation.
 func (s *server) resolveInstallToken(ctx context.Context, acct state.Account, app state.App, repoFullName string) (int64, *api.Problem) {
-	installationID := int64(0)
-	if binding, err := s.store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID); err == nil && binding.RepoFullName == repoFullName {
-		installationID = binding.InstallID
+	binding, err := s.store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID)
+	if err == nil && canonicalGitHubRepo(binding.RepoFullName) == canonicalGitHubRepo(repoFullName) {
+		return s.requireOwnedGitHubInstallation(ctx, acct.ID, binding.InstallID)
 	}
-	var inst state.GitHubInstall
-	var err error
-	if installationID > 0 {
-		inst, err = s.store.GitHubInstallForAccountInstallation(ctx, acct.ID, installationID)
-	} else {
-		inst, err = s.store.GitHubInstallForAccount(ctx, acct.ID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return 0, api.ErrCapacity("could not load repository binding")
+	}
+	return s.resolveRepositoryInstallation(ctx, acct.ID, repoFullName)
+}
+
+func (s *server) resolveRepositoryInstallation(ctx context.Context, accountID, repoFullName string) (int64, *api.Problem) {
+	installs, err := s.store.ListGitHubInstallationsForAccount(ctx, accountID)
+	if err != nil {
+		return 0, api.ErrCapacity("could not list GitHub installations")
+	}
+	if len(installs) == 0 {
+		return 0, api.ErrGitHubInstallNotFound()
+	}
+
+	wanted := canonicalGitHubRepo(repoFullName)
+	matches := make([]int64, 0, 1)
+	for _, inst := range installs {
+		repos, listErr := s.githubd.ListInstallableRepos(ctx, accountID, inst.InstallationID)
+		if listErr != nil {
+			if problem := api.AsProblem(listErr); problem != nil {
+				return 0, problem
+			}
+			return 0, api.ErrSourceRefUnavailable("could not resolve the repository's GitHub installation")
+		}
+		for _, repo := range repos {
+			if canonicalGitHubRepo(repo.FullName) == wanted {
+				matches = append(matches, inst.InstallationID)
+				break
+			}
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return 0, api.NewProblem(http.StatusForbidden, api.CodeGitHubRepoNotAccessible,
+			"Repository is not accessible", "none of this account's GitHub App installations can access the repository")
+	case 1:
+		return matches[0], nil
+	default:
+		return 0, api.NewProblem(http.StatusConflict, api.CodeGitHubInstallAmbiguous,
+			"GitHub installation is ambiguous", "more than one connected installation can access the repository; bind the app to select one")
+	}
+}
+
+func (s *server) requireOwnedGitHubInstallation(ctx context.Context, accountID string, installationID int64) (int64, *api.Problem) {
+	inst, err := s.store.GitHubInstallForAccountInstallation(ctx, accountID, installationID)
+	if errors.Is(err, state.ErrNotFound) {
+		return 0, api.ErrGitHubInstallNotFound()
 	}
 	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			return 0, api.ErrGitHubInstallNotFound()
-		}
-		return 0, api.ErrCapacity("could not load install")
+		return 0, api.ErrCapacity("could not load GitHub installation")
 	}
-	if inst.InstallationID == 0 {
+	if inst.InstallationID <= 0 {
 		return 0, api.ErrGitHubInstallNotFound()
 	}
 	return inst.InstallationID, nil

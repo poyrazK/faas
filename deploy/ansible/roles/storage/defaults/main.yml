@@ -8,6 +8,7 @@
 # silently destroyed.
 faas_storage_mode: auto
 faas_storage_mount: /srv/fc
+faas_storage_cache_mount: /var/lib/faas/cache
 faas_storage_redundancy: auto
 faas_storage_device: ""
 # Auto-discovered blank disks are part of the provider-neutral workflow. An

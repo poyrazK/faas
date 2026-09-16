@@ -93,10 +93,13 @@ func mapReconcileError(err error) *reconcileErrMapping {
 		return nil
 	}
 	if errors.Is(err, reconcile.ErrPlanEmpty) {
-		return &reconcileErrMapping{Status: 422, Code: "no_workloads", Msg: err.Error()}
+		return &reconcileErrMapping{Status: 422, Code: "plan_empty", Msg: err.Error()}
 	}
 	if errors.Is(err, state.ErrScanSourceDowngrade) {
 		return &reconcileErrMapping{Status: 409, Code: "scan_source_downgrade", Msg: err.Error()}
+	}
+	if errors.Is(err, state.ErrConflict) {
+		return &reconcileErrMapping{Status: 409, Code: "workload_slug_conflict", Msg: err.Error()}
 	}
 	if errors.Is(err, reconcile.ErrIgnored) {
 		return &reconcileErrMapping{Status: 200, Code: "ignored", Msg: "feature branch; reconcile is a no-op"}

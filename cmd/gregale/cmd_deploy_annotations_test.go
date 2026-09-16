@@ -7,6 +7,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -63,6 +64,28 @@ func TestDeploymentAnnotationTags_MirrorsDB(t *testing.T) {
 	for i, w := range want {
 		if DeploymentAnnotationTags[i] != w {
 			t.Errorf("DeploymentAnnotationTags[%d] = %q, want %q", i, DeploymentAnnotationTags[i], w)
+		}
+	}
+}
+
+func TestDeployTagHelpNamesEveryAcceptedValue(t *testing.T) {
+	var help string
+	for _, command := range cliCommands {
+		if command.Name != "deploy" {
+			continue
+		}
+		for _, flag := range command.Flags {
+			if flag.Name == "tag" {
+				help = flag.Short
+			}
+		}
+	}
+	if help == "" {
+		t.Fatal("deploy --tag metadata is missing")
+	}
+	for _, tag := range DeploymentAnnotationTags {
+		if !strings.Contains(help, tag) {
+			t.Errorf("deploy --tag help %q does not name accepted value %q", help, tag)
 		}
 	}
 }

@@ -44,10 +44,7 @@ import (
 // cap without involving the multi-tier detectors.
 func quotaFixture(t *testing.T, workloadCount int) []byte {
 	t.Helper()
-	entries := make([]struct{ name, body string }, 0, workloadCount+1)
-	entries = append(entries, struct{ name, body string }{
-		"faas-quota/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n",
-	})
+	entries := make([]struct{ name, body string }, 0, workloadCount)
 	for i := 0; i < workloadCount; i++ {
 		entries = append(entries, struct{ name, body string }{
 			"faas-quota/services/svc" + itoa(i) + "/Dockerfile",
@@ -255,7 +252,7 @@ func TestApplyProject_Quota_CronsNotAllowed(t *testing.T) {
     command: bundle exec rake nightly
 `
 	entries := []struct{ name, body string }{
-		{"faas-cron/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n"},
+		{"faas-cron/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n"},
 		{"faas-cron/render.yaml", renderYAML},
 		{"faas-cron/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
 	}
@@ -388,7 +385,7 @@ func TestApplyProject_Quota_FreeAcceptedAsOneApp(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	h := e2etest.Start(t, pool, e2etest.APID)
-	key := h.SeedAccount(context.Background(), api.PlanFree)
+	key := h.SeedAccount(context.Background(), api.PlanFree, "project-free-one-app")
 
 	ar := applyProjectMultipart(t, h, key, "free-ok", "", quotaFixture(t, 1))
 	if len(ar.Apps) != 1 {

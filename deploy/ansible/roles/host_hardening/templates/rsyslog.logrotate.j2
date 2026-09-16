@@ -1,0 +1,30 @@
+/var/log/syslog
+/var/log/mail.info
+/var/log/mail.warn
+/var/log/mail.err
+/var/log/mail.log
+/var/log/daemon.log
+/var/log/kern.log
+/var/log/auth.log
+/var/log/user.log
+/var/log/lpr.log
+/var/log/cron.log
+/var/log/debug
+/var/log/messages
+{
+    # /var/log is root:syslog 0775 on GCE. Keep root privileges for
+    # ownership changes while selecting the directory-write group; using
+    # `su syslog adm` cannot create delayed-compression outputs there.
+    su root syslog
+    create 0640 syslog adm
+    size {{ faas_hardening_rsyslog_max_file_size }}
+    rotate {{ faas_hardening_rsyslog_rotate }}
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate
+    endscript
+}

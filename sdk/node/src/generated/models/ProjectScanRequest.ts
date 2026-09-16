@@ -14,14 +14,26 @@ export type ProjectScanRequest = {
    * kebab slug; default = repo dir basename
    */
   project_slug?: string;
+  /**
+   * GitHub owner/name to persist for push reconciliation
+   */
+  repo_full_name?: string;
   production_branch?: string;
   /**
-   * GitHub install id (with --repo); 0 for unbound repos
+   * GitHub installation id (with --repository or --repo); 0 for unbound repos
    */
   install_id?: number;
   /**
    * CSV of workload names to include (others skipped)
    */
   only?: string;
+  /**
+   * Environment slug used to scope all discovered workloads
+   */
+  environment?: string;
+  /**
+   * Leave trigger declarations and existing project trigger state unchanged for this scan/apply pair.
+   */
+  no_triggers?: boolean;
 };
 

@@ -87,10 +87,14 @@ func cmdAppSecurity(slug string, args []string) int {
 	// would silently drop --require-signed=false if we parsed args
 	// directly. The reorder helper pulls the flag to the front so
 	// the parser sees it. Mirrors cmdDelayedTaskAdd (commands_delayed_task.go:118).
-	flags, _ := splitArgsForFlags(args)
-	fs := flag.NewFlagSet("app security", flag.ContinueOnError)
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("app security", flag.ContinueOnError)
 	requireSigned := fs.String("require-signed", "", "require signed images on deploy (true|false)")
 	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(positional) != 0 {
+		PrintUsage(os.Stderr, "usage: gregale app <slug> security [--require-signed=true|false]", "apps")
 		return 1
 	}
 	// --require-signed is parsed as a string so the strict literal

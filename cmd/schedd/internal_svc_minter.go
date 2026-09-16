@@ -185,7 +185,7 @@ const (
 // Fallback chain (in order):
 //
 //  1. cluster_signing_keys row (PR-3 / ADR-125) — unsealed
-//     via host.age identities on this box. The cluster row
+//     via the dedicated fleet.age identity on this box. The cluster row
 //     is the multi-host source of truth; every schedd in
 //     the fleet mints with the same kid.
 //  2. FAAS_INTERNAL_SVC_KEY_SEALED_BLOB — sealed-at-rest
@@ -196,18 +196,16 @@ const (
 // Sealed-at-rest mode (step 2): if
 // FAAS_INTERNAL_SVC_KEY_SEALED_BLOB is set, the plaintext-PEM
 // path is skipped entirely and the unsealed bytes are used.
-// The host.age identities are loaded via
-// secretbox.LoadHostKeys(secretbox.DefaultHostKeyDir) — current
-// first, previous second — so a rotation overlap window is
-// supported without daemon restart.
+// Legacy sealed-at-rest values load fleet.age first and retain current and
+// previous host identities for the bounded migration window.
 func newSchedInternalSvcMinter(ctx context.Context, store *state.PgStore, log *slog.Logger) (*atomicMinter, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	m := &atomicMinter{}
 	// Step 1: cluster-wide PG key (PR-3 / ADR-125). Most
-	// production schedds hit this path; the per-host fallback
-	// chain below is the operator-migration window.
+	// production schedds hit this path. The per-host fallback below is
+	// permitted only when cluster_signing_keys is empty for development.
 	if store != nil {
 		priv, kid, err := loadClusterInternalSvcKey(ctx, store, log)
 		if err == nil {
@@ -221,10 +219,11 @@ func newSchedInternalSvcMinter(ctx context.Context, store *state.PgStore, log *s
 				"ttl", internalSvcTokenTTL.String())
 			return m, nil
 		}
-		if !errors.Is(err, ErrClusterKeyUnavailable) {
+		if !errors.Is(err, ErrClusterKeyMissing) {
 			// Hard error — log + bail. The fallback chain is
-			// for "row missing or unseal failed", not for
-			// "PG is unreachable and pgx is erroring".
+			// only for an empty table. A populated row that this
+			// node cannot unseal is a fleet-domain violation and
+			// must stop schedd before the node can advertise capacity.
 			return nil, fmt.Errorf("schedd: cluster key load: %w", err)
 		}
 		log.Info("schedd: cluster_signing_keys unavailable; falling back to per-host key path",

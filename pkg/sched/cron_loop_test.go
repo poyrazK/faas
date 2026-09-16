@@ -133,6 +133,15 @@ type recordingSynth struct {
 	inv   atomic.Value // last persisted invocation delivered
 }
 
+type claimLosingStore struct{ state.Store }
+
+func (s claimLosingStore) ClaimInvocation(ctx context.Context, id, instanceID string, leaseSeconds int) (state.Invocation, error) {
+	if _, err := s.Store.ClaimInvocation(ctx, id, instanceID, leaseSeconds); err != nil {
+		return state.Invocation{}, err
+	}
+	return state.Invocation{}, state.ErrNotFound
+}
+
 func (r *recordingSynth) SynthesizeRequest(_ context.Context, appID, _, path string) error {
 	r.calls.Add(1)
 	r.last.Store(struct{ AppID, Path string }{AppID: appID, Path: path})
@@ -398,6 +407,135 @@ func TestCronDispatch_DisabledSkipped(t *testing.T) {
 	}
 	if len(enabled) != 0 {
 		t.Fatalf("expected zero enabled crons in fresh store, got %d", len(enabled))
+	}
+}
+
+func TestCronDispatch_NoLiveDeploymentSuspendsUntilRedeploy(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "no-live-cron@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "no-live", Type: state.AppTypeApp, RAMMB: 256,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	cron, err := store.CreateCron(ctx, app.ID, "* * * * *", "/ping", true)
+	if err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
+
+	eng, _ := makeEngine(t, store, &fakeWakeVMM{})
+	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(&recordingSynth{})
+	if _, admitted := loop.dispatchCronLocked(ctx, cron, time.Now().UTC(), TriggerSchedule); !admitted {
+		t.Fatal("permanent wake failure should still emit the cron failure audit")
+	}
+
+	got, err := store.CronByID(ctx, cron.ID)
+	if err != nil {
+		t.Fatalf("CronByID: %v", err)
+	}
+	if got.SuspendedReason != state.CronSuspendedNoLiveDeployment {
+		t.Fatalf("suspended reason = %q, want %q", got.SuspendedReason, state.CronSuspendedNoLiveDeployment)
+	}
+	enabled, err := store.ListEnabledCrons(ctx)
+	if err != nil {
+		t.Fatalf("ListEnabledCrons: %v", err)
+	}
+	if len(enabled) != 0 {
+		t.Fatalf("enabled crons after suspension = %d, want 0", len(enabled))
+	}
+
+	// A successful redeploy reactivates the schedule. A separate cron that
+	// the customer disabled stays disabled because suspension never changes
+	// the customer-owned Enabled field.
+	disabled, err := store.CreateCron(ctx, app.ID, "*/5 * * * *", "/disabled", false)
+	if err != nil {
+		t.Fatalf("CreateCron(disabled): %v", err)
+	}
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Status: state.DeployPending, Kind: state.DeploymentKindImage,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
+
+	got, err = store.CronByID(ctx, cron.ID)
+	if err != nil {
+		t.Fatalf("CronByID(reactivated): %v", err)
+	}
+	if got.SuspendedReason != "" || !got.Enabled {
+		t.Fatalf("reactivated cron = %+v, want enabled with no suspension", got)
+	}
+	disabled, err = store.CronByID(ctx, disabled.ID)
+	if err != nil {
+		t.Fatalf("CronByID(disabled): %v", err)
+	}
+	if disabled.Enabled {
+		t.Fatal("successful redeploy re-enabled a customer-disabled cron")
+	}
+}
+
+func TestCronDispatch_ClaimLostHandsOffWithoutDuplicateInvoke(t *testing.T) {
+	t.Parallel()
+	base := state.NewMemStore()
+	store := claimLosingStore{Store: base}
+	ctx := context.Background()
+	acct, _ := store.CreateAccount(ctx, "claim-race@example.com", api.PlanHobby)
+	_, cron := newAppAndCron(t, store, acct.ID, true)
+	vmm := &fakeWakeVMM{}
+	eng, _ := makeEngine(t, store, vmm)
+	synth := &recordingSynth{}
+	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
+
+	run, admitted := loop.dispatchCronLocked(ctx, cron, time.Now().UTC(), TriggerSchedule)
+
+	if !admitted || run.InvocationID == "" {
+		t.Fatalf("dispatch result = %+v, admitted=%v; want durable handoff", run, admitted)
+	}
+	if got := synth.calls.Load(); got != 0 {
+		t.Fatalf("gateway calls = %d, want 0 after drain won the claim", got)
+	}
+	inv, err := base.InvocationByID(ctx, run.InvocationID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	if inv.State != state.InvocationDispatching {
+		t.Fatalf("invocation state = %q, want dispatching under drain ownership", inv.State)
+	}
+}
+
+func TestCronDispatch_OwnerlessSchedulerSkipsRemoteApp(t *testing.T) {
+	t.Parallel()
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, _ := store.CreateAccount(ctx, "remote-cron@example.com", api.PlanHobby)
+	app, _ := newAppAndCron(t, store, acct.ID, true)
+	if err := store.SetAppNodeID(ctx, app.ID, "remote-node"); err != nil {
+		t.Fatalf("SetAppNodeID: %v", err)
+	}
+	vmm := &fakeWakeVMM{}
+	eng, _ := makeEngine(t, store, vmm)
+	synth := &recordingSynth{}
+	loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
+	loop.now = func() time.Time {
+		return time.Date(2026, 7, 17, 12, 2, 0, 0, time.UTC)
+	}
+
+	loop.runCronTick(ctx)
+
+	if got := vmm.calls.Load(); got != 0 {
+		t.Fatalf("wake calls = %d, want 0 for remote-owned app", got)
+	}
+	if got := synth.calls.Load(); got != 0 {
+		t.Fatalf("gateway calls = %d, want 0 for remote-owned app", got)
 	}
 }
 

@@ -1880,3 +1880,133 @@ func keysOf(m map[string]int) []string {
 	sort.Strings(out)
 	return out
 }
+
+// noLocalPathBackend hides a backend's LocalPath capability. Embedding the
+// storage.StorageBackend INTERFACE (not the concrete type) promotes only
+// Put/Get/Delete, so a type assertion to storage.LocalPathResolver fails —
+// the shape of a remote object store, and of a cache miss. Same trick as
+// snapshotUnlistedBackend in snapshot_publication_test.go.
+type noLocalPathBackend struct{ storage.StorageBackend }
+
+// TestEnsureBaseExt4_MissingLocalImageRestages — a skip must prove this NODE
+// has the base, not merely that the backend can serve it.
+//
+// spec: §4.6
+// adr: 005
+//
+// Production incident, 2026-09-12: imaged logged "reused pinned base from local
+// evidence" and then "imaged ready" with builder_base_skipped=true, naming
+// builder_base_path=/srv/fc/base/builder-base.ext4 — on a host where neither
+// that path nor the canonical base/runner-builder-amd64.ext4 existed anywhere
+// on disk. The base had been wiped while the backend copy and both sidecars
+// survived, so every restart re-confirmed evidence for an artifact that was
+// gone. validateExistingBaseArtifact could not catch it: with no local path
+// resolvable it falls through to be.Get(baseKey), which a remote object store
+// answers happily. The next build would have failed on a missing drive0, and
+// ADR-005 requires cold boot to always work.
+func TestEnsureBaseExt4_MissingLocalImageRestages(t *testing.T) {
+	const (
+		baseKey = "base/runtime.ext4"
+		digKey  = baseKey + ".digest"
+		ref     = "ghcr.io/onebox-faas/runner-node22@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+
+	// stage runs a real first staging pass, then hides the backend's LocalPath
+	// so the subsequent call has to decide using outImage alone.
+	stage := func(t *testing.T, outImage string) (*baseHarness, *callCountingBuilder) {
+		t.Helper()
+		b := &callCountingBuilder{}
+		hs := newBaseHarness(t, newTwoLayerPuller(t), b)
+		first, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, outImage, "", "")
+		if err != nil {
+			t.Fatalf("first EnsureBaseExt4: %v", err)
+		}
+		if first.Skipped {
+			t.Fatal("first stage unexpectedly skipped")
+		}
+		if b.calls == 0 {
+			t.Fatal("first stage did not build the base")
+		}
+		hs.h.storage = noLocalPathBackend{hs.be}
+		return hs, b
+	}
+
+	t.Run("absent local image restages", func(t *testing.T) {
+		// Never created: the directory exists, the image does not.
+		outImage := filepath.Join(t.TempDir(), "builder-base.ext4")
+		hs, b := stage(t, outImage)
+		staged := b.calls
+
+		res, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, outImage, "", "")
+		if err != nil {
+			t.Fatalf("EnsureBaseExt4: %v", err)
+		}
+		if res.Skipped {
+			t.Fatal("reported a staged base while the local image does not exist")
+		}
+		if b.calls == staged {
+			t.Fatal("declined the skip but never rebuilt the base")
+		}
+	})
+
+	t.Run("empty local image restages", func(t *testing.T) {
+		outImage := filepath.Join(t.TempDir(), "builder-base.ext4")
+		hs, b := stage(t, outImage)
+		// A truncated file is the other half of this bug class: it exists, so a
+		// bare existence check would accept it as drive0.
+		if err := os.WriteFile(outImage, nil, 0o644); err != nil {
+			t.Fatalf("write empty image: %v", err)
+		}
+		staged := b.calls
+
+		res, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, outImage, "", "")
+		if err != nil {
+			t.Fatalf("EnsureBaseExt4: %v", err)
+		}
+		if res.Skipped {
+			t.Fatal("reported a staged base for a zero-byte image")
+		}
+		if b.calls == staged {
+			t.Fatal("declined the skip but never rebuilt the base")
+		}
+	})
+
+	t.Run("present local image still skips", func(t *testing.T) {
+		outImage := filepath.Join(t.TempDir(), "builder-base.ext4")
+		hs, b := stage(t, outImage)
+		if err := os.WriteFile(outImage, []byte("staged ext4"), 0o644); err != nil {
+			t.Fatalf("write image: %v", err)
+		}
+		staged := b.calls
+
+		res, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, outImage, "", "")
+		if err != nil {
+			t.Fatalf("EnsureBaseExt4: %v", err)
+		}
+		if !res.Skipped {
+			t.Fatal("restaged a base that is present on disk; the check is too strict")
+		}
+		if b.calls != staged {
+			t.Fatalf("rebuilt the base %d extra times despite a present image", b.calls-staged)
+		}
+	})
+
+	t.Run("empty outImage keeps backend-only behaviour", func(t *testing.T) {
+		// Every other test in this package passes outImage="" — the artifact is
+		// consumed straight from the backend and there is no local path to
+		// require. That path must keep skipping.
+		hs, b := stage(t, "")
+		staged := b.calls
+
+		res, err := hs.h.EnsureBaseExt4(context.Background(), ref, baseKey, digKey, "", "", "")
+		if err != nil {
+			t.Fatalf("EnsureBaseExt4: %v", err)
+		}
+		if !res.Skipped {
+			t.Fatal("backend-only deployment restaged; the check must not apply without an outImage")
+		}
+		if b.calls != staged {
+			t.Fatalf("rebuilt the base %d extra times in a backend-only deployment", b.calls-staged)
+		}
+	})
+}

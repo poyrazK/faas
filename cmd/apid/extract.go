@@ -220,7 +220,17 @@ func extractTarGzInto(src, dst string, lim extractLimits) *api.Problem {
 		// non-empty-name header. tar archives the customer uploaded
 		// usually have this; fs.MapFS test fixtures don't. The
 		// no-prefix case (single root already) leaves firstDir="".
+		// Canonicalise harmless leading "./" segments before selecting
+		// and stripping the archive wrapper. Without this, an entry such
+		// as "./repo/compose.yaml" selected "." as the wrapper and left
+		// the real repository root nested one level too deep, producing an
+		// empty project plan. escapesArchiveRoot above already rejected
+		// absolute names and parent traversal. Preserve a trailing slash on
+		// directory headers because wrapper discovery uses that separator.
 		name := hdr.Name
+		for strings.HasPrefix(name, "./") {
+			name = strings.TrimPrefix(name, "./")
+		}
 		if !firstSet {
 			// Only consume the first segment as the archive root
 			// if every other entry also begins with it. We can't

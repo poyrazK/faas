@@ -105,6 +105,11 @@ type Pending struct {
 	// the wire request. A non-nil plan makes a fresh-app preview explicit
 	// even when all resource fields use server defaults.
 	BuildPlan *api.BuildPlan
+	// TrafficPercent and Canary are immutable deployment rollout intent.
+	// Pointers preserve omission versus an explicit 0/none policy.
+	TrafficPercent *int
+	Canary         *api.CanaryPresetSpec
+	Workflows      []api.WorkflowSpec
 	// ImageRef is the per-deployment image ref (matches
 	// [api.CreateDeploymentRequest.Image]). Empty string = no
 	// image deploy (e.g. tarball-only). When non-empty and the
@@ -144,6 +149,7 @@ type Pending struct {
 // the nil-vs-explicit distinction.
 type AppConfigPatch struct {
 	RAMMB               *int
+	VCPU                *int
 	CPUMillicores       *int
 	IdleTimeoutS        *int
 	MaxConcurrency      *int

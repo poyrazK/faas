@@ -167,6 +167,7 @@ func TestDo_MutatingCallsCarryIdempotencyKey(t *testing.T) {
 			return err
 		}},
 		{"DeleteDomain", func(c *Client) error { return c.DeleteDomain(context.Background(), "x") }},
+		{"RetryDomainVerification", func(c *Client) error { return c.RetryDomainVerification(context.Background(), "x") }},
 		{"UpdateCron", func(c *Client) error {
 			_, err := c.UpdateCron(context.Background(), "1", UpdateCronRequest{})
 			return err
@@ -337,6 +338,28 @@ func TestDo_BearerAuthHeader(t *testing.T) {
 			t.Errorf("Authorization = %q, want %q", got, "Bearer fp_live_xyz")
 		}
 	})
+}
+
+func TestClientGetBillingStatus(t *testing.T) {
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"mode":"disabled","enabled":false,"provider":"polar","plan":"free","account_status":"active","customer_configured":false,"subscription_configured":false,"usage_reconciliation_enabled":false}`))
+	}))
+	defer srv.Close()
+
+	got, err := NewClient(srv.URL, "customer-token").GetBillingStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/billing/status" || gotAuth != "Bearer customer-token" {
+		t.Fatalf("request path/auth = %q/%q", gotPath, gotAuth)
+	}
+	if got.Mode != "disabled" || got.Enabled || got.Provider != "polar" || got.Plan != PlanFree {
+		t.Fatalf("decoded status = %+v", got)
+	}
 }
 
 // TestDo_ProblemDecodedAsAPIError pins the wire-side error path:
@@ -765,7 +788,7 @@ func TestProjectMultipartRequestsTerminateAtCleanEOF(t *testing.T) {
 			name: "scan",
 			path: "/v1/projects/scan",
 			call: func(ctx context.Context, c *Client) error {
-				_, err := c.ScanProject(ctx, bytes.NewReader([]byte("tarball bytes")), "src.tar.gz", "demo", "main", 0, nil, nil, false)
+				_, err := c.ScanProject(ctx, bytes.NewReader([]byte("tarball bytes")), "src.tar.gz", "demo", "main", 0, nil, nil, false, false)
 				return err
 			},
 		},
@@ -773,7 +796,7 @@ func TestProjectMultipartRequestsTerminateAtCleanEOF(t *testing.T) {
 			name: "apply",
 			path: "/v1/projects",
 			call: func(ctx context.Context, c *Client) error {
-				_, err := c.ApplyProjectPlan(ctx, "", bytes.NewReader([]byte("tarball bytes")), "src.tar.gz", "demo", "main", 0, nil, nil, false)
+				_, err := c.ApplyProjectPlan(ctx, "", bytes.NewReader([]byte("tarball bytes")), "src.tar.gz", "demo", "main", 0, nil, nil, false, false)
 				return err
 			},
 		},
@@ -1175,6 +1198,31 @@ func TestStreamAppLogs_URLEscape(t *testing.T) {
 	_, _ = io.Copy(io.Discard, body2)
 	if want := "/v1/apps/myapp/logs?follow=0"; seenZero != want {
 		t.Fatalf("zero-value path mismatch:\n got: %s\nwant: %s", seenZero, want)
+	}
+}
+
+func TestStreamAppArchivedLogs_RequestShape(t *testing.T) {
+	var seenPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: end\ndata: {\"reason\":\"archive_complete\"}\n\n")
+	}))
+	defer srv.Close()
+
+	body, err := NewClient(srv.URL, "fp_test").StreamAppArchivedLogs(context.Background(), "my app", ArchiveLogSelector{
+		InstanceID: "inst-abc",
+		Date:       "2026-09-14",
+	})
+	if err != nil {
+		t.Fatalf("StreamAppArchivedLogs: %v", err)
+	}
+	defer func() { _ = body.Close() }()
+	_, _ = io.Copy(io.Discard, body)
+
+	want := "/v1/apps/my%20app/logs?archive=1&date=2026-09-14&instance=inst-abc"
+	if seenPath != want {
+		t.Fatalf("URL path mismatch:\n got: %s\nwant: %s", seenPath, want)
 	}
 }
 

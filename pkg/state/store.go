@@ -680,6 +680,27 @@ type ComputeNodeUsageBatcher interface {
 	ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string) (map[string]int64, error)
 }
 
+// ManagedRealtimeEndpointStore is the optional persistence surface for
+// managed realtime endpoint resources. It is intentionally separate from
+// Store so narrow test doubles and older integrations remain source-
+// compatible while the control-plane resource rolls out.
+type ManagedRealtimeEndpointStore interface {
+	CreateManagedRealtimeEndpointIfUnderQuota(ctx context.Context, endpoint ManagedRealtimeEndpoint, perApp, perAccount int) (ManagedRealtimeEndpoint, error)
+	ManagedRealtimeEndpointByID(ctx context.Context, id string) (ManagedRealtimeEndpoint, error)
+	UpdateManagedRealtimeEndpoint(ctx context.Context, id string, params UpdateManagedRealtimeEndpointParams) (ManagedRealtimeEndpoint, error)
+	DeleteManagedRealtimeEndpoint(ctx context.Context, id string) error
+	ListManagedRealtimeEndpointsForApp(ctx context.Context, appID string) ([]ManagedRealtimeEndpoint, error)
+	ListManagedRealtimeEndpointsForAccount(ctx context.Context, accountID string) ([]ManagedRealtimeEndpoint, error)
+}
+
+// ManagedRealtimeEndpointLister is the optional store-wide read surface used
+// by the apid endpoint reconciler. It is separate from
+// ManagedRealtimeEndpointStore so narrow test doubles and older integrations
+// remain source-compatible while the background repair loop rolls out.
+type ManagedRealtimeEndpointLister interface {
+	ListManagedRealtimeEndpoints(ctx context.Context) ([]ManagedRealtimeEndpoint, error)
+}
+
 // WebhookDeliveryReleaser is an optional rollback seam for webhook ingress.
 // A delivery is claimed before its side effects run to serialize concurrent
 // redeliveries; if those side effects fail, the claim must be removed so the
@@ -741,6 +762,22 @@ type ProjectReconcileStore interface {
 	) (ProjectReconcileResult, error)
 }
 
+// BuildProvenanceRunnerDigestStore is the optional persistence seam used by
+// imaged after it injects the function runner. It remains separate from Store
+// so narrow test doubles and older integrations do not need to grow with this
+// post-build metadata update.
+type BuildProvenanceRunnerDigestStore interface {
+	UpdateBuildProvenanceRunnerDigest(ctx context.Context, buildID, runnerDigest string) error
+}
+
+// CronSuspensionStore separates scheduler-owned suspension from the
+// customer's enabled flag. A successful deployment clears the reason while a
+// customer-disabled cron remains disabled.
+type CronSuspensionStore interface {
+	SuspendCronsForApp(ctx context.Context, appID, reason string) (int, error)
+	ReactivateCronsForApp(ctx context.Context, appID string) (int, error)
+}
+
 // Store is the persistence boundary apid and schedd depend on (spec §6, ADR-006).
 // The production implementation is Postgres via the embedded SQL queries in
 // pkg/state/queries.sql; MemStore backs unit tests. Keeping this interface
@@ -752,6 +789,10 @@ type Store interface {
 
 	// Accounts & auth.
 	CreateAccount(ctx context.Context, email string, plan api.Plan) (Account, error)
+	// Account-wide fixed-window deployment admissions. Consume is atomic across
+	// all apps and deploy sources; Read never spends an admission.
+	ConsumeAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (AccountDeployRateSnapshot, error)
+	ReadAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (AccountDeployRateSnapshot, error)
 	// CreateAccountWithPersonalOrg is the PR 3 canonical
 	// account-creation entry point (issue #190 / ADR-061). It runs
 	// the account INSERT + orgs INSERT + org_memberships INSERT
@@ -2045,7 +2086,15 @@ type Store interface {
 	RestoreApp(ctx context.Context, id string) (App, error)
 	// ListDeletedApps returns tombstones for the app grace sweeper.
 	ListDeletedApps(ctx context.Context) ([]App, error)
-	// DeleteAppPermanently removes an expired app and its dependent state.
+	// ClaimAppDeletion atomically closes the restore window for an expired
+	// tombstone before the grace sweeper deletes external artifacts. Repeated
+	// claims are idempotent so failed artifact deletion remains retryable.
+	ClaimAppDeletion(ctx context.Context, id string) error
+	// ListAppDeletionArtifacts returns storage keys referenced by this app and
+	// no other app. The grace sweeper deletes these before removing database
+	// state so a failed storage operation remains durably retryable.
+	ListAppDeletionArtifacts(ctx context.Context, appID string) ([]AppDeletionArtifact, error)
+	// DeleteAppPermanently removes a claimed, expired app and its dependent state.
 	DeleteAppPermanently(ctx context.Context, id string) error
 
 	// Projects (ADR-050, Phase 1).
@@ -2095,7 +2144,23 @@ type Store interface {
 	ListProjectsForAccount(ctx context.Context, accountID string) ([]Project, error)
 	AppsForProject(ctx context.Context, accountID, projectID string) ([]App, error)
 	SetProjectScanSource(ctx context.Context, projectID string, src ProjectScanSource) (Project, error)
+	// UpdateProjectBinding replaces the customer-managed repository and
+	// production branch while enforcing account ownership. Empty repository
+	// and installID zero deliberately unbind the project.
+	UpdateProjectBinding(ctx context.Context, accountID, projectID, repoFullName, productionBranch string, installID int64) (Project, error)
 	DeleteProject(ctx context.Context, projectID string) error
+
+	// Project environments are durable named targets for a project. Reads are
+	// account-scoped and return ErrNotFound for cross-account access; duplicate
+	// slugs return ErrConflict.
+	ListProjectEnvironments(ctx context.Context, accountID, projectID string) ([]ProjectEnvironment, error)
+	ProjectEnvironmentBySlug(ctx context.Context, accountID, projectID, slug string) (ProjectEnvironment, error)
+	CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error)
+	UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error)
+	CreateProjectEnvironmentApproval(ctx context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error)
+	ProjectEnvironmentApprovalByToken(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string) (ProjectEnvironmentApproval, error)
+	ProjectEnvironmentConfigLatest(ctx context.Context, accountID, projectID, environmentSlug string) (ProjectEnvironmentConfig, error)
+	CreateProjectEnvironmentConfigVersion(ctx context.Context, config ProjectEnvironmentConfig) (ProjectEnvironmentConfig, error)
 
 	// ApplyProjectPlan persists a project + its member apps + crons
 	// in a single transaction. Quota is checked inside the locked
@@ -2201,6 +2266,10 @@ type Store interface {
 	// dashboard's bind picker hydrates off this signal to decide
 	// whether to render the "Connect GitHub" button vs the bind list.
 	GitHubInstallForAccount(ctx context.Context, accountID string) (GitHubInstall, error)
+	// ListGitHubInstallationsForAccount returns every installation owned by
+	// one account in installation-ID order. Repository resolution must use
+	// this account-scoped list instead of choosing a row by recency.
+	ListGitHubInstallationsForAccount(ctx context.Context, accountID string) ([]GitHubInstall, error)
 	// GitHubInstallForAccountInstallation resolves the exact installation a
 	// bind or webhook named. This is the multi-install-safe path; callers must
 	// not silently substitute another installation owned by the account.
@@ -2696,6 +2765,8 @@ type Store interface {
 	ListOpenStatusIncidents(ctx context.Context) ([]StatusIncident, error)
 	CreatePublicStatusEvent(ctx context.Context, input StatusEventCreate) (StatusIncident, error)
 	AppendPublicStatusUpdate(ctx context.Context, publicID string, input StatusEventUpdateInput) (StatusIncident, error)
+	EditPublicStatusEventTitle(ctx context.Context, publicID string, input StatusEventTitleEditInput) (StatusIncident, error)
+	EditPublicStatusUpdateMessage(ctx context.Context, publicID, updateID string, input StatusUpdateMessageEditInput) (StatusIncident, error)
 	StatusEventByPublicID(ctx context.Context, publicID string) (StatusIncident, error)
 	ListPublicStatusEvents(ctx context.Context, options StatusEventListOptions) ([]StatusIncident, error)
 	RecordStatusBucket(ctx context.Context, bucket StatusBucket) error
@@ -4077,6 +4148,10 @@ type Store interface {
 	// (schedd's heartbeat sweep already flipped it) or
 	// last_heartbeat_at older than threshold (the flip has not landed
 	// yet, e.g. the schedd that owns the heartbeat loop restarted).
+	// App-backed rows on draining, force_draining, unavailable, or
+	// recovering nodes are excluded because the recovery controller owns
+	// their transition. App-less job-task rows remain eligible; their
+	// lease and stuck-task reaper own retry after this billing stop.
 	//
 	// Why this exists: MarkComputeNodeInactive only writes
 	// compute_nodes; it deliberately leaves instances untouched. A
@@ -4098,13 +4173,15 @@ type Store interface {
 	// stops meterd billing for a VM that no longer exists; it also
 	// frees the row from the §6.2-2 RAM ceiling.
 	//
-	// Implementations MUST make the write conditional on both
-	// `state = 'running'` and the supplied nodeID, and MUST return
+	// Implementations MUST make the write conditional on `state =
+	// 'running'`, the supplied nodeID, the same dead-node threshold used
+	// by the list, and the recovery-controller lifecycle exclusion. They
+	// MUST return
 	// ErrConflict (not an error) when no row matches — that is the
 	// benign "a peer got there first / the node recovered" path. The
 	// nodeID predicate prevents a stale read from failing an instance
 	// that has since migrated to a healthy node.
-	FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string) error
+	FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string, threshold time.Time) error
 	// ListInstancesInTerminalStatesOlderThan is the §17 retention sweep's
 	// lookup (PR #74). Returns rows currently in any of the given states
 	// (today: {STOPPED, FAILED}) whose terminal_at is strictly older than
@@ -4115,6 +4192,16 @@ type Store interface {
 	// successfully has a stale started_at). PgStore relies on migration
 	// 00017's partial index for the state predicate.
 	ListInstancesInTerminalStatesOlderThan(ctx context.Context, states []State, threshold time.Time) ([]Instance, error)
+	// DeleteParkedInstancesOlderThan atomically removes at most limit
+	// wake-history rows whose current lifecycle state is PARKED and whose
+	// parked_at anchor is strictly older than threshold. Rows carrying a live
+	// migration lease/start marker are recovery-owned and ineligible even if
+	// their state was left PARKED. Implementations must re-check the lifecycle
+	// predicates in the DELETE statement: a row selected before a concurrent
+	// PARKED -> WAKING transition must survive. PARKED rows are not reused by
+	// Wake; snapshots are separate durable rows keyed by deployment and must
+	// not be changed by this operation. limit <= 0 is a no-op.
+	DeleteParkedInstancesOlderThan(ctx context.Context, threshold time.Time, limit int) (int64, error)
 	// DeleteInstance removes a single instance row unconditionally
 	// (PR #74). Returns ErrNotFound when the row is already gone — the
 	// retention sweep swallows that case for redelivery. There are NO
@@ -4129,6 +4216,12 @@ type Store interface {
 	// calls this between a successful vmmd boot and the RUNNING transition so the
 	// gateway can route to host_ip:8080 (spec §7).
 	SetInstanceRuntime(ctx context.Context, id, netns, hostIP string, guestUID int) error
+	// PublishInstanceRuntime atomically records vmmd's runtime identity and
+	// moves an instance from expectedState to RUNNING. The successful wake
+	// path uses this single compare-and-swap instead of a read, runtime write,
+	// second read, and state write. It returns ErrConflict when the watchdog or
+	// another reconciler changed/deleted the row during the vmmd call.
+	PublishInstanceRuntime(ctx context.Context, id, expectedState, netns, hostIP string, guestUID int) (Instance, error)
 	// RunningInstanceForApp returns the newest RUNNING instance attached to a
 	// currently live deployment with positive traffic, or ErrNotFound when none
 	// is routable. A VM on a superseded or zero-weight generation must not make
@@ -4165,6 +4258,9 @@ type Store interface {
 	// ListSnapshotsStaleOlderThan returns stale snapshots whose retention
 	// window has expired, including the metadata needed to remove their files.
 	ListSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) ([]SnapshotForGC, error)
+	// ListSnapshotsPendingDelete returns GC tombstones whose remote artifacts
+	// have not yet been fully deleted. Ordinary stale rollback rows are excluded.
+	ListSnapshotsPendingDelete(ctx context.Context) ([]SnapshotForGC, error)
 	// ListSnapshotDeploymentIDs returns the distinct deployment IDs referenced
 	// by every snapshot row, including retained stale rows. Imaged uses this
 	// compact projection to distinguish legacy local orphans from retained data.
@@ -4190,8 +4286,8 @@ type Store interface {
 	// snapshot matches the id AND the deployment's app.app_protocol
 	// ∈ appProtocols. Empty appProtocols is an error (caller bug).
 	MarkSnapshotStaleByAppProtocol(ctx context.Context, snapshotID string, appProtocols []string) error
-	// MarkOldSnapshotsStale marks the given snapshot IDs stale (the imaged
-	// rollback-window GC calls this immediately before DeleteSnapshotsByID).
+	// MarkOldSnapshotsStale marks the given snapshot IDs stale and delete-pending
+	// (the imaged rollback-window GC calls this before remote artifact deletion).
 	MarkOldSnapshotsStale(ctx context.Context, beforeSnapshotIDs []string) (int64, error)
 	// DeleteSnapshotsStaleOlderThan removes rows where stale=true AND
 	// created_at < now()-retention. Used by imaged's F2 startup sweep
@@ -4353,9 +4449,9 @@ type Store interface {
 	// CAS didn't land (the caller is expected to re-read via
 	// NodeGet and decide whether to retry).
 	NodeSetLifecycle(ctx context.Context, id string, expected, next NodeLifecycle) error
-	// NodeListRecoverable returns every node in
-	// ('unavailable','recovering') — the recovery arbiter's input
-	// set. Cold-start sweep + the 1s tick both consume this.
+	// NodeListRecoverable returns recovering nodes and unavailable nodes whose
+	// last heartbeat is less than 24 hours old. Older inventory stays auditable
+	// without causing an endless recovery polling loop.
 	NodeListRecoverable(ctx context.Context) ([]ComputeNode, error)
 	// NodeListDrainable returns every 'active' node with zero live
 	// instances — the set the drain handler is allowed to flip to
@@ -4878,6 +4974,11 @@ type Store interface {
 	// has no snapshot yet — a cold start, not an error. ADR-049
 	// §B.3.
 	LatestSnapshotBytes(ctx context.Context, appID string) (memBytes, diskBytes int64, err error)
+	// RetainedLayerBytes returns the physical app-layer bytes still referenced
+	// by non-deleted deployments for an active app. It includes the rootfs and
+	// sidecar layer artifacts, deduplicated by storage key, so superseded
+	// rollback artifacts remain visible until their deployment is cleared.
+	RetainedLayerBytes(ctx context.Context, appID string) (int64, error)
 	// StorageUsage returns the per-(account, app, day) storage
 	// rollup rows (migrations/00070_snapshot_storage_daily.sql
 	// ::snapshot_storage_daily). day is a UTC midnight time;
@@ -6111,4 +6212,28 @@ type Store interface {
 	// of POST /v1/uploads. Hits the partial index; returns 0 when
 	// no open sessions.
 	SumOpenUploadSessionBytesByAccount(ctx context.Context, accountID pgtype.UUID) (int64, error)
+}
+
+// CustomerEventFilter is the tenant-safe query contract for the customer audit
+// timeline. Subjectless events are included only when their app, deployment,
+// build, or instance metadata resolves to an app owned by AccountID.
+type CustomerEventFilter struct {
+	AccountID        string
+	IncludeAnonymous bool
+	KindPrefix       string
+	AppID            string
+	Since            time.Time
+	Limit            int
+}
+
+const (
+	CustomerEventLimitDefault = 50
+	CustomerEventLimitMax     = 100
+)
+
+// CustomerEventLister is implemented by production stores without widening
+// Store for narrow test adapters. Callers must fall back to subject-only reads
+// when the optimized ownership query is unavailable.
+type CustomerEventLister interface {
+	ListCustomerEvents(ctx context.Context, filter CustomerEventFilter) ([]Event, error)
 }

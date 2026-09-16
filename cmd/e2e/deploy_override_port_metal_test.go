@@ -79,11 +79,18 @@ func TestDeployOverridePortMetal(t *testing.T) {
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", "x")
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+	// Digest-pinned, not ":latest": imaged refuses a tag with
+	//
+	//	FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference
+	//
+	// and EXITS at boot. AddImage already returns the pinned ref; this used
+	// to discard it and hand-build a tag, so imaged died on every one of
+	// these tests and the failure surfaced later as a deploy timeout.
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.Start(t, pool, e2etest.DeployWake)
 	defer h.DumpLogs(t)
@@ -123,9 +130,9 @@ func TestDeployOverridePortMetal(t *testing.T) {
 	depID, _ := parseQueuedDeployment(t, raw)
 
 	// Wait for parked → live.
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 90*time.Second)
+	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline())
 	if err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}

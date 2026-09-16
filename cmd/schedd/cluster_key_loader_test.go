@@ -58,19 +58,20 @@ func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
 	// systemd-credential-shaped path used by the deployed unit.
 	hostDir := t.TempDir()
 	hostAgePath := filepath.Join(hostDir, "host.age")
-	hostKey, err := age.GenerateX25519Identity()
+	fleetAgePath := filepath.Join(hostDir, "fleet.age")
+	fleetKey, err := age.GenerateX25519Identity()
 	if err != nil {
-		t.Fatalf("gen host identity: %v", err)
+		t.Fatalf("gen fleet identity: %v", err)
 	}
-	if err := os.WriteFile(hostAgePath, []byte(hostKey.String()), 0o600); err != nil {
-		t.Fatalf("write host.age: %v", err)
+	if err := os.WriteFile(fleetAgePath, []byte(fleetKey.String()), 0o600); err != nil {
+		t.Fatalf("write fleet.age: %v", err)
 	}
 	// pkg/secretbox.LoadHostKey enforces 0o400 perm (M8 §11)
 	// even on test fixtures — WriteFile's mode arg is masked by
 	// the process umask, so chmod explicitly to the canonical
 	// shape the loader expects.
-	if err := os.Chmod(hostAgePath, 0o400); err != nil {
-		t.Fatalf("chmod host.age: %v", err)
+	if err := os.Chmod(fleetAgePath, 0o400); err != nil {
+		t.Fatalf("chmod fleet.age: %v", err)
 	}
 	t.Setenv(hostAgeIdentityPathEnv, hostAgePath)
 
@@ -81,7 +82,7 @@ func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
 		t.Fatalf("marshal priv PKCS#8: %v", err)
 	}
 	privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
-	sealed, err := secretbox.SealBytes(hostKey.Recipient(), "cluster_svc", privPEM, 1<<20)
+	sealed, err := secretbox.SealBytes(fleetKey.Recipient(), "internal_svc", privPEM, 1<<20)
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
@@ -110,6 +111,58 @@ func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(gotPriv, priv) {
 		t.Errorf("unsealed private key bytes do not match the original")
+	}
+}
+
+func TestNewSchedInternalSvcMinterFailsClosedForForeignFleetEnvelope(t *testing.T) {
+	pool := pgtest.Open(t)
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store := state.NewPgStore(pool)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := secretbox.SealBytes(foreign.Recipient(), "internal_svc", pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kid := internalsvc.KidFromPub(pub)
+	if err := store.InsertClusterSigningKey(context.Background(), state.ClusterSigningKey{
+		KeyID: kid, PublicKeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER})), SealedBlob: sealed,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	staged, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fleet.age"), []byte(staged.String()), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(hostAgeIdentityPathEnv, filepath.Join(dir, "host.age"))
+
+	_, _, err = loadClusterInternalSvcKey(context.Background(), store, quietLoggerForTest())
+	if !errors.Is(err, ErrClusterKeyUnsealable) {
+		t.Fatalf("loader error = %v, want ErrClusterKeyUnsealable", err)
+	}
+	if _, err := newSchedInternalSvcMinter(context.Background(), store, quietLoggerForTest()); !errors.Is(err, ErrClusterKeyUnsealable) {
+		t.Fatalf("minter error = %v, want fail-closed ErrClusterKeyUnsealable", err)
 	}
 }
 

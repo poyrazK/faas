@@ -52,6 +52,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	EgressTxService_StreamBytes_FullMethodName = "/onebox.faas.egress.v1.EgressTxService/StreamBytes"
+	EgressTxService_AckBytes_FullMethodName    = "/onebox.faas.egress.v1.EgressTxService/AckBytes"
 )
 
 // EgressTxServiceClient is the client API for EgressTxService service.
@@ -80,12 +81,12 @@ type EgressTxServiceClient interface {
 	// drain this turn (the ring buffer has no observed bytes);
 	// the client MUST tolerate empty returns. End-of-stream is
 	// driven by ctx cancellation (server side) or by
-	// deadline-exceeded (client side); there is no
-	// "complete" marker because the drain is naturally lossy
-	// (an instance that parks between two drains loses its
-	// last-partial bucket, by design — see egressSink eviction
-	// comment).
+	// deadline-exceeded (client side). Frames carry a stable event_id and stay
+	// in the gateway replay set until AckBytes confirms durable persistence.
 	StreamBytes(ctx context.Context, in *StreamBytesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[BytesFrame], error)
+	// AckBytes removes durably persisted frames from the gateway replay set.
+	// Meterd calls this only after its Postgres idempotency ledger commits.
+	AckBytes(ctx context.Context, in *AckBytesRequest, opts ...grpc.CallOption) (*AckBytesResponse, error)
 }
 
 type egressTxServiceClient struct {
@@ -115,6 +116,16 @@ func (c *egressTxServiceClient) StreamBytes(ctx context.Context, in *StreamBytes
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type EgressTxService_StreamBytesClient = grpc.ServerStreamingClient[BytesFrame]
 
+func (c *egressTxServiceClient) AckBytes(ctx context.Context, in *AckBytesRequest, opts ...grpc.CallOption) (*AckBytesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AckBytesResponse)
+	err := c.cc.Invoke(ctx, EgressTxService_AckBytes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // EgressTxServiceServer is the server API for EgressTxService service.
 // All implementations must embed UnimplementedEgressTxServiceServer
 // for forward compatibility.
@@ -141,12 +152,12 @@ type EgressTxServiceServer interface {
 	// drain this turn (the ring buffer has no observed bytes);
 	// the client MUST tolerate empty returns. End-of-stream is
 	// driven by ctx cancellation (server side) or by
-	// deadline-exceeded (client side); there is no
-	// "complete" marker because the drain is naturally lossy
-	// (an instance that parks between two drains loses its
-	// last-partial bucket, by design — see egressSink eviction
-	// comment).
+	// deadline-exceeded (client side). Frames carry a stable event_id and stay
+	// in the gateway replay set until AckBytes confirms durable persistence.
 	StreamBytes(*StreamBytesRequest, grpc.ServerStreamingServer[BytesFrame]) error
+	// AckBytes removes durably persisted frames from the gateway replay set.
+	// Meterd calls this only after its Postgres idempotency ledger commits.
+	AckBytes(context.Context, *AckBytesRequest) (*AckBytesResponse, error)
 	mustEmbedUnimplementedEgressTxServiceServer()
 }
 
@@ -159,6 +170,9 @@ type UnimplementedEgressTxServiceServer struct{}
 
 func (UnimplementedEgressTxServiceServer) StreamBytes(*StreamBytesRequest, grpc.ServerStreamingServer[BytesFrame]) error {
 	return status.Error(codes.Unimplemented, "method StreamBytes not implemented")
+}
+func (UnimplementedEgressTxServiceServer) AckBytes(context.Context, *AckBytesRequest) (*AckBytesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AckBytes not implemented")
 }
 func (UnimplementedEgressTxServiceServer) mustEmbedUnimplementedEgressTxServiceServer() {}
 func (UnimplementedEgressTxServiceServer) testEmbeddedByValue()                         {}
@@ -192,13 +206,36 @@ func _EgressTxService_StreamBytes_Handler(srv interface{}, stream grpc.ServerStr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type EgressTxService_StreamBytesServer = grpc.ServerStreamingServer[BytesFrame]
 
+func _EgressTxService_AckBytes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AckBytesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EgressTxServiceServer).AckBytes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: EgressTxService_AckBytes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EgressTxServiceServer).AckBytes(ctx, req.(*AckBytesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // EgressTxService_ServiceDesc is the grpc.ServiceDesc for EgressTxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var EgressTxService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "onebox.faas.egress.v1.EgressTxService",
 	HandlerType: (*EgressTxServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "AckBytes",
+			Handler:    _EgressTxService_AckBytes_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "StreamBytes",

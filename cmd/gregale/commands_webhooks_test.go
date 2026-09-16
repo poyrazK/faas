@@ -31,7 +31,7 @@ func TestCmdWebhooks_Add_HappyPath(t *testing.T) {
 			AccountID:                 "acct-1",
 			TargetURL:                 "https://example.com/hook",
 			WebhookSecretSealedMasked: api.AppWebhookSecretMasked,
-			EventFilter:               []string{"cron.fired"},
+			EventFilter:               []string{"app.parked"},
 			RetryPolicy:               "default",
 			Enabled:                   true,
 		})
@@ -49,7 +49,7 @@ func TestCmdWebhooks_Add_HappyPath(t *testing.T) {
 		"--app", "demo",
 		"--target-url", "https://example.com/hook",
 		"--secret", "shh",
-		"--event", "cron.fired",
+		"--event", "app.parked",
 	}); code != 0 {
 		t.Errorf("add = %d, want 0", code)
 	}
@@ -67,6 +67,31 @@ func TestCmdWebhooks_Add_HappyPath(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "%!") || !strings.Contains(stdout.String(), webhookTestID) {
 		t.Errorf("malformed human output: %q", stdout.String())
+	}
+}
+
+func TestCmdWebhooks_Add_AutoMintsAndRevealsSecretOnce(t *testing.T) {
+	var gotBody api.CreateAppWebhookRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(api.AppWebhookResponse{ID: webhookTestID, TargetURL: "https://example.com/hook"})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	oldOut, oldJSON := osStdout, jsonOutput
+	var stdout bytes.Buffer
+	osStdout, jsonOutput = &stdout, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+
+	if code := cmdWebhooksAdd([]string{"--app", "demo", "--target-url", "https://example.com/hook"}); code != 0 {
+		t.Fatalf("add = %d", code)
+	}
+	if gotBody.WebhookSecret == "" {
+		t.Fatal("auto-minted secret was not sent to the API")
+	}
+	if strings.Count(stdout.String(), gotBody.WebhookSecret) != 1 {
+		t.Fatalf("generated secret must be shown exactly once; output=%q", stdout.String())
 	}
 }
 

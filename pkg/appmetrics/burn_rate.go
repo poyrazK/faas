@@ -46,7 +46,7 @@ func FetchSLOBurnRate(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 
 	errorBudget := 1 - APIAvailabilitySLO
 	shortQ := fmt.Sprintf(
-		`sum(rate(gateway_requests_total{app=%q,code!~"2.."}[%s])) / sum(rate(gateway_requests_total{app=%q}[%s])) / %g`,
+		`sum(rate(gateway_requests_total{app=%q,code=~"5.."}[%s])) / sum(rate(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) / %g`,
 		appID, SLOBurnRateShortWindow, appID, SLOBurnRateShortWindow, errorBudget)
 	short, err := fetcher.QueryScalar(ctx, shortQ)
 	if err != nil {
@@ -54,7 +54,7 @@ func FetchSLOBurnRate(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 	}
 
 	longQ := fmt.Sprintf(
-		`sum(rate(gateway_requests_total{app=%q,code!~"2.."}[%s])) / sum(rate(gateway_requests_total{app=%q}[%s])) / %g`,
+		`sum(rate(gateway_requests_total{app=%q,code=~"5.."}[%s])) / sum(rate(gateway_requests_total{app=%q,code=~"2..|5.."}[%s])) / %g`,
 		appID, SLOBurnRateLongWindow, appID, SLOBurnRateLongWindow, errorBudget)
 	long, err := fetcher.QueryScalar(ctx, longQ)
 	if err != nil {

@@ -364,10 +364,19 @@ gateway-bench: ## Bench gatewayd-internal cold/hot/concurrent paths with -race; 
 	$(GO) test -race -bench=. -benchmem -run=^$ ./pkg/gateway/
 
 .PHONY: test-metal
-test-metal: ## Integration tests tagged //go:build metal — needs KVM + root
+# RUN_REGEX is the ENVIRONMENT-passed `-run` filter. Use it instead of putting
+# a regex in RUN_ARGS: RUN_ARGS is expanded by Make and then re-parsed by the
+# shell, so an alternation like ^(TestA|TestB)$ loses its trailing anchor to
+# Make ($ is Make syntax) and then dies in the shell on the unquoted ( and |
+# — `syntax error near unexpected token '('`. That silently ran ZERO tests on
+# the native e2e gate (dispatch 34760212826, 2026-09-13). Read from the
+# environment and quoted here, the regex reaches go test byte-for-byte.
+test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (RUN_REGEX=<re> filters via -run)
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
-	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) $(PKGS)
+	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
+	  if [ -n "$${RUN_REGEX:-}" ]; then set -- -run "$$RUN_REGEX"; else set --; fi; \
+	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags metal -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
 
 .PHONY: test-metal-builder
 test-metal-builder: ## Native KVM builder acceptance — requires staged release assets and root
@@ -379,6 +388,7 @@ test-metal-builder: ## Native KVM builder acceptance — requires staged release
 	@test -n "$$FAAS_TEST_FC_VERSION" || (echo "FAAS_TEST_FC_VERSION must match the installed Firecracker release" >&2; exit 1)
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
+	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" FAAS_METAL_BUILD_ACCEPTANCE=1 \
 	  $(GO) test -tags metal -race -count=1 -run '^TestMetalBuilderAcceptance$$' \
 	  -v -timeout "$${METAL_BUILDER_TIMEOUT:-30m}" ./pkg/fcvm
@@ -397,6 +407,13 @@ e2e: ## End-to-end tests in cmd/e2e (needs Postgres reachable; metal subset via 
 	# Cumulative wall time hit 15m on CI; 20m gives headroom for
 	# reruns + cold-cache cold-runner edge cases.
 	$(GO) test -race -count=1 -timeout=20m ./cmd/e2e/...
+
+.PHONY: e2e-general
+e2e-general: ## Focused KVM-free general-path acceptance gate (real daemons + Postgres; needs DATABASE_URL).
+	@command -v psql >/dev/null 2>&1 || (echo "psql not on PATH; e2e-general needs DATABASE_URL set to a reachable Postgres" ; exit 1)
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set; set it to a reachable Postgres to run e2e-general" ; exit 1)
+	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "Postgres is not reachable; e2e-general refuses a green no-op run" ; exit 1)
+	$(GO) test -race -count=1 -timeout=12m -run '^TestE2E_NormalPath_' ./cmd/e2e/...
 
 .PHONY: e2e-sandbox
 e2e-sandbox: ## Live Paddle sandbox walk (operator-only; PR-P3). Reads secrets from secrets/.env.sandbox — NEVER committed.
@@ -448,6 +465,7 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/pg-restore-verify_test.sh
 	bash deploy/scripts/faas-pg-basebackup-push_test.sh
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
+	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
 
 .PHONY: m8-evidence-check
 m8-evidence-check: ## Fail when the executed M8 restore-drill record is missing or older than 30 days
@@ -654,11 +672,24 @@ scan-images: ## Scan concrete locally-loaded OCI refs (IMAGE_REFS="ref1 ref2 ...
 .PHONY: public-endpoint-check
 public-endpoint-check: ## Validate the public HTTPS/Caddy endpoint (PUBLIC_ENDPOINT_URL required)
 	@test -n "$(PUBLIC_ENDPOINT_URL)" || { echo "PUBLIC_ENDPOINT_URL is required (example: https://my-api.gregale.dev)" >&2; exit 2; }
-	@PUBLIC_ENDPOINT_URL="$(PUBLIC_ENDPOINT_URL)" PUBLIC_HTTP_URL="$(PUBLIC_HTTP_URL)" PUBLIC_ENDPOINT_PATH="$(PUBLIC_ENDPOINT_PATH)" bash scripts/ci/check_public_endpoint.sh
+	@PUBLIC_ENDPOINT_URL="$(PUBLIC_ENDPOINT_URL)" PUBLIC_PLATFORM_API_URL="$(PUBLIC_PLATFORM_API_URL)" PUBLIC_HTTP_URL="$(PUBLIC_HTTP_URL)" PUBLIC_ENDPOINT_PATH="$(PUBLIC_ENDPOINT_PATH)" bash scripts/ci/check_public_endpoint.sh
 
 .PHONY: systemd-hardening-check
 systemd-hardening-check: ## Static release gate for production systemd isolation directives
 	bash scripts/ci/check_systemd_hardening.sh $(CURDIR)
+
+.PHONY: canary-artifact-retention-test
+canary-artifact-retention-test: ## Test bounded validation-artifact inventory, safety proofs, and cleanup
+	python3 scripts/ops/faas_canary_artifacts_test.py
+
+.PHONY: gcp-public-beta-policy-test
+gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer
+	python3 scripts/ops/gcp_public_beta_audit_test.py
+	python3 scripts/ops/gcp_public_beta_iam_test.py
+	python3 deploy/scripts/faas-rclone-backup-identity_test.py
+	bash -n scripts/ops/gcp_public_beta_converge.sh
+	bash -n scripts/ops/gcp_provision_compute.sh
+	bash -n scripts/ops/gcp_retire_compute.sh
 
 .PHONY: otlp-unit-check
 otlp-unit-check: ## Verify every instrumented daemon loads the operator-owned OTLP environment
@@ -1073,6 +1104,11 @@ pricing-check: ## Verify generated customer pricing is in sync
 .PHONY: docs-links-check
 docs-links-check: ## Verify every Gregale docs URL maps to a customer page source
 	@$(GO) run ./cmd/docs-links-check
+	@python3 scripts/ops/check_live_docs_test.py
+
+.PHONY: docs-live-check
+docs-live-check: ## Verify deployed docs headings and require real 404s (DOCS_BASE_URL optional)
+	@python3 scripts/ops/check_live_docs.py $(if $(DOCS_BASE_URL),--base-url "$(DOCS_BASE_URL)")
 
 .PHONY: api-hosting-contract-check
 api-hosting-contract-check: ## Run the metal-free API framework fixture contract
@@ -1102,6 +1138,10 @@ object-storage-gateway-smoke: ## Operator-only: exercise s3.gregale.dev and dele
 .PHONY: object-storage-release-preflight
 object-storage-release-preflight: ## Read-only gate for object-storage config and compute-binding routes
 	@deploy/scripts/object-storage-release-preflight.sh
+
+.PHONY: disposable-execution-release-smoke
+disposable-execution-release-smoke: ## Operator-only: compare disposable-runs capability with a production run
+	@deploy/scripts/disposable-execution-release-smoke.sh
 
 .PHONY: managed-postgres-qualify
 managed-postgres-qualify: ## Operator-only: run the explicit staging managed PostgreSQL provider qualification

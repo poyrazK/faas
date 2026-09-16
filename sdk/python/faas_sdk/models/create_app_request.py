@@ -34,6 +34,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.service_replicas import ServiceReplicas
+    from ..models.workload_port import WorkloadPort
 
 
 T = TypeVar("T", bound="CreateAppRequest")
@@ -73,6 +74,9 @@ class CreateAppRequest:
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
     the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
     image-digest pinning semantics land in M-4."""
+    ports: list[WorkloadPort] | Unset = UNSET
+    """App-owned listener declarations. Named TCP listeners are publicly routable at
+    `<slug>--port-<name>.<domain>`; UDP listeners remain guest-only."""
     favicon: None | str | Unset = UNSET
     """Create-time base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."""
     robots_txt: None | str | Unset = UNSET
@@ -166,6 +170,13 @@ class CreateAppRequest:
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
 
+        ports: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.ports, Unset):
+            ports = []
+            for ports_item_data in self.ports:
+                ports_item = ports_item_data.to_dict()
+                ports.append(ports_item)
+
         favicon: None | str | Unset
         if isinstance(self.favicon, Unset):
             favicon = UNSET
@@ -247,6 +258,8 @@ class CreateAppRequest:
             field_dict["max_retries"] = max_retries
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
+        if ports is not UNSET:
+            field_dict["ports"] = ports
         if favicon is not UNSET:
             field_dict["favicon"] = favicon
         if robots_txt is not UNSET:
@@ -287,6 +300,7 @@ class CreateAppRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.service_replicas import ServiceReplicas
+        from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
         slug = d.pop("slug")
@@ -351,6 +365,15 @@ class CreateAppRequest:
             service_replicas = UNSET
         else:
             service_replicas = ServiceReplicas.from_dict(_service_replicas)
+
+        _ports = d.pop("ports", UNSET)
+        ports: list[WorkloadPort] | Unset = UNSET
+        if _ports is not UNSET:
+            ports = []
+            for ports_item_data in _ports:
+                ports_item = WorkloadPort.from_dict(ports_item_data)
+
+                ports.append(ports_item)
 
         def _parse_favicon(data: object) -> None | str | Unset:
             if data is None:
@@ -430,6 +453,7 @@ class CreateAppRequest:
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             service_replicas=service_replicas,
+            ports=ports,
             favicon=favicon,
             robots_txt=robots_txt,
             head_wakes=head_wakes,

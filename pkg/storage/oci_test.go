@@ -655,17 +655,18 @@ func TestOCISnapshotCompressionPreservesLocalCacheRepresentation(t *testing.T) {
 	}
 }
 
-func TestOCISnapshotCompressionScope(t *testing.T) {
+func TestOCIArtifactCompressionScope(t *testing.T) {
 	f := newFakeRegistry(t)
 	defer f.srv.Close()
 	const depID = "550e8400-e29b-41d4-a716-446655440000"
 
 	tests := []struct {
-		name    string
-		backend *OCIRegistryStorageBackend
-		key     string
-		repo    string
-		tag     string
+		name        string
+		backend     *OCIRegistryStorageBackend
+		key         string
+		repo        string
+		tag         string
+		wantEncoded bool
 	}{
 		{
 			name:    "disabled snapshot memory",
@@ -682,26 +683,54 @@ func TestOCISnapshotCompressionScope(t *testing.T) {
 			tag:     "vmstate",
 		},
 		{
-			name:    "enabled app layer",
-			backend: f.clientWithOptions(t, WithSnapshotCompression(snapshotCompressionZstd)),
-			key:     "apps/example/" + depID + ".ext4",
-			repo:    "faas/apps",
-			tag:     "example__" + depID,
+			name:        "app layer independent of snapshot setting",
+			backend:     f.client(t),
+			key:         "apps/example/" + depID + ".ext4",
+			repo:        "faas/apps",
+			tag:         "example__" + depID,
+			wantEncoded: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body := []byte("opaque artifact bytes")
+			if tt.wantEncoded {
+				body = make([]byte, 8<<20)
+				copy(body, []byte("ext4-superblock"))
+				copy(body[4<<20:], []byte("allocated-app-data"))
+			}
 			if err := tt.backend.Put(t.Context(), tt.key, bytes.NewReader(body)); err != nil {
 				t.Fatalf("Put: %v", err)
 			}
 			manifest, remoteBlob := f.storedLayer(t, tt.repo, tt.tag)
-			if got := manifest.Layers[0].Annotations[layerEncodingAnnotation]; got != "" {
-				t.Fatalf("layer encoding = %q, want legacy unencoded representation", got)
+			gotEncoding := manifest.Layers[0].Annotations[layerEncodingAnnotation]
+			if tt.wantEncoded {
+				if gotEncoding != snapshotCompressionZstd {
+					t.Fatalf("layer encoding = %q, want %q", gotEncoding, snapshotCompressionZstd)
+				}
+				if got := manifest.Layers[0].Annotations[layerUncompressedSizeAnnotation]; got != fmt.Sprint(len(body)) {
+					t.Fatalf("uncompressed size = %q, want %d", got, len(body))
+				}
+				if len(remoteBlob) >= len(body)/100 {
+					t.Fatalf("compressed app filesystem = %d bytes, want less than 1%% of %d", len(remoteBlob), len(body))
+				}
+				rc, err := tt.backend.Get(t.Context(), tt.key)
+				if err != nil {
+					t.Fatalf("Get: %v", err)
+				}
+				decoded, readErr := io.ReadAll(rc)
+				_ = rc.Close()
+				if readErr != nil || !bytes.Equal(decoded, body) {
+					t.Fatalf("compressed app filesystem round trip changed bytes: %v", readErr)
+				}
+				return
+			}
+			if gotEncoding != "" {
+				t.Fatalf("layer encoding = %q, want legacy unencoded representation", gotEncoding)
 			}
 			if !bytes.Equal(remoteBlob, body) {
-				t.Fatal("artifact outside enabled snapshot-memory scope changed in registry")
+				t.Fatal("artifact outside compression scope changed in registry")
 			}
 		})
 	}
@@ -935,14 +964,141 @@ func TestOCIDeleteStopsRetryingWhenRegistryRejectsDigestDelete(t *testing.T) {
 	if err := be.Delete(ctx, key); !errors.Is(err, ErrDeleteUnsupported) {
 		t.Fatalf("first Delete error = %v, want ErrDeleteUnsupported", err)
 	}
-	if err := be.Delete(ctx, key); err != nil {
-		t.Fatalf("second Delete should skip known-unsupported API: %v", err)
+	if err := be.Delete(ctx, key); !errors.Is(err, ErrDeleteUnsupported) {
+		t.Fatalf("second Delete error = %v, want durable ErrDeleteUnsupported", err)
 	}
 	f.mu.Lock()
 	hits := f.manifestDeleteHits
 	f.mu.Unlock()
 	if hits != 1 {
 		t.Fatalf("manifest DELETE requests = %d, want 1", hits)
+	}
+}
+
+func TestOCIDeleteFallsBackToGitHubPackageVersionAPI(t *testing.T) {
+	f := newFakeRegistry(t)
+	f.deleteUnsupported = true
+	defer f.srv.Close()
+
+	const versionID = int64(731)
+	var listHits, deleteHits int
+	deleted := false
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer delete-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			listHits++
+			if deleted {
+				_ = json.NewEncoder(w).Encode([]githubPackageVersion{})
+				return
+			}
+			version := githubPackageVersion{ID: versionID}
+			version.Metadata.Container.Tags = []string{"my-app__550e8400-e29b-41d4-a716-446655440000"}
+			_ = json.NewEncoder(w).Encode([]githubPackageVersion{version})
+		case http.MethodDelete:
+			deleteHits++
+			if !strings.HasSuffix(r.URL.Path, "/731") {
+				t.Fatalf("delete path = %q", r.URL.Path)
+			}
+			deleted = true
+			f.mu.Lock()
+			delete(f.manifests["faas/apps"], "my-app__550e8400-e29b-41d4-a716-446655440000")
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+	defer apiServer.Close()
+
+	key := "apps/my-app/550e8400-e29b-41d4-a716-446655440000.ext4"
+	be := f.clientWithOptions(t,
+		WithGitHubPackagesAPI(apiServer.URL),
+	)
+	if err := be.Put(context.Background(), key, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	// The first conforming registry DELETE discovers the 405. No credentials
+	// means the fallback remains a visible durable failure.
+	if err := be.Delete(context.Background(), key); !errors.Is(err, ErrDeleteUnsupported) {
+		t.Fatalf("Delete without fallback credentials = %v, want ErrDeleteUnsupported", err)
+	}
+	be.user, be.pw = "poyrazK", "delete-token"
+	if err := be.Delete(context.Background(), key); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if rc, err := be.Get(context.Background(), key); !IsNotFound(err) {
+		if rc != nil {
+			_ = rc.Close()
+		}
+		t.Fatalf("remote manifest still readable after GitHub delete: %v", err)
+	}
+	if err := be.Delete(context.Background(), key); err != nil {
+		t.Fatalf("second Delete must use GitHub fallback: %v", err)
+	}
+	if listHits != 2 || deleteHits != 1 {
+		t.Fatalf("GitHub calls list=%d delete=%d, want 2/1", listHits, deleteHits)
+	}
+	f.mu.Lock()
+	manifestDeleteHits := f.manifestDeleteHits
+	f.mu.Unlock()
+	if manifestDeleteHits != 1 {
+		t.Fatalf("distribution delete hits = %d, want 1", manifestDeleteHits)
+	}
+}
+
+func TestOCIDeleteGitHubPackageMissingIsIdempotent(t *testing.T) {
+	f := newFakeRegistry(t)
+	f.deleteUnsupported = true
+	defer f.srv.Close()
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Package not found", http.StatusNotFound)
+	}))
+	defer apiServer.Close()
+	be := f.clientWithOptions(t, WithGitHubPackagesAPI(apiServer.URL))
+	key := "apps/my-app/550e8400-e29b-41d4-a716-446655440000.ext4"
+	if err := be.Put(context.Background(), key, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := be.Delete(context.Background(), key); !errors.Is(err, ErrDeleteUnsupported) {
+		t.Fatalf("Delete without fallback credentials = %v, want ErrDeleteUnsupported", err)
+	}
+	be.user, be.pw = "poyrazK", "delete-token"
+	if err := be.Delete(context.Background(), key); err != nil {
+		t.Fatalf("GitHub package 404 must be idempotent success: %v", err)
+	}
+}
+
+func TestOCIDeleteGitHubDownloadProtectedVersionIsQuarantined(t *testing.T) {
+	f := newFakeRegistry(t)
+	f.deleteUnsupported = true
+	defer f.srv.Close()
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			version := githubPackageVersion{ID: 731}
+			version.Metadata.Container.Tags = []string{"my-app__550e8400-e29b-41d4-a716-446655440000"}
+			_ = json.NewEncoder(w).Encode([]githubPackageVersion{version})
+		case http.MethodDelete:
+			http.Error(w, "Package versions with more than 5,000 downloads cannot be deleted.", http.StatusBadRequest)
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+	defer apiServer.Close()
+	be := f.clientWithOptions(t, WithGitHubPackagesAPI(apiServer.URL))
+	key := "apps/my-app/550e8400-e29b-41d4-a716-446655440000.ext4"
+	if err := be.Put(context.Background(), key, bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := be.Delete(context.Background(), key); !errors.Is(err, ErrDeleteUnsupported) {
+		t.Fatalf("Delete without fallback credentials = %v, want ErrDeleteUnsupported", err)
+	}
+	be.user, be.pw = "poyrazK", "delete-token"
+	if err := be.Delete(context.Background(), key); !errors.Is(err, ErrDeleteQuarantined) {
+		t.Fatalf("GitHub protected version error = %v, want ErrDeleteQuarantined", err)
 	}
 }
 
@@ -984,10 +1140,9 @@ func TestOCIListUnderApps(t *testing.T) {
 	}
 }
 
-// TestOCIListUnderSnap exercises the snap/ fan-out via knownRepos.
-// We pre-warm knownRepos by issuing Puts; on a cold start without a
-// populated knownRepos the list would be empty (the registry's
-// /v2/_catalog is not implemented by most public registries).
+// TestOCIListUnderSnap exercises the durable snap/ fan-out. The reader is a
+// fresh backend with an empty process-local cache, proving enumeration survives
+// daemon restart without the registry's optional /v2/_catalog endpoint.
 func TestOCIListUnderSnap(t *testing.T) {
 	f := newFakeRegistry(t)
 	defer f.srv.Close()
@@ -1000,7 +1155,8 @@ func TestOCIListUnderSnap(t *testing.T) {
 	if err := be.Put(ctx, "snap/"+depUUID+"/vmstate", bytes.NewReader([]byte("v"))); err != nil {
 		t.Fatalf("Put snap vmstate: %v", err)
 	}
-	got, err := be.List(ctx, "snap/")
+	fresh := f.client(t)
+	got, err := fresh.List(ctx, "snap/")
 	if err != nil {
 		t.Fatalf("List snap: %v", err)
 	}
@@ -1019,6 +1175,63 @@ func TestOCIListUnderSnap(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("List missing keys: %v", want)
+	}
+}
+
+func TestOCIListUnderSnapWithoutDurableIndexIsExplicitlyIncomplete(t *testing.T) {
+	f := newFakeRegistry(t)
+	defer f.srv.Close()
+	got, err := f.client(t).List(context.Background(), "snap/")
+	if !errors.Is(err, ErrIncompleteEnumeration) {
+		t.Fatalf("List snap/ error = %v, want ErrIncompleteEnumeration (keys=%v)", err, got)
+	}
+	if got != nil {
+		t.Fatalf("List snap/ keys = %v, want nil on incomplete inventory", got)
+	}
+}
+
+func TestOCIReconcileSnapshotRepositoryIndexUpgradesLegacyArtifacts(t *testing.T) {
+	f := newFakeRegistry(t)
+	defer f.srv.Close()
+	ctx := context.Background()
+	depID := "550e8400-e29b-41d4-a716-446655440000"
+	writer := f.client(t)
+	if err := writer.Put(ctx, "snap/"+depID+"/mem", bytes.NewReader([]byte("memory"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Put(ctx, "snap/"+depID+"/vmstate", bytes.NewReader([]byte("state"))); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate artifacts produced before snap-index existed.
+	f.mu.Lock()
+	delete(f.manifests, "faas/"+repoSnapIdx)
+	f.mu.Unlock()
+
+	reconciler := f.client(t)
+	cache, err := NewLocalCacheBackend(reconciler, t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router, err := NewPrefixRouter(nil, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := router.ReconcileSnapshotRepositoryIndex(ctx, []string{depID}); err != nil {
+		t.Fatalf("ReconcileSnapshotRepositoryIndex: %v", err)
+	}
+	got, err := f.client(t).List(ctx, "snap/")
+	if err != nil {
+		t.Fatalf("fresh List after reconcile: %v", err)
+	}
+	want := map[string]bool{
+		"snap/" + depID + "/mem":     true,
+		"snap/" + depID + "/vmstate": true,
+	}
+	for _, key := range got {
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("fresh List missing legacy keys: %v (got %v)", want, got)
 	}
 }
 
@@ -1104,6 +1317,7 @@ func TestOCIListFanOutContinuesOnPartialFailure(t *testing.T) {
 		goodRepo: {status: http.StatusOK, body: `{"name":"snap-good","tags":["mem"]}`},
 	})
 	manipulateKnownReposForTest(be, []string{badRepo, goodRepo})
+	initializeSnapshotRepoIndexForTest(f)
 
 	got, err := be.List(context.Background(), "snap/")
 	if err == nil {
@@ -1205,6 +1419,7 @@ func TestOCIListFanOutAllFailingReturnsError(t *testing.T) {
 		"snap-zzz2": {status: http.StatusInternalServerError, body: "registry down"},
 	})
 	manipulateKnownReposForTest(be, []string{"snap-zzz1", "snap-zzz2"})
+	initializeSnapshotRepoIndexForTest(f)
 
 	got, err := be.List(context.Background(), "snap/")
 	if err == nil {
@@ -1236,6 +1451,15 @@ func manipulateKnownReposForTest(be *OCIRegistryStorageBackend, repos []string) 
 	for _, r := range repos {
 		be.knownRepos.Store(prefix+"/"+r, true)
 	}
+}
+
+func initializeSnapshotRepoIndexForTest(f *fakeRegistry) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.manifests["faas/"+repoSnapIdx] == nil {
+		f.manifests["faas/"+repoSnapIdx] = map[string][]byte{}
+	}
+	f.manifests["faas/"+repoSnapIdx][snapshotRepoIndexVersionTag] = []byte(`{"schemaVersion":2}`)
 }
 
 // TestOCIRequiresRegistry verifies the constructor's empty-registry

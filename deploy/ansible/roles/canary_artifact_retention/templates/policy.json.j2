@@ -1,0 +1,7 @@
+{
+  "retention_seconds": {{ canary_artifact_retention_seconds | int }},
+  "active_lease_seconds": {{ canary_artifact_active_lease_seconds | int }},
+  "pressure_grace_seconds": {{ canary_artifact_pressure_grace_seconds | int }},
+  "max_bytes": {{ canary_artifact_max_bytes | int }},
+  "allowed_patterns": {{ canary_artifact_patterns | to_json }}
+}

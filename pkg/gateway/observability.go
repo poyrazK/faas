@@ -124,16 +124,44 @@ func WithStartTime(ctx context.Context, t time.Time) context.Context {
 	return context.WithValue(ctx, startTimeKey{}, t)
 }
 
+// StartTimeFromContext returns the request-acceptance timestamp carried by
+// public and synthetic invocation paths.
+func StartTimeFromContext(ctx context.Context) (time.Time, bool) {
+	if ctx == nil {
+		return time.Time{}, false
+	}
+	t, ok := ctx.Value(startTimeKey{}).(time.Time)
+	return t, ok && !t.IsZero()
+}
+
 // startTime extracts the request-received timestamp from r's context if the
 // upstream middleware set one, otherwise falls back to r's arrival time.
 func startTime(r *http.Request) time.Time {
 	if r == nil {
 		return time.Now()
 	}
-	if t, ok := r.Context().Value(startTimeKey{}).(time.Time); ok {
+	if t, ok := StartTimeFromContext(r.Context()); ok {
 		return t
 	}
 	return time.Now()
+}
+
+type wakeTimelineStartKey struct{}
+
+// WithWakeTimelineStart pins the canonical start of the wake generation whose
+// first byte will be emitted. It differs from the current HTTP request start
+// when a browser received a wake page and retried after the detached boot.
+func WithWakeTimelineStart(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, wakeTimelineStartKey{}, t)
+}
+
+func wakeTimelineStart(r *http.Request) time.Time {
+	if r != nil {
+		if t, ok := r.Context().Value(wakeTimelineStartKey{}).(time.Time); ok && !t.IsZero() {
+			return t
+		}
+	}
+	return startTime(r)
 }
 
 // routeLabelKey (ADR-093) is the context key used to thread the

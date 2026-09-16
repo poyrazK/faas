@@ -124,19 +124,21 @@ func TestWaitForDevSourceChangeDebouncesWriteBurst(t *testing.T) {
 	}
 
 	writesDone := make(chan error, 1)
+	firstWriteDone := make(chan struct{})
 	go func() {
-		time.Sleep(20 * time.Millisecond)
 		if writeErr := os.WriteFile(source, []byte("{\"step\":1}\n"), 0o600); writeErr != nil {
 			writesDone <- writeErr
 			return
 		}
-		time.Sleep(60 * time.Millisecond)
+		close(firstWriteDone)
+		time.Sleep(20 * time.Millisecond)
 		writesDone <- os.WriteFile(source, []byte("{\"step\":2,\"done\":true}\n"), 0o600)
 	}()
+	<-firstWriteDone
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	got, err := waitForDevSourceChangeWithIntervals(ctx, dir, before, 5*time.Millisecond, 80*time.Millisecond)
+	got, err := waitForDevSourceChangeWithIntervals(ctx, dir, before, 5*time.Millisecond, 250*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}

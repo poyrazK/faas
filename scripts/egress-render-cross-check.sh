@@ -80,6 +80,41 @@ compare() {
   fi
 }
 
+check_cloudflare_origin_ingress() {
+  local v4_file="$SRC_ROOT/deploy/ansible/roles/nftables/files/cloudflare-ips-v4.txt"
+  local v6_file="$SRC_ROOT/deploy/ansible/roles/nftables/files/cloudflare-ips-v6.txt"
+  local rendered
+  rendered=$(python3 - "$JINJA2" "$v4_file" "$v6_file" <<'PY'
+import pathlib
+import sys
+from jinja2 import Template
+
+template, v4, v6 = map(pathlib.Path, sys.argv[1:])
+print(Template(template.read_text()).render(
+    public_iface='eth0',
+    masquerade_cidr='10.100.0.0/16',
+    overlay_cidrs=[],
+    masquerade_cidr_v6='',
+    faas_cloudflare_origin_only=True,
+    faas_cloudflare_ipv4_cidrs=v4.read_text().splitlines(),
+    faas_cloudflare_ipv6_cidrs=v6.read_text().splitlines(),
+), end='')
+PY
+  )
+  if grep -Fq 'tcp dport { 22,80,443 } accept' <<<"$rendered"; then
+    echo "egress-render: DIVERGE cloudflare-origin retained broad public ingress"
+    return 1
+  fi
+  while IFS= read -r cidr; do
+    [[ -n "$cidr" ]] || continue
+    grep -Fq "saddr $cidr tcp dport { 80,443 } accept" <<<"$rendered" || {
+      echo "egress-render: DIVERGE cloudflare-origin missing $cidr"
+      return 1
+    }
+  done < <(cat "$v4_file" "$v6_file")
+  echo "egress-render: OK cloudflare-origin"
+}
+
 main() {
   local status=0
   # row format: "label|iface|cidr|overlay|v6"
@@ -128,6 +163,9 @@ main() {
       status=1
     fi
   done
+  if ! check_cloudflare_origin_ingress; then
+    status=1
+  fi
   return $status
 }
 

@@ -17,10 +17,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestStatusHistoryRollup seeds 90 days of terminal invocation rows and
-// verifies that the public status projection keeps exactly the last 30 days,
-// calculates weighted uptime, and includes the operator incident timeline
-// (issue #276 / spec §12).
+// TestStatusHistoryRollup seeds 90 days of platform observation rows and
+// verifies that the legacy projection keeps exactly the last 30 days,
+// calculates time-weighted uptime, ignores customer outcomes, and includes
+// the operator incident timeline.
 func TestStatusHistoryRollup(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
@@ -40,19 +40,27 @@ func TestStatusHistoryRollup(t *testing.T) {
 
 	now := time.Now().UTC()
 	for daysAgo := 0; daysAgo < 90; daysAgo++ {
-		createdAt := now.AddDate(0, 0, -daysAgo)
+		observedAt := utcDay(now.AddDate(0, 0, -daysAgo)).Add(time.Hour)
 		for i := 0; i < 3; i++ {
-			stateValue := state.InvocationCompleted
+			stateValue := publicstatus.StateOperational
 			if daysAgo >= statusHistoryDays || i == 2 {
-				stateValue = state.InvocationFailed
+				stateValue = publicstatus.StatePartialOutage
 			}
-			if _, err := store.EnqueueInvocation(ctx, state.Invocation{
-				AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke,
-				State: stateValue, CreatedAt: createdAt, DueAt: createdAt,
-			}); err != nil {
-				t.Fatalf("EnqueueInvocation day %d row %d: %v", daysAgo, i, err)
+			for _, component := range publicstatus.AllComponents() {
+				if err := store.RecordStatusBucket(ctx, state.StatusBucket{
+					Component: component, BucketAt: observedAt.Add(time.Duration(i) * 5 * time.Minute),
+					State: stateValue, HasTelemetry: true,
+				}); err != nil {
+					t.Fatalf("RecordStatusBucket day %d interval %d component %s: %v", daysAgo, i, component, err)
+				}
 			}
 		}
+	}
+	if _, err := store.EnqueueInvocation(ctx, state.Invocation{
+		AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke,
+		State: state.InvocationFailed, CreatedAt: now, DueAt: now,
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation customer failure: %v", err)
 	}
 	if _, err := store.InsertStatusIncident(ctx, state.StatusIncidentComponentApid,
 		state.StatusIncidentSeverityDegraded, "API latency elevated"); err != nil {
@@ -77,7 +85,7 @@ func TestStatusHistoryRollup(t *testing.T) {
 		t.Fatalf("uptime buckets = %d, want %d", len(snap.Uptime30d), statusHistoryDays)
 	}
 	want := float64(2) / 3 * 100
-	if snap.Uptime30dPct != want {
+	if snap.Uptime30dPct == nil || *snap.Uptime30dPct != want {
 		t.Fatalf("uptime_30d_pct = %v, want %v", snap.Uptime30dPct, want)
 	}
 	if snap.Uptime30d[0].Total != 3 || snap.Uptime30d[0].Successful != 2 {
@@ -117,7 +125,7 @@ func TestStatusJSONHandlerIdleHistogramEmitsJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("query")
 		switch {
-		case strings.Contains(query, "gateway_wake_latency_seconds_bucket"):
+		case strings.Contains(query, "gateway_platform_wake_latency_seconds_bucket"):
 			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"NaN"]}]}}`))
 		case strings.Contains(query, "builderd_ops_total"):
 			// Prometheus evaluates the query's idle fallback, vector(100).
@@ -143,8 +151,8 @@ func TestStatusJSONHandlerIdleHistogramEmitsJSON(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
 		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
 	}
-	if snap.APIAvailabilityPct != 100 || snap.WakeP95MS != 0 || snap.BuildSuccessPct != 100 {
-		t.Fatalf("snapshot = %+v, want finite idle API/build=100 and wake=0", snap)
+	if snap.APIAvailabilityPct != 100 || snap.WakeP95MS != nil || snap.BuildSuccessPct != 100 {
+		t.Fatalf("snapshot = %+v, want finite idle API/build=100 and wake unavailable", snap)
 	}
 }
 
@@ -164,8 +172,8 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 		{
 			name:     "wake p95",
 			query:    statusWakeP95Query,
-			fallback: "or vector(0)",
-			guard:    "sum(rate(gateway_wake_latency_seconds_count[5m])) > 0",
+			fallback: "",
+			guard:    "sum(increase(gateway_platform_wake_latency_seconds_count[30m])) >= 20",
 		},
 		{
 			name:     "build success",
@@ -174,13 +182,22 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 			guard:    "sum(rate(builderd_ops_total{op=\"build\",code!=\"user_error\"}[5m])) > 0",
 		},
 	}
+	if strings.Contains(statusWakeP95Query, "gateway_wake_latency_seconds") {
+		t.Fatalf("platform 350ms status gate reads legacy end-to-end histogram: %q", statusWakeP95Query)
+	}
+	if !strings.Contains(statusWakeP95Query, "gateway_platform_wake_latency_seconds_bucket[30m]") {
+		t.Fatalf("wake status query is not aligned with the platform SLO window: %q", statusWakeP95Query)
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if !strings.Contains(tt.query, tt.guard) {
 				t.Fatalf("query %q is missing its non-idle denominator guard %q", tt.query, tt.guard)
 			}
-			if !strings.Contains(tt.query, tt.fallback) {
+			if tt.fallback != "" && !strings.Contains(tt.query, tt.fallback) {
 				t.Fatalf("query %q is missing idle fallback %q", tt.query, tt.fallback)
+			}
+			if tt.name == "wake p95" && strings.Contains(tt.query, "or vector(") {
+				t.Fatalf("query %q synthesizes a wake value for an idle period", tt.query)
 			}
 		})
 	}
@@ -194,6 +211,87 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 	if !strings.Contains(statusAPIAvailabilityQuery, `code=~"2..|5.."`) ||
 		strings.Contains(statusAPIAvailabilityQuery, `code=~"[45].."`) {
 		t.Fatalf("API availability query does not exclude client 4xx outcomes: %q", statusAPIAvailabilityQuery)
+	}
+}
+
+func TestStatusCacheEmptyWakeVectorIsFreshNoSample(t *testing.T) {
+	var logs strings.Builder
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		if strings.Contains(query, "gateway_platform_wake_latency_seconds_bucket") || strings.Contains(query, "ALERTS") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+	}))
+	t.Cleanup(prom.Close)
+
+	c := newStatusCache(prom.URL, slog.New(slog.NewTextHandler(&logs, nil)))
+	evaluation, err := c.getEvaluation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evaluation.dataStatus != "fresh" || !evaluation.indicatorAvailable["wake_p95"] || evaluation.legacy.WakeP95MS != nil {
+		t.Fatalf("evaluation = %+v, want fresh available wake telemetry with no sample", evaluation)
+	}
+	if strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("quiet wake window emitted warning: %s", logs.String())
+	}
+	indicator := statusIndicator("wake_p95", "Platform wake p95", nil, true, "ms", 350, "lte")
+	if indicator.SampleStatus != "no_sample" || indicator.Value != nil {
+		t.Fatalf("indicator = %+v, want explicit no_sample", indicator)
+	}
+}
+
+func TestStatusCacheWakeQueryFailureIsUnavailableAndStale(t *testing.T) {
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		if strings.Contains(query, "gateway_platform_wake_latency_seconds_bucket") {
+			http.Error(w, "prometheus unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if strings.Contains(query, "ALERTS") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+	}))
+	t.Cleanup(prom.Close)
+
+	evaluation, err := newStatusCache(prom.URL, slog.Default()).getEvaluation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evaluation.dataStatus != "stale" || evaluation.indicatorAvailable["wake_p95"] {
+		t.Fatalf("evaluation = %+v, want stale unavailable wake telemetry", evaluation)
+	}
+}
+
+func TestStatusHistoryNoTrafficRemainsUnknown(t *testing.T) {
+	store := state.NewMemStore()
+	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("query"), "gateway_platform_wake_latency_seconds_bucket") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+	}))
+	t.Cleanup(prom.Close)
+
+	snap, err := newStatusCacheWithStore(prom.URL, store, slog.Default()).Get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Uptime30dPct != nil {
+		t.Fatalf("uptime_30d_pct = %v, want null with no observations", snap.Uptime30dPct)
+	}
+	if len(snap.Uptime30d) != statusHistoryDays {
+		t.Fatalf("daily buckets = %d, want %d", len(snap.Uptime30d), statusHistoryDays)
+	}
+	for _, bucket := range snap.Uptime30d {
+		if bucket.UptimePct != nil || bucket.Total != 0 {
+			t.Fatalf("empty day represented as measured uptime: %+v", bucket)
+		}
 	}
 }
 
@@ -515,6 +613,65 @@ func TestStatusDegradedQueryExcludesNonServiceAlerts(t *testing.T) {
 	}
 	if !strings.Contains(alertQuery, `public_status!="internal"`) {
 		t.Fatalf("alert query does not exclude internal operator alerts: %s", alertQuery)
+	}
+}
+
+func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	// A build may run longer than the status window. The aggregate is based on
+	// when the deployment reached its terminal state, not when it was queued.
+	queuedAt := time.Now().Add(-time.Hour)
+	acct, _ := store.CreateAccount(ctx, "deployment-status@example.com", api.PlanPro)
+	app, _ := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "deployment-status", RAMMB: 256,
+		IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	succeeded, _ := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, CreatedAt: queuedAt,
+	})
+	if err := store.MarkDeploymentLive(ctx, succeeded.ID); err != nil {
+		t.Fatal(err)
+	}
+	failed, _ := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, CreatedAt: queuedAt,
+	})
+	if _, err := store.SetDeploymentFailed(ctx, failed.ID, api.CodeDeploymentSmokeFailed, "platform route returned 404"); err != nil {
+		t.Fatal(err)
+	}
+	userFailed, _ := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball, CreatedAt: queuedAt,
+	})
+	userBuild, err := store.CreateBuild(ctx, userFailed.ID, state.DeploymentKindTarball, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimQueuedBuild(ctx, userBuild.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FailBuild(ctx, claim, state.FailureUserError, "customer source did not compile"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("query"), "ALERTS") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"100"]}]}}`))
+	}))
+	defer srv.Close()
+
+	snap, err := newStatusCacheWithStore(srv.URL, store, slog.Default()).Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.BuildSuccessPct != 50 || !snap.Degraded {
+		t.Fatalf("status = %+v, want 50%% and degraded", snap)
+	}
+	if !strings.Contains(snap.Source, "recent platform deployment failures") {
+		t.Fatalf("source = %q", snap.Source)
 	}
 }
 

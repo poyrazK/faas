@@ -104,15 +104,24 @@ func (f failingPuller) PullLayers(_ context.Context, _ string) (oci.PullLayersRe
 // fakeBuilder records every BuildInput so tests can assert the manifest,
 // paths, and layer plumbing. Set buildErr to make Build return an error.
 type fakeBuilder struct {
-	calls    []rootfs.BuildInput
-	bytesOut int64
-	buildErr error
+	calls            []rootfs.BuildInput
+	fullRootfsCalls  []rootfs.BuildFullRootfsInput
+	bytesOut         int64
+	buildErr         error
+	runnerDigest     string
+	omitRunnerDigest bool
 }
+
+const testRunnerDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.BuildResult, error) {
 	b.calls = append(b.calls, in)
 	if b.buildErr != nil {
 		return rootfs.BuildResult{}, b.buildErr
+	}
+	runnerDigest := b.runnerDigest
+	if in.FunctionRunnerPath != "" && runnerDigest == "" && !b.omitRunnerDigest {
+		runnerDigest = testRunnerDigest
 	}
 	// #96: the handler publishes the produced ext4 via Storage.Put under
 	// the apps/<slug>/<dep>.ext4 key. The fake mirrors real mkfs by
@@ -127,6 +136,7 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 		return rootfs.BuildResult{
 			ImageKey:     in.StorageKey,
 			ContentBytes: b.bytesOut,
+			RunnerDigest: runnerDigest,
 		}, nil
 	}
 	if in.OutImage != "" {
@@ -136,9 +146,10 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 		return rootfs.BuildResult{
 			ImagePath:    in.OutImage,
 			ContentBytes: b.bytesOut,
+			RunnerDigest: runnerDigest,
 		}, nil
 	}
-	return rootfs.BuildResult{ContentBytes: b.bytesOut}, nil
+	return rootfs.BuildResult{ContentBytes: b.bytesOut, RunnerDigest: runnerDigest}, nil
 }
 
 // BuildBase is part of the LayerBuilder interface (M6); the existing
@@ -188,6 +199,7 @@ func (b *fakeBuilder) BuildBaseFromStaging(ctx context.Context, _ string, in roo
 // small placeholder via Storage.Put so dispatchFullRootfs /
 // buildFullRootfsLayer tests stay KVM-free.
 func (b *fakeBuilder) BuildFullRootfs(ctx context.Context, in rootfs.BuildFullRootfsInput) (rootfs.BuildResult, error) {
+	b.fullRootfsCalls = append(b.fullRootfsCalls, in)
 	b.calls = append(b.calls, rootfs.BuildInput{Plan: in.Plan})
 	if in.Storage != nil && in.StorageKey != "" {
 		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4 full-rootfs")); err != nil {
@@ -381,9 +393,11 @@ func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
 	})
 	_ = store.UpdateDeploymentStatus(context.Background(), dep.ID, state.DeploySnapshotting, "")
 
-	var sawLive bool
-	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
+	var sawLive, sawRouteNotification bool
+	notif := &fakeNotifier{}
+	h := New(store, notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmoke(
 		func(ctx context.Context, _ state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
+			sawRouteNotification = findNotify(notif, db.NotifyDeploymentChanged) != nil
 			got, err := store.DeploymentByID(ctx, dep.ID)
 			if err == nil {
 				sawLive = got.Status == state.DeployLive
@@ -410,6 +424,29 @@ func TestHandleSnapshotWritten_HostingSmokeRunsAfterLive(t *testing.T) {
 	}
 	if !sawLive {
 		t.Fatal("hosting smoke ran before deployment became live")
+	}
+	if !sawRouteNotification {
+		t.Fatal("hosting smoke ran before the gateway route notification")
+	}
+	var deploymentEvents []map[string]any
+	for _, call := range notif.calls {
+		if call.channel != db.NotifyDeploymentChanged {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(call.payload), &event); err != nil {
+			t.Fatalf("decode deployment event: %v", err)
+		}
+		deploymentEvents = append(deploymentEvents, event)
+	}
+	if len(deploymentEvents) != 2 {
+		t.Fatalf("deployment events = %v, want route + terminal", deploymentEvents)
+	}
+	if deploymentEvents[0]["kind"] != "candidate_route" || deploymentEvents[0]["status"] != nil {
+		t.Fatalf("pre-smoke event = %v, want nonterminal candidate_route", deploymentEvents[0])
+	}
+	if deploymentEvents[1]["status"] != "live" {
+		t.Fatalf("terminal event = %v, want live", deploymentEvents[1])
 	}
 	if got.Status != state.DeployLive {
 		t.Fatalf("status = %s, want live", got.Status)
@@ -1749,7 +1786,54 @@ func TestBuildFunctionLayer_Runtimes(t *testing.T) {
 			if in.Manifest.Healthz != "/healthz" {
 				t.Errorf("Manifest.Healthz = %q, want \"/healthz\"", in.Manifest.Healthz)
 			}
+			if strings.HasPrefix(tc.runtime, "python") {
+				want := "/app/.venv/lib/python" + strings.TrimPrefix(tc.runtime, "python")[:1] + "." + strings.TrimPrefix(tc.runtime, "python")[1:] + "/site-packages"
+				if got := in.Manifest.Env["PYTHONPATH"]; got != want {
+					t.Errorf("Manifest PYTHONPATH = %q, want %q", got, want)
+				}
+			}
 		})
+	}
+}
+
+func TestBuildFunctionLayer_StampsRunnerDigest(t *testing.T) {
+	h := newFunctionTestHarness(t, api.PlanHobby, RuntimeNode22)
+	build, err := h.store.CreateBuild(context.Background(), h.dep.ID, state.DeploymentKindTarball, 0, "")
+	if err != nil {
+		t.Fatalf("CreateBuild: %v", err)
+	}
+	if err := h.store.CreateBuildProvenance(context.Background(), state.BuildProvenance{BuildID: build.ID}); err != nil {
+		t.Fatalf("CreateBuildProvenance: %v", err)
+	}
+
+	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
+	handler.WithFunctionRunnerNode22("/runners/node22")
+	if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+		t.Fatalf("buildFunctionLayer: %v", err)
+	}
+
+	prov, err := h.store.BuildProvenanceByBuildID(context.Background(), build.ID)
+	if err != nil {
+		t.Fatalf("BuildProvenanceByBuildID: %v", err)
+	}
+	if prov.RunnerDigest != testRunnerDigest {
+		t.Fatalf("RunnerDigest = %q, want %q", prov.RunnerDigest, testRunnerDigest)
+	}
+}
+
+func TestBuildFunctionLayer_MissingRunnerDigestFailsClosed(t *testing.T) {
+	h := newFunctionTestHarness(t, api.PlanHobby, RuntimeNode22)
+	h.bld.omitRunnerDigest = true
+	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
+	handler.WithFunctionRunnerNode22("/runners/node22")
+
+	err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct)
+	if err == nil || !strings.Contains(err.Error(), "function runner digest missing") {
+		t.Fatalf("buildFunctionLayer error = %v, want missing digest", err)
+	}
+	got, _ := h.store.DeploymentByID(context.Background(), h.dep.ID)
+	if got.Status != state.DeployFailed {
+		t.Fatalf("deployment status = %s, want failed", got.Status)
 	}
 }
 

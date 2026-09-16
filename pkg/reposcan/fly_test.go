@@ -10,8 +10,12 @@ func TestDetectFly_AppAndProcesses(t *testing.T) {
 	body := `app = "my-fly-app"
 
 [processes]
-web = 1
-worker = 1
+web = "node server.js"
+worker = "node worker.js"
+empty = ""
+
+[http_service]
+processes = ["web"]
 `
 	fsys := fstest.MapFS{
 		"fly.toml": &fstest.MapFile{Data: []byte(body)},
@@ -28,8 +32,14 @@ worker = 1
 	if !ok || app.class != ClassHTTP {
 		t.Errorf("app seed = (%v, %s); want my-fly-app/http", ok, app.class)
 	}
-	if _, ok := byName["worker"]; !ok {
+	if worker, ok := byName["worker"]; !ok || worker.class != ClassWorker || len(worker.command) != 1 || worker.command[0] != "node worker.js" {
 		t.Errorf("worker process missing; seeds = %v", names(seeds))
+	}
+	if web, ok := byName["web"]; !ok || web.class != ClassHTTP || len(web.command) != 1 || web.command[0] != "node server.js" {
+		t.Errorf("web process = %#v, want HTTP command", web)
+	}
+	if empty, ok := byName["empty"]; !ok || empty.class != ClassWorker || len(empty.command) != 0 {
+		t.Errorf("empty process = %#v, want retained worker with no command", empty)
 	}
 }
 

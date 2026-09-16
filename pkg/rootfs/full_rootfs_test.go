@@ -38,6 +38,9 @@ func TestBuildFullRootfsPublishesAllLayers(t *testing.T) {
 	if res.ImageKey != "apps/full/dep.ext4" {
 		t.Fatalf("ImageKey = %q", res.ImageKey)
 	}
+	if want := api.MustLimitsFor(api.PlanHobby).EphemeralDiskMaxMB(); res.SizeMB != want {
+		t.Fatalf("SizeMB = %d, want Hobby capacity %d", res.SizeMB, want)
+	}
 	got, err := be.Get(context.Background(), res.ImageKey)
 	if err != nil {
 		t.Fatalf("Get published image: %v", err)

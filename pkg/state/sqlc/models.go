@@ -267,6 +267,7 @@ type App struct {
 	DeclaredRoutes            []byte
 	DeletedAt                 pgtype.Timestamptz
 	DeleteGraceUntil          pgtype.Timestamptz
+	PurgeClaimedAt            pgtype.Timestamptz
 }
 
 type AppEnv struct {
@@ -606,11 +607,26 @@ type ComputeNodeHeartbeat struct {
 	DiskUsedBytes   pgtype.Int8
 }
 
+type ComputeNodeHeartbeatHourly struct {
+	NodeID           pgtype.UUID
+	BucketAt         pgtype.Timestamptz
+	SampleCount      int64
+	CpuSampleCount   int64
+	CpuPctSum        float64
+	DiskUsedMaxBytes pgtype.Int8
+	FirstReceivedAt  pgtype.Timestamptz
+	LastReceivedAt   pgtype.Timestamptz
+	LastHeartbeatAt  pgtype.Timestamptz
+}
+
 type ComputeNodeKey struct {
 	ComputeNodeID pgtype.UUID
 	KeyID         string
 	PublicKeyPem  string
 	CreatedAt     pgtype.Timestamptz
+	KeyState      string
+	ValidUntil    pgtype.Timestamptz
+	RevokedAt     pgtype.Timestamptz
 }
 
 type ConsumerKey struct {
@@ -658,16 +674,17 @@ type CreditLedger struct {
 }
 
 type Cron struct {
-	ID            pgtype.UUID
-	AppID         pgtype.UUID
-	Schedule      string
-	Path          string
-	Enabled       bool
-	LastFiredAt   pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	OrgID         pgtype.UUID
-	Timezone      string
-	SkipIfRunning bool
+	ID              pgtype.UUID
+	AppID           pgtype.UUID
+	Schedule        string
+	Path            string
+	Enabled         bool
+	LastFiredAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	OrgID           pgtype.UUID
+	Timezone        string
+	SkipIfRunning   bool
+	SuspendedReason string
 }
 
 type CronFireNowRequest struct {
@@ -1001,6 +1018,21 @@ type ExecutionPayload struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type ExecutionUsageLedger struct {
+	ExecutionID  pgtype.UUID
+	AccountID    pgtype.UUID
+	Runtime      string
+	Status       string
+	WallTimeMs   int64
+	CpuTimeMs    int64
+	PeakMemoryMb int64
+	OutputBytes  int64
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	RecordedAt   pgtype.Timestamptz
+}
+
 type GdprRequest struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
@@ -1227,6 +1259,14 @@ type MailSuppression struct {
 	ProviderEventID string
 	ExpiresAt       pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
+}
+
+type MeterGatewayUsageEvent struct {
+	NodeID     pgtype.UUID
+	EventID    pgtype.UUID
+	InstanceID pgtype.UUID
+	Minute     pgtype.Timestamptz
+	RecordedAt pgtype.Timestamptz
 }
 
 type MeterNetworkCheckpoint struct {

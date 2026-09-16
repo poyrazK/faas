@@ -291,6 +291,60 @@ func TestCheckVerifyTarballSBOM_Regression(t *testing.T) {
 	}
 }
 
+func TestCheckVerifyTarballSBOM_DoesNotCompareInactiveReleaseToCurrentBaseline(t *testing.T) {
+	root := t.TempDir()
+	oldSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	newSHA := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	sbomStageTriple(t, root, oldSHA, nil, 1, 0, 0, 0)
+	baseline := releaseinstall.KGVZero(newSHA)
+	sbomStageTriple(t, root, newSHA, &baseline, 0, 0, 0, 0)
+	if err := releaseinstall.AtomicFlip(root, newSHA); err != nil {
+		t.Fatal(err)
+	}
+
+	findings, err := checkVerifyTarballSBOM(context.Background(), &doctorDeps{
+		releasesRoot: root,
+		verifier:     &releaseinstall.FixtureCosignVerifier{Identity: "test-identity"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, finding := range findings {
+		if finding.Target == oldSHA && finding.Severity != doctorSeverityOK {
+			t.Fatalf("inactive release compared with active baseline: %+v", finding)
+		}
+	}
+}
+
+func TestCheckVerifyTarballSBOM_RejectsUnacceptedActiveRelease(t *testing.T) {
+	root := t.TempDir()
+	oldSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	newSHA := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	baseline := releaseinstall.KGVZero(oldSHA)
+	sbomStageTriple(t, root, oldSHA, &baseline, 0, 0, 0, 0)
+	sbomStageTriple(t, root, newSHA, nil, 0, 0, 0, 0)
+	if err := releaseinstall.AtomicFlip(root, newSHA); err != nil {
+		t.Fatal(err)
+	}
+
+	findings, err := checkVerifyTarballSBOM(context.Background(), &doctorDeps{
+		releasesRoot: root,
+		verifier:     &releaseinstall.FixtureCosignVerifier{Identity: "test-identity"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, finding := range findings {
+		if finding.Target == newSHA && finding.Severity == doctorSeverityError && strings.Contains(finding.Message, "not accepted") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("unaccepted active release was not rejected: %+v", findings)
+	}
+}
+
 // TestCheckVerifyTarballSBOM_VerifyFailed asserts the cosign
 // half: a release with the triple but a verifier that returns
 // an error → error finding with the cosign error in the Detail.

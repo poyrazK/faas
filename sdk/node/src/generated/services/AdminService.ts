@@ -7,7 +7,9 @@ import type { AdminRefundResponse } from '../models/AdminRefundResponse.js';
 import type { AdminSetGithubWebhookSecretRequest } from '../models/AdminSetGithubWebhookSecretRequest.js';
 import type { AdminSetGithubWebhookSecretResponse } from '../models/AdminSetGithubWebhookSecretResponse.js';
 import type { AdminStatusEventCreateRequest } from '../models/AdminStatusEventCreateRequest.js';
+import type { AdminStatusEventEditRequest } from '../models/AdminStatusEventEditRequest.js';
 import type { AdminStatusEventUpdateRequest } from '../models/AdminStatusEventUpdateRequest.js';
+import type { AdminStatusUpdateEditRequest } from '../models/AdminStatusUpdateEditRequest.js';
 import type { BillingCatalogResponse } from '../models/BillingCatalogResponse.js';
 import type { BillingPaddleOveragePreflightResponse } from '../models/BillingPaddleOveragePreflightResponse.js';
 import type { BillingReconcileResponse } from '../models/BillingReconcileResponse.js';
@@ -173,6 +175,110 @@ export class AdminService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Correct a published event title without changing its timeline order.
+   * Requires an operator session. The event remains published and exposes edited_at; deletion is unsupported.
+   * @returns PublicStatusEvent Corrected event with stable updated_at ordering and visible edited_at.
+   * @throws ApiError
+   */
+  public static editAdminStatusEvent({
+    publicId,
+    requestBody,
+    faasSid,
+  }: {
+    /**
+     * Stable public UUID used by status permalinks.
+     */
+    publicId: string,
+    requestBody: AdminStatusEventEditRequest,
+    /**
+     * Dashboard session cookie. Sealed; opaque to the client
+     * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.
+     * The browser sets it automatically on `/login` / `/signup`;
+     * the SDK uses the device-code flow instead and never sets
+     * this cookie.
+     *
+     */
+    faasSid?: string,
+  }): CancelablePromise<PublicStatusEvent> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/admin/status/incidents/{public_id}',
+      path: {
+        'public_id': publicId,
+      },
+      cookies: {
+        'faas_sid': faasSid,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Correct a published timeline message without changing its posted time.
+   * Requires an operator session. The entry remains in place and exposes edited_at; deletion is unsupported.
+   * @returns PublicStatusEvent Corrected timeline with stable posted_at and visible edited_at.
+   * @throws ApiError
+   */
+  public static editAdminStatusUpdate({
+    publicId,
+    updateId,
+    requestBody,
+    faasSid,
+  }: {
+    /**
+     * Stable public UUID used by status permalinks.
+     */
+    publicId: string,
+    /**
+     * Public UUID of the timeline entry being corrected.
+     */
+    updateId: string,
+    requestBody: AdminStatusUpdateEditRequest,
+    /**
+     * Dashboard session cookie. Sealed; opaque to the client
+     * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.
+     * The browser sets it automatically on `/login` / `/signup`;
+     * the SDK uses the device-code flow instead and never sets
+     * this cookie.
+     *
+     */
+    faasSid?: string,
+  }): CancelablePromise<PublicStatusEvent> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/admin/status/incidents/{public_id}/updates/{update_id}',
+      path: {
+        'public_id': publicId,
+        'update_id': updateId,
+      },
+      cookies: {
+        'faas_sid': faasSid,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

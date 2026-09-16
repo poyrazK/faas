@@ -12,18 +12,17 @@ func UnitOutboundd() daemonunit.Unit {
 		After:       []string{"network.target", "postgresql.service", "faas-cp.slice"},
 		Wants:       []string{"faas-cp.slice"},
 
-		Type:               "simple",
-		User:               "faas-outboundd",
-		Group:              "faas",
-		ExecStart:          `/opt/faas/current/bin/outboundd --config /etc/faas/outboundd.toml`,
-		Restart:            "on-failure",
-		RestartSec:         "2s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		Type:       "simple",
+		User:       "faas-outboundd",
+		Group:      "faas",
+		ExecStart:  `/opt/faas/current/bin/outboundd --config /etc/faas/outboundd.toml`,
+		Restart:    "on-failure",
+		RestartSec: "2s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
 
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/outboundd/outboundd.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/outboundd/outboundd.env -/etc/faas/otel.env",
 
 		NoNewPrivileges:       true,
 		ProtectSystem:         "strict",

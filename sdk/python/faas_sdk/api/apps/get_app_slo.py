@@ -57,6 +57,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 402:
+        response_402 = Problem.from_dict(response.json())
+
+        return response_402
+
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
@@ -115,6 +120,9 @@ def sync_detailed(
     `gb_hours` are zeroed and `source` is
     `\"degraded: postgres unavailable\"`.
 
+    This is a Hobby+ per-app observability surface. Free
+    accounts receive 402 before the app slug is resolved.
+
     Args:
         slug (str):
         window (GetAppSLOWindow | Unset):  Default: '24h'.
@@ -170,6 +178,9 @@ def sync(
     `gb_hours` are zeroed and `source` is
     `\"degraded: postgres unavailable\"`.
 
+    This is a Hobby+ per-app observability surface. Free
+    accounts receive 402 before the app slug is resolved.
+
     Args:
         slug (str):
         window (GetAppSLOWindow | Unset):  Default: '24h'.
@@ -219,6 +230,9 @@ async def asyncio_detailed(
     the PromQL pass succeeded, only `instance_hours` /
     `gb_hours` are zeroed and `source` is
     `\"degraded: postgres unavailable\"`.
+
+    This is a Hobby+ per-app observability surface. Free
+    accounts receive 402 before the app slug is resolved.
 
     Args:
         slug (str):
@@ -272,6 +286,9 @@ async def asyncio(
     the PromQL pass succeeded, only `instance_hours` /
     `gb_hours` are zeroed and `source` is
     `\"degraded: postgres unavailable\"`.
+
+    This is a Hobby+ per-app observability surface. Free
+    accounts receive 402 before the app slug is resolved.
 
     Args:
         slug (str):

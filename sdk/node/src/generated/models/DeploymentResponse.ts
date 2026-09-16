@@ -8,6 +8,7 @@ import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { LogExcerpt } from './LogExcerpt.js';
 import type { ScanResult } from './ScanResult.js';
 import type { SecretScanResult } from './SecretScanResult.js';
+import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
  * One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design.
  */
@@ -148,6 +149,10 @@ export type DeploymentResponse = {
    */
   build_plan?: (BuildPlan | null);
   /**
+   * Validated workflow definitions persisted with this immutable deployment revision.
+   */
+  workflows?: Array<WorkflowSpec>;
+  /**
    * Durable non-secret deployment evidence captured after readiness, including the resolved API profile, artifact identity, and post-readiness smoke result.
    */
   hosting_receipt?: any | null;
@@ -183,30 +188,6 @@ export type DeploymentResponse = {
    * Pull-request number that drove this source-ref deploy request (githubd pull_request.number; Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR.
    */
   pr_number?: number;
-  /**
-   * Per-deployment auto-rollback opt-in (issue #961 leaf 8 / ADR-118 / Mega-C PR-2). Customer sets this at create time (Pro+ only); schedd fires the rollback when first_5xx_count crosses the per-plan threshold inside first_5xx_window_ends_at.
-   */
-  rollback_on_5xx?: boolean;
-  /**
-   * Wall-clock timestamp of the first customer-visible wake response (anchor for the auto-rollback window). NULL until the gateway stamps it on the first wake.proxy_first_byte event.
-   */
-  first_wake_at?: string | null;
-  /**
-   * Wall-clock timestamp the auto-rollback window closes (first_wake_at + 5 min). NULL until the gateway stamps it on the first wake. The schedd scan checks `now() < first_5xx_window_ends_at` before firing the rollback.
-   */
-  first_5xx_window_ends_at?: string | null;
-  /**
-   * Atomic 5xx counter incremented by schedd on every wake.response_5xx event for this row. Default 0; NOT NULL DEFAULT 0 enforced at the schema layer.
-   */
-  first_5xx_count?: number;
-  /**
-   * Wall-clock timestamp the most recent auto-rollback fired (idempotent across retries; updated by schedd when the rollback tx commits). NULL until the first auto-rollback.
-   */
-  last_auto_rollback_at?: string | null;
-  /**
-   * Closed-set classifier for the most recent auto-rollback trigger. `threshold_exceeded` = first_5xx_count crossed the per-plan threshold inside the window. `first_window_expired` = the window expired without crossing the threshold (clean wake window). Closed-set is enforced at the schema layer via deployments_last_auto_rollback_reason_check.
-   */
-  last_auto_rollback_reason?: 'threshold_exceeded' | 'first_window_expired';
   /**
    * Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment path.
    */

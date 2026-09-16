@@ -11,11 +11,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
 
-const VsockWorkloadIdentityHostPort uint32 = 1030
+const VsockWorkloadIdentityHostPort uint32 = fcvm.VsockWorkloadIdentityHostPort
 
 type WorkloadIdentityReceiver struct{}
 
-func StartWorkloadIdentityReceiver(context.Context, *slog.Logger, *fcvm.Manager, *workloadidentity.Signer) (*WorkloadIdentityReceiver, error) {
+func StartWorkloadIdentityReceiver(context.Context, *slog.Logger, *fcvm.Manager, *workloadidentity.Signer, *fcvm.JailerVMM) (*WorkloadIdentityReceiver, error) {
 	return nil, fmt.Errorf("workload identity vsock requires Linux")
 }
 

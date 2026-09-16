@@ -6,17 +6,16 @@
 // when deploying this template so the wiring is automatic.
 
 export async function handler(event, ctx) {
-  // event.body is the parsed JSON request body (string for non-JSON).
-  // ctx.log is the structured logger guest-init wires up. Surface
-  // both so a smoke test sees something useful.
-  ctx.log.info("function invoked", { event, invocation_id: ctx.invocation_id });
+  // Never log or echo the request event: it can contain cookies, API keys,
+  // authorization headers, and customer payloads. Keep the starter useful
+  // with a bounded, non-secret invocation marker instead.
+  ctx.log.info("function invoked", { invocation_id: ctx.invocation_id });
   return {
     statusCode: 200,
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       ok: true,
       invocation_id: ctx.invocation_id,
-      received: event,
     }),
   };
 }

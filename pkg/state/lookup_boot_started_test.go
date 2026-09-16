@@ -11,10 +11,9 @@
 //  1. DISTINCT ON (data->>'wake_id') picks the EARLIEST row per
 //     wake_id. A re-wake that emits two wake.boot_started rows for
 //     the same wake_id must surface the first row's telemetry.
-//  2. The mirror row (the canonical-emit-failure path closed by
-//     pkg/vmmdgrpc/server.go:emitBootStartedMirror) must NOT be
-//     surfaced — the mirror uses a later `at` timestamp and is
-//     the fallback, never the preferred row.
+//  2. A legacy vmmd mirror row must NOT be surfaced — the mirror uses a
+//     later `at` timestamp and is never preferred over the canonical schedd
+//     row. Current releases use the distinct wake.boot_observed kind.
 //  3. Empty / nil input returns an empty map without touching the
 //     pool (exercises the early-return branch at pgstore.go:10362).
 //  4. Unknown wake_ids produce an empty map (not an error) so the
@@ -112,9 +111,8 @@ func TestLookupBootStartedForWakes_RoundTrip(t *testing.T) {
 	wakeID1 := "wake-rt-1-" + t.Name()
 	wakeID2 := "wake-rt-2-" + t.Name()
 
-	// wakeID1: canonical then mirror. The mirror is the
-	// emitBootStartedMirror fallback — it MUST be discarded by
-	// DISTINCT ON ORDER BY at ASC.
+	// wakeID1: canonical then a pre-cutover mirror. The legacy duplicate must
+	// be discarded by DISTINCT ON's actor preference and timestamp order.
 	insertBootStarted(t, ctx, pool, map[string]any{
 		"wake_id":              wakeID1,
 		"app_id":               "app-a",

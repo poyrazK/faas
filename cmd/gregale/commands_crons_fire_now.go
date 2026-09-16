@@ -67,7 +67,7 @@ const (
 // poll from inside `crons run` — the operator is expected to follow
 // up with `crons fire-now <request-id>` (or pipe to it).
 func cmdCronsRun(args []string) int {
-	fs := flag.NewFlagSet("crons-run", flag.ContinueOnError)
+	fs := newFlagSet("crons-run", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -104,7 +104,7 @@ func cmdCronsRun(args []string) int {
 // byte-identical bodies (IDOR-safe), so the CLI never invents a
 // local branch that could leak existence.
 func cmdCronsFireNowGet(args []string) int {
-	fs := flag.NewFlagSet("crons-fire-now", flag.ContinueOnError)
+	fs := newFlagSet("crons-fire-now", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

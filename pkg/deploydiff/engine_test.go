@@ -81,6 +81,101 @@ func TestCompute_FreshApp(t *testing.T) {
 	}
 }
 
+// adr: 122
+func TestComputeCarriesVCPURolloutWorkflowAndBuildOverrides(t *testing.T) {
+	vcpu := 4
+	traffic := 25
+	workflow := api.WorkflowSpec{Name: "release", Steps: []api.WorkflowStepSpec{{Name: "ship", Run: "api"}}}
+	got := Compute("api", api.PlanScale, Baseline{}, Pending{
+		AppConfig:      AppConfigPatch{VCPU: &vcpu},
+		TrafficPercent: &traffic,
+		Workflows:      []api.WorkflowSpec{workflow},
+		BuildPlan: &api.BuildPlan{
+			Class: "app", Framework: "node", Entrypoint: "node server.js",
+			Port: 8080, HealthPath: "/ready", ConfigFile: "gregale.yaml",
+		},
+	})
+	want := map[string]bool{
+		"app": false, "deployment": false, "vcpu": false,
+		"deployment.traffic_percent": false, "deployment.workflows": false,
+	}
+	for _, change := range got.Changes {
+		if _, ok := want[change.Field]; ok {
+			want[change.Field] = true
+		}
+		if change.Field == "deployment" {
+			values, ok := change.After.Value.(map[string]string)
+			if !ok || values["entrypoint"] != "node server.js" || values["port"] != "8080" || values["health_path"] != "/ready" || values["config_file"] != "gregale.yaml" {
+				t.Fatalf("deployment override preview = %#v", change.After.Value)
+			}
+		}
+	}
+	for field, seen := range want {
+		if !seen {
+			t.Errorf("missing preview change %q: %+v", field, got.Changes)
+		}
+	}
+}
+
+// adr: 081
+func TestComputeWorkflowAddModifyRemoveAndOmission(t *testing.T) {
+	one := api.WorkflowSpec{Name: "one", Steps: []api.WorkflowStepSpec{{Name: "run", Run: "api"}}}
+	two := api.WorkflowSpec{Name: "two", Steps: []api.WorkflowStepSpec{{Name: "run", Run: "api"}}}
+	cases := []struct {
+		name     string
+		baseline []api.WorkflowSpec
+		pending  []api.WorkflowSpec
+		want     ChangeKind
+	}{
+		{"add", nil, []api.WorkflowSpec{one}, ChangeAdd},
+		{"modify", []api.WorkflowSpec{one}, []api.WorkflowSpec{two}, ChangeModify},
+		{"remove", []api.WorkflowSpec{one}, []api.WorkflowSpec{}, ChangeRemove},
+		{"omitted", []api.WorkflowSpec{one}, nil, ""},
+		{"equal", []api.WorkflowSpec{one}, []api.WorkflowSpec{one}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Compute("api", api.PlanPro, Baseline{LatestDeployment: &api.DeploymentResponse{Workflows: tc.baseline}}, Pending{Workflows: tc.pending})
+			var found *Change
+			for i := range got.Changes {
+				if got.Changes[i].Field == "deployment.workflows" {
+					found = &got.Changes[i]
+				}
+			}
+			if tc.want == "" && found != nil {
+				t.Fatalf("unexpected workflow change: %+v", found)
+			}
+			if tc.want != "" && (found == nil || found.Kind != tc.want) {
+				t.Fatalf("workflow change = %+v, want %s", found, tc.want)
+			}
+		})
+	}
+}
+
+// adr: 083
+func TestComputeBlocksImmutableExistingShape(t *testing.T) {
+	got := Compute("api", api.PlanPro, Baseline{App: &api.AppResponse{Slug: "api", Type: "app"}}, Pending{
+		BuildPlan: &api.BuildPlan{Class: "function", Runtime: "node22"},
+	})
+	if !hasBreakCode(got.Breaks, api.CodeValidation) {
+		t.Fatalf("immutable app class preview did not block: %+v", got)
+	}
+	for _, change := range got.Changes {
+		if change.Field == "app.class" || change.Field == "app.runtime" {
+			t.Fatalf("preview promised an immutable mutation: %+v", change)
+		}
+	}
+}
+
+func hasBreakCode(breaks []Break, code string) bool {
+	for _, item := range breaks {
+		if item.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCompute_FreshSourcePreviewIncludesAppAndDeploymentIdentity(t *testing.T) {
 	got := Compute("new-function", api.PlanHobby, Baseline{}, Pending{
 		BuildPlan: &api.BuildPlan{

@@ -50,10 +50,10 @@ func newMigrationHandlersTestServer(t *testing.T) *Server {
 // the handler exits before any I/O, then walks the gRPC status
 // back through grpcerr.FromStatus to recover the *api.Problem
 // and assert the docs_url shape. Any site that falls back to a
-// hard-coded host or drops the wire.DocsHost indirection trips
+// hard-coded host or drops the wire.DocsBaseURL indirection trips
 // here.
 func TestMigrationHandlers_DocsURLsAreWellFormed(t *testing.T) {
-	const wantPrefix = "https://docs.gregale.dev/vmmd#"
+	const wantPrefix = "https://gregale.dev/docs/vmmd#"
 
 	cases := []struct {
 		name     string

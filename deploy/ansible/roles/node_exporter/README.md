@@ -1,16 +1,16 @@
 # `node_exporter` ansible role
 
-Installs the Prometheus `node_exporter` binary pinned to a specific
-version, bound to loopback (`127.0.0.1:9100`). Prometheus scrapes
-locally, so the public iface's input chain never needs to expose host
-telemetry on a provider-specific bridge.
+Installs the Prometheus `node_exporter` binary pinned to a specific version.
+Control-plane and single-box hosts bind loopback. Compute hosts bind their
+private fleet address so the control-plane Prometheus can discover every
+host's textfile metrics from the active `compute_nodes` registry.
 
-## Why loopback-only
+## Network boundary
 
-`nftables` host policy (spec §7) drops unsolicited ingress on the
-public iface. The Prometheus scraper dials from inside the box, so
-listening on the public iface or a provider-specific bridge would be
-additional attack surface for zero benefit.
+`nftables` host policy admits compute TCP/9100 only from configured
+control-plane CIDRs. The public interface remains unreachable. This lets the
+central scraper collect per-host certificate expiry while preserving the
+same private fleet boundary as the daemon metrics ports.
 
 ## Collectors disabled
 

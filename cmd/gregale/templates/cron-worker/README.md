@@ -82,9 +82,11 @@ curl -X POST https://qstash.upstash.io/v2/publish/<slug>.gregale.dev \
   -d '{"task":"tick"}'
 ```
 
-The handler responds 200 with `{ ok, invocation_id, count, received }`.
+The handler responds 200 with `{ ok, invocation_id, count }`.
 The `count` is the per-invocation Redis counter, incremented every
-time the handler fires.
+time the handler fires. Logs include the payload byte count but never the
+payload itself. Select and log individual non-secret fields only when the job
+requires them.
 
 ## Re-deploy after edits
 

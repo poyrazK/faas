@@ -69,7 +69,7 @@ func TestEdgeRulesMaintenance_E2E_MatchReturns503(t *testing.T) {
 
 	slug := "maintenance-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	var app api.AppResponse
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
@@ -83,7 +83,7 @@ func TestEdgeRulesMaintenance_E2E_MatchReturns503(t *testing.T) {
 
 	// Rule under test: kind=maintenance on POST /payments with a
 	// custom 3600 s Retry-After + a Message payload.
-	seedEdgeRuleDirect(t, context.Background(), pool,
+	ruleID := seedEdgeRuleDirect(t, context.Background(), pool,
 		accountID, app.ID, synthHost,
 		state.EdgeRuleKindMaintenance,
 		map[string]any{
@@ -94,6 +94,10 @@ func TestEdgeRulesMaintenance_E2E_MatchReturns503(t *testing.T) {
 			},
 		},
 	)
+	if _, err := pool.Exec(context.Background(),
+		`update edge_rules set match_methods = array['POST']::text[] where id = $1`, ruleID); err != nil {
+		t.Fatalf("set maintenance method filter: %v", err)
+	}
 
 	resetEdgeRuleCache(t, h)
 
@@ -123,10 +127,8 @@ func TestEdgeRulesMaintenance_E2E_MatchReturns503(t *testing.T) {
 	// Methods filter: GET /payments must NOT trigger the rule
 	// (the rule's match_methods is post-only). The request
 	// reaches Backend.Pick → 404 (no real impl).
-	_, _, status = doReqHeaders(t, h, synthHost, http.MethodGet, "/payments", nil)
-	if status == http.StatusServiceUnavailable {
-		t.Errorf("GET /payments: status=503; rule should NOT fire on GET (match_methods=post)")
-	}
+	_, body, status = doReqHeaders(t, h, synthHost, http.MethodGet, "/payments", nil)
+	assertBackendFallthrough(t, status, body)
 }
 
 // TestEdgeRulesMaintenance_E2E_DefaultRetryAfter pins the default
@@ -149,7 +151,7 @@ func TestEdgeRulesMaintenance_E2E_DefaultRetryAfter(t *testing.T) {
 
 	slug := "maintenance-default-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	var app api.AppResponse
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
@@ -202,12 +204,12 @@ func TestEdgeRulesMaintenance_E2E_CrossAccountFallsThrough(t *testing.T) {
 	accountID := accountIDFromKey(t, context.Background(), pool, key)
 
 	// Second account (cross-account rule owner).
-	otherKey := h.SeedAccount(context.Background(), api.PlanHobby)
+	otherKey := h.SeedAccount(context.Background(), api.PlanHobby, "edge-maintenance-other")
 	otherAccountID := accountIDFromKey(t, context.Background(), pool, otherKey)
 
 	slug := "maintenance-crossaccount-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	var app api.AppResponse
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
@@ -239,11 +241,6 @@ func TestEdgeRulesMaintenance_E2E_CrossAccountFallsThrough(t *testing.T) {
 	// POST /payments → cross-account rule silently falls through to
 	// Backend.Pick → 404 (no real impl). 503 means the cross-account
 	// rule DID fire — wrong.
-	_, _, status := doReqHeaders(t, h, synthHost, http.MethodPost, "/payments", nil)
-	if status == http.StatusServiceUnavailable {
-		t.Errorf("POST /payments: status=503; cross-account rule must fall through")
-	}
-	if status != http.StatusNotFound {
-		t.Errorf("POST /payments: status=%d, want 404 (Backend.Pick miss after cross-account fall-through)", status)
-	}
+	_, body, status := doReqHeaders(t, h, synthHost, http.MethodPost, "/payments", nil)
+	assertBackendFallthrough(t, status, body)
 }

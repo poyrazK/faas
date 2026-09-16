@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -23,6 +24,12 @@ import (
 // names use pkg/db constants to stay aligned with the apid NotifyChannels
 // table.
 const verifyInterval = 30 * time.Second
+
+const (
+	doctorBatchLimit  = 128
+	doctorWorkerLimit = 16
+	doctorPassTimeout = 25 * time.Second
+)
 
 // startDNSPoller runs the DNS poll loop until ctx is cancelled. Caller is
 // responsible for surfacing errors via the slog logger.
@@ -67,12 +74,32 @@ func startDNSPoller(ctx context.Context, s *server, log *slog.Logger) {
 func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 	pending, err := s.pendingUnverifiedDomains(ctx)
 	if err != nil {
+		if s.domainVerificationMetrics != nil {
+			s.domainVerificationMetrics.cycles.WithLabelValues("error").Inc()
+			s.domainVerificationMetrics.results.WithLabelValues("error").Inc()
+		}
 		log.Warn("dns_poller: list failed", "err", err)
 		return
+	}
+	if s.domainVerificationMetrics != nil {
+		s.domainVerificationMetrics.cycles.WithLabelValues("success").Inc()
+		s.domainVerificationMetrics.batch.Set(float64(len(pending)))
+		s.domainVerificationMetrics.lastSuccess.Set(float64(time.Now().Unix()))
+	}
+	if stats, ok := s.store.(interface {
+		CustomDomainVerificationStats(context.Context) (int, time.Duration, error)
+	}); ok && s.domainVerificationMetrics != nil {
+		if n, age, e := stats.CustomDomainVerificationStats(ctx); e == nil {
+			s.domainVerificationMetrics.backlog.Set(float64(n))
+			s.domainVerificationMetrics.oldest.Set(age.Seconds())
+		}
 	}
 	for _, d := range pending {
 		checkedAt := time.Now().UTC()
 		if checkTXT(ctx, d.Domain, d.ChallengeToken) {
+			if s.domainVerificationMetrics != nil {
+				s.domainVerificationMetrics.results.WithLabelValues("success").Inc()
+			}
 			if d.CertStatus == state.CustomDomainCertDNSDrifted {
 				// Drifted domains must repair the routing target before the
 				// TXT challenge can restore verification. This prevents a
@@ -94,6 +121,9 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 			_ = s.notif.Notify(ctx, db.NotifyDomainVerify, `{"domain":"`+d.Domain+`"}`)
 			log.Info("domain verified", "domain", d.Domain)
 		} else if d.CertStatus != state.CustomDomainCertDNSDrifted {
+			if s.domainVerificationMetrics != nil {
+				s.domainVerificationMetrics.results.WithLabelValues("failure").Inc()
+			}
 			// Keep dns_drifted durable until the customer has both fixed the
 			// target and satisfied the TXT challenge. A failed TXT lookup on
 			// the next tick must not downgrade the warning back to pending.
@@ -186,6 +216,20 @@ func (s *server) pendingUnverifiedDomains(ctx context.Context) ([]pendingDomainR
 	// Fast path: PgStore and MemStore expose the full row through this
 	// optional interface. Keeping it optional preserves compatibility with
 	// narrow test doubles that only implement the historical Store surface.
+	type claimer interface {
+		ClaimCustomDomainsForVerification(context.Context, int) ([]state.CustomDomain, error)
+	}
+	if c, ok := s.store.(claimer); ok {
+		domains, err := c.ClaimCustomDomainsForVerification(ctx, 64)
+		if err != nil {
+			return nil, err
+		}
+		out = make([]pendingDomainRow, 0, len(domains))
+		for _, d := range domains {
+			out = append(out, pendingDomainRow{Domain: d.Domain, ChallengeToken: d.ChallengeToken, CertStatus: d.CertStatus})
+		}
+		return out, nil
+	}
 	type listUnverified interface {
 		ListUnverifiedCustomDomains(ctx context.Context) ([]state.CustomDomain, error)
 	}
@@ -215,8 +259,10 @@ type pendingDomainRow struct {
 // checkTXT does a TXT lookup for _faas-verify.<domain> and reports whether
 // any returned record equals the expected token.
 func checkTXT(ctx context.Context, domain, expected string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	target := state.CustomDomainChallengeName(domain)
-	records, err := txtLookupFunc(ctx, target)
+	records, err := txtLookupFunc(probeCtx, target)
 	if err != nil {
 		return false
 	}
@@ -261,15 +307,64 @@ var txtLookupFunc = func(ctx context.Context, target string) ([]string, error) {
 // goroutine itself uses the parent ctx so a daemon shutdown
 // cancels the entire pass cleanly.
 func (s *server) runDoctorOnce(ctx context.Context, log *slog.Logger) {
-	domains, err := s.store.ListAllCustomDomainsForDoctor(ctx)
+	passCtx, cancelPass := context.WithTimeout(ctx, doctorPassTimeout)
+	defer cancelPass()
+	type doctorBatcher interface {
+		ListCustomDomainsForDoctorBatch(context.Context, int) ([]string, error)
+	}
+	var domains []string
+	var err error
+	if batcher, ok := s.store.(doctorBatcher); ok {
+		domains, err = batcher.ListCustomDomainsForDoctorBatch(passCtx, doctorBatchLimit)
+	} else {
+		domains, err = s.store.ListAllCustomDomainsForDoctor(passCtx)
+		if len(domains) > doctorBatchLimit {
+			domains = domains[:doctorBatchLimit]
+		}
+	}
 	if err != nil {
+		if s.ops != nil {
+			s.ops.DomainDoctorCycles().WithLabelValues("error").Inc()
+		}
 		log.Warn("dns_poller: list domains for doctor failed", "err", err)
 		return
 	}
+	if s.ops != nil {
+		s.ops.DomainDoctorBatchSize().Set(float64(len(domains)))
+	}
+	jobs := make(chan string)
+	workerCount := min(doctorWorkerLimit, len(domains))
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for domain := range jobs {
+				domainCtx, cancel := context.WithTimeout(passCtx, probeTimeout+2*time.Second)
+				_ = s.runDoctorForDomain(domainCtx, log, domain)
+				cancel()
+			}
+		}()
+	}
+	timedOut := false
 	for _, domain := range domains {
-		domainCtx, cancel := context.WithTimeout(ctx, probeTimeout+2*time.Second)
-		_ = s.runDoctorForDomain(domainCtx, log, domain)
-		cancel()
+		select {
+		case jobs <- domain:
+		case <-passCtx.Done():
+			timedOut = true
+		}
+		if timedOut {
+			break
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	outcome := "success"
+	if passCtx.Err() != nil {
+		outcome = "timeout"
+	}
+	if s.ops != nil {
+		s.ops.DomainDoctorCycles().WithLabelValues(outcome).Inc()
 	}
 	// ADR-120 Tier A1: refresh the apid_domain_doctor_oldest_
 	// observation_seconds gauge after the pass completes. The
@@ -387,6 +482,13 @@ func (s *server) runDoctorForDomain(ctx context.Context, log *slog.Logger, domai
 		legacyLoaded = legacyErr == nil
 		if legacyErr == nil && !legacy.Verified() {
 			obs.CertState = certStatusPending
+		} else if pointsToG.Status == probeFail {
+			// A definite routing mismatch is already actionable and must not
+			// become a tenant-controlled network probe. Wait for the hostname to
+			// point back to the Gregale edge before opening a TLS connection.
+			obs.CertState = certStatusDialFailed
+			obs.LastError = errCertRoutingMismatch.Error()
+			obs.CertCheckedAt = time.Now().UTC()
 		} else {
 			obs.CertState, obs.LastError, obs.CertNotAfter = dialCertForDoctor(ctx, probeDomain)
 			obs.CertCheckedAt = time.Now().UTC()

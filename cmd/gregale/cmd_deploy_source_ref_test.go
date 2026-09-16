@@ -52,24 +52,46 @@ type sourceRefSink struct {
 	captured      *http.Request
 	capturedBody  []byte
 	capturedCalls int
+	createCalls   int
+	getAppCalls   int
+	existingApp   bool
 }
 
 // ServeHTTP is the single dispatch arm — the sink only knows the
 // source-ref path. Any other path returns 404 with a useful message
 // so a regression that drives the wrong wire URL fails loud.
 func (s *sourceRefSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.captured = r
-	body, _ := io.ReadAll(r.Body)
-	s.capturedBody = body
-	s.capturedCalls++
-	if s.problem != nil {
-		if s.retryAfter != "" {
-			w.Header().Set("Retry-After", s.retryAfter)
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
+		s.createCalls++
+		if s.existingApp {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "App exists", "slug already exists"))
+			return
 		}
-		writeJSONTestStatus(w, s.status, s.problem)
-		return
+		writeJSONTestStatus(w, http.StatusCreated, api.AppResponse{ID: "app_hello", Slug: "hello"})
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/hello":
+		s.getAppCalls++
+		if s.existingApp {
+			writeJSONTestStatus(w, http.StatusOK, api.AppResponse{ID: "app_hello", Slug: "hello"})
+			return
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app"))
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/hello/deployments/source-ref":
+		s.captured = r
+		body, _ := io.ReadAll(r.Body)
+		s.capturedBody = body
+		s.capturedCalls++
+		if s.problem != nil {
+			if s.retryAfter != "" {
+				w.Header().Set("Retry-After", s.retryAfter)
+			}
+			writeJSONTestStatus(w, s.status, s.problem)
+			return
+		}
+		writeJSONTestStatus(w, s.status, s.body)
+	default:
+		http.Error(w, "sourceRefSink: not found: "+r.URL.Path, http.StatusNotFound)
 	}
-	writeJSONTestStatus(w, s.status, s.body)
 }
 
 // withResetJSONOutput flips the global jsonOutput flag for the
@@ -154,6 +176,9 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 				stdoutJSONID:   "dep_2",
 				stderrContains: nil,
 				wirePin: func(t *testing.T, sink *sourceRefSink) {
+					if sink.getAppCalls != 1 || sink.createCalls != 1 {
+						t.Errorf("fresh app calls: get=%d create=%d, want 1 each", sink.getAppCalls, sink.createCalls)
+					}
 					if sink.captured.Method != http.MethodPost {
 						t.Errorf("method = %s, want POST", sink.captured.Method)
 					}
@@ -178,6 +203,27 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 					}
 					if got.TrafficPercent == nil || *got.TrafficPercent != 0 {
 						t.Errorf("body.traffic_percent = %v, want explicit 0", got.TrafficPercent)
+					}
+				},
+			},
+		},
+		{
+			name: "existing_app_redeploy",
+			setup: func(sink *sourceRefSink) {
+				sink.existingApp = true
+				sink.status = http.StatusAccepted
+				sink.body = api.DeploymentResponse{
+					ID: "dep_existing", AppID: "app_hello", BuildID: "build_existing",
+					Kind: "github", Status: "queued",
+				}
+			},
+			invoke: cmdDeployRepoSourceRef,
+			expect: expect{
+				exitCode:     0,
+				stdoutJSONID: "dep_existing",
+				wirePin: func(t *testing.T, sink *sourceRefSink) {
+					if sink.getAppCalls != 1 || sink.createCalls != 0 || sink.capturedCalls != 1 {
+						t.Errorf("existing app calls: get=%d create=%d source-ref=%d, want 1/0/1", sink.getAppCalls, sink.createCalls, sink.capturedCalls)
 					}
 				},
 			},
@@ -322,6 +368,34 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 			},
 			wantExit:        1,
 			wantStderrHas:   "Invalid --repo",
+			wantNoServerHit: true,
+		},
+		{
+			name:            "ref_without_repo",
+			args:            []string{"--ref", "main"},
+			wantExit:        1,
+			wantStderrHas:   "--ref requires --repo",
+			wantNoServerHit: true,
+		},
+		{
+			name:            "diff_repo_is_read_only",
+			args:            []string{"--repo", "onebox-faas/hello", "--ref", "main", "--diff"},
+			wantExit:        1,
+			wantStderrHas:   "source-ref preview is not supported",
+			wantNoServerHit: true,
+		},
+		{
+			name:            "repo_cannot_hide_image",
+			args:            []string{"--repo", "onebox-faas/hello", "--ref", "main", "--image", "registry.example/app:latest"},
+			wantExit:        1,
+			wantStderrHas:   "source selectors are mutually exclusive",
+			wantNoServerHit: true,
+		},
+		{
+			name:            "repo_rejects_discarded_app_config",
+			args:            []string{"--repo", "onebox-faas/hello", "--ref", "main", "--app", "--vcpu", "999", "--doctor-strict"},
+			wantExit:        1,
+			wantStderrHas:   "unsupported with --repo",
 			wantNoServerHit: true,
 		},
 	}

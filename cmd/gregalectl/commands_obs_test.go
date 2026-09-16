@@ -87,6 +87,7 @@ func TestApidBase_OverridesWithEnv(t *testing.T) {
 // exact strings.
 func TestWriteObsHealthHuman_FieldOrder(t *testing.T) {
 	snap := map[string]any{
+		"prometheus_available":        true,
 		"audit_log_write_total_5m":    float64(1234),
 		"audit_log_write_failures_5m": float64(0),
 		"audit_log_coverage_ratio_5m": 1.0,
@@ -106,8 +107,9 @@ func TestWriteObsHealthHuman_FieldOrder(t *testing.T) {
 	writeObsHealthHuman(&buf, snap)
 	out := buf.String()
 
-	// Order: audit_log_write_total_5m first, alerts_firing last.
+	// Order: prometheus_available first, alerts_firing last.
 	wantSubstrings := []string{
+		"prometheus_available:",
 		"audit_log_write_total_5m:",
 		"audit_log_write_failures_5m:",
 		"audit_log_coverage_ratio_5m:",

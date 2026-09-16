@@ -12,11 +12,13 @@ import faas "github.com/poyrazK/faas/sdk/go"
 
 The package exposes:
 
-- a typed `Client` with **57 methods** covering every apid route,
+- a typed `Client` covering every apid route, including disposable agent
+  executions,
 - bearer-auth + caller-supplied `Idempotency-Key` for replay safety,
 - RFC 7807 error envelope + `errors.Is(err, faas.ErrNotFound)` sentinels,
 - cursor pagination helpers (`ListDeploymentsAll`),
-- SSE streaming via `Decoder` for app logs, deployment logs, and events,
+- SSE streaming via `Decoder` for app logs, deployment logs, dashboard events,
+  and typed resumable disposable executions,
 - functional `Option` for HTTP transport, retry, and logger.
 
 ## Install
@@ -61,6 +63,30 @@ func main() {
     fmt.Println(app.Slug, app.Status)
 }
 ```
+
+## Disposable agent executions
+
+Runs execute in an isolated, networkless microVM with only ephemeral guest
+scratch space. The SDK can reconnect an event stream from its last cursor and
+return the terminal receipt in one call:
+
+```go
+receipt, err := c.Run(ctx, faas.CreateExecutionRequest{
+    Runtime: faas.ExecutionRuntimeNode22,
+    Source:  "console.log('hello')",
+}, faas.RunOptions{
+    OnEvent: func(event faas.ExecutionEvent) error {
+        if event.Type == faas.ExecutionEventStdout {
+            fmt.Print(event.Data.Chunk)
+        }
+        return nil
+    },
+})
+```
+
+For long-lived consumers, call `c.WatchExecution` directly and repeatedly
+call `Next`. `Cursor` exposes the latest replay position for checkpointing;
+`Close` is idempotent and releases the active stream.
 
 ## Idempotency
 

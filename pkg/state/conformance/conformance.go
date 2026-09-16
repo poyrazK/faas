@@ -59,6 +59,9 @@ func Run(t *testing.T, open Open) {
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
+		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
+		{"project_binding_update_is_scoped", testProjectBindingUpdate},
+		{"project_environment_registry_is_scoped_and_protected", testProjectEnvironmentRegistry},
 		{"export_history_pagination_is_stable", testExportHistoryPagination},
 		{"latest_deployment_per_app_is_scoped_and_stable", testLatestDeploymentPerApp},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
@@ -67,11 +70,439 @@ func Run(t *testing.T, open Open) {
 		{"execution_intent_lifecycle_is_leased_and_bounded", testExecutionIntentLifecycle},
 		{"workflow_admission_recovery_and_cancel_are_atomic", testWorkflowAdmissionRecoveryAndCancel},
 		{"public_status_lifecycle_is_idempotent", testPublicStatusLifecycle},
+		{"account_deploy_rate_window_is_fixed_and_durable", testAccountDeployRateWindow},
+		{"instance_runtime_publication_is_atomic", testPublishInstanceRuntime},
+		{"parked_instance_retention_is_lifecycle_gated", testParkedInstanceRetention},
+		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
+		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
+		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
+		{"terminal_job_task_retains_logs", testJobTaskTerminalLogs},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fn(t, Seed(t, open(t)))
 		})
+	}
+}
+
+func testProjectBindingUpdate(t *testing.T, fx *Fixture) {
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "binding-" + uuid.NewString()[:8],
+		ProductionBranch: "main", ScanSource: state.ProjectScanSourceConvention,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := fx.Store.UpdateProjectBinding(fx.Ctx, fx.Account.ID, project.ID, "", "release", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ProductionBranch != "release" || updated.RepoFullName != "" || updated.InstallID != 0 {
+		t.Fatalf("updated project = %+v", updated)
+	}
+	if _, err := fx.Store.UpdateProjectBinding(fx.Ctx, uuid.NewString(), project.ID, "", "other", 0); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account update err = %v, want ErrNotFound", err)
+	}
+}
+
+func testProjectEnvironmentRegistry(t *testing.T, fx *Fixture) {
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "environment-" + uuid.NewString()[:8],
+		ProductionBranch: "main", ScanSource: state.ProjectScanSourceConvention,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	environments, err := fx.Store.ListProjectEnvironments(fx.Ctx, fx.Account.ID, project.ID)
+	if err != nil {
+		t.Fatalf("ListProjectEnvironments(initial): %v", err)
+	}
+	if len(environments) != 1 || environments[0].Slug != "production" || !environments[0].Protected {
+		t.Fatalf("initial environments = %+v, want protected production", environments)
+	}
+
+	staging, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "staging",
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectEnvironment: %v", err)
+	}
+	if staging.Protected {
+		t.Fatalf("new staging environment = %+v, want unprotected", staging)
+	}
+	if _, err := fx.Store.CreateProjectEnvironment(fx.Ctx, state.ProjectEnvironment{
+		AccountID: fx.Account.ID, ProjectID: project.ID, Slug: "staging",
+	}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("duplicate environment err = %v, want ErrConflict", err)
+	}
+
+	got, err := fx.Store.ProjectEnvironmentBySlug(fx.Ctx, fx.Account.ID, project.ID, "staging")
+	if err != nil {
+		t.Fatalf("ProjectEnvironmentBySlug: %v", err)
+	}
+	if got.ID != staging.ID || got.Slug != "staging" || got.Protected {
+		t.Fatalf("staging environment = %+v", got)
+	}
+
+	updated, err := fx.Store.UpdateProjectEnvironmentProtection(fx.Ctx, fx.Account.ID, project.ID, "staging", true)
+	if err != nil {
+		t.Fatalf("UpdateProjectEnvironmentProtection: %v", err)
+	}
+	if !updated.Protected || updated.ID != staging.ID {
+		t.Fatalf("updated staging environment = %+v, want protected and stable ID", updated)
+	}
+	values, hash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"eu","replicas":2}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	versionOne, err := fx.Store.CreateProjectEnvironmentConfigVersion(fx.Ctx, state.ProjectEnvironmentConfig{
+		AccountID: fx.Account.ID, ProjectID: project.ID, EnvironmentSlug: staging.Slug,
+		ConfigHash: hash, Values: values,
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectEnvironmentConfigVersion: %v", err)
+	}
+	if versionOne.Version != 1 || versionOne.ConfigHash != hash {
+		t.Fatalf("first environment config version = %+v", versionOne)
+	}
+	values, hash, err = api.NormalizeProjectEnvironmentConfig([]byte(`{"region":"us"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.Store.CreateProjectEnvironmentConfigVersion(fx.Ctx, state.ProjectEnvironmentConfig{
+		AccountID: fx.Account.ID, ProjectID: project.ID, EnvironmentSlug: staging.Slug,
+		ConfigHash: hash, Values: values,
+	}); err != nil {
+		t.Fatalf("CreateProjectEnvironmentConfigVersion(second): %v", err)
+	}
+	latest, err := fx.Store.ProjectEnvironmentConfigLatest(fx.Ctx, fx.Account.ID, project.ID, staging.Slug)
+	if err != nil {
+		t.Fatalf("ProjectEnvironmentConfigLatest: %v", err)
+	}
+	if latest.Version != 2 || latest.ConfigHash != hash || string(latest.Values) != `{"region":"us"}` {
+		t.Fatalf("latest environment config = %+v", latest)
+	}
+	if _, err := fx.Store.ProjectEnvironmentConfigLatest(fx.Ctx, uuid.NewString(), project.ID, staging.Slug); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account environment config err = %v, want ErrNotFound", err)
+	}
+	if _, err := fx.Store.ListProjectEnvironments(fx.Ctx, uuid.NewString(), project.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account environment list err = %v, want ErrNotFound", err)
+	}
+}
+
+func testProjectReconcileMultipleCrons(t *testing.T, fx *Fixture) {
+	reconciler, ok := fx.Store.(state.ProjectReconcileStore)
+	if !ok {
+		t.Fatal("store does not implement ProjectReconcileStore")
+	}
+	project, err := fx.Store.CreateProject(fx.Ctx, state.Project{
+		AccountID: fx.Account.ID, Slug: "cron-project-" + uuid.NewString()[:8],
+		ScanSource: state.ProjectScanSourceCompose,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, ProjectID: project.ID,
+		Slug: "cron-app-" + uuid.NewString()[:8], WorkloadName: "api",
+		Type: state.AppTypeFunction, Status: state.AppActive,
+		RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired := []state.ProjectReconcileCron{
+		{WorkloadName: "api", Schedule: "*/5 * * * *", Path: "/", Enabled: true},
+		{WorkloadName: "api", Schedule: "0 12 * * *", Path: "/", Enabled: false},
+	}
+	limits := api.MustLimitsFor(api.PlanScale)
+	if _, err := reconciler.ApplyProjectReconcile(fx.Ctx, project, nil, desired, state.ProjectScanSourceCompose, limits); err != nil {
+		t.Fatal(err)
+	}
+	first, err := fx.Store.ListCronsForApp(fx.Ctx, app.ID)
+	if err != nil || len(first) != 2 {
+		t.Fatalf("first apply crons=%#v err=%v", first, err)
+	}
+	ids := make(map[string]string, len(first))
+	for _, cron := range first {
+		ids[cron.Schedule] = cron.ID
+	}
+	desired[0].Enabled = false
+	if _, err := reconciler.ApplyProjectReconcile(fx.Ctx, project, nil, desired, state.ProjectScanSourceCompose, limits); err != nil {
+		t.Fatal(err)
+	}
+	second, err := fx.Store.ListCronsForApp(fx.Ctx, app.ID)
+	if err != nil || len(second) != 2 {
+		t.Fatalf("second apply crons=%#v err=%v", second, err)
+	}
+	for _, cron := range second {
+		if cron.ID != ids[cron.Schedule] || cron.Enabled {
+			t.Errorf("reapplied cron=%#v, want stable ID and disabled state", cron)
+		}
+	}
+}
+
+func testSnapshotDeleteIntent(t *testing.T, fx *Fixture) {
+	snapshot, err := fx.Store.CreateSnapshot(fx.Ctx, state.Snapshot{
+		DeploymentID: fx.Deployment.ID,
+		FCVersion:    "1.10.0",
+		MemBytes:     64 << 20,
+		DiskBytes:    8 << 20,
+		StorageKey:   state.SnapMemKey(fx.Deployment.ID) + "/delete-conformance",
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	if pending, err := fx.Store.ListSnapshotsPendingDelete(fx.Ctx); err != nil || len(pending) != 0 {
+		t.Fatalf("ListSnapshotsPendingDelete(initial) = (%+v, %v), want empty", pending, err)
+	}
+	if changed, err := fx.Store.MarkOldSnapshotsStale(fx.Ctx, []string{snapshot.ID}); err != nil || changed != 1 {
+		t.Fatalf("MarkOldSnapshotsStale = (%d, %v), want (1, nil)", changed, err)
+	}
+	pending, err := fx.Store.ListSnapshotsPendingDelete(fx.Ctx)
+	if err != nil || len(pending) != 1 || pending[0].ID != snapshot.ID || !pending[0].Stale || !pending[0].DeletePending {
+		t.Fatalf("ListSnapshotsPendingDelete(marked) = (%+v, %v), want one durable tombstone", pending, err)
+	}
+	if deleted, err := fx.Store.DeleteSnapshotsByID(fx.Ctx, []string{snapshot.ID}); err != nil || deleted != 1 {
+		t.Fatalf("DeleteSnapshotsByID = (%d, %v), want (1, nil)", deleted, err)
+	}
+	if pending, err := fx.Store.ListSnapshotsPendingDelete(fx.Ctx); err != nil || len(pending) != 0 {
+		t.Fatalf("ListSnapshotsPendingDelete(deleted) = (%+v, %v), want empty", pending, err)
+	}
+}
+
+func testAppDeletionClaim(t *testing.T, fx *Fixture) {
+	deadline := time.Now().UTC().Add(-time.Minute)
+	if _, err := fx.Store.ScheduleAppDeletion(fx.Ctx, fx.App.ID, deadline); err != nil {
+		t.Fatalf("ScheduleAppDeletion: %v", err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := fx.Store.ClaimAppDeletion(fx.Ctx, fx.App.ID); err != nil {
+			t.Fatalf("ClaimAppDeletion attempt %d: %v", attempt, err)
+		}
+	}
+	if _, err := fx.Store.RestoreApp(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
+	}
+	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); err != nil {
+		t.Fatalf("DeleteAppPermanently: %v", err)
+	}
+	if err := fx.Store.DeleteAppPermanently(fx.Ctx, fx.App.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("repeated DeleteAppPermanently = %v, want ErrNotFound", err)
+	}
+}
+
+func testRetainedLayersAndDeletionArtifacts(t *testing.T, fx *Fixture) {
+	const (
+		rootfsKey  = "conformance/layers/rootfs.ext4"
+		sidecarKey = "conformance/layers/proxy.ext4"
+	)
+	if err := fx.Store.SetDeploymentRootfs(fx.Ctx, fx.Deployment.ID, "/srv/fc/rootfs.ext4", rootfsKey, 10); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	if _, err := fx.Store.SetDeploymentSidecarLayer(fx.Ctx, state.DeploymentSidecarLayer{
+		DeploymentID:  fx.Deployment.ID,
+		SidecarName:   "proxy",
+		StorageKey:    sidecarKey,
+		Bytes:         5,
+		ContentDigest: "sha256:conformance-sidecar",
+	}); err != nil {
+		t.Fatalf("SetDeploymentSidecarLayer: %v", err)
+	}
+	retained, err := fx.Store.RetainedLayerBytes(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("RetainedLayerBytes: %v", err)
+	}
+	if retained != 15 {
+		t.Fatalf("RetainedLayerBytes = %d, want 15", retained)
+	}
+	artifacts, err := fx.Store.ListAppDeletionArtifacts(fx.Ctx, fx.App.ID)
+	if err != nil {
+		t.Fatalf("ListAppDeletionArtifacts: %v", err)
+	}
+	got := make(map[string]int64, len(artifacts))
+	for _, artifact := range artifacts {
+		got[artifact.Key] = artifact.Bytes
+	}
+	if len(got) != 2 || got[rootfsKey] != 10 || got[sidecarKey] != 5 {
+		t.Fatalf("deletion artifacts = %+v, want rootfs=10 and sidecar=5", got)
+	}
+}
+
+func testParkedInstanceRetention(t *testing.T, fx *Fixture) {
+	now := time.Date(2026, 9, 13, 18, 0, 0, 0, time.UTC)
+	create := func(label string) state.Instance {
+		t.Helper()
+		ins, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+			string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+		if err != nil {
+			t.Fatalf("CreateInstance(%s): %v", label, err)
+		}
+		return ins
+	}
+	oldest := create("oldest")
+	older := create("older")
+	recent := create("recent")
+	waking := create("waking")
+	leasedParked := create("leased-parked")
+	for _, row := range []struct {
+		instance state.Instance
+		parkedAt time.Time
+	}{
+		{oldest, now.Add(-50 * 24 * time.Hour)},
+		{older, now.Add(-40 * 24 * time.Hour)},
+		{recent, now.Add(-time.Hour)},
+		{waking, now.Add(-60 * 24 * time.Hour)},
+	} {
+		if err := fx.Store.UpdateInstanceStateWithTimestamp(fx.Ctx, row.instance.ID, string(state.StateParked), row.parkedAt); err != nil {
+			t.Fatalf("park %s: %v", row.instance.ID, err)
+		}
+	}
+	if err := fx.Store.UpdateInstanceStateIf(fx.Ctx, waking.ID, string(state.StateParked), string(state.StateWaking)); err != nil {
+		t.Fatalf("move recovery row to waking: %v", err)
+	}
+	if err := fx.Store.MarkInstanceMigrating(fx.Ctx, leasedParked.ID, fx.Node.ID, "lease-retention-conformance"); err != nil {
+		t.Fatalf("MarkInstanceMigrating: %v", err)
+	}
+	if err := fx.Store.UpdateInstanceStateWithTimestamp(fx.Ctx, leasedParked.ID, string(state.StateParked), now.Add(-60*24*time.Hour)); err != nil {
+		t.Fatalf("leave leased row parked: %v", err)
+	}
+
+	snapshot, err := fx.Store.CreateSnapshot(fx.Ctx, state.Snapshot{
+		DeploymentID: fx.Deployment.ID,
+		FCVersion:    "1.10.0",
+		MemBytes:     256 << 20,
+		DiskBytes:    64 << 20,
+		StorageKey:   state.SnapMemKey(fx.Deployment.ID) + "/retention-conformance",
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	if err := fx.Store.MarkDeploymentSuperseded(fx.Ctx, fx.Deployment.ID); err != nil {
+		t.Fatalf("MarkDeploymentSuperseded: %v", err)
+	}
+
+	deleted, err := fx.Store.DeleteParkedInstancesOlderThan(fx.Ctx, now.Add(-30*24*time.Hour), 1)
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteParkedInstancesOlderThan(first) = (%d, %v), want (1, nil)", deleted, err)
+	}
+	if _, err := fx.Store.InstanceByID(fx.Ctx, oldest.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("oldest parked row survived bounded delete: %v", err)
+	}
+	deleted, err = fx.Store.DeleteParkedInstancesOlderThan(fx.Ctx, now.Add(-30*24*time.Hour), 10)
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteParkedInstancesOlderThan(second) = (%d, %v), want (1, nil)", deleted, err)
+	}
+	for _, id := range []string{recent.ID, waking.ID, leasedParked.ID} {
+		if _, err := fx.Store.InstanceByID(fx.Ctx, id); err != nil {
+			t.Fatalf("recent/recovery row %s was deleted: %v", id, err)
+		}
+	}
+	latest, err := fx.Store.LatestSnapshot(fx.Ctx, fx.Deployment.ID)
+	if err != nil || latest.ID != snapshot.ID {
+		t.Fatalf("LatestSnapshot after instance cleanup = (%+v, %v), want id=%s", latest, err, snapshot.ID)
+	}
+}
+
+func testAccountDeployRateWindow(t *testing.T, fx *Fixture) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	initial, err := fx.Store.ReadAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now)
+	if err != nil {
+		t.Fatalf("ReadAccountDeployRate(initial): %v", err)
+	}
+	if initial.Used != 0 || initial.Remaining != 2 || !initial.Allowed || !initial.WindowStart.Equal(now) {
+		t.Fatalf("initial deploy rate = %+v, want used=0 remaining=2 allowed with window=%s", initial, now)
+	}
+	first, err := fx.Store.ConsumeAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now)
+	if err != nil {
+		t.Fatalf("ConsumeAccountDeployRate(first): %v", err)
+	}
+	second, err := fx.Store.ConsumeAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("ConsumeAccountDeployRate(second): %v", err)
+	}
+	blocked, err := fx.Store.ConsumeAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("ConsumeAccountDeployRate(blocked): %v", err)
+	}
+	if !first.Allowed || !second.Allowed || blocked.Allowed || blocked.Used != 2 || blocked.Remaining != 0 {
+		t.Fatalf("deploy admissions = first=%+v second=%+v blocked=%+v", first, second, blocked)
+	}
+	reset, err := fx.Store.ReadAccountDeployRate(fx.Ctx, fx.Account.ID, 2, now.Add(state.AccountDeployRateWindow))
+	if err != nil {
+		t.Fatalf("ReadAccountDeployRate(reset): %v", err)
+	}
+	if reset.Used != 0 || reset.Remaining != 2 || !reset.WindowStart.Equal(now.Add(state.AccountDeployRateWindow)) {
+		t.Fatalf("reset deploy rate = %+v", reset)
+	}
+}
+
+func testPublishInstanceRuntime(t *testing.T, fx *Fixture) {
+	instance, err := fx.Store.CreateInstance(
+		fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateColdBooting),
+		256, fx.Node.ID, "",
+	)
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	published, err := fx.Store.PublishInstanceRuntime(
+		fx.Ctx, instance.ID, string(state.StateColdBooting),
+		"fc-conformance", "10.99.0.8", 20008,
+	)
+	if err != nil {
+		t.Fatalf("PublishInstanceRuntime: %v", err)
+	}
+	if published.State != string(state.StateRunning) || published.Netns != "fc-conformance" || published.HostIP != "10.99.0.8" || published.GuestUID != 20008 || published.StartedAt.IsZero() {
+		t.Fatalf("published runtime = %+v", published)
+	}
+	if _, err := fx.Store.PublishInstanceRuntime(
+		fx.Ctx, instance.ID, string(state.StateColdBooting),
+		"stale", "10.99.0.9", 20009,
+	); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale PublishInstanceRuntime error = %v, want ErrConflict", err)
+	}
+}
+
+func testJobTaskTerminalLogs(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(
+		fx.Ctx, fx.Account.ID, "logs-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"},
+		128, 60, 1, 0, nil,
+	)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	parallelism := 1
+	run, tasks, err := fx.Store.JobRunCreate(
+		fx.Ctx, job.ID, fx.Account.ID, "manual", &parallelism,
+		nil, nil, nil, 1,
+	)
+	if err != nil {
+		t.Fatalf("JobRunCreate: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("JobRunCreate tasks = %d, want 1", len(tasks))
+	}
+	finished := time.Date(2026, 9, 12, 12, 30, 0, 0, time.UTC)
+	if err := fx.Store.JobTaskMarkTerminalWithLogs(
+		fx.Ctx, run.ID, tasks[0].TaskIndex, "succeeded", 0,
+		"", "", "hello from task\n", true, finished,
+	); err != nil {
+		t.Fatalf("JobTaskMarkTerminalWithLogs: %v", err)
+	}
+	got, err := fx.Store.JobTaskGet(fx.Ctx, run.ID, tasks[0].TaskIndex)
+	if err != nil {
+		t.Fatalf("JobTaskGet: %v", err)
+	}
+	if got.Status != "succeeded" || got.ExitCode == nil || *got.ExitCode != 0 || got.LogContent != "hello from task\n" || !got.LogTruncated || got.FinishedAt == nil {
+		t.Fatalf("terminal task = %+v", got)
+	}
+	if err := fx.Store.JobTaskMarkTerminalWithLogs(
+		fx.Ctx, run.ID, tasks[0].TaskIndex, "failed", 1,
+		"user_error", "late", "replacement", false, finished.Add(time.Second),
+	); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("terminal replay error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -698,6 +1129,10 @@ func testExecutionIntentLifecycle(t *testing.T, fx *Fixture) {
 	listed, err := fx.Store.ListExecutions(fx.Ctx, fx.Account.ID, 10, 0)
 	if err != nil || len(listed) != 1 || listed[0].ID != created.ID {
 		t.Fatalf("ListExecutions = %#v, %v", listed, err)
+	}
+	queued, err := fx.Store.ListExecutionsByStatus(fx.Ctx, fx.Account.ID, api.ExecutionStatusQueued, 10, 0)
+	if err != nil || len(queued) != 1 || queued[0].ID != created.ID {
+		t.Fatalf("ListExecutionsByStatus = %#v, %v", queued, err)
 	}
 	claim, err := fx.Store.ClaimExecution(fx.Ctx, "conformance-schedd", base.Add(10*time.Millisecond), time.Second)
 	if err != nil {

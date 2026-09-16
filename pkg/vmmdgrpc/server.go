@@ -172,6 +172,13 @@ type ExecutionVMMAPI interface {
 	ExecuteExecution(context.Context, string, executionproto.Request) (executionproto.Result, error)
 }
 
+// ExecutionOutputVMMAPI is the optional live-output capability. It is kept
+// separate from ExecutionVMMAPI so older vmmd fakes and mixed-version nodes
+// can continue serving the unary execution RPC.
+type ExecutionOutputVMMAPI interface {
+	ExecuteExecutionWithOutput(context.Context, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
+}
+
 // ExecutionRestoreVMMAPI is the dedicated pre-dispatch capability. It is
 // separate from ExecuteExecution so a node cannot receive caller source until
 // it has returned a fresh execution-only VM.
@@ -197,7 +204,7 @@ type Server struct {
 	log   *slog.Logger
 	// events (issue #517 / PR-C / ADR-064) is the wake-timeline
 	// fan-out. vmmd is the corroborating-observation source for
-	// wake.boot_started (mirror at the gRPC server boundary) and
+	// wake.boot_observed at the gRPC server boundary and
 	// the canonical emit site for wake.readiness_200 (the first
 	// 2xx probe). nil opts out (pre-PR-C fixtures).
 	events *events.Platform
@@ -307,8 +314,8 @@ func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string
 
 // WithEvents (issue #517 / PR-C / ADR-064) wires the wake-timeline
 // fan-out (pkg/events.Platform) on the gRPC server. vmmd is the
-// corroborating-observation source for wake.boot_started (mirror
-// at the gRPC server boundary) and the canonical emit site for
+// corroborating-observation source for wake.boot_observed
+// at the gRPC server boundary and the canonical emit site for
 // wake.readiness_200 (the first 2xx probe). Returns the receiver
 // to match the fluent setter pattern; nil opts out (pre-PR-C
 // fixtures).
@@ -358,43 +365,32 @@ func (s *Server) WithFlowCounter(counter flowCounter) *Server {
 	return s
 }
 
-// emitBootStartedMirror (issue #517 / PR-C / ADR-064) is the
-// vmmd-side mirror of wake.boot_started. Schedd is the canonical
+// emitBootObserved (issue #517 / PR-C / ADR-064) is the
+// vmmd-side wake.boot_observed event. Schedd is the canonical
 // source (the engine emits the row at the Phase 3 entry); vmmd's
-// mirror is a corroborating observation that the boot RPC
+// observation is corroborating evidence that the boot RPC
 // actually entered the FC bring-up path on this vmmd instance.
 // The wake_id is recovered from the wire envelope (PR-A), which
 // schedd stamped on the bootCtx before dialing vmmd. nil events
 // opts out (pre-PR-C fixtures).
-func (s *Server) emitBootStartedMirror(ctx context.Context, instanceID, method string) {
+func (s *Server) emitBootObserved(ctx context.Context, instanceID, method string) {
 	if s.events == nil {
 		return
 	}
-	var wakeID, appID, trigger, triggerClass string
-	var queued, conc int
+	var wakeID, appID string
 	if fields, ok := wire.FromContext(ctx); ok {
 		wakeID = fields.WakeID
 		appID = fields.AppID
-		// ADR-123 — schedd propagates the wake-boot telemetry
-		// envelope so the mirror carries the same trigger /
-		// queue / concurrency context as the canonical schedd
-		// emit. Pre-ADR-123 schedd peers leave these empty.
-		trigger = fields.Trigger
-		triggerClass = fields.TriggerClass
-		queued = fields.QueuedCount
-		conc = fields.ConcurrencyAtAdmit
 	}
-	s.events.EmitAsync(ctx, events.BootStarted{
-		EmitAt:             time.Now().UTC(),
-		WakeID:             wakeID,
-		AppID:              appID,
-		InstanceID:         instanceID,
-		Method:             method,
-		RequestedAt:        time.Now().UTC(), // best-effort stamp (vmmd doesn't have schedd's startedAt)
-		Trigger:            trigger,
-		TriggerClass:       triggerClass,
-		QueuedCount:        queued,
-		ConcurrencyAtAdmit: conc,
+	observedAt := time.Now().UTC()
+	s.events.EmitAsync(ctx, events.BootObserved{
+		EmitAt:     observedAt,
+		WakeID:     wakeID,
+		AppID:      appID,
+		InstanceID: instanceID,
+		NodeID:     s.nodeID,
+		Method:     method,
+		ObservedAt: observedAt,
 	})
 }
 
@@ -536,13 +532,13 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "restore", wr)
-	// issue #517 / PR-C / ADR-064 — mirror wake.boot_started at
+	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Schedd is the canonical emit site;
-	// this vmmd-side mirror is a corroborating observation that
+	// this vmmd-side event is a corroborating observation that
 	// the boot RPC actually entered the FC bring-up path. Both
 	// rows share the wake_id from the wire envelope (PR-A) so
 	// the customer-facing timeline endpoint can join them.
-	s.emitBootStartedMirror(wakeCtx, req.GetInstance(), "restore")
+	s.emitBootObserved(wakeCtx, req.GetInstance(), "restore")
 	inst, err := s.wakeWithBridgePrewarm(wakeCtx, wr, req.GetApp().GetAppProtocol())
 	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
@@ -602,11 +598,11 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "cold_boot", wr)
-	// issue #517 / PR-C / ADR-064 — mirror wake.boot_started at
+	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Same canonical-site pairing as
 	// CreateFromSnapshot: schedd is the source of truth, vmmd's
-	// mirror is a corroborating observation.
-	s.emitBootStartedMirror(wakeCtx, req.GetInstance(), "cold_boot")
+	// observation is corroborating evidence.
+	s.emitBootObserved(wakeCtx, req.GetInstance(), "cold_boot")
 	inst, err := s.vmm.Wake(wakeCtx, wr)
 	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
@@ -789,7 +785,7 @@ func (s *Server) PauseAndSnapshot(ctx context.Context, req *vmmdpb.PauseAndSnaps
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing paths",
 			"storage_key is required; at least one of vmstate_storage_key or vmstate_path must be set").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#pause")
+			WithDocs(wire.DocsBaseURL + "/vmmd#pause")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -832,7 +828,7 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing instance",
 			"instance is required on WarmSnapshot").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#warm-snapshot")
+			WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -840,7 +836,7 @@ func (s *Server) WarmSnapshot(ctx context.Context, req *vmmdpb.WarmSnapshotReque
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing storage keys",
 			"storage_key and vmstate_storage_key are required on WarmSnapshot (warm captures are storage-backend-only)").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#warm-snapshot")
+			WithDocs(wire.DocsBaseURL + "/vmmd#warm-snapshot")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -954,7 +950,7 @@ func (s *Server) FrameworkReady(ctx context.Context, req *vmmdpb.FrameworkReadyR
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing instance",
 			"instance is required on FrameworkReady").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#framework_ready")
+			WithDocs(wire.DocsBaseURL + "/vmmd#framework_ready")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -967,7 +963,7 @@ func (s *Server) FrameworkReady(ctx context.Context, req *vmmdpb.FrameworkReadyR
 		err := api.NewProblem(int(codes.NotFound), api.CodeNotFound,
 			"Instance not live",
 			"framework_ready receipt for an instance that is not live on this vmmd").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#framework_ready")
+			WithDocs(wire.DocsBaseURL + "/vmmd#framework_ready")
 		return nil, grpcerr.ToStatus(err)
 	}
 	// Issue #470 / PR C / ADR-074: observe the wall-clock guest-init
@@ -1309,7 +1305,7 @@ func (s *Server) UpdateEgressAllowlist(ctx context.Context, req *vmmdpb.UpdateEg
 	if req.GetAppId() == "" {
 		return nil, grpcerr.ToStatus(toProblem(api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing app_id", "app_id is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#update-egress-allowlist")))
+			WithDocs(wire.DocsBaseURL + "/vmmd#update-egress-allowlist")))
 	}
 	allowlist, err := toEgressAllowlist(req.GetEgressAllowlist())
 	if err != nil {
@@ -1348,13 +1344,13 @@ func (s *Server) SeccompStatus(ctx context.Context, req *vmmdpb.SeccompStatusReq
 	if req.GetInstance() == "" {
 		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#seccomp"))
+			WithDocs(wire.DocsBaseURL + "/vmmd#seccomp"))
 	}
 	pid, ok := s.vmm.InstancePID(req.GetInstance())
 	if !ok {
 		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.NotFound),
 			api.CodeNotFound, "Instance not alive", fmt.Sprintf("instance %q is not alive on this vmmd", req.GetInstance())).
-			WithDocs("https://" + wire.DocsHost + "/vmmd#seccomp"))
+			WithDocs(wire.DocsBaseURL + "/vmmd#seccomp"))
 	}
 
 	mode, filterLen, err := readSeccompStatus(pid)
@@ -1411,7 +1407,7 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 	if req.GetStorageKey() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing storage_key", "storage_key is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#mount-parent-ext4")
+			WithDocs(wire.DocsBaseURL + "/vmmd#mount-parent-ext4")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1423,7 +1419,7 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be mounted").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#mount-parent-ext4")
+			WithDocs(wire.DocsBaseURL + "/vmmd#mount-parent-ext4")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1438,7 +1434,7 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 			p := api.NewProblem(int(codes.NotFound), api.CodeNotFound,
 				"storage_key not found",
 				"no artifact under that key in the configured storage backend").
-				WithDocs("https://" + wire.DocsHost + "/vmmd#mount-parent-ext4")
+				WithDocs(wire.DocsBaseURL + "/vmmd#mount-parent-ext4")
 			s.ops.Observe(op, time.Since(start), p)
 			return nil, grpcerr.ToStatus(p)
 		}
@@ -1456,7 +1452,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 	if req.GetStorageKey() == "" || req.GetTargetDir() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing materialize path", "storage_key and target_dir are required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#materialize-parent-ext4")
+			WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1464,7 +1460,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be materialized").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#materialize-parent-ext4")
+			WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1474,14 +1470,14 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 		if errors.Is(err, vmmdmount.ErrNotFound) {
 			p := api.NewProblem(int(codes.NotFound), api.CodeNotFound,
 				"storage_key not found", "no parent artifact exists under that key").
-				WithDocs("https://" + wire.DocsHost + "/vmmd#materialize-parent-ext4")
+				WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 			return nil, grpcerr.ToStatus(p)
 		}
 		if errors.Is(err, vmmdmount.ErrInvalidOverlayPath) {
 			p := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 				"target_dir outside staging root",
 				"target_dir must be under /dev/shm/faas-base-staging/").
-				WithDocs("https://" + wire.DocsHost + "/vmmd#materialize-parent-ext4")
+				WithDocs(wire.DocsBaseURL + "/vmmd#materialize-parent-ext4")
 			return nil, grpcerr.ToStatus(p)
 		}
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -1502,7 +1498,7 @@ func (s *Server) UmountParentExt4(ctx context.Context, req *vmmdpb.UmountParentE
 	if req.GetMountpoint() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing mountpoint", "mountpoint is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#umount-parent-ext4")
+			WithDocs(wire.DocsBaseURL + "/vmmd#umount-parent-ext4")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1538,7 +1534,7 @@ func (s *Server) MountOverlayParent(ctx context.Context, req *vmmdpb.MountOverla
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing path",
 			"lowerdir, upperdir, workdir, and merged are all required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#mount-overlay-parent")
+			WithDocs(wire.DocsBaseURL + "/vmmd#mount-overlay-parent")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -1551,7 +1547,7 @@ func (s *Server) MountOverlayParent(ctx context.Context, req *vmmdpb.MountOverla
 			p := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 				"overlay path outside allowed prefixes",
 				"lowerdir must be under /srv/fc/parent/; upper/work/merged must be under /dev/shm/faas-base-staging/").
-				WithDocs("https://" + wire.DocsHost + "/vmmd#mount-overlay-parent")
+				WithDocs(wire.DocsBaseURL + "/vmmd#mount-overlay-parent")
 			s.ops.Observe(op, time.Since(start), p)
 			return nil, grpcerr.ToStatus(p)
 		}
@@ -1570,7 +1566,7 @@ func (s *Server) UmountOverlayParent(ctx context.Context, req *vmmdpb.UmountOver
 	if req.GetMerged() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing merged", "merged is required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#umount-overlay-parent")
+			WithDocs(wire.DocsBaseURL + "/vmmd#umount-overlay-parent")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}

@@ -28,6 +28,8 @@
 
 package sched
 
+// adr: 066
+
 import (
 	"context"
 	"errors"
@@ -50,10 +52,11 @@ import (
 // path mirrors it).
 func stubSpecBuilder(_ context.Context, _ string) (AppSpec, error) {
 	return AppSpec{
-		BaseKey:    "base/runtime-node22.ext4",
-		LayerKey:   "apps/test/dep.ext4",
-		VCPUCount:  2,
-		MemSizeMiB: 256,
+		BaseKey:      "base/runtime-node22.ext4",
+		LayerKey:     "apps/test/dep.ext4",
+		VCPUCount:    2,
+		MemSizeMiB:   256,
+		DeploymentID: "11111111-1111-4111-8111-111111111111",
 	}, nil
 }
 
@@ -114,6 +117,10 @@ func TestMigrateOne_HappyPath(t *testing.T) {
 	}
 	if vmm.cancels != 0 {
 		t.Errorf("cancels = %d, want 0 (no rollback)", vmm.cancels)
+	}
+	if !state.IsSnapshotCaptureKey(vmm.prepareStorageKey) ||
+		!strings.HasPrefix(vmm.prepareStorageKey, "snap/11111111-1111-4111-8111-111111111111/warm/captures/") {
+		t.Errorf("prepare storage key = %q, want unique warm capture under deployment", vmm.prepareStorageKey)
 	}
 
 	// State ended at 'running' on the new owner with lineage.
@@ -440,17 +447,21 @@ func TestMigrateOne_SpecBuilderError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("MigrateOne: want error on spec builder failure, got nil")
 	}
-	// Phase 3 never ran (adopts=0). Phase 4 fired (cancels=1).
+	// Restore inputs are resolved before Phase 1, so a spec failure never
+	// pauses the source or requires a rollback.
 	if vmm.adopts != 0 {
 		t.Errorf("adopts = %d, want 0", vmm.adopts)
 	}
-	if vmm.cancels != 1 {
-		t.Errorf("cancels = %d, want 1 (Phase 4 rollback)", vmm.cancels)
+	if vmm.prepares != 0 {
+		t.Errorf("prepares = %d, want 0", vmm.prepares)
 	}
-	// State rolled back via CancelInstanceMigration.
+	if vmm.cancels != 0 {
+		t.Errorf("cancels = %d, want 0", vmm.cancels)
+	}
+	// The source remains serving because no migration state was changed.
 	ins, _ := store.InstanceByID(context.Background(), insID)
-	if string(ins.State) != string(state.StateParked) {
-		t.Errorf("state = %q, want parked", ins.State)
+	if string(ins.State) != string(state.StateRunning) {
+		t.Errorf("state = %q, want running", ins.State)
 	}
 }
 
@@ -554,7 +565,21 @@ func TestMigrateLiveInstances_CapsPerTick(t *testing.T) {
 	vmm := &fakeVMM{}
 	// Seed 3 running instances on a dying node.
 	for i := 0; i < 3; i++ {
-		seedInstanceForMigration(t, store, "dying")
+		insID := seedInstanceForMigration(t, store, "dying")
+		ins, err := store.InstanceByID(context.Background(), insID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.CreateDeployment(context.Background(), state.Deployment{
+			ID:          uuid.NewString(),
+			AppID:       ins.AppID,
+			Kind:        state.DeploymentKindImage,
+			ImageDigest: "sha256:seed",
+			Status:      state.DeployLive,
+			CreatedAt:   time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").
 		WithOpsMetrics(wire.NewOpsMetrics("schedd")).
@@ -662,5 +687,47 @@ func TestBuildAppSpecForMigration_NonEmpty(t *testing.T) {
 	}
 	if spec.EgressMbit == 0 {
 		t.Errorf("EgressMbit=0; want the per-plan cap (Hobby=25)")
+	}
+}
+
+func TestBuildAppSpecForMigration_UsesInstanceDeployment(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, original := seedApp(t, store, api.PlanHobby, 256, 3)
+	ins, err := store.CreateInstance(
+		context.Background(),
+		app.ID,
+		original.ID,
+		string(state.StateRunning),
+		256,
+		"dying",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindImage,
+		ImageDigest: "sha256:replacement",
+		Status:      state.DeployLive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ID == original.ID {
+		t.Fatal("replacement deployment reused original ID")
+	}
+
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+		WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	spec, err := engine.BuildAppSpecForMigration(context.Background(), ins.ID)
+	if err != nil {
+		t.Fatalf("BuildAppSpecForMigration: %v", err)
+	}
+	if spec.DeploymentID != original.ID {
+		t.Fatalf("DeploymentID = %q, want instance deployment %q", spec.DeploymentID, original.ID)
+	}
+	if !strings.Contains(spec.LayerKey, original.ID) {
+		t.Fatalf("LayerKey = %q, want instance deployment %q", spec.LayerKey, original.ID)
 	}
 }

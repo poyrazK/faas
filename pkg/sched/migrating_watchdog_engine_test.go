@@ -100,6 +100,26 @@ func seedComputeNodeForReconcile(t *testing.T, store *state.MemStore, active boo
 	return created.ID
 }
 
+// seedStaleComputeNodeForReconcile creates a node that is still marked active
+// but whose heartbeat is old enough for the dead-node reconciler. This is the
+// crash window before the heartbeat sweep changes lifecycle to unavailable.
+func seedStaleComputeNodeForReconcile(t *testing.T, store *state.MemStore) string {
+	t.Helper()
+	name := "node-stale-" + uuid.NewString()
+	created, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+		Name:            name,
+		Active:          true,
+		Lifecycle:       state.NodeLifecycleActive,
+		LastHeartbeatAt: time.Now().UTC().Add(-10 * time.Minute),
+		MemMB:           8192,
+		MaxConcurrency:  16,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	return created.ID
+}
+
 func TestReconcileExpiredMigrations_ActiveOwnerReinvited(t *testing.T) {
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")

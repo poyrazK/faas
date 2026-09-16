@@ -43,19 +43,18 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitBuilderd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:           "onebox-faas builderd — build orchestrator + ephemeral builder microVMs (spec §4.5, ADR-003, ADR-005)",
-		Documentation:         "https://docs.gregale.dev/ops/builderd",
+		Documentation:         "https://gregale.dev/docs/ops/builderd",
 		After:                 []string{"network.target", "faas-cp.slice", "faas-vmmd.service"},
 		Wants:                 []string{"faas-cp.slice", "faas-vmmd.service"},
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "notify",
-		User:               "faas-builderd",
-		Group:              "faas",
-		ExecStart:          "/opt/faas/current/bin/builderd",
-		Restart:            "on-failure",
-		RestartSec:         "2s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		Type:       "notify",
+		User:       "faas-builderd",
+		Group:      "faas",
+		ExecStart:  "/opt/faas/current/bin/builderd",
+		Restart:    "on-failure",
+		RestartSec: "2s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "512M",

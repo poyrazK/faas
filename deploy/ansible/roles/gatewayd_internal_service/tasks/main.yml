@@ -70,6 +70,17 @@
     group: faas
     mode: "0750"
 
+# Request/response usage frames are acknowledged only after meterd commits
+# them. Keep the gateway replay ledger on the host boot disk so a daemon or
+# node restart cannot discard frames that were sent but not yet acknowledged.
+- name: gatewayd_internal_service — create egress metering replay root
+  ansible.builtin.file:
+    path: /var/lib/faas/egress-meter
+    state: directory
+    owner: faas
+    group: faas
+    mode: "0750"
+
 # ADR-093 — drop the per-cluster operator kill-switch. Mirrors the
 # alertmanager role's `alertmanager.yml.j2` template drop (tasks/
 # main.yml:126-134). A toml key change restarts the daemon so the

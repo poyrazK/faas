@@ -10,7 +10,7 @@
 // directly — it runs in the customer's app namespace and only
 // has access to the localhost unix domain socket at
 // /run/guest-init/tail-events.sock. The proxy bridges:
-// runner → AF_UNIX stream → guest-init → AF_VSOCK DGRAM → host.
+// runner → AF_UNIX stream → guest-init → AF_VSOCK STREAM → host.
 //
 // Why a separate socket from framework_ready.sock?
 //
@@ -21,13 +21,13 @@
 // opens a fresh stream connection per tail-event (it's behind a
 // sync.WaitGroup drain, so the connection rate is bounded by
 // tailCapMax = 16 in pkg/api/limits.go), and the proxy is a
-// stateless line→DGRAM pump with no parser state.
+// stateless line→STREAM pump with no parser state.
 //
 // The proxy is started in boot() BEFORE the supervisor starts the
 // runners, so the first tail terminal can't race the proxy coming
 // up; see the wiring in main_linux.go.
 //
-// Wire (runner → proxy → vsock DGRAM):
+// Wire (runner → proxy → vsock STREAM):
 //
 //	proxy connect sends a single line: "<outcome_byte> <elapsed_ms>\n"
 //
@@ -49,11 +49,11 @@
 //	proxy replies with one of:
 //	  "ok\n"   ← receipt accepted (forwarded to vsock)
 //
-//	proxy forwards to vsock DGRAM (port 1027, msg_type 4) with
+//	proxy forwards to vsock STREAM (port 1027, msg_type 4) with
 //	the 16-byte body:
 //	  [1B type=0x04][1B outcome][6B reserved][8B elapsed_ms BE uint64]
 //
-// The DGRAM body is exactly the same shape the guest-init's
+// The STREAM body is exactly the same shape the guest-init's
 // own sidecar_events_proxy_linux.go::sendTail pipeline emits —
 // the host's recv loop already demuxes on the type byte. This
 // proxy is the runner-side alternate path (runner → AF_UNIX over
@@ -71,8 +71,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"golang.org/x/sys/unix"
+	"time"
 )
 
 // TailEventsProxyPath is the localhost unix-socket path the
@@ -112,10 +111,8 @@ const TailEventsProxyMode = 0o660
 // so a drift produces a compile-time error in guest/init rather
 // than a silent "wrong byte on the wire" in production.
 
-// startTailEventsProxy brings up the unix-socket listener and
-// the vsock DGRAM sender (one shared outbound socket, same
-// FD-bind as the framework_ready proxy) and spawns the accept
-// loop in the background. Returns are tolerated at the boot()
+// startTailEventsProxy brings up the unix-socket listener and forwards each
+// runner event over a fresh vsock STREAM. Returns are tolerated at the boot()
 // caller — the platform contract is "no signal" (a missing
 // receipt is bounded by the 5s snapshotAndPark watchdog on
 // schedd).
@@ -161,29 +158,7 @@ func startTailEventsProxy(log *slog.Logger) error {
 		return fmt.Errorf("tail events proxy chmod: %w", err)
 	}
 
-	// 3. AF_VSOCK DGRAM outbound socket. Bound on
-	// VMADDR_CID_ANY:VsockFrameworkReadyPort — the same port
-	// the host's FrameworkReadyReceiver reads from and the same
-	// port the framework_ready proxy and sidecar_events_proxy
-	// bind on. DGRAM is connectionless; the four message types
-	// (0x01 framework_ready, 0x02 init_exit, 0x03 restart,
-	// 0x04 tail_event) are demuxed by the host on the type
-	// byte at the front of the body.
-	vsock, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		_ = ln.Close()
-		return fmt.Errorf("tail events proxy vsock socket: %w", err)
-	}
-	if err := unix.Bind(vsock, &unix.SockaddrVM{
-		CID:  unix.VMADDR_CID_ANY,
-		Port: VsockFrameworkReadyPort,
-	}); err != nil {
-		_ = unix.Close(vsock)
-		_ = ln.Close()
-		return fmt.Errorf("tail events proxy vsock bind %d: %w", VsockFrameworkReadyPort, err)
-	}
-
-	// 4. Accept loop. Each connection is one tail terminal
+	// 3. Accept loop. Each connection is one tail terminal
 	// event from the runner's tail host — the runner's
 	// emit() opens a fresh connection per terminal (no
 	// connection re-use: the per-connection work is bounded by
@@ -191,14 +166,13 @@ func startTailEventsProxy(log *slog.Logger) error {
 	// the "ok\n" reply before closing).
 	go func() {
 		defer func() { _ = ln.Close() }()
-		defer func() { _ = unix.Close(vsock) }()
 		for {
 			conn, err := ln.AcceptUnix()
 			if err != nil {
 				log.Debug("tail events proxy accept ended", "err", err)
 				return
 			}
-			go handleTailEventsConn(conn, vsock, log)
+			go handleTailEventsConn(conn, log)
 		}
 	}()
 
@@ -246,7 +220,7 @@ func parseTailEventLine(line string) (byte, uint64, error) {
 }
 
 // handleTailEventsConn reads one line from the runner
-// ("<outcome_byte> <elapsed_ms>\n"), frames it for vsock DGRAM,
+// ("<outcome_byte> <elapsed_ms>\n"), frames it for vsock STREAM,
 // and sends to VMADDR_CID_HOST:VsockFrameworkReadyPort. Closes
 // the connection on return regardless of error. Writes back
 // "ok\n" on success or "err <reason>\n" on failure so the
@@ -258,7 +232,7 @@ func parseTailEventLine(line string) (byte, uint64, error) {
 // format, same unix.SendmsgN-vsock send). The two proxies
 // differ only in the wire layout they frame — this one
 // encodes the fixed-size 16-byte 0x04 body.
-func handleTailEventsConn(conn *net.UnixConn, vsock int, log *slog.Logger) {
+func handleTailEventsConn(conn *net.UnixConn, log *slog.Logger) {
 	defer func() { _ = conn.Close() }()
 
 	reader := bufio.NewReader(conn)
@@ -299,11 +273,7 @@ func handleTailEventsConn(conn *net.UnixConn, vsock int, log *slog.Logger) {
 	// buf[2:8] reserved, already zero from make().
 	binary.BigEndian.PutUint64(buf[8:16], elapsedMs)
 
-	dst := &unix.SockaddrVM{
-		CID:  unix.VMADDR_CID_HOST,
-		Port: VsockFrameworkReadyPort,
-	}
-	if _, err := unix.SendmsgN(vsock, buf, nil, dst, 0); err != nil {
+	if err := sendGuestEventFrame(buf, time.Second); err != nil {
 		_, _ = conn.Write([]byte("err send_vsock\n"))
 		log.Warn("tail events proxy send vsock", "err", err, "outcome", outcome)
 		return

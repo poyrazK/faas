@@ -164,10 +164,13 @@ type EnqueueParams struct {
 	SourcePath    string
 	SourceBytes   int64
 	SourceRoot    string
-	SourceURL     string
-	CommitSHA     string
-	Scope         string
-	Handler       string
+	// DockerfilePath is the explicit Dockerfile selected inside SourceRoot.
+	// It is captured in the deployment's immutable inferred profile.
+	DockerfilePath string
+	SourceURL      string
+	CommitSHA      string
+	Scope          string
+	Handler        string
 	// FunctionRuntime carries the app's explicit runtime for markerless
 	// function sources. It is used only when static profiling finds no
 	// framework marker; the runtime remains authoritative in builderd.
@@ -363,7 +366,21 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			if p.Log != nil {
 				p.Log.Warn("apidsource.Enqueue: infer source profile", "app", p.AppID, "err", profileErr)
 			}
-		} else {
+		}
+		if profileErr == nil || p.Kind == state.DeploymentKindDockerfile {
+			// The explicit deployment kind is authoritative. A source tree can
+			// contain language markers alongside its Dockerfile; persisting a
+			// Railpack profile would make builderd ignore the customer's
+			// Dockerfile selection.
+			if p.Kind == state.DeploymentKindDockerfile {
+				profile.Version = frameworkprofile.Version
+				profile.Framework = string(markers.FrameworkDocker)
+				profile.FrameworkVer = ""
+				profile.PackageManager = ""
+				profile.StartCommand = ""
+				profile.Inferred = false
+				profile.DockerfilePath = p.DockerfilePath
+			}
 			// A dependency-free function is a valid source tree even though
 			// static framework detection has no manifest to inspect. The
 			// explicit app runtime supplies the missing builder pipeline.

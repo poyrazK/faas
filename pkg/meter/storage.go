@@ -7,8 +7,8 @@
 // faas_test_<hex> schema. Every
 // FAAS_STORAGE_ROLLUP_INTERVAL (default 1 h) the loop walks
 // every (account, app) and sums the latest non-stale
-// snapshots.mem_bytes + snapshots.disk_bytes + the overlay
-// staging bytes. The result is upserted into snapshot_storage_daily
+// snapshots.mem_bytes + snapshots.disk_bytes + retained app-layer
+// artifact bytes. The result is upserted into snapshot_storage_daily
 // for the current day (UTC midnight).
 //
 // Distinct from pkg/meter/rollup.go (usage_daily from usage_minutes):

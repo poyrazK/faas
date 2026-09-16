@@ -1,5 +1,5 @@
 // vmmd — the only root component, owns firecracker+jailer (spec §4.4, ADR-013,
-// ADR-014, ADR-016). All five RPCs map 1:1 to spec §4.4 line 138. Wire shape
+// ADR-014, ADR-016). RPCs map 1:1 to spec §4.4 line 138. Wire shape
 // stays narrow: the caller resolves `(app)` into AppSpec; vmmd never queries
 // apid or postgres on its own.
 
@@ -36,6 +36,11 @@ service Vmmd {
   // RPC so source and input never cross the restore boundary. vmmd enforces
   // the networkless guest contract and destroys the instance before returning.
   rpc ExecuteExecution(ExecuteExecutionRequest) returns (ExecuteExecutionResponse);
+
+  // ExecuteExecutionStream is the live-output variant of ExecuteExecution.
+  // It carries bounded stdout/stderr chunks as they arrive, followed by one
+  // terminal response. The unary RPC remains available for older schedulers.
+  rpc ExecuteExecutionStream(ExecuteExecutionRequest) returns (stream ExecuteExecutionEvent);
 
   // RestoreExecution creates a fresh, networkless disposable execution VM.
   // The envelope contains only immutable machine/artifact metadata; caller
@@ -1440,6 +1445,15 @@ message ForwardHTTPRequestInit {
   // additive per ADR-016; legacy callers (no field set → "") default to
   // H1+chunked so behavior is preserved.
   string app_protocol = 7;
+  // content_length carries the gateway's parsed request length. It is valid
+  // only when content_length_known is true. Preserving a known zero lets vmmd
+  // represent a bodyless GET as a closed HTTP/2 stream. The bridge can then
+  // pass http.NoBody to the guest HTTP/1 transport; an unknown body there is
+  // otherwise probed for up to 200 ms before the request head is sent. A
+  // positive value also preserves fixed-length framing. Streaming/chunked
+  // requests leave content_length_known false.
+  int64 content_length = 8;
+  bool content_length_known = 9;
 }
 
 // ForwardHTTPStreamResponse is one frame on the server→client
@@ -1732,6 +1746,23 @@ message ExecuteExecutionResponse {
   int64 wall_time_ms = 10;
   int64 cpu_time_ms = 11;
   int32 peak_memory_mb = 12;
+}
+
+// ExecuteExecutionEvent is one frame from the live execution stream. Output
+// chunks are delivered in guest order; the terminal response is always the
+// final frame and omits stdout/stderr because those bytes were already sent as
+// output chunks.
+message ExecuteExecutionEvent {
+  oneof frame {
+    ExecuteExecutionOutputChunk output = 1;
+    ExecuteExecutionResponse terminal = 2;
+  }
+}
+
+message ExecuteExecutionOutputChunk {
+  // stream is one of "stdout" or "stderr".
+  string stream = 1;
+  bytes chunk = 2;
 }
 
 // RestoreExecutionRequest is the payload-free machine envelope for one

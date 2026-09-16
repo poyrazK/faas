@@ -1,0 +1,495 @@
+---
+# Daily internal mTLS leaf renewal. The control-plane issuer is the only host
+# that reads ca.key. Active hosts export trust-only material, the issuer
+# preserves every safe leaf, and each target activates one complete bundle.
+
+- name: Reconcile renewal inventory with the active compute registry
+  hosts: control_plane
+  gather_facts: false
+  become: true
+  max_fail_percentage: 0
+  tasks:
+    - name: pki renewal — require exactly one issuer
+      ansible.builtin.assert:
+        that:
+          - groups['control_plane'] | length == 1
+
+    - name: pki renewal — read the active compute registry
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - list
+          - --active-only
+          - --break-glass-db
+          - --json
+      register: faas_pki_registry
+      changed_when: false
+
+    - name: pki renewal — derive registry and inventory identities
+      ansible.builtin.set_fact:
+        faas_pki_registry_nodes: >-
+          {{ (faas_pki_registry.stdout | from_json).nodes
+             | map(attribute='name') | list | sort }}
+        faas_pki_inventory_nodes: >-
+          {{ groups['compute_nodes']
+             | map('extract', hostvars, 'faas_node_name') | list | sort }}
+
+    - name: pki renewal — refuse an incomplete or stale fleet inventory
+      ansible.builtin.assert:
+        that:
+          - faas_pki_registry_nodes == faas_pki_inventory_nodes
+        fail_msg: >-
+          Active compute registry {{ faas_pki_registry_nodes }} differs from
+          renewal inventory {{ faas_pki_inventory_nodes }}. Reconcile the
+          generated inventory before rotating any certificate.
+
+- name: Renew internal mTLS leaves across the complete fleet
+  hosts: control_plane:compute_nodes
+  gather_facts: true
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    faas_pki_issuer_host: "{{ groups['control_plane'] | first }}"
+    faas_pki_root: /etc/faas/tls
+    faas_pki_state_dir: /var/lib/faas/pki-renewal
+    faas_pki_controller_stage: "{{ lookup('env', 'RUNNER_TEMP') | default('/tmp', true) }}/faas-pki-renewal"
+    faas_pki_remote_export: /var/lib/faas/pki-renewal/export
+    faas_pki_remote_outgoing: "/var/lib/faas/pki-renewal/outgoing/{{ inventory_hostname }}"
+    faas_pki_remote_candidate: /var/lib/faas/pki-renewal/candidate
+    faas_pki_transport_san: >-
+      {{ faas_private_dns_address
+         | default(faas_private_address | default(ansible_default_ipv4.address, true), true) }}
+    faas_pki_unit_by_directory:
+      apid: faas-apid.service
+      builderd: faas-builderd.service
+      egress: faas-gatewayd-internal.service
+      gatewayd: faas-gatewayd-internal.service
+      gatewayd-internal-public: faas-gatewayd-internal.service
+      gatewayd-public: faas-gatewayd-public.service
+      githubd: faas-githubd.service
+      imaged: faas-imaged.service
+      meterd: faas-meterd.service
+      schedd: faas-schedd.service
+      vmmd: faas-vmmd.service
+    faas_pki_hup_units:
+      - faas-apid.service
+      - faas-schedd.service
+      - faas-vmmd.service
+
+  pre_tasks:
+    - name: pki renewal — validate host identity
+      ansible.builtin.assert:
+        that:
+          - faas_box_role in ['control-plane', 'compute-only']
+          - faas_node_name is defined
+          - faas_node_name | length > 0
+
+  roles:
+    - role: internal_pki_renewal
+
+  tasks:
+    - name: pki renewal — renew only leaves inside the issuance threshold
+      block:
+        - name: pki renewal — recover an interrupted file transaction
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - pki
+              - recover-install
+              - --root-dir
+              - "{{ faas_pki_root }}"
+          changed_when: false
+
+        - name: pki renewal — inspect prior activation state
+          ansible.builtin.stat:
+            path: "{{ faas_pki_state_dir }}/status.json"
+          register: faas_pki_state_stat
+
+        - name: pki renewal — read prior activation state
+          ansible.builtin.slurp:
+            src: "{{ faas_pki_state_dir }}/status.json"
+          register: faas_pki_state_raw
+          when: faas_pki_state_stat.stat.exists
+
+        - name: pki renewal — decode prior activation state
+          ansible.builtin.set_fact:
+            faas_pki_previous_state: >-
+              {{ (faas_pki_state_raw.content | b64decode | from_json)
+                 if faas_pki_state_stat.stat.exists else {} }}
+
+        - name: pki renewal — detect resumable activation
+          ansible.builtin.set_fact:
+            faas_pki_resume_activation: >-
+              {{ faas_pki_previous_state.phase | default('') == 'activation_pending' }}
+            faas_pki_installed: >-
+              {{ faas_pki_previous_state.phase | default('') == 'activation_pending' }}
+
+        - name: pki renewal — inspect the active host bundle
+          ansible.builtin.command:
+            argv: >-
+              {{ ['/usr/local/bin/gregalectl', 'pki', 'status',
+                  '--root-dir', faas_pki_root, '--box-role', faas_box_role]
+                 + (['--cn', faas_node_name, '--transport-san', faas_pki_transport_san]
+                    if faas_box_role == 'compute-only' else []) }}
+          register: faas_pki_status
+          changed_when: false
+          failed_when: false
+          when: not faas_pki_resume_activation
+
+        - name: pki renewal — decide whether activation work is required
+          ansible.builtin.set_fact:
+            faas_pki_action_required: >-
+              {{ faas_pki_resume_activation or (faas_pki_status.rc | default(0) != 0) }}
+
+        - name: pki renewal — restore the pending consumer set
+          ansible.builtin.set_fact:
+            faas_pki_changed_units: "{{ faas_pki_previous_state.changed_units | default([]) }}"
+            faas_pki_expected_fingerprint: "{{ faas_pki_previous_state.expected_fingerprint | default('') }}"
+          when: faas_pki_resume_activation
+
+        - name: pki renewal — remove prior target export material
+          ansible.builtin.file:
+            path: "{{ faas_pki_remote_export }}"
+            state: absent
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — export active trust material without ca.key
+          ansible.builtin.command:
+            argv: >-
+              {{ ['/usr/local/bin/gregalectl', 'pki', 'export-bundle',
+                  '--source-root', faas_pki_root,
+                  '--output-dir', faas_pki_remote_export + '/bundle',
+                  '--box-role', faas_box_role]
+                 + (['--cn', faas_node_name, '--transport-san', faas_pki_transport_san]
+                    if faas_box_role == 'compute-only' else []) }}
+          changed_when: true
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — package active trust material
+          ansible.builtin.command:
+            argv:
+              - tar
+              - --create
+              - --gzip
+              - --file
+              - "{{ faas_pki_remote_export }}/active.tgz"
+              - --directory
+              - "{{ faas_pki_remote_export }}/bundle"
+              - .
+          changed_when: true
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — create controller transfer directory
+          ansible.builtin.file:
+            path: "{{ faas_pki_controller_stage }}"
+            state: directory
+            mode: "0700"
+          become: false
+          delegate_to: localhost
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — fetch active trust material from the target
+          ansible.builtin.fetch:
+            src: "{{ faas_pki_remote_export }}/active.tgz"
+            dest: "{{ faas_pki_controller_stage }}/{{ inventory_hostname }}-active.tgz"
+            flat: true
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — reset issuer staging
+          ansible.builtin.file:
+            path: "{{ faas_pki_remote_outgoing }}"
+            state: absent
+          delegate_to: "{{ faas_pki_issuer_host }}"
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — create issuer staging
+          ansible.builtin.file:
+            path: "{{ faas_pki_remote_outgoing }}/active"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+          delegate_to: "{{ faas_pki_issuer_host }}"
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — transfer active trust material to the issuer
+          ansible.builtin.unarchive:
+            src: "{{ faas_pki_controller_stage }}/{{ inventory_hostname }}-active.tgz"
+            dest: "{{ faas_pki_remote_outgoing }}/active"
+            owner: root
+            group: root
+          delegate_to: "{{ faas_pki_issuer_host }}"
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — selectively issue expiring leaves
+          ansible.builtin.command:
+            argv: >-
+              {{ ['/usr/local/bin/gregalectl', 'pki', 'issue-bundle',
+                  '--issuer-root', faas_pki_root,
+                  '--active-root', faas_pki_remote_outgoing + '/active',
+                  '--output-dir', faas_pki_remote_outgoing + '/bundle',
+                  '--changed-file', faas_pki_remote_outgoing + '/changed.json',
+                  '--box-role', faas_box_role]
+                 + (['--cn', faas_node_name, '--transport-san', faas_pki_transport_san]
+                    if faas_box_role == 'compute-only' else []) }}
+          delegate_to: "{{ faas_pki_issuer_host }}"
+          no_log: true
+          changed_when: true
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — read the exact renewed consumer set
+          ansible.builtin.slurp:
+            src: "{{ faas_pki_remote_outgoing }}/changed.json"
+          register: faas_pki_changed_raw
+          delegate_to: "{{ faas_pki_issuer_host }}"
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — derive the exact daemon reload set
+          ansible.builtin.set_fact:
+            faas_pki_changed_directories: >-
+              {{ (faas_pki_changed_raw.content | b64decode | from_json).changed
+                 | map(attribute='directory') | unique | list }}
+            faas_pki_changed_units: >-
+              {{ (faas_pki_changed_raw.content | b64decode | from_json).changed
+                 | map(attribute='directory') | unique
+                 | map('extract', faas_pki_unit_by_directory) | unique | list }}
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — package the candidate bundle on the issuer
+          ansible.builtin.command:
+            argv:
+              - tar
+              - --create
+              - --gzip
+              - --file
+              - "{{ faas_pki_remote_outgoing }}/candidate.tgz"
+              - --directory
+              - "{{ faas_pki_remote_outgoing }}/bundle"
+              - .
+          delegate_to: "{{ faas_pki_issuer_host }}"
+          changed_when: true
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — fetch the candidate from the issuer
+          ansible.builtin.fetch:
+            src: "{{ faas_pki_remote_outgoing }}/candidate.tgz"
+            dest: "{{ faas_pki_controller_stage }}/{{ inventory_hostname }}-candidate.tgz"
+            flat: true
+          delegate_to: "{{ faas_pki_issuer_host }}"
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — reset target candidate directory
+          ansible.builtin.file:
+            path: "{{ faas_pki_remote_candidate }}"
+            state: absent
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — create target candidate directory
+          ansible.builtin.file:
+            path: "{{ faas_pki_remote_candidate }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — transfer the candidate to the target
+          ansible.builtin.unarchive:
+            src: "{{ faas_pki_controller_stage }}/{{ inventory_hostname }}-candidate.tgz"
+            dest: "{{ faas_pki_remote_candidate }}"
+            owner: root
+            group: root
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — read the current vmmd fingerprint
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - pki
+              - fingerprint
+              - --cert
+              - "{{ faas_pki_root }}/vmmd/server.crt"
+          register: faas_pki_old_fingerprint
+          changed_when: false
+          when:
+            - faas_pki_action_required
+            - not faas_pki_resume_activation
+            - faas_box_role == 'compute-only'
+            - "'faas-vmmd.service' in faas_pki_changed_units"
+
+        - name: pki renewal — read the candidate vmmd fingerprint
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - pki
+              - fingerprint
+              - --cert
+              - "{{ faas_pki_remote_candidate }}/vmmd/server.crt"
+          register: faas_pki_new_fingerprint
+          changed_when: false
+          when:
+            - faas_pki_action_required
+            - not faas_pki_resume_activation
+            - faas_box_role == 'compute-only'
+            - "'faas-vmmd.service' in faas_pki_changed_units"
+
+        - name: pki renewal — persist the activation-pending checkpoint
+          ansible.builtin.copy:
+            dest: "{{ faas_pki_state_dir }}/status.json"
+            content: >-
+              {{ {'phase': 'activation_pending',
+                  'last_success_unix': faas_pki_previous_state.last_success_unix | default(0),
+                  'last_failure_unix': 0,
+                  'partial': true,
+                  'changed_units': faas_pki_changed_units,
+                  'expected_fingerprint': faas_pki_old_fingerprint.stdout | default(''),
+                  'new_fingerprint': faas_pki_new_fingerprint.stdout | default('')} | to_json }}
+            owner: root
+            group: root
+            mode: "0600"
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — install the complete bundle transactionally
+          ansible.builtin.command:
+            argv: >-
+              {{ ['/usr/local/bin/gregalectl', 'pki', 'install-bundle',
+                  '--bundle-dir', faas_pki_remote_candidate,
+                  '--root-dir', faas_pki_root, '--box-role', faas_box_role]
+                 + (['--cn', faas_node_name, '--transport-san', faas_pki_transport_san]
+                    if faas_box_role == 'compute-only' else []) }}
+          changed_when: true
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — remember successful on-disk activation
+          ansible.builtin.set_fact:
+            faas_pki_installed: true
+            faas_pki_expected_fingerprint: "{{ faas_pki_old_fingerprint.stdout | default('') }}"
+          when: faas_pki_action_required and not faas_pki_resume_activation
+
+        - name: pki renewal — compare-and-swap vmmd database attestation
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - secrets
+              - stamp
+              - --host
+              - "{{ faas_node_name }}"
+              - --expected-fingerprint
+              - "{{ faas_pki_expected_fingerprint }}"
+          changed_when: true
+          when:
+            - faas_pki_action_required
+            - faas_box_role == 'compute-only'
+            - "'faas-vmmd.service' in faas_pki_changed_units"
+
+        - name: pki renewal — inspect affected daemon state  # noqa: command-instead-of-module
+          ansible.builtin.command: "systemctl is-active {{ item }}"
+          loop: "{{ faas_pki_changed_units }}"
+          register: faas_pki_active_units
+          changed_when: false
+          failed_when: false
+          when: faas_pki_action_required
+
+        - name: pki renewal — signal active hot-reload consumers
+          ansible.builtin.command:
+            argv:
+              - systemctl
+              - kill
+              - --kill-who=main
+              - --signal=HUP
+              - "{{ item.item }}"
+          loop: "{{ faas_pki_active_units.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          changed_when: true
+          when:
+            - faas_pki_action_required
+            - item.rc == 0
+            - item.item in faas_pki_hup_units
+
+        - name: pki renewal — restart other affected active consumers
+          ansible.builtin.systemd:
+            name: "{{ item.item }}"
+            state: restarted
+          loop: "{{ faas_pki_active_units.results | default([]) }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when:
+            - faas_pki_action_required
+            - item.rc == 0
+            - item.item not in faas_pki_hup_units
+
+        - name: pki renewal — verify fleet health after activation
+          ansible.builtin.include_role:
+            name: fleet_verify
+          vars:
+            faas_verify_strict: false
+          when: faas_pki_action_required
+
+        - name: pki renewal — record a successful scheduled check
+          ansible.builtin.copy:
+            dest: "{{ faas_pki_state_dir }}/status.json"
+            content: >-
+              {{ {'phase': 'complete',
+                  'last_success_unix': ansible_date_time.epoch | int,
+                  'last_failure_unix': 0,
+                  'partial': false,
+                  'changed_units': []} | to_json }}
+            owner: root
+            group: root
+            mode: "0600"
+
+      rescue:
+        - name: pki renewal — record a visible failure checkpoint
+          ansible.builtin.copy:
+            dest: "{{ faas_pki_state_dir }}/status.json"
+            content: >-
+              {{ {'phase': ('activation_pending' if faas_pki_installed | default(false) else 'failed'),
+                  'last_success_unix': faas_pki_previous_state.last_success_unix | default(0),
+                  'last_failure_unix': ansible_date_time.epoch | int,
+                  'partial': faas_pki_installed | default(false) | bool,
+                  'changed_units': faas_pki_changed_units | default([]),
+                  'expected_fingerprint': faas_pki_expected_fingerprint | default('')} | to_json }}
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: pki renewal — fail the scheduled workflow after recording state
+          ansible.builtin.fail:
+            msg: >-
+              Internal mTLS renewal failed on {{ inventory_hostname }}.
+              installed={{ faas_pki_installed | default(false) }}; inspect
+              {{ faas_pki_state_dir }}/status.json and the failed task above.
+
+      always:
+        - name: pki renewal — refresh exporter state immediately
+          ansible.builtin.systemd:
+            name: faas-internal-pki-metrics.service
+            state: started
+          failed_when: false
+
+        - name: pki renewal — remove target transfer material
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ faas_pki_remote_export }}"
+            - "{{ faas_pki_remote_candidate }}"
+
+        - name: pki renewal — remove issuer transfer material
+          ansible.builtin.file:
+            path: "{{ faas_pki_remote_outgoing }}"
+            state: absent
+          delegate_to: "{{ faas_pki_issuer_host }}"
+
+        - name: pki renewal — remove controller transfer archives
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ faas_pki_controller_stage }}/{{ inventory_hostname }}-active.tgz"
+            - "{{ faas_pki_controller_stage }}/{{ inventory_hostname }}-candidate.tgz"
+          become: false
+          delegate_to: localhost

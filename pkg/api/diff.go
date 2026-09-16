@@ -78,6 +78,11 @@ type DiffRequest struct {
 	// deploy clients can make app creation, runtime, framework, and handler
 	// semantics visible before any remote row exists.
 	BuildPlan *BuildPlan `json:"build_plan,omitempty"`
+	// Rollout fields mirror CreateDeploymentRequest so preview models the
+	// exact traffic policy that apply will persist.
+	TrafficPercent *int              `json:"traffic_percent,omitempty"`
+	Canary         *CanaryPresetSpec `json:"canary,omitempty"`
+	Workflows      []WorkflowSpec    `json:"workflows"`
 }
 
 // DiffAppConfigPatch mirrors [pkg/deploydiff.AppConfigPatch] field
@@ -86,6 +91,7 @@ type DiffRequest struct {
 // pr-819-openapi-nullable-3-1: wire "absent" ≠ "explicit zero").
 type DiffAppConfigPatch struct {
 	RAMMB               *int      `json:"ram_mb,omitempty"`
+	VCPU                *int      `json:"vcpu,omitempty"`
 	CPUMillicores       *int      `json:"cpu_millicores,omitempty"`
 	IdleTimeoutS        *int      `json:"idle_timeout_s,omitempty"`
 	MaxConcurrency      *int      `json:"max_concurrency,omitempty"`

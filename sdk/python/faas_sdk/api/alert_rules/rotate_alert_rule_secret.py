@@ -7,6 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
+from ...models.rotate_alert_rule_secret_request import RotateAlertRuleSecretRequest
 from ...models.rotate_alert_rule_secret_response import RotateAlertRuleSecretResponse
 from ...types import Response
 
@@ -14,7 +15,10 @@ from ...types import Response
 def _get_kwargs(
     slug: str,
     id: str,
+    *,
+    body: RotateAlertRuleSecretRequest,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -24,6 +28,11 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -77,17 +86,19 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateAlertRuleSecretRequest,
 ) -> Response[Problem | RotateAlertRuleSecretResponse]:
-    """Mint a new webhook HMAC secret.
+    """Install a new webhook HMAC secret.
 
-     Server-mints a 32-byte secret, base64-encodes it, and
-    overwrites the row's sealed ciphertext in place. The
-    plaintext is NEVER returned in the response — the body
-    carries the masked constant + rotated_at only.
+     Seals the caller-supplied replacement and overwrites the row in place.
+    Cutover is immediate with no old-key overlap; install the replacement
+    in the receiver before calling. The plaintext is never returned.
 
     Args:
         slug (str):
         id (str):
+        body (RotateAlertRuleSecretRequest): Caller-supplied replacement. Provision the receiver
+            first; cutover is immediate with no old-key overlap.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -100,6 +111,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         id=id,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -114,17 +126,19 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateAlertRuleSecretRequest,
 ) -> Problem | RotateAlertRuleSecretResponse | None:
-    """Mint a new webhook HMAC secret.
+    """Install a new webhook HMAC secret.
 
-     Server-mints a 32-byte secret, base64-encodes it, and
-    overwrites the row's sealed ciphertext in place. The
-    plaintext is NEVER returned in the response — the body
-    carries the masked constant + rotated_at only.
+     Seals the caller-supplied replacement and overwrites the row in place.
+    Cutover is immediate with no old-key overlap; install the replacement
+    in the receiver before calling. The plaintext is never returned.
 
     Args:
         slug (str):
         id (str):
+        body (RotateAlertRuleSecretRequest): Caller-supplied replacement. Provision the receiver
+            first; cutover is immediate with no old-key overlap.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,6 +152,7 @@ def sync(
         slug=slug,
         id=id,
         client=client,
+        body=body,
     ).parsed
 
 
@@ -146,17 +161,19 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateAlertRuleSecretRequest,
 ) -> Response[Problem | RotateAlertRuleSecretResponse]:
-    """Mint a new webhook HMAC secret.
+    """Install a new webhook HMAC secret.
 
-     Server-mints a 32-byte secret, base64-encodes it, and
-    overwrites the row's sealed ciphertext in place. The
-    plaintext is NEVER returned in the response — the body
-    carries the masked constant + rotated_at only.
+     Seals the caller-supplied replacement and overwrites the row in place.
+    Cutover is immediate with no old-key overlap; install the replacement
+    in the receiver before calling. The plaintext is never returned.
 
     Args:
         slug (str):
         id (str):
+        body (RotateAlertRuleSecretRequest): Caller-supplied replacement. Provision the receiver
+            first; cutover is immediate with no old-key overlap.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,6 +186,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         id=id,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -181,17 +199,19 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateAlertRuleSecretRequest,
 ) -> Problem | RotateAlertRuleSecretResponse | None:
-    """Mint a new webhook HMAC secret.
+    """Install a new webhook HMAC secret.
 
-     Server-mints a 32-byte secret, base64-encodes it, and
-    overwrites the row's sealed ciphertext in place. The
-    plaintext is NEVER returned in the response — the body
-    carries the masked constant + rotated_at only.
+     Seals the caller-supplied replacement and overwrites the row in place.
+    Cutover is immediate with no old-key overlap; install the replacement
+    in the receiver before calling. The plaintext is never returned.
 
     Args:
         slug (str):
         id (str):
+        body (RotateAlertRuleSecretRequest): Caller-supplied replacement. Provision the receiver
+            first; cutover is immediate with no old-key overlap.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -206,5 +226,6 @@ async def asyncio(
             slug=slug,
             id=id,
             client=client,
+            body=body,
         )
     ).parsed

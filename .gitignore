@@ -60,3 +60,7 @@ vmlinux-*
 /.cache/
 # Temporary credentials emitted by google-github-actions/auth.
 gha-creds-*.json
+
+# Python tooling bytecode
+__pycache__/
+*.py[cod]

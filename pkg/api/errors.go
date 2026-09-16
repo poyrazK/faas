@@ -13,7 +13,7 @@ import (
 // docsBase is the documentation URL prefix every WithDocs() /
 // Type: / example value in this file composes against.
 //
-// Historical note: this used to be "https://docs.gregale.dev".
+// Historical note: this used to use the legacy dedicated docs host.
 // That host resolves (Cloudflare) but serves 404 on every path —
 // it was never deployed, and the `deploy/ansible/roles/docs-tls/`
 // runbook that pkg/wire/docs.go cites does not exist. The
@@ -39,7 +39,7 @@ import (
 // 404 in JavaScript, so neither curl nor a link checker nor CI can
 // detect a missing page. Only a real browser can.
 //
-// Duplication note: pkg/wire.DocsHost and this constant must stay
+// Duplication note: pkg/wire.DocsBaseURL and this constant must stay
 // in lock-step — pkg/api cannot import pkg/wire (pkg/wire imports
 // pkg/api for api.Plans, creating a cycle).
 const docsBase = "https://gregale.dev/docs"
@@ -85,6 +85,11 @@ type Problem struct {
 	ObservedBytes *int64 `json:"observed_bytes,omitempty"`
 	// DocsURL points the user at the single next action.
 	DocsURL string `json:"docs_url,omitempty"`
+	// RetryAfterSeconds is populated by SDK clients from the HTTP Retry-After
+	// header when it contains a delta in seconds. Keeping the value in the
+	// decoded Problem lets JSON-mode callers act on back-pressure without
+	// reaching into transport-specific response headers.
+	RetryAfterSeconds *int64 `json:"retry_after_seconds,omitempty"`
 	// CheckoutURL is the provider-neutral hosted checkout URL for a paid
 	// upgrade. PaddleCheckoutURL remains below for backwards compatibility
 	// with older SDKs that only know the Paddle-specific field.
@@ -362,16 +367,18 @@ func (p *Problem) HasHeader(key string) []string {
 // Stable error codes (spec Appendix A, UX spec §7). Keep in sync with docs and
 // the CLI's exit-code mapping.
 const (
-	CodePlanLimitApps          = "plan_limit_apps"
-	CodePlanLimitDeveloperApps = "plan_limit_developer_apps"
-	CodePlanLimitRAM           = "plan_limit_ram"
-	CodePlanLimitConcur        = "plan_limit_concurrency"
-	CodeInvalidAppCPU          = "invalid_cpu_millicores"
-	CodeInvalidAppRAM          = "invalid_ram_mb"
-	CodeInvalidCPURAMPair      = "invalid_cpu_ram_pair"
-	CodeInvalidResourceProfile = "invalid_resource_profile"
-	CodeSourceTooLarge         = "source_too_large"
-	CodeSourceInvalid          = "source_invalid"
+	CodeProjectEnvironmentApprovalRequired = "project_environment_approval_required"
+	CodeProjectEnvironmentApprovalInvalid  = "project_environment_approval_invalid"
+	CodePlanLimitApps                      = "plan_limit_apps"
+	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
+	CodePlanLimitRAM                       = "plan_limit_ram"
+	CodePlanLimitConcur                    = "plan_limit_concurrency"
+	CodeInvalidAppCPU                      = "invalid_cpu_millicores"
+	CodeInvalidAppRAM                      = "invalid_ram_mb"
+	CodeInvalidCPURAMPair                  = "invalid_cpu_ram_pair"
+	CodeInvalidResourceProfile             = "invalid_resource_profile"
+	CodeSourceTooLarge                     = "source_too_large"
+	CodeSourceInvalid                      = "source_invalid"
 	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
 	// the node-local developer-source cache was absent, stale, or corrupt.
 	// The CLI responds by uploading a complete source snapshot.
@@ -419,6 +426,7 @@ const (
 	// clients can give a precise remediation.
 	CodeGitHubInstallNotOwned   = "github_install_not_owned"
 	CodeGitHubRepoNotAccessible = "github_repo_not_accessible"
+	CodeGitHubInstallAmbiguous  = "github_install_ambiguous"
 	// CodeSourceRefUnavailable is the DEPLOY-PROV-4 / ADR-092 (issue
 	// #739) 503 sentinel for POST /v1/apps/{slug}/deployments/source-ref
 	// when the githubd bridge is down (StreamSourceRef returns
@@ -463,6 +471,11 @@ const (
 	// generic error. Maps to HTTP 501.
 	CodeBillingNotImplemented = "billing_not_implemented"
 	CodeCapacity              = "capacity_unavailable"
+	// CodeWakeInProgress is a successful asynchronous admission response from
+	// the public gateway. It is returned with HTTP 202 when a cold fallback
+	// outlives the function request budget but the coalesced wake is still
+	// progressing. Clients should honor Retry-After and retry the invocation.
+	CodeWakeInProgress = "wake_in_progress"
 	// CodeDebugRegressionUnavailable is returned when the debugger's
 	// regression-observation relation or query is unavailable. It is kept
 	// distinct from CodeCapacity because this is a database/schema dependency
@@ -542,13 +555,22 @@ const (
 	// endpoint, not a billing gate. Maps to HTTP 429 + Retry-After:
 	// the window is 24h so the retry hint is in seconds-until-reset.
 	CodeExportRateLimited = "export_rate_limited"
+	// CodeDeployRateLimited marks an account that exhausted its plan's
+	// deployment admissions in the current one-hour window.
+	CodeDeployRateLimited = "deploy_rate_limited"
 	CodeUnauthorized      = "unauthorized"
+	// CodeAuthRateLimited marks a rejected credential after the caller's
+	// source IP exhausted the failed-auth budget. Valid credentials from the
+	// same IP are still admitted, so one broken client behind a shared NAT
+	// cannot lock out other customers.
+	CodeAuthRateLimited = "auth_rate_limited"
 	// CodeForbidden is returned when the authenticated principal lacks
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
-	CodeForbidden = "insufficient_scope"
-	CodeNotFound  = "not_found"
+	CodeForbidden        = "insufficient_scope"
+	CodeNotFound         = "not_found"
+	CodeMethodNotAllowed = "method_not_allowed"
 	// CodeUndeclaredRoute is returned directly by gatewayd when the
 	// only-declared-routes contract is enabled and the request path/method is
 	// absent from the explicit list or imported OpenAPI document.
@@ -838,6 +860,10 @@ const (
 	// split at line 533/534.
 	CodePlanDataUpstreamsNotAllowed = "plan_data_upstreams_not_allowed" // 402, Free
 	CodePlanLimitDataUpstreams      = "plan_limit_data_upstreams"       // 403, per-app cap reached
+	// CodeDataUpstreamsDisabled distinguishes an operator runtime switch
+	// from a customer plan entitlement. It prevents an entitled Scale
+	// account from receiving impossible downgrade guidance.
+	CodeDataUpstreamsDisabled = "data_upstreams_disabled"
 
 	// ADR-098 §D4 + §11: explicit-upstream write surface validation.
 	// Distinct codes from CodeEnvVarInvalidKey / CodeEnvVarValueTooLarge
@@ -1665,12 +1691,13 @@ func StatusForCode(code string) int {
 	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed:
 		return http.StatusForbidden
-	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited:
+	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeExportRateLimited, CodeDeployRateLimited,
+		CodeAuthRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
 		return http.StatusRequestEntityTooLarge
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
-		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeHandlerMissing, CodeImageRequired,
+		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeHandlerMissing, CodeImageRequired,
 		CodeEgressAllowlistTooLong, CodePublicAuthIPAllowlistTooLong,
 		CodeInvalidEgressAllowlist, CodeInvalidPublicAuthIPAllowlist,
 		CodeOpenAPIPolicyConfirmationRequired:
@@ -1683,7 +1710,7 @@ func StatusForCode(code string) int {
 	case CodeCapacity, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled:
 		return http.StatusServiceUnavailable
-	case CodeAPIContractDiffDisabled:
+	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -1976,6 +2003,10 @@ func StatusForCode(code string) int {
 		return http.StatusPaymentRequired
 	case CodePlanWebhookQuota:
 		return http.StatusForbidden
+	case CodePlanRealtimeNotAllowed:
+		return http.StatusPaymentRequired
+	case CodePlanRealtimeQuota:
+		return http.StatusForbidden
 	case CodePlanLogDrainsNotAllowed:
 		return http.StatusPaymentRequired
 	case CodePlanLogDrainQuota:
@@ -2158,14 +2189,14 @@ func ErrInvalidCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
 }
 
 // ErrAppLayerTooLarge is returned when the built app layer (deps + code) would
-// exceed the plan's writable ephemeral drive1 capacity (spec §4.6). The
+// exceed the plan's total writable-filesystem capacity (spec §4.6). The
 // legacy problem code remains stable for clients; the message names both the
 // app-layer build boundary and its runtime-disk meaning.
 func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 	capBytes := l.EphemeralDiskMaxBytes()
 	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
 		"App too large",
-		fmt.Sprintf("%s plan caps the writable ephemeral app disk at %d MB (app-layer build cap); built layer is %.1f MB.",
+		fmt.Sprintf("%s plan caps total ephemeral app-filesystem capacity at %d MB (including app content and filesystem overhead); the built layer requires %.1f MB.",
 			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
 		WithDocs(docsBase + "/build/limits#app-layer")
@@ -2369,7 +2400,21 @@ func ErrExportRateLimited(retryAfterS int) *Problem {
 		"Export rate limited",
 		"Only one account export is allowed per 24h window; retry after the indicated back-off.").
 		WithHeader("Retry-After", fmt.Sprintf("%d", retryAfterS)).
-		WithDocs("https://docs.gregale.dev/gdpr#export-rate-limit")
+		WithDocs("https://gregale.dev/docs/gdpr#export-rate-limit")
+}
+
+// ErrDeployRateLimited reports an exhausted account deploy window. The
+// remaining/reset headers are added by apid from the atomic store result.
+func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeDeployRateLimited,
+		"Deploy rate limited",
+		fmt.Sprintf("This account has used all %d deploys in its current one-hour window.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/deployments#rate-limit")
 }
 
 // ErrInternal is the catch-all 500 envelope for handler-side failures
@@ -3013,6 +3058,15 @@ const CodePlanWebhooksNotAllowed = "plan_webhooks_not_allowed"
 // reached. Distinct from CodePlanWebhooksNotAllowed so the CLI
 // can branch on upsell-vs-delete copy without parsing the body.
 const CodePlanWebhookQuota = "plan_webhook_quota"
+
+// Managed realtime endpoint errors (ADR-156). Realtime is an opt-in
+// connection service; Free is gated, while paid plans have bounded endpoint
+// inventories so quiet connections cannot become an unmetered resource.
+const (
+	CodePlanRealtimeNotAllowed = "plan_realtime_not_allowed"
+	CodePlanRealtimeQuota      = "plan_realtime_quota"
+	CodeRealtimeInvalid        = "realtime_invalid"
+)
 
 // CodePlanLogDrainsNotAllowed is the 402 returned when the plan does not
 // include customer-configurable runtime log destinations.
@@ -3664,6 +3718,28 @@ func ErrPlanWebhookQuota(plan Plan, scope string, limit, observed int) *Problem 
 		WithDocs(docsBase + "/plans#webhooks")
 }
 
+func ErrPlanRealtimeNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanRealtimeNotAllowed,
+		"Managed realtime unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include managed realtime endpoints; upgrade to Hobby or above to keep WebSocket clients connected while your app sleeps.", p)).
+		WithDocs(docsBase + "/plans#realtime")
+}
+
+func ErrPlanRealtimeQuota(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodePlanRealtimeQuota,
+		"Managed realtime endpoint limit reached",
+		fmt.Sprintf("%s plan caps managed realtime endpoints at %d for %s; you have %d. Delete one to add another.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#realtime")
+}
+
+func ErrRealtimeInvalid(reason string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeRealtimeInvalid,
+		"Invalid managed realtime endpoint", reason)
+}
+
 // ErrPlanTriggersNotAllowed is returned by apid's createTrigger /
 // listTriggers handlers when the customer's plan has
 // TriggerLimitPerApp == 0 (Free today, issue #757 / ADR-0NN).
@@ -3883,6 +3959,16 @@ func ErrPlanDataUpstreamsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanDataUpstreamsNotAllowed,
 		"Data-placement hints unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include data-placement hints; upgrade to Hobby or above to capture upstreams.", p)).
+		WithDocs(docsBase + "/plans#data-placement")
+}
+
+// ErrDataUpstreamsDisabled reports cluster configuration independently of
+// plan entitlement. Operators can enable the runtime switch without asking an
+// already-entitled customer to change plans.
+func ErrDataUpstreamsDisabled() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeDataUpstreamsDisabled,
+		"Data placement is disabled",
+		"data-placement APIs are not enabled on this cluster; contact the platform operator").
 		WithDocs(docsBase + "/plans#data-placement")
 }
 
@@ -4396,7 +4482,7 @@ func ErrPlanTrafficSplitNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanTrafficSplitNotAllowed,
 		"Plan doesn't allow traffic splitting",
 		fmt.Sprintf("the %s plan routes 100%% to the most recent deployment; upgrade to Pro or Scale to keep N canary deployments warm.", p)).
-		WithDocs("https://docs.gregale.dev/plans#traffic-split")
+		WithDocs("https://gregale.dev/docs/plans#traffic-split")
 }
 
 // ErrInvalidTrafficPercent (issue #556) is returned when the
@@ -4411,7 +4497,7 @@ func ErrInvalidTrafficPercent(got int) *Problem {
 		"Invalid traffic_percent",
 		fmt.Sprintf("traffic_percent must be in [0, %d]; got %d.", cap, got)).
 		WithLimit(int64(cap), int64(got)).
-		WithDocs("https://docs.gregale.dev/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
 // ErrDeploymentNotLive distinguishes lifecycle conflict from percentage
@@ -4424,7 +4510,7 @@ func ErrDeploymentNotLive(status string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDeploymentNotLive,
 		"Deployment is not live",
 		fmt.Sprintf("traffic can only be changed on a live deployment; current state is %s. Select the current live deployment, roll back, or redeploy.", status)).
-		WithDocs("https://docs.gregale.dev/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
 // ErrInvalidCanaryPreset (issue #976 / ADR-122 / SAFE-RELEASES-A)
@@ -4438,7 +4524,7 @@ func ErrInvalidCanaryPreset(got string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidCanaryPreset,
 		"Invalid canary preset",
 		fmt.Sprintf("canary preset %q is not in the closed-set catalog (%v); see --canary-preset in `gregale deploy --help`.", got, canary.AllowedCanaryPresets)).
-		WithDocs("https://docs.gregale.dev/deployments#canary-presets")
+		WithDocs("https://gregale.dev/docs/deployments#canary-presets")
 }
 
 // ErrCanaryStepConflict is the expected concurrency response for the
@@ -4466,7 +4552,7 @@ func ErrTrafficPercentSumInvalid(observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficPercentSumInvalid,
 		"traffic_percent sum invariant violated",
 		fmt.Sprintf("sum of traffic_percent across live deployments must be 100; observed %d.", observed)).
-		WithDocs("https://docs.gregale.dev/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
 // ErrPlanMirrorNotAllowed (issue #72 / ADR-125 traffic mirroring
@@ -4483,7 +4569,7 @@ func ErrPlanMirrorNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanMirrorNotAllowed,
 		"Plan doesn't allow traffic mirroring",
 		fmt.Sprintf("the %s plan wakes a mirror VM on every request (billed per running second); upgrade to Pro or Scale to mirror traffic in the background.", p)).
-		WithDocs("https://docs.gregale.dev/plans#traffic-mirror")
+		WithDocs("https://gregale.dev/docs/plans#traffic-mirror")
 }
 
 // ErrMirrorRuleQuotaExceeded (issue #72 / ADR-125 PR-A2) is
@@ -4498,7 +4584,7 @@ func ErrMirrorRuleQuotaExceeded(l Limits, observed int) *Problem {
 		"mirror rule quota exceeded",
 		fmt.Sprintf("this app already has %d mirror rule(s); the plan cap is %d.", observed, l.MirrorTargetsPerApp)).
 		WithLimit(int64(l.MirrorTargetsPerApp), int64(observed)).
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrInvalidMirrorPercent (issue #72 / ADR-125 PR-A2) is
@@ -4513,7 +4599,7 @@ func ErrInvalidMirrorPercent(got int) *Problem {
 		"Invalid mirror percent",
 		fmt.Sprintf("mirror percent must be in [0, %d]; got %d.", cap, got)).
 		WithLimit(int64(cap), int64(got)).
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrMirrorSourceTargetSame (issue #72 / ADR-125 PR-A2) is
@@ -4525,7 +4611,7 @@ func ErrMirrorSourceTargetSame() *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMirrorSourceTargetSame,
 		"source and mirror deployments must differ",
 		"source_deployment_id and mirror_deployment_id cannot reference the same deployment.").
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrMirrorDeploymentNotLive (issue #72 / ADR-125 PR-A2) is
@@ -4540,7 +4626,7 @@ func ErrMirrorDeploymentNotLive() *Problem {
 	return NewProblem(http.StatusConflict, CodeMirrorDeploymentNotLive,
 		"referenced deployment is not live",
 		"one or both of source_deployment_id / mirror_deployment_id points at a deployment that is not 'live'; mirror targets must both be live.").
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrMirrorCrossAppMismatch (issue #72 / ADR-125 PR-A2) is
@@ -4553,7 +4639,7 @@ func ErrMirrorCrossAppMismatch() *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMirrorCrossAppMismatch,
 		"source and mirror deployments must belong to the same app",
 		"source_deployment_id and mirror_deployment_id must reference deployments of the same app (slug in the URL path).").
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrMirrorRuleNotFound (issue #72 / ADR-125 PR-A2) is the
@@ -4566,7 +4652,7 @@ func ErrMirrorRuleNotFound(id string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeMirrorRuleNotFound,
 		"mirror rule not found",
 		fmt.Sprintf("no mirror rule with id %q on this app.", id)).
-		WithDocs("https://docs.gregale.dev/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
 }
 
 // ErrInvalidMirrorWindow (issue #72 / ADR-125 PR-A2) is the
@@ -4578,7 +4664,7 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidMirrorWindow,
 		"Invalid mirror window",
 		fmt.Sprintf("window must be one of: 1h, 24h, 7d; got %q.", got)).
-		WithDocs("https://docs.gregale.dev/apps#mirror-summary")
+		WithDocs("https://gregale.dev/docs/apps#mirror-summary")
 }
 
 // ErrSidecarCapExceeded is returned when the request carries more
@@ -5011,6 +5097,18 @@ func ErrPlanSourceBytes(limit int, observed int64) *Problem {
 // nudge). Code differs from CodePlanLimit* because the failure mode
 // is plan-gating, not "you used more than the plan allows".
 func ErrPlanFeatureGated(feature string, p Plan) *Problem {
+	if feature == "analytics" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include analytics",
+			fmt.Sprintf("the %s plan doesn't include request analytics; upgrade to Hobby or higher for historical observability.", p)).
+			WithDocs(docsBase + "/plans#analytics")
+	}
+	if feature == "sync_invoke" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include synchronous invocation",
+			fmt.Sprintf("the %s plan doesn't include synchronous invocation; use the app's public HTTPS endpoint or upgrade to Hobby or higher.", p)).
+			WithDocs(docsBase + "/plans#synchronous-invocation")
+	}
 	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 		"Plan doesn't include this feature",
 		fmt.Sprintf("the %s plan doesn't unlock %s; upgrade to Hobby or higher to use event-driven features.", p, feature)).
@@ -5049,7 +5147,7 @@ func ErrInvocationNotReplayable(state string) *Problem {
 	return NewProblem(http.StatusConflict, CodeInvocationNotReplayable,
 		"Invocation is not in a replayable state",
 		fmt.Sprintf("only invocations in state 'failed' or 'dead_letter' can be replayed; current state is %q.", state)).
-		WithDocs("https://docs.gregale.dev/event-driven#invocations")
+		WithDocs("https://gregale.dev/docs/event-driven#invocations")
 }
 
 // ErrBuildProvenanceNotFound is the ADR-038 surface for a build

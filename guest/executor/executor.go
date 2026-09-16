@@ -92,7 +92,12 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	sourcePath := filepath.Join(workdir, sourceName)
 	inputPath := filepath.Join(workdir, "input.json")
 	resultPath := filepath.Join(workdir, "result.json")
-	if err := writeGuestFile(sourcePath, []byte(req.Source)); err != nil {
+	if len(req.Files) != 0 {
+		if err := stageBundle(workdir, req.Entrypoint, req.Files); err != nil {
+			return executionproto.Result{}, errors.New("execution bundle staging failed")
+		}
+		sourcePath = filepath.Join(workdir, filepath.FromSlash(req.Entrypoint))
+	} else if err := writeGuestFile(sourcePath, []byte(req.Source)); err != nil {
 		return executionproto.Result{}, errors.New("execution source staging failed")
 	}
 	if err := writeGuestFile(inputPath, req.Input); err != nil {
@@ -227,6 +232,22 @@ func writeGuestFile(path string, data []byte) error {
 		// If we are not PID 1/root, retain a readable mode for the current test
 		// user. In the production guest chown succeeds and the file stays 0600.
 		if err := os.Chmod(path, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func stageBundle(workdir, entrypoint string, files []api.ExecutionFile) error {
+	if err := api.ValidateExecutionBundle(entrypoint, files, api.ExecutionPlaintextFieldMaxBytes); err != nil {
+		return err
+	}
+	for _, file := range files {
+		filePath := filepath.Join(workdir, filepath.FromSlash(file.Path))
+		if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+			return err
+		}
+		if err := writeGuestFile(filePath, file.Content); err != nil {
 			return err
 		}
 	}
@@ -369,8 +390,9 @@ fs.writeFileSync(resultPath, encoded, { encoding: "utf8", mode: 0o600 });
 `
 
 const pythonWrapper = `
-import asyncio, importlib.util, inspect, json, sys
+import asyncio, importlib.util, inspect, json, os, sys
 source_path, input_path, result_path, execution_id, runtime, max_bytes = sys.argv[1:]
+sys.path.insert(0, os.path.dirname(source_path))
 spec = importlib.util.spec_from_file_location("faas_execution", source_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

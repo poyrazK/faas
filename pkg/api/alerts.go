@@ -212,10 +212,12 @@ type UpdateAlertRuleRequest struct {
 	CooldownMinutes *int     `json:"cooldown_minutes,omitempty"`
 }
 
-// RotateAlertRuleSecretRequest is the rotate-secret body. Reserved for
-// a future "customer supplies plaintext" variant; PR 3 always
-// server-mints via crypto/rand so the body is empty today.
-type RotateAlertRuleSecretRequest struct{}
+// RotateAlertRuleSecretRequest carries a caller-supplied replacement. The
+// receiver can install this value before the request, then atomically switch
+// Gregale to it. The write response and all later reads remain masked.
+type RotateAlertRuleSecretRequest struct {
+	WebhookSecret string `json:"webhook_secret"`
+}
 
 // AlertRuleResponse is the GET / list / create / update shape. It
 // mirrors state.AlertRule but drops the sealed ciphertext and renders

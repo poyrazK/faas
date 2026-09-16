@@ -175,6 +175,9 @@ jobs:
               ;;
           esac
 
+          scripts/ci/gcp-oslogin-preflight.sh \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" --instance "$GCP_INSTANCE"
+
           # RUNNING precedes sshd readiness. Bound the wait so a broken boot
           # fails this job instead of consuming credits until its timeout.
           for attempt in {1..24}; do
@@ -199,7 +202,7 @@ jobs:
           unit="faas-builder-acceptance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "mkdir -p '$remote_root'"
+            --command "mkdir -p '$remote_root' && sudo /usr/local/sbin/faas-canary-artifacts register --path '$remote_root' --run-id '${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --kind native-builder"
           gcloud compute scp "$RUNNER_TEMP/native-builder-bundle.tar.gz" \
             "$GCP_INSTANCE:$remote_root/bundle.tar.gz" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE"
@@ -218,7 +221,9 @@ jobs:
       - name: Remove remote transfer bundle
         if: always() && steps.source.outputs.run == 'true'
         run: |
+          set -euo pipefail
           remote_root="/var/tmp/faas-builder-acceptance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup_state="${{ job.status }}"
           log="$RUNNER_TEMP/native-builder-acceptance.log"
           gcloud compute scp "$GCP_INSTANCE:$remote_root/acceptance.log" "$log" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
@@ -227,7 +232,7 @@ jobs:
           fi
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "sudo rm -rf '$remote_root'" || true
+            --command "sudo /usr/local/sbin/faas-canary-artifacts finish --path '$remote_root' --state '$cleanup_state'"
 
       - name: Upload acceptance log
         if: always() && steps.source.outputs.run == 'true'
@@ -292,7 +297,7 @@ jobs:
           unit="faas-metal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "mkdir -p '$remote_root'"
+            --command "mkdir -p '$remote_root' && sudo /usr/local/sbin/faas-canary-artifacts register --path '$remote_root' --run-id '${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --kind native-metal-smoke"
           gcloud compute scp "$RUNNER_TEMP/native-metal-bundle.tar.gz" \
             "$GCP_INSTANCE:$remote_root/bundle.tar.gz" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE"
@@ -311,7 +316,9 @@ jobs:
       - name: Remove remote transfer bundle
         if: always()
         run: |
+          set -euo pipefail
           remote_root="/var/tmp/faas-metal-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup_state="${{ job.status }}"
           log="$RUNNER_TEMP/native-metal-smoke.log"
           gcloud compute scp "$GCP_INSTANCE:$remote_root/metal-smoke.log" "$log" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
@@ -320,7 +327,7 @@ jobs:
           fi
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "sudo rm -rf '$remote_root'" || true
+            --command "sudo /usr/local/sbin/faas-canary-artifacts finish --path '$remote_root' --state '$cleanup_state'"
 
       - name: Upload metal smoke log
         if: always()

@@ -88,11 +88,8 @@ func (m *MemStore) EnqueueSnapshotReplicasForNode(_ context.Context, nodeID stri
 		if exists {
 			if row.state == SnapshotReplicaReady && !row.readyAt.IsZero() && time.Since(row.readyAt) >= snapshotReplicaRevalidateAfter {
 				row.state = SnapshotReplicaPending
-				row.readyAt = time.Time{}
 				row.updatedAt = time.Now()
-				row.createdAt = row.updatedAt
 				m.snapshotReplicas[key] = row
-				created++
 			}
 			continue
 		}
@@ -150,9 +147,16 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 	if chosen == nil {
 		return SnapshotReplicaJob{}, ErrNotFound
 	}
+	revalidation := !chosenRow.readyAt.IsZero()
+	queuedAt := chosenRow.createdAt
+	if revalidation {
+		queuedAt = now
+	}
 	chosenRow.state = SnapshotReplicaSyncing
 	chosenRow.leaseToken = uuid.NewString()
-	chosenRow.attempts = min(chosenRow.attempts+1, snapshotReplicaAttemptCap)
+	if !revalidation {
+		chosenRow.attempts = min(chosenRow.attempts+1, snapshotReplicaAttemptCap)
+	}
 	chosenRow.updatedAt = now
 	chosenRow.nextAttemptAt = time.Time{}
 	chosenRow.lastError = ""
@@ -180,7 +184,8 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 		NodeID:            nodeID,
 		Region:            nodeRegion(node),
 		Attempts:          chosenRow.attempts,
-		QueuedAt:          chosenRow.createdAt,
+		Revalidation:      revalidation,
+		QueuedAt:          queuedAt,
 		LeaseToken:        chosenRow.leaseToken,
 	}, nil
 }

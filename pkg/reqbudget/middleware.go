@@ -253,7 +253,7 @@ func (cfg MiddlewareConfig) writeProblem(bw *budgetWriter, w http.ResponseWriter
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(http.StatusGatewayTimeout)
 	_, _ = w.Write([]byte(`{"type":"about:blank","title":"request budget exceeded","status":504,"code":"request_budget_exceeded","limit":"` +
-		b.Total.String() + `","docs_url":"https://docs.gregale.dev/errors/request-budget-exceeded"}`))
+		b.Total.String() + `","docs_url":"https://gregale.dev/docs/errors/request-budget-exceeded"}`))
 }
 
 // budgetWriter is a tiny http.ResponseWriter wrapper that tracks

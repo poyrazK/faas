@@ -4,6 +4,36 @@
     name: fail2ban
     state: restarted
 
+- name: restart rsyslog
+  ansible.builtin.systemd_service:
+    name: rsyslog
+    state: restarted
+
 - name: reload auditd rules
   ansible.builtin.command: augenrules --load
   changed_when: true
+
+- name: reload systemd for Caddy hardening
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# Ubuntu 24.04's systemd-journald unit does not implement ExecReload, so
+# `state: reloaded` fails after an otherwise successful first convergence.
+# Restart first so the configured bound governs the newly active file, then
+# rotate and vacuum archived files. The handler fires only when the drop-in
+# changes, so routine converges do not restart journald.
+- name: restart journald with bounded storage
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted
+  listen: converge bounded journal
+
+- name: rotate journal before enforcing new bound
+  ansible.builtin.command: journalctl --rotate
+  changed_when: true
+  listen: converge bounded journal
+
+- name: vacuum archived journal to configured bound
+  ansible.builtin.command: "journalctl --vacuum-size={{ faas_hardening_journal_system_max_use }}"
+  changed_when: true
+  listen: converge bounded journal

@@ -146,6 +146,14 @@ func TestMemStoreExecutionClaimCompletionAndPayloadErasure(t *testing.T) {
 	}); !errors.Is(err, ErrExecutionLeaseLost) {
 		t.Fatalf("stale terminal rewrite error = %v, want ErrExecutionLeaseLost", err)
 	}
+	usage, err := store.ExecutionUsageByAccount(context.Background(), account.ID, base)
+	if err != nil {
+		t.Fatalf("ExecutionUsageByAccount: %v", err)
+	}
+	if usage.Runs != 1 || usage.WallTimeMS != 3 || usage.CPUTimeMS != 2 || usage.PeakMemoryMB != 12 ||
+		usage.Succeeded != 1 || usage.Failed != 0 || usage.OutputBytes != int64(len(completed.Result)+len(completed.Stdout)) {
+		t.Fatalf("execution usage = %+v, want one idempotent succeeded ledger row", usage)
+	}
 }
 
 func TestMemStoreExecutionCancellationWaitsForTeardownAfterClaim(t *testing.T) {
@@ -307,5 +315,12 @@ func TestMemStoreExecutionSweepRecoveryNeverReplaysRunningCode(t *testing.T) {
 		FinishedAt: base.Add(301 * time.Millisecond),
 	}); !errors.Is(err, ErrExecutionLeaseLost) {
 		t.Fatalf("expired running lease completion error = %v", err)
+	}
+	usage, err := store.ExecutionUsageByAccount(context.Background(), account.ID, base)
+	if err != nil {
+		t.Fatalf("ExecutionUsageByAccount: %v", err)
+	}
+	if usage.Runs != 2 || usage.TimedOut != 1 || usage.Failed != 1 || usage.Succeeded != 0 {
+		t.Fatalf("sweep usage = %+v, want timed_out=1 failed=1 exactly once", usage)
 	}
 }

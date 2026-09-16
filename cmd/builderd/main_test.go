@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -24,7 +25,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/builderd"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -107,6 +110,49 @@ func TestDefaultDeps_NewResidentProbeWired(t *testing.T) {
 	}
 	if got := p.ResidentMB(); got <= 0 {
 		t.Errorf("empty-URL probe ResidentMB = %d, want > 0 (must deny opportunistic)", got)
+	}
+}
+
+func TestResolveBuilderBasePath_UsesCanonicalLocalStorageCopy(t *testing.T) {
+	root := t.TempDir()
+	be, err := storage.NewLocalStorageBackend(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, sched.BaseKey("builder"))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("base"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveBuilderBasePath("/srv/fc/base/builder-base.ext4", be)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, local, err := be.LocalPath(sched.BaseKey("builder"))
+	if err != nil || !local {
+		t.Fatalf("LocalPath(builder) = %q, %v, %v", want, local, err)
+	}
+	if got != want {
+		t.Fatalf("resolveBuilderBasePath = %q, want local canonical path %q", got, want)
+	}
+}
+
+func TestResolveBuilderBasePath_RejectsLegacyFallbackOnSplitBox(t *testing.T) {
+	root := t.TempDir()
+	be, err := storage.NewLocalStorageBackend(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAAS_STORAGE_ROOT", root)
+	got, err := resolveBuilderBasePath("/srv/fc/base/builder-base.ext4", be)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "base", "runner-builder-"+runtime.GOARCH+".ext4")
+	if got != want {
+		t.Fatalf("resolveBuilderBasePath = %q, want canonical fallback %q", got, want)
 	}
 }
 

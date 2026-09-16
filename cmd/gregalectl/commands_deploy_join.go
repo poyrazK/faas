@@ -28,46 +28,52 @@ import (
 	"github.com/onebox-faas/faas/pkg/nodejoin"
 	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"gopkg.in/yaml.v3"
 )
 
 type deployJoinOptions struct {
-	ManifestFile          string
-	Node                  string
-	SSHHost               string
-	SSHUser               string
-	SSHPort               int
-	SSHHostKeySHA256      string
-	SSHKey                string
-	FleetBundleFile       string
-	FleetBundleSignature  string
-	FleetReplayState      string
-	SSHKnownHostsFile     string
-	ReleaseTarball        string
-	ReleaseGitSHA         string
-	BootstrapBinary       string
-	CosignBinary          string
-	PKISource             string
-	SignKeySource         string
-	VerifyKeySource       string
-	ComputeDBEnvSource    string
-	StorageEnvSource      string
-	RuntimeBasesEnvSource string
-	StorageDevice         string
-	FormatStorage         bool
-	BoxAgeKeySource       string
-	RcloneEnvelope        string
-	ArchiveEnvelope       string
-	ArtifactDir           string
-	AnsibleVarsFile       string
-	RepoRoot              string
-	SkipFleetPreflight    bool
-	Resume                bool
-	Timeout               time.Duration
-	LeaseTTL              time.Duration
-	DryRun                bool
-	Yes                   bool
-	JSON                  bool
+	ManifestFile            string
+	Node                    string
+	SSHHost                 string
+	SSHUser                 string
+	SSHPort                 int
+	SSHHostKeySHA256        string
+	SSHKey                  string
+	SSHKnownHostsSource     string
+	FleetBundleFile         string
+	FleetBundleSignature    string
+	FleetReplayState        string
+	SSHKnownHostsFile       string
+	ReleaseTarball          string
+	ReleaseGitSHA           string
+	BootstrapBinary         string
+	CosignBinary            string
+	PKISource               string
+	SignKeySource           string
+	VerifyKeySource         string
+	ComputeDBEnvSource      string
+	StorageEnvSource        string
+	RuntimeBasesEnvSource   string
+	StorageDevice           string
+	FormatStorage           bool
+	BoxAgeKeySource         string
+	FleetAgeKeySource       string
+	FleetAgeRecipientSource string
+	RcloneEnvelope          string
+	ArchiveEnvelope         string
+	ArtifactDir             string
+	AnsibleVarsFile         string
+	RepoRoot                string
+	PostgresOverlapNodes    int
+	SkipFleetPreflight      bool
+	Resume                  bool
+	Timeout                 time.Duration
+	LeaseTTL                time.Duration
+	DryRun                  bool
+	Yes                     bool
+	JSON                    bool
 }
 
 type deployJoinReport struct {
@@ -90,6 +96,7 @@ type joinTiming struct {
 var nodeJoinStoreOpener = openNodeJoinStore
 
 var joinControlPlaneVerifier = verifyAndActivateJoinedNode
+var joinControlPlaneDeactivator = deactivateJoinedNode
 
 func openNodeJoinStore() (nodejoin.Store, func(), error) {
 	pool, err := openPgPoolFromEnv(context.Background())
@@ -131,6 +138,7 @@ func cmdDeployJoinNode(args []string) int {
 	sshPort := fs.Int("ssh-port", 0, "SSH port for the adopted machine (default: 22 without --fleet-bundle-file)")
 	sshHostKey := fs.String("ssh-host-key-sha256", "", "expected OpenSSH SHA256 host-key fingerprint")
 	sshKey := fs.String("ssh-key", "", "optional SSH private key used by Ansible")
+	sshKnownHosts := fs.String("ssh-known-hosts-file", "", "operator-verified known_hosts file covering the complete manifest fleet")
 	fleetBundleFile := fs.String("fleet-bundle-file", "", "signed FleetEnrollmentBundle YAML/JSON authorization")
 	fleetBundleSignature := fs.String("fleet-bundle-signature", "", "detached cosign signature for --fleet-bundle-file")
 	fleetReplayState := fs.String("fleet-replay-state", "", "durable single-use enrollment state directory (required with --fleet-bundle-file for apply)")
@@ -147,6 +155,8 @@ func cmdDeployJoinNode(args []string) int {
 	storageDevice := fs.String("storage-device", "", "optional fast-root block device (must be an absolute path; manifest host value is used when omitted)")
 	formatStorage := fs.Bool("format-storage", false, "format an explicitly supplied blank storage device as XFS with reflink support")
 	boxAgeKey := fs.String("box-age-key", "", "optional box-age identity source (artifact-dir convention: box-age-key)")
+	fleetAgeKey := fs.String("fleet-age-key", "", "shared fleet.age identity (required for apply; artifact-dir convention: fleet.age)")
+	fleetAgeRecipient := fs.String("fleet-age-recipient", "", "fleet.age.pub matching --fleet-age-key (required for apply)")
 	rcloneEnvelope := fs.String("rclone-envelope", "", "optional encrypted rclone.conf envelope (artifact-dir convention: rclone.conf.age)")
 	archiveEnvelope := fs.String("archive-creds-envelope", "", "optional encrypted archive credentials envelope (artifact-dir convention: archive-creds.json.age)")
 	artifactDir := fs.String("artifact-dir", "", "directory containing the standard release, key, trust-bundle, and bootstrap assets")
@@ -168,41 +178,45 @@ func cmdDeployJoinNode(args []string) int {
 	}
 
 	opts := deployJoinOptions{
-		ManifestFile:          *manifestFile,
-		Node:                  *node,
-		SSHHost:               *sshHost,
-		SSHUser:               *sshUser,
-		SSHPort:               *sshPort,
-		SSHHostKeySHA256:      *sshHostKey,
-		SSHKey:                *sshKey,
-		FleetBundleFile:       *fleetBundleFile,
-		FleetBundleSignature:  *fleetBundleSignature,
-		FleetReplayState:      *fleetReplayState,
-		ReleaseTarball:        *releaseTarball,
-		ReleaseGitSHA:         *releaseGitSHA,
-		BootstrapBinary:       *bootstrapBinary,
-		CosignBinary:          *cosignBinary,
-		PKISource:             *pkiSource,
-		SignKeySource:         *signKey,
-		VerifyKeySource:       *verifyKey,
-		ComputeDBEnvSource:    *computeDBEnv,
-		StorageEnvSource:      *storageEnv,
-		RuntimeBasesEnvSource: *runtimeBasesEnv,
-		StorageDevice:         *storageDevice,
-		FormatStorage:         *formatStorage,
-		BoxAgeKeySource:       *boxAgeKey,
-		RcloneEnvelope:        *rcloneEnvelope,
-		ArchiveEnvelope:       *archiveEnvelope,
-		ArtifactDir:           *artifactDir,
-		AnsibleVarsFile:       *ansibleVars,
-		RepoRoot:              *repoRoot,
-		SkipFleetPreflight:    *skipPreflight,
-		Resume:                *resume,
-		Timeout:               *timeout,
-		LeaseTTL:              *leaseTTL,
-		DryRun:                *dryRun,
-		Yes:                   *yes,
-		JSON:                  *jsonOut || jsonOutput,
+		ManifestFile:            *manifestFile,
+		Node:                    *node,
+		SSHHost:                 *sshHost,
+		SSHUser:                 *sshUser,
+		SSHPort:                 *sshPort,
+		SSHHostKeySHA256:        *sshHostKey,
+		SSHKey:                  *sshKey,
+		SSHKnownHostsSource:     *sshKnownHosts,
+		FleetBundleFile:         *fleetBundleFile,
+		FleetBundleSignature:    *fleetBundleSignature,
+		FleetReplayState:        *fleetReplayState,
+		ReleaseTarball:          *releaseTarball,
+		ReleaseGitSHA:           *releaseGitSHA,
+		BootstrapBinary:         *bootstrapBinary,
+		CosignBinary:            *cosignBinary,
+		PKISource:               *pkiSource,
+		SignKeySource:           *signKey,
+		VerifyKeySource:         *verifyKey,
+		ComputeDBEnvSource:      *computeDBEnv,
+		StorageEnvSource:        *storageEnv,
+		RuntimeBasesEnvSource:   *runtimeBasesEnv,
+		StorageDevice:           *storageDevice,
+		FormatStorage:           *formatStorage,
+		BoxAgeKeySource:         *boxAgeKey,
+		FleetAgeKeySource:       *fleetAgeKey,
+		FleetAgeRecipientSource: *fleetAgeRecipient,
+		RcloneEnvelope:          *rcloneEnvelope,
+		ArchiveEnvelope:         *archiveEnvelope,
+		ArtifactDir:             *artifactDir,
+		AnsibleVarsFile:         *ansibleVars,
+		RepoRoot:                *repoRoot,
+		PostgresOverlapNodes:    1,
+		SkipFleetPreflight:      *skipPreflight,
+		Resume:                  *resume,
+		Timeout:                 *timeout,
+		LeaseTTL:                *leaseTTL,
+		DryRun:                  *dryRun,
+		Yes:                     *yes,
+		JSON:                    *jsonOut || jsonOutput,
 	}
 	if opts.FleetBundleFile == "" {
 		if opts.SSHUser == "" {
@@ -369,6 +383,7 @@ func executeDeployJoin(opts deployJoinOptions, report *deployJoinReport) (int, e
 }
 
 func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
+	rolloutOverlapNodes := postgresRolloutOverlapNodes(opts.PostgresOverlapNodes)
 	report := deployJoinReport{
 		Node:           opts.Node,
 		DatabaseNode:   canonicalComputeNodeName(opts.Node, roleComputeOnly),
@@ -386,10 +401,14 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 			"converge the production compute-only Ansible role when that contract is absent or stale",
 			"install the signed release while the database row remains drained",
 			"render configuration, initialize host identity, and unseal supplied backup envelopes",
+			"stage and verify the fleet unseal identity while the node remains drained",
 			"wait for sockets, gateway, and systemd readiness",
 			"verify every active compute daemon executes the installed release",
 			"run the node-scoped doctor and verify the control-plane row before activation",
 		},
+	}
+	if rolloutOverlapNodes < 1 {
+		return report, errors.New("PostgreSQL rollout overlap must be positive")
 	}
 	if opts.ManifestFile == "" {
 		return report, errors.New("--manifest-file is required")
@@ -467,15 +486,17 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 		return report, nil
 	}
 	for name, path := range map[string]string{
-		"release-tarball":   opts.ReleaseTarball,
-		"bootstrap-binary":  opts.BootstrapBinary,
-		"cosign-binary":     opts.CosignBinary,
-		"pki-dir":           opts.PKISource,
-		"sign-key":          opts.SignKeySource,
-		"verify-key":        opts.VerifyKeySource,
-		"compute-db-env":    opts.ComputeDBEnvSource,
-		"storage-env":       opts.StorageEnvSource,
-		"runtime-bases-env": opts.RuntimeBasesEnvSource,
+		"release-tarball":     opts.ReleaseTarball,
+		"bootstrap-binary":    opts.BootstrapBinary,
+		"cosign-binary":       opts.CosignBinary,
+		"pki-dir":             opts.PKISource,
+		"sign-key":            opts.SignKeySource,
+		"verify-key":          opts.VerifyKeySource,
+		"compute-db-env":      opts.ComputeDBEnvSource,
+		"storage-env":         opts.StorageEnvSource,
+		"runtime-bases-env":   opts.RuntimeBasesEnvSource,
+		"fleet-age-key":       opts.FleetAgeKeySource,
+		"fleet-age-recipient": opts.FleetAgeRecipientSource,
 	} {
 		if path == "" {
 			return report, fmt.Errorf("--%s is required for apply", name)
@@ -543,9 +564,17 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	if err := validateRuntimeBasesEnv(opts.RuntimeBasesEnvSource, m.Release.RuntimeBaseRefs); err != nil {
 		return report, fmt.Errorf("--runtime-bases-env: %w", err)
 	}
+	if err := validateFleetAgePair(opts.FleetAgeKeySource, opts.FleetAgeRecipientSource); err != nil {
+		return report, err
+	}
 	if opts.AnsibleVarsFile != "" {
 		if _, err := os.Stat(opts.AnsibleVarsFile); err != nil {
 			return report, fmt.Errorf("--ansible-vars-file: %w", err)
+		}
+	}
+	if opts.SSHKnownHostsSource != "" {
+		if _, err := os.Stat(opts.SSHKnownHostsSource); err != nil {
+			return report, fmt.Errorf("--ssh-known-hosts-file: %w", err)
 		}
 	}
 	if _, err := releaseAssetPath(opts.ReleaseTarball, releaseSigName); err != nil {
@@ -555,6 +584,28 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 		return report, err
 	}
 	return report, nil
+}
+
+func postgresRolloutOverlapNodes(configured int) int {
+	if configured == 0 {
+		return 1
+	}
+	return configured
+}
+
+func validateFleetAgePair(identityPath, recipientPath string) error {
+	identity, err := secretbox.LoadHostKey(identityPath)
+	if err != nil {
+		return fmt.Errorf("--fleet-age-key: %w", err)
+	}
+	recipient, err := secretbox.LoadRecipient(recipientPath)
+	if err != nil {
+		return fmt.Errorf("--fleet-age-recipient: %w", err)
+	}
+	if identity.Recipient().String() != recipient.String() {
+		return errors.New("--fleet-age-key and --fleet-age-recipient do not match")
+	}
+	return nil
 }
 
 func deployJoinApply(opts *deployJoinOptions, report *deployJoinReport) (int, error) {
@@ -581,6 +632,18 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	defer func() { _ = os.RemoveAll(tempRoot) }()
 	if opts.SSHHostKeySHA256 != "" {
 		knownHostsPath := filepath.Join(tempRoot, "known_hosts")
+		if opts.SSHKnownHostsSource != "" {
+			body, readErr := os.ReadFile(opts.SSHKnownHostsSource)
+			if readErr != nil {
+				return 3, fmt.Errorf("read fleet known_hosts: %w", readErr)
+			}
+			if len(body) > 0 && body[len(body)-1] != '\n' {
+				body = append(body, '\n')
+			}
+			if writeErr := os.WriteFile(knownHostsPath, body, 0o600); writeErr != nil {
+				return 3, fmt.Errorf("seed fleet known_hosts: %w", writeErr)
+			}
+		}
 		if err := verifySSHHostKey(ctx, *opts, knownHostsPath); err != nil {
 			return 3, fmt.Errorf("verify SSH host key: %w", err)
 		}
@@ -590,6 +653,15 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	m, err := manifest.Load(opts.ManifestFile)
 	if err != nil {
 		return 1, err
+	}
+	peerContractSHA256, err := joinPeerContractHash(ansibleDir, m, opts.AnsibleVarsFile, opts.StorageEnvSource, opts.FleetAgeKeySource, opts.FleetAgeRecipientSource)
+	if err != nil {
+		return 3, err
+	}
+	if opts.SSHKnownHostsSource != "" {
+		if err := requireFleetKnownHosts(opts.SSHKnownHostsFile, m); err != nil {
+			return 3, err
+		}
 	}
 	expectedManifestHash, err := joinManifestHash(opts.ManifestFile)
 	if err != nil {
@@ -661,30 +733,34 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		return 3, err
 	}
 	vars := map[string]any{
-		"faas_join_inventory_name":            opts.Node,
-		"faas_join_database_node":             report.DatabaseNode,
-		"faas_join_release_git_sha":           report.ReleaseGitSHA,
-		"faas_join_manifest_source":           opts.ManifestFile,
-		"faas_join_bootstrap_binary_source":   opts.BootstrapBinary,
-		"faas_join_cosign_binary_source":      opts.CosignBinary,
-		"faas_join_pki_source":                trustRoot,
-		"faas_join_sign_key_source":           opts.SignKeySource,
-		"faas_join_verify_key_source":         opts.VerifyKeySource,
-		"faas_join_compute_db_env_source":     opts.ComputeDBEnvSource,
-		"faas_join_storage_env_source":        opts.StorageEnvSource,
-		"faas_join_runtime_bases_env_source":  opts.RuntimeBasesEnvSource,
-		"faas_join_storage_device":            opts.StorageDevice,
-		"faas_join_format_storage":            opts.FormatStorage,
-		"faas_join_box_age_key_source":        opts.BoxAgeKeySource,
-		"faas_join_rclone_envelope_source":    opts.RcloneEnvelope,
-		"faas_join_archive_envelope_source":   opts.ArchiveEnvelope,
-		"faas_join_node_key_source":           nodeKeySource,
-		"faas_join_node_pub_source":           nodePubSource,
-		"faas_join_release_tarball_source":    opts.ReleaseTarball,
-		"faas_join_release_signature_source":  signature,
-		"faas_join_release_sbom_source":       sbom,
-		"faas_join_builder_base_ref":          builderBaseRef,
-		"faas_join_bootstrap_contract_sha256": bootstrapContractSHA256,
+		"faas_join_inventory_name":             opts.Node,
+		"faas_join_database_node":              report.DatabaseNode,
+		"faas_join_release_git_sha":            report.ReleaseGitSHA,
+		"faas_join_manifest_source":            opts.ManifestFile,
+		"faas_join_bootstrap_binary_source":    opts.BootstrapBinary,
+		"faas_join_cosign_binary_source":       opts.CosignBinary,
+		"faas_join_pki_source":                 trustRoot,
+		"faas_join_sign_key_source":            opts.SignKeySource,
+		"faas_join_verify_key_source":          opts.VerifyKeySource,
+		"faas_join_compute_db_env_source":      opts.ComputeDBEnvSource,
+		"faas_join_storage_env_source":         opts.StorageEnvSource,
+		"faas_join_runtime_bases_env_source":   opts.RuntimeBasesEnvSource,
+		"faas_join_storage_device":             opts.StorageDevice,
+		"faas_join_format_storage":             opts.FormatStorage,
+		"faas_join_box_age_key_source":         opts.BoxAgeKeySource,
+		"faas_join_fleet_age_key_source":       opts.FleetAgeKeySource,
+		"faas_join_fleet_age_recipient_source": opts.FleetAgeRecipientSource,
+		"faas_join_rclone_envelope_source":     opts.RcloneEnvelope,
+		"faas_join_archive_envelope_source":    opts.ArchiveEnvelope,
+		"faas_join_node_key_source":            nodeKeySource,
+		"faas_join_node_pub_source":            nodePubSource,
+		"faas_join_release_tarball_source":     opts.ReleaseTarball,
+		"faas_join_release_signature_source":   signature,
+		"faas_join_release_sbom_source":        sbom,
+		"faas_join_builder_base_ref":           builderBaseRef,
+		"faas_join_bootstrap_contract_sha256":  bootstrapContractSHA256,
+		"faas_join_peer_contract_sha256":       peerContractSHA256,
+		"faas_postgres_rollout_overlap_nodes":  postgresRolloutOverlapNodes(opts.PostgresOverlapNodes),
 		// A clean provider-created host does not have the release binary or
 		// rendered daemon configuration yet. Defer bootstrap service handlers
 		// and readiness verification until node_join.yml has installed and
@@ -703,6 +779,9 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	report.Timings = append(report.Timings, joinTiming{Phase: "prepare_local", DurationMS: localPrepareDuration.Milliseconds()})
 
 	common := []string{"-i", filepath.Join(tempRoot, "inventory", "hosts.ini")}
+	if opts.SSHKnownHostsSource != "" {
+		common = append(common, "--ssh-common-args", "-o UserKnownHostsFile="+opts.SSHKnownHostsFile+" -o StrictHostKeyChecking=yes")
+	}
 	if opts.AnsibleVarsFile != "" {
 		common = append(common, "-e", "@"+opts.AnsibleVarsFile)
 	}
@@ -754,17 +833,86 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if verifyErr != nil {
 		return 3, fmt.Errorf("control-plane readiness gate: %w", verifyErr)
 	}
+	// The accepted SBOM baseline advances only after the controller has
+	// verified and activated the database row. If the remote write fails,
+	// immediately return the row to drained so an unaccepted release cannot
+	// remain eligible for customer admission.
+	acceptArgs := append(append([]string{}, common...), "--limit", opts.Node, filepath.Join(ansibleDir, "node_join_accept_release.yml"))
+	phaseStarted = time.Now()
+	acceptErr := ansiblePlaybookRunner(ctx, ansibleDir, acceptArgs)
+	report.Timings = append(report.Timings, joinTiming{Phase: "accept_release_baseline", DurationMS: time.Since(phaseStarted).Milliseconds()})
+	if acceptErr != nil {
+		deactivateErr := joinControlPlaneDeactivator(context.WithoutCancel(ctx), report)
+		return 3, errors.Join(fmt.Errorf("accept activated release baseline: %w", acceptErr), deactivateErr)
+	}
 	report.Applied = true
 	return 0, nil
 }
 
-func joinBootstrapContractHash(ansibleDir string) (string, error) {
+func joinPeerContractHash(ansibleDir string, m *manifest.Manifest, inputFiles ...string) (string, error) {
 	roots := []string{
-		"bootstrap.yml",
-		"group_vars",
-		"node_join.yml",
-		"requirements.yml",
-		"roles",
+		"node_join_control_plane.yml",
+		"roles/_shared",
+		"roles/postgres_capacity",
+		"roles/nftables",
+		"roles/control_plane_peer_access",
+	}
+	var paths []string
+	for _, root := range roots {
+		path := filepath.Join(ansibleDir, root)
+		if err := filepath.WalkDir(path, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !entry.IsDir() {
+				paths = append(paths, path)
+			}
+			return nil
+		}); err != nil {
+			return "", fmt.Errorf("walk control-plane peer contract %s: %w", root, err)
+		}
+	}
+	sort.Strings(paths)
+	hash := sha256.New()
+	fleetBody, err := json.Marshal(m.Fleet)
+	if err != nil {
+		return "", fmt.Errorf("encode fleet peer contract: %w", err)
+	}
+	_, _ = hash.Write([]byte("fleet\x00"))
+	_, _ = hash.Write(fleetBody)
+	_, _ = hash.Write([]byte{0})
+	for _, path := range append(paths, inputFiles...) {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return "", fmt.Errorf("read control-plane peer contract input %s: %w", path, readErr)
+		}
+		rel, relErr := filepath.Rel(ansibleDir, path)
+		if relErr != nil || strings.HasPrefix(rel, "..") {
+			rel = filepath.Base(path)
+		}
+		_, _ = io.WriteString(hash, filepath.ToSlash(rel))
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write(body)
+		_, _ = hash.Write([]byte{0})
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func joinBootstrapContractHash(ansibleDir string) (string, error) {
+	bootstrapBody, err := os.ReadFile(filepath.Join(ansibleDir, "bootstrap.yml"))
+	if err != nil {
+		return "", fmt.Errorf("read compute bootstrap playbook: %w", err)
+	}
+	computePlaybook, roleNames, err := computeBootstrapContract(bootstrapBody)
+	if err != nil {
+		return "", fmt.Errorf("select compute bootstrap contract: %w", err)
+	}
+	roots := []string{"node_join.yml", "requirements.yml", "roles/_shared"}
+	for _, roleName := range roleNames {
+		roots = append(roots, filepath.Join("roles", roleName))
 	}
 	var paths []string
 	for _, root := range roots {
@@ -784,6 +932,15 @@ func joinBootstrapContractHash(ansibleDir string) (string, error) {
 	}
 	sort.Strings(paths)
 	hash := sha256.New()
+	if _, err := io.WriteString(hash, "bootstrap.compute.yml\x00"); err != nil {
+		return "", fmt.Errorf("hash compute bootstrap path: %w", err)
+	}
+	if _, err := hash.Write(computePlaybook); err != nil {
+		return "", fmt.Errorf("hash compute bootstrap body: %w", err)
+	}
+	if _, err := hash.Write([]byte{0}); err != nil {
+		return "", fmt.Errorf("hash compute bootstrap separator: %w", err)
+	}
 	for _, path := range paths {
 		rel, err := filepath.Rel(ansibleDir, path)
 		if err != nil {
@@ -807,6 +964,75 @@ func joinBootstrapContractHash(ansibleDir string) (string, error) {
 		}
 	}
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// computeBootstrapContract extracts only plays that target compute_nodes and
+// the role names those plays reference. Control-plane-only role changes must
+// not invalidate every managed compute host and turn a release rollout into a
+// full OS bootstrap. The selected play bodies are part of the hash, so adding,
+// removing, reordering, or changing a compute pre-task still invalidates the
+// contract without maintaining a second handwritten role list.
+func computeBootstrapContract(body []byte) ([]byte, []string, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal(body, &document); err != nil {
+		return nil, nil, err
+	}
+	if len(document.Content) != 1 || document.Content[0].Kind != yaml.SequenceNode {
+		return nil, nil, errors.New("bootstrap.yml must contain a sequence of plays")
+	}
+	selected := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	roles := make(map[string]struct{})
+	for _, play := range document.Content[0].Content {
+		if play.Kind != yaml.MappingNode {
+			continue
+		}
+		hosts := mappingValue(play, "hosts")
+		if hosts == nil || !strings.Contains(hosts.Value, "compute_nodes") {
+			continue
+		}
+		selected.Content = append(selected.Content, play)
+		roleList := mappingValue(play, "roles")
+		if roleList == nil || roleList.Kind != yaml.SequenceNode {
+			continue
+		}
+		for _, item := range roleList.Content {
+			var name string
+			switch item.Kind {
+			case yaml.ScalarNode:
+				name = item.Value
+			case yaml.MappingNode:
+				if role := mappingValue(item, "role"); role != nil {
+					name = role.Value
+				}
+			}
+			name = strings.TrimSpace(name)
+			if name != "" {
+				roles[name] = struct{}{}
+			}
+		}
+	}
+	if len(selected.Content) == 0 {
+		return nil, nil, errors.New("bootstrap.yml has no compute_nodes play")
+	}
+	roleNames := make([]string, 0, len(roles))
+	for name := range roles {
+		roleNames = append(roleNames, name)
+	}
+	sort.Strings(roleNames)
+	selectedBody, err := yaml.Marshal(selected)
+	if err != nil {
+		return nil, nil, err
+	}
+	return selectedBody, roleNames, nil
+}
+
+func mappingValue(node *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
 }
 
 func registerJoinReleaseBundle(ctx context.Context, tarballPath, expectedGitSHA, expectedManifestHash string) error {
@@ -918,10 +1144,35 @@ func verifyAndActivateJoinedNode(ctx context.Context, report *deployJoinReport, 
 	if err := validateComputeTargetURL(row.TargetURL); err != nil {
 		return err
 	}
+	// Establish a fresh liveness baseline before making a long-idle standby
+	// admitting. Peer schedds compare last_heartbeat_at with the 90-second
+	// staleness budget and can observe the activation immediately. Leaving the
+	// old timestamp in place lets that observer demote an otherwise healthy
+	// node before its owner runs its first heartbeat tick. Nodes older than the
+	// recovery inventory window then cannot recover without operator action.
+	if err := store.HeartbeatComputeNode(ctx, row.ID); err != nil {
+		return fmt.Errorf("refresh row %s heartbeat before activation: %w", row.ID, err)
+	}
 	if !row.Active {
 		if err := store.SetComputeNodeActive(ctx, row.ID, true); err != nil {
 			return fmt.Errorf("activate row %s: %w", row.ID, err)
 		}
+	}
+	return nil
+}
+
+func deactivateJoinedNode(ctx context.Context, report *deployJoinReport) error {
+	store, closeFn, err := computeNodesStoreOpener()
+	if err != nil {
+		return fmt.Errorf("re-drain %s after baseline failure: %w", report.DatabaseNode, err)
+	}
+	defer closeFn()
+	row, err := store.ComputeNodeByName(ctx, report.DatabaseNode)
+	if err != nil {
+		return fmt.Errorf("re-drain lookup %s: %w", report.DatabaseNode, err)
+	}
+	if err := store.SetComputeNodeActive(ctx, row.ID, false); err != nil {
+		return fmt.Errorf("re-drain row %s: %w", row.ID, err)
 	}
 	return nil
 }
@@ -957,18 +1208,50 @@ func verifySSHHostKey(ctx context.Context, opts deployJoinOptions, knownHostsPat
 	if len(keys) == 0 {
 		return fmt.Errorf("ssh-keyscan %s:%d returned no host keys", opts.SSHHost, opts.SSHPort)
 	}
-	if err := os.WriteFile(knownHostsPath, keys, 0o600); err != nil {
-		return fmt.Errorf("write temporary known_hosts: %w", err)
+	observedPath := knownHostsPath + ".observed"
+	if err := os.WriteFile(observedPath, keys, 0o600); err != nil {
+		return fmt.Errorf("write observed SSH host keys: %w", err)
 	}
-	fingerprint := exec.CommandContext(ctx, "ssh-keygen", "-lf", knownHostsPath, "-E", "sha256")
+	defer func() { _ = os.Remove(observedPath) }()
+	fingerprint := exec.CommandContext(ctx, "ssh-keygen", "-lf", observedPath, "-E", "sha256")
 	fingerprints, err := fingerprint.Output()
 	if err != nil {
 		return fmt.Errorf("ssh-keygen fingerprint: %w", err)
 	}
-	if fingerprintMatches(string(fingerprints), opts.SSHHostKeySHA256) {
-		return nil
+	if !fingerprintMatches(string(fingerprints), opts.SSHHostKeySHA256) {
+		return fmt.Errorf("observed host key fingerprint does not match signed %s", opts.SSHHostKeySHA256)
 	}
-	return fmt.Errorf("observed host key fingerprint does not match signed %s", opts.SSHHostKeySHA256)
+	knownHosts, err := os.OpenFile(knownHostsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open temporary known_hosts: %w", err)
+	}
+	if _, err := knownHosts.Write(keys); err != nil {
+		_ = knownHosts.Close()
+		return fmt.Errorf("append temporary known_hosts: %w", err)
+	}
+	if err := knownHosts.Close(); err != nil {
+		return fmt.Errorf("close temporary known_hosts: %w", err)
+	}
+	return nil
+}
+
+// requireFleetKnownHosts prevents a per-node rollout from silently falling
+// back to a long-lived runner's ambient SSH trust while the fleet preflight
+// contacts peers. Every stable manifest address must appear in the
+// operator-verified file. The selected provider address is appended only
+// after its observed key matches the separately authorized fingerprint.
+func requireFleetKnownHosts(path string, m *manifest.Manifest) error {
+	for _, host := range m.Fleet.Hosts {
+		address := strings.TrimSpace(host.Address)
+		if address == "" {
+			address = strings.TrimSpace(host.Name)
+		}
+		lookup := exec.Command("ssh-keygen", "-F", address, "-f", path)
+		if err := lookup.Run(); err != nil {
+			return fmt.Errorf("fleet known_hosts has no verified key for manifest host %s (%s)", host.Name, address)
+		}
+	}
+	return nil
 }
 
 func fingerprintMatches(output, expected string) bool {
@@ -1016,6 +1299,8 @@ func resolveJoinArtifacts(opts *deployJoinOptions) {
 	resolve(&opts.StorageEnvSource, "storage.env")
 	resolve(&opts.RuntimeBasesEnvSource, "runtime-bases.env")
 	resolveIfPresent(&opts.BoxAgeKeySource, "box-age-key")
+	resolve(&opts.FleetAgeKeySource, "fleet.age")
+	resolve(&opts.FleetAgeRecipientSource, "fleet.age.pub")
 	resolveIfPresent(&opts.RcloneEnvelope, "rclone.conf.age")
 	resolveIfPresent(&opts.ArchiveEnvelope, "archive-creds.json.age")
 }

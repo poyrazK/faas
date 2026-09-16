@@ -17,7 +17,7 @@ import (
 //   - turbo.json    (pipeline / $pipeline form)
 //   - nx.json       (projects)
 //   - go.work       (use ( ... ))
-//   - Cargo.toml    ([workspace] members) [out of scope this phase]
+//   - Cargo.toml    ([workspace] members and exclude)
 //
 // Each workspace member has its directory treated as RootDir —
 // the merge rule later pairs on (RootDir, Name) so a workspace
@@ -27,7 +27,7 @@ import (
 // Pure: no fsys error escalates to Scan. A missing manifest file
 // is a quiet skip.
 func detectWorkspaces(fsys fs.FS) ([]workloadSeed, []string, error) {
-	return detectWorkspacesImpl(fsys)
+	return detectWorkspacesImpl(fsys, false)
 }
 
 // WorkspaceMemberPaths returns the repository-relative paths of workspace
@@ -36,7 +36,7 @@ func detectWorkspaces(fsys fs.FS) ([]workloadSeed, []string, error) {
 // a deploy selected with --path expands to a repository context only when it
 // points at a buildable workspace member.
 func WorkspaceMemberPaths(fsys fs.FS) ([]string, error) {
-	seeds, _, err := detectWorkspacesImpl(fsys)
+	seeds, _, err := detectWorkspacesImpl(fsys, true)
 	if err != nil {
 		return nil, err
 	}

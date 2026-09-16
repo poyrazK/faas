@@ -318,6 +318,8 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderOrgDetail(w, r, log, acct, slug)
 		case path == dashboardAccountPath:
 			s.renderAccount(w, r, log, acct)
+		case path == "/dashboard/projects" || path == "/dashboard/projects/":
+			s.renderProjects(w, r, log, acct)
 		case len(path) > len("/dashboard/projects/") &&
 			path[:len("/dashboard/projects/")] == "/dashboard/projects/":
 			// ADR-124 affected-workloads preview. The dispatcher
@@ -334,6 +336,10 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// landing gets a clean seam without colliding with
 			// /dashboard/projects/{slug}/preview/apply.
 			const previewSuffix = "/preview"
+			if slug != "" && !strings.ContainsRune(slug, '/') && api.ValidProjectSlug(slug) {
+				s.renderProjectDetail(w, r, log, acct, slug)
+				return
+			}
 			if slug == "" || !strings.HasSuffix(slug, previewSuffix) {
 				http.NotFound(w, r)
 				return
@@ -499,7 +505,17 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 	// issue 100 PromQL calls per render. nil = no badge.
 	badges := s.fetchDashboardSLOBadges(ctx, log, items, acct)
 	attachSLOBadges(items, badges)
-	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: dashboardAccountView(view, len(apps)), Data: items}
+	accountView := dashboardAccountView(view, len(apps))
+	if snapshot, rateErr := s.readAccountDeployRate(ctx, acct, timeNow().UTC()); rateErr != nil {
+		log.Warn("dashboard renderAppsList: account deploy rate", "account_id", acct.ID, "err", rateErr)
+	} else {
+		accountView.DeployRateUsed = snapshot.Used
+		accountView.DeployRateLimit = snapshot.Limit
+		accountView.DeployRateRemaining = snapshot.Remaining
+		accountView.DeployRateResetsAt = snapshot.WindowResetsAt.UTC().Format(time.RFC3339)
+		accountView.DeployRateResetsLabel = snapshot.WindowResetsAt.UTC().Format("15:04 UTC")
+	}
+	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: accountView, Data: items}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
@@ -1140,6 +1156,9 @@ func (s *server) fetchDashboardPresets(ctx context.Context, log *slog.Logger, ac
 	}
 	out := make([]dashboard.AlertPresetItem, 0, len(rows))
 	for _, p := range rows {
+		if isOperatorOnlyAlertPreset(p.Name) {
+			continue
+		}
 		meetsPlan := api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(p.MinimumPlan))
 		enabled := p.EnabledInCatalog && meetsPlan
 		item := dashboard.AlertPresetItem{
@@ -1650,7 +1669,7 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 			CreatedAt: k.CreatedAt.UTC().Format("2006-01-02"),
 			CanRevoke: k.Status != string(state.APIKeyStatusRevoked),
 		}
-		if !k.LastUsedAt.IsZero() {
+		if k.LastUsedAt != nil {
 			item.LastUsedAt = k.LastUsedAt.UTC().Format("2006-01-02 15:04 MST")
 		}
 		keyItems = append(keyItems, item)

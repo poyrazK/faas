@@ -46,6 +46,7 @@ const (
 	orgsFile              = "orgs.go"            // issue #190 / IAM-6 / ADR-061 PR 5
 	scanFile              = "dto_scan.go"        // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
 	webhooksFile          = "webhooks.go"        // issue #476 / ADR-076
+	realtimeFile          = "realtime.go"        // ADR-156 — managed realtime endpoint DTOs
 	logDrainsFile         = "logdrains.go"       // issue #1398 O4 — customer runtime log destinations
 	billingFile           = "billing.go"         // PR-P3 — admin reconcile + future billing DTOs
 	diffFile              = "diff.go"            // PR-1 of the deploy-diff cluster — DiffRequest / DiffResponse wire DTOs
@@ -60,6 +61,7 @@ const (
 	managedPostgresFile   = "managed_postgres.go"
 	openapiContractFile   = "openapi_contract.go"
 	executionsFile        = "executions.go" // ADR-171 — disposable one-shot execution DTOs
+	projectsFile          = "projects.go"   // issue #2201 — durable project lifecycle and recovery DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -71,22 +73,23 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"GET /v1/account/dpa":                       true, // public markdown (no auth)
-	"POST /v1/webhooks/stripe":                  true, // HMAC-signed webhook
-	"POST /v1/webhooks/paddle":                  true, // HMAC-signed webhook (PR #3 / ADR-025)
-	"POST /v1/webhooks/polar":                   true, // Standard Webhooks-signed webhook
-	"POST /v1/webhooks/resend":                  true, // Svix-signed webhook (issue #246 / ADR-115)
-	"GET /v1/compute-nodes":                     true, // operator-only (ADR-029)
-	"GET /v1/compute-nodes/{name}":              true, // operator-only node detail
-	"POST /v1/compute-nodes":                    true, // operator-only
-	"DELETE /v1/compute-nodes/{name}":           true, // operator-only
-	"GET /v1/compute-nodes/{name}/heartbeats":   true, // CP-1: operator-only (heartbeat history; schedd-owned)
-	"GET /v1/compute-nodes/events":              true, // CP-1: operator-only SSE on compute_node_changed
-	"GET /v1/internal/metrics/targets":          true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
-	"GET /v1/internal/metrics/vmmd-targets":     true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/imaged-targets":   true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/builderd-targets": true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
+	"GET /v1/account/dpa":                        true, // public markdown (no auth)
+	"POST /v1/webhooks/stripe":                   true, // HMAC-signed webhook
+	"POST /v1/webhooks/paddle":                   true, // HMAC-signed webhook (PR #3 / ADR-025)
+	"POST /v1/webhooks/polar":                    true, // Standard Webhooks-signed webhook
+	"POST /v1/webhooks/resend":                   true, // Svix-signed webhook (issue #246 / ADR-115)
+	"GET /v1/compute-nodes":                      true, // operator-only (ADR-029)
+	"GET /v1/compute-nodes/{name}":               true, // operator-only node detail
+	"POST /v1/compute-nodes":                     true, // operator-only
+	"DELETE /v1/compute-nodes/{name}":            true, // operator-only
+	"GET /v1/compute-nodes/{name}/heartbeats":    true, // CP-1: operator-only (heartbeat history; schedd-owned)
+	"GET /v1/compute-nodes/events":               true, // CP-1: operator-only SSE on compute_node_changed
+	"GET /v1/internal/metrics/targets":           true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/vmmd-targets":      true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/imaged-targets":    true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/builderd-targets":  true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/realtimed-targets": true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/promtail-targets":  true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
@@ -194,6 +197,8 @@ var routeExclude = map[string]bool{
 	// multipart envelope + CSRF posture of the cron/retry handlers.
 	"POST /dashboard/projects/{slug}/preview":       true, // ADR-124 HTML form, preview re-render
 	"POST /dashboard/projects/{slug}/preview/apply": true, // ADR-124 HTML form, apply-with-exclude
+	"POST /dashboard/projects/{slug}/update":        true, // issue #2201 HTML project recovery form
+	"POST /dashboard/projects/{slug}/delete":        true, // issue #2201 HTML project deletion form
 	"POST /v1/cli-auth/code":                        true, // CLI device-code mint
 	"POST /v1/cli-auth/exchange":                    true, // CLI device-code exchange
 	"GET /cli-auth":                                 true, // dashboard claim form
@@ -277,10 +282,10 @@ var dtoExclude = map[string]bool{
 	"StatusPage":                   true, // GET /status/slo.json (public status)
 	"SessionsRevokeRequest":        true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
 	"ManagedPostgresPlanLimits":    true, // internal plan policy, not a wire DTO
+	"RealtimeLimits":               true, // internal plan policy, not a wire DTO
 	"ExecutionSnapshotShape":       true, // internal snapshot compatibility key, not a wire DTO
 	"ResolvedExecutionRequest":     true, // sealed scheduler intent, not a public DTO
 	"AlertRuleRow":                 true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
-	"RotateAlertRuleSecretRequest": true, // PR 3 / ADR-045: server-mints the secret; request body is empty, not in spec
 	// Issue #190 / IAM-6 / ADR-061 PR 5 — typed inputs at the
 	// pkg/api ↔ pkg/state seam. The wire DTOs are OrgResponse /
 	// OrgMemberResponse / OrgInvitationResponse; the *Row types
@@ -905,6 +910,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", orgsFile),
 		filepath.Join(root, "pkg", "api", scanFile),
 		filepath.Join(root, "pkg", "api", webhooksFile),
+		filepath.Join(root, "pkg", "api", realtimeFile),
 		filepath.Join(root, "pkg", "api", logDrainsFile),
 		filepath.Join(root, "pkg", "api", billingFile),
 		filepath.Join(root, "pkg", "api", diffFile),
@@ -920,6 +926,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
+		filepath.Join(root, "pkg", "api", projectsFile),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

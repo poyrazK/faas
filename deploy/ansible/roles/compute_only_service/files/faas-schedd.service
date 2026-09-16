@@ -1,0 +1,47 @@
+[Unit]
+Description=onebox-faas schedd — scheduler + lifecycle owner (compute-only)
+# Compute nodes use the remote control-plane PostgreSQL DSN from
+# /etc/faas/compute-db.env. Do not order readiness on a local PostgreSQL
+# service inherited from a control-plane image.
+After=network.target faas-cp.slice faas-brokerq.slice
+Wants=faas-cp.slice faas-brokerq.slice
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=notify
+User=faas-schedd
+Group=faas
+ExecStartPre=+/usr/bin/install -d -o faas-schedd -g faas -m 0770 /var/lib/faas/oci-tmp
+ExecStartPre=/opt/faas/current/bin/schedd-brokerq-apply
+ExecStart=/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml
+Restart=on-failure
+RestartSec=2s
+Slice=faas-cp.slice
+MemoryMax=256M
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+EnvironmentFile=-/etc/faas/compute-db.env
+EnvironmentFile=-/etc/faas/secrets/schedd/schedd.env
+EnvironmentFile=-/etc/faas/storage.env
+EnvironmentFile=-/etc/faas/otel.env
+Environment=TMPDIR=/var/lib/faas/oci-tmp
+Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/host.age
+Environment=FAAS_SIGN_PUB=%d/faas_sign_pub
+Environment=FAAS_JOBS_DISPATCH=1
+Environment=FAAS_WORKFLOWS_ENABLED=1
+LoadCredential=fleet.age:/etc/faas/secrets/fleet.age
+LoadCredential=host.age:/etc/faas/secrets/host.age
+LoadCredential=faas_sign_pub:/etc/faas/secrets/sign-pub.pem
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/run/faas /var/lib/faas /var/log/faas
+
+[Install]
+WantedBy=multi-user.target

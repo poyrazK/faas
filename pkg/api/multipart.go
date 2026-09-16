@@ -44,6 +44,9 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 	if a.CommitSHA != "" {
 		_ = w.WriteField("commit_sha", a.CommitSHA)
 	}
+	if a.Environment != "" {
+		_ = w.WriteField("environment", a.Environment)
+	}
 	if a.Reason != "" {
 		_ = w.WriteField("reason", a.Reason)
 	}
@@ -103,13 +106,14 @@ type DeployAnnotations struct {
 	// server never fetches from SourceURL and the archive bytes remain the
 	// trust root. Empty values mean the source was not associated with a
 	// repository (for example an image or hand-built tarball deploy).
-	SourceURL  string
-	CommitSHA  string
-	Reason     string // free text, ≤280 chars (DB CHECK)
-	Tag        string // closed-set enum (DB CHECK; handler validates too)
-	DeployedBy string // human-readable actor label
-	PRNumber   int    // positive int (DB CHECK; 0 collapses to NULL)
-	Workflows  []WorkflowSpec
+	SourceURL   string
+	CommitSHA   string
+	Environment string // registered project environment; resolved by apid
+	Reason      string // free text, ≤280 chars (DB CHECK)
+	Tag         string // closed-set enum (DB CHECK; handler validates too)
+	DeployedBy  string // human-readable actor label
+	PRNumber    int    // positive int (DB CHECK; 0 collapses to NULL)
+	Workflows   []WorkflowSpec
 	// Rollout options share this transport envelope so local directory,
 	// tarball, developer-source, and source-ref deploys preserve the same
 	// semantics as image JSON deploys. The pointer preserves explicit zero.

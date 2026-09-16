@@ -44,6 +44,28 @@ func TestSparseSnapshotBytesAndTrailingHoles(t *testing.T) {
 	}
 }
 
+func TestSparseArtifactScopeIncludesAppFilesystems(t *testing.T) {
+	for _, key := range []string{
+		"snap/deployment/mem",
+		"snap/deployment/warm/mem",
+		"apps/example/deployment.ext4",
+	} {
+		if !isSparseArtifactKey(key) {
+			t.Errorf("%q should preserve sparse holes", key)
+		}
+	}
+	for _, key := range []string{
+		"snap/deployment/vmstate",
+		"base/runtime.ext4",
+		"layers/deployment.ext4",
+		"apps/example/deployment.ext4.sig",
+	} {
+		if isSparseArtifactKey(key) {
+			t.Errorf("%q unexpectedly selected for sparse copying", key)
+		}
+	}
+}
+
 type snapshotErrorReader struct{ err error }
 
 func (r snapshotErrorReader) Read(p []byte) (int, error) {

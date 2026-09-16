@@ -393,7 +393,7 @@ func TestCmdEdgeRulesUpdate_EnableFlag_SendsTruePointer(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesUpdate([]string{"--enable", edgeRuleTestID}); code != 0 {
+	if code := cmdEdgeRulesUpdate([]string{edgeRuleTestID, "--enable"}); code != 0 {
 		t.Errorf("update --enable = %d, want 0", code)
 	}
 	if gotBody.Enabled == nil {
@@ -491,7 +491,7 @@ func TestCmdEdgeRulesRm_QuietBypass_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesRm([]string{"--quiet", edgeRuleTestID}); code != 0 {
+	if code := cmdEdgeRulesRm([]string{edgeRuleTestID, "--quiet"}); code != 0 {
 		t.Errorf("rm --quiet = %d, want 0", code)
 	}
 	if !called {

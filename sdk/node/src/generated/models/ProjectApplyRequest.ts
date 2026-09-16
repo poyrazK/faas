@@ -11,8 +11,21 @@
 export type ProjectApplyRequest = {
   source: Blob;
   project_slug?: string;
+  repo_full_name?: string;
   production_branch?: string;
   install_id?: number;
   only?: string;
+  /**
+   * Environment slug applied to deployments created by this apply
+   */
+  environment?: string;
+  /**
+   * Short-lived approval credential for the exact protected-environment plan
+   */
+  approval_token?: string;
+  /**
+   * Leave trigger declarations and existing project trigger state unchanged for this apply.
+   */
+  no_triggers?: boolean;
 };
 

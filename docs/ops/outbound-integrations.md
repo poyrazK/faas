@@ -13,6 +13,15 @@ before starting it:
 systemctl enable --now faas-outboundd
 ```
 
+The daemon also exposes an operator-only Prometheus endpoint on
+`127.0.0.1:9108` by default (override with `metrics_addr`). It publishes
+`outbound_admissions_total`, `outbound_rejections_total`,
+`outbound_in_flight`, `outbound_upstream_requests_total`, and
+`outbound_upstream_latency_seconds`, all labelled only by configured
+integration ID and bounded outcome/rejection vocabularies. The in-flight gauge
+is per gateway process; the Postgres-backed admission decision remains the
+authoritative fleet-wide limit.
+
 Create `/etc/faas/outboundd.toml` from the Ansible example. Each integration
 specifies a UUID, a fixed `https://` origin, attached app UUIDs, a rate/burst,
 and `max_in_flight`. Put the raw Gregale gateway token in the named environment
@@ -37,3 +46,9 @@ when the rate or concurrency budget is exhausted; inspect
 Callers decide whether and how to retry. Gregale makes no automatic retries,
 does not follow redirects, and does not transparently intercept encrypted
 egress. Provider responses (including provider `429`s) pass through.
+
+The loopback listener also serves `/metrics` and `/readyz` on port `8095` by
+default. Prometheus records bounded request status classes (`1xx` through
+`5xx`), request latency, readiness, and the standard OTLP exporter health
+metrics. The request metrics intentionally do not include integration IDs,
+URLs, or raw provider status codes as labels.

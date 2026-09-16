@@ -28,6 +28,59 @@
           {{ faas_join_inventory_name }}, got {{ inventory_hostname }} with
           role {{ faas_box_role | default('unset') }}.
 
+    # Managed-host joins skip the full bootstrap roles, so converge the
+    # control-plane image's inherited PostgreSQL residue here as well. The
+    # compute daemons use the remote DSN from compute-db.env and must not pay
+    # the local cluster's boot and memory cost.
+    - name: Stop inherited local PostgreSQL services before compute adoption
+      ansible.builtin.shell: |
+        set -euo pipefail
+        units="$(systemctl list-unit-files --type=service --no-legend 'postgresql*' 2>/dev/null | awk '{print $1}' || true)"
+        for unit in $units; do
+          systemctl disable --now "$unit" >/dev/null 2>&1 || true
+        done
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Mask inherited PostgreSQL units on adopted compute node
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - mask
+          - postgresql.service
+          - postgresql@.service
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect inherited PostgreSQL data directory
+      ansible.builtin.stat:
+        path: /var/lib/postgresql
+      register: faas_join_local_postgresql_dir
+
+    - name: Inspect PostgreSQL data archive destination
+      ansible.builtin.stat:
+        path: /var/lib/postgresql.disabled
+      register: faas_join_local_postgresql_archive_dir
+
+    - name: Archive inherited PostgreSQL data directory
+      ansible.builtin.command:
+        argv:
+          - mv
+          - /var/lib/postgresql
+          - /var/lib/postgresql.disabled
+      args:
+        creates: /var/lib/postgresql.disabled
+      when:
+        - faas_join_local_postgresql_dir.stat.exists
+        - faas_join_local_postgresql_dir.stat.isdir
+        - not faas_join_local_postgresql_archive_dir.stat.exists
+      register: faas_join_local_postgresql_archive
+
+    - name: Reload systemd after PostgreSQL cleanup
+      ansible.builtin.systemd:
+        daemon_reload: true
+
     - name: Probe the managed-host bootstrap contract
       ansible.builtin.shell:
         cmd: |
@@ -36,6 +89,10 @@
           test -c /dev/kvm
           test -d /srv/fc
           mountpoint -q /srv/fc
+          mountpoint -q /var/lib/faas/cache
+          test "$(stat -c %d /var/lib/faas/cache)" = "$(stat -c %d /srv/fc)"
+          test "$(findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache)" = xfs
+          xfs_info /srv/fc | grep -Eq '(^|[[:space:]])reflink=1($|[[:space:]])'
           test -L /opt/faas/current
           test -d "$(readlink -f /opt/faas/current)"
           test -x /usr/local/bin/gregalectl
@@ -77,6 +134,26 @@
         - { path: /etc/faas/tls, mode: "0755" }
         - { path: /usr/local/bin, mode: "0755" }
         - { path: /var/lib/faas/bootstrap, mode: "0700" }
+
+    # The production bootstrap renders units with fleet.age as a required
+    # systemd credential. Stage it before importing bootstrap.yml so a fresh
+    # host cannot transiently start with a host-local unseal domain.
+    - name: Stage the dedicated fleet unseal identity before bootstrap
+      ansible.builtin.copy:
+        src: "{{ faas_join_fleet_age_key_source }}"
+        dest: /etc/faas/secrets/fleet.age
+        owner: root
+        group: root
+        mode: "0400"
+      no_log: true
+
+    - name: Stage the fleet unseal recipient before bootstrap
+      ansible.builtin.copy:
+        src: "{{ faas_join_fleet_age_recipient_source }}"
+        dest: /etc/faas/secrets/fleet.age.pub
+        owner: root
+        group: root
+        mode: "0444"
 
     # Keep the Ansible boundary fail-closed as well as the gregalectl
     # boundary. This playbook can be invoked directly by an operator, so a
@@ -186,6 +263,54 @@
         path: /etc/faas/oci-e2e.env
         state: absent
 
+    # The builder artifact is content-addressed by architecture. A previous
+    # release could leave /srv/fc/base/builder-base.ext4 behind while the
+    # canonical runner-builder key (and its digest sidecar) was absent. Do
+    # not let builderd consume that unscanned legacy file: remove both
+    # spellings before the release-bound imaged pre-stage repopulates the
+    # canonical artifact, and let the readiness gate keep the node drained if
+    # pre-staging fails.
+    - name: Remove legacy builder base artifacts before canonical pre-stage
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /srv/fc/base/builder-base.ext4
+        - /srv/fc/base/builder-base.ext4.digest
+
+    # Capture the database-side attestation before replacing the on-disk leaf.
+    # A managed node can receive a refreshed PKI bundle during convergence;
+    # vmmd correctly refuses to start while compute_nodes still names the old
+    # fingerprint. The captured value is the CAS guard used immediately after
+    # staging so pre-stage never depends on a vmmd that is deadlocked behind
+    # stale attestation state.
+    - name: Inspect existing compute-node certificate attestation before trust refresh
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - show
+          - --node
+          - "{{ faas_join_database_node }}"
+          - --break-glass-db
+      register: faas_join_existing_compute_node
+      changed_when: false
+      failed_when: faas_join_existing_compute_node.rc not in [0, 3]
+
+    - name: Remember the pre-refresh certificate fingerprint
+      ansible.builtin.set_fact:
+        faas_join_expected_cert_fingerprint: >-
+          {{
+            (
+              faas_join_existing_compute_node.stdout
+              | regex_findall('(?m)^cert_fingerprint=(sha256:[0-9a-f]{64})$')
+              | first
+              | default('', true)
+            )
+            if faas_join_existing_compute_node.rc == 0
+            else ''
+          }}
+
     - name: Stage the compute trust bundle (the source never includes the CA private key)
       ansible.builtin.copy:
         src: "{{ faas_join_pki_source }}/"
@@ -223,6 +348,19 @@
         - { path: /etc/faas/tls/egress/egress.key, mode: "0440" }
         - { path: /etc/faas/tls/egress/egress.crt, mode: "0444" }
 
+    - name: CAS-stamp the staged vmmd certificate before runtime pre-stage
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - secrets
+          - stamp
+          - --host
+          - "{{ faas_join_database_node }}"
+          - --expected-fingerprint
+          - "{{ faas_join_expected_cert_fingerprint }}"
+      when: (faas_join_expected_cert_fingerprint | default('') | trim) != ''
+      changed_when: true
+
     - name: Stage the image-signing private key
       ansible.builtin.copy:
         src: "{{ faas_join_sign_key_source }}"
@@ -241,22 +379,42 @@
         mode: "0444"
       no_log: true
 
-    - name: Stage the per-node capacity signing key
+    - name: Inspect the existing per-node capacity signing key
+      ansible.builtin.stat:
+        path: /etc/faas/secrets/vmmd/node.key
+      register: faas_join_existing_node_key
+
+    - name: Inspect the existing per-node capacity public key
+      ansible.builtin.stat:
+        path: /etc/faas/secrets/vmmd/node.pub
+      register: faas_join_existing_node_pub
+
+    - name: Refuse a partial per-node capacity keypair
+      ansible.builtin.assert:
+        that:
+          - (faas_join_existing_node_key.stat.exists | bool) == (faas_join_existing_node_pub.stat.exists | bool)
+        fail_msg: >-
+          node.key and node.pub must either both exist or both be absent; repair the
+          pair with gregalectl node-key before resuming this node join
+
+    - name: Stage the per-node capacity signing key on first enrollment
       ansible.builtin.copy:
         src: "{{ faas_join_node_key_source }}"
         dest: /etc/faas/secrets/vmmd/node.key
         owner: root
         group: root
         mode: "0400"
+        force: false
       no_log: true
 
-    - name: Stage the per-node capacity public key
+    - name: Stage the per-node capacity public key on first enrollment
       ansible.builtin.copy:
         src: "{{ faas_join_node_pub_source }}"
         dest: /etc/faas/secrets/vmmd/node.pub
         owner: root
         group: root
         mode: "0444"
+        force: false
       no_log: true
 
     - name: Stage the manifest consumed by the on-host renderer
@@ -388,9 +546,6 @@
 
 - name: Converge the adopted node with the production bootstrap
   import_playbook: bootstrap.yml
-  when: >-
-    not (hostvars[inventory_hostname].faas_join_bootstrap_contract_current |
-         default(false) | bool)
 
 - name: Record successful compute bootstrap convergence
   hosts: compute_nodes
@@ -451,6 +606,17 @@
   serial: 1
   max_fail_percentage: 0
   tasks:
+    - name: Refuse activation when the OCI cache is outside fast storage
+      ansible.builtin.shell: |
+        set -euo pipefail
+        mountpoint -q /var/lib/faas/cache
+        test "$(stat -c %d /var/lib/faas/cache)" = "$(stat -c %d /srv/fc)"
+        test "$(findmnt -n -o FSTYPE --mountpoint /var/lib/faas/cache)" = xfs
+        xfs_info /srv/fc | grep -Eq '(^|[[:space:]])reflink=1($|[[:space:]])'
+      args:
+        executable: /bin/bash
+      changed_when: false
+
     - name: Detect the legacy imaged environment file
       ansible.builtin.stat:
         path: /etc/faas/oci-e2e.env
@@ -500,7 +666,106 @@
           Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(((ansible_memtotal_mb | int) * 85 / 100) | int, true) }}
           Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((ansible_processor_vcpus | int) * 8, true) }}
 
-    - name: Pre-register the adopted node as drained before release installation
+    # Changed runtime bases used to be built by faas-imaged after this play
+    # drained the node. Extract the signed candidate and run its normal base
+    # staging path while the serving release and vmmd are still available.
+    - name: Create the release-bound runtime-base pre-stage directory
+      ansible.builtin.file:
+        path: "/opt/faas/prestage/{{ faas_join_release_git_sha }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Extract the signed candidate for runtime-base pre-staging
+      ansible.builtin.unarchive:
+        src: /var/lib/faas/bootstrap/release.tar.gz
+        dest: "/opt/faas/prestage/{{ faas_join_release_git_sha }}"
+        remote_src: true
+        owner: root
+        group: root
+
+    - name: Install the runtime-base pre-stage one-shot
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-imaged-prestage.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Gregale release-bound runtime base pre-stage
+          After=network.target faas-vmmd.service
+          Requires=faas-vmmd.service
+
+          [Service]
+          Type=oneshot
+          User=faas-imaged
+          Group=faas
+          ExecStart=/opt/faas/prestage/{{ faas_join_release_git_sha }}/imaged --config /etc/faas/imaged.toml
+          EnvironmentFile=-/etc/faas/compute-db.env
+          EnvironmentFile=-/etc/faas/storage.env
+          EnvironmentFile=-/etc/faas/runtime-bases.env
+          EnvironmentFile=-/etc/faas/otel.env
+          Environment=FAAS_IMAGED_PRESTAGE_ONLY=1
+          Environment=FAAS_IMAGED_ROLE=compute-only
+          Environment=FAAS_NODE_NAME={{ faas_join_database_node }}
+          Environment=FAAS_MANIFEST_PATH=/etc/faas/manifest.yaml
+          Environment=FAAS_BUILDER_BASE_REF={{ faas_builder_base_ref | default(faas_join_builder_base_ref) }}
+          Environment=FAAS_VMM_SOCK={{ faas_vmmd_target_url }}
+          Environment=FAAS_VMM_TLS_CERT_PATH=/etc/faas/tls/imaged/vmmd-client.crt
+          Environment=FAAS_VMM_TLS_KEY_PATH=/etc/faas/tls/imaged/vmmd-client.key
+          Environment=FAAS_VMM_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt
+          Environment=GRYPE_DB_CACHE_DIR=/var/lib/faas/grype
+          Environment=TMPDIR=/srv/fc/base
+          Environment=FAAS_BASE_STAGING_ROOT=/dev/shm/faas-base-staging
+          Environment=FAAS_BASE_EXTRACT_ROOT=/srv/fc/base-staging
+          Environment=FAAS_BASE_TMP_ROOT=/srv/fc/base
+          Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_fleet_age_identity
+          Environment=FAAS_GUEST_INIT=/opt/faas/prestage/{{ faas_join_release_git_sha }}/init
+          Environment=FAAS_FUNCTION_RUNNER_NODE22=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/node22/faas-runner
+          Environment=FAAS_FUNCTION_RUNNER_NODE24=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/node24/faas-runner
+          Environment=FAAS_FUNCTION_RUNNER_PYTHON312=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/python312/faas-runner
+          Environment=FAAS_FUNCTION_RUNNER_PYTHON313=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/python313/faas-runner
+          Environment=FAAS_FUNCTION_RUNNER_GO124=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/go124/faas-runner
+          Environment=FAAS_FUNCTION_RUNNER_GO124_ALPINE=/opt/faas/prestage/{{ faas_join_release_git_sha }}/runners/go124-alpine/faas-runner
+          LoadCredential=faas_fleet_age_identity:/etc/faas/secrets/fleet.age
+          LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
+          NoNewPrivileges=yes
+          ProtectSystem=strict
+          ProtectHome=yes
+          PrivateTmp=yes
+          ProtectKernelTunables=yes
+          ProtectKernelModules=yes
+          ProtectControlGroups=yes
+          ReadOnlyPaths=/etc/faas /opt/faas/prestage/{{ faas_join_release_git_sha }}
+          ReadWritePaths=/srv/fc/snap /srv/fc/base /srv/fc/base-staging /srv/fc/scans /srv/fc/sigs /var/log/faas /var/spool/faas /var/lib/faas/cache /var/lib/faas/grype /var/cache/faas/builds/.leases /dev/shm/faas-base-staging
+
+    - name: Reload systemd for runtime-base pre-staging
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Pre-stage release-bound runtime bases before draining the node
+      ansible.builtin.systemd:
+        name: faas-imaged-prestage.service
+        state: started
+
+    - name: Begin graceful drain of the existing node before release installation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - drain
+          - --node
+          - "{{ faas_join_database_node }}"
+          - --reason
+          - node_join_preregister
+          - --break-glass-db
+          - --yes
+      when: faas_join_existing_compute_node.rc == 0
+      register: faas_compute_node_drain
+      changed_when: true
+
+    - name: Pre-register the newly adopted node as unavailable before release installation
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -533,18 +798,39 @@
           - --yes
       register: faas_compute_node_preregister
       changed_when: true
+      when: faas_join_existing_compute_node.rc == 3
+
+    # Existing nodes enter draining first: placement stops admitting new work,
+    # while the forwarding bridge remains available to live instances until
+    # the recovery controller migrates them. Maintenance plus zero live rows is
+    # the deterministic cache/traffic barrier before listener shutdown.
+    - name: Wait for the existing node to reach an empty maintenance hold
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - drain-status
+          - --node
+          - "{{ faas_join_database_node }}"
+          - --break-glass-db
+      when: faas_join_existing_compute_node.rc == 0
+      register: faas_compute_node_drain_status
+      changed_when: false
+      retries: 48
+      delay: 2
+      until: faas_compute_node_drain_status.rc == 0
 
     - name: Stop stale compute-only services before replacing the active release
       ansible.builtin.systemd:
         name: "{{ item }}"
         state: stopped
       loop:
-        - faas-vmmd.service
-        - faas-schedd.service
-        - faas-realtimed.service
         - faas-gatewayd-internal.service
-        - faas-builderd.service
+        - faas-realtimed.service
         - faas-imaged.service
+        - faas-builderd.service
+        - faas-schedd.service
+        - faas-vmmd.service
 
     - name: Install the verified release while keeping the row drained
       ansible.builtin.command:
@@ -569,16 +855,23 @@
         ((faas_release_install.stdout | default('')) ~
          (faas_release_install.stderr | default('')))
 
-    - name: Initialize the per-release SBoM baseline on a new node
-      ansible.builtin.command:
-        argv:
-          - /usr/local/bin/gregalectl
-          - release
-          - kgv
-          - rotate
-          - --git-sha
-          - "{{ faas_join_release_git_sha }}"
-          - --from-zero
+    - name: Explicitly bootstrap the persistent SBoM baseline
+      ansible.builtin.shell: |
+        set -euo pipefail
+        current_release="$(readlink -f /opt/faas/current 2>/dev/null || true)"
+        if [[ -n "$current_release" && "$current_release" != "/opt/faas/releases/{{ faas_join_release_git_sha }}" && -s "$current_release/release.sbom.json" ]]; then
+          /usr/local/bin/gregalectl release kgv rotate \
+            --git-sha "$(basename "$current_release")"
+        else
+          # A brand-new host has no prior accepted state. Trust the signed,
+          # verified candidate once so the deferred install can proceed; the
+          # controller keeps the node drained and accepts it again only after
+          # the full readiness gate succeeds.
+          /usr/local/bin/gregalectl release kgv rotate \
+            --git-sha "{{ faas_join_release_git_sha }}"
+        fi
+      args:
+        executable: /bin/bash
       when: >-
         faas_release_install.rc != 0 and
         'SBoM gate requires a prior baseline' in
@@ -623,6 +916,16 @@
         (faas_active_release.stdout | trim) !=
         ('/opt/faas/releases/' ~ faas_join_release_git_sha)
 
+    - name: Remove superseded runtime-base pre-stage trees
+      ansible.builtin.shell:
+        cmd: >-
+          set -euo pipefail;
+          find /opt/faas/prestage -mindepth 1 -maxdepth 1 -type d
+          ! -name '{{ faas_join_release_git_sha }}' -print -exec rm -rf -- {} +
+        executable: /bin/bash
+      register: faas_join_prestage_cleanup
+      changed_when: (faas_join_prestage_cleanup.stdout | trim) != ''
+
     - name: Render the manifest for this exact host
       ansible.builtin.command:
         argv:
@@ -639,6 +942,11 @@
     - name: Remove the legacy vmmd schedd target override
       ansible.builtin.file:
         path: /etc/systemd/system/faas-vmmd.service.d/99-schedd-target.conf
+        state: absent
+
+    - name: Remove emergency gateway release override before service activation
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-gatewayd-internal.service.d/zz-emergency-release.conf
         state: absent
 
     - name: Stage the reusable box-age identity when supplied
@@ -682,6 +990,33 @@
           - "{{ faas_join_database_node }}"
       register: faas_secrets_init
       changed_when: true
+
+    - name: Ensure the fleet-seal node-exporter metric directory exists
+      ansible.builtin.file:
+        path: /var/lib/node_exporter/textfile_collector
+        state: directory
+        owner: node_exporter
+        group: node_exporter
+        mode: "0755"
+
+    - name: Prove fleet customer-secret and shared-kid access before service activation
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - fleet-seal
+          - verify
+          - --fleet-key
+          - /etc/faas/secrets/fleet.age
+          - --host-key
+          - /etc/faas/secrets/host.age
+          - --db-env
+          - /etc/faas/compute-db.env
+          - --metrics-file
+          - /var/lib/node_exporter/textfile_collector/faas_fleet_seal.prom
+          - --json
+      register: faas_fleet_seal_verify
+      changed_when: false
+      no_log: true
 
     - name: Unseal the reusable rclone configuration
       changed_when: true
@@ -803,6 +1138,36 @@
         - faas-gatewayd-internal.service
         - faas-builderd.service
         - faas-imaged.service
+
+    - name: Require the GCP off-host telemetry collector on Google Compute Engine  # noqa: command-instead-of-module (read-only readiness gate)
+      ansible.builtin.command: systemctl is-active google-cloud-ops-agent.service
+      changed_when: false
+      when: >-
+        (ansible_system_vendor | default('')) == 'Google' or
+        (ansible_product_name | default('')) == 'Google Compute Engine'
+
+    - name: Prove the effective rsyslog rotation policy remains usable  # noqa: command-instead-of-module (logrotate owns policy validation)
+      ansible.builtin.command:
+        argv:
+          - logrotate
+          - --debug
+          - /etc/logrotate.d/rsyslog
+      register: faas_join_rsyslog_debug
+      changed_when: false
+      failed_when: >-
+        faas_join_rsyslog_debug.rc != 0 or
+        'insecure permissions' in
+        ((faas_join_rsyslog_debug.stdout | default('')) ~
+         (faas_join_rsyslog_debug.stderr | default('')))
+
+    - name: Reject a failed rsyslog rotation unit  # noqa: command-instead-of-shell (compound systemd assertion)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        systemctl cat faas-rsyslog-rotate.service >/dev/null
+        ! systemctl is-failed --quiet faas-rsyslog-rotate.service
+      args:
+        executable: /bin/bash
+      changed_when: false
 
     # `systemctl is-active` only proves that a process is alive. A restart
     # failure or an out-of-band service override could leave an older daemon

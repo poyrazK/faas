@@ -46,6 +46,11 @@ the fixture, and performs a final leak check on every exit path.
 The cloud identity and host controls are documented in
 [`docs/ops/builder-native-ci.md`](../docs/ops/builder-native-ci.md).
 
+The designated host is provisioned by `ansible/native-acceptance-host.yml`
+(role `native_acceptance_host`): runner toolchain, a local e2e Postgres cluster,
+and the designation marker itself, written last so a half-provisioned host is
+never designated.
+
 `.github/workflows/e2e-native.yml` is the platform-level gate on the same host:
 the whole `./cmd/e2e` suite with the `metal` build tag, covering source upload
 through builder microVM, snapshot, park, and gateway wake. It shares the host

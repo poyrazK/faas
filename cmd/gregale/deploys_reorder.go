@@ -15,7 +15,7 @@ import (
 const deploysReorderUsage = "usage: gregale deploys reorder <id> --priority <int 0..1000> [--json]"
 
 func cmdDeploysReorder(args []string) int {
-	fs := flag.NewFlagSet("deploys reorder", flag.ContinueOnError)
+	fs := newFlagSet("deploys reorder", flag.ContinueOnError)
 	priority := fs.Int("priority", -1, "new priority (0=deploy-immediately, 100=FIFO default, 1000=background)")
 	if err := fs.Parse(args); err != nil {
 		return 1

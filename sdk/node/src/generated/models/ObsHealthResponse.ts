@@ -21,25 +21,32 @@ export type ObsHealthResponse = {
    */
   generated_at: string;
   /**
+   * True only when every PromQL query used for this snapshot
+   * completed successfully. False means Prometheus-derived numeric
+   * fields are fallback values and must not be interpreted as
+   * observed telemetry.
+   *
+   */
+  prometheus_available: boolean;
+  /**
    * Sum of audit_log_write_total over the trailing 5m
-   * window. 0 when apid's Prometheus is unreachable or
-   * the audit pipeline has been silent in the window.
+   * window. 0 when the audit pipeline has been silent in the
+   * window. Check `prometheus_available` before interpreting it.
    *
    */
   audit_log_write_total_5m: number;
   /**
    * Sum of audit_log_write_failures_total over the trailing
-   * 5m window. Same nil-promql posture as the success
-   * counter.
+   * 5m window. Check `prometheus_available` before interpreting it.
    *
    */
   audit_log_write_failures_5m: number;
   /**
    * Ratio of audit_log writes with a non-NULL trace_id
    * over all audit_log writes in the window. 1.0
-   * (vacuous truth) when apid's Prometheus is
-   * unreachable or the audit pipeline has been silent
-   * in the window.
+   * (vacuous truth) when the audit pipeline has been silent
+   * in the window. Check `prometheus_available` before
+   * interpreting it.
    *
    */
   audit_log_coverage_ratio_5m: number;
@@ -64,8 +71,8 @@ export type ObsHealthResponse = {
   trace_id_completeness_ratio: Record<string, number>;
   /**
    * Count of Prometheus alert rules in the firing state
-   * via PromQL ALERTS{alertstate="firing"}. 0 when
-   * apid's Prometheus is unreachable.
+   * via PromQL ALERTS{alertstate="firing"}. Check
+   * `prometheus_available` before interpreting a zero value.
    *
    */
   alerts_firing: number;

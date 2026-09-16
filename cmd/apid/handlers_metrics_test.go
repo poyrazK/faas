@@ -419,29 +419,22 @@ func TestAppMetrics_Wakes24hEnrichment(t *testing.T) {
 	if out.Wakes24h != 47 {
 		t.Errorf("wakes_24h = %d, want 47 (wrapped store returned it)", out.Wakes24h)
 	}
-	// The other two enrichment fields stay 0 until their PromQL
-	// wires land — the test pins that they are NOT silently
-	// populated by the PromQL fetch path (zero is the documented
-	// state).
-	if out.CacheHitRatePct != 0 {
-		t.Errorf("cache_hit_rate_pct = %v, want 0 (cache not yet wired)", out.CacheHitRatePct)
+	// The other two enrichment fields are omitted until their metric
+	// sources are available; nil is distinct from an observed 0% value.
+	if out.CacheHitRatePct != nil {
+		t.Errorf("cache_hit_rate_pct = %v, want nil (cache not yet wired)", *out.CacheHitRatePct)
 	}
-	if out.ErrorBudgetPct != 0 {
-		t.Errorf("error_budget_pct = %v, want 0 (SLO target not yet wired)", out.ErrorBudgetPct)
+	if out.ErrorBudgetPct != nil {
+		t.Errorf("error_budget_pct = %v, want nil (SLO target not yet wired)", *out.ErrorBudgetPct)
 	}
 }
 
-// TestAppMetrics_ZeroEnrichmentFieldsAlwaysOnWire pins the
-// code-review contract from PR #1097 (commit 2 of the review-fix
-// cluster): cache_hit_rate_pct + error_budget_pct are non-omitempty
-// on the DTO, so the fields are ALWAYS present on the wire — even
-// when 0. This matters for SDK consumers because the documented
-// schema must match the actual JSON: omitempty on a float64=0
-// would drop the field and break "is this app's cache rule wired"
-// detection. The decoded JSON map check (raw key presence) is the
-// load-bearing assertion; the typed decode above already round-
-// trips 0 either way.
-func TestAppMetrics_ZeroEnrichmentFieldsAlwaysOnWire(t *testing.T) {
+// TestAppMetrics_UnwiredEnrichmentFieldsAreOmitted pins the
+// contract for the two not-yet-wired metrics: an unavailable value
+// must not be serialized as an observed zero. Consumers use field
+// absence to render an unavailable state until the corresponding
+// metric source lands.
+func TestAppMetrics_UnwiredEnrichmentFieldsAreOmitted(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	mustSeedApp(t, e, "my-api")
 	installPromFixture(t, &e, func(q string) string {
@@ -453,17 +446,15 @@ func TestAppMetrics_ZeroEnrichmentFieldsAlwaysOnWire(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Decode into a generic map so we can assert on key presence,
-	// not just typed values (a typed decode round-trips 0 either
-	// way — the wire-shape contract is about whether the JSON key
-	// is emitted at all).
+	// Decode into a generic map so we can assert on key absence rather
+	// than only the typed nil values.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("decode raw: %v", err)
 	}
 	for _, key := range []string{"cache_hit_rate_pct", "error_budget_pct"} {
-		if _, ok := raw[key]; !ok {
-			t.Errorf("wire key %q missing — DTO tag must not be omitempty", key)
+		if _, ok := raw[key]; ok {
+			t.Errorf("wire key %q present — unavailable metrics must be omitted", key)
 		}
 	}
 }

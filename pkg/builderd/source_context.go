@@ -1,6 +1,7 @@
 package builderd
 
 import (
+	"fmt"
 	"path/filepath"
 
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
@@ -19,4 +20,18 @@ func buildWorkdir(sourceRoot string) (string, error) {
 		return "/build/src", nil
 	}
 	return filepath.Join("/build/src", filepath.FromSlash(root)), nil
+}
+
+func buildDockerfilePath(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	normalized, err := sourcecontext.Normalize(raw)
+	if err != nil {
+		return "", err
+	}
+	if normalized == sourcecontext.DefaultRoot {
+		return "", fmt.Errorf("dockerfile path must name a file")
+	}
+	return normalized, nil
 }

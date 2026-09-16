@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 )
 
@@ -30,8 +29,12 @@ import (
 // runbook's first drill end-to-end: stale the heartbeat, observe
 // the lifecycle flip + the node.failed event row.
 func TestRunbook_Drill1_HeartbeatGapFlipsUnavailable(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	// Migrate explicitly: pgtest.OpenMigrated returns an empty schema unless the
+	// template-database optimisation is enabled, which the native gate does not
+	// enable. See poolWithSkip in twonode_failure_safe_metal_test.go.
+	pool := poolWithSkip(t)
 	h := e2etest.StartTwoNode(t, pool)
+	h.RequireRemote(t)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 	// Runbook step 1: stale the heartbeat on node-b by 120s.
 	if err := fi.StaleHeartbeat(h.NodeB, 2*time.Minute); err != nil {
@@ -66,7 +69,10 @@ func TestRunbook_Drill1_HeartbeatGapFlipsUnavailable(t *testing.T) {
 // rather than POSTing to apid — the apid HTTP gate has its own
 // coverage in cmd/apid/handlers_compute_nodes_drain_test.go.
 func TestRunbook_Drill2_DrainCascade(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	// Migrate explicitly: pgtest.OpenMigrated returns an empty schema unless the
+	// template-database optimisation is enabled, which the native gate does not
+	// enable. See poolWithSkip in twonode_failure_safe_metal_test.go.
+	pool := poolWithSkip(t)
 	h := e2etest.StartTwoNode(t, pool)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 	if err := fi.Drain(h.NodeA); err != nil {
@@ -96,8 +102,12 @@ func TestRunbook_Drill2_DrainCascade(t *testing.T) {
 // end state. This test exists so the runbook step has a Go
 // counterpart in CI for the daemon-boot path.
 func TestRunbook_Drill3_PgNotifyRecovery(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	// Migrate explicitly: pgtest.OpenMigrated returns an empty schema unless the
+	// template-database optimisation is enabled, which the native gate does not
+	// enable. See poolWithSkip in twonode_failure_safe_metal_test.go.
+	pool := poolWithSkip(t)
 	h := e2etest.StartTwoNode(t, pool)
+	h.RequireRemote(t)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 	// StaleHeartbeat is the row-level analog of a SIGSTOP'd
 	// schedd; the recovery path is identical from the row's

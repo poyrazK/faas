@@ -240,9 +240,14 @@ func (s *server) dashboardInstanceAction(w http.ResponseWriter, r *http.Request)
 				"App is not active", "only an active app can be restarted"))
 			return
 		}
-		st := state.AppEvictedCold
-		if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &st}); err != nil {
+		claimed, err := claimAppRestart(r.Context(), s.store, app.ID)
+		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not restart app"))
+			return
+		}
+		if !claimed {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"Restart already in progress", "wait for the accepted restart to finish before retrying"))
 			return
 		}
 		wakeUUID, err := uuid.NewV7()

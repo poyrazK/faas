@@ -4,6 +4,8 @@ package vmmdgrpc_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"testing"
 
@@ -52,6 +54,51 @@ func TestExecuteExecution_RoundTripsBoundedResult(t *testing.T) {
 	}
 	if resp.GetWallTimeMs() != 12 || resp.GetCpuTimeMs() != 3 || resp.GetPeakMemoryMb() != 64 {
 		t.Fatalf("response usage = %d/%d/%d", resp.GetWallTimeMs(), resp.GetCpuTimeMs(), resp.GetPeakMemoryMb())
+	}
+}
+
+type streamingExecutionVMM struct{ *fakeVMM }
+
+func (f *streamingExecutionVMM) ExecuteExecutionWithOutput(ctx context.Context, _ string, _ executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	if err := receive(ctx, "stdout", []byte("live\n")); err != nil {
+		return executionproto.Result{}, err
+	}
+	return executionproto.Result{
+		Status: api.ExecutionStatusSucceeded,
+		Result: json.RawMessage(`{"ok":true}`),
+		Stdout: []byte("live\n"),
+	}, nil
+}
+
+func TestExecuteExecutionStreamSendsOutputBeforeMetadataOnlyTerminal(t *testing.T) {
+	cli := newExecutionClient(t, &streamingExecutionVMM{fakeVMM: &fakeVMM{}})
+	stream, err := cli.ExecuteExecutionStream(context.Background(), &vmmdpb.ExecuteExecutionRequest{
+		Instance:       "exec-vm-1",
+		Version:        uint32(executionproto.Version),
+		ExecutionId:    "exec-1",
+		Runtime:        string(api.ExecutionRuntimeNode22),
+		Source:         "1 + 1",
+		Input:          []byte(`{"value":1}`),
+		TimeoutMs:      1000,
+		MaxOutputBytes: 1024,
+		NetworkMode:    string(api.ExecutionNetworkNone),
+	})
+	if err != nil {
+		t.Fatalf("ExecuteExecutionStream: %v", err)
+	}
+	first, err := stream.Recv()
+	if err != nil || first.GetOutput() == nil || first.GetOutput().GetStream() != "stdout" || string(first.GetOutput().GetChunk()) != "live\n" {
+		t.Fatalf("first event = %v, %v", first, err)
+	}
+	second, err := stream.Recv()
+	if err != nil || second.GetTerminal() == nil {
+		t.Fatalf("terminal event = %v, %v", second, err)
+	}
+	if len(second.GetTerminal().GetStdout()) != 0 || string(second.GetTerminal().GetResult()) != `{"ok":true}` {
+		t.Fatalf("terminal output = %q/%q", second.GetTerminal().GetStdout(), second.GetTerminal().GetResult())
+	}
+	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
+		t.Fatalf("stream end = %v, want io.EOF", err)
 	}
 }
 

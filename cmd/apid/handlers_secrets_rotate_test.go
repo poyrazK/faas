@@ -328,6 +328,32 @@ func TestSecrets_Rotate_IdentitiesMissing_503(t *testing.T) {
 	assertProblem(t, rec, 503, api.CodeCapacity)
 }
 
+func TestSecrets_Rotate_IdentityAccessorMissing_503(t *testing.T) {
+	// A partially wired boot must fail closed with a Problem response. In
+	// particular, the handler must never call a nil identity accessor.
+	e := setup(t, api.PlanHobby)
+	app := createApp(t, e, "rot-no-id-accessor")
+	ident, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prevRcp := setSecretRecipient
+	prevIdents := mfaIdentities
+	setSecretRecipient = func() *age.X25519Recipient { return ident.Recipient() }
+	mfaIdentities = nil
+	defer func() {
+		setSecretRecipient = prevRcp
+		mfaIdentities = prevIdents
+	}()
+
+	rec := e.do(t, "POST", rotateURL(app.Slug, "X"),
+		api.RotateAppSecretRequest{Value: "v"}, nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("rotate with nil identity accessor: %d %s, want 503", rec.Code, rec.Body.String())
+	}
+	assertProblem(t, rec, http.StatusServiceUnavailable, api.CodeCapacity)
+}
+
 func TestSecrets_Rotate_RoundTripsThroughOpenMulti(t *testing.T) {
 	// The post-rotate ciphertext must be OpenMulti-readable by
 	// the SAME identity set that sealed it. Pins the invariant

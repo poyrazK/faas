@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,9 +50,9 @@ const (
 		and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
 	) or vector(100)`
 	statusWakeP95Query = `(
-		(histogram_quantile(0.95, sum(rate(gateway_wake_latency_seconds_bucket[5m])) by (le)) * 1000)
-		and sum(rate(gateway_wake_latency_seconds_count[5m])) > 0
-	) or vector(0)`
+		(histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[30m])) by (le)) * 1000)
+		and sum(increase(gateway_platform_wake_latency_seconds_count[30m])) >= 20
+	)`
 	statusBuildSuccessQuery = `(
 		(sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m])) / sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) * 100)
 		and sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m])) > 0
@@ -155,6 +156,12 @@ type statusEvaluation struct {
 	telemetryAvailable bool
 }
 
+type deploymentOutcomeCounter interface {
+	CountDeploymentOutcomesSince(context.Context, time.Time) (state.DeploymentOutcomeCounts, error)
+}
+
+const statusDeploymentOutcomeWindow = 15 * time.Minute
+
 // newStatusCache builds a cache. promURL is the local Prometheus base
 // (e.g. "http://10.0.0.1:9090"); empty string disables the cache and
 // the JSON handler returns a degraded payload. The HTTP transport
@@ -257,8 +264,8 @@ func (c *statusCache) getEvaluation(ctx context.Context) (statusEvaluation, erro
 // error so the caller can fall back to the last cached snapshot.
 //
 // We track per-query success instead of inferring failure from
-// "all values are zero" — a freshly-booted idle box legitimately
-// has 0 ms wake p95. API and build availability use 100% when their
+// "all values are zero". A period with no wake observations has no p95,
+// rather than a synthetic 0 ms value. API and build availability use 100% when their
 // denominator is empty because no request or build failed.
 func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 	if c.client == nil {
@@ -288,11 +295,17 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 		}
 	}
 
-	// 2. Wake p95 (seconds → ms).
-	if ms, err := c.client.QueryScalar(ctx, statusWakeP95Query); err == nil {
-		snap.legacy.WakeP95MS = ms
+	// 2. Platform wake p95 (seconds → ms). QueryVector deliberately keeps a
+	// successful empty result distinct from a Prometheus failure. A quiet or
+	// low-population window is healthy telemetry with no statistically valid
+	// sample, so it remains null without making the whole snapshot stale.
+	if samples, err := c.client.QueryVector(ctx, statusWakeP95Query); err == nil {
 		snap.indicatorAvailable["wake_p95"] = true
 		okCount++
+		if len(samples) > 0 {
+			ms := samples[0].Value
+			snap.legacy.WakeP95MS = &ms
+		}
 	} else {
 		c.log.Warn("status: wake_p95 query failed", "err", err)
 		if firstErr == nil {
@@ -300,20 +313,43 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 		}
 	}
 
-	// 3. Build success rate over last 5m. Spec §12 defines success as
-	// non-user_error: an app that fails to build because of the customer's
-	// own code is not a platform failure. Sourced from builderd's real
-	// build counter (ADR-030) — NOT the old vmmd cold-boot proxy, which
-	// measured a different thing entirely (wake success, not build).
+	// 3. Deployment success over the authoritative recent database window.
+	// The legacy field name remains build_success_pct for wire compatibility,
+	// but the numerator covers deployments that reached live and the
+	// denominator also covers platform-attributable build, scan, snapshot,
+	// and readiness failures. User-code build failures are excluded by the
+	// store aggregate. Prometheus remains the compatibility fallback for
+	// embedders without the aggregate and for an idle database window.
+	buildAvailable := false
 	if pct, err := c.client.QueryScalar(ctx, statusBuildSuccessQuery); err == nil {
 		snap.legacy.BuildSuccessPct = pct
-		snap.indicatorAvailable["build_success"] = true
-		okCount++
+		buildAvailable = true
 	} else {
 		c.log.Warn("status: build_success query failed", "err", err)
 		if firstErr == nil {
 			firstErr = err
 		}
+	}
+	if counter, ok := c.store.(deploymentOutcomeCounter); ok {
+		counts, countErr := counter.CountDeploymentOutcomesSince(ctx, now.Add(-statusDeploymentOutcomeWindow))
+		if countErr != nil {
+			c.log.Warn("status: deployment outcome aggregate failed", "err", countErr)
+			buildAvailable = false
+			if firstErr == nil {
+				firstErr = countErr
+			}
+		} else if total := counts.Succeeded + counts.Failed; total > 0 {
+			snap.legacy.BuildSuccessPct = float64(counts.Succeeded) / float64(total) * 100
+			buildAvailable = true
+			if counts.Failed > 0 {
+				snap.legacy.Degraded = true
+				snap.legacy.Source = appmetrics.SourceDegradedPrefix + "recent platform deployment failures"
+			}
+		}
+	}
+	if buildAvailable {
+		snap.indicatorAvailable["build_success"] = true
+		okCount++
 	}
 
 	// 4. Degraded flag: at least one customer-impacting platform warn- or
@@ -394,17 +430,17 @@ func (c *statusCache) populateHistory(ctx context.Context, snap *StatusPage) {
 			total += bucket.Total
 		}
 		if total > 0 {
-			snap.Uptime30dPct = float64(successful) / float64(total) * 100
-		} else {
-			snap.Uptime30dPct = 100
+			pct := float64(successful) / float64(total) * 100
+			snap.Uptime30dPct = &pct
 		}
 		snap.Uptime30d = make([]api.StatusUptimeBucket, 0, statusHistoryDays)
 		for i := statusHistoryDays - 1; i >= 0; i-- {
 			day := time.Date(now.Year(), now.Month(), now.Day()-i, 0, 0, 0, 0, time.UTC)
 			bucket := byDay[day]
-			pct := 100.0
+			var pct *float64
 			if bucket.Total > 0 {
-				pct = float64(bucket.Successful) / float64(bucket.Total) * 100
+				value := float64(bucket.Successful) / float64(bucket.Total) * 100
+				pct = &value
 			}
 			snap.Uptime30d = append(snap.Uptime30d, api.StatusUptimeBucket{
 				Date: day, UptimePct: pct, Successful: bucket.Successful, Total: bucket.Total,
@@ -506,27 +542,35 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	components := make([]api.PublicStatusComponent, 0, 5)
+	launchAt, launchErr := configuredPublicStatusLaunchAt(os.Getenv)
+	if launchErr != nil {
+		// Invalid launch metadata must not turn pre-launch burn-in into
+		// customer-visible uptime. Fail closed at the current instant and
+		// surface the configuration fault through the data-status contract.
+		s.log.Error("status: invalid public launch boundary", "err", launchErr)
+		launchAt = now
+		evaluation.dataStatus = "unavailable"
+	}
 	for _, component := range publicstatus.AllComponents() {
 		dailyDomain := make([]publicstatus.DailyObservation, 0, 30)
 		dailyAPI := make([]api.PublicStatusDaily, 0, 30)
 		for offset := 0; offset < 30; offset++ {
 			day := startDay.AddDate(0, 0, offset)
-			expected := 288
-			if day.Equal(utcDay(now)) {
-				expected = int(now.Sub(day)/(5*time.Minute)) + 1
-				if expected > 288 {
-					expected = 288
-				}
-			}
+			expected := publicStatusExpectedBuckets(day, now, launchAt)
 			var selected []publicstatus.Bucket
 			for _, bucket := range buckets {
-				if bucket.Component == component && !bucket.BucketAt.Before(day) && bucket.BucketAt.Before(day.Add(24*time.Hour)) {
+				if bucket.Component == component && !bucket.BucketAt.Before(day) && bucket.BucketAt.Before(day.Add(24*time.Hour)) &&
+					(launchAt.IsZero() || !bucket.BucketAt.Before(launchAt)) {
 					selected = append(selected, publicstatus.Bucket{At: bucket.BucketAt, State: bucket.State, HasTelemetry: bucket.HasTelemetry})
 				}
 			}
 			observation := publicstatus.SummarizeDay(day, selected, expected)
 			dailyDomain = append(dailyDomain, observation)
-			dailyAPI = append(dailyAPI, api.PublicStatusDaily{Date: day.Format("2006-01-02"), Status: string(observation.State), UptimePct: observation.UptimePct, CoveragePct: observation.CoveragePct})
+			status := string(observation.State)
+			if !launchAt.IsZero() && expected == 0 && day.Before(launchAt) {
+				status = "pre_release"
+			}
+			dailyAPI = append(dailyAPI, api.PublicStatusDaily{Date: day.Format("2006-01-02"), Status: status, UptimePct: observation.UptimePct, CoveragePct: observation.CoveragePct})
 		}
 		uptime, coverage, available := publicstatus.ThirtyDayUptime(dailyDomain)
 		var uptimePtr *float64
@@ -544,9 +588,9 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 		DataStatus:    evaluation.dataStatus, UpdatedAt: evaluation.updatedAt, RegionScope: "single-region",
 		Components: components,
 		Indicators: []api.PublicStatusIndicator{
-			statusIndicator("api_availability", "API availability", evaluation.legacy.APIAvailabilityPct, evaluation.indicatorAvailable["api_availability"], "%", 99.9, "gte"),
-			statusIndicator("wake_p95", "Wake p95", evaluation.legacy.WakeP95MS, evaluation.indicatorAvailable["wake_p95"], "ms", 350, "lte"),
-			statusIndicator("build_success", "Build success", evaluation.legacy.BuildSuccessPct, evaluation.indicatorAvailable["build_success"], "%", 99, "gte"),
+			statusIndicator("api_availability", "API availability", float64Ptr(evaluation.legacy.APIAvailabilityPct), evaluation.indicatorAvailable["api_availability"], "%", 99.9, "gte"),
+			statusIndicator("wake_p95", "Platform wake p95", evaluation.legacy.WakeP95MS, evaluation.indicatorAvailable["wake_p95"], "ms", 350, "lte"),
+			statusIndicator("build_success", "Deployment success", float64Ptr(evaluation.legacy.BuildSuccessPct), evaluation.indicatorAvailable["build_success"], "%", 99, "gte"),
 		},
 		ActiveEvents: publicStatusEvents(active), UpcomingMaintenance: publicStatusEvents(upcoming), ResolvedIncidents: publicStatusEvents(resolved),
 	}
@@ -587,12 +631,22 @@ func unavailableStatusEvaluation() statusEvaluation {
 	return statusEvaluation{legacy: StatusPage{AsOf: now, Source: "degraded: unavailable"}, states: states, indicatorAvailable: map[string]bool{}, dataStatus: "unavailable", updatedAt: now}
 }
 
-func statusIndicator(id, label string, value float64, available bool, unit string, target float64, comparison string) api.PublicStatusIndicator {
-	var ptr *float64
-	if available {
-		ptr = &value
+func statusIndicator(id, label string, value *float64, available bool, unit string, target float64, comparison string) api.PublicStatusIndicator {
+	sampleStatus := "unavailable"
+	if !available {
+		value = nil
 	}
-	return api.PublicStatusIndicator{ID: id, Label: label, Value: ptr, Unit: unit, Target: target, Comparison: comparison}
+	if available {
+		sampleStatus = "no_sample"
+		if value != nil {
+			sampleStatus = "available"
+		}
+	}
+	return api.PublicStatusIndicator{ID: id, Label: label, Value: value, SampleStatus: sampleStatus, Unit: unit, Target: target, Comparison: comparison}
+}
+
+func float64Ptr(value float64) *float64 {
+	return &value
 }
 
 func publicStatusEvents(events []state.StatusIncident) []api.PublicStatusEvent {
@@ -610,18 +664,75 @@ func publicStatusEvent(event state.StatusIncident) api.PublicStatusEvent {
 	}
 	updates := make([]api.PublicStatusUpdate, len(event.Updates))
 	for i, update := range event.Updates {
-		updates[i] = api.PublicStatusUpdate{ID: update.ID, State: string(update.State), Message: update.Message, PostedAt: update.At}
+		var impact *string
+		if update.Impact != nil {
+			value := string(*update.Impact)
+			impact = &value
+		}
+		components := make([]string, len(update.Components))
+		for j, component := range update.Components {
+			components[j] = string(component)
+		}
+		updates[i] = api.PublicStatusUpdate{
+			ID: update.ID, State: string(update.State), Message: update.Message, PostedAt: update.At,
+			EditedAt: update.EditedAt, Impact: impact, Components: components,
+		}
 	}
 	return api.PublicStatusEvent{
 		ID: event.PublicID, Kind: string(event.Kind), Title: event.Title, Impact: string(event.Impact), Components: components,
 		State: string(event.State), StartsAt: event.StartsAt, ScheduledStartAt: event.ScheduledStartAt,
-		ScheduledEndAt: event.ScheduledEndAt, UpdatedAt: event.UpdatedAt, ResolvedAt: event.ResolvedAt, Updates: updates,
+		ScheduledEndAt: event.ScheduledEndAt, UpdatedAt: event.UpdatedAt, EditedAt: event.EditedAt,
+		ResolvedAt: event.ResolvedAt, Updates: updates,
 	}
 }
 
 func utcDay(value time.Time) time.Time {
 	year, month, day := value.UTC().Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+const publicStatusBucketInterval = 5 * time.Minute
+
+func configuredPublicStatusLaunchAt(getenv func(string) string) (time.Time, error) {
+	raw := strings.TrimSpace(getenv("FAAS_PUBLIC_STATUS_LAUNCH_AT"))
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	launchAt, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("FAAS_PUBLIC_STATUS_LAUNCH_AT must be RFC3339: %w", err)
+	}
+	return launchAt.UTC(), nil
+}
+
+// publicStatusExpectedBuckets counts five-minute UTC bucket boundaries inside
+// one day that are both at/after the public launch and at/before now. This
+// excludes burn-in data and correctly weights a partial first public day.
+func publicStatusExpectedBuckets(day, now, launchAt time.Time) int {
+	day = utcDay(day)
+	now = now.UTC()
+	dayEnd := day.Add(24 * time.Hour)
+	if now.Before(day) || (!launchAt.IsZero() && now.Before(launchAt)) {
+		return 0
+	}
+
+	first := 0
+	if !launchAt.IsZero() && launchAt.After(day) {
+		if !launchAt.Before(dayEnd) {
+			return 0
+		}
+		delta := launchAt.Sub(day)
+		first = int((delta + publicStatusBucketInterval - 1) / publicStatusBucketInterval)
+	}
+
+	last := 287
+	if now.Before(dayEnd) {
+		last = int(now.Sub(day) / publicStatusBucketInterval)
+	}
+	if last < first {
+		return 0
+	}
+	return last - first + 1
 }
 
 func (s *server) runStatusEvaluator(ctx context.Context) {

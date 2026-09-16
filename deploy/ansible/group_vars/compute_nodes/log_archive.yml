@@ -1,0 +1,6 @@
+# Apply the archive gate to every present and future compute node in the fleet.
+faas_log_archive_required: true
+faas_log_archive_bucket: gregale-log-archive-5ae37259
+faas_log_archive_endpoint: https://storage.googleapis.com
+faas_log_archive_region: auto
+faas_log_archive_auth_mode: gcp_metadata

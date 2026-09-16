@@ -98,7 +98,11 @@ returning id, account_id, slug, type, coalesce(runtime, ''), ram_mb, coalesce(id
 update apps set manifest = $2 where id = $1;
 
 -- name: DeleteApp :exec
-update apps set status = 'deleted' where id = $1;
+update apps
+set status = 'deleted',
+    deleted_at = coalesce(deleted_at, now()),
+    delete_grace_until = coalesce(delete_grace_until, now() + interval '7 days')
+where id = $1;
 
 -- name: CreateDeployment :one
 insert into deployments (id, app_id, build_id, image_digest, kind, source_path, source_root, source_bytes, handler, log_path, status)
@@ -146,7 +150,15 @@ where app_id = $1 and status = 'superseded'
 order by created_at desc limit 1;
 
 -- name: UpdateDeploymentStatus :exec
-update deployments set status = $2, error = $3 where id = $1;
+update deployments
+set status = $2,
+    error = $3,
+    traffic_percent = case when $2 = 'failed' then 0 else traffic_percent end,
+    rollout_state = case when $2 = 'failed' then 'aborted' else rollout_state end,
+    rollout_completed_at = case when $2 = 'failed' then null else rollout_completed_at end,
+    rollout_aborted_at = case when $2 = 'failed' then coalesce(rollout_aborted_at, now()) else rollout_aborted_at end,
+    rollout_aborted_reason = case when $2 = 'failed' then coalesce(nullif($3, ''), 'deployment failed') else rollout_aborted_reason end
+where id = $1;
 
 -- name: SetDeploymentFailed :one
 -- ADR-021 (G1, image digest enforcement hardening): durable
@@ -163,7 +175,11 @@ update deployments set status = $2, error = $3 where id = $1;
 -- "no code mapped"; null in the column means "not yet stamped" —
 -- both render as "" on the Go side via the coalesce in the SELECT).
 update deployments
-   set status = 'failed', error = $2, error_code = $3
+   set status = 'failed', error = $2, error_code = $3,
+       traffic_percent = 0, rollout_state = 'aborted',
+       rollout_completed_at = null,
+       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
  where id = $1
 returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
           coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -204,7 +220,7 @@ delete from custom_domains where domain = $1;
 -- name: CreateCron :one
 insert into crons (id, app_id, schedule, path, enabled, timezone, skip_if_running)
 values (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
-returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at;
+returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at;
 
 -- name: UpdateCron :one
 update crons set
@@ -212,21 +228,21 @@ update crons set
   path = coalesce($3, path),
   enabled = coalesce($4, enabled)
 where id = $1
-returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at;
+returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at;
 
 -- name: DeleteCron :exec
 delete from crons where id = $1 and app_id = $2;
 
 -- name: ListCronsForApp :many
-select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
+select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at
 from crons where app_id = $1 order by created_at desc;
 
 -- name: ListEnabledCrons :many
-select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
-from crons where enabled = true;
+select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at
+from crons where enabled = true and suspended_reason = '';
 
 -- name: CronByID :one
-select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
+select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at
 from crons where id = $1;
 
 -- name: AppendEvent :exec
@@ -339,12 +355,33 @@ limit $3::int8;
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 on conflict (instance_id, minute) do update
-   set cpu_usec        = usage_minutes.cpu_usec        + EXCLUDED.cpu_usec,
+   set mb_seconds      = case when usage_minutes.mb_seconds = 0 and EXCLUDED.mb_seconds > 0 then EXCLUDED.mb_seconds else usage_minutes.mb_seconds end,
+       cpu_usec        = usage_minutes.cpu_usec        + EXCLUDED.cpu_usec,
        tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
        net_tx_bytes    = usage_minutes.net_tx_bytes    + EXCLUDED.net_tx_bytes,
        net_rx_bytes    = usage_minutes.net_rx_bytes    + EXCLUDED.net_rx_bytes,
        cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count,
        tail_seconds    = usage_minutes.tail_seconds    + EXCLUDED.tail_seconds;
+
+-- name: RegisterGatewayUsageEvent :one
+with inserted as (
+  insert into meter_gateway_usage_events (node_id, event_id, instance_id, minute)
+  values ($1, $2, $3, $4)
+  on conflict (node_id, event_id) do nothing
+  returning 1
+)
+select exists(select 1 from inserted) as inserted;
+
+-- name: ApplyGatewayUsageEvent :execrows
+insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
+select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
+  from instances i
+  join apps a on a.id = i.app_id
+ where i.id = $1
+on conflict (instance_id, minute) do update
+   set requests        = usage_minutes.requests        + EXCLUDED.requests,
+       tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
+       cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count;
 
 -- name: UsageByMonth :many
 select account_id, app_id, month, mb_seconds, cpu_usec, requests, tx_bytes, net_tx_bytes
@@ -2432,8 +2469,9 @@ WHERE id = $1
 --   'unavailable'  → heartbeat gap detected; instances stranded.
 --   'recovering'   → first post-failure ping succeeded; sweep to
 --                    confirm zero stranded instances.
--- Caller is the recovery arbiter; one tick enumerates both classes
--- and applies the same decision matrix.
+-- Unavailable rows age out of active polling after 24 hours. They remain in
+-- inventory for audit; a returning vmmd re-registers through the heartbeat
+-- path and becomes active again.
 SELECT
     id, name, target_url, vpcpus, mem_mb, max_concurrency,
     admission_ceiling_mb,
@@ -2444,7 +2482,8 @@ SELECT
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
     last_recovery_outcome
 FROM compute_nodes
-WHERE lifecycle IN ('unavailable', 'recovering')
+WHERE lifecycle = 'recovering'
+   OR (lifecycle = 'unavailable' AND coalesce(last_heartbeat_at, created_at) >= now() - interval '24 hours')
 ORDER BY name;
 
 -- name: NodeListDrainable :many
@@ -2480,7 +2519,7 @@ ORDER BY name;
 -- (app_id, deployment_id, state, id) tuple — account_id is reachable
 -- via the existing app/deployment joins if needed by downstream
 -- code, but the per-tick hot loop doesn't pay for it here.
-SELECT id, state, app_id, deployment_id
+SELECT id, state, app_id, deployment_id, kind
 FROM instances
 WHERE node_id = $1
   AND state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
@@ -3141,6 +3180,13 @@ WHERE account_id = sqlc.arg(account_id)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
 
+-- name: ExecutionListForAccountStatus :many
+SELECT * FROM executions
+WHERE account_id = sqlc.arg(account_id)
+  AND status = sqlc.arg(status)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
 -- name: ExecutionClaimNext :one
 WITH candidate AS (
   SELECT id, deadline_at
@@ -3345,6 +3391,40 @@ WITH candidates AS (
 DELETE FROM execution_payloads AS payload
 USING candidates
 WHERE payload.execution_id = candidates.execution_id;
+
+-- name: ExecutionUsageRecord :exec
+-- The execution ID is the idempotency key. Recording from the terminal
+-- execution row keeps usage and the lifecycle projection in lockstep and
+-- makes retries/recovery harmless.
+INSERT INTO execution_usage_ledger (
+    execution_id, account_id, runtime, status, wall_time_ms, cpu_time_ms,
+    peak_memory_mb, output_bytes, started_at, finished_at, created_at
+)
+SELECT id, account_id, runtime, status, wall_time_ms, cpu_time_ms,
+       peak_memory_mb,
+       (result_bytes + octet_length(stdout) + octet_length(stderr))::bigint,
+       started_at, finished_at, created_at
+FROM executions
+WHERE id = sqlc.arg(execution_id)
+  AND status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+ON CONFLICT (execution_id) DO NOTHING;
+
+-- name: ExecutionUsageByAccount :one
+SELECT
+    count(*)::bigint AS runs,
+    COALESCE(sum(wall_time_ms), 0)::bigint AS wall_time_ms,
+    COALESCE(sum(cpu_time_ms), 0)::bigint AS cpu_time_ms,
+    COALESCE(max(peak_memory_mb), 0)::bigint AS peak_memory_mb,
+    COALESCE(sum(output_bytes), 0)::bigint AS output_bytes,
+    count(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded,
+    count(*) FILTER (WHERE status = 'failed')::bigint AS failed,
+    count(*) FILTER (WHERE status = 'timed_out')::bigint AS timed_out,
+    count(*) FILTER (WHERE status = 'out_of_memory')::bigint AS out_of_memory,
+    count(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled
+FROM execution_usage_ledger
+WHERE account_id = sqlc.arg(account_id)
+  AND finished_at >= sqlc.arg(month_start)::timestamptz
+  AND finished_at < sqlc.arg(month_end)::timestamptz;
 
 -- Runtime snapshot catalog (ADR-171 follow-up / durable publication boundary).
 -- Publication is insert-only; retirement is the sole mutable transition.

@@ -14,6 +14,7 @@ package state_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -83,9 +84,64 @@ func TestPg_CancelDeploymentTx_Pending_Happy(t *testing.T) {
 	if got.CancelReason != string(state.CancelReasonUser) {
 		t.Errorf("CancelReason = %q, want %q", got.CancelReason, string(state.CancelReasonUser))
 	}
+	if got.TrafficPercent != 0 || got.RolloutState != "aborted" || got.RolloutAbortedAt == nil || got.RolloutCompletedAt != nil {
+		t.Errorf("cancelled release state = traffic %d rollout %q aborted_at %v completed_at %v",
+			got.TrafficPercent, got.RolloutState, got.RolloutAbortedAt, got.RolloutCompletedAt)
+	}
+	var stages state.StageState
+	if err := json.Unmarshal(got.StageState, &stages); err != nil {
+		t.Fatalf("decode stage state: %v", err)
+	}
+	if stages.Current != "" || stages.CurrentStartedAt != nil {
+		t.Errorf("cancelled stage still active: %+v", stages)
+	}
+	if len(stages.History) != 1 || stages.History[0].Status != "cancelled" {
+		t.Errorf("cancelled stage history = %+v, want one cancelled entry", stages.History)
+	}
 	// pending deployments with no in-flight builds cascade to nothing.
 	if len(cascaded) != 0 {
 		t.Errorf("cascaded build ids = %v, want empty", cascaded)
+	}
+}
+
+// A legacy or interrupted app teardown can leave a nonterminal deployment
+// under a soft-deleted parent. The stale-deployment reconciler must still be
+// able to cancel that retained work and create the running-build cleanup
+// obligation instead of retrying the same row forever.
+func TestPg_CancelDeploymentTx_DeletedApp_CascadesRunningBuild(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	_, appID, depID := seedPendingDeployPg(t, s, ctx, "cancel-deleted-app")
+	buildID := seedBuildPg(t, s, ctx, depID)
+	if _, err := s.ClaimQueuedBuild(ctx, buildID); err != nil {
+		t.Fatalf("ClaimQueuedBuild: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE apps SET status = 'deleted' WHERE id = $1`, appID); err != nil {
+		t.Fatalf("soft-delete parent app fixture: %v", err)
+	}
+
+	got, cascaded, err := s.CancelDeploymentTx(ctx, depID, "system:imaged-stale-reconciler", state.CancelReasonSystem)
+	if err != nil {
+		t.Fatalf("CancelDeploymentTx: %v", err)
+	}
+	if got.Status != state.DeployCancelled {
+		t.Errorf("deployment status after cancel = %q, want %q", got.Status, state.DeployCancelled)
+	}
+	if len(cascaded) != 1 || cascaded[0] != buildID {
+		t.Fatalf("cascaded build ids = %v, want [%s]", cascaded, buildID)
+	}
+	build, err := s.BuildByID(ctx, buildID)
+	if err != nil {
+		t.Fatalf("BuildByID: %v", err)
+	}
+	if build.Status != state.BuildCancelled {
+		t.Errorf("build status after cancel = %q, want %q", build.Status, state.BuildCancelled)
+	}
+	var cleanupCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM builder_vm_cleanup WHERE build_id = $1`, buildID).Scan(&cleanupCount); err != nil {
+		t.Fatalf("query builder VM cleanup: %v", err)
+	}
+	if cleanupCount != 1 {
+		t.Errorf("builder VM cleanup rows = %d, want 1", cleanupCount)
 	}
 }
 
@@ -98,6 +154,22 @@ func TestPg_CancelDeploymentTx_Live_Refuses(t *testing.T) {
 	_, _, err := s.CancelDeploymentTx(ctx, depID, "operator:test", state.CancelReasonUser)
 	if !errors.Is(err, state.ErrCancelLiveForbidden) {
 		t.Fatalf("CancelDeploymentTx(live) = %v, want ErrCancelLiveForbidden", err)
+	}
+}
+
+func TestPg_CancelDeploymentTx_DeletedApp_LiveStillRefuses(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	_, appID, depID := seedPendingDeployPg(t, s, ctx, "cancel-deleted-live")
+	if err := s.MarkDeploymentLive(ctx, depID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE apps SET status = 'deleted' WHERE id = $1`, appID); err != nil {
+		t.Fatalf("soft-delete parent app fixture: %v", err)
+	}
+
+	_, _, err := s.CancelDeploymentTx(ctx, depID, "system:imaged-stale-reconciler", state.CancelReasonSystem)
+	if !errors.Is(err, state.ErrCancelLiveForbidden) {
+		t.Fatalf("CancelDeploymentTx(deleted app, live deployment) = %v, want ErrCancelLiveForbidden", err)
 	}
 }
 

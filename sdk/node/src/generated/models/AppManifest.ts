@@ -18,7 +18,7 @@ export type AppManifest = {
   working_dir?: string | null;
   port?: number | null;
   /**
-   * Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the public HTTP/readiness listener; these entries are used for in-task endpoint discovery (ADR-165).
+   * Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries remain available for in-task discovery (ADR-165, ADR-176).
    */
   ports?: Array<WorkloadPort>;
   healthz?: string | null;

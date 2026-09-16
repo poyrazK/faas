@@ -44,7 +44,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/wire"
-	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -309,12 +308,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if handleForwardRequestCancellation(w, r, true) {
 			return
 		}
+		responseStatus := http.StatusBadGateway
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 			markStaleTarget(r.Context())
+			responseStatus = http.StatusServiceUnavailable
 		}
 		log.Error("gateway: forwarder stream open failed",
 			"node", t.NodeID, "err", err.Error())
-		http.Error(w, "forwarder stream open failed", http.StatusBadGateway)
+		http.Error(w, "forwarder stream open failed", responseStatus)
 		return
 	}
 
@@ -339,28 +340,28 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		port = uint32(sidecarPort)
 	}
 	init := &vmmdpb.ForwardHTTPRequestInit{
-		Instance:    r.Header.Get("x-faas-instance"),
-		Method:      r.Method,
-		RequestUri:  r.URL.RequestURI(),
-		Port:        port,
-		Stream:      true,
-		AppProtocol: protocol,
+		Instance:           r.Header.Get("x-faas-instance"),
+		Method:             r.Method,
+		RequestUri:         r.URL.RequestURI(),
+		Port:               port,
+		Stream:             true,
+		AppProtocol:        protocol,
+		ContentLength:      max(r.ContentLength, 0),
+		ContentLengthKnown: r.ContentLength >= 0 && len(r.TransferEncoding) == 0,
 	}
 	// The gRPC client handler propagates the current span to vmmd, but
 	// the guest request is a new HTTP carrier assembled from this init
-	// frame. Inject the W3C context here so customer OTel SDKs can join
-	// the platform trace. Use TraceContext directly rather than the
-	// process-wide composite propagator: baggage is customer-controlled
-	// and must not be copied into the guest bridge implicitly.
+	// frame. Inject the request-scoped W3C context here so customer OTel
+	// SDKs can join the platform trace, including on warm instances.
 	guestHeaders := stripHopByHop(r.Header)
-	propagation.TraceContext{}.Inject(r.Context(), propagation.HeaderCarrier(guestHeaders))
+	injectGuestTraceContext(r.Context(), guestHeaders)
 	for name, vals := range guestHeaders {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
-			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, "x-faas-invocation-id")) {
-			// x-faas-client-ip is the one customer-facing platform
-			// header. Handler.ServeHTTP overwrites it from the trusted
-			// XFF hop immediately before dispatch; every other x-faas-*
-			// header remains internal metadata.
+			!strings.EqualFold(name, api.InvocationIDHeader) {
+			// The guest receives only the platform-authored client IP and
+			// invocation correlation headers. Handler.ServeHTTP overwrites
+			// both immediately before dispatch; every other x-faas-* header
+			// remains internal metadata.
 			if !strings.EqualFold(name, wire.ClientIPHeader) {
 				continue
 			}
@@ -501,10 +502,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// gateway-fanout cache sets it from the
 			// AdmitInstanceResponse on the wake). requestID
 			// is the inbound x-faas-request-id minted by the
-			// gateway edge. latency_ms is the gap from the
-			// proxy start (stamped on the request context by
-			// the closure) to the first byte. nil opts out
-			// (pre-PR-C fixtures).
+			// gateway edge. latency_ms starts at request/wake
+			// acceptance; proxy_latency_ms keeps the final bridge
+			// hop separately. nil opts out (pre-PR-C fixtures).
 			//
 			// `evs` aliases the parameter so the package
 			// name `evts.ProxyFirstByte` is still reachable
@@ -513,13 +513,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
 				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
-					EmitAt:     time.Now().UTC(),
-					WakeID:     t.WakeID,
-					AppID:      r.Header.Get("x-faas-app"),
-					RequestID:  r.Header.Get("x-faas-request-id"),
-					InstanceID: t.InstanceID,
-					NodeID:     t.NodeID,
-					LatencyMs:  time.Since(started).Milliseconds(),
+					EmitAt:         time.Now().UTC(),
+					WakeID:         t.WakeID,
+					AppID:          t.AppID,
+					RequestID:      requestIDFrom(r),
+					InstanceID:     t.InstanceID,
+					NodeID:         t.NodeID,
+					LatencyMs:      time.Since(wakeTimelineStart(r)).Milliseconds(),
+					ProxyLatencyMs: time.Since(started).Milliseconds(),
 				})
 			}
 			continue
@@ -853,13 +854,14 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
 				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
-					EmitAt:     time.Now().UTC(),
-					WakeID:     t.WakeID,
-					AppID:      r.Header.Get("x-faas-app"),
-					RequestID:  r.Header.Get("x-faas-request-id"),
-					InstanceID: t.InstanceID,
-					NodeID:     t.NodeID,
-					LatencyMs:  time.Since(started).Milliseconds(),
+					EmitAt:         time.Now().UTC(),
+					WakeID:         t.WakeID,
+					AppID:          t.AppID,
+					RequestID:      requestIDFrom(r),
+					InstanceID:     t.InstanceID,
+					NodeID:         t.NodeID,
+					LatencyMs:      time.Since(wakeTimelineStart(r)).Milliseconds(),
+					ProxyLatencyMs: time.Since(started).Milliseconds(),
 				})
 			}
 			// If the init carries an error string (the bridge
@@ -982,12 +984,12 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 	headers := r.Header.Clone()
 	for name := range headers {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") &&
-			(!isSyntheticInvocation(r.Context()) || !strings.EqualFold(name, "x-faas-invocation-id")) &&
+			!strings.EqualFold(name, api.InvocationIDHeader) &&
 			!strings.EqualFold(name, wire.ClientIPHeader) {
 			headers.Del(name)
 		}
 	}
-	propagation.TraceContext{}.Inject(r.Context(), propagation.HeaderCarrier(headers))
+	injectGuestTraceContext(r.Context(), headers)
 
 	var buf bytes.Buffer
 	if _, err := fmt.Fprintf(&buf, "%s %s %s\r\n", method, requestURI, proto); err != nil {

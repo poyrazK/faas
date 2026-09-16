@@ -23,13 +23,16 @@ class AccountLimits:
     reads."""
     max_concurrency: int
     deployed_apps: int
+    deploys_per_hour: int
+    """Account-wide deployment admissions per fixed one-hour window."""
     developer_apps: int
     """Maximum live `gregale dev` environments for this plan."""
     included_gb_hours: int
     app_layer_max_mb: int
     ephemeral_disk_max_mb: int
-    """Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap
-    historically named app_layer_max_mb."""
+    """Total logical capacity of the writable ephemeral app filesystem per app, in MB, including application
+    content and filesystem metadata. Free scratch space is this value minus deployed content and overhead. This is
+    the same physical drive1 cap historically named app_layer_max_mb."""
     triggers_allowed: bool
     """Whether the plan permits external event triggers."""
     trigger_kinds: list[TriggerKind]
@@ -56,6 +59,8 @@ class AccountLimits:
         max_concurrency = self.max_concurrency
 
         deployed_apps = self.deployed_apps
+
+        deploys_per_hour = self.deploys_per_hour
 
         developer_apps = self.developer_apps
 
@@ -95,6 +100,7 @@ class AccountLimits:
                 "vcpu": vcpu,
                 "max_concurrency": max_concurrency,
                 "deployed_apps": deployed_apps,
+                "deploys_per_hour": deploys_per_hour,
                 "developer_apps": developer_apps,
                 "included_gb_hours": included_gb_hours,
                 "app_layer_max_mb": app_layer_max_mb,
@@ -125,6 +131,8 @@ class AccountLimits:
         max_concurrency = d.pop("max_concurrency")
 
         deployed_apps = d.pop("deployed_apps")
+
+        deploys_per_hour = d.pop("deploys_per_hour")
 
         developer_apps = d.pop("developer_apps")
 
@@ -163,6 +171,7 @@ class AccountLimits:
             vcpu=vcpu,
             max_concurrency=max_concurrency,
             deployed_apps=deployed_apps,
+            deploys_per_hour=deploys_per_hour,
             developer_apps=developer_apps,
             included_gb_hours=included_gb_hours,
             app_layer_max_mb=app_layer_max_mb,

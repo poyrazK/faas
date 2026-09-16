@@ -408,13 +408,43 @@ func TestPgSnapshotReplicaTransientRetryAndReadyRevalidation(t *testing.T) {
 		 where snapshot_id = $1 and node_id = $2`, snap.ID, nodeID); err != nil {
 		t.Fatal(err)
 	}
+	initialQueuedAt := job.QueuedAt
+	revalidationStarted := time.Now()
 	if refreshed, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
 		t.Fatal(err)
-	} else if refreshed != 1 {
-		t.Fatalf("revalidated = %d, want 1", refreshed)
+	} else if refreshed != 0 {
+		t.Fatalf("new fan-out jobs = %d, want 0 during revalidation", refreshed)
 	}
-	if _, err := s.ClaimSnapshotReplica(ctx, nodeID); err != nil {
+	revalidation, err := s.ClaimSnapshotReplica(ctx, nodeID)
+	if err != nil {
 		t.Fatalf("claim revalidation: %v", err)
+	}
+	if !revalidation.Revalidation {
+		t.Fatal("claimed cache check was not marked as revalidation")
+	}
+	if revalidation.Attempts != job.Attempts {
+		t.Fatalf("revalidation attempts = %d, want unchanged %d", revalidation.Attempts, job.Attempts)
+	}
+	if revalidation.QueuedAt.Before(revalidationStarted) || revalidation.QueuedAt.Equal(initialQueuedAt) {
+		t.Fatalf("revalidation queue timestamp = %s, initial=%s start=%s", revalidation.QueuedAt, initialQueuedAt, revalidationStarted)
+	}
+	if err := s.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, nodeID, revalidation.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	var cursorUpdatedAt time.Time
+	if err := pool.QueryRow(ctx, `select updated_at from snapshot_replica_cursors where node_id = $1`, nodeID).Scan(&cursorUpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if added, err := s.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil || added != 0 {
+		t.Fatalf("idle enqueue = %d, %v; want 0, nil", added, err)
+	}
+	var idleCursorUpdatedAt time.Time
+	if err := pool.QueryRow(ctx, `select updated_at from snapshot_replica_cursors where node_id = $1`, nodeID).Scan(&idleCursorUpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !idleCursorUpdatedAt.Equal(cursorUpdatedAt) {
+		t.Fatalf("idle enqueue wrote cursor updated_at: before=%s after=%s", cursorUpdatedAt, idleCursorUpdatedAt)
 	}
 }
 

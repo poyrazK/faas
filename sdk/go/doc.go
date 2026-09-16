@@ -80,6 +80,21 @@
 //	    return err
 //	}
 //
+// Disposable executions have a typed, resumable watcher. It reconnects after
+// a transient EOF or transport failure and advances its replay cursor only
+// after an event has been decoded:
+//
+//	receipt, err := c.Run(ctx, faas.CreateExecutionRequest{
+//	    Runtime: faas.ExecutionRuntimeNode22,
+//	    Source:  "console.log('hello')",
+//	}, faas.RunOptions{OnEvent: func(ev faas.ExecutionEvent) error {
+//	    fmt.Print(ev.Data.Chunk)
+//	    return nil
+//	}})
+//
+// The guest filesystem is ephemeral and no customer storage disk is attached
+// to the run. The final receipt is returned only after the VM is destroyed.
+//
 // # Concurrency
 //
 // A Client is safe for concurrent use. The HTTP transport is shared;

@@ -67,6 +67,75 @@ func TestClientServeRoundTripStreamsBoundedResult(t *testing.T) {
 	_ = host.Close()
 }
 
+func TestClientExecuteWithOutputDeliversFramesBeforeTerminal(t *testing.T) {
+	host, guest := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- Serve(ctx, guest, func(_ context.Context, _ Request, stdout, stderr *OutputWriter) (Result, error) {
+			if _, err := stdout.Write([]byte("first\n")); err != nil {
+				return Result{}, err
+			}
+			if _, err := stderr.Write([]byte("second\n")); err != nil {
+				return Result{}, err
+			}
+			return Result{Status: api.ExecutionStatusSucceeded, Result: json.RawMessage(`null`)}, nil
+		})
+	}()
+	client, err := NewClient(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	result, err := client.ExecuteWithOutput(ctx, testRequest(), func(_ context.Context, stream string, chunk []byte) error {
+		got = append(got, stream+":"+string(chunk))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"stdout:first\n", "stderr:second\n"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("received frames = %q, want %q", got, want)
+	}
+	if string(result.Stdout) != "first\n" || string(result.Stderr) != "second\n" {
+		t.Fatalf("result streams = %q/%q", result.Stdout, result.Stderr)
+	}
+	if err := <-serveDone; err != nil {
+		t.Fatal(err)
+	}
+	_ = host.Close()
+}
+
+func TestClientExecuteWithOutputStopsOnReceiverError(t *testing.T) {
+	host, guest := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- Serve(ctx, guest, func(_ context.Context, _ Request, stdout, _ *OutputWriter) (Result, error) {
+			_, err := stdout.Write([]byte("stop\n"))
+			return Result{Status: api.ExecutionStatusSucceeded, Result: json.RawMessage(`null`)}, err
+		})
+	}()
+	client, err := NewClient(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiverErr := errors.New("consumer stopped")
+	if _, err := client.ExecuteWithOutput(ctx, testRequest(), func(context.Context, string, []byte) error {
+		return receiverErr
+	}); !errors.Is(err, receiverErr) {
+		t.Fatalf("error = %v, want receiver error", err)
+	}
+	_ = host.Close()
+	select {
+	case <-serveDone:
+	case <-time.After(time.Second):
+		t.Fatal("guest serve did not stop after receiver error")
+	}
+}
+
 func TestClientIsSingleUse(t *testing.T) {
 	host, guest := net.Pipe()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

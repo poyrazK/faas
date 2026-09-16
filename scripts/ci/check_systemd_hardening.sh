@@ -23,6 +23,52 @@ units=(
 required=(NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes ProtectKernelModules=yes)
 errors=0
 
+socket_units=(
+  "${root}/deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.socket"
+  "${root}/deploy/systemd/faas-gatewayd-public.socket"
+)
+for socket_unit in "${socket_units[@]}"; do
+  if [[ ! -f "$socket_unit" ]]; then
+    echo "systemd-hardening-check: missing ${socket_unit}" >&2
+    errors=$((errors + 1))
+    continue
+  fi
+  for directive in 'ListenStream=127.0.0.1:8080' 'FileDescriptorName=public' 'Backlog=4096'; do
+    if ! grep -Fqx "$directive" "$socket_unit"; then
+      echo "systemd-hardening-check: ${socket_unit}: missing ${directive}" >&2
+      errors=$((errors + 1))
+    fi
+  done
+done
+
+caddy_dropin="${unit_root}/host_hardening/templates/90-gregale-caddy-hardening.conf.j2"
+if [[ ! -f "$caddy_dropin" ]]; then
+  echo "systemd-hardening-check: missing ${caddy_dropin}" >&2
+  errors=$((errors + 1))
+else
+  caddy_required=(
+    CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+    AmbientCapabilities=CAP_NET_BIND_SERVICE
+    NoNewPrivileges=yes
+    ProtectSystem=strict
+    ProtectHome=yes
+    PrivateDevices=yes
+    ProtectKernelLogs=yes
+    RestrictNamespaces=yes
+    RestrictAddressFamilies=AF_UNIX\ AF_INET\ AF_INET6
+  )
+  for directive in "${caddy_required[@]}"; do
+    if ! grep -Fqx "$directive" "$caddy_dropin"; then
+      echo "systemd-hardening-check: Caddy drop-in: missing ${directive}" >&2
+      errors=$((errors + 1))
+    fi
+  done
+  if grep -Eq '(^|[[:space:]])CAP_NET_ADMIN($|[[:space:]])' "$caddy_dropin"; then
+    echo "systemd-hardening-check: Caddy drop-in must not grant CAP_NET_ADMIN" >&2
+    errors=$((errors + 1))
+  fi
+fi
+
 for rel in "${units[@]}"; do
   file="${unit_root}/${rel}"
   if [[ ! -f "$file" ]]; then
@@ -181,6 +227,29 @@ for rel in "${shared_schedd_units[@]}"; do
     errors=$((errors + 1))
   fi
 done
+
+# The compute-only role deliberately installs its own schedd unit. It shares
+# the binary and hardening contract with the control-plane unit but must not
+# inherit the control-plane PostgreSQL ordering from a copied image.
+compute_schedd_unit="${root}/deploy/ansible/roles/compute_only_service/files/faas-schedd.service"
+compute_schedd_tasks="${root}/deploy/ansible/roles/compute_only_service/tasks/main.yml"
+if [[ ! -f "$compute_schedd_unit" ]]; then
+  echo "systemd-hardening-check: missing ${compute_schedd_unit}" >&2
+  errors=$((errors + 1))
+else
+  if has_directive_value "$compute_schedd_unit" After postgresql.service; then
+    echo "systemd-hardening-check: compute-only schedd must not order after postgresql.service" >&2
+    errors=$((errors + 1))
+  fi
+  if grep -Eq '^Requires=.*postgresql\.service' "$compute_schedd_unit"; then
+    echo "systemd-hardening-check: compute-only schedd must not require postgresql.service" >&2
+    errors=$((errors + 1))
+  fi
+fi
+if [[ ! -f "$compute_schedd_tasks" ]] || ! grep -Fqx '    src: faas-schedd.service' <(sed -n '/install node-local schedd unit/,/dest: \/etc\/systemd\/system\/faas-schedd.service/p' "$compute_schedd_tasks"); then
+  echo "systemd-hardening-check: compute-only role must install its remote-DB schedd unit" >&2
+  errors=$((errors + 1))
+fi
 
 # The compute-only role is deliberately remote-DB capable. This tripwire
 # prevents a future copy/paste of the control-plane dependency from making a

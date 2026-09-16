@@ -1,5 +1,7 @@
 package state
 
+// adr: 137
+
 // memstore_deployment_node_test.go: covers 28 zero-coverage
 // MemStore methods that PR #1 / PR #2 left behind. These are pure
 // in-memory state operations on the deployment / node registry — no
@@ -385,7 +387,7 @@ func TestMemStore_FailRunningInstanceOnDeadNode_Happy(t *testing.T) {
 	if got := memGetInstance(t, m, inst.ID); got.State != string(StateRunning) {
 		t.Fatalf("pre-call State = %q, want %q", got.State, StateRunning)
 	}
-	if err := m.FailRunningInstanceOnDeadNode(ctx, inst.ID, "node-dead"); err != nil {
+	if err := m.FailRunningInstanceOnDeadNode(ctx, inst.ID, "node-dead", time.Now()); err != nil {
 		t.Fatalf("FailRunningInstanceOnDeadNode: %v", err)
 	}
 	got := memGetInstance(t, m, inst.ID)
@@ -398,7 +400,7 @@ func TestMemStore_FailRunningInstanceOnDeadNode_WrongNode(t *testing.T) {
 	t.Parallel()
 	m, ctx, _, app, dep := memDeploymentFixture(t)
 	inst := memLiveInstance(t, m, ctx, app.ID, dep.ID, "node-live")
-	err := m.FailRunningInstanceOnDeadNode(ctx, inst.ID, "node-dead")
+	err := m.FailRunningInstanceOnDeadNode(ctx, inst.ID, "node-dead", time.Now())
 	if err == nil {
 		t.Error("FailRunningInstanceOnDeadNode(wrong node) = nil; want ErrConflict")
 	}

@@ -26,6 +26,7 @@ import (
 )
 
 const kgvTestGitSHA = "0123456789abcdef0123456789abcdef01234567"
+const kgvIncomingGitSHA = "fedcba9876543210fedcba9876543210fedcba98"
 
 // TestCmdReleaseKGV_Help asserts both `-h` and `--help` route to
 // the inner dispatcher and exit 0.
@@ -213,6 +214,71 @@ func TestCmdReleaseKGVRotate_HappyPath(t *testing.T) {
 	}
 	if b.CreatedAt == "" || b.CreatedAt == "1970-01-01T00:00:00Z" {
 		t.Errorf("baseline CreatedAt = %q, want a real RFC3339 timestamp", b.CreatedAt)
+	}
+}
+
+// spec: CD must compare an incoming SBOM with the last accepted production
+// baseline before activation and leave the current release unchanged when a
+// high/critical count regresses.
+func TestCmdReleaseKGVVerify_RefusesRegressionBeforeActivation(t *testing.T) {
+	root := t.TempDir()
+	stageFixtureRelease(t, root, kgvTestGitSHA, 0, 0, 0, 0)
+	if code := cmdReleaseKGVRotate([]string{"--git-sha=" + kgvTestGitSHA, "--releases-root=" + root}); code != 0 {
+		t.Fatalf("accept baseline: code %d", code)
+	}
+	if err := releaseinstall.AtomicFlip(root, kgvTestGitSHA); err != nil {
+		t.Fatal(err)
+	}
+	stageFixtureRelease(t, root, kgvIncomingGitSHA, 0, 1, 0, 0)
+	if code := cmdReleaseKGVVerify([]string{"--git-sha=" + kgvIncomingGitSHA, "--releases-root=" + root}); code != 3 {
+		t.Fatalf("verify regressed release = %d, want 3", code)
+	}
+	current, err := os.Readlink(releaseinstall.CurrentSymlink(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(current, kgvTestGitSHA) {
+		t.Fatalf("current changed after refusal: %s", current)
+	}
+}
+
+func TestCmdReleaseKGVVerify_AcceptsEqualOrLowerCounts(t *testing.T) {
+	root := t.TempDir()
+	stageFixtureRelease(t, root, kgvTestGitSHA, 1, 2, 0, 0)
+	if code := cmdReleaseKGVRotate([]string{"--git-sha=" + kgvTestGitSHA, "--releases-root=" + root}); code != 0 {
+		t.Fatalf("accept baseline: code %d", code)
+	}
+	stageFixtureRelease(t, root, kgvIncomingGitSHA, 1, 1, 0, 0)
+	if code := cmdReleaseKGVVerify([]string{"--git-sha=" + kgvIncomingGitSHA, "--releases-root=" + root}); code != 0 {
+		t.Fatalf("verify non-regressed release = %d, want 0", code)
+	}
+}
+
+func TestCmdReleaseKGVVerify_RejectsStaleStampedSBOM(t *testing.T) {
+	root := t.TempDir()
+	stageFixtureRelease(t, root, kgvIncomingGitSHA, 0, 0, 0, 0)
+	if err := releaseinstall.WriteBaseline(root, releaseinstall.KGVZero(kgvTestGitSHA)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(releaseinstall.BundleRoot(root, kgvIncomingGitSHA), "release.sbom.json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["documentNamespace"] = "https://gregale.dev/spdxdocs/" + kgvTestGitSHA
+	body, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdReleaseKGVVerify([]string{"--git-sha=" + kgvIncomingGitSHA, "--releases-root=" + root}); code != 3 {
+		t.Fatalf("verify stale SBoM = %d, want 3", code)
 	}
 }
 

@@ -4,10 +4,13 @@ from .account_app_secret_response import AccountAppSecretResponse
 from .account_credit_response import AccountCreditResponse
 from .account_deletion_response import AccountDeletionResponse
 from .account_deletion_response_status import AccountDeletionResponseStatus
+from .account_deploy_rate_limit import AccountDeployRateLimit
 from .account_egress_allowlist_extra_response import AccountEgressAllowlistExtraResponse
 from .account_export_response import AccountExportResponse
+from .account_export_response_schema_version import AccountExportResponseSchemaVersion
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
+from .account_rate_limits_response import AccountRateLimitsResponse
 from .account_response import AccountResponse
 from .account_response_plan import AccountResponsePlan
 from .account_response_requested_plan import AccountResponseRequestedPlan
@@ -21,7 +24,10 @@ from .admin_refund_response import AdminRefundResponse
 from .admin_refund_response_provider import AdminRefundResponseProvider
 from .admin_set_github_webhook_secret_request import AdminSetGithubWebhookSecretRequest
 from .admin_set_github_webhook_secret_response import AdminSetGithubWebhookSecretResponse
+from .admin_status_event_edit_request import AdminStatusEventEditRequest
 from .admin_status_event_update_request import AdminStatusEventUpdateRequest
+from .admin_status_event_update_request_components_item import AdminStatusEventUpdateRequestComponentsItem
+from .admin_status_event_update_request_impact import AdminStatusEventUpdateRequestImpact
 from .admin_status_event_update_request_state import AdminStatusEventUpdateRequestState
 from .admin_status_incident_create_request import AdminStatusIncidentCreateRequest
 from .admin_status_incident_create_request_components_item import AdminStatusIncidentCreateRequestComponentsItem
@@ -33,6 +39,7 @@ from .admin_status_maintenance_create_request_components_item import AdminStatus
 from .admin_status_maintenance_create_request_impact import AdminStatusMaintenanceCreateRequestImpact
 from .admin_status_maintenance_create_request_kind import AdminStatusMaintenanceCreateRequestKind
 from .admin_status_maintenance_create_request_state import AdminStatusMaintenanceCreateRequestState
+from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_status import AlertDeliveryResponseStatus
@@ -111,6 +118,7 @@ from .app_open_api_import_response_openapi_version import AppOpenAPIImportRespon
 from .app_open_api_import_response_source import AppOpenAPIImportResponseSource
 from .app_open_api_policy_apply_response import AppOpenAPIPolicyApplyResponse
 from .app_open_api_policy_preview_response import AppOpenAPIPolicyPreviewResponse
+from .app_open_api_policy_preview_response_observed_source import AppOpenAPIPolicyPreviewResponseObservedSource
 from .app_open_api_policy_preview_route import AppOpenAPIPolicyPreviewRoute
 from .app_open_api_policy_preview_route_method import AppOpenAPIPolicyPreviewRouteMethod
 from .app_open_api_policy_preview_route_status import AppOpenAPIPolicyPreviewRouteStatus
@@ -181,6 +189,10 @@ from .billing_paddle_overage_preflight_response import BillingPaddleOveragePrefl
 from .billing_portal_response import BillingPortalResponse
 from .billing_reconcile_response import BillingReconcileResponse
 from .billing_retry_response import BillingRetryResponse
+from .billing_status_response import BillingStatusResponse
+from .billing_status_response_account_status import BillingStatusResponseAccountStatus
+from .billing_status_response_mode import BillingStatusResponseMode
+from .billing_status_response_plan import BillingStatusResponsePlan
 from .budget_threshold_webhook_payload import BudgetThresholdWebhookPayload
 from .build_export_response import BuildExportResponse
 from .build_list_response import BuildListResponse
@@ -264,8 +276,6 @@ from .create_deployment_request_tag_type_3_type_1 import CreateDeploymentRequest
 from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
-from .create_execution_request import CreateExecutionRequest
-from .create_execution_request_runtime import CreateExecutionRequestRuntime
 from .create_job_request import CreateJobRequest
 from .create_job_request_env_overrides import CreateJobRequestEnvOverrides
 from .create_job_request_kind import CreateJobRequestKind
@@ -278,6 +288,7 @@ from .create_managed_postgres_binding_request_access import CreateManagedPostgre
 from .create_managed_postgres_database_request import CreateManagedPostgresDatabaseRequest
 from .create_managed_postgres_database_request_availability import CreateManagedPostgresDatabaseRequestAvailability
 from .create_managed_postgres_database_request_service_class import CreateManagedPostgresDatabaseRequestServiceClass
+from .create_managed_realtime_endpoint_request import CreateManagedRealtimeEndpointRequest
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
@@ -289,6 +300,8 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_project_environment_approval_request import CreateProjectEnvironmentApprovalRequest
+from .create_project_environment_request import CreateProjectEnvironmentRequest
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
 from .create_tenant_surface_request_cert_kind import CreateTenantSurfaceRequestCertKind
 from .create_trigger_batch_request import CreateTriggerBatchRequest
@@ -304,6 +317,7 @@ from .create_trigger_request_broker_poison_strategy_type_3_type_1 import (
 )
 from .create_trigger_request_config import CreateTriggerRequestConfig
 from .cron_response import CronResponse
+from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
@@ -383,13 +397,6 @@ from .deployment_response_deployed_via_type_1 import DeploymentResponseDeployedV
 from .deployment_response_deployed_via_type_2_type_1 import DeploymentResponseDeployedViaType2Type1
 from .deployment_response_deployed_via_type_3_type_1 import DeploymentResponseDeployedViaType3Type1
 from .deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
-from .deployment_response_last_auto_rollback_reason_type_1 import DeploymentResponseLastAutoRollbackReasonType1
-from .deployment_response_last_auto_rollback_reason_type_2_type_1 import (
-    DeploymentResponseLastAutoRollbackReasonType2Type1,
-)
-from .deployment_response_last_auto_rollback_reason_type_3_type_1 import (
-    DeploymentResponseLastAutoRollbackReasonType3Type1,
-)
 from .deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
 from .deployment_response_parked_reason_type_1 import DeploymentResponseParkedReasonType1
 from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseParkedReasonType2Type1
@@ -467,16 +474,19 @@ from .env_diff_row import EnvDiffRow
 from .env_diff_row_cells import EnvDiffRowCells
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .execution_failure import ExecutionFailure
+from .execution_file import ExecutionFile
 from .execution_limit_request import ExecutionLimitRequest
 from .execution_limit_request_cpu_millicores import ExecutionLimitRequestCpuMillicores
 from .execution_limit_request_ephemeral_disk_mb import ExecutionLimitRequestEphemeralDiskMb
 from .execution_limit_request_memory_mb import ExecutionLimitRequestMemoryMb
+from .execution_list_response import ExecutionListResponse
 from .execution_network_policy import ExecutionNetworkPolicy
 from .execution_network_policy_mode import ExecutionNetworkPolicyMode
 from .execution_response import ExecutionResponse
 from .execution_response_runtime import ExecutionResponseRuntime
 from .execution_response_status import ExecutionResponseStatus
 from .execution_usage import ExecutionUsage
+from .execution_usage_summary_response import ExecutionUsageSummaryResponse
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .field_error import FieldError
 from .filter_criteria import FilterCriteria
@@ -597,6 +607,7 @@ from .list_bucket_objects_response_200_items_item import ListBucketObjectsRespon
 from .list_cron_runs_response import ListCronRunsResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
+from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
 from .list_job_runs_response import ListJobRunsResponse
@@ -631,6 +642,14 @@ from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperat
 from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_realtime_close_request import ManagedRealtimeCloseRequest
+from .managed_realtime_endpoint_response import ManagedRealtimeEndpointResponse
+from .managed_realtime_endpoint_response_auth_token_masked import ManagedRealtimeEndpointResponseAuthTokenMasked
+from .managed_realtime_endpoint_response_callback_auth_token_masked import (
+    ManagedRealtimeEndpointResponseCallbackAuthTokenMasked,
+)
+from .managed_realtime_message_request import ManagedRealtimeMessageRequest
+from .managed_realtime_publish_response import ManagedRealtimePublishResponse
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -729,6 +748,8 @@ from .org_list_response import OrgListResponse
 from .org_me_response import OrgMeResponse
 from .org_member_response import OrgMemberResponse
 from .org_member_response_role import OrgMemberResponseRole
+from .org_membership_export_response import OrgMembershipExportResponse
+from .org_membership_export_response_role import OrgMembershipExportResponseRole
 from .org_response import OrgResponse
 from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
@@ -777,7 +798,28 @@ from .programmatic_auth_response_plan import ProgrammaticAuthResponsePlan
 from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagicLinkResponse200
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
 from .project_apply_request import ProjectApplyRequest
+from .project_delete_preview_response import ProjectDeletePreviewResponse
+from .project_environment_approval_response import ProjectEnvironmentApprovalResponse
+from .project_environment_config_change import ProjectEnvironmentConfigChange
+from .project_environment_config_change_kind import ProjectEnvironmentConfigChangeKind
+from .project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
+from .project_environment_config_response import ProjectEnvironmentConfigResponse
+from .project_environment_config_response_values import ProjectEnvironmentConfigResponseValues
+from .project_environment_promotion_change import ProjectEnvironmentPromotionChange
+from .project_environment_promotion_change_kind import ProjectEnvironmentPromotionChangeKind
+from .project_environment_promotion_change_source_revision_kind import (
+    ProjectEnvironmentPromotionChangeSourceRevisionKind,
+)
+from .project_environment_promotion_change_target_revision_kind import (
+    ProjectEnvironmentPromotionChangeTargetRevisionKind,
+)
+from .project_environment_promotion_preview_response import ProjectEnvironmentPromotionPreviewResponse
+from .project_environment_response import ProjectEnvironmentResponse
+from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
+from .project_source_ref_scan_request import ProjectSourceRefScanRequest
+from .project_summary_response import ProjectSummaryResponse
+from .project_workload_response import ProjectWorkloadResponse
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -800,6 +842,8 @@ from .public_status_overview_data_status import PublicStatusOverviewDataStatus
 from .public_status_overview_overall_status import PublicStatusOverviewOverallStatus
 from .public_status_overview_region_scope import PublicStatusOverviewRegionScope
 from .public_status_update import PublicStatusUpdate
+from .public_status_update_components_item import PublicStatusUpdateComponentsItem
+from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
@@ -853,6 +897,7 @@ from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeCon
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
 from .rollout_transition_response import RolloutTransitionResponse
+from .rotate_alert_rule_secret_request import RotateAlertRuleSecretRequest
 from .rotate_alert_rule_secret_response import RotateAlertRuleSecretResponse
 from .rotate_app_secret_request import RotateAppSecretRequest
 from .rotate_app_secret_response import RotateAppSecretResponse
@@ -989,8 +1034,13 @@ from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidat
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
+from .update_managed_realtime_endpoint_request import UpdateManagedRealtimeEndpointRequest
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
+from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
+from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
+from .update_project_environment_request import UpdateProjectEnvironmentRequest
+from .update_project_request import UpdateProjectRequest
 from .update_trigger_request import UpdateTriggerRequest
 from .update_trigger_request_broker_poison_strategy_type_1 import UpdateTriggerRequestBrokerPoisonStrategyType1
 from .update_trigger_request_broker_poison_strategy_type_2_type_1 import (
@@ -1044,10 +1094,13 @@ __all__ = (
     "AccountCreditResponse",
     "AccountDeletionResponse",
     "AccountDeletionResponseStatus",
+    "AccountDeployRateLimit",
     "AccountEgressAllowlistExtraResponse",
     "AccountExportResponse",
+    "AccountExportResponseSchemaVersion",
     "AccountLimits",
     "AccountLimitsPlan",
+    "AccountRateLimitsResponse",
     "AccountResponse",
     "AccountResponsePlan",
     "AccountResponseRequestedPlan",
@@ -1061,7 +1114,10 @@ __all__ = (
     "AdminRefundResponseProvider",
     "AdminSetGithubWebhookSecretRequest",
     "AdminSetGithubWebhookSecretResponse",
+    "AdminStatusEventEditRequest",
     "AdminStatusEventUpdateRequest",
+    "AdminStatusEventUpdateRequestComponentsItem",
+    "AdminStatusEventUpdateRequestImpact",
     "AdminStatusEventUpdateRequestState",
     "AdminStatusIncidentCreateRequest",
     "AdminStatusIncidentCreateRequestComponentsItem",
@@ -1073,6 +1129,7 @@ __all__ = (
     "AdminStatusMaintenanceCreateRequestImpact",
     "AdminStatusMaintenanceCreateRequestKind",
     "AdminStatusMaintenanceCreateRequestState",
+    "AdminStatusUpdateEditRequest",
     "AdvanceCanaryRequest",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseStatus",
@@ -1155,6 +1212,7 @@ __all__ = (
     "AppOpenAPIImportResponseSource",
     "AppOpenAPIPolicyApplyResponse",
     "AppOpenAPIPolicyPreviewResponse",
+    "AppOpenAPIPolicyPreviewResponseObservedSource",
     "AppOpenAPIPolicyPreviewRoute",
     "AppOpenAPIPolicyPreviewRouteMethod",
     "AppOpenAPIPolicyPreviewRouteStatus",
@@ -1221,6 +1279,10 @@ __all__ = (
     "BillingPortalResponse",
     "BillingReconcileResponse",
     "BillingRetryResponse",
+    "BillingStatusResponse",
+    "BillingStatusResponseAccountStatus",
+    "BillingStatusResponseMode",
+    "BillingStatusResponsePlan",
     "BudgetThresholdWebhookPayload",
     "BuildExportResponse",
     "BuildListResponse",
@@ -1304,8 +1366,6 @@ __all__ = (
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestValidateMode",
-    "CreateExecutionRequest",
-    "CreateExecutionRequestRuntime",
     "CreateJobRequest",
     "CreateJobRequestEnvOverrides",
     "CreateJobRequestKind",
@@ -1318,6 +1378,7 @@ __all__ = (
     "CreateManagedPostgresDatabaseRequest",
     "CreateManagedPostgresDatabaseRequestAvailability",
     "CreateManagedPostgresDatabaseRequestServiceClass",
+    "CreateManagedRealtimeEndpointRequest",
     "CreateMirrorRuleRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
@@ -1329,6 +1390,8 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateProjectEnvironmentApprovalRequest",
+    "CreateProjectEnvironmentRequest",
     "CreateTenantSurfaceRequest",
     "CreateTenantSurfaceRequestCertKind",
     "CreateTriggerBatchRequest",
@@ -1340,6 +1403,7 @@ __all__ = (
     "CreateTriggerRequestBrokerPoisonStrategyType3Type1",
     "CreateTriggerRequestConfig",
     "CronResponse",
+    "CronResponseSuspendedReason",
     "CronRun",
     "CronRunOutcome",
     "CSRFTokenResponse",
@@ -1416,9 +1480,6 @@ __all__ = (
     "DeploymentResponseDeployedViaType2Type1",
     "DeploymentResponseDeployedViaType3Type1",
     "DeploymentResponseHostingReceiptType0",
-    "DeploymentResponseLastAutoRollbackReasonType1",
-    "DeploymentResponseLastAutoRollbackReasonType2Type1",
-    "DeploymentResponseLastAutoRollbackReasonType3Type1",
     "DeploymentResponseOverrideEnvSecretRefs",
     "DeploymentResponseParkedReasonType1",
     "DeploymentResponseParkedReasonType2Type1",
@@ -1499,16 +1560,19 @@ __all__ = (
     "EnvDiffRowCells",
     "ErrorNewWebhookPayload",
     "ExecutionFailure",
+    "ExecutionFile",
     "ExecutionLimitRequest",
     "ExecutionLimitRequestCpuMillicores",
     "ExecutionLimitRequestEphemeralDiskMb",
     "ExecutionLimitRequestMemoryMb",
+    "ExecutionListResponse",
     "ExecutionNetworkPolicy",
     "ExecutionNetworkPolicyMode",
     "ExecutionResponse",
     "ExecutionResponseRuntime",
     "ExecutionResponseStatus",
     "ExecutionUsage",
+    "ExecutionUsageSummaryResponse",
     "ExportAppDebugRequestsFormat",
     "FieldError",
     "FilterCriteria",
@@ -1629,6 +1693,7 @@ __all__ = (
     "ListCronRunsResponse",
     "ListDeploymentAuditResponse",
     "ListDeployTokensResponse",
+    "ListExecutionsStatus",
     "ListInstancesResponse",
     "ListInvocationsResponse",
     "ListJobRunsResponse",
@@ -1663,6 +1728,12 @@ __all__ = (
     "ManagedPostgresUsageOperatorResponseGuardrailState",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedRealtimeCloseRequest",
+    "ManagedRealtimeEndpointResponse",
+    "ManagedRealtimeEndpointResponseAuthTokenMasked",
+    "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
+    "ManagedRealtimeMessageRequest",
+    "ManagedRealtimePublishResponse",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
@@ -1758,6 +1829,8 @@ __all__ = (
     "OrgListResponse",
     "OrgMemberResponse",
     "OrgMemberResponseRole",
+    "OrgMembershipExportResponse",
+    "OrgMembershipExportResponseRole",
     "OrgMeResponse",
     "OrgResponse",
     "OrgResponsePlan",
@@ -1807,7 +1880,24 @@ __all__ = (
     "ProgrammaticSignupMagicLinkResponse200",
     "ProgrammaticSignupMagicLinkResponse200Status",
     "ProjectApplyRequest",
+    "ProjectDeletePreviewResponse",
+    "ProjectEnvironmentApprovalResponse",
+    "ProjectEnvironmentConfigChange",
+    "ProjectEnvironmentConfigChangeKind",
+    "ProjectEnvironmentConfigDiffResponse",
+    "ProjectEnvironmentConfigResponse",
+    "ProjectEnvironmentConfigResponseValues",
+    "ProjectEnvironmentPromotionChange",
+    "ProjectEnvironmentPromotionChangeKind",
+    "ProjectEnvironmentPromotionChangeSourceRevisionKind",
+    "ProjectEnvironmentPromotionChangeTargetRevisionKind",
+    "ProjectEnvironmentPromotionPreviewResponse",
+    "ProjectEnvironmentResponse",
+    "ProjectResponse",
     "ProjectScanRequest",
+    "ProjectSourceRefScanRequest",
+    "ProjectSummaryResponse",
+    "ProjectWorkloadResponse",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",
@@ -1830,6 +1920,8 @@ __all__ = (
     "PublicStatusOverviewOverallStatus",
     "PublicStatusOverviewRegionScope",
     "PublicStatusUpdate",
+    "PublicStatusUpdateComponentsItem",
+    "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
@@ -1883,6 +1975,7 @@ __all__ = (
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
     "RolloutTransitionResponse",
+    "RotateAlertRuleSecretRequest",
     "RotateAlertRuleSecretResponse",
     "RotateAppSecretRequest",
     "RotateAppSecretResponse",
@@ -2017,8 +2110,13 @@ __all__ = (
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
+    "UpdateManagedRealtimeEndpointRequest",
     "UpdateMirrorRuleRequest",
     "UpdateOperatorRuntimeConfigBody",
+    "UpdateProjectEnvironmentConfigRequest",
+    "UpdateProjectEnvironmentConfigRequestValues",
+    "UpdateProjectEnvironmentRequest",
+    "UpdateProjectRequest",
     "UpdateTriggerRequest",
     "UpdateTriggerRequestBrokerPoisonStrategyType1",
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",

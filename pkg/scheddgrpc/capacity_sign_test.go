@@ -102,7 +102,7 @@ func freshStrictModeRegistry(t *testing.T) (*sched.NodeKeyRegistry, *ecdsa.Priva
 	}
 	loader := &stubLoader{
 		rows: []sched.NodeKeyRow{
-			{KeyID: keyID, PublicKeyPEM: string(der)},
+			{ComputeNodeID: "node-1", KeyID: keyID, PublicKeyPEM: string(der)},
 		},
 	}
 	reg := sched.NewNodeKeyRegistry(loader, nil)
@@ -291,7 +291,7 @@ func TestReportCapacity_Slice3_UnknownKeyIDRejected(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	reg.ReplaceAll([]sched.NodeKeyRow{
-		{KeyID: otherKeyID, PublicKeyPEM: string(der)},
+		{ComputeNodeID: "node-1", KeyID: otherKeyID, PublicKeyPEM: string(der)},
 	})
 	cli := newServer(t, &strictModeEngine{
 		capturingEngine: &capturingEngine{},

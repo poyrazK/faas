@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestPgStoreStatusHistory pins the Postgres projection described by ADR-130:
-// terminal invocation buckets and the bounded incident timeline share the
+// platform availability buckets and the bounded incident timeline share the
 // same UTC/recent-plus-open semantics as the MemStore implementation.
 func TestPgStoreStatusHistory(t *testing.T) {
 	s, ctx := pgStore(t)
@@ -29,14 +30,23 @@ func TestPgStoreStatusHistory(t *testing.T) {
 		t.Fatalf("CreateApp: %v", err)
 	}
 
-	since := time.Now().UTC().Add(-time.Minute)
-	for _, status := range []state.InvocationState{state.InvocationCompleted, state.InvocationFailed} {
-		if _, err := s.EnqueueInvocation(ctx, state.Invocation{
-			AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke,
-			State: status, Method: "POST", Path: "/", DueAt: time.Now().UTC(),
-		}); err != nil {
-			t.Fatalf("EnqueueInvocation(%s): %v", status, err)
+	bucketAt := time.Now().UTC().Truncate(5 * time.Minute)
+	since := bucketAt
+	for _, component := range publicstatus.AllComponents() {
+		statusValue := publicstatus.StateOperational
+		if component == publicstatus.ComponentNetworking {
+			statusValue = publicstatus.StatePartialOutage
 		}
+		if err := s.RecordStatusBucket(ctx, state.StatusBucket{Component: component, BucketAt: bucketAt, State: statusValue, HasTelemetry: true}); err != nil {
+			t.Fatalf("RecordStatusBucket(%s): %v", component, err)
+		}
+	}
+	// The customer workload ledger remains available but is not an uptime input.
+	if _, err := s.EnqueueInvocation(ctx, state.Invocation{
+		AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke,
+		State: state.InvocationCompleted, Method: "POST", Path: "/", DueAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
 	}
 	buckets, err := s.StatusUptimeBuckets(ctx, since)
 	if err != nil {
@@ -47,8 +57,8 @@ func TestPgStoreStatusHistory(t *testing.T) {
 	for _, bucket := range buckets {
 		if bucket.Day.Equal(today) {
 			foundToday = true
-			if bucket.Successful != 1 || bucket.Total != 2 {
-				t.Fatalf("today bucket = %+v, want 1/2", bucket)
+			if bucket.Successful != 0 || bucket.Total != 1 {
+				t.Fatalf("today bucket = %+v, want one unavailable platform interval", bucket)
 			}
 		}
 	}

@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -40,10 +41,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/authcode"
+	"github.com/onebox-faas/faas/pkg/billing"
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
+	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -97,6 +100,46 @@ func seedDevAccount(ctx context.Context, store state.Store, token string) error 
 		return err
 	}
 	_ = acct // find-or-create confirmed; the row exists either way
+	return nil
+}
+
+// rejectProductionDevEnvironment keeps local bootstrap conveniences out of a
+// control-plane process. The registry filter also catches future dev-only
+// variables owned directly by apid; shared test-only variables are excluded
+// except for the process-wide FAAS_DEV switch.
+func rejectProductionDevEnvironment(boxRole role.Role, getenv func(string) string) error {
+	if boxRole != role.RoleControlPlane {
+		return nil
+	}
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	var configured []string
+	for _, row := range daemonunitspec.EnvContractForDaemon("apid") {
+		if row.Source != daemonunitspec.EnvSourceDevOnly {
+			continue
+		}
+		directOwner := false
+		for _, owner := range row.Owners {
+			if owner == "apid" {
+				directOwner = true
+				break
+			}
+		}
+		if row.Name != "FAAS_DEV" && !directOwner {
+			continue
+		}
+		if _, prefix := strings.CutSuffix(row.Name, "_"); prefix {
+			continue
+		}
+		if strings.TrimSpace(getenv(row.Name)) != "" {
+			configured = append(configured, row.Name)
+		}
+	}
+	if len(configured) > 0 {
+		sort.Strings(configured)
+		return fmt.Errorf("apid: production role forbids dev-only environment variables: %s", strings.Join(configured, ", "))
+	}
 	return nil
 }
 
@@ -172,6 +215,27 @@ func workflowsEnabledFromEnv(getenv func(string) string) bool {
 // and tested before operators set this flag; the default is fail-closed.
 func executionAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_EXECUTION_API_ENABLED")) == "1"
+}
+
+func githubDeploysAvailabilityProbe(getenv func(string) string) func(context.Context) bool {
+	base := strings.TrimRight(strings.TrimSpace(getenv("FAAS_GITHUBD_LOOPBACK")), "/")
+	if base == "" {
+		base = "http://127.0.0.1:8083"
+	}
+	readyURL := base + "/readyz"
+	client := &http.Client{Timeout: time.Second}
+	return func(ctx context.Context) bool {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, readyURL, nil)
+		if err != nil {
+			return false
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}
 }
 
 // resolveMetricsAddr reads FAAS_APID_METRICS_ADDR via the test seam
@@ -491,9 +555,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	// DEPLOY-1 / ADR-075 capdecl gate. apid's capsDecl is
-	// cap_net_bind_service (HTTPS listener). A misconfigured
-	// AmbientCapabilities line fails fast at boot. The
+	// DEPLOY-1 / ADR-075 capdecl gate. apid serves only a Unix socket and
+	// high loopback ports behind Caddy, so its allowlist is empty. A future code
+	// path that requires an undeployed capability fails fast at boot. The
 	// capCheck seam lets tests stub the live /proc/self/status
 	// check (review finding M2 — every daemon now has this).
 	capCheck := deps.capCheck
@@ -534,8 +598,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		role.RoleSingleBox, role.RoleControlPlane); err != nil {
 		return err
 	}
+	if err := rejectProductionDevEnvironment(cfg.Role, deps.getenv); err != nil {
+		return err
+	}
 
-	pool, err := db.Open(ctx, cfg.DBURL)
+	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
 	if err != nil {
 		return fmt.Errorf("apid: open db: %w", err)
 	}
@@ -627,6 +694,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
+		go srv.runManagedRealtimeEndpointReconciler(ctx)
+		go srv.runManagedRealtimeOwnerReaper(ctx)
 		// ADR-132: pg_notify is a low-latency wake-up only. The
 		// subscriber re-reads the durable runtime_config_entries row, so a
 		// missed notification is repaired by the next reconnect or boot.
@@ -690,10 +759,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ListAllAccounts walk so it stays bounded by the customer
 		// count on the one box.
 		graceLoop := grace.New(grace.Params{
-			Store:    srv.store,
-			Mailer:   graceSenderAdapter{m: srv.mailer},
-			Log:      log,
-			Interval: graceIntervalFromEnv(log),
+			Store:     srv.store,
+			Mailer:    graceSenderAdapter{m: srv.mailer},
+			Log:       log,
+			Interval:  graceIntervalFromEnv(log),
+			Artifacts: srv.sbomStorage,
+			Registry:  srv.ops.Registry(),
 			Notif: func(ctx context.Context, ch, payload string) error {
 				return srv.notif.Notify(ctx, ch, payload)
 			},
@@ -772,6 +843,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				shipCfg.Bucket,
 				shipCfg.KeyID,
 				shipCfg.Secret,
+				shipCfg.AuthMode,
 			)
 			if err != nil {
 				log.Warn("logarchive.s3client_init_failed", "err", err)
@@ -1294,7 +1366,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv := newServerWithDeps(store, log, cfg.GetAppsDomain(deps.getenv), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv)).
 		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv)).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
-		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv))
+		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
+		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv))
+	billingMode, err := billing.ModeFromEnv(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid: billing mode: %w", err)
+	}
+	srv.WithBillingMode(billingMode)
 	objectRegistry, err := objectstorage.Load(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)
@@ -1374,17 +1452,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: load billing config: %w", err)
 	}
 	billingCfg = billingloader.ApplyBillingEnvOverlay(billingCfg, deps.getenv)
-	billingProv, provName, err := billingloader.LoadProviderForAPID(ctx, billingCfg, deps.getenv, log)
-	if err != nil {
-		return fmt.Errorf("apid: load billing provider: %w", err)
+	provName := billingCfg.DefaultProvider()
+	if billingMode.Enabled() {
+		billingProv, loadedName, err := billingloader.LoadProviderForAPID(ctx, billingCfg, deps.getenv, log)
+		if err != nil {
+			return fmt.Errorf("apid: load billing provider: %w", err)
+		}
+		provName = loadedName
+		if err := validateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
+			return err
+		}
+		if billingProv != nil {
+			srv.WithBillingProvider(billingProv)
+		}
+		log.Info("billing provider loaded", "provider", provName)
+	} else {
+		log.Info("billing disabled; provider initialization skipped", "provider", provName)
 	}
-	if err := validateObjectStorageBillingSetup(billingProv, objectRegistry); err != nil {
-		return err
-	}
-	if billingProv != nil {
-		srv.WithBillingProvider(billingProv)
-	}
-	log.Info("billing provider loaded", "provider", provName)
+	srv.WithBillingProviderName(provName)
 
 	// Issue #299 / ADR-038 Phase 3: imagd stores CycloneDX JSON under
 	// sboms/<buildID>.cdx.json and records that storage key in provenance.
@@ -1487,6 +1572,34 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// same-box install doesn't brick the per-route surface just
 	// because the operator never exported the env var.
 	srv.WithGatewaydControlURL(resolveGatewaydControlURL(deps.getenv))
+	// ADR-156: same-box installs mirror durable realtime endpoint writes onto
+	// the local realtimed owner. Fleet installs replace it with the leased
+	// cross-node registrar below; the background reconciler repairs missed
+	// fan-out after node activation or restart.
+	srv.WithRealtimeSocket(deps.getenv("FAAS_REALTIME_SOCKET"))
+	if ownerStore, ok := store.(state.ManagedRealtimeConnectionOwnerStore); ok {
+		localNodeID := ""
+		if cfg.NodeName != "" {
+			if node, nodeErr := store.ComputeNodeByName(ctx, cfg.NodeName); nodeErr == nil {
+				localNodeID = node.ID
+			}
+		}
+		if localNodeID == "" {
+			if node, nodeErr := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName); nodeErr == nil {
+				localNodeID = node.ID
+			}
+		}
+		var local realtimeNodeOperator
+		if srv.realtimeOwner != nil && srv.realtimeClient != nil {
+			local = localRealtimeNodeOperator{owner: srv.realtimeOwner, client: srv.realtimeClient}
+		}
+		resolver := newLeasedRealtimeOwner(ownerStore, store, localNodeID, local, log)
+		// The fleet adapter owns both public operations and endpoint
+		// reconciliation. It retains the local Unix fast path when present.
+		srv.realtimeOwner = resolver
+		srv.realtimeRegistrar = resolver
+		log.Info("apid: managed realtime leased owner resolver armed", "local_node_id", localNodeID)
+	}
 
 	// ADR-126 / issue #975 item #2: the in-process LRU backing
 	// the `?source=auto` OpenAPI generation. Constructed once
@@ -1517,10 +1630,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// signal that the box is misconfigured rather than a silent accept-and-
 	// drop of plaintext. The unit tests don't set the var because the
 	// handlers they're checking don't exercise the seal path.
-	if recipientPath := deps.getenv("FAAS_HOST_AGE_RECIPIENT_PATH"); recipientPath != "" {
+	recipientPath := deps.getenv("FAAS_FLEET_AGE_RECIPIENT_PATH")
+	if recipientPath == "" {
+		recipientPath = deps.getenv("FAAS_HOST_AGE_RECIPIENT_PATH")
+	}
+	if recipientPath != "" {
 		r, err := secretbox.LoadRecipient(recipientPath)
 		if err != nil {
-			return fmt.Errorf("apid: load host age recipient %q: %w", recipientPath, err)
+			return fmt.Errorf("apid: load fleet age recipient %q: %w", recipientPath, err)
 		}
 		setSecretRecipient = func() *age.X25519Recipient { return r }
 		// Issue #463 / ADR-068: the sidecar seal helper reuses the
@@ -1528,9 +1645,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// separate getter keeps the seal helpers testable in
 		// isolation without leaking the secret-handler test seam.
 		setSidecarRecipient = func() *age.X25519Recipient { return r }
-		log.Info("host age recipient loaded", "path", recipientPath)
+		log.Info("fleet age recipient loaded", "path", recipientPath)
 	} else {
-		log.Warn("FAAS_HOST_AGE_RECIPIENT_PATH unset — secrets PUT will return 503")
+		log.Warn("FAAS_FLEET_AGE_RECIPIENT_PATH unset — secrets PUT will return 503")
 	}
 
 	// MFA (IAM-2, issue #186): load the host age identity so
@@ -1546,14 +1663,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// so the 30-day rotation overlap window unseals envelopes
 	// sealed under the previous key. The single-identity SetMFAIdentity
 	// stays wired for backward compat with the existing tests.
-	if identityPath := deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH"); identityPath != "" {
+	identityPath := deps.getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
+	if identityPath == "" {
+		identityPath = deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
+	}
+	if identityPath != "" {
 		ident, err := secretbox.LoadHostKey(identityPath)
 		if err != nil {
-			return fmt.Errorf("apid: load host age identity %q: %w", identityPath, err)
+			return fmt.Errorf("apid: load fleet age identity %q: %w", identityPath, err)
 		}
 		SetMFARecipient(func() *age.X25519Recipient { return ident.Recipient() })
 		SetMFAIdentity(func() *age.X25519Identity { return ident })
-		log.Info("host age identity loaded for MFA", "path", identityPath)
+		log.Info("fleet age identity loaded for MFA", "path", identityPath)
 
 		// Rotation-overlap wiring: load the multi-identity slice from
 		// the same directory. If LoadHostKeys fails (e.g. .previous
@@ -1562,9 +1683,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// envelopes under the current key, just not the previous one.
 		// A hard error would lock every MFA customer out, which is
 		// worse than the operator-visible degraded-mode log line.
-		identities, loadErr := secretbox.LoadHostKeys(filepath.Dir(identityPath))
+		identities, loadErr := secretbox.LoadFleetAndHostKeys(filepath.Dir(identityPath))
 		if loadErr != nil {
-			log.Warn("apid: LoadHostKeys (rotation overlap) failed; MFA unseal will work only for envelopes sealed under the current host.age",
+			// Legacy installations have host.age plus an optional
+			// host.age.previous, but no fleet.age. Preserve that overlap during
+			// the fleet migration so old envelopes can still be unsealed and
+			// rekeyed. If the legacy scan itself fails, the explicitly loaded
+			// identity remains a safe last-resort accessor.
+			if legacy, legacyErr := secretbox.LoadHostKeys(filepath.Dir(identityPath)); legacyErr == nil {
+				identities = legacy
+			} else {
+				identities = []*age.X25519Identity{ident}
+			}
+			SetMFAIdentities(func() []*age.X25519Identity {
+				return identities
+			})
+			log.Warn("apid: fleet identity load failed; using legacy host identities for MFA unseal",
 				"dir", filepath.Dir(identityPath), "err", loadErr.Error())
 		} else {
 			SetMFAIdentities(func() []*age.X25519Identity { return identities })
@@ -1819,6 +1953,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			prometheus.Gatherers{ops.Registry(), budgetReg},
 			promhttp.HandlerOpts{Registry: ops.Registry()},
 		))
+		metricsMux.Handle("/v1/internal/metrics/", srv.metricsDiscoveryHandler())
 		wire.ControlMuxLite(metricsMux, apidProbe.ReadyFunc(), apidProbe.ReasonFunc())
 		metricsSrv = &http.Server{
 			Addr:    metricsAddr,
@@ -1954,6 +2089,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var appErrSrv *grpc.Server
 	var appErrLis net.Listener
 	appErrRotator := wire.NewTLSRotator(nil)
+	// Preview teardown is independent of the optional app-error writer. Keep
+	// the janitor outside that feature gate so disabling the gRPC listener in
+	// development or CI cannot strand expired preview applications.
+	go newPreviewJanitor(srv.store, srv.notif, srv.ops, log, true).Run(ctx)
 	if deps.getenv("FAAS_APP_ERRORS_ENABLED") != "false" { //nolint:goconst // kill-switch sentinel; the canonical "true" env literal.
 		appErrTarget := cfg.GetAppErrorsTarget(deps.getenv)
 		appErrTLS, tlsErr := cfg.LoadAppErrorsTLSWithPrefixAndVerifierAndReload(nodeVerifier, appErrRotator.Reload(nil))
@@ -2066,15 +2205,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}()
 		}
-
-		// ADR-095 PR-C: preview teardown janitor. Lives in apid
-		// (the sole writer to customer-intent tables per CLAUDE.md
-		// line 71) and drives preview rows through the
-		// closed → stale → torn_down state machine. Emits
-		// db.NotifyAppDelete so schedd reaps in-flight instances
-		// for tombstoned apps via its existing app_delete
-		// subscriber (pkg/sched/app_delete_subscriber.go).
-		go newPreviewJanitor(srv.store, srv.notif, srv.ops, log, true).Run(ctx)
 
 		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed
@@ -2492,8 +2622,9 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 // gRPC server onto a fresh /run/faas/apid-githubd.sock (or wherever
 // FAAS_APID_GITHUBD_BRIDGE_SOCK points). The githubd daemon dials
 // this listener after the dispatcher fans out the touched apps
-// and stages each app's RootDir subtree into its build-sources
-// dir as a per-app .tar.gz (issue #432 phase 5).
+// and stages each app's full repository into its build-sources
+// dir as a per-app .tar.gz (issue #432 phase 5). The app's
+// RootDir is persisted separately as the builder SourceRoot.
 //
 // The DAC contract mirrors the advisory socket (0660 group
 // `faas`) so githubd can dial without root, but the listener is

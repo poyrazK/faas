@@ -11,6 +11,7 @@ config="${FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG:-/etc/faas/secrets/storage-box/rclo
 remote="${OFF_HOST_BACKUP_REMOTE:-offhostbox}"
 path="${OFF_HOST_BACKUP_BASEBACKUP_PATH:-faas-pg-basebackup}"
 keep="${FAAS_PG_LOCAL_BASEBACKUP_KEEP:-2}"
+rclone_bin="${FAAS_RCLONE_BIN:-rclone}"
 
 fail() { echo "faas-pg-basebackup-push: $*" >&2; exit 1; }
 [[ -r "$config" ]] || { echo "off-host backup disabled: credential not installed" >&2; exit 0; }
@@ -28,8 +29,8 @@ for backup in "${backups[@]}"; do
   [[ -s "$backup/backup_manifest" ]] || fail "backup manifest missing: $backup/backup_manifest"
 done
 
-rclone copy "$src" "$remote:$path" --config="$config" --stats=0 --quiet
-rclone check "$src" "$remote:$path" --config="$config" --one-way --checkers=16 --quiet \
+"$rclone_bin" copy "$src" "$remote:$path" --config="$config" --stats=0 --quiet
+"$rclone_bin" check "$src" "$remote:$path" --config="$config" --one-way --checkers=16 --quiet \
   || fail "off-host verification failed; local basebackups left intact"
 
 remove_count=$((${#backups[@]} - keep))

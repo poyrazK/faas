@@ -97,10 +97,13 @@ func cmdJobs(args []string) int {
 // server-side list. Output is either the complete pagination envelope
 // in JSON mode or a tabular row per job.
 func cmdJobsList(args []string) int {
-	fs := flag.NewFlagSet("jobs-list", flag.ContinueOnError)
+	fs := newFlagSet("jobs-list", flag.ContinueOnError)
 	limit := fs.Int("limit", 0, "page size (1..200; omit for server default 50)")
 	offset := fs.Int("offset", 0, "page offset")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	limitProvided := false
@@ -149,7 +152,7 @@ func cmdJobsAdd(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale jobs add <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
 		return 1
 	}
-	fs := flag.NewFlagSet("jobs-add", flag.ContinueOnError)
+	fs := newFlagSet("jobs-add", flag.ContinueOnError)
 	image := fs.String("image", "", "OCI image name[:tag | @digest] (required)")
 	command := fs.String("command", "", "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)")
 	ram := fs.Int("ram", 0, "billable memory in MB (0 = plan default)")
@@ -158,6 +161,9 @@ func cmdJobsAdd(args []string) int {
 	retries := fs.Int("retries", 0, "per-task max retries (0 = plan default)")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *image == "" {
@@ -233,7 +239,7 @@ func cmdJobsUpdate(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale jobs update <name>   (name is 3..40 lowercase / digits / hyphens)", "jobs")
 		return 1
 	}
-	fs := flag.NewFlagSet("jobs-update", flag.ContinueOnError)
+	fs := newFlagSet("jobs-update", flag.ContinueOnError)
 	image := fs.String("image", "", "new OCI image")
 	command := fs.String("command", "", "new comma-separated entrypoint")
 	ram := fs.Int("ram", 0, "new RAM (MB)")
@@ -244,6 +250,9 @@ func cmdJobsUpdate(args []string) int {
 	resume := fs.Bool("resume", false, "resume dispatches (status=active)")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *pause && *resume {
@@ -356,13 +365,16 @@ func cmdJobsRun(args []string) int {
 		return 1
 	}
 	name := args[0]
-	fs := flag.NewFlagSet("jobs-run", flag.ContinueOnError)
+	fs := newFlagSet("jobs-run", flag.ContinueOnError)
 	tasks := fs.Int("tasks", 0, "number of tasks to fan out (required)")
 	parallelism := fs.Int("parallelism", 0, "override job parallelism for this run")
 	retries := fs.Int("retries", 0, "override retry max for this run")
 	timeout := fs.Int("timeout", 0, "override task timeout (s) for this run")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
 	if err := fs.Parse(args[1:]); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *tasks <= 0 {

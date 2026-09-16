@@ -119,6 +119,9 @@ func validGuestErrorClass(value string) bool {
 }
 
 func forwardedResponseHeader(ctx context.Context, dst http.Header, name, value string) {
+	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) {
+		return
+	}
 	if !recordGuestExecutionEvidence(ctx, name, value) && !isGuestEvidenceHeader(name) {
 		dst.Add(name, value)
 	}

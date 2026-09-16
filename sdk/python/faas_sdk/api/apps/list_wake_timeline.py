@@ -61,6 +61,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 402:
+        response_402 = Problem.from_dict(response.json())
+
+        return response_402
+
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
@@ -106,11 +111,19 @@ def sync_detailed(
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
 
+    For `wake.proxy_first_byte`, `data.latency_ms` is measured from
+    request/queue acceptance through the first upstream byte. New rows
+    also include `data.proxy_latency_ms` for the final bridge hop. Rows
+    written before this contract correction contain the former
+    proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
+    Wake narratives are a Hobby+ observability surface; Free
+    accounts receive 402 before slug or wake lookup.
 
     Args:
         slug (str):
@@ -158,11 +171,19 @@ def sync(
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
 
+    For `wake.proxy_first_byte`, `data.latency_ms` is measured from
+    request/queue acceptance through the first upstream byte. New rows
+    also include `data.proxy_latency_ms` for the final bridge hop. Rows
+    written before this contract correction contain the former
+    proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
+    Wake narratives are a Hobby+ observability surface; Free
+    accounts receive 402 before slug or wake lookup.
 
     Args:
         slug (str):
@@ -205,11 +226,19 @@ async def asyncio_detailed(
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
 
+    For `wake.proxy_first_byte`, `data.latency_ms` is measured from
+    request/queue acceptance through the first upstream byte. New rows
+    also include `data.proxy_latency_ms` for the final bridge hop. Rows
+    written before this contract correction contain the former
+    proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
+    Wake narratives are a Hobby+ observability surface; Free
+    accounts receive 402 before slug or wake lookup.
 
     Args:
         slug (str):
@@ -255,11 +284,19 @@ async def asyncio(
     `wake.boot_failed`) are joined in alongside the success
     path so a single GET shows the whole lifecycle.
 
+    For `wake.proxy_first_byte`, `data.latency_ms` is measured from
+    request/queue acceptance through the first upstream byte. New rows
+    also include `data.proxy_latency_ms` for the final bridge hop. Rows
+    written before this contract correction contain the former
+    proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
+    Wake narratives are a Hobby+ observability surface; Free
+    accounts receive 402 before slug or wake lookup.
 
     Args:
         slug (str):

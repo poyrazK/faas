@@ -223,6 +223,26 @@ func TestListBuilds_OK_StatusFilter(t *testing.T) {
 	_ = bQueued // left queued — must be excluded from ?status=running.
 }
 
+func TestListBuilds_OK_CancelledStatusFilter(t *testing.T) {
+	h, key, store, acct := listBuildsTestServer(t)
+	dep := seedBuildListDeploy(t, store, acct, "list-cancelled-app")
+	buildID := seedBuildListBuild(t, store, dep)
+	if err := store.MarkBuildCancelled(context.Background(), buildID, dep, false, time.Now().UTC()); err != nil {
+		t.Fatalf("cancel build: %v", err)
+	}
+	rec := listBuildsGet(t, h, key, "/v1/builds?status=cancelled")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp api.BuildListResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].ID != buildID || resp.Items[0].Status != api.BuildStatusCancelled {
+		t.Fatalf("items = %+v, want cancelled build %s", resp.Items, buildID)
+	}
+}
+
 // TestListBuilds_OK_Pagination pins the cursor round-trip: seed
 // 5 running builds with started_at landing in distinct seconds
 // (the cursor is whole-second-aligned because BuildResponse.

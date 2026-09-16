@@ -184,6 +184,11 @@ func (s *PgStore) ListWorkflowRuns(ctx context.Context, appID string, opts ListW
 	if opts.Offset < 0 || opts.Limit < 0 {
 		return nil, 0, ErrWorkflowInvalidPagination
 	}
+	if opts.Status != "" {
+		if err := validateWorkflowRunStatus(opts.Status); err != nil {
+			return nil, 0, err
+		}
+	}
 	countQuery := `SELECT count(*) FROM workflow_runs WHERE app_id = $1`
 	var args []any
 	args = append(args, appID)

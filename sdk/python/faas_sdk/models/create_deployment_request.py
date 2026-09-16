@@ -63,6 +63,9 @@ class CreateDeploymentRequest:
     scope: None | str | Unset = UNSET
     """Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 3..40 chars, no
     leading/trailing dash. nil/omitted = `default`."""
+    environment: str | Unset = UNSET
+    """Registered project environment to resolve to the deployment scope. Requires the app to belong to the
+    project; omitted preserves legacy scope behavior."""
     reason: None | str | Unset = UNSET
     """Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280."""
     tag: (
@@ -78,9 +81,6 @@ class CreateDeploymentRequest:
     to ${{ github.actor }}."""
     pr_number: int | None | Unset = UNSET
     """PR number (when known). 0 / NULL collapses to NULL on the row (DB CHECK rejects 0)."""
-    rollback_on_5xx: bool | None | Unset = UNSET
-    """Per-deployment auto-rollback opt-in (issue #961 leaf 8 / ADR-118 / Mega-C PR-2). Pro+ only. nil = server
-    default false."""
     canary: CanaryPresetSpec | None | Unset = UNSET
     """Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'.
     For preset='custom', stages carries the customer ladder."""
@@ -138,6 +138,8 @@ class CreateDeploymentRequest:
         else:
             scope = self.scope
 
+        environment = self.environment
+
         reason: None | str | Unset
         if isinstance(self.reason, Unset):
             reason = UNSET
@@ -167,12 +169,6 @@ class CreateDeploymentRequest:
             pr_number = UNSET
         else:
             pr_number = self.pr_number
-
-        rollback_on_5xx: bool | None | Unset
-        if isinstance(self.rollback_on_5xx, Unset):
-            rollback_on_5xx = UNSET
-        else:
-            rollback_on_5xx = self.rollback_on_5xx
 
         canary: dict[str, Any] | None | Unset
         if isinstance(self.canary, Unset):
@@ -211,6 +207,8 @@ class CreateDeploymentRequest:
             field_dict["traffic_percent"] = traffic_percent
         if scope is not UNSET:
             field_dict["scope"] = scope
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if reason is not UNSET:
             field_dict["reason"] = reason
         if tag is not UNSET:
@@ -219,8 +217,6 @@ class CreateDeploymentRequest:
             field_dict["deployed_by"] = deployed_by
         if pr_number is not UNSET:
             field_dict["pr_number"] = pr_number
-        if rollback_on_5xx is not UNSET:
-            field_dict["rollback_on_5xx"] = rollback_on_5xx
         if canary is not UNSET:
             field_dict["canary"] = canary
         if full_rootfs_allow_auto is not UNSET:
@@ -302,6 +298,8 @@ class CreateDeploymentRequest:
 
         scope = _parse_scope(d.pop("scope", UNSET))
 
+        environment = d.pop("environment", UNSET)
+
         def _parse_reason(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -377,15 +375,6 @@ class CreateDeploymentRequest:
 
         pr_number = _parse_pr_number(d.pop("pr_number", UNSET))
 
-        def _parse_rollback_on_5xx(data: object) -> bool | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(bool | None | Unset, data)
-
-        rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
-
         def _parse_canary(data: object) -> CanaryPresetSpec | None | Unset:
             if data is None:
                 return data
@@ -429,11 +418,11 @@ class CreateDeploymentRequest:
             workflows=workflows,
             traffic_percent=traffic_percent,
             scope=scope,
+            environment=environment,
             reason=reason,
             tag=tag,
             deployed_by=deployed_by,
             pr_number=pr_number,
-            rollback_on_5xx=rollback_on_5xx,
             canary=canary,
             full_rootfs_allow_auto=full_rootfs_allow_auto,
             full_rootfs_override=full_rootfs_override,

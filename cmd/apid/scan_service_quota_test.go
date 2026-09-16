@@ -18,11 +18,13 @@ package main
 // cmd/e2e/quota_rescue_test.go (separate file).
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // freeLimits mirrors api.MustLimitsFor(api.PlanFree) for the two
@@ -111,6 +113,76 @@ func TestEvaluateQuotaGate_CronsNotAllowed(t *testing.T) {
 	}
 	if !hasNotAllowed {
 		t.Fatalf("reasons %v missing the load-bearing %q reason", reasons, "crons not allowed on this plan")
+	}
+}
+
+func TestEvaluateQuotaGate_CountsEveryDiscoveredSchedule(t *testing.T) {
+	t.Parallel()
+	workloads := []reposcan.Workload{{
+		Name: "api",
+		Schedules: []reposcan.CronSchedule{
+			{Expression: "*/5 * * * *", Enabled: true},
+			{Expression: "0 12 * * *", Enabled: false},
+		},
+	}}
+	_, _, _, cronCount := evaluateQuotaGate(workloads, hobbyLimits(), 0, 0)
+	if cronCount != 2 {
+		t.Fatalf("cronCount = %d, want 2", cronCount)
+	}
+}
+
+func TestEvaluateQuotaGate_RejectsPerAppScheduleOverflow(t *testing.T) {
+	t.Parallel()
+	limits := hobbyLimits()
+	limits.CronLimitPerApp = 1
+	limits.CronLimitPerAccount = 10
+	workloads := []reposcan.Workload{{Name: "api", Schedules: []reposcan.CronSchedule{
+		{Expression: "*/5 * * * *", Enabled: true},
+		{Expression: "0 12 * * *", Enabled: true},
+	}}}
+	canApply, _, reasons, _ := evaluateQuotaGate(workloads, limits, 0, 0)
+	if canApply || len(reasons) != 1 || !strings.Contains(reasons[0], "per-app") {
+		t.Fatalf("canApply=%v reasons=%v", canApply, reasons)
+	}
+}
+
+func TestValidateScannedSchedules_UsesSchedulerGrammar(t *testing.T) {
+	t.Parallel()
+	valid := []reposcan.Workload{{Name: "job", Schedule: "*/5 * * * *"}}
+	if err := validateScannedSchedules(valid); err != nil {
+		t.Fatalf("valid schedule: %v", err)
+	}
+	invalid := []reposcan.Workload{{Name: "job", Schedule: "definitely-not-a-cron"}}
+	if err := validateScannedSchedules(invalid); err == nil || !strings.Contains(err.Error(), "job") {
+		t.Fatalf("invalid schedule err = %v, want workload-specific failure", err)
+	}
+
+	duplicate := []reposcan.Workload{{
+		Name: "duplicate-job",
+		Schedules: []reposcan.CronSchedule{
+			{Expression: "0 * * * *", Enabled: true},
+			{Expression: "0 * * * *", Enabled: false},
+		},
+	}}
+	if err := validateScannedSchedules(duplicate); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate schedule err = %v, want duplicate identity failure", err)
+	}
+}
+
+func TestProjectWorkloadCrons_PreservesMultiplicityAndEnabledState(t *testing.T) {
+	t.Parallel()
+	got := projectWorkloadCrons([]reposcan.Workload{{
+		Name: "cleanup",
+		Schedules: []reposcan.CronSchedule{
+			{Expression: "*/5 * * * *", Enabled: true},
+			{Expression: "0 12 * * *", Enabled: false},
+		},
+	}})
+	if len(got) != 2 {
+		t.Fatalf("crons = %#v, want 2", got)
+	}
+	if !got[0].Enabled || got[1].Enabled || got[1].Schedule != "0 12 * * *" {
+		t.Fatalf("crons = %#v, enabled state or schedules changed", got)
 	}
 }
 
@@ -232,6 +304,21 @@ func TestEvaluateQuotaGate_RescueViaExclude(t *testing.T) {
 	}
 }
 
+func TestPlanCanApplyReasons(t *testing.T) {
+	pre := []string{"apps over plan limit", "duplicate workload slug"}
+	post := []string{"post-exclude blocker"}
+
+	if got := planCanApplyReasons(true, pre, nil); !reflect.DeepEqual(got, pre) {
+		t.Fatalf("rescued reasons = %#v, want pre-exclude reasons %#v", got, pre)
+	}
+	if got := planCanApplyReasons(false, pre, post); !reflect.DeepEqual(got, post) {
+		t.Fatalf("blocked reasons = %#v, want post-exclude reasons %#v", got, post)
+	}
+	if got := planCanApplyReasons(false, pre, nil); len(got) != 0 {
+		t.Fatalf("applicable reasons = %#v, want empty", got)
+	}
+}
+
 // TestEvaluateQuotaGate_NoRescueOnStillBlocked pins the negative
 // rescue invariant. A blocked gate that stays blocked after
 // --exclude must NOT fire gateRescuedByExclude (the rescue signal
@@ -276,5 +363,45 @@ func TestEvaluateQuotaGate_CronCountDerivation(t *testing.T) {
 	_, _, _, cronCount := evaluateQuotaGate(workloads, hobbyLimits(), 0, 0)
 	if cronCount != 2 {
 		t.Errorf("cronCount: got %d, want 2 (workloads with Schedule != \"\" only)", cronCount)
+	}
+}
+
+func TestProjectedQuotaGateAllowsExactLimitReapplyAndReplacement(t *testing.T) {
+	limits := api.Limits{DeployedApps: 2, CronLimitPerAccount: 2, CronLimitPerApp: 2}
+	crons := []planCron{{WorkloadName: "api", Schedule: "0 * * * *", Path: "/", Enabled: true}}
+	canApply, notAllowed, reasons, cronCount := evaluateProjectedQuotaGate(crons, limits, 2, 2)
+	if !canApply || notAllowed || len(reasons) != 0 || cronCount != 1 {
+		t.Fatalf("exact-limit reapply = canApply %v notAllowed %v reasons %v crons %d", canApply, notAllowed, reasons, cronCount)
+	}
+	partition := affectedPartition{
+		Removed: []string{"old-worker"},
+		WillDeploy: []api.PlanAffectedApp{
+			{Slug: "api", Action: "update"},
+			{Slug: "new-worker", Action: "create"},
+		},
+	}
+	if got := projectedAppCount(2, partition); got != 2 {
+		t.Fatalf("one-for-one projected apps = %d, want 2", got)
+	}
+	canApply, _, reasons, _ = evaluateProjectedQuotaGate(crons, limits, 3, 2)
+	if canApply || len(reasons) == 0 {
+		t.Fatalf("real net addition should be blocked: %v %v", canApply, reasons)
+	}
+}
+
+func TestProjectCronsWithPreservedRetainsOnlyUnselectedSiblings(t *testing.T) {
+	projectApps := []state.App{
+		{ID: "api-id", WorkloadName: "api"},
+		{ID: "worker-id", WorkloadName: "worker"},
+	}
+	inventory := map[string][]state.Cron{
+		"api-id":    {{AppID: "api-id", Schedule: "0 * * * *", Path: "/old", Enabled: true}},
+		"worker-id": {{AppID: "worker-id", Schedule: "*/5 * * * *", Path: "/work", Enabled: true}},
+	}
+	desired := []planCron{{WorkloadName: "api", Schedule: "30 * * * *", Path: "/new", Enabled: true}}
+	got := projectCronsWithPreserved(desired, projectApps, inventory, func(name string) bool { return name == "worker" })
+	if len(got) != 2 || got[0].WorkloadName != "api" || got[0].Schedule != "30 * * * *" ||
+		got[1].WorkloadName != "worker" || got[1].Schedule != "*/5 * * * *" {
+		t.Fatalf("preserved cron model = %#v", got)
 	}
 }

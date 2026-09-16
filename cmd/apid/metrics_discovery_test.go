@@ -53,7 +53,7 @@ func TestComputeMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -91,7 +91,7 @@ func TestComputeMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec = httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
 	var replacement []prometheusTargetGroup
 	if err := json.Unmarshal(rec.Body.Bytes(), &replacement); err != nil {
 		t.Fatalf("decode replacement response: %v", err)
@@ -106,7 +106,7 @@ func TestComputeMetricsDiscoveryRejectsNonLoopback(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "203.0.113.10:8080"
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d, want 404", rec.Code)
 	}
@@ -135,7 +135,7 @@ func TestComputeMetricsDiscoveryScalesTo1000Nodes(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -174,7 +174,7 @@ func TestComputeMetricsDiscoveryRejectsMoreThan1000ConfiguredNodes(t *testing.T)
 	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s, want 503", rec.Code, rec.Body.String())
 	}
@@ -218,6 +218,16 @@ func TestPromtailMetricsTargetReusesComputeHost(t *testing.T) {
 	}
 }
 
+func TestNodeMetricsTargetReusesComputeHost(t *testing.T) {
+	got, ok := daemonMetricsTarget("9100")("tcp://fsn-2.gregale.dev:8080")
+	if !ok {
+		t.Fatal("node metrics target rejected a valid compute target")
+	}
+	if got != "fsn-2.gregale.dev:9100" {
+		t.Fatalf("target=%q, want fsn-2.gregale.dev:9100", got)
+	}
+}
+
 func TestPromtailMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 	store := state.NewMemStore()
 	target := "tcp://fsn-2.gregale.dev:8080"
@@ -237,7 +247,7 @@ func TestPromtailMetricsDiscoveryUsesActiveRegistry(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, promtailMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -279,6 +289,8 @@ func TestComputeDaemonMetricsDiscoveryUsesCanonicalPorts(t *testing.T) {
 		{name: "vmmd", path: vmmdMetricsDiscoveryPath, handler: srv.vmmdMetricsDiscovery, want: "192.0.2.2:9104", job: "vmmd"},
 		{name: "imaged", path: imagedMetricsDiscoveryPath, handler: srv.imagedMetricsDiscovery, want: "192.0.2.2:9102", job: "imaged"},
 		{name: "builderd", path: builderdMetricsDiscoveryPath, handler: srv.builderdMetricsDiscovery, want: "192.0.2.2:9105", job: "builderd"},
+		{name: "node", path: nodeMetricsDiscoveryPath, handler: srv.nodeMetricsDiscovery, want: "192.0.2.2:9100", job: "node-compute"},
+		{name: "realtimed", path: realtimedMetricsDiscoveryPath, handler: srv.realtimedMetricsDiscovery, want: "192.0.2.2:9107", job: "realtimed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -335,7 +347,7 @@ func TestComputeMetricsDiscoveryRecordsProducerHealth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
 	req.RemoteAddr = "127.0.0.1:9099"
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.metricsDiscoveryHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -358,7 +370,7 @@ func TestComputeMetricsDiscoveryRecordsProducerHealth(t *testing.T) {
 	forbiddenReq := httptest.NewRequest(http.MethodGet, computeMetricsDiscoveryPath, nil)
 	forbiddenReq.RemoteAddr = "203.0.113.10:8080"
 	forbiddenRec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(forbiddenRec, forbiddenReq)
+	srv.metricsDiscoveryHandler().ServeHTTP(forbiddenRec, forbiddenReq)
 	if forbiddenRec.Code != http.StatusNotFound {
 		t.Fatalf("forbidden status=%d, want 404", forbiddenRec.Code)
 	}

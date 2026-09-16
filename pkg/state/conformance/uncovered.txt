@@ -129,7 +129,6 @@ CreateAPIKeyWithExpiryAndProvenance
 CreateAccountWithPersonalOrg
 CreateAlertRule
 CreateAlertRuleIfUnderQuota
-CreateApp
 CreateAppLogDrain
 CreateAppLogDrainIfUnderQuota
 CreateAppWebhook
@@ -155,11 +154,10 @@ CreateOrg
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
 CreateOrgInvitation
-CreateProject
+CreateProjectEnvironmentApproval
 CreateRuntimeConfigOperation
 CreateSession
 CreateSessionWithBinding
-CreateSnapshot
 CreateTenantHostnameIfUnderQuota
 CreateTenantSurfaceIfUnderQuota
 CreateTriggerIfUnderQuota
@@ -183,7 +181,6 @@ DeleteAppErrorRequestsOlderThan
 DeleteAppErrorsByIDs
 DeleteAppLogDrain
 DeleteAppOpenAPIDoc
-DeleteAppPermanently
 DeleteAppRegistryCredential
 DeleteAppSecret
 DeleteAppSecretInScope
@@ -207,7 +204,6 @@ DeleteOIDCExchangedToken
 DeleteOldEvents
 DeleteOldLoginTokens
 DeleteProject
-DeleteSnapshotsByID
 DeleteSnapshotsStaleOlderThan
 DeleteTenantHostname
 DeleteTenantSurface
@@ -220,6 +216,8 @@ DeploymentSidecarRAMs
 DeploymentSnapshotBackoffActive
 DomainByName
 DropTriggerRecordByOperator
+EditPublicStatusEventTitle
+EditPublicStatusUpdateMessage
 EnsureAccountAsyncQuota
 ExpireOrgInvitations
 ExpireUploadSession
@@ -316,7 +314,6 @@ JobSoftDelete
 JobTaskCancel
 JobTaskClaimBatch
 JobTaskFindStuck
-JobTaskGet
 JobTaskList
 JobTaskMarkClaimed
 JobTaskMarkTerminal
@@ -327,7 +324,6 @@ LatestBuilderHeartbeatStats
 LatestDeployment
 LatestHeartbeatStats
 LatestParkedDeploymentForApp
-LatestSnapshot
 LatestSnapshotBytes
 LatestSnapshotForTier
 LatestSupersededDeployment
@@ -381,7 +377,6 @@ ListCorsPresetsForAccount
 ListCorsPresetsForApp
 ListCronRunsForCron
 ListCronsForAccount
-ListCronsForApp
 ListDataUpstreamProbeHistory
 ListDataUpstreamProbesByHostRegion
 ListDataUpstreamsByApp
@@ -413,6 +408,7 @@ ListExpiredInvocationsForReaper
 ListExpiredMigrations
 ListExpiredTriggerRecordsForReaper
 ListGdprRequestsForAccount
+ListGitHubInstallationsForAccount
 ListGithubInstallBindingsForAccount
 ListInstancesByNodeID
 ListInstancesByStatesOlderThan
@@ -487,14 +483,11 @@ MarkComputeNodeInactive
 MarkCronFired
 MarkDeploymentCancelled
 MarkDeploymentStageFailed
-MarkDeploymentSuperseded
 MarkDomainVerified
 MarkDunningStep
 MarkFireNowRequestFailed
 MarkFireNowRequestSucceeded
-MarkInstanceMigrating
 MarkMFAEnrolled
-MarkOldSnapshotsStale
 MarkOperatorIntentFailed
 MarkOperatorIntentSucceeded
 MarkRuntimeConfigApplied
@@ -541,6 +534,7 @@ PreviewAppsByParent
 ProjectByID
 ProjectByRepo
 ProjectBySlug
+ProjectEnvironmentApprovalByToken
 ProvisionedStaticEgressIPExists
 PruneAppLogDrainDeliveryAnalytics
 PruneDataUpstreamProbesOlderThan
@@ -594,7 +588,6 @@ ResealAppSecretWithKidAndValueHashInScope
 ResetAppWebhookDeliveryFromDead
 ResolveStatusIncident
 RestoreAccount
-RestoreApp
 RetireRuntimeSnapshot
 RetryDeploymentFromStage
 RetryQueueDeadLetter
@@ -611,7 +604,6 @@ RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
 SafedeployStampRollout
-ScheduleAppDeletion
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow
@@ -626,8 +618,6 @@ SetComputeNodeRole
 SetDeploymentFailed
 SetDeploymentFailedEx
 SetDeploymentParked
-SetDeploymentRootfs
-SetDeploymentSidecarLayer
 SetDeploymentSourceURL
 SetInstanceFrameworkReadyAt
 SetInstanceMode
@@ -679,9 +669,7 @@ UpdateCustomDomainCertStatus
 UpdateDeploymentMinInstances
 UpdateDeploymentTraffic
 UpdateEdgeRule
-UpdateInstanceStateIf
 UpdateInstanceStateToTerminal
-UpdateInstanceStateWithTimestamp
 UpdateMirrorRule
 UpdateOrgMemberRole
 UpdateOrgName

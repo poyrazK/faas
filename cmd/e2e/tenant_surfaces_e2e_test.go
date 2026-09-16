@@ -179,6 +179,12 @@ func TestE2E_TenantSurfaces_VerticalSlice(t *testing.T) {
 	}
 
 	// 5. POST the same host twice → 409 tenant_hostname_already_claimed.
+	req, _ = http.NewRequestWithContext(ctx, http.MethodPost,
+		h.APIDURL+"/v1/apps/"+appSlug+"/tenant-surfaces/"+created.ID+"/hostnames",
+		bytes.NewReader(addBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "ts-e2e-addhost-duplicate-"+uuid.NewString())
 	rec, err = h.HTTPClient().Do(req)
 	if err != nil {
 		t.Fatalf("add hostname 2nd: %v", err)

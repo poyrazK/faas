@@ -179,7 +179,7 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
-	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/faas", "usr/local/bin", "tmp", "overlay"} {
+	for _, sub := range []string{"bin", "sbin", "dev", "sys", "proc", "etc", "etc/faas", "usr/local/bin", "tmp", "overlay", "cgi-bin"} {
 		if err := os.MkdirAll(filepath.Join(work, sub), 0o755); err != nil {
 			return err
 		}
@@ -219,6 +219,37 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 	if err := os.WriteFile(filepath.Join(work, "usr", "local", "bin", "faas-write-uuid"), []byte(uuidShim), 0o755); err != nil {
 		return err
 	}
+	// The capacity metal test invokes this CGI endpoint inside a restored
+	// guest. It verifies an ordinary write, observes that write again during
+	// the same instance lifetime, and then fills the overlay until ext4
+	// returns ENOSPC. Keeping the probe in the read-only base means the test
+	// can also hash the canonical writable layer before and after the run.
+	diskProbe := `#!/bin/sh
+printf 'Content-Type: text/plain\r\n\r\n'
+case "$QUERY_STRING" in
+  action=small)
+    if /bin/busybox dd if=/dev/zero of=/capacity-small bs=1048576 count=16 conv=fsync 2>/dev/null; then
+      echo write=ok
+    else
+      echo write=failed
+    fi
+    ;;
+  action=fill)
+    if /bin/busybox dd if=/dev/zero of=/capacity-full bs=1048576 2>/dev/null; then
+      echo limit=missed
+    else
+      echo limit=hit
+    fi
+    ;;
+  *)
+    if [ -f /capacity-small ]; then echo small=present; else echo small=absent; fi
+    /bin/busybox df -k /
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(work, "cgi-bin", "disk"), []byte(diskProbe), 0o755); err != nil {
+		return err
+	}
 	appJSON := `{"entrypoint":["/usr/local/bin/faas-write-uuid"],"port":8080}` + "\n"
 	if err := os.WriteFile(filepath.Join(work, "etc/faas/app.json"), []byte(appJSON), 0o644); err != nil {
 		return err
@@ -246,6 +277,10 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 // uses it as the overlay upper (so /etc/faas/uuid.txt is writable across
 // re-runs). 16 MiB is plenty — we only ever write one short UUID line.
 func buildV6LayerExt4(dst string) error {
+	return buildV6LayerExt4Size(dst, 16)
+}
+
+func buildV6LayerExt4Size(dst string, sizeMB int) error {
 	work, err := os.MkdirTemp("", "v6-layer-skel-*")
 	if err != nil {
 		return err
@@ -258,7 +293,7 @@ func buildV6LayerExt4(dst string) error {
 	}
 	if f, err := os.Create(dst); err != nil {
 		return fmt.Errorf("create ext4 file: %w", err)
-	} else if err := f.Truncate(16 << 20); err != nil {
+	} else if err := f.Truncate(int64(sizeMB) << 20); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("size ext4 file: %w", err)
 	} else if err := f.Close(); err != nil {

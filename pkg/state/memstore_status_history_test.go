@@ -6,26 +6,22 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/publicstatus"
 )
 
-func TestMemStoreStatusUptimeBucketsClassifiesTerminalInvocations(t *testing.T) {
+func TestMemStoreStatusUptimeBucketsUsePlatformObservations(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
 	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	dayOne := since.Add(2 * time.Hour)
 	dayTwo := since.Add(26 * time.Hour)
-	success := OutcomeSuccess
-	failed := OutcomeFailed
-
+	recordCompleteStatusInterval(t, m, dayOne, "", publicstatus.StateOperational)
+	recordCompleteStatusInterval(t, m, dayOne.Add(5*time.Minute), publicstatus.ComponentAPIConsole, publicstatus.StateDegraded)
+	recordCompleteStatusInterval(t, m, dayTwo, "", publicstatus.StateOperational)
+	// This deliberate customer cancellation must not enter public uptime.
 	m.mu.Lock()
-	m.invocations["completed"] = Invocation{ID: "completed", CreatedAt: dayOne, State: InvocationCompleted}
-	m.invocations["failed"] = Invocation{ID: "failed", CreatedAt: dayOne, State: InvocationFailed}
-	m.invocations["cancelled"] = Invocation{ID: "cancelled", CreatedAt: dayOne, State: InvocationCancelled}
-	m.invocations["dead-letter"] = Invocation{ID: "dead-letter", CreatedAt: dayTwo, State: InvocationDeadLetter}
-	m.invocations["outcome-success"] = Invocation{ID: "outcome-success", CreatedAt: dayTwo, State: InvocationPending, Outcome: &success}
-	m.invocations["outcome-failed"] = Invocation{ID: "outcome-failed", CreatedAt: dayTwo, State: InvocationPending, Outcome: &failed}
-	m.invocations["pending"] = Invocation{ID: "pending", CreatedAt: dayTwo, State: InvocationPending}
-	m.invocations["old"] = Invocation{ID: "old", CreatedAt: since.Add(-time.Minute), State: InvocationCompleted}
+	m.invocations["cancelled"] = Invocation{ID: "cancelled", CreatedAt: dayTwo, State: InvocationCancelled}
 	m.mu.Unlock()
 
 	buckets, err := m.StatusUptimeBuckets(ctx, since)
@@ -35,11 +31,11 @@ func TestMemStoreStatusUptimeBucketsClassifiesTerminalInvocations(t *testing.T) 
 	if len(buckets) != 2 {
 		t.Fatalf("got %d buckets, want 2: %+v", len(buckets), buckets)
 	}
-	if got := buckets[0]; !got.Day.Equal(dayOne.Truncate(24*time.Hour)) || got.Successful != 1 || got.Total != 3 {
-		t.Errorf("day one bucket = %+v, want 1/3", got)
+	if got := buckets[0]; !got.Day.Equal(dayOne.Truncate(24*time.Hour)) || got.Successful != 1 || got.Total != 2 {
+		t.Errorf("day one bucket = %+v, want 1/2", got)
 	}
-	if got := buckets[1]; !got.Day.Equal(dayTwo.Truncate(24*time.Hour)) || got.Successful != 1 || got.Total != 3 {
-		t.Errorf("day two bucket = %+v, want 1/3", got)
+	if got := buckets[1]; !got.Day.Equal(dayTwo.Truncate(24*time.Hour)) || got.Successful != 1 || got.Total != 1 {
+		t.Errorf("day two bucket = %+v, want 1/1", got)
 	}
 }
 

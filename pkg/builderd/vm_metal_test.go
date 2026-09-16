@@ -285,25 +285,54 @@ func TestWaitForWarmCompletionReadinessFailureRemovesDrive(t *testing.T) {
 	}
 }
 
+func TestDeleteWarmSnapshotRemovesLegacyLocalState(t *testing.T) {
+	layerPath := filepath.Join(t.TempDir(), "builder.ext4")
+	vmstatePath := filepath.Join(t.TempDir(), "builder.vmstate")
+	for _, path := range []string{layerPath, vmstatePath} {
+		if err := os.WriteFile(path, []byte("warm state"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	driver := &VMMDriver{cli: &warmSnapshotFailureClient{}}
+	err := driver.DeleteWarmSnapshot(context.Background(), WarmSnapshot{
+		LayerPath:   layerPath,
+		VMStatePath: vmstatePath,
+	})
+	if err != nil {
+		t.Fatalf("DeleteWarmSnapshot: %v", err)
+	}
+	for _, path := range []string{layerPath, vmstatePath} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("local warm state %q still exists: %v", path, statErr)
+		}
+	}
+}
+
 func TestBuildManifestForRequestCarriesWarmInputs(t *testing.T) {
 	manifest, err := buildManifestForRequest(VMRequest{
 		BuildID:            "build-1",
 		TenantID:           "acct-1",
 		DeploymentID:       "dep-1",
 		SourceRoot:         "services/api",
+		DockerfilePath:     "deploy/Dockerfile.production",
 		Framework:          FrameworkNode,
 		Runtime:            "node22",
 		RuntimeBaseRef:     "base-ref",
 		DependencyCacheKey: "cache-key",
 		KeepWarm:           true,
+		Function:           true,
 	}, 900)
 	if err != nil {
 		t.Fatalf("buildManifestForRequest: %v", err)
 	}
-	if !manifest.KeepWarm || !manifest.DependencyCache || manifest.TimeoutSec != 900 {
+	if !manifest.KeepWarm || !manifest.DependencyCache || !manifest.Function || manifest.TimeoutSec != 900 {
 		t.Fatalf("manifest warm/cache/timeout = %v/%v/%d", manifest.KeepWarm, manifest.DependencyCache, manifest.TimeoutSec)
 	}
 	if !strings.HasSuffix(manifest.Workdir, "/services/api") {
 		t.Fatalf("manifest workdir = %q, want services/api suffix", manifest.Workdir)
+	}
+	if manifest.DockerfilePath != "deploy/Dockerfile.production" {
+		t.Fatalf("manifest dockerfile = %q", manifest.DockerfilePath)
 	}
 }

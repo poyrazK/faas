@@ -80,6 +80,7 @@ type stubOps struct {
 	durationCalls []string
 	durationSecs  []float64
 	recoveryCalls []string // "<kind>:<result>" — recovery-timeline
+	identityCalls []string // "<phase>:<field>"
 
 	// backbone is a private registry so the WakePhaseEmitted
 	// stub returns a real Counter that satisfies .Inc(). The
@@ -87,6 +88,7 @@ type stubOps struct {
 	// no-op for assertion purposes.
 	backbone         *prometheus.CounterVec
 	recoveryBackbone *prometheus.CounterVec
+	identityBackbone *prometheus.CounterVec
 }
 
 func newStubOps() *stubOps {
@@ -99,7 +101,18 @@ func newStubOps() *stubOps {
 			Name: "events_platform_test_recovery_event_emitted",
 			Help: "test",
 		}, []string{"kind", "result"}),
+		identityBackbone: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "events_platform_test_wake_identity_invalid",
+			Help: "test",
+		}, []string{"phase", "field"}),
 	}
+}
+
+func (o *stubOps) WakeIdentityInvalid(phase, field string) prometheus.Counter {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.identityCalls = append(o.identityCalls, phase+":"+field)
+	return o.identityBackbone.WithLabelValues(phase, field)
 }
 
 func (o *stubOps) WakePhaseEmitted(phase, result string) prometheus.Counter {

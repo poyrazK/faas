@@ -5,6 +5,7 @@
 import type { AccountDeletionResponse } from '../models/AccountDeletionResponse.js';
 import type { AccountEgressAllowlistExtraResponse } from '../models/AccountEgressAllowlistExtraResponse.js';
 import type { AccountExportResponse } from '../models/AccountExportResponse.js';
+import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsResponse.js';
 import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
 import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
@@ -88,6 +89,25 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         409: `code: account_deletion_confirm_required | account_deletion_pending | account_not_restorable`,
+      },
+    });
+  }
+  /**
+   * Read the account's current deploy rate window.
+   * Returns the durable account-wide deploy count, plan limit, remaining admissions, and fixed-window reset time.
+   * @returns AccountRateLimitsResponse Current account rate limits.
+   * @throws ApiError
+   */
+  public static getAccountRateLimits(): CancelablePromise<AccountRateLimitsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/rate-limits',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
       },
     });
   }
@@ -181,7 +201,8 @@ export class AccountService {
    *
    * `window` is the same closed vocabulary as the per-app
    * endpoint: `1h` | `24h` (default) | `7d`. Auth chain:
-   * `usage:read` scope + MFA.
+   * `usage:read` scope + MFA. The SLO rollup is a Hobby+
+   * observability surface; Free accounts receive 402.
    *
    * On Prometheus failure the endpoint returns 200 with
    * zeroed fields and `source: "degraded: <reason>"`. When
@@ -209,6 +230,7 @@ export class AccountService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

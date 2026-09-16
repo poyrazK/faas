@@ -3,9 +3,11 @@ package gateway
 // spec: §6.3
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +19,35 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
+
+func TestRequestLoggerKeepsRoutineHotSuccessesAtDebug(t *testing.T) {
+	var infoBuf bytes.Buffer
+	infoLog := slog.New(slog.NewJSONHandler(&infoBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := &requestLogger{log: infoLog}
+
+	logger.Log("app-1", "200", 5*time.Millisecond, false, "req-hot")
+	if got := infoBuf.String(); got != "" {
+		t.Fatalf("hot 2xx emitted at info: %s", got)
+	}
+
+	logger.Log("app-1", "200", 150*time.Millisecond, true, "req-cold")
+	if got := infoBuf.String(); !strings.Contains(got, `"cold":true`) {
+		t.Fatalf("cold success missing from info logs: %s", got)
+	}
+	infoBuf.Reset()
+
+	logger.Log("app-1", "503", 10*time.Millisecond, false, "req-error")
+	if got := infoBuf.String(); !strings.Contains(got, `"code":"503"`) {
+		t.Fatalf("failed request missing from info logs: %s", got)
+	}
+
+	var debugBuf bytes.Buffer
+	debugLog := slog.New(slog.NewJSONHandler(&debugBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	(&requestLogger{log: debugLog}).Log("app-1", "200", 5*time.Millisecond, false, "req-hot")
+	if got := debugBuf.String(); !strings.Contains(got, `"level":"DEBUG"`) {
+		t.Fatalf("hot success missing from debug logs: %s", got)
+	}
+}
 
 // TestMetricsWakeQueueWaitRegisters asserts the §12 row name is
 // exposed. Catches a rename that would silently break the dashboard.
@@ -895,10 +926,29 @@ func TestMetricsWakePhaseDurationPreinstantiated(t *testing.T) {
 	for _, phase := range []string{
 		"queue_wait", "coordinator_wait", "schedd_admit",
 		"vmmd_wake", "guest_ready", "cold_fallback_reason",
+		"pre_admission", "scheduler_wake", "target_publication",
+		"post_publication", "internal_proxy",
 	} {
 		want := fmt.Sprintf(`gateway_wake_phase_duration_seconds_count{phase=%q} 0`, phase)
 		if !strings.Contains(body, want) {
 			t.Errorf("pre-instantiated %s missing from /metrics body:\n%s", want, body)
+		}
+	}
+}
+
+func TestMetricsPlatformWakeLatencyUsesDedicatedGateHistogram(t *testing.T) {
+	m := NewMetrics()
+	m.ObservePlatformWakeWithTrace(340*time.Millisecond, "")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	m.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_platform_wake_latency_seconds_bucket{le="0.35"} 1`,
+		`gateway_platform_wake_latency_seconds_count 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing exposition line %q in body:\n%s", want, body)
 		}
 	}
 }

@@ -1603,6 +1603,98 @@ func TestRollbackApp_ExplicitTarget_Specific(t *testing.T) {
 	}
 }
 
+func TestRollbackApp_ExplicitTarget_UsesCurrentLiveDeployment(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	notif := &captureNotifier{}
+	e.s.notif = notif
+
+	depA := mustSeedDeployment(t, e, "rb-current-live")
+	app, err := e.store.AppBySlug(context.Background(), "rb-current-live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	depB, err := e.store.CreateDeployment(context.Background(), state.Deployment{
+		AppID:       app.ID,
+		ImageDigest: "sha256:" + repeat("b", 64),
+		Kind:        state.DeploymentKindImage,
+		Status:      state.DeployBuilding,
+		CreatedAt:   time.Now().UTC().Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(context.Background(), depB.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentSuperseded(context.Background(), depB.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(context.Background(), depA.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	body := api.RollbackRequest{TargetDeploymentID: &depB.ID}
+	rec := e.do(t, http.MethodPost, "/v1/apps/rb-current-live/rollback", body, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+
+	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := mustAuditEvent(t, findEventByKind(events, "app.rolled_back"), "missing app.rolled_back event")
+	var eventData map[string]any
+	if err := json.Unmarshal(event.Data, &eventData); err != nil {
+		t.Fatal(err)
+	}
+	if eventData["from"] != depA.ID || eventData["to"] != depB.ID || eventData["mode"] != "explicit" {
+		t.Fatalf("account audit transition = %#v, want from=%s to=%s mode=explicit", eventData, depA.ID, depB.ID)
+	}
+
+	audits, err := e.store.ListDeploymentAudit(context.Background(), depA.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audits) != 1 {
+		t.Fatalf("current deployment audit rows = %d, want 1", len(audits))
+	}
+	var deploymentData map[string]any
+	if err := json.Unmarshal(audits[0].Data, &deploymentData); err != nil {
+		t.Fatal(err)
+	}
+	if deploymentData["from"] != depA.ID || deploymentData["to"] != depB.ID || deploymentData["mode"] != "explicit" {
+		t.Fatalf("deployment audit transition = %#v, want from=%s to=%s mode=explicit", deploymentData, depA.ID, depB.ID)
+	}
+
+	calls := notif.byChannel(db.NotifyDeploymentChanged)
+	if len(calls) != 2 {
+		t.Fatalf("deployment notifications = %d, want 2: %#v", len(calls), calls)
+	}
+	statuses := map[string]string{}
+	for _, call := range calls {
+		var payload struct {
+			Status       string `json:"status"`
+			DeploymentID string `json:"deployment_id"`
+			From         string `json:"from"`
+			To           string `json:"to"`
+		}
+		if err := json.Unmarshal([]byte(call.payload), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if previous := statuses[payload.DeploymentID]; previous != "" && previous != payload.Status {
+			t.Fatalf("deployment %s emitted both %s and %s", payload.DeploymentID, previous, payload.Status)
+		}
+		statuses[payload.DeploymentID] = payload.Status
+		if payload.To != depB.ID {
+			t.Errorf("notification to = %s, want %s: %s", payload.To, depB.ID, call.payload)
+		}
+	}
+	if statuses[depA.ID] != "superseded" || statuses[depB.ID] != "live" {
+		t.Fatalf("notification statuses = %#v, want A superseded and B live", statuses)
+	}
+}
+
 // TestRollbackApp_ExplicitTarget_NotFound confirms the 404 path when
 // the caller names a deployment_id that doesn't exist (or belongs to
 // a different app).
@@ -1718,6 +1810,7 @@ func TestParkApp_HappyPath(t *testing.T) {
 	if app.Status != state.AppEvictedCold {
 		t.Errorf("status = %s, want evicted_cold", app.Status)
 	}
+	assertLifecycleAudit(t, e, "app.parked", appID, "")
 	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), appID, hook.ID, 10, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1725,12 +1818,96 @@ func TestParkApp_HappyPath(t *testing.T) {
 	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppParked || deliveries[0].Status != state.AppWebhookDeliveryPending {
 		t.Fatalf("park deliveries = %+v, want one pending app.parked row", deliveries)
 	}
+
+	// A successful idempotent retry is not another lifecycle transition.
+	rec = e.do(t, "POST", "/v1/apps/park-me/park", nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("idempotent park status %d: %s", rec.Code, rec.Body)
+	}
+	assertLifecycleAudit(t, e, "app.parked", appID, "")
+}
+
+func TestParkApp_WaitsForLiveInstanceDrain(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "park-drain")
+	ins, err := e.store.CreateInstance(t.Context(), dep.AppID, dep.ID, string(state.StateRunning), 128, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		_ = e.store.UpdateInstanceState(context.Background(), ins.ID, string(state.StateParked))
+	}()
+
+	started := time.Now()
+	rec := e.do(t, http.MethodPost, "/v1/apps/park-drain/park", nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if elapsed := time.Since(started); elapsed < 40*time.Millisecond {
+		t.Fatalf("park returned before the live instance drained: %s", elapsed)
+	}
+	rows, err := e.store.ListActiveInstancesForApp(t.Context(), dep.AppID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("active instances after park = %+v, want none", rows)
+	}
+}
+
+func TestWakeApp_RejectsWhileParkDrainIsInProgress(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "wake-draining")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := e.store.AppByID(t.Context(), dep.AppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked := state.AppEvictedCold
+	if _, err := e.store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateInstance(t.Context(), dep.AppID, dep.ID, string(state.StateRunning), 128, "node-1", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/wake-draining/wake", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	if !strings.Contains(rec.Body.String(), "still draining") {
+		t.Fatalf("wake response = %s, want drain guidance", rec.Body)
+	}
+	current, err := e.store.AppByID(t.Context(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != state.AppEvictedCold {
+		t.Fatalf("app status = %s, want evicted_cold", current.Status)
+	}
+}
+
+func TestWaitForAppInstancesDrainedTimesOut(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "park-timeout")
+	if _, err := e.store.CreateInstance(t.Context(), dep.AppID, dep.ID, string(state.StateRunning), 128, "node-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	err := waitForAppInstancesDrained(t.Context(), e.store, dep.AppID, 20*time.Millisecond, 5*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wait error = %v, want deadline exceeded", err)
+	}
 }
 
 // TestWakeApp_HappyPath parks, then wakes — exercises the inverse path.
 func TestWakeApp_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "wake-me")
+	dep := mustSeedDeployment(t, e, "wake-me")
+	appID := dep.AppID
+	if err := e.store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
+		t.Fatalf("mark deployment live: %v", err)
+	}
 	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{
 		AccountID: e.acct.ID, AppID: appID, TargetURL: "https://example.com/woken",
 		SecretSealed: []byte("sealed"), EventFilter: []string{"app.woken"},
@@ -1748,12 +1925,103 @@ func TestWakeApp_HappyPath(t *testing.T) {
 	if app.Status != state.AppActive {
 		t.Errorf("status = %s, want active", app.Status)
 	}
+	assertLifecycleAudit(t, e, "app.woken", appID, "")
 	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), appID, hook.ID, 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventAppWoken || deliveries[0].Status != state.AppWebhookDeliveryPending {
 		t.Fatalf("wake deliveries = %+v, want one pending app.woken row", deliveries)
+	}
+
+	rec = e.do(t, "POST", "/v1/apps/wake-me/wake", nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("idempotent wake status %d: %s", rec.Code, rec.Body)
+	}
+	assertLifecycleAudit(t, e, "app.woken", appID, "")
+}
+
+func TestWakeApp_RejectsAppWithoutLiveDeployment(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "never-deployed")
+
+	rec := e.do(t, "POST", "/v1/apps/never-deployed/wake", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	if !strings.Contains(rec.Body.String(), "deploy the app") {
+		t.Fatalf("response lacks deploy guidance: %s", rec.Body.String())
+	}
+	assertLifecycleAuditCount(t, e, "app.woken", 0)
+}
+
+func TestRestartApp_EmitsCorrelatedAuditOnlyAfterAcceptedTransition(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "restart-me")
+	if err := e.store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+		t.Fatalf("mark deployment live: %v", err)
+	}
+
+	rec := e.do(t, http.MethodPost, "/v1/apps/restart-me/restart", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("restart status %d: %s", rec.Code, rec.Body)
+	}
+	var response api.AppRestartResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode restart response: %v", err)
+	}
+	if response.WakeID == "" {
+		t.Fatal("restart response omitted wake_id")
+	}
+	assertLifecycleAudit(t, e, "app.restart_requested", dep.AppID, response.WakeID)
+
+	// The first request parked the app, so a second request is rejected and
+	// must not manufacture another successful audit row.
+	rec = e.do(t, http.MethodPost, "/v1/apps/restart-me/restart", nil, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	assertLifecycleAudit(t, e, "app.restart_requested", dep.AppID, response.WakeID)
+}
+
+func assertLifecycleAudit(t *testing.T, e testEnv, kind, appID, wakeID string) {
+	t.Helper()
+	rows, err := e.store.ListEvents(t.Context(), e.acct.ID, 100)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	matched := 0
+	for _, row := range rows {
+		if row.Kind != kind {
+			continue
+		}
+		matched++
+		var data map[string]any
+		if err := json.Unmarshal(row.Data, &data); err != nil {
+			t.Fatalf("decode %s audit data: %v", kind, err)
+		}
+		if data["app_id"] != appID {
+			t.Errorf("%s audit app_id = %v, want %s", kind, data["app_id"], appID)
+		}
+		if wakeID != "" && data["wake_id"] != wakeID {
+			t.Errorf("%s audit wake_id = %v, want %s", kind, data["wake_id"], wakeID)
+		}
+	}
+	if matched != 1 {
+		t.Fatalf("%s audit rows = %d, want exactly 1", kind, matched)
+	}
+}
+
+func assertLifecycleAuditCount(t *testing.T, e testEnv, kind string, want int) {
+	t.Helper()
+	rows, err := e.store.ListEvents(t.Context(), e.acct.ID, 100)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	got := 0
+	for _, row := range rows {
+		if row.Kind == kind {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("%s audit rows = %d, want %d", kind, got, want)
 	}
 }
 
@@ -1795,6 +2063,14 @@ func TestRenameApp_InvalidSlug(t *testing.T) {
 	assertProblem(t, rec, 400, api.CodeValidation)
 }
 
+func TestRenameApp_ReservedSlug(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	mustSeedApp(t, e, "rename-reserved")
+	rec := e.do(t, "POST", "/v1/apps/rename-reserved/rename",
+		api.RenameAppRequest{NewSlug: "status"}, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeValidation)
+}
+
 // TestListInstances_HappyPath seeds an instance and confirms listInstances
 // returns it.
 func TestListInstances_HappyPath(t *testing.T) {
@@ -1814,6 +2090,48 @@ func TestListInstances_HappyPath(t *testing.T) {
 	}
 	if len(out) != 1 || out[0].State != string(state.StateRunning) {
 		t.Errorf("got %+v, want 1 instance running", out)
+	}
+	if !out[0].Resident {
+		t.Errorf("running instance should be marked resident: %+v", out[0])
+	}
+}
+
+func TestListInstancesDefaultsToBoundedResidentState(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	dep := mustSeedDeployment(t, e, "inst-current")
+	ctx := context.Background()
+	for i := 0; i < 105; i++ {
+		ins, err := e.store.CreateInstance(ctx, dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := e.store.UpdateInstanceState(ctx, ins.ID, string(state.StateParked)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, err := e.store.CreateInstance(ctx, dep.AppID, dep.ID, string(state.StateRunning), 512, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/inst-current/instances", nil, nil)
+	var out []api.InstanceResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].ID != current.ID || !out[0].Resident {
+		t.Fatalf("default ps rows = %+v, want only current resident instance", out)
+	}
+
+	rec = e.do(t, http.MethodGet, "/v1/apps/inst-current/instances?history=true", nil, nil)
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != api.DefaultInstanceHistoryLimit {
+		t.Fatalf("explicit history rows = %d, want documented cap %d", len(out), api.DefaultInstanceHistoryLimit)
+	}
+	if out[0].ID != current.ID || !out[0].Resident || out[1].Resident {
+		t.Fatalf("history residency projection is incorrect: %+v", out[:2])
 	}
 }
 
@@ -2044,12 +2362,12 @@ func TestCreateCron_AtPerAppLimitReturns403(t *testing.T) {
 	// Pro caps at 20 per-app; seed all 20 directly.
 	limits := api.MustLimitsFor(api.PlanPro)
 	for i := 0; i < limits.CronLimitPerApp; i++ {
-		if _, err := e.store.CreateCron(context.Background(), appID, "*/5 * * * *", "/x", true); err != nil {
+		if _, err := e.store.CreateCron(context.Background(), appID, "*/5 * * * *", fmt.Sprintf("/seed-%d", i), true); err != nil {
 			t.Fatalf("seed cron %d: %v", i, err)
 		}
 	}
 	rec := e.do(t, "POST", "/v1/crons",
-		api.CreateCronRequest{AppID: appID, Schedule: "*/5 * * * *", Path: "/x"}, nil)
+		api.CreateCronRequest{AppID: appID, Schedule: "*/5 * * * *", Path: "/beyond-cap"}, nil)
 	assertProblem(t, rec, 403, api.CodePlanCronQuota)
 }
 
@@ -2065,12 +2383,12 @@ func TestCreateCron_AtPerAccountLimitReturns403(t *testing.T) {
 	appA := mustSeedApp(t, e, "cron-acct-a")
 	appB := mustSeedApp(t, e, "cron-acct-b")
 	for i := 0; i < limits.CronLimitPerApp; i++ {
-		if _, err := e.store.CreateCron(context.Background(), appA, "*/5 * * * *", "/x", true); err != nil {
+		if _, err := e.store.CreateCron(context.Background(), appA, "*/5 * * * *", fmt.Sprintf("/a-%d", i), true); err != nil {
 			t.Fatalf("seed A cron %d: %v", i, err)
 		}
 	}
 	for i := 0; i < limits.CronLimitPerApp; i++ {
-		if _, err := e.store.CreateCron(context.Background(), appB, "*/5 * * * *", "/x", true); err != nil {
+		if _, err := e.store.CreateCron(context.Background(), appB, "*/5 * * * *", fmt.Sprintf("/b-%d", i), true); err != nil {
 			t.Fatalf("seed B cron %d: %v", i, err)
 		}
 	}
@@ -2081,13 +2399,13 @@ func TestCreateCron_AtPerAccountLimitReturns403(t *testing.T) {
 	// partially-full app and POST 11 more (to push per-account to 51).
 	appC := mustSeedApp(t, e, "cron-acct-c")
 	for i := 0; i < 10; i++ {
-		if _, err := e.store.CreateCron(context.Background(), appC, "*/5 * * * *", "/x", true); err != nil {
+		if _, err := e.store.CreateCron(context.Background(), appC, "*/5 * * * *", fmt.Sprintf("/c-%d", i), true); err != nil {
 			t.Fatalf("seed C cron %d: %v", i, err)
 		}
 	}
 	// per-account is now 40 + 10 = 50 == cap; one more on appC must 403.
 	rec := e.do(t, "POST", "/v1/crons",
-		api.CreateCronRequest{AppID: appC, Schedule: "*/5 * * * *", Path: "/x"}, nil)
+		api.CreateCronRequest{AppID: appC, Schedule: "*/5 * * * *", Path: "/beyond-account-cap"}, nil)
 	assertProblem(t, rec, 403, api.CodePlanCronQuota)
 }
 
@@ -2330,6 +2648,35 @@ func TestListKeys_HappyPath(t *testing.T) {
 	}
 }
 
+func TestListKeys_NeverUsedTimestampIsOmitted(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	_, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, "never-used", api.ScopesReadSurface)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, http.MethodGet, "/v1/keys", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row["id"] == k.ID {
+			if value, exists := row["last_used_at"]; exists {
+				t.Fatalf("never-used key serialized last_used_at=%v", value)
+			}
+			return
+		}
+	}
+	t.Fatalf("never-used key %s missing", k.ID)
+}
+
 // TestDeleteKey_HappyPath deletes the test fixture key.
 func TestDeleteKey_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
@@ -2432,6 +2779,61 @@ func TestUsageSummary_HappyPath(t *testing.T) {
 	}
 	if out.Daily == nil {
 		t.Errorf("daily = nil, want an empty array")
+	}
+	if out.Executions == nil || out.Executions.Runs != 0 {
+		t.Fatalf("execution usage = %+v, want an empty ledger-backed projection", out.Executions)
+	}
+}
+
+func TestUsageSummaryIncludesExecutionUsageLedger(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	admitted := time.Now().UTC().Add(-100 * time.Millisecond)
+	request := api.CreateExecutionRequest{
+		Runtime: api.ExecutionRuntimeNode22,
+		Source:  "export default async function main(input) { return input }",
+		Input:   []byte(`{"ok":true}`),
+	}
+	resolved, problem := request.Resolve(e.acct.Plan)
+	if problem != nil {
+		t.Fatalf("resolve execution: %v", problem)
+	}
+	row, err := e.store.CreateExecution(t.Context(), state.CreateExecutionParams{
+		AccountID: e.acct.ID, Request: resolved,
+		SourceBytes: len(request.Source), InputBytes: len(request.Input),
+		AdmittedAt: admitted, DeadlineAt: admitted.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
+		SealedPayload: []byte("sealed"), PayloadKID: "test-kid",
+	})
+	if err != nil {
+		t.Fatalf("CreateExecution: %v", err)
+	}
+	claim, err := e.store.ClaimExecution(t.Context(), "usage-test", admitted.Add(time.Millisecond), time.Second)
+	if err != nil {
+		t.Fatalf("ClaimExecution: %v", err)
+	}
+	if _, err := e.store.MarkExecutionRunning(t.Context(), row.ID, *claim.LeaseToken, admitted.Add(2*time.Millisecond)); err != nil {
+		t.Fatalf("MarkExecutionRunning: %v", err)
+	}
+	exitCode := 0
+	finished := admitted.Add(3 * time.Millisecond)
+	if _, err := e.store.CompleteExecution(t.Context(), state.CompleteExecutionParams{
+		ID: row.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded,
+		Result: []byte(`{"ok":true}`), Stdout: "done\n", ExitCode: &exitCode,
+		Usage: api.ExecutionUsage{WallTimeMS: 3, CPUTimeMS: 2, PeakMemoryMB: 64}, FinishedAt: finished,
+	}); err != nil {
+		t.Fatalf("CompleteExecution: %v", err)
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/usage/summary?month="+finished.Format("2006-01"), nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out api.UsageSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Executions == nil || out.Executions.Runs != 1 || out.Executions.Succeeded != 1 ||
+		out.Executions.WallTimeMS != 3 || out.Executions.CPUTimeMS != 2 || out.Executions.PeakMemoryMB != 64 {
+		t.Fatalf("execution usage = %+v, want one succeeded run", out.Executions)
 	}
 }
 

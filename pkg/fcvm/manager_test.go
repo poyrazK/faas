@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -361,7 +362,16 @@ func (v *fakeVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) error 
 // customer HTTP listener, so Manager must not send them through waitReady.
 func TestWakeBuilderRestoreSkipsAppReadiness(t *testing.T) {
 	vmm := &fakeVMM{}
-	mgr := NewManager(&fakeRunner{}, vmm, Paths{Kernel: "/k"}, testFCVersion, nil, nil)
+	livenessStarts := 0
+	mgr := NewManager(&fakeRunner{}, vmm, Paths{Kernel: "/k"}, testFCVersion, nil, nil).
+		WithLivenessProbes(NewLivenessRegistry(), LivenessProbeConfig{PeriodSeconds: 1, ConsecutiveFailures: 1}).
+		WithLivenessProbeStarter(func(context.Context, string, int, string, LivenessProbeConfig) context.CancelFunc {
+			livenessStarts++
+			return func() {}
+		}).
+		WithFrameworkReadyReader(func(context.Context, string) (frameworkready.Status, error) {
+			return frameworkready.Status{}, errors.New("builder must not start framework-ready polling")
+		})
 	_, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "builder-restore",
 		BaseKey:    "/base.ext4",
@@ -371,6 +381,7 @@ func TestWakeBuilderRestoreSkipsAppReadiness(t *testing.T) {
 		Plan:       api.PlanHobby,
 		ExportDir:  "/var/lib/faas/build-out/builder-restore",
 		Snapshot:   usableSnapshot(),
+		Runtime:    "node22",
 	})
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
@@ -383,6 +394,15 @@ func TestWakeBuilderRestoreSkipsAppReadiness(t *testing.T) {
 	}
 	if !vmm.restoreSpecs[0].SkipReady {
 		t.Fatal("builder restore SkipReady = false, want true")
+	}
+	if livenessStarts != 0 {
+		t.Fatalf("builder liveness starts = %d, want 0", livenessStarts)
+	}
+	mgr.mu.Lock()
+	frameworkRuns := len(mgr.frameworkReadyRuns)
+	mgr.mu.Unlock()
+	if frameworkRuns != 0 {
+		t.Fatalf("builder framework-ready loops = %d, want 0", frameworkRuns)
 	}
 }
 

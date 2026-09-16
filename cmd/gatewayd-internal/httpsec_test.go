@@ -56,7 +56,6 @@ func TestHttpsec_ApidPathGetsCSP(t *testing.T) {
 		"/auth/reset",
 		"/logout",
 		"/status",
-		"/healthz",
 		"/cli-auth",
 		"/oauth/callback",
 	}
@@ -83,6 +82,7 @@ func TestHttpsec_CustomerPathSkipsCSP(t *testing.T) {
 		"/wp-login.php",
 		"/.env",
 		"/api/foo",
+		"/healthz",
 	}
 	for _, p := range cases {
 		t.Run(p, func(t *testing.T) {

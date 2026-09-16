@@ -40,6 +40,13 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 	if nodeID == "" {
 		return 0, errors.New("state: enqueue snapshot replicas: node_id required")
 	}
+	active, pending, err := s.snapshotReplicaWorkPending(ctx, nodeID)
+	if err != nil {
+		return 0, err
+	}
+	if !active || !pending {
+		return 0, nil
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("state: enqueue snapshot replicas begin: %w", err)
@@ -53,15 +60,15 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 		return 0, fmt.Errorf("state: enqueue snapshot replicas isolation: %w", err)
 	}
 
-	var active bool
+	var activeInTx bool
 	if err := tx.QueryRow(ctx, `
-		select active from compute_nodes where id = $1`, nodeID).Scan(&active); err != nil {
+		select active from compute_nodes where id = $1`, nodeID).Scan(&activeInTx); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, ErrNotFound
 		}
 		return 0, fmt.Errorf("state: enqueue snapshot replicas node lookup: %w", err)
 	}
-	if !active {
+	if !activeInTx {
 		if err := tx.Commit(ctx); err != nil {
 			return 0, fmt.Errorf("state: enqueue snapshot replicas inactive commit: %w", err)
 		}
@@ -111,15 +118,17 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 		 where id > $1`, lastEventID).Scan(&latestEventID); err != nil {
 		return 0, fmt.Errorf("state: enqueue snapshot replicas cursor advance: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		update snapshot_replica_cursors
-		   set last_event_id = $2, updated_at = now()
-		 where node_id = $1`, nodeID, latestEventID); err != nil {
-		return 0, fmt.Errorf("state: enqueue snapshot replicas cursor update: %w", err)
+	if latestEventID != lastEventID {
+		if _, err := tx.Exec(ctx, `
+			update snapshot_replica_cursors
+			   set last_event_id = $2, updated_at = now()
+			 where node_id = $1`, nodeID, latestEventID); err != nil {
+			return 0, fmt.Errorf("state: enqueue snapshot replicas cursor update: %w", err)
+		}
 	}
-	revalidated, err := tx.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		update snapshot_replicas r
-		   set state = 'pending', ready_at = null, updated_at = now()
+		   set state = 'pending', updated_at = now()
 		  from snapshots sn
 		  join deployments d on d.id = sn.deployment_id
 		  join apps a on a.id = d.app_id
@@ -130,14 +139,57 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 		   and sn.stale = false
 		   and a.status <> 'deleted'
 		   and d.status in ('snapshotting', 'live', 'superseded')`,
-		nodeID, int(snapshotReplicaRevalidateAfter/time.Second))
-	if err != nil {
+		nodeID, int(snapshotReplicaRevalidateAfter/time.Second)); err != nil {
 		return 0, fmt.Errorf("state: enqueue snapshot replicas revalidate: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: enqueue snapshot replicas commit: %w", err)
 	}
-	return int(tag.RowsAffected() + revalidated.RowsAffected()), nil
+	return int(tag.RowsAffected()), nil
+}
+
+// snapshotReplicaWorkPending keeps the 100 ms pickup loop read-only while a
+// node is caught up. A fan-out event that commits just after this query is
+// observed on the next tick, preserving the sub-200 ms pickup contract.
+func (s *PgStore) snapshotReplicaWorkPending(ctx context.Context, nodeID string) (active, pending bool, err error) {
+	err = s.pool.QueryRow(ctx, `
+		select cn.active,
+		       cn.active and (
+		         not exists (
+		           select 1 from snapshot_replica_cursors c where c.node_id = cn.id
+		         )
+		         or exists (
+		           select 1
+		             from snapshot_fanout_events e
+		            where e.id > coalesce((
+		              select c.last_event_id
+		                from snapshot_replica_cursors c
+		               where c.node_id = cn.id
+		            ), 0)
+		         )
+		         or exists (
+		           select 1
+		             from snapshot_replicas r
+		             join snapshots sn on sn.id = r.snapshot_id
+		             join deployments d on d.id = sn.deployment_id
+		             join apps a on a.id = d.app_id
+		            where r.node_id = cn.id
+		              and r.state = 'ready'
+		              and r.ready_at <= now() - make_interval(secs => $2)
+		              and sn.stale = false
+		              and a.status <> 'deleted'
+		              and d.status in ('snapshotting', 'live', 'superseded')
+		         )
+		       )
+		  from compute_nodes cn
+		 where cn.id = $1`, nodeID, int(snapshotReplicaRevalidateAfter/time.Second)).Scan(&active, &pending)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, false, ErrNotFound
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("state: enqueue snapshot replicas preflight: %w", err)
+	}
+	return active, pending, nil
 }
 
 // RecordSnapshotOrigin lets the reconciler restrict fan-out to the producer's
@@ -198,7 +250,8 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		       r.node_id::text,
 		       coalesce(cn.region, ''),
 		       r.attempts,
-		       r.created_at
+		       r.ready_at is not null,
+		       case when r.ready_at is not null then r.updated_at else r.created_at end
 		from snapshot_replicas r
 		join snapshots sn on sn.id = r.snapshot_id
 		join deployments d on d.id = sn.deployment_id
@@ -225,7 +278,7 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		for update of r skip locked
 		limit 1`, nodeID)
 	if err := row.Scan(&job.SnapshotID, &job.DeploymentID, &job.StorageKey,
-		&job.VMStateStorageKey, &job.LayerStorageKeys, &job.Tier, &job.NodeID, &job.Region, &job.Attempts, &job.QueuedAt); err != nil {
+		&job.VMStateStorageKey, &job.LayerStorageKeys, &job.Tier, &job.NodeID, &job.Region, &job.Attempts, &job.Revalidation, &job.QueuedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SnapshotReplicaJob{}, ErrNotFound
 		}
@@ -234,7 +287,8 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 	leaseToken := uuid.NewString()
 	if _, err := tx.Exec(ctx, `
 		update snapshot_replicas
-		set state = 'syncing', lease_token = $3, attempts = least(attempts + 1, $4),
+		set state = 'syncing', lease_token = $3,
+		    attempts = case when ready_at is null then least(attempts + 1, $4) else attempts end,
 		    updated_at = now(), next_attempt_at = null, last_error = null
 		where snapshot_id = $1 and node_id = $2`, job.SnapshotID, job.NodeID, leaseToken, snapshotReplicaAttemptCap); err != nil {
 		return SnapshotReplicaJob{}, fmt.Errorf("state: claim snapshot replica update: %w", err)
@@ -242,7 +296,9 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 	if err := tx.Commit(ctx); err != nil {
 		return SnapshotReplicaJob{}, fmt.Errorf("state: claim snapshot replica commit: %w", err)
 	}
-	job.Attempts = min(job.Attempts+1, snapshotReplicaAttemptCap)
+	if !job.Revalidation {
+		job.Attempts = min(job.Attempts+1, snapshotReplicaAttemptCap)
+	}
 	job.VMStateStorageKey = SnapshotVMStateKey(Snapshot{DeploymentID: job.DeploymentID, StorageKey: job.StorageKey, Tier: job.Tier})
 	job.LeaseToken = leaseToken
 	return job, nil

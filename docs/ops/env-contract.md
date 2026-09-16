@@ -60,6 +60,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BASE_EXTRACT_ROOT` | shared | `unit` |  |  | `` |  |
 | `FAAS_BASE_STAGING_ROOT` | shared | `unit` |  |  | `` |  |
 | `FAAS_BASE_TMP_ROOT` | shared | `unit` |  |  | `` |  |
+| `FAAS_BILLING_MODE` | apid, meterd, shared | `unit` |  | live | `` | disabled pauses provider delivery and reconciliation paging; the public-beta control-plane role overrides the unit default to disabled |
 | `FAAS_BILLING_PORTAL_URL` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BILLING_PROVIDER` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BRIDGE_HEADERS` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
@@ -97,7 +98,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DEPLOY_BASE_REF_NODE24` | shared | `envfile` |  |  | `` |  |
 | `FAAS_DEPLOY_BASE_REF_PYTHON312` | shared | `envfile` |  |  | `` |  |
 | `FAAS_DEPLOY_BASE_REF_PYTHON313` | shared | `envfile` |  |  | `` |  |
-| `FAAS_DEV` | shared | `dev-only` |  |  | `` | must never be set on a production host |
+| `FAAS_DEV` | shared, apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DEV_TOKEN` | apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DNS_API_URL` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_DNS_PROVIDER` | gatewayd-public, shared | `default` |  |  | `` |  |
@@ -105,15 +106,19 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DNS_ZONE` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_DOMAIN_DOCTOR_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_DOMAIN_DOCTOR_TTL_SECONDS` | apid | `runtime-config` |  |  | `` |  |
-| `FAAS_DPA_PATH` | apid | `default` |  |  | `` |  |
+| `FAAS_DPA_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_DUNNING_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_E2E_API_HOSTING_SMOKE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
+| `FAAS_E2E_BIN_DIR` | shared | `dev-only` |  |  | `` | test-harness only; directory of pre-built daemon binaries shared across native e2e phases so each phase does not re-link them (the Go build cache does not cover the final link); must never be set on a production host |
+| `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_EGRESS_SOCKET` | shared | `dropin` |  |  | `` |  |
 | `FAAS_ENVIRONMENT` | shared | `default` |  |  | `` | optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value |
 | `FAAS_EXECUTION_` | schedd | `default` |  |  | `` | prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1 |
 | `FAAS_EXECUTION_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes |
 | `FAAS_EXECUTION_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired |
+| `FAAS_FLEET_AGE_IDENTITY_PATH` | apid | `unit` |  |  | `` |  |
+| `FAAS_FLEET_AGE_RECIPIENT_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_FLOOR_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_GO124_ALPINE` | imaged | `unit` | yes |  | `path-exists` |  |
@@ -137,7 +142,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
 | `FAAS_GEOIP_AUTO_REFRESH` | gatewayd-internal | `default` |  |  | `` | 0; the geoip role owns refresh through re-bootstrap |
 | `FAAS_GEOIP_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it |
-| `FAAS_GITHUBD_LOOPBACK` | gatewayd-internal | `default` |  |  | `` |  |
+| `FAAS_GITHUBD_LOOPBACK` | apid, gatewayd-internal, gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_GITHUBD_ROLE` | githubd, shared | `dropin` |  |  | `` |  |
 | `FAAS_GITHUBD_SOCKET` | apid | `default` |  |  | `` |  |
 | `FAAS_GITHUBD_WORK_DIR` | apid, githubd | `default` |  |  | `` |  |
@@ -153,8 +158,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, s3-gatewayd, schedd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_AGE_KEY` | githubd | `default` |  |  | `` |  |
-| `FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH` | s3-gatewayd | `unit` |  |  | `` | optional systemd credential path during host-age rotation overlap |
-| `FAAS_HOST_AGE_PUB` | githubd | `default` |  |  | `` |  |
+| `FAAS_HOST_AGE_PUB` | githubd | `unit` |  |  | `` |  |
 | `FAAS_HOST_AGE_RECIPIENT_PATH` | apid, vmmd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_BRIDGE_CIDR` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; same tenant bridge network used by the Ansible nftables policy |
 | `FAAS_HOST_HMAC_KEY_PATH` | apid, shared | `unit` |  |  | `` |  |
@@ -162,6 +166,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_HSTS_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_IMAGED_METRICS_ADDR` | imaged | `default` |  |  | `` |  |
 | `FAAS_IMAGED_NODE_NAME` | shared | `default` |  |  | `` |  |
+| `FAAS_IMAGED_PRESTAGE_ONLY` | imaged | `dropin` |  |  | `` | release rollout one-shot exits after staging every assigned runtime base before node drain |
 | `FAAS_IMAGED_ROLE` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_INTERNAL_H2C` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SOCKET` | gatewayd-public | `default` |  |  | `` |  |
@@ -175,6 +180,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_LEADER_REDIRECT_TLS_CA` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_LEADER_REDIRECT_TLS_CERT` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_LEADER_REDIRECT_TLS_KEY` | gatewayd-internal | `default` |  |  | `` |  |
+| `FAAS_LOG_ARCHIVE_AUTH_MODE` | shared | `default` |  |  | `` | optional environment override; production metadata auth is normally loaded from the archive credential envelope |
 | `FAAS_LOG_ARCHIVE_BUCKET` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_CREDS_PATH` | shared | `unit` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_ENDPOINT` | shared | `default` |  |  | `` |  |
@@ -269,9 +275,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PRIVATE_INGRESS_TCP_PORTS` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; exact compute service ports reachable from the control plane |
 | `FAAS_PROMETHEUS_URL` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_PUBLIC_CONTROL_ADDR` | gatewayd-public, shared | `unit` |  |  | `` |  |
-| `FAAS_PUBLIC_IFACE` | vmmd | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible |
+| `FAAS_PUBLIC_IFACE` | vmmd, shared | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; "shared" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement) |
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `envfile` |  |  | `` |  |
+| `FAAS_PUBLIC_STATUS_LAUNCH_AT` | apid | `dropin` |  |  | `` | public-beta launch boundary rendered by the control-plane deployment |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_REALTIME_CALLBACK_OUTBOX` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_TIMEOUT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HEALTH_LISTEN` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HEARTBEAT` | realtimed | `default` |  |  | `` |  |
@@ -281,7 +289,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_PONG_WAIT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_ROLE` | realtimed, shared | `dropin` |  |  | `` |  |
-| `FAAS_REALTIME_SOCKET` | gatewayd-internal, realtimed, shared | `unit` |  |  | `` |  |
+| `FAAS_REALTIME_SOCKET` | apid, gatewayd-internal, realtimed, shared | `unit` |  |  | `` |  |
 | `FAAS_REALTIME_WRITE_WAIT` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_COOLDOWN_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_REBALANCE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
@@ -313,7 +321,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_SESSION_KEY` | apid, gatewayd-internal, shared | `unit` |  |  | `` | LoadCredential= path form in faas-apid.service and faas-gatewayd-internal.service |
 | `FAAS_SIGN_KEY` | imaged | `default` |  |  | `` |  |
-| `FAAS_SIGN_PUB` | schedd | `default` |  |  | `` |  |
+| `FAAS_SIGN_PUB` | schedd | `unit` |  |  | `` |  |
 | `FAAS_SKIP_PG_TESTS` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SKIP_SOCKET_GROUP` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` | defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments |
@@ -330,7 +338,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_CACHE_SERVE_STALE` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_LOCAL_PREFIXES` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
-| `FAAS_STORAGE_ROOT` | imaged, vmmd, shared | `default` |  |  | `` |  |
+| `FAAS_STORAGE_ROOT` | builderd, imaged, vmmd, shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_SNAPSHOT_COMPRESSION` | shared | `envfile` |  |  | `` | remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165) |
 | `FAAS_STREAM_BRIDGE_PERSISTENT` | shared | `default` |  |  | `` |  |
 | `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |

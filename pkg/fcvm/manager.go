@@ -229,8 +229,8 @@ type VMM interface {
 	// WithEvents (issue #517 / PR-C / ADR-064) wires the wake-timeline
 	// fan-out (pkg/events.Platform) on the VMM. vmmd is the canonical
 	// emit site for wake.readiness_200 (the first 2xx probe) and a
-	// corroborating observation for wake.boot_started (mirror at the
-	// gRPC server boundary). nil opts out (pre-PR-C fixtures).
+	// corroborating wake.boot_observed event at the gRPC server
+	// boundary. nil opts out (pre-PR-C fixtures).
 	// Mirrors WithStorage's nil-tolerance / one-shot wiring posture.
 	WithEvents(p *events.Platform) VMM
 }
@@ -3966,11 +3966,18 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if !req.ExecutionOnly {
 		m.rebuildHostSMTPAllowlistRules(ctx)
 	}
-	m.log.Info("wake ok", "wake_id", wakeID, "instance", req.Instance, "method", method.String(),
+	wakeAttrs := []any{
+		"wake_id", wakeID, "instance", req.Instance, "method", method.String(),
 		"uid", lease.UID, "host_ip", lease.HostIP.String(),
 		"setup_network_ms", timings.netnsTapMs, "scan_check_ms", timings.scanCheckMs,
 		"restore_ms", timings.restoreMs, "cold_boot_ms", timings.coldBootMs,
-		"total_ms", time.Since(phases.start).Milliseconds())
+	}
+	// Include every outer phase measurement on successes too. A
+	// fallback can spend most of its wall time before Firecracker Boot (for
+	// example materializing runtime files); reporting only cold_boot_ms hid
+	// that gap behind a much larger total_ms in production.
+	wakeAttrs = append(wakeAttrs, phases.attrs()...)
+	m.log.Info("wake ok", wakeAttrs...)
 	// Issue #554 / ADR-078 / PR review fix: start the per-instance
 	// liveness probe loop after the live map insert so the cmd/vmmd
 	// helper can read Lease.Slot via the same instance id. No-op
@@ -3978,7 +3985,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// The Manager selects its daemon lifecycle context so the loop
 	// survives the short-lived Wake RPC and exits with vmmd shutdown
 	// or explicit instance teardown.
-	if !req.ExecutionOnly {
+	if !req.ExecutionOnly && !lease.IsBuilder {
 		m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
 		m.startFrameworkReadyLoop(ctx, req.Instance)
 	}
@@ -4777,8 +4784,9 @@ func (m *Manager) LastLivenessDestroyAtForDeployment(deploymentID string) time.T
 // cooldownByDeployment[deploymentID], not on the Instance, so the
 // stamp survives the test's Register→SetLivenessDestroy sequence
 // even if the Instance is replaced. Empty deploymentID skips the
-// stamp seam (legacy pre-PR-B path is also exempt).
-func (m *Manager) RegisterInstanceForTest(instanceID, deploymentID string) *Manager {
+// stamp seam (legacy pre-PR-B path is also exempt). Two optional identity
+// values set app_id and account_id for workload-identity receiver tests.
+func (m *Manager) RegisterInstanceForTest(instanceID, deploymentID string, identity ...string) *Manager {
 	if m == nil {
 		return m
 	}
@@ -4796,6 +4804,10 @@ func (m *Manager) RegisterInstanceForTest(instanceID, deploymentID string) *Mana
 		// Update the DeploymentID on an existing entry so the
 		// test-side stamp matches the test-side loop's read key.
 		m.live[instanceID].DeploymentID = deploymentID
+	}
+	if len(identity) >= 2 {
+		m.live[instanceID].AppID = identity[0]
+		m.live[instanceID].AccountID = identity[1]
 	}
 	return m
 }

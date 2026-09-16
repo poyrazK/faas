@@ -42,7 +42,7 @@ import (
 // not found" branch on the 404 path: leak the SDK error verbatim so
 // customers see the same diagnostic they'd get from cURL.
 func cmdCronsRuns(args []string) int {
-	fs := flag.NewFlagSet("crons-runs", flag.ContinueOnError)
+	fs := newFlagSet("crons-runs", flag.ContinueOnError)
 	before := fs.String("before", "", "pagination cursor (last id of the prior page)")
 	limit := fs.Int("limit", 10, "max rows (1..100; server caps at 100)")
 	flags, pos := splitArgsForFlags(args)

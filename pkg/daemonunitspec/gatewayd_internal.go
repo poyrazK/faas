@@ -50,7 +50,7 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitGatewaydInternal() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas gatewayd-internal — routing + wake + proxy (Tier A7 split, ADR-070)",
-		Documentation: "https://docs.gregale.dev/ops/gatewayd-internal",
+		Documentation: "https://gregale.dev/docs/ops/gatewayd-internal",
 		// ADR-143: gatewayd-internal runs on compute-only nodes where
 		// apid + schedd are masked (role_convergence); ordering on them
 		// only produced "Unit is masked" noise at every start. It dials
@@ -61,13 +61,12 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "notify",
-		User:               "faas",
-		Group:              "faas",
-		ExecStart:          `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
-		Restart:            "on-failure",
-		RestartSec:         "2s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		Type:       "notify",
+		User:       "faas",
+		Group:      "faas",
+		ExecStart:  `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
+		Restart:    "on-failure",
+		RestartSec: "2s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "512M",
@@ -94,6 +93,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "fleet.age", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
 			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 			{Name: "faas_session_key", Path: "/etc/faas/secrets/session.key"},
@@ -121,7 +121,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
-		ReadWritePaths: []string{"/run/faas", "/var/lib/faas/log-drains"},
+		ReadWritePaths: []string{"/run/faas", "/var/lib/faas/log-drains", "/var/lib/faas/egress-meter"},
 
 		WantedBy: "multi-user.target",
 	}

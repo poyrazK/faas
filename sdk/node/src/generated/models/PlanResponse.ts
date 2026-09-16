@@ -12,6 +12,18 @@ import type { PlanWorkload } from './PlanWorkload.js';
 export type PlanResponse = {
   project_slug: string;
   repo_full_name?: string;
+  /**
+   * Registered project environment targeted by this plan
+   */
+  environment?: string;
+  /**
+   * Whether applying this plan requires protected-environment approval
+   */
+  environment_protected?: boolean;
+  /**
+   * Hash of the non-secret environment configuration bound into this plan
+   */
+  environment_config_hash?: string;
   scan_source: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'workspace' | 'convention' | 'single' | 'unknown';
   tier: string;
   workloads: Array<PlanWorkload>;

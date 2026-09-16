@@ -77,6 +77,28 @@ func TestValidateImport_Valid30(t *testing.T) {
 	}
 }
 
+func TestValidateImport_ValidYAML(t *testing.T) {
+	doc := `openapi: 3.1.0
+info:
+  title: YAML API
+  version: 1.0.0
+paths:
+  /ping:
+    get:
+      summary: ping
+  /users:
+    post:
+      summary: create user
+`
+	version, endpointCount, err := openapiimport.ValidateImport([]byte(doc))
+	if err != nil {
+		t.Fatalf("ValidateImport(YAML): %v", err)
+	}
+	if version != "3.1.0" || endpointCount != 2 {
+		t.Fatalf("ValidateImport(YAML) = version %q, endpoints %d; want 3.1.0, 2", version, endpointCount)
+	}
+}
+
 // TestValidateImport_EmptyPaths pins the empty `paths: {}`
 // case. The customer's doc declares the API but has no
 // operations yet — the apid surface accepts it.

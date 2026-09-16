@@ -114,6 +114,7 @@ type BytesFrame struct {
 	Bytes         uint64                 `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
 	Requests      uint64                 `protobuf:"varint,4,opt,name=requests,proto3" json:"requests,omitempty"`
 	ColdBoots     uint64                 `protobuf:"varint,5,opt,name=cold_boots,json=coldBoots,proto3" json:"cold_boots,omitempty"`
+	EventId       string                 `protobuf:"bytes,6,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -183,12 +184,107 @@ func (x *BytesFrame) GetColdBoots() uint64 {
 	return 0
 }
 
+func (x *BytesFrame) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+type AckBytesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EventIds      []string               `protobuf:"bytes,1,rep,name=event_ids,json=eventIds,proto3" json:"event_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AckBytesRequest) Reset() {
+	*x = AckBytesRequest{}
+	mi := &file_onebox_faas_egress_v1_egress_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AckBytesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AckBytesRequest) ProtoMessage() {}
+
+func (x *AckBytesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_egress_v1_egress_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AckBytesRequest.ProtoReflect.Descriptor instead.
+func (*AckBytesRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_egress_v1_egress_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *AckBytesRequest) GetEventIds() []string {
+	if x != nil {
+		return x.EventIds
+	}
+	return nil
+}
+
+type AckBytesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Acknowledged  uint32                 `protobuf:"varint,1,opt,name=acknowledged,proto3" json:"acknowledged,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AckBytesResponse) Reset() {
+	*x = AckBytesResponse{}
+	mi := &file_onebox_faas_egress_v1_egress_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AckBytesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AckBytesResponse) ProtoMessage() {}
+
+func (x *AckBytesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_egress_v1_egress_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AckBytesResponse.ProtoReflect.Descriptor instead.
+func (*AckBytesResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_egress_v1_egress_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *AckBytesResponse) GetAcknowledged() uint32 {
+	if x != nil {
+		return x.Acknowledged
+	}
+	return 0
+}
+
 var File_onebox_faas_egress_v1_egress_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_egress_v1_egress_proto_rawDesc = "" +
 	"\n" +
 	"\"onebox/faas/egress/v1/egress.proto\x12\x15onebox.faas.egress.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x14\n" +
-	"\x12StreamBytesRequest\"\xb2\x01\n" +
+	"\x12StreamBytesRequest\"\xcd\x01\n" +
 	"\n" +
 	"BytesFrame\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
@@ -197,9 +293,15 @@ const file_onebox_faas_egress_v1_egress_proto_rawDesc = "" +
 	"\x05bytes\x18\x03 \x01(\x04R\x05bytes\x12\x1a\n" +
 	"\brequests\x18\x04 \x01(\x04R\brequests\x12\x1d\n" +
 	"\n" +
-	"cold_boots\x18\x05 \x01(\x04R\tcoldBoots2p\n" +
+	"cold_boots\x18\x05 \x01(\x04R\tcoldBoots\x12\x19\n" +
+	"\bevent_id\x18\x06 \x01(\tR\aeventId\".\n" +
+	"\x0fAckBytesRequest\x12\x1b\n" +
+	"\tevent_ids\x18\x01 \x03(\tR\beventIds\"6\n" +
+	"\x10AckBytesResponse\x12\"\n" +
+	"\facknowledged\x18\x01 \x01(\rR\facknowledged2\xcd\x01\n" +
 	"\x0fEgressTxService\x12]\n" +
-	"\vStreamBytes\x12).onebox.faas.egress.v1.StreamBytesRequest\x1a!.onebox.faas.egress.v1.BytesFrame0\x01BFZDgithub.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1;egresspbb\x06proto3"
+	"\vStreamBytes\x12).onebox.faas.egress.v1.StreamBytesRequest\x1a!.onebox.faas.egress.v1.BytesFrame0\x01\x12[\n" +
+	"\bAckBytes\x12&.onebox.faas.egress.v1.AckBytesRequest\x1a'.onebox.faas.egress.v1.AckBytesResponseBFZDgithub.com/onebox-faas/faas/api/proto/onebox/faas/egress/v1;egresspbb\x06proto3"
 
 var (
 	file_onebox_faas_egress_v1_egress_proto_rawDescOnce sync.Once
@@ -213,18 +315,22 @@ func file_onebox_faas_egress_v1_egress_proto_rawDescGZIP() []byte {
 	return file_onebox_faas_egress_v1_egress_proto_rawDescData
 }
 
-var file_onebox_faas_egress_v1_egress_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_onebox_faas_egress_v1_egress_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_onebox_faas_egress_v1_egress_proto_goTypes = []any{
 	(*StreamBytesRequest)(nil),    // 0: onebox.faas.egress.v1.StreamBytesRequest
 	(*BytesFrame)(nil),            // 1: onebox.faas.egress.v1.BytesFrame
-	(*timestamppb.Timestamp)(nil), // 2: google.protobuf.Timestamp
+	(*AckBytesRequest)(nil),       // 2: onebox.faas.egress.v1.AckBytesRequest
+	(*AckBytesResponse)(nil),      // 3: onebox.faas.egress.v1.AckBytesResponse
+	(*timestamppb.Timestamp)(nil), // 4: google.protobuf.Timestamp
 }
 var file_onebox_faas_egress_v1_egress_proto_depIdxs = []int32{
-	2, // 0: onebox.faas.egress.v1.BytesFrame.minute:type_name -> google.protobuf.Timestamp
+	4, // 0: onebox.faas.egress.v1.BytesFrame.minute:type_name -> google.protobuf.Timestamp
 	0, // 1: onebox.faas.egress.v1.EgressTxService.StreamBytes:input_type -> onebox.faas.egress.v1.StreamBytesRequest
-	1, // 2: onebox.faas.egress.v1.EgressTxService.StreamBytes:output_type -> onebox.faas.egress.v1.BytesFrame
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
+	2, // 2: onebox.faas.egress.v1.EgressTxService.AckBytes:input_type -> onebox.faas.egress.v1.AckBytesRequest
+	1, // 3: onebox.faas.egress.v1.EgressTxService.StreamBytes:output_type -> onebox.faas.egress.v1.BytesFrame
+	3, // 4: onebox.faas.egress.v1.EgressTxService.AckBytes:output_type -> onebox.faas.egress.v1.AckBytesResponse
+	3, // [3:5] is the sub-list for method output_type
+	1, // [1:3] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -241,7 +347,7 @@ func file_onebox_faas_egress_v1_egress_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_egress_v1_egress_proto_rawDesc), len(file_onebox_faas_egress_v1_egress_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

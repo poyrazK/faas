@@ -33,15 +33,42 @@
   register: faas_hardening_authkeys
   when: faas_hardening_sshd | bool
 
+# GCP OS Login intentionally does not populate ~/.ssh/authorized_keys. Its
+# sshd AuthorizedKeysCommand is the authenticated key source, so prove that
+# the configured helper can currently resolve at least one key for the exact
+# Ansible user before accepting it as a lockout-safe path.
+- name: host_hardening — verify the connecting user's GCP OS Login key path
+  ansible.builtin.shell: |
+    set -euo pipefail
+    user="{{ ansible_env.SUDO_USER | default('root') }}"
+    command="$(sshd -T -C "user=${user},host=$(hostname),addr=127.0.0.1" | awk '$1 == "authorizedkeyscommand" {print $2; exit}')"
+    test "$command" = /usr/bin/google_authorized_keys
+    test -x "$command"
+    keys="$($command "$user")"
+    test -n "$keys"
+  args:
+    executable: /bin/bash
+  register: faas_hardening_oslogin_key
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: faas_hardening_sshd | bool
+
 - name: host_hardening — refuse to disable password auth without a key on the box
   ansible.builtin.assert:
     that:
       - not (faas_hardening_sshd_password_auth | bool == false) or
-        (faas_hardening_authkeys.stat.exists and faas_hardening_authkeys.stat.size > 0)
+        (faas_hardening_authkeys.stat.exists and faas_hardening_authkeys.stat.size > 0) or
+        faas_hardening_oslogin_key.rc == 0
+      - faas_hardening_sshd_permit_root_login != 'no' or
+        (ansible_env.SUDO_USER | default('root')) != 'root'
     fail_msg: >-
-      faas_hardening_sshd_password_auth=false but {{ faas_hardening_authkeys.stat.path | default('~/.ssh/authorized_keys') }}
-      is missing or empty for the connecting user. Add a key first or set
-      faas_hardening_sshd_password_auth=true; this role will not lock you out.
+      The requested SSH posture would lock out the current connection. A
+      password-disabled user needs a non-empty local authorized_keys file or a
+      verified GCP OS Login AuthorizedKeysCommand result, and
+      PermitRootLogin=no requires Ansible to connect as a named sudo-capable
+      administrator. Test OS Login/IAP first; this role will not remove its
+      own access path.
   when: faas_hardening_sshd | bool
 
 - name: host_hardening — render the sshd hardening drop-in
@@ -128,6 +155,153 @@
     enabled: true
     state: started
   when: faas_hardening_auditd | bool
+
+# --- Caddy ------------------------------------------------------------------
+
+- name: host_hardening — inspect the control-plane Caddy unit  # noqa: command-instead-of-module (read-only query / no module equivalent)
+  ansible.builtin.command: systemctl cat caddy.service
+  register: faas_hardening_caddy_unit
+  changed_when: false
+  failed_when: false
+  when:
+    - faas_hardening_caddy | bool
+    - "'control_plane' in group_names"
+
+- name: host_hardening — create the Caddy drop-in directory
+  ansible.builtin.file:
+    path: "{{ faas_hardening_caddy_dropin | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - faas_hardening_caddy | bool
+    - "'control_plane' in group_names"
+    - faas_hardening_caddy_unit.rc == 0
+
+- name: host_hardening — install the least-privilege Caddy sandbox
+  ansible.builtin.template:
+    src: 90-gregale-caddy-hardening.conf.j2
+    dest: "{{ faas_hardening_caddy_dropin }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd for Caddy hardening
+  when:
+    - faas_hardening_caddy | bool
+    - "'control_plane' in group_names"
+    - faas_hardening_caddy_unit.rc == 0
+
+# --- journald ---------------------------------------------------------------
+
+- name: host_hardening — create journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_hardening_journald | bool
+
+- name: host_hardening — install bounded journal policy
+  ansible.builtin.template:
+    src: 60-faas-journal-bounds.conf.j2
+    dest: /etc/systemd/journald.conf.d/60-faas-journal-bounds.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: converge bounded journal
+  when: faas_hardening_journald | bool
+
+# --- rsyslog ----------------------------------------------------------------
+
+- name: host_hardening — inspect the inherited GCE rsyslog policy
+  ansible.builtin.stat:
+    path: /etc/rsyslog.d/90-google.conf
+  register: faas_hardening_google_rsyslog
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — disable the unwritable GCE console sink
+  ansible.builtin.replace:
+    path: /etc/rsyslog.d/90-google.conf
+    regexp: '^([ \t]*daemon,kern\.\*[ \t]+-?/dev/console[ \t]*)$'
+    replace: |-
+      # Gregale: inherited GCE console sink disabled; rsyslog cannot write root:tty /dev/console.
+      # \1
+  notify: restart rsyslog
+  when:
+    - faas_hardening_rsyslog | bool
+    - faas_hardening_google_rsyslog.stat.exists | default(false)
+
+- name: host_hardening — install bounded rsyslog rotation policy
+  ansible.builtin.template:
+    src: rsyslog.logrotate.j2
+    dest: /etc/logrotate.d/rsyslog
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — install hourly rsyslog rotation units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: faas-rsyslog-rotate.service.j2, dest: faas-rsyslog-rotate.service }
+    - { src: faas-rsyslog-rotate.timer.j2, dest: faas-rsyslog-rotate.timer }
+  register: faas_hardening_rsyslog_units
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — prove the rsyslog policy can inspect its targets  # noqa: command-instead-of-module (logrotate owns policy validation)
+  ansible.builtin.command:
+    argv:
+      - logrotate
+      - --debug
+      - /etc/logrotate.d/rsyslog
+  register: faas_hardening_rsyslog_debug
+  changed_when: false
+  failed_when: >-
+    faas_hardening_rsyslog_debug.rc != 0 or
+    'insecure permissions' in
+    ((faas_hardening_rsyslog_debug.stdout | default('')) ~
+     (faas_hardening_rsyslog_debug.stderr | default('')))
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — run one bounded rsyslog rotation check
+  ansible.builtin.systemd_service:
+    name: faas-rsyslog-rotate.service
+    state: started
+    daemon_reload: "{{ faas_hardening_rsyslog_units is changed }}"
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — enable bounded rsyslog rotation
+  ansible.builtin.systemd_service:
+    name: faas-rsyslog-rotate.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ faas_hardening_rsyslog_units is changed }}"
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — validate the effective rsyslog configuration  # noqa: command-instead-of-module (rsyslog owns the config parser)
+  ansible.builtin.command: rsyslogd -N1
+  changed_when: false
+  when: faas_hardening_rsyslog | bool
+
+- name: host_hardening — reject active file sinks to the unwritable console  # noqa: command-instead-of-module (recursive config validation has no module equivalent)
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -RHE
+      - '^[[:space:]]*daemon,kern\.\*[[:space:]]+-?/dev/console[[:space:]]*$'
+      - /etc/rsyslog.conf
+      - /etc/rsyslog.d
+  register: faas_hardening_console_sink
+  changed_when: false
+  failed_when: faas_hardening_console_sink.rc == 0 or faas_hardening_console_sink.rc > 1
+  when: faas_hardening_rsyslog | bool
 
 # --- sysctl -----------------------------------------------------------------
 

@@ -234,9 +234,8 @@ func RetentionOnceRequestTelemetry(ctx context.Context, db retentionExecer) (int
 
 // retentionDropExpiredPartitionsSQL is a single-statement
 // partition-drop pass (PR-B ADR-127). Enumerates monthly
-// partitions of request_telemetry whose name encodes a month
-// older than the floor retention cap (1 day; safe upper bound
-// for any plan — Hobby=3d is the loosest cap), and DROPs each
+// partitions of request_telemetry whose upper bound is older than
+// the longest plan retention cap (Scale=14 days), and DROPs each
 // in turn via a DO block.
 //
 // The partition name is request_telemetry_YYYYMM (the 00435
@@ -268,7 +267,7 @@ BEGIN
         EXCEPTION WHEN OTHERS THEN
             CONTINUE;
         END;
-        IF partstart < date_trunc('month', now() - interval '1 day') THEN
+        IF partstart + interval '1 month' <= now() - interval '14 days' THEN
             EXECUTE 'DROP TABLE IF EXISTS public.' || quote_ident(partname);
         END IF;
     END LOOP;
@@ -276,9 +275,8 @@ END $$;
 `
 
 // DropExpiredRequestTelemetryPartitions (PR-B ADR-127) drops
-// monthly partitions of request_telemetry whose month-suffix
-// encodes a month older than the floor retention cap (1 day;
-// safe upper bound for any plan — Hobby=3d is the loosest cap).
+// monthly partitions of request_telemetry whose month-suffix has an
+// upper bound older than the longest plan retention cap (Scale=14 days).
 //
 // The DROP runs once per cron tick; the cron in
 // pkg/meter/retention.go::RetentionLoopRequestTelemetry calls
