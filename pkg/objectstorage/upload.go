@@ -2,6 +2,7 @@ package objectstorage
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -140,8 +141,12 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	requestFingerprint := ""
 	if idempotencyKey != "" {
-		requestFingerprint = uploadRequestFingerprint(route.ID, subject, r.ContentLength, contentType, r.Header)
-		objectKey = idempotentUploadKey(route.KeyPrefix, route.ID, subject, idempotencyKey)
+		// APIKey.Hash is the durable, non-reversible credential fingerprint
+		// already available after authentication. Use it as the HMAC key so
+		// idempotency material is not exposed through a bare SHA-256 digest
+		// (which CodeQL correctly rejects for sensitive request data).
+		requestFingerprint = uploadRequestFingerprint(key.Hash, route.ID, subject, r.ContentLength, contentType, r.Header)
+		objectKey = idempotentUploadKey(key.Hash, route.KeyPrefix, route.ID, subject, idempotencyKey)
 		existing, lookupErr := h.routes.GetObjectUploadIntent(r.Context(), route.ID, subject, idempotencyKey)
 		if lookupErr == nil {
 			if h.replayIdempotent(w, existing, requestFingerprint) {
@@ -311,20 +316,27 @@ func parseUploadIdempotencyKey(value string) (string, error) {
 	return value, nil
 }
 
-func uploadRequestFingerprint(routeID, subject string, size int64, contentType string, headers http.Header) string {
+func uploadRequestFingerprint(key []byte, routeID, subject string, size int64, contentType string, headers http.Header) string {
 	material := strings.Join([]string{routeID, subject, strconv.FormatInt(size, 10), contentType, strings.TrimSpace(headers.Get("Content-MD5")), strings.TrimSpace(headers.Get("Digest"))}, "\x00")
-	sum := sha256.Sum256([]byte(material))
-	return hex.EncodeToString(sum[:])
+	return uploadMaterialMAC(key, material)
 }
 
-func idempotentUploadKey(prefix, routeID, subject, idempotencyKey string) string {
+func idempotentUploadKey(key []byte, prefix, routeID, subject, idempotencyKey string) string {
 	material := routeID + "\x00" + subject + "\x00" + idempotencyKey
-	sum := sha256.Sum256([]byte(material))
 	prefix = strings.Trim(prefix, "/")
 	if prefix == "" {
-		return subject + "/idem-" + hex.EncodeToString(sum[:])
+		return subject + "/idem-" + uploadMaterialMAC(key, material)
 	}
-	return prefix + "/" + subject + "/idem-" + hex.EncodeToString(sum[:])
+	return prefix + "/" + subject + "/idem-" + uploadMaterialMAC(key, material)
+}
+
+func uploadMaterialMAC(key []byte, material string) string {
+	// HMAC-SHA256 is intentionally used instead of a bare SHA-256 digest:
+	// route, subject, and idempotency inputs are request-derived sensitive
+	// data, and the API-key fingerprint provides a stable per-principal key.
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(material))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func uploadResponse(completion state.ObjectUploadCompletion) map[string]any {
