@@ -8,34 +8,34 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.project_environment_approval_response_status import (
-    ProjectEnvironmentApprovalResponseStatus,
-    check_project_environment_approval_response_status,
+from ..models.project_environment_approval_status_response_status import (
+    ProjectEnvironmentApprovalStatusResponseStatus,
+    check_project_environment_approval_status_response_status,
 )
-from ..models.project_environment_approval_response_token_kind import (
-    ProjectEnvironmentApprovalResponseTokenKind,
-    check_project_environment_approval_response_token_kind,
+from ..models.project_environment_approval_status_response_token_kind import (
+    ProjectEnvironmentApprovalStatusResponseTokenKind,
+    check_project_environment_approval_status_response_token_kind,
 )
+from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="ProjectEnvironmentApprovalResponse")
+T = TypeVar("T", bound="ProjectEnvironmentApprovalStatusResponse")
 
 
 @_attrs_define
-class ProjectEnvironmentApprovalResponse:
-    """Short-lived, single-use credential for applying the approved plan. The approval token is returned only here."""
+class ProjectEnvironmentApprovalStatusResponse:
+    """Durable, non-secret lifecycle status for one environment approval."""
 
     approval_id: UUID
-    approval_token: str
     environment: str
-    token_kind: ProjectEnvironmentApprovalResponseTokenKind
-    status: ProjectEnvironmentApprovalResponseStatus
+    token_kind: ProjectEnvironmentApprovalStatusResponseTokenKind
+    status: ProjectEnvironmentApprovalStatusResponseStatus
+    created_at: datetime.datetime
     expires_at: datetime.datetime
+    consumed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         approval_id = str(self.approval_id)
-
-        approval_token = self.approval_token
 
         environment = self.environment
 
@@ -43,20 +43,28 @@ class ProjectEnvironmentApprovalResponse:
 
         status: str = self.status
 
+        created_at = self.created_at.isoformat()
+
         expires_at = self.expires_at.isoformat()
+
+        consumed_at: str | Unset = UNSET
+        if not isinstance(self.consumed_at, Unset):
+            consumed_at = self.consumed_at.isoformat()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "approval_id": approval_id,
-                "approval_token": approval_token,
                 "environment": environment,
                 "token_kind": token_kind,
                 "status": status,
+                "created_at": created_at,
                 "expires_at": expires_at,
             }
         )
+        if consumed_at is not UNSET:
+            field_dict["consumed_at"] = consumed_at
 
         return field_dict
 
@@ -65,27 +73,35 @@ class ProjectEnvironmentApprovalResponse:
         d = dict(src_dict)
         approval_id = UUID(d.pop("approval_id"))
 
-        approval_token = d.pop("approval_token")
-
         environment = d.pop("environment")
 
-        token_kind = check_project_environment_approval_response_token_kind(d.pop("token_kind"))
+        token_kind = check_project_environment_approval_status_response_token_kind(d.pop("token_kind"))
 
-        status = check_project_environment_approval_response_status(d.pop("status"))
+        status = check_project_environment_approval_status_response_status(d.pop("status"))
+
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
 
-        project_environment_approval_response = cls(
+        _consumed_at = d.pop("consumed_at", UNSET)
+        consumed_at: datetime.datetime | Unset
+        if isinstance(_consumed_at, Unset):
+            consumed_at = UNSET
+        else:
+            consumed_at = datetime.datetime.fromisoformat(_consumed_at)
+
+        project_environment_approval_status_response = cls(
             approval_id=approval_id,
-            approval_token=approval_token,
             environment=environment,
             token_kind=token_kind,
             status=status,
+            created_at=created_at,
             expires_at=expires_at,
+            consumed_at=consumed_at,
         )
 
-        project_environment_approval_response.additional_properties = d
-        return project_environment_approval_response
+        project_environment_approval_status_response.additional_properties = d
+        return project_environment_approval_status_response
 
     @property
     def additional_keys(self) -> list[str]:

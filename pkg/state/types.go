@@ -5556,9 +5556,11 @@ type ProjectEnvironmentApproval struct {
 	AccountID         string
 	ProjectSlug       string
 	EnvironmentSlug   string
+	TokenKind         string
 	PlanTokenHash     string
 	ApprovalTokenHash string
 	ExpiresAt         time.Time
+	ConsumedAt        *time.Time
 	CreatedAt         time.Time
 }
 

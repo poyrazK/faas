@@ -4228,7 +4228,8 @@ func scanProjectEnvironmentApproval(row pgx.Row) (ProjectEnvironmentApproval, er
 	var approval ProjectEnvironmentApproval
 	if err := row.Scan(
 		&approval.ID, &approval.AccountID, &approval.ProjectSlug, &approval.EnvironmentSlug,
-		&approval.PlanTokenHash, &approval.ApprovalTokenHash, &approval.ExpiresAt, &approval.CreatedAt,
+		&approval.TokenKind, &approval.PlanTokenHash, &approval.ApprovalTokenHash,
+		&approval.ExpiresAt, &approval.ConsumedAt, &approval.CreatedAt,
 	); err != nil {
 		return ProjectEnvironmentApproval{}, mapErr(err)
 	}
@@ -4236,24 +4237,51 @@ func scanProjectEnvironmentApproval(row pgx.Row) (ProjectEnvironmentApproval, er
 }
 
 func (s *PgStore) CreateProjectEnvironmentApproval(ctx context.Context, approval ProjectEnvironmentApproval) (ProjectEnvironmentApproval, error) {
+	if approval.TokenKind == "" {
+		approval.TokenKind = "plan"
+	}
 	row := s.pool.QueryRow(ctx, `
 		insert into project_environment_approvals
-			(account_id, project_slug, environment_slug, plan_token_hash, approval_token_hash, expires_at)
-		values ($1, $2, $3, $4, $5, $6)
-		returning id, account_id, project_slug, environment_slug, plan_token_hash, approval_token_hash, expires_at, created_at
-	`, approval.AccountID, approval.ProjectSlug, approval.EnvironmentSlug, approval.PlanTokenHash, approval.ApprovalTokenHash, approval.ExpiresAt)
+			(account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at)
+		values ($1, $2, $3, $4, $5, $6, $7)
+		returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at
+	`, approval.AccountID, approval.ProjectSlug, approval.EnvironmentSlug, approval.TokenKind, approval.PlanTokenHash, approval.ApprovalTokenHash, approval.ExpiresAt)
+	return scanProjectEnvironmentApproval(row)
+}
+
+func (s *PgStore) ProjectEnvironmentApprovalByID(ctx context.Context, accountID, projectSlug, environmentSlug, id string) (ProjectEnvironmentApproval, error) {
+	row := s.pool.QueryRow(ctx, `
+		select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at
+		  from project_environment_approvals
+		 where id = $1 and account_id = $2 and project_slug = $3 and environment_slug = $4
+	`, id, accountID, projectSlug, environmentSlug)
 	return scanProjectEnvironmentApproval(row)
 }
 
 func (s *PgStore) ProjectEnvironmentApprovalByToken(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string) (ProjectEnvironmentApproval, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, account_id, project_slug, environment_slug, plan_token_hash, approval_token_hash, expires_at, created_at
+		select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at
 		  from project_environment_approvals
 		 where account_id = $1 and project_slug = $2 and environment_slug = $3
-		   and plan_token_hash = $4 and approval_token_hash = $5 and expires_at > now()
+		   and plan_token_hash = $4 and approval_token_hash = $5 and consumed_at is null and expires_at > now()
 		 order by created_at desc
 		 limit 1
 	`, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash)
+	return scanProjectEnvironmentApproval(row)
+}
+
+func (s *PgStore) ConsumeProjectEnvironmentApproval(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string, consumedAt time.Time) (ProjectEnvironmentApproval, error) {
+	if consumedAt.IsZero() {
+		consumedAt = time.Now().UTC()
+	}
+	row := s.pool.QueryRow(ctx, `
+		update project_environment_approvals
+		   set consumed_at = $6
+		 where account_id = $1 and project_slug = $2 and environment_slug = $3
+		   and plan_token_hash = $4 and approval_token_hash = $5
+		   and consumed_at is null and expires_at > now()
+		returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at
+	`, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash, consumedAt)
 	return scanProjectEnvironmentApproval(row)
 }
 

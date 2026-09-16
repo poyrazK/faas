@@ -222,6 +222,10 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.revalidateProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, plan); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if plan.Preview.ApprovalRequired {
 		approvalToken := strings.TrimSpace(req.ApprovalToken)
 		if approvalToken == "" {
@@ -229,16 +233,20 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 				"Protected environment approval required", "approve this exact promotion before executing it"))
 			return
 		}
-		if _, err := s.store.ProjectEnvironmentApprovalByToken(r.Context(), acct.ID, projectSlug, toEnvironment,
-			hashProjectEnvironmentApprovalMaterial(promotionToken), hashProjectEnvironmentApprovalMaterial(approvalToken)); err != nil {
+		approval, err := s.store.ConsumeProjectEnvironmentApproval(r.Context(), acct.ID, projectSlug, toEnvironment,
+			hashProjectEnvironmentApprovalMaterial(promotionToken), hashProjectEnvironmentApprovalMaterial(approvalToken), time.Now().UTC())
+		if err != nil {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 				"Invalid environment approval", "the approval is expired or does not match this exact promotion"))
 			return
 		}
-	}
-	if problem := s.revalidateProjectEnvironmentPromotionPlan(r.Context(), acct, projectSlug, fromEnvironment, toEnvironment, plan); problem != nil {
-		api.WriteProblem(w, problem)
-		return
+		s.audit.Emit(r.Context(), "project.environment.approval.consumed", &acct.ID, map[string]any{
+			"project_slug": projectSlug,
+			"environment":  toEnvironment,
+			"approval_id":  approval.ID,
+			"token_kind":   approval.TokenKind,
+			"consumed_at":  approval.ConsumedAt.UTC().Format(time.RFC3339),
+		})
 	}
 	promotion, workloads, err := s.store.CreateProjectEnvironmentPromotion(r.Context(), state.ProjectEnvironmentPromotion{
 		AccountID: acct.ID, ProjectID: plan.ProjectID, ProjectSlug: projectSlug,

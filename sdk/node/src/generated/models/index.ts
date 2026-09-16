@@ -427,6 +427,7 @@ export type { ProgrammaticAuthResponse } from './ProgrammaticAuthResponse.js';
 export type { ProjectApplyRequest } from './ProjectApplyRequest.js';
 export type { ProjectDeletePreviewResponse } from './ProjectDeletePreviewResponse.js';
 export type { ProjectEnvironmentApprovalResponse } from './ProjectEnvironmentApprovalResponse.js';
+export type { ProjectEnvironmentApprovalStatusResponse } from './ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentConfigChange } from './ProjectEnvironmentConfigChange.js';
 export type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';
 export type { ProjectEnvironmentConfigResponse } from './ProjectEnvironmentConfigResponse.js';

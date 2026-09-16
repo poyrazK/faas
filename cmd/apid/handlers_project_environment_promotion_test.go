@@ -72,9 +72,23 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 		t.Fatalf("missing approval status=%d body=%s", executeRec.Code, executeRec.Body.String())
 	}
 
-	approvalToken, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
+	approvalToken, approval, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
 	if problem != nil {
 		t.Fatalf("issue promotion approval: %v", problem)
+	}
+	approvalStatusReq, approvalStatusRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/approvals/"+approval.ID, "shop", nil)
+	approvalStatusReq.SetPathValue("environment", "production")
+	approvalStatusReq.SetPathValue("approval", approval.ID)
+	srv.getProjectEnvironmentApprovalStatus(approvalStatusRec, approvalStatusReq, acct)
+	if approvalStatusRec.Code != http.StatusOK {
+		t.Fatalf("approval status=%d body=%s", approvalStatusRec.Code, approvalStatusRec.Body.String())
+	}
+	var approvalStatus api.ProjectEnvironmentApprovalStatusResponse
+	if err := json.Unmarshal(approvalStatusRec.Body.Bytes(), &approvalStatus); err != nil {
+		t.Fatal(err)
+	}
+	if approvalStatus.Status != "pending" || approvalStatus.TokenKind != "promotion" || approvalStatus.ApprovalID != approval.ID {
+		t.Fatalf("approval status response=%+v", approvalStatus)
 	}
 	requestBody, err = json.Marshal(api.PromoteProjectEnvironmentRequest{
 		FromEnvironment: "staging", PromotionToken: preview.PromotionToken, ApprovalToken: approvalToken,
@@ -98,6 +112,27 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	}
 	if response.PromotionID == "" {
 		t.Fatal("promotion response did not include durable promotion id")
+	}
+	approvalStatusReq, approvalStatusRec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/approvals/"+approval.ID, "shop", nil)
+	approvalStatusReq.SetPathValue("environment", "production")
+	approvalStatusReq.SetPathValue("approval", approval.ID)
+	srv.getProjectEnvironmentApprovalStatus(approvalStatusRec, approvalStatusReq, acct)
+	if approvalStatusRec.Code != http.StatusOK {
+		t.Fatalf("consumed approval status=%d body=%s", approvalStatusRec.Code, approvalStatusRec.Body.String())
+	}
+	if err := json.Unmarshal(approvalStatusRec.Body.Bytes(), &approvalStatus); err != nil {
+		t.Fatal(err)
+	}
+	if approvalStatus.Status != "consumed" || approvalStatus.ConsumedAt == "" {
+		t.Fatalf("consumed approval status response=%+v", approvalStatus)
+	}
+	// A fresh idempotency key cannot reuse a consumed approval.
+	reuseReq, reuseRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
+	reuseReq.SetPathValue("environment", "production")
+	reuseReq.Header.Set("Idempotency-Key", "promotion-test-reuse")
+	srv.promoteProjectEnvironment(reuseRec, reuseReq, acct)
+	if reuseRec.Code != http.StatusConflict {
+		t.Fatalf("consumed approval reuse status=%d body=%s", reuseRec.Code, reuseRec.Body.String())
 	}
 	statusReq, statusRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID, "shop", nil)
 	statusReq.SetPathValue("environment", "production")

@@ -9,6 +9,7 @@ import type { PlanResponse } from '../models/PlanResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePreviewResponse.js';
 import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnvironmentApprovalResponse.js';
+import type { ProjectEnvironmentApprovalStatusResponse } from '../models/ProjectEnvironmentApprovalStatusResponse.js';
 import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
 import type { ProjectEnvironmentPromotionPreviewResponse } from '../models/ProjectEnvironmentPromotionPreviewResponse.js';
@@ -566,6 +567,48 @@ export class ProjectsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Get the lifecycle status of a project environment approval.
+   * The raw approval token is never returned by this endpoint.
+   * @returns ProjectEnvironmentApprovalStatusResponse Durable approval lifecycle status.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentApprovalStatus({
+    slug,
+    environment,
+    approval,
+  }: {
+    /**
+     * Project slug owning the approval lookup.
+     */
+    slug: string,
+    /**
+     * Protected environment slug containing the approval.
+     */
+    environment: string,
+    /**
+     * Durable approval identifier returned when the approval is created.
+     */
+    approval: string,
+  }): CancelablePromise<ProjectEnvironmentApprovalStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/approvals/{approval}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'approval': approval,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

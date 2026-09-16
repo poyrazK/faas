@@ -1527,6 +1527,20 @@ func (c *Client) PostProjectsSlugEnvironmentsEnvironmentApprovals(ctx context.Co
 	return c.ApproveProjectEnvironment(ctx, projectSlug, environmentSlug, req)
 }
 
+// GetProjectEnvironmentApprovalStatus returns the durable lifecycle state of
+// an approval without exposing its raw single-use token.
+func (c *Client) GetProjectEnvironmentApprovalStatus(ctx context.Context, projectSlug, environmentSlug, approvalID string) (ProjectEnvironmentApprovalStatusResponse, error) {
+	var out ProjectEnvironmentApprovalStatusResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/approvals/" + url.PathEscape(approvalID)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectsSlugEnvironmentsEnvironmentApprovalsApproval is the
+// route-shaped SDK alias used by SDK coverage.
+func (c *Client) GetProjectsSlugEnvironmentsEnvironmentApprovalsApproval(ctx context.Context, projectSlug, environmentSlug, approvalID string) (ProjectEnvironmentApprovalStatusResponse, error) {
+	return c.GetProjectEnvironmentApprovalStatus(ctx, projectSlug, environmentSlug, approvalID)
+}
+
 // PromoteProjectEnvironment executes a previously previewed promotion after
 // revalidating the promotion token against current live releases and config.
 func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {

@@ -1090,11 +1090,19 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalRequired,
 				"Protected environment approval required", "approve the exact plan before applying to this protected environment")
 		}
-		if _, err := s.store.ProjectEnvironmentApprovalByToken(r.Context(), acct.ID, req.ProjectSlug, req.Environment,
-			hashProjectEnvironmentApprovalMaterial(planToken), hashProjectEnvironmentApprovalMaterial(req.ApprovalToken)); err != nil {
+		approval, err := s.store.ConsumeProjectEnvironmentApproval(r.Context(), acct.ID, req.ProjectSlug, req.Environment,
+			hashProjectEnvironmentApprovalMaterial(planToken), hashProjectEnvironmentApprovalMaterial(req.ApprovalToken), time.Now().UTC())
+		if err != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 				"Invalid environment approval", "the approval is expired or does not match this exact plan and environment")
 		}
+		s.audit.Emit(r.Context(), "project.environment.approval.consumed", &acct.ID, map[string]any{
+			"project_slug": req.ProjectSlug,
+			"environment":  req.Environment,
+			"approval_id":  approval.ID,
+			"token_kind":   approval.TokenKind,
+			"consumed_at":  approval.ConsumedAt.UTC().Format(time.RFC3339),
+		})
 	}
 	// ADR-124 follow-up #3 — apply-time persisted-exclude fallback.
 	// When the apply path runs without an explicit --exclude AND a

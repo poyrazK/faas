@@ -820,6 +820,11 @@ from .programmatic_signup_magic_link_response_200_status import ProgrammaticSign
 from .project_apply_request import ProjectApplyRequest
 from .project_delete_preview_response import ProjectDeletePreviewResponse
 from .project_environment_approval_response import ProjectEnvironmentApprovalResponse
+from .project_environment_approval_response_status import ProjectEnvironmentApprovalResponseStatus
+from .project_environment_approval_response_token_kind import ProjectEnvironmentApprovalResponseTokenKind
+from .project_environment_approval_status_response import ProjectEnvironmentApprovalStatusResponse
+from .project_environment_approval_status_response_status import ProjectEnvironmentApprovalStatusResponseStatus
+from .project_environment_approval_status_response_token_kind import ProjectEnvironmentApprovalStatusResponseTokenKind
 from .project_environment_config_change import ProjectEnvironmentConfigChange
 from .project_environment_config_change_kind import ProjectEnvironmentConfigChangeKind
 from .project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
@@ -1944,6 +1949,11 @@ __all__ = (
     "ProjectApplyRequest",
     "ProjectDeletePreviewResponse",
     "ProjectEnvironmentApprovalResponse",
+    "ProjectEnvironmentApprovalResponseStatus",
+    "ProjectEnvironmentApprovalResponseTokenKind",
+    "ProjectEnvironmentApprovalStatusResponse",
+    "ProjectEnvironmentApprovalStatusResponseStatus",
+    "ProjectEnvironmentApprovalStatusResponseTokenKind",
     "ProjectEnvironmentConfigChange",
     "ProjectEnvironmentConfigChangeKind",
     "ProjectEnvironmentConfigDiffResponse",

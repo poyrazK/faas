@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -46,11 +47,7 @@ func (s *server) approveProjectEnvironment(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, problem)
 			return
 		}
-		writeJSON(w, http.StatusCreated, api.ProjectEnvironmentApprovalResponse{
-			ApprovalToken: approvalToken,
-			Environment:   environment,
-			ExpiresAt:     approval.ExpiresAt.UTC().Format(time.RFC3339),
-		})
+		writeJSON(w, http.StatusCreated, projectEnvironmentApprovalResponse(approvalToken, approval))
 		return
 	}
 	approvalToken, approval, problem := s.issueProjectEnvironmentApproval(r.Context(), acct, projectSlug, environment, planToken)
@@ -58,11 +55,32 @@ func (s *server) approveProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
-	writeJSON(w, http.StatusCreated, api.ProjectEnvironmentApprovalResponse{
-		ApprovalToken: approvalToken,
-		Environment:   environment,
-		ExpiresAt:     approval.ExpiresAt.UTC().Format(time.RFC3339),
-	})
+	writeJSON(w, http.StatusCreated, projectEnvironmentApprovalResponse(approvalToken, approval))
+}
+
+func (s *server) getProjectEnvironmentApprovalStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	approval, err := s.store.ProjectEnvironmentApprovalByID(r.Context(), acct.ID, r.PathValue("slug"), r.PathValue("environment"), r.PathValue("approval"))
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Environment approval not found", "no approval exists with that id"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not load environment approval"))
+		return
+	}
+	now := time.Now().UTC()
+	response := api.ProjectEnvironmentApprovalStatusResponse{
+		ApprovalID:  approval.ID,
+		Environment: approval.EnvironmentSlug,
+		TokenKind:   approval.TokenKind,
+		Status:      api.DeriveProjectEnvironmentApprovalStatus(approval.ConsumedAt, approval.ExpiresAt, now),
+		CreatedAt:   approval.CreatedAt.UTC().Format(time.RFC3339),
+		ExpiresAt:   approval.ExpiresAt.UTC().Format(time.RFC3339),
+	}
+	if approval.ConsumedAt != nil {
+		response.ConsumedAt = approval.ConsumedAt.UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *server) issueProjectEnvironmentPromotionApproval(ctx context.Context, acct state.Account, projectSlug, environment, promotionToken string) (string, state.ProjectEnvironmentApproval, *api.Problem) {
@@ -110,6 +128,7 @@ func (s *server) createProjectEnvironmentApproval(ctx context.Context, acct stat
 		AccountID:         acct.ID,
 		ProjectSlug:       projectSlug,
 		EnvironmentSlug:   environment,
+		TokenKind:         tokenKind,
 		PlanTokenHash:     hashProjectEnvironmentApprovalMaterial(token),
 		ApprovalTokenHash: hashProjectEnvironmentApprovalMaterial(approvalToken),
 		ExpiresAt:         now.Add(projectEnvironmentApprovalTTL),
@@ -132,4 +151,15 @@ func (s *server) createProjectEnvironmentApproval(ctx context.Context, acct stat
 func hashProjectEnvironmentApprovalMaterial(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func projectEnvironmentApprovalResponse(approvalToken string, approval state.ProjectEnvironmentApproval) api.ProjectEnvironmentApprovalResponse {
+	return api.ProjectEnvironmentApprovalResponse{
+		ApprovalID:    approval.ID,
+		ApprovalToken: approvalToken,
+		Environment:   approval.EnvironmentSlug,
+		TokenKind:     approval.TokenKind,
+		Status:        api.DeriveProjectEnvironmentApprovalStatus(approval.ConsumedAt, approval.ExpiresAt, time.Now().UTC()),
+		ExpiresAt:     approval.ExpiresAt.UTC().Format(time.RFC3339),
+	}
 }

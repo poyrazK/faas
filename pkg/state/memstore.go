@@ -2830,6 +2830,9 @@ func (m *MemStore) CreateProjectEnvironmentApproval(_ context.Context, approval 
 	if approval.AccountID == "" || approval.ProjectSlug == "" || approval.EnvironmentSlug == "" || approval.PlanTokenHash == "" || approval.ApprovalTokenHash == "" {
 		return ProjectEnvironmentApproval{}, ErrNotFound
 	}
+	if approval.TokenKind == "" {
+		approval.TokenKind = "plan"
+	}
 	if approval.ID == "" {
 		approval.ID = newID()
 	}
@@ -2840,12 +2843,39 @@ func (m *MemStore) CreateProjectEnvironmentApproval(_ context.Context, approval 
 	return approval, nil
 }
 
+func (m *MemStore) ProjectEnvironmentApprovalByID(_ context.Context, accountID, projectSlug, environmentSlug, id string) (ProjectEnvironmentApproval, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	approval, ok := m.projectEnvironmentApprovals[id]
+	if !ok || approval.AccountID != accountID || approval.ProjectSlug != projectSlug || approval.EnvironmentSlug != environmentSlug {
+		return ProjectEnvironmentApproval{}, ErrNotFound
+	}
+	return approval, nil
+}
+
 func (m *MemStore) ProjectEnvironmentApprovalByToken(_ context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string) (ProjectEnvironmentApproval, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
 	for _, approval := range m.projectEnvironmentApprovals {
-		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approval.PlanTokenHash == planTokenHash && approval.ApprovalTokenHash == approvalTokenHash && approval.ExpiresAt.After(now) {
+		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approval.PlanTokenHash == planTokenHash && approval.ApprovalTokenHash == approvalTokenHash && approval.ConsumedAt == nil && approval.ExpiresAt.After(now) {
+			return approval, nil
+		}
+	}
+	return ProjectEnvironmentApproval{}, ErrNotFound
+}
+
+func (m *MemStore) ConsumeProjectEnvironmentApproval(_ context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string, consumedAt time.Time) (ProjectEnvironmentApproval, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	if consumedAt.IsZero() {
+		consumedAt = now
+	}
+	for id, approval := range m.projectEnvironmentApprovals {
+		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approval.PlanTokenHash == planTokenHash && approval.ApprovalTokenHash == approvalTokenHash && approval.ConsumedAt == nil && approval.ExpiresAt.After(now) {
+			approval.ConsumedAt = &consumedAt
+			m.projectEnvironmentApprovals[id] = approval
 			return approval, nil
 		}
 	}

@@ -433,6 +433,7 @@ export type { ProgrammaticAuthResponse } from './models/ProgrammaticAuthResponse
 export type { ProjectApplyRequest } from './models/ProjectApplyRequest.js';
 export type { ProjectDeletePreviewResponse } from './models/ProjectDeletePreviewResponse.js';
 export type { ProjectEnvironmentApprovalResponse } from './models/ProjectEnvironmentApprovalResponse.js';
+export type { ProjectEnvironmentApprovalStatusResponse } from './models/ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironmentConfigChange.js';
 export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';
 export type { ProjectEnvironmentConfigResponse } from './models/ProjectEnvironmentConfigResponse.js';

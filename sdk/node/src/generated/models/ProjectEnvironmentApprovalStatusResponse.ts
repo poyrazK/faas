@@ -3,14 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Short-lived, single-use credential for applying the approved plan. The approval token is returned only here.
+ * Durable, non-secret lifecycle status for one environment approval.
  */
-export type ProjectEnvironmentApprovalResponse = {
+export type ProjectEnvironmentApprovalStatusResponse = {
   approval_id: string;
-  approval_token: string;
   environment: string;
   token_kind: 'plan' | 'promotion';
   status: 'pending' | 'expired' | 'consumed';
+  created_at: string;
   expires_at: string;
+  consumed_at?: string;
 };
 

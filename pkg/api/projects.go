@@ -1,6 +1,9 @@
 package api
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ProjectSummaryResponse is the stable account-scoped project list shape.
 type ProjectSummaryResponse struct {
@@ -83,9 +86,38 @@ type CreateProjectEnvironmentApprovalRequest struct {
 // ProjectEnvironmentApprovalResponse contains a short-lived credential that
 // may be used only with the approved plan and environment.
 type ProjectEnvironmentApprovalResponse struct {
+	ApprovalID    string `json:"approval_id"`
 	ApprovalToken string `json:"approval_token"`
 	Environment   string `json:"environment"`
+	TokenKind     string `json:"token_kind"`
+	Status        string `json:"status"`
 	ExpiresAt     string `json:"expires_at"`
+}
+
+// ProjectEnvironmentApprovalStatusResponse is the durable, non-secret view
+// of one approval. The raw approval token is intentionally never returned by
+// this endpoint.
+type ProjectEnvironmentApprovalStatusResponse struct {
+	ApprovalID  string `json:"approval_id"`
+	Environment string `json:"environment"`
+	TokenKind   string `json:"token_kind"`
+	Status      string `json:"status"`
+	CreatedAt   string `json:"created_at"`
+	ExpiresAt   string `json:"expires_at"`
+	ConsumedAt  string `json:"consumed_at,omitempty"`
+}
+
+// DeriveProjectEnvironmentApprovalStatus computes the approval lifecycle
+// state from its durable timestamps. Consumption takes precedence over expiry
+// so operators can distinguish a used credential from an unused timeout.
+func DeriveProjectEnvironmentApprovalStatus(consumedAt *time.Time, expiresAt, now time.Time) string {
+	if consumedAt != nil {
+		return "consumed"
+	}
+	if !expiresAt.IsZero() && now.After(expiresAt) {
+		return "expired"
+	}
+	return "pending"
 }
 
 // UpdateProjectEnvironmentConfigRequest replaces the non-secret configuration

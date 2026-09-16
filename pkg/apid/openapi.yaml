@@ -10533,6 +10533,38 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/approvals/{approval}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the approval lookup.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Protected environment slug containing the approval.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: approval
+        in: path
+        required: true
+        description: Durable approval identifier returned when the approval is created.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentApprovalStatus
+      summary: Get the lifecycle status of a project environment approval.
+      description: The raw approval token is never returned by this endpoint.
+      responses:
+        '200':
+          description: Durable approval lifecycle status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentApprovalStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/promotion-preview:
     parameters:
       - name: slug
@@ -22217,13 +22249,29 @@ components:
         promotion_token: { type: string, minLength: 1, description: Exact promotion token returned by the environment promotion preview. }
 
     ProjectEnvironmentApprovalResponse:
-      description: Short-lived credential for applying the approved plan. The approval token is returned only here.
+      description: Short-lived, single-use credential for applying the approved plan. The approval token is returned only here.
       type: object
-      required: [approval_token, environment, expires_at]
+      required: [approval_id, approval_token, environment, token_kind, status, expires_at]
       properties:
+        approval_id: { type: string, format: uuid }
         approval_token: { type: string, minLength: 1 }
         environment: { type: string }
+        token_kind: { type: string, enum: [plan, promotion] }
+        status: { type: string, enum: [pending, expired, consumed] }
         expires_at: { type: string, format: date-time }
+
+    ProjectEnvironmentApprovalStatusResponse:
+      description: Durable, non-secret lifecycle status for one environment approval.
+      type: object
+      required: [approval_id, environment, token_kind, status, created_at, expires_at]
+      properties:
+        approval_id: { type: string, format: uuid }
+        environment: { type: string }
+        token_kind: { type: string, enum: [plan, promotion] }
+        status: { type: string, enum: [pending, expired, consumed] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        consumed_at: { type: string, format: date-time }
 
     PromoteProjectEnvironmentRequest:
       description: Request to execute one exact environment promotion.
