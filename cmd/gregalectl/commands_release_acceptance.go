@@ -256,7 +256,9 @@ func cmdReleaseAcceptanceRevokeToken(args []string) int {
 	if jsonOutput {
 		_ = json.NewEncoder(osStdout).Encode(map[string]any{"key_id": *keyID, "revoked": true})
 	} else {
-		fmt.Fprintf(osStdout, "revoked acceptance key %s\n", *keyID)
+		if _, err := fmt.Fprintf(osStdout, "revoked acceptance key %s\n", *keyID); err != nil {
+			return 1
+		}
 	}
 	return 0
 }
