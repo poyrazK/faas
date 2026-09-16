@@ -295,14 +295,11 @@ func TestClient_DoBytes_BodyLimitExactBoundary_Mega4(t *testing.T) {
 	}
 }
 
-func TestClient_DoBytes_BodyLimitSilentTruncate_Mega4(t *testing.T) {
+func TestClient_DoBytes_BodyLimitRejectsTruncation_Mega4(t *testing.T) {
 	t.Parallel()
-	// Same doBytes path, but with an 8 MiB response. io.LimitReader
-	// caps the read at 4 MiB and the remainder is silently dropped;
-	// doBytes does NOT return an error in that case. This pins the
-	// silent-truncation contract that pkg/api/client.go:252's call
-	// site relies on — callers must pre-size the response or check
-	// len(out) against an expected size.
+	// Same doBytes path, but with an 8 MiB response. The client reads one
+	// byte past its cap and reports a typed error; callers never receive a
+	// plausible-looking 4 MiB prefix.
 	const overLimit = 8 << 20
 	body := make([]byte, overLimit)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -313,11 +310,13 @@ func TestClient_DoBytes_BodyLimitSilentTruncate_Mega4(t *testing.T) {
 
 	c := NewClient(srv.URL, "t")
 	var out []byte
-	if err := c.doBytes(context.Background(), "GET", "/v1/raw", nil, &out); err != nil {
-		t.Fatalf("doBytes 8MiB response: want nil err, got %v", err)
+	err := c.doBytes(context.Background(), "GET", "/v1/raw", nil, &out)
+	var tooLarge *ResponseTooLargeError
+	if !errors.As(err, &tooLarge) {
+		t.Fatalf("doBytes 8MiB error = %v, want *ResponseTooLargeError", err)
 	}
-	if len(out) != 4<<20 {
-		t.Errorf("truncated len = %d, want 4MiB (the LimitReader cap)", len(out))
+	if len(out) != 0 {
+		t.Errorf("partial response len = %d, want 0", len(out))
 	}
 }
 

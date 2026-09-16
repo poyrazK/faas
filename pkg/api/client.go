@@ -68,6 +68,35 @@ import (
 // composes a path that matches this regex.
 const cookieOnlyAdminStatusPath = "/v1/admin/status/incidents"
 
+const (
+	maxResponseBodyBytes  = int64(4 << 20)
+	maxAccountExportBytes = int64(1 << 30)
+)
+
+// ResponseTooLargeError reports a response that exceeded the explicit SDK
+// limit. The client reads one byte past the limit so a body is never silently
+// accepted after truncation.
+type ResponseTooLargeError struct {
+	Limit    int64
+	Observed int64
+}
+
+func (e *ResponseTooLargeError) Error() string {
+	return fmt.Sprintf("API response exceeded %d-byte limit (received at least %d bytes)", e.Limit, e.Observed)
+}
+
+// ResponseTruncatedError reports a response whose body ended before the
+// server-declared Content-Length. Callers can use errors.As to retry a transfer
+// with the same request id.
+type ResponseTruncatedError struct {
+	Expected int64
+	Received int64
+}
+
+func (e *ResponseTruncatedError) Error() string {
+	return fmt.Sprintf("API response was truncated: expected %d bytes, received %d", e.Expected, e.Received)
+}
+
 var cookieOnlyPathRE = regexp.MustCompile(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
@@ -289,7 +318,10 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	data, err := readBoundedResponse(resp, maxResponseBodyBytes)
+	if err != nil {
+		return err
+	}
 	if !success(resp) {
 		return apiErrorFromResponse(resp, data)
 	}
@@ -344,7 +376,10 @@ func (c *Client) doBytes(ctx context.Context, method, path string, body, out any
 		return fmt.Errorf("could not reach the API: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	data, err := readBoundedResponse(resp, maxResponseBodyBytes)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode >= 300 {
 		return apiErrorFromResponse(resp, data)
 	}
@@ -363,6 +398,20 @@ func (c *Client) doBytes(ctx context.Context, method, path string, body, out any
 		}
 	}
 	return nil
+}
+
+func readBoundedResponse(resp *http.Response, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read API response: %w", err)
+	}
+	if int64(len(data)) > limit {
+		return nil, &ResponseTooLargeError{Limit: limit, Observed: int64(len(data))}
+	}
+	if resp.ContentLength >= 0 && int64(len(data)) != resp.ContentLength {
+		return nil, &ResponseTruncatedError{Expected: resp.ContentLength, Received: int64(len(data))}
+	}
+	return data, nil
 }
 
 // apiErrorFromResponse preserves the wire status even when an intermediary
@@ -433,12 +482,63 @@ func (c *Client) GetCapabilities(ctx context.Context) (CapabilitiesResponse, err
 // slice. The streamed body is decoded as a single JSON document for
 // the SDK caller to inspect, so memory usage scales with bundle size.
 func (c *Client) ExportAccount(ctx context.Context, includeSecrets bool) (AccountExportResponse, error) {
+	var out AccountExportResponse
+	var data bytes.Buffer
+	if _, err := c.StreamAccountExport(ctx, includeSecrets, newUUIDv4(), &data); err != nil {
+		return out, err
+	}
+	if err := json.Unmarshal(data.Bytes(), &out); err != nil {
+		return out, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
+}
+
+// StreamAccountExport writes one complete GDPR export directly to dst. The
+// request id is caller-supplied so a retry after a partial transfer reaches
+// the server's idempotent replay path instead of consuming another 24-hour
+// quota slot. An empty requestID is replaced with a fresh value.
+func (c *Client) StreamAccountExport(ctx context.Context, includeSecrets bool, requestID string, dst io.Writer) (int64, error) {
 	path := "/v1/account/export"
 	if !includeSecrets {
 		path += "?include_secrets=false"
 	}
-	var out AccountExportResponse
-	return out, c.do(ctx, "GET", path, nil, &out)
+	if requestID == "" {
+		requestID = newUUIDv4()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return 0, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("X-Faas-Request-Id", requestID)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("could not reach the API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, readErr := readBoundedResponse(resp, maxResponseBodyBytes)
+		if readErr != nil {
+			return 0, readErr
+		}
+		return 0, apiErrorFromResponse(resp, data)
+	}
+	if resp.ContentLength > maxAccountExportBytes {
+		return 0, &ResponseTooLargeError{Limit: maxAccountExportBytes, Observed: resp.ContentLength}
+	}
+	n, copyErr := io.Copy(dst, io.LimitReader(resp.Body, maxAccountExportBytes+1))
+	if n > maxAccountExportBytes {
+		return n, &ResponseTooLargeError{Limit: maxAccountExportBytes, Observed: n}
+	}
+	if resp.ContentLength >= 0 && n != resp.ContentLength {
+		return n, &ResponseTruncatedError{Expected: resp.ContentLength, Received: n}
+	}
+	if copyErr != nil {
+		return n, fmt.Errorf("stream account export: %w", copyErr)
+	}
+	return n, nil
 }
 
 // DeleteAccount schedules the account for deletion. The server is

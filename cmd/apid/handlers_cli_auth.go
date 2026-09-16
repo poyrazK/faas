@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -51,6 +52,10 @@ const (
 	// successful claim. The user lands on their account page so the
 	// browser is logged in alongside the CLI.
 	cliAuthDashboard = "/dashboard/account"
+	// Browser-authorized CLI sessions are replaceable credentials. A finite
+	// lifetime bounds exposure for a lost device even when the user never
+	// returns to run `gregale logout`.
+	cliAuthKeyTTL = 30 * 24 * time.Hour
 )
 
 // cliAuthHandlers is the sibling of authHandlers, scoped narrowly to
@@ -139,7 +144,11 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
 		return
 	}
-	k, err := h.srv.store.CreateAPIKey(r.Context(), accountID, keyHash, "cli-login", api.ScopesAdminOnly)
+	expiresAt := time.Now().UTC().Add(cliAuthKeyTTL)
+	k, err := h.srv.store.CreateAPIKeyWithExpiryAndProvenance(
+		r.Context(), accountID, keyHash, "cli-login", api.ScopesAdminOnly,
+		&expiresAt, clientIPFromRequest(r), logsanitize.Field(r.UserAgent()), nil,
+	)
 	if err != nil {
 		h.log.Error("cli_auth.create_key", "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not persist key"))
@@ -171,6 +180,8 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	}
 	writeJSON(w, http.StatusOK, api.CliAuthExchangeResponse{
 		Plaintext: plaintext,
+		KeyID:     k.ID,
+		ExpiresAt: expiresAt.Format(time.RFC3339),
 		Account:   h.srv.accountResponse(r.Context(), acct, r),
 	})
 }

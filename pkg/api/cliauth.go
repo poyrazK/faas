@@ -42,5 +42,7 @@ type CliAuthExchangeRequest struct {
 // Plaintext is shown exactly once and never persisted server-side.
 type CliAuthExchangeResponse struct {
 	Plaintext string          `json:"plaintext"`
+	KeyID     string          `json:"key_id"`
+	ExpiresAt string          `json:"expires_at"`
 	Account   AccountResponse `json:"account"`
 }

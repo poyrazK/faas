@@ -460,10 +460,9 @@ func TestClient_DoBytes_BodyAt1MiBOk(t *testing.T) {
 	}
 }
 
-func TestClient_DoBytes_BodyOver4MiBTruncated(t *testing.T) {
-	// doBytes uses the same LimitReader as do; oversize is truncated
-	// at 4 MiB rather than erroring. (do decodes JSON so a truncated
-	// payload errors on unmarshal; doBytes returns raw bytes verbatim.)
+func TestClient_DoBytes_BodyOver4MiBReturnsTypedError(t *testing.T) {
+	// Raw response paths must reject oversize bodies explicitly instead of
+	// returning a silently truncated byte slice.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, 5<<20)
 		for i := range buf {
@@ -474,10 +473,12 @@ func TestClient_DoBytes_BodyOver4MiBTruncated(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(srv.URL, "")
 	var out []byte
-	if err := c.doBytes(context.Background(), "GET", "/v1/x", nil, &out); err != nil {
-		t.Fatalf("doBytes: err = %v", err)
+	err := c.doBytes(context.Background(), "GET", "/v1/x", nil, &out)
+	var tooLarge *ResponseTooLargeError
+	if !errors.As(err, &tooLarge) {
+		t.Fatalf("doBytes error = %v, want *ResponseTooLargeError", err)
 	}
-	if len(out) != (4 << 20) {
-		t.Errorf("len = %d, want 4 MiB cap", len(out))
+	if len(out) != 0 {
+		t.Errorf("len = %d, want no partial body", len(out))
 	}
 }

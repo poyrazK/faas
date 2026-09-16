@@ -3014,10 +3014,10 @@ func (s *server) handler() http.Handler {
 	// nonce and stamps it on the context that dashboard.Render reads
 	// to mark up <script>/<style> tags. apid serves only dashboard
 	// + JSON so the gate is unconditionally true.
-	return httpsec.Static(httpsec.Nonce(
+	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
 		s.observeWrap(apiContractHandler(mux)),
-	))
+	)))
 }
 
 // apiContractHandler replaces net/http's plain-text 404/405 fallbacks for the

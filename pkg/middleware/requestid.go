@@ -63,10 +63,18 @@ func NewRequestID() string {
 // same value flows from gatewayd-internal through the reverse-proxy to apid.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rid := r.Header.Get("x-faas-request-id")
+		// Prefer an id already established by an outer RequestID wrapper.
+		// A few route-specific chains also install this middleware; keeping
+		// the context value makes nested wrappers idempotent instead of
+		// minting a second correlation id midway through one request.
+		rid, _ := r.Context().Value(RequestIDKey{}).(string)
+		if rid == "" {
+			rid = r.Header.Get("x-faas-request-id")
+		}
 		if rid == "" {
 			rid = NewRequestID()
 		}
+		r.Header.Set("x-faas-request-id", rid)
 		w.Header().Set("x-faas-request-id", rid)
 		r = r.WithContext(WithRequestID(r.Context(), rid))
 		next.ServeHTTP(w, r)

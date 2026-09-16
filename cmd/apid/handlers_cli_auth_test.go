@@ -371,6 +371,16 @@ func TestClaimThenExchange_ReturnsKey(t *testing.T) {
 	if !api.ValidAPIKeyFormat(resp.Plaintext) {
 		t.Errorf("plaintext %q is not a valid api key", resp.Plaintext)
 	}
+	if resp.KeyID == "" {
+		t.Error("key_id is empty")
+	}
+	expiresAt, err := time.Parse(time.RFC3339, resp.ExpiresAt)
+	if err != nil {
+		t.Fatalf("expires_at = %q: %v", resp.ExpiresAt, err)
+	}
+	if until := time.Until(expiresAt); until < 29*24*time.Hour || until > 31*24*time.Hour {
+		t.Errorf("CLI key lifetime = %s, want about 30 days", until)
+	}
 	if resp.Account.Email != "carol@example.com" {
 		t.Errorf("account email = %q, want carol@example.com", resp.Account.Email)
 	}

@@ -983,7 +983,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "logout",
 		DocSlug: "auth",
-		Short:   "Remove the stored token",
+		Short:   "Revoke the managed CLI session and remove the stored token",
 	},
 	{
 		Name:    "signup",

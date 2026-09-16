@@ -2,9 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -90,23 +96,113 @@ func DeployDevSourceTarball(c *Client, ctx context.Context, slug, sourcePath, ru
 // raw JSON to outPath with mode 0600. includeSecrets=false drops the
 // ciphertext slice. The CLI owns file creation (mode + atomic rename)
 // so the SDK stays a wire-layer concern.
-//
-// Note: the older CLI implementation streamed the response body to
-// disk via io.Copy on the raw HTTP response. We unmarshal-then-encode
-// here because the SDK API changed from "stream bytes" to "parse
-// struct" — the bundle is small enough (KBs of metadata) that the
-// extra allocation is not a concern; the JSON-on-disk shape stays
-// byte-identical because we re-encode.
 func ExportAccountFile(c *Client, ctx context.Context, outPath string, includeSecrets bool) error {
-	bundle, err := c.ExportAccount(ctx, includeSecrets)
-	if err != nil {
-		return err
+	dir := filepath.Dir(outPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create export directory: %w", err)
 	}
-	data, err := json.MarshalIndent(&bundle, "", "  ")
-	if err != nil {
-		return err
+	requestID := newExportRequestID()
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		tmp, err := os.CreateTemp(dir, ".gregale-export-*.tmp")
+		if err != nil {
+			return fmt.Errorf("create export file: %w", err)
+		}
+		tmpPath := tmp.Name()
+		cleanup := func() {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+		if err := tmp.Chmod(0o600); err != nil {
+			cleanup()
+			return fmt.Errorf("secure export file: %w", err)
+		}
+
+		_, streamErr := c.StreamAccountExport(ctx, includeSecrets, requestID, tmp)
+		if streamErr != nil {
+			cleanup()
+			lastErr = streamErr
+			if attempt == 0 && retryableExportTransfer(streamErr) {
+				continue
+			}
+			break
+		}
+		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+			cleanup()
+			return fmt.Errorf("rewind export: %w", err)
+		}
+		if err := validateSingleJSONDocument(tmp); err != nil {
+			cleanup()
+			return err
+		}
+		if err := tmp.Sync(); err != nil {
+			cleanup()
+			return fmt.Errorf("sync export: %w", err)
+		}
+		if err := tmp.Close(); err != nil {
+			cleanup()
+			return fmt.Errorf("close export: %w", err)
+		}
+		if err := os.Rename(tmpPath, outPath); err != nil {
+			cleanup()
+			return fmt.Errorf("commit export: %w", err)
+		}
+		return nil
 	}
-	return osWriteFile0600(outPath, data)
+	return lastErr
+}
+
+func newExportRequestID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err == nil {
+		return hex.EncodeToString(raw[:])
+	}
+	return fmt.Sprintf("gregale-export-%d", time.Now().UTC().UnixNano())
+}
+
+func retryableExportTransfer(err error) bool {
+	var truncated *api.ResponseTruncatedError
+	var apiErr *api.APIError
+	return errors.As(err, &truncated) ||
+		(!errors.As(err, &apiErr) && (strings.Contains(err.Error(), "could not reach the API") ||
+			strings.Contains(err.Error(), "stream account export")))
+}
+
+func validateSingleJSONDocument(r io.Reader) error {
+	dec := json.NewDecoder(r)
+	depth, roots := 0, 0
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("validate export JSON: %w", err)
+		}
+		if delim, ok := tok.(json.Delim); ok {
+			switch delim {
+			case '{', '[':
+				if depth == 0 {
+					roots++
+					if delim != '{' {
+						return errors.New("validate export JSON: root must be an object")
+					}
+				}
+				depth++
+			case '}', ']':
+				depth--
+				if depth < 0 {
+					return errors.New("validate export JSON: unbalanced document")
+				}
+			}
+		} else if depth == 0 {
+			roots++
+		}
+	}
+	if depth != 0 || roots != 1 {
+		return fmt.Errorf("validate export JSON: expected one complete object, found %d", roots)
+	}
+	return nil
 }
 
 // osWriteFile0600 writes data to outPath with mode 0600 (owner RW only).

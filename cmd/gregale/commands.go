@@ -72,14 +72,11 @@ func cmdLogin(args []string) int {
 		if err != nil {
 			return printErr("Login failed", err)
 		}
-		if err := saveToken(*token); err != nil {
-			return printErr("Could not save token", err)
-		}
 		// Use a fresh ctx for the quickstart probe; the --token
 		// path is CI-shaped (no caller-supplied cancellation).
 		probeCtx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		return finalizeLogin(probeCtx, client, *token, acct)
+		return finalizeLogin(probeCtx, client, *token, "", acct)
 	}
 
 	// Interactive flow (spec §2.2 device-code pair).
@@ -153,7 +150,7 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 		normalized := strings.ReplaceAll(codeResp.Code, "-", "")
 		resp, err := c.ExchangeCliAuthCode(ctx, normalized)
 		if err == nil {
-			return finalizeLogin(ctx, c, resp.Plaintext, resp.Account)
+			return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
 		}
 		var ae *APIError
 		if errors.As(err, &ae) {
@@ -183,16 +180,25 @@ func exchangeOnce(ctx context.Context, c *Client, normalized string) int {
 	if err != nil {
 		return printErr("Login failed", err)
 	}
-	return finalizeLogin(ctx, c, resp.Plaintext, resp.Account)
+	return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
 }
 
 // finalizeLogin writes the freshly-minted plaintext API key to disk
 // and prints the success line. Splits the path so the paste +
 // browser-open flows can share it without duplicating the printer
 // or saveToken call.
-func finalizeLogin(ctx context.Context, c *Client, plaintext string, acct api.AccountResponse) int {
+func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID string, acct api.AccountResponse) int {
 	if err := saveToken(plaintext); err != nil {
 		return printErr("Could not save token", err)
+	}
+	if err := saveManagedSession(plaintext, managedKeyID, c.BaseURL()); err != nil {
+		// Do not leave an untracked server credential behind when local
+		// session metadata cannot be committed.
+		if managedKeyID != "" {
+			_ = NewClient(c.BaseURL(), plaintext).DeleteKey(ctx, managedKeyID)
+		}
+		deleteToken()
+		return printErr("Could not save CLI session", err)
 	}
 	PrintOK(osStdout, "Logged in as %s (%s plan)", acct.Email, acct.Plan)
 
@@ -200,7 +206,7 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext string, acct api.Ac
 	// no apps yet, drop a 3-line pointer to the two deploy paths.
 	// A failing ListApps is silent — login must not be blocked by
 	// transient API issues.
-	if apps, err := c.ListApps(ctx); err == nil && len(apps) == 0 {
+	if apps, err := NewClient(c.BaseURL(), plaintext).ListApps(ctx); err == nil && len(apps) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "")
 		_, _ = fmt.Fprintln(osStdout, "You're in. Next step — deploy your first app:")
 		_, _ = fmt.Fprintln(osStdout, "  cd my-project && gregale deploy         # auto-detect & ship the current directory")
@@ -239,10 +245,28 @@ func readLineWithTimeout(r io.Reader, d time.Duration) (string, bool) {
 }
 
 func cmdLogout() int {
+	token := loadToken()
+	meta, metaErr := loadManagedSession()
+	var revokeErr error
+	if metaErr != nil {
+		PrintWarn(os.Stderr, "Could not read CLI session metadata; the server credential may require manual revocation: %v", metaErr)
+	} else if os.Getenv("FAAS_TOKEN") == "" && token != "" && meta.matches(token) {
+		base := meta.APIBase
+		if base == "" {
+			base = apiBase()
+		}
+		if err := NewClient(base, token).DeleteKey(context.Background(), meta.KeyID); err != nil {
+			revokeErr = fmt.Errorf("could not revoke CLI key %s: %w", meta.KeyID, err)
+		}
+	}
 	// Clear both stores (OS keychain + legacy plaintext file).
 	// Best-effort: a stuck keychain must not block logout, and a
 	// missing file is not an error. Issue #293.
 	deleteToken()
+	clearManagedSession()
+	if revokeErr != nil {
+		return printErr("Logged out locally, but server revocation failed", revokeErr)
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]bool{"logged_out": true}))
 	}

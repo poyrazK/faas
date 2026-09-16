@@ -155,10 +155,11 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 	// re-derive the receipt.
 	if isIdempotentRetry {
 		w.Header().Set("X-Idempotent-Replay", "true")
-	} else if !s.recordGdprRequest(r.Context(), acct, state.GdprActionExport, middleware.RequestIDFrom(r)) {
+	} else if !s.recordGdprRequest(r.Context(), acct, state.GdprActionExport, requestID) {
 		w.Header().Set("X-Audit-Logged", "false")
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.FormatInt(byteCount, 10))
 	w.Header().Set("Content-Disposition",
 		`attachment; filename="faas-account-`+acct.ID+`-`+
 			time.Now().UTC().Format("20060102")+`.json"`)
@@ -176,7 +177,7 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 	// non-blocking (spec §5.1) so a backlog cannot block exports.
 	acctID := acct.ID
 	s.audit.Emit(r.Context(), "account.export_requested", &acctID, map[string]any{
-		"request_id": middleware.RequestIDFrom(r),
+		"request_id": requestID,
 		"byte_count": byteCount,
 		"replay":     isIdempotentRetry,
 	})

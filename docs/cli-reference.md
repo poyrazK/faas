@@ -44,7 +44,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`invoices`](#invoices) | List issued invoices |
 | [`keys`](#keys) | Manage API keys (keys list\|add\|rm\|rotate\|grace-window) |
 | [`login`](#login) | Authenticate this machine (--token for CI) |
-| [`logout`](#logout) | Remove the stored token |
+| [`logout`](#logout) | Revoke the managed CLI session and remove the stored token |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
 | [`logs`](#logs) | Read app or deployment logs (logs &lt;slug&gt;; logs tail &lt;slug&gt; is the follow alias) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (gregale metrics &lt;slug&gt; [--range 5m] \| --account) |
@@ -1196,7 +1196,7 @@ Authenticate this machine (--token for CI)
 
 ## logout
 
-Remove the stored token
+Revoke the managed CLI session and remove the stored token
 
 `gregale logout`
 

@@ -1430,6 +1430,54 @@ func TestExportAccount_RequestIdIdempotent_RetrySucceeds(t *testing.T) {
 	}
 }
 
+func TestExportAccount_GeneratedRequestIDCorrelatesResponseLedgerAndAudit(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	rec := e.do(t, http.MethodGet, "/v1/account/export?include_secrets=false", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export: %d %s", rec.Code, rec.Body)
+	}
+	requestID := rec.Header().Get("X-Faas-Request-Id")
+	if requestID == "" {
+		t.Fatal("response request id is empty")
+	}
+	rows, err := e.store.ListGdprRequestsForAccount(context.Background(), e.acct.ID, 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("GDPR rows = %d, err=%v", len(rows), err)
+	}
+	if rows[0].RequestID != requestID {
+		t.Fatalf("ledger request id = %q, response = %q", rows[0].RequestID, requestID)
+	}
+	events, err := e.store.ListEvents(context.Background(), e.acct.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var auditID string
+	for _, event := range events {
+		if event.Kind != "account.export_requested" {
+			continue
+		}
+		var data map[string]any
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+		auditID, _ = data["request_id"].(string)
+		break
+	}
+	if auditID != requestID {
+		t.Fatalf("audit request id = %q, response = %q", auditID, requestID)
+	}
+
+	retry := e.do(t, http.MethodGet, "/v1/account/export?include_secrets=false", nil,
+		map[string]string{"X-Faas-Request-Id": requestID})
+	if retry.Code != http.StatusOK || retry.Header().Get("X-Idempotent-Replay") != "true" {
+		t.Fatalf("retry = %d replay=%q body=%s", retry.Code, retry.Header().Get("X-Idempotent-Replay"), retry.Body)
+	}
+	rows, _ = e.store.ListGdprRequestsForAccount(context.Background(), e.acct.ID, 10)
+	if len(rows) != 1 {
+		t.Fatalf("retry inserted %d ledger rows, want 1", len(rows))
+	}
+}
+
 // TestExportAccount_RequestIdIdempotent_DistinctIdsStillRateLimited
 // (issue #755 / PR-5.2). Distinct X-Request-Id values are
 // independent actions: the rate-limit still applies. This guards

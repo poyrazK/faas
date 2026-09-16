@@ -123,7 +123,7 @@ func signupInteractive() int {
 	if err != nil {
 		return printErr("Signup failed", err)
 	}
-	return finalizeLogin(ctx, c, resp.APIKey.Plaintext, api.AccountResponse{
+	return finalizeLogin(ctx, c, resp.APIKey.Plaintext, resp.APIKey.ID, api.AccountResponse{
 		ID:    resp.AccountID,
 		Email: resp.Email,
 		Plan:  resp.Plan,
@@ -181,7 +181,7 @@ func signupFromStdin() int {
 	if err != nil {
 		return printErr("Signup failed", err)
 	}
-	return finalizeLogin(ctx, c, resp.APIKey.Plaintext, api.AccountResponse{
+	return finalizeLogin(ctx, c, resp.APIKey.Plaintext, resp.APIKey.ID, api.AccountResponse{
 		ID:    resp.AccountID,
 		Email: resp.Email,
 		Plan:  resp.Plan,

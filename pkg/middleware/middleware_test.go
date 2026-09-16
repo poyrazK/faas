@@ -59,6 +59,18 @@ func TestRequestID_PropagatesInbound(t *testing.T) {
 	}
 }
 
+func TestRequestID_NestedWrappersReuseContextID(t *testing.T) {
+	var seen string
+	h := middleware.RequestID(middleware.RequestID(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seen = middleware.RequestIDFrom(r)
+	})))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/account", nil))
+	if seen == "" || seen != rec.Header().Get("x-faas-request-id") {
+		t.Fatalf("nested middleware id = %q, response = %q", seen, rec.Header().Get("x-faas-request-id"))
+	}
+}
+
 // TestRecovery_Returns500OnPanic confirms a panicking handler produces
 // a 500 RFC 7807 body and doesn't propagate the panic.
 func TestRecovery_Returns500OnPanic(t *testing.T) {
