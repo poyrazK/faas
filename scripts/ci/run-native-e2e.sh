@@ -462,7 +462,13 @@ if [[ -n "${phase}" ]]; then
     # base, a dead imaged). Now that they build, ~6 min each on this node makes
     # 25m too tight, and the step would time out mid-build with no verdict.
     streaming) phase_timeout=60m ;;
-    twonode | deploy) phase_timeout=25m ;;
+    # deploy carries two source deploys of its own (healthcheck, override-port).
+    # At 25m the go-test alarm fired mid-build —
+    #   panic: test timed out after 25m0s
+    #     running tests: TestDeployOverridePortMetal (8m54s)
+    # — killing the phase before its other tests ran at all.
+    deploy) phase_timeout=45m ;;
+    twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac
 else
