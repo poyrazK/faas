@@ -1,5 +1,11 @@
 # Standby write-redirect runbook (Tier A9 / ADR-089)
 
+> **Acceptance status:** this historical drill is retained for the ADR-089
+> evidence trail. Its local virtualization harness is retired. Run the
+> supported native x86_64 acceptance gates from
+> [`docs/ops/native-m9-acceptance.md`](../ops/native-m9-acceptance.md); do not
+> use the legacy shell wrapper on a production host.
+
 This runbook is the operator-facing counterpart to
 `docs/adr/089-standby-write-redirect.md`. It closes the §14
 M9 row "Standby write-redirect" (was deferred in
@@ -26,7 +32,8 @@ Before relying on the writeGate, verify:
    drain protocol. Without these, the writeGate's resolver
    has no leader to redirect to.
 2. **Tier A7 / ADR-070 is shipped.** The runbook assumes
-   `gatewayd-public` is the TLS-only edge and
+   `gatewayd-public` is the plain-HTTP public ingress behind the upstream
+   Caddy/Cloudflare TLS edge and
    `gatewayd-internal` is the routing + wake + proxy layer.
    The gate sits in `gatewayd-internal`'s `apidProxy` —
    if the Tier A7 split hasn't landed, the gate is wired
@@ -88,14 +95,12 @@ make ha-failover-drill
 make ha-write-redirect-drill
 ```
 
-The drill drives the public listener on each box (loopback
-`https://127.0.0.1:8080/v1/apps` via `limactl shell`), sends
+The historical drill drove the public listener on each box (loopback
+`https://127.0.0.1:8080/v1/apps`), sends
 one bearer write + one cookie write to the standby, and
 asserts the closed-vocabulary counter increments in
-`gatewayd_internal_write_redirect_total`. Exit codes mirror
-the Tier A8 drill (0 = pass; 1 = pre-flight; 2/3/4 = specific
-failure mode — see `deploy/lima/run-ha-write-redirect.sh`
-header).
+`gatewayd_internal_write_redirect_total`. Its exit-code contract is retained
+for historical incident review; the production acceptance flow is native-only.
 
 ## Validation matrix
 
@@ -208,7 +213,7 @@ required.
 - §14 M9 row: `docs/faas_implementation_spec.md`
 - Tier A8 sibling runbook:
   `docs/runbooks/active-passive-ha.md`
-- Drill script: `deploy/lima/run-ha-write-redirect.sh`
+- Historical drill script: retired local harness (not supported for production)
 - Makefile target: `make ha-write-redirect-drill`
 
 ## Acceptance
@@ -223,11 +228,10 @@ This runbook is closed when §14 M9 flips green:
 - [x] `CachedLeaderResolver` + `MTLSLeaderClient` +
       `writeGate` (PR-B / PR #797).
 - [x] `make ha-write-redirect-drill` Makefile target.
-- [x] `deploy/lima/run-ha-write-redirect.sh` read-only
-      drill script.
+- [x] Historical read-only drill script (retired local harness).
 - [x] Standalone runbook (this file).
 - [x] Property test `tests/property/write_redirect_test.go`
       with 5 invariants.
 - [x] Runbook e2e `cmd/e2e/standby_write_redirect_e2e_test.go`.
-- [x] Manual smoke on Lima: relay + 307 + leader flip +
-      zero 5xx within 30s.
+- [ ] Native x86_64 manual smoke: relay + 307 + leader flip +
+      zero 5xx within 30s (remaining M9 evidence).

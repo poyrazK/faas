@@ -159,7 +159,7 @@ For routing 404:
 # (the webhook normally re-fires on next push; manual rebuild is
 #  only needed when the original webhook was refused or eaten by
 #  an at-capacity DeployedAppMax.)
-faas apps rebuild --slug=myapp --pr=42
+gregale apps rebuild --slug=myapp --pr=42
 ```
 
 For cert denial:

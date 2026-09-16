@@ -48,7 +48,7 @@ Cross-references are abbreviated:
 | A.5.11 | Return of assets | Implemented | `docs/DPA.md` §11 (data return on termination); `GET /v1/account/export` (issue #756). | |
 | A.5.12 | Classification of information | Implemented | Customer secrets classified as **restricted** (`docs/adr/020-customer-secrets.md`, sealed at rest); audit log classified as **internal** (90-day retention per `docs/adr/075-event-retention.md`); app code classified as **customer-owned** (Controller's asset, not Gregale's). | |
 | A.5.13 | Labelling of information | Implemented | Sealed-secret envelope includes an integrity tag (X25519 + ChaCha20-Poly1305); audit row data payloads JSON-tagged by `events.kind` per §5.1. | |
-| A.5.14 | Information transfer | Implemented | TLS 1.3 in transit (`docs/adr/024-certmagic-cutover.md`, certmagic); HSTS + CSP with per-request nonce; `kernel.unprivileged_userns_clone=0`. | C-6.7. |
+| A.5.14 | Information transfer | Implemented | TLS 1.3 in transit at the upstream Caddy/Cloudflare edge; HSTS + CSP with per-request nonce; `kernel.unprivileged_userns_clone=0`. | C-6.7. |
 | A.5.15 | Access control | Implemented | `pkg/auth/middleware.RequireSession` is the single authentication seam; per-org RBAC (ADR-061). | C-6.1, C-6.3. |
 | A.5.16 | Identity management | Implemented | `accounts` table; email verification + GitHub OAuth (30-day account age) per spec §11. | C-6.2. |
 | A.5.17 | Authentication information | Implemented | API keys hashed (`pkg/auth/hash.go`, SHA-256); TOTP MFA sealed at rest + 10 recovery codes (ADR-077). | |
@@ -137,7 +137,7 @@ Cross-references are abbreviated:
 | A.8.18 | Use of privileged utility programs | Implemented | `vmmd` is the ONLY root component (CLAUDE.md "Component ownership"); nothing else on the host runs as root. | C-6.8. |
 | A.8.19 | Installation of software on operational systems | Implemented | `make bootstrap` (ansible) is the only install path; no ad-hoc installs in production. | C-7.1. |
 | A.8.20 | Networks security | Implemented | nftables default-drop inbound (spec §11); per-instance netns; per-app egress allowlist (`docs/adr/031-app-egress-allowlist.md` / `docs/adr/033-app-egress-allowlist-v6.md`). | C-6.6. |
-| A.8.21 | Security of network services | Implemented | TLS 1.3 at edge (`docs/adr/024-certmagic-cutover.md`, certmagic); mTLS for control-plane gRPC (`docs/adr/052-control-plane-mtls-and-handler-peer-binding.md`). | C-6.7. |
+| A.8.21 | Security of network services | Implemented | TLS 1.3 at the upstream Caddy/Cloudflare edge; mTLS for control-plane gRPC (`docs/adr/052-control-plane-mtls-and-handler-peer-binding.md`). | C-6.7. |
 | A.8.22 | Segregation of networks | Implemented | Per-instance netns in `pkg/netns`; identical inner network 10.0.0.2/30 (spec §4.6, load-bearing for snapshot reusability per the CLAUDE.md "things that look wrong but are load-bearing" tripwire); TAP per netns. | |
 | A.8.23 | Web filtering | Implemented | Per-instance egress filter (spec §7); `vmmd_egress_deny_total{cidr,family}` Prometheus counter. | C-6.6. |
 | A.8.24 | Use of cryptography | Implemented | TLS 1.3 at edge; X25519 host age key for sealed secrets (`docs/adr/020-customer-secrets.md`); AES-GCM session envelope (`docs/adr/039-server-side-session-revocation.md`); ChaCha20-Poly1305 sealed-secret envelope (`docs/adr/020-customer-secrets.md`); SHA-256 for API-key hashing + HMAC verification; constant-time compare for HMAC. | C-6.7, C-1.1. |
@@ -147,7 +147,7 @@ Cross-references are abbreviated:
 | A.8.28 | Secure coding | Implemented | Linting via golangci-lint + custom checks (`make lint`); CodeQL; ADR-035 (audit emit-failure semantics, prevent roll-back of mutating operations); `gofmt -l` repo-wide gate. | |
 | A.8.29 | Security testing in development & acceptance | Implemented | `make test` + `make test-metal` + `make leakcheck`; property-based tests for §6.2 invariants; issue #754 (§6.2-1 pinned by in-process property test). | |
 | A.8.30 | Outsourced development | Out of scope | All development is in-house (single-operator). Customer-developed apps are the customer's responsibility. | |
-| A.8.31 | Separation of development, test & production environments | Implemented | Production is the bare-metal x86_64 box; staging on Lima nested virt on Apple Silicon (`make metal-lima`); `FAAS_SPOOL_ROOT` separation; `cmd/e2e` isolation (issue #520 family). | |
+| A.8.31 | Separation of development, test & production environments | Implemented | Production and acceptance use dedicated bare-metal x86_64 KVM hosts; `FAAS_SPOOL_ROOT` separation; `cmd/e2e` isolation (issue #520 family). Nested virtualization is not a supported staging or acceptance environment. | |
 | A.8.32 | Change management | Implemented | Branch protection + ADR-first + table-driven tests + property-based tests + lint + unit + metal + leakcheck. | C-8.1. |
 | A.8.33 | Test information | Implemented | Test data is generated in-test; no production data is ever copied into test fixtures; staging environments use synthetic tenants. | |
 | A.8.34 | Protection of information systems during audit testing | Implemented | Audits run on production hot-standby (Postgres replica, spec §13); auditor gets a read-only viewer role (ADR-061 family) without write access to customer tables. DPA §9 (audit rights). | |

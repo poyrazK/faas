@@ -27,14 +27,11 @@ constant. The `HeadroomMB` doc comment at `admission.go:302-323`
 makes this explicit ("Global headroom is sum(ceiling - resident)
 across nodes").
 
-The vCPU budget similarly: `VCPUSlots = 160` is per-box
-(`pkg/api/limits.go:508`); cluster total is `Σ(node.VCPUSlots)`.
-The per-node vCPU budget is not yet enforced — the ledger sums
-vCPU across all nodes (`pkg/sched/admission.go:217-223`) and
-applies the global `VCPUSlots` cap. The cap-on-the-sum posture is
-safe (a node holding more than its share can't escape the global
-budget) but doesn't isolate per-node vCPU; that's a Tier 2
-follow-up.
+The vCPU budget is likewise per node: `compute_nodes.vcpu_budget` is enforced
+by `NodeLedger.Admit` for the chosen node. Unregistered or legacy rows fall
+back to `VCPUSlots = 160` (`pkg/api/limits.go`), which preserves the original
+single-box behavior. Cluster capacity is the sum of the registered node
+budgets, not one global 160-vCPU gate.
 
 **The financial model reads `Σ(node.AdmissionCeilingMB)`, not the
 global 47,600 MB cap.** A reviewer reading the financial model spreadsheet
@@ -46,7 +43,7 @@ on a multi-node fleet, that's a bug.
 | Constant                      | Value       | Where                              |
 |-------------------------------|-------------|------------------------------------|
 | `RAMAdmissionCeilingMB`       | 47,600 MB   | per-box (legacy single-box posture)|
-| `VCPUSlots`                   | 160         | per-box (8× overcommit, spec §1)   |
+| `VCPUSlots`                   | 160         | fallback per-node budget (single-box default) |
 | `PerVMOverheadMB`             | 8 MB        | added to every instance's `ram_mb` |
 | `FleetSnapshotAvgTargetMB`    | 130 MB      | business metric; alert > 160, page > 200 (spec §12) |
 | `BillableRAMMB(ram_mb)`       | `ram_mb + 8`| admission + billing helper         |
@@ -165,8 +162,8 @@ in Phase E pins this under multi-node.
 ### Wake path RPS scaling
 
 `(projected)` Wake path RPS scales linearly with the number of
-gatewayd-internal instances behind a load balancer (with
-gatewayd-public terminating TLS at the edge), NOT with compute nodes.
+gatewayd-internal instances behind the upstream Caddy/Cloudflare edge (with
+gatewayd-public as the plain-HTTP ingress), NOT with compute nodes.
 A compute node does not increase wake RPS; it increases the
 admitted-RAM and vCPU budgets. The wake-path bottleneck today is
 gatewayd-internal's listener (spec §6.4 "WakeResponse reverts" row); a

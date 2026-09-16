@@ -1,5 +1,5 @@
 # faas_sdk
-A client library for accessing one-box FaaS REST API
+A client library for accessing the Gregale FaaS REST API
 
 ## Agent execution streams
 

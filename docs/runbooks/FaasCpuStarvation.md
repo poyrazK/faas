@@ -154,7 +154,7 @@ Three-step cascade, ordered from least to most disruptive:
    the platform's builder slot consuming the slice (rare —
    builderd lives under `faas-cp.slice`, but a stuck build
    manifest can keep a slice warm), park the offending instance
-   via `faas instances park <id>`.
+   via `gregale instances park <id>`.
 
 2. **Coordinate a plan raise with the customer.** For Hobby/Pro/Scale
    slices, a sustained > 80% throttle ratio is the signal that the

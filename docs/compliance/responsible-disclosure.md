@@ -61,7 +61,7 @@ will notify the reporter and explain. The SLAs are NOT a contract.
   deployment. Includes the `apid`, `gatewayd-public`,
   `gatewayd-internal`, `schedd`, `vmmd`, `builderd`, `imaged`,
   `meterd`, `gregale` daemons, plus the `pkg/{api,state,fcvm,netns,
-  oci,rootfs,meter,stripex,wire}` shared libraries.
+  oci,rootfs,meter,billing,wire}` shared libraries.
 - Customer-facing dashboard and app endpoints at `*.gregale.dev`.
 - The Stripe / Paddle / Resend / Postmark / GitHub / Google OAuth
   integrations listed in
@@ -126,7 +126,7 @@ Reports are triaged faster when they include:
    app, deployment, build, request shape).
 3. **The affected component** — daemon name, package, route, or
    migration number.
-4. **The affected deployment** — production / staging / Lima, plus
+4. **The affected deployment** — production / staging / acceptance host, plus
    the SHA of the running build.
 5. **The reporter's preferred disclosure timeline**, with a default
    of 90 days from the operator's fix ship date.

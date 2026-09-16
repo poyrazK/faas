@@ -80,9 +80,9 @@ When you receive a page:
 | `traffic_anomaly` | warn | [`FaasTrafficAnomaly.md`](FaasTrafficAnomaly.md) | DDoS (legit customer traffic but unusual shape); check gateway L7 metrics. |
 | `githubd` | warn | [`FaasGithubdPathFilterDegraded.md`](FaasGithubdPathFilterDegraded.md) | GitHub App credentials rotation; check `FAAS_GITHUB_APP_*` env. |
 | `gateway` | warn | [`GatewayWildcardRoute.md`](GatewayWildcardRoute.md) | Customer-side wildcard route pattern (intentional). |
-| `billing` | warn | [`BillingDrift.md`](BillingDrift.md) | Stripe webhook backlog (transient). |
+| `billing` | warn | [`BillingDrift.md`](BillingDrift.md) | Selected-provider webhook or usage-delivery backlog (transient). |
 | `domain_doctor` | warn | [`FaasDomainDoctorStalled.md`](FaasDomainDoctorStalled.md) | Single-domain DNS resolution failure (transient). |
-| `tls_cert_expiry` | warn | [`FaasTLSCertExpiryWarn.md`](FaasTLSCertExpiryWarn.md) | acme.sh renewal queue lag (transient); check `faas_acme_renewal_lag_seconds`. |
+| `tls_cert_expiry` | warn | [`FaasTLSCertExpiryWarn.md`](FaasTLSCertExpiryWarn.md) | Legacy certificate refresher queue lag (transient); current production TLS is upstream. |
 | `tls_cert_expiry` | page | [`FaasTLSCertExpiryPage.md`](FaasTLSCertExpiryPage.md) | None — certs expiring within 24h are always actionable. |
 | `tls_on_demand_denied` | warn | [`FaasTLSOnDemandDeniedHigh.md`](FaasTLSOnDemandDeniedHigh.md) | Bot/fuzzer probe traffic; check `gateway_request_origin_asn`. |
 | `cpu_starvation` | warn | [`FaasCpuStarvation.md`](FaasCpuStarvation.md) | Tenant burst coinciding with a builder build; check `vmmd_cpu_throttle_ratio{slice}`. |

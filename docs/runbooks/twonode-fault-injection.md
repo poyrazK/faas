@@ -17,15 +17,16 @@ two-schedd scenarios use the fixture harness described below.
 ## Pre-flight
 
 ```bash
-# 1. Confirm the native pair is healthy
+# 1. Confirm the native pair is healthy. Use the SSH targets from the
+#    active Ansible inventory; the names below are examples.
 ssh faas-fsn-2 'systemctl is-active faas-schedd faas-vmmd'
 ssh faas-fsn-3 'systemctl is-active faas-schedd faas-vmmd'
-faasctl nodes list --format=tsv | awk '$4=="active"'
-# Expected: fsn-2.faas and fsn-3.faas
 
-# 2. Confirm no in-flight drain
-faasctl nodes drain --all --status
-# Expected: (empty)
+# 2. Discover the registered node names and confirm each has no in-flight
+#    drain. Replace <node-a> and <node-b> with names from the list output.
+gregalectl compute-nodes list --json
+gregalectl compute-nodes drain-status --node <node-a>
+gregalectl compute-nodes drain-status --node <node-b>
 ```
 
 ## Drill 1 — Heartbeat gap → node.unavailable
@@ -43,8 +44,14 @@ Step 2: Observe the recovery timeline.
 
 ```bash
 # Within 90s the row must flip to lifecycle='unavailable'.
-# The apid event log must show a `node.failed` row.
-faasctl events list --topic=recovery --since=5m
+# The control-plane event log must show a `node.failed` row. The operator
+# CLI exposes audit events; query the recovery row directly for this drill.
+psql -U faas -d faas -c "
+  SELECT kind, at, subject, data
+    FROM events
+   WHERE kind = 'node.failed'
+     AND at > now() - interval '5 minutes'
+   ORDER BY at DESC;"
 ```
 
 Expected outcome: lifecycle='unavailable', event row present,
@@ -61,22 +68,24 @@ ssh faas-fsn-3 'sudo systemctl start faas-vmmd'
 Step 1: Issue the drain.
 
 ```bash
-faasctl nodes drain fsn-3.faas --wait
-# --wait blocks until drained_at lands. The recovery arbiter
-# owns the migration; ?wait=1 returns 200 with the timestamp.
+gregalectl compute-nodes drain --node <node-b> \
+  --reason planned_fault_injection --timeout 5m
+# The durable intent returns after the drain request is recorded. The
+# recovery arbiter owns migration; poll until the node reaches maintenance.
+gregalectl compute-nodes drain-status --node <node-b>
 ```
 
 Step 2: Verify the cascade completed.
 
 ```bash
-faasctl nodes list --format=tsv | awk '$1=="fsn-3.faas" && $4=="active"'
-# Lifecycle back to 'active'. drain_initiated_at + drain_completed_at
-# stamped on the row. Per-instance live-migration events present.
+gregalectl compute-nodes show --node <node-b> --json
+# A successful drain ends in lifecycle='maintenance' with zero live
+# instances. Inspect the row's drain timestamps and migration events.
 ```
 
-Expected outcome: fsn-3.faas back to 'active' with zero live
-instances, every previously-running app migrated to another live compute
-node without customer-visible 5xx.
+Expected outcome: <node-b> reaches 'maintenance' with zero live instances;
+every previously-running app migrates to another live compute node without
+customer-visible 5xx. A drain does not automatically reactivate a node.
 
 ## Drill 3 — pg_notify fan-out + peer stale-heartbeat recovery
 
@@ -106,12 +115,15 @@ event row has its corresponding audit row in `events`.
 ## Out-of-band: cleanup
 
 ```bash
-# Whatever state you leave the rows in, the test runbook
-# tears down via t.Cleanup. For an operator drill, run:
-faasctl nodes reactivate --all
-# Resets lifecycle to 'active', clears last_recovery_outcome.
-# This is the operator-initiated recovery shortcut; the
-# canonical failure-driven recovery is via the arbiter.
+# Whatever state you leave the rows in, the test runbook tears down via
+# t.Cleanup. For an operator drill, reactivate each node explicitly after
+# confirming the maintenance work is complete:
+gregalectl compute-nodes activate --node <node-a> \
+  --reason planned_fault_injection
+gregalectl compute-nodes activate --node <node-b> \
+  --reason planned_fault_injection
+# The canonical failure-driven recovery remains the arbiter path; activation
+# is an audited operator mutation and requires the stepped-up session.
 ```
 
 ## Cross-references

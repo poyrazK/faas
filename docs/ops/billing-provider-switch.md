@@ -132,7 +132,7 @@ wrong fixed price, wrong meter, or meter-credit benefit prevents startup.
 - Polar invoice PDF generation is retried asynchronously after the webhook is
   acknowledged; invoice persistence and entitlement updates remain retryable
   on database failure.
-- Polar does not expose a direct saved-card retry operation. `faas billing
+- Polar does not expose a direct saved-card retry operation. `gregale billing
   retry` returns an unsupported result with the portal fallback; the customer
   must update the payment method in the portal.
 - Operator refunds use `POST /v1/admin/accounts/{id}/refunds`. The route
@@ -167,7 +167,7 @@ meterd billing provider loaded provider=polar
 The admin catalog endpoint retains its historical path,
 `/v1/admin/billing-paddle-catalog`, but is provider-neutral at runtime. It
 returns Polar product IDs after the successful catalog preflight, so
-`faas billing status` and `faas billing price-catalog sync` work with Polar as
+`gregale billing status` and `gregale billing price-catalog sync` work with Polar as
 well as Paddle. A provider without this operator surface returns 501.
 
 Monitor these metrics and logs:
@@ -216,7 +216,7 @@ means Polar.
 
 Rotate the active provider credentials in the deployment secret store, render
 the service configuration, and restart both billing daemons together. Verify
-`faas billing status`, the provider name in both boot logs, and one signed
+`gregale billing status`, the provider name in both boot logs, and one signed
 webhook or sandbox checkout before revoking the old credential. See
 [`secrets-rotation.md`](secrets-rotation.md) for the cadence and host-secret
 handling rules.

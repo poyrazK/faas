@@ -28,38 +28,20 @@ make test           # unit tests, must pass on any machine, no KVM needed
 make test-metal     # integration tests tagged //go:build metal — needs KVM + root
 make leakcheck      # asserts zero leaked netns/TAPs/jail uids/cgroups after tests
 make lint           # golangci-lint + custom checks (see Conventions)
-make metal-lima     # run the metal tests locally on an M3+ Mac via Lima nested KVM
+make native-m9-acceptance # guarded two-node failure-safe acceptance on native x86_64
 ```
 
-Go ≥ 1.23. One binary per `cmd/` dir. If a change touches VM lifecycle, run
-`test-metal` and `leakcheck` before calling it done.
-
-### Developing the metal side on a Mac (no bare-metal x86_64 host needed)
-
-Firecracker needs `/dev/kvm`, which macOS doesn't provide — but on **Apple
-Silicon M3+ / macOS 15+** you can run the `//go:build metal` tests locally through
-Lima nested virtualization. `make metal-lima` boots an arm64 Linux guest (config:
-`deploy/lima/faas-metal.yaml`) that gets its own `/dev/kvm` and runs aarch64
-Firecracker, then executes the metal suite via `deploy/lima/run-metal.sh`. Full
-setup + caveats: [`deploy/lima/README.md`](deploy/lima/README.md).
-
-This is the **default local loop** for anything touching `pkg/fcvm`, `pkg/netns`,
-`vmmd`, or `builderd`'s builder microVMs — write the metal code behind the build
-tag, iterate with `make metal-lima`, and you never touch the box until final
-sign-off. **Caveat (do not forget):** the Lima guest is **arm64**, the
-production control-plane nodes are **x86_64**. This validates the arch-agnostic
-VM lifecycle logic and the Firecracker boot path — it does NOT produce
-production x86_64 snapshots or exercise the pinned x86_64 kernel. **A bare-metal
-x86_64 control-plane node remains the source of truth for the §14 metal
-acceptance gates**; a green `make metal-lima` is necessary, not sufficient. On
-an older Mac (pre-M3) nested virt isn't granted; fall back to another bare-metal
-x86_64 box or a cloud KVM host.
+Go 1.25.13 (the version pinned by `go.mod`). One binary per `cmd/` dir. If a
+change touches VM lifecycle, run `test-metal` and `leakcheck` before calling it
+done. Metal and snapshot acceptance is supported only on the dedicated native
+x86_64 Linux KVM hosts; macOS and nested virtualization are not supported
+acceptance environments.
 
 ## Repo map
 
 ```
 cmd/{apid,gatewayd-public,gatewayd-internal,schedd,vmmd,builderd,imaged,meterd,gregale}   daemons + CLI (Go)
-pkg/{api,state,fcvm,netns,oci,rootfs,meter,stripex,wire,apid}   shared libs
+pkg/{api,state,fcvm,netns,oci,rootfs,meter,billing,wire,apid}   shared libs
 pkg/api/limits.go     EVERY plan quota/limit lives in this one table — never inline a limit
 guest/init            static Go PID1 inside every microVM
 guest/runners/{node22,python312}                              function runner shims
@@ -74,8 +56,9 @@ docs/adr/
 - `schedd` is the ONLY writer to `instances` and owner of the state machine (§6).
 - `apid` is the ONLY writer to customer-intent tables (apps, deployments, domains).
 - `vmmd` is the ONLY component that touches firecracker/jailer, and the only root one.
-- `gatewayd-public` is the ONLY public listener on a node (TLS-only edge;
-  introduced by the Tier A7 split, ADR-070). `gatewayd-internal` is the
+- `gatewayd-public` is the ONLY public listener on a node (plain-HTTP edge
+  behind the upstream Caddy/Cloudflare TLS boundary; introduced by the Tier A7
+  split, ADR-070). `gatewayd-internal` is the
   routing + wake + proxy daemon that listens on a unix socket on the
   node and is reached only by `gatewayd-public`. The legacy monolithic
   `gatewayd` daemon was removed in PR-A (Tier A7 ship). Cross-node
@@ -143,8 +126,9 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 
 ## Workflow
 
-- Work milestones **in order** (M0→M8, §14). A milestone is done when its acceptance
-  tests pass — they are listed in §14 and are executable, not aspirational.
+- Use the current acceptance gates in spec §14 and `docs/STATUS.md`. Milestone
+  labels are historical context; a feature is not complete until its current
+  capability, operational, and recovery evidence is green.
 - Small PRs (reviewable in ~10 min). PR description names the milestone; architecture
   changes name an ADR. New quota/limit → add to `pkg/api/limits.go` + docs, never inline.
 - **Never push directly to `main`.** All changes land via a PR (squash-merge from a

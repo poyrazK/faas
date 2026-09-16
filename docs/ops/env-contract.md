@@ -17,7 +17,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `script` | consumed by a `deploy/scripts/` script |
 | `internal` | set by a daemon for its own subprocess |
 | `client` | read by the CLI/SDK on the operator's machine |
-| `dev-only` | tests / e2e / Lima only — never set in production |
+| `dev-only` | tests / e2e / acceptance harness only — never set in production |
 | `guest` | read by guest-init inside the microVM |
 
 | Variable | Owners | Source | Required | Default | Validate | Note |
@@ -352,17 +352,17 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TEST_BUILDER_BASE_REF` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_TEST_DEPLOY_BASE_REF` | imaged, shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_TEST_KERNEL` | shared | `dev-only` |  |  | `` | must never be set on a production host |
-| `FAAS_TLS_CONTACT_EMAIL` | shared | `default` |  |  | `` |  |
+| `FAAS_TLS_CONTACT_EMAIL` | shared | `default` |  |  | `` | legacy tenant-surface certificate issuer; production public TLS is upstream |
 | `FAAS_TLS_CUTOVER_STATE_FILE` | apid, shared | `default` |  |  | `` | optional operator override for the durable issue #252 TLS cutover state path |
 | `FAAS_TLS_DIR` | vmmd | `default` |  |  | `` |  |
-| `FAAS_TLS_DNS_PROVIDER` | shared | `default` |  |  | `` |  |
-| `FAAS_TLS_DNS_TOKEN` | gatewayd-internal | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal) |
+| `FAAS_TLS_DNS_PROVIDER` | shared | `default` |  |  | `` | legacy tenant-surface certificate issuer; production public TLS is upstream |
+| `FAAS_TLS_DNS_TOKEN` | gatewayd-internal | `secrets-env` |  |  | `` | legacy tenant-surface certificate issuer; delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal) |
 | `FAAS_TLS_STAGING` | shared | `dev-only` |  |  | `` | must never be set on a production host |
-| `FAAS_TLS_STORAGE_DIR` | shared | `default` |  |  | `` |  |
+| `FAAS_TLS_STORAGE_DIR` | shared | `default` |  |  | `` | legacy tenant-surface certificate storage; production public TLS is upstream |
 | `FAAS_TOKEN` | shared | `client` |  |  | `` | read by the CLI/SDK on the operator's machine, never by a daemon |
 | `FAAS_TRACE_OBSERVER_TOKEN` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACE_RING_CAP` | shared | `default` |  |  | `` |  |
-| `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | TLS terminator CIDRs allowed to provide canonical forwarding context |
+| `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | upstream TLS edge CIDRs allowed to provide canonical forwarding context |
 | `FAAS_TRUSTED_PUBLISHERS_DIR` | apid, imaged | `default` |  |  | `` |  |
 | `FAAS_TWO_NODE_ADDR_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
 | `FAAS_TWO_NODE_NODE_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |

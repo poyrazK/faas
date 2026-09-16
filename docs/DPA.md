@@ -31,10 +31,10 @@
 **Jurisdiction:** {{JURISDICTION}}
 
 This Data Processing Addendum ("DPA") supplements the master services
-agreement between onebox faas ("Processor", the platform operator)
+agreement between Gregale ("Processor", the platform operator)
 and {{CUSTOMER_NAME}} ("Controller", the customer) and reflects the
 parties' agreement with respect to the Processing of Personal Data
-by Processor on behalf of Controller in connection with the faas
+by Processor on behalf of Controller in connection with the Gregale FaaS
 service.
 
 The DPA is offered under the European Commission's Standard
@@ -46,7 +46,7 @@ prevail.
 ## 1. Subject matter and duration
 
 Processor Processes Personal Data on behalf of Controller for the
-purpose of providing the faas platform (deployments, builds, runtime
+purpose of providing the Gregale FaaS platform (deployments, builds, runtime
 secrets, request logs, billing). The Processing runs for the term of
 the master agreement and any tail period required for lawful record
 keeping (tax invoices: 7 years).
@@ -54,7 +54,7 @@ keeping (tax invoices: 7 years).
 ## 2. Nature and purpose of processing
 
 - Hosting Controller's application code, build artifacts, and
-  customer-uploaded secrets as part of the onebox FaaS platform.
+  customer-uploaded secrets as part of the Gregale FaaS platform.
 - Routing inbound HTTP requests to the appropriate microVM
   instance.
 - Aggregating per-minute usage (RAM-seconds + request count) for
@@ -72,7 +72,7 @@ keeping (tax invoices: 7 years).
 
 ## 4. Categories of personal data
 
-- Account data: email address, Stripe customer ID, plan tier.
+- Account data: email address, billing-provider customer ID, plan tier.
 - App data: app slug, deployment artifacts, runtime env vars
   (sealed at rest with the host X25519 key, spec §11/G2).
 - Usage data: per-minute aggregate of (app, instance, request
@@ -112,7 +112,7 @@ Processor shall:
 ## 6. Data subject rights (spec §11 / G6)
 
 Controller may at any time exercise the following rights on behalf
-of data subjects via the documented faas endpoints:
+of data subjects via the documented Gregale endpoints:
 
 | Right | Endpoint |
 |---|---|
@@ -260,4 +260,4 @@ Controller: _________________________  Date: ____________
 
 Processor: __________________________  Date: ____________
 
-— onebox faas, {{EFFECTIVE_DATE}}
+— Gregale, {{EFFECTIVE_DATE}}

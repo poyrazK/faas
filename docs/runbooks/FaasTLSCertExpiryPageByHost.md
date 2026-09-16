@@ -19,10 +19,11 @@ Severity: page.
 > daemon's former hostname shape. Current release checks use
 > `*.<zone>` and a representative `<slug>.gregale.dev` endpoint.
 >
-> The certmagic surface lives on `gatewayd-public` post-ADR-070;
-> the legacy `gatewayd.toml` config file is retained as the
-> historical reference, with the current config at
-> `/etc/faas/gatewayd-public.toml`.
+> The certificate metrics and this runbook are retained for legacy
+> observability only. Current production TLS terminates at the upstream
+> Caddy/Cloudflare edge; use `docs/ops/secrets-rotation.md` for the current
+> provider-token procedure. The legacy `gatewayd.toml` config file is kept
+> only as migration reference.
 
 ## Symptom
 
@@ -52,8 +53,9 @@ curl -fsS http://127.0.0.1:9090/metrics \
 A single wildcard cert covers `*.apps.<zone>`. Renewals are
 DNS-01-driven and run automatically; failure modes are:
 
-- Hetzner DNS API token rotated without a `faas secrets seal`
-  re-run — see `FaasTLSCertExpiryPage.md` for the rotation steps.
+- Legacy DNS provider credentials were rotated without following the
+  provider-owned secret procedure — see `FaasTLSCertExpiryPage.md` for the
+  historical daemon path.
 - The apps zone no longer delegates to this box's IP — check with
   `dig +short <zone>` and `dig +short <zone> NS`.
 
@@ -90,7 +92,7 @@ psql -U faas -d faas -c "SELECT hostname, verified_at FROM custom_domains WHERE 
 For `kind=wildcard`:
 
 ```bash
-faas cert refresh --host='*.<zone>'   # forces DNS-01 re-mint
+gregale domains verify '*.<zone>'   # re-checks DNS and certificate state
 journalctl -u faas-gatewayd-public -f        # watch for "renewing" log line
 ```
 
@@ -99,7 +101,7 @@ For `kind=ondemand`:
 ```bash
 # Trigger a fresh mint by hitting the cert-mint path directly.
 curl -fsS https://$HOST/healthz   # this is what gatewayd-public's allowlist hooks
-faas cert refresh --host=$HOST    # explicit refresh for diagnostic logging
+gregale domains verify "$HOST"    # explicit refresh for diagnostic logging
 ```
 
 If certmagic's renew loop is wedged (the same Warn line repeating

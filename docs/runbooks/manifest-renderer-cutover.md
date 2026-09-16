@@ -312,7 +312,7 @@ Listed because an operator reading this will hit them:
   PR per ADR-075 / ADR-078. The workflow is now a release-bundle
   controller (PR-1 rewire); the typed-state-machine swap is
   incremental.
-- **Metal harness (`make metal-lima-splitbox`)** — PR-7 ships the
-  two-role Lima harness that runs the issue #911 acceptance chain
-  on a developer laptop. Use that for the pre-prod rehearsal of
-  this cutover before doing it on a real box.
+- **Native acceptance harness (`make native-m9-acceptance`)** — runs the
+  two-role issue #911 acceptance chain on the dedicated native x86_64 pair.
+  Use `docs/ops/native-m9-acceptance.md` for the pre-prod rehearsal before
+  doing this cutover on a production box.

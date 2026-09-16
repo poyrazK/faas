@@ -17,7 +17,7 @@ managed-service requirements, never provisioned (ADR-047, `docs/storage.md`).
 ## 1. Target experience
 
 ```
-$ faas deploy
+$ gregale deploy
 
   Scanning acme/shop @ main …
 
@@ -49,12 +49,12 @@ for its deployable dependencies (for example,
 proxy path provides the endpoint even when the target app is cold; image-only
 managed services remain customer-provided and are not given a Gregale URL.
 
-On every subsequent `faas deploy`, the same scan runs and renders a **diff**
+On every subsequent `gregale deploy`, the same scan runs and renders a **diff**
 instead of a first-run list — the repo is the source of truth, so the deployed
 set reconciles to whatever the repo now declares:
 
 ```
-$ faas deploy
+$ gregale deploy
 
   Scanning acme/shop @ main …
 
@@ -82,10 +82,10 @@ Supporting verbs:
 
 | Command | Behaviour |
 |---|---|
-| `faas scan` | Print the table and exit. Provisions nothing. |
-| `faas deploy --yes` | Skip the prompt (CI). |
-| `faas deploy --json` | Emit the plan as JSON, provision nothing unless `--yes`. |
-| `faas deploy --only api,worker` | Provision a named subset. |
+| `gregale scan` | Print the table and exit. Provisions nothing. |
+| `gregale deploy --yes` | Skip the prompt (CI). |
+| `gregale deploy --json` | Emit the plan as JSON, provision nothing unless `--yes`. |
+| `gregale deploy --only api,worker` | Provision a named subset. |
 
 ---
 
@@ -277,11 +277,11 @@ deterministic order. Scanner never reads a file outside the tarball root.
 
 ### Phase 3 — CLI plan + one-key provision
 
-`faas scan`, the confirm table, `--yes` / `--json` / `--only`. Server side:
+`gregale scan`, the confirm table, `--yes` / `--json` / `--only`. Server side:
 one transactional endpoint that creates project + apps + crons, quota-checked
 **before** any write, RFC 7807 limit error carrying limit + observed + docs URL.
 
-**Gate:** `faas deploy` on the fixture repo creates 3 apps + 1 cron on one
+**Gate:** `gregale deploy` on the fixture repo creates 3 apps + 1 cron on one
 keypress; over-quota creates **nothing** and returns the limit problem;
 `--json` output is stable enough to assert in CI.
 
@@ -402,7 +402,7 @@ not starve tenant wakes under `make test-load`.
 
 **Settled** (see ADR-050): later pushes **re-scan and reconcile** — new
 workloads are auto-created, removed workloads are auto-removed, changed
-workloads are updated. `faas deploy` shows the same reconcile as a confirmable
+workloads are updated. `gregale deploy` shows the same reconcile as a confirmable
 diff. The safety that would otherwise come from a confirmation queue comes
 instead from the three reconcile guards.
 

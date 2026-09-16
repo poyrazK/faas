@@ -86,10 +86,11 @@ grow a workload-class guard so a service is never parked, and `schedd` grows a
 
 ## Phased plan (tied to existing milestones/gates)
 
-**Phase 0 — now → M8 (single-box v1).**
-Do nothing for scale. Finish serverless. The only discipline: keep the two
-watch-it walls (D3) thin — don't pour extra concrete around local snapshot paths
-or assume unix-socket locality in new code beyond what vmmd/schedd already do.
+**Phase 0 — historical (M8 single-box v1).**
+This phase is complete context, not the current roadmap. The two watch-it walls
+(D3) were kept thin while the serverless launch surface shipped; the supported
+deployment now includes the split-box topology and native multi-node recovery
+work described in Phase 2.
 
 **Phase 1 — first customers (vertical).**
 Move to a bigger dedicated control-plane node when RAM/CPU pressure appears.
@@ -98,8 +99,9 @@ biggest node any provider rents, and — the actual forcing function — **a
 single node is one failure domain** (every customer dies together). Blast
 radius, not RAM, is what ends Phase 1.
 
-**Phase 2 — Gate A (horizontal + HA).**
-Tier A work is shipping incrementally today. Build order:
+**Phase 2 — Gate A (horizontal + HA, current).**
+Tier A work has shipped incrementally and M9 recovery work remains in progress.
+The current build order and evidence are:
 1. De-local snapshots (sticky placement first; shared store only if needed)
    — ADR-063.
 2. Sockets → mTLS TCP (ADR-013/015/018 re-eval triggers) — ADR-052.

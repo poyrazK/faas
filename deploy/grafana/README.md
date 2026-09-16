@@ -219,9 +219,11 @@ For a hand-import path (developer laptop, external Grafana instance):
 
 The dashboard reads from the local Prometheus installed by
 `deploy/ansible/roles/prometheus`. The scrape config there
-(`prometheus.yml.j2`) targets every Gregale daemon + node_exporter on
-the bridge IP. No remote source — the dashboard is single-node today (Tier A
-will move to a federated scrape per ADR-031).
+(`prometheus.yml.j2`) targets every Gregale daemon and node_exporter on
+each node's private bridge address. The dashboard UID `faas-fleet-m8` is
+retained for backwards-compatible links; its panels are valid for the current
+split-box deployment. Cross-node aggregation still requires the operator's
+Prometheus federation or a shared remote-write backend.
 
 ## Panels
 

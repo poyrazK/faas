@@ -67,8 +67,8 @@ cluster on the node, and is documented in
 - `nftables/` — tenant + builder egress policy (§7): deny 25/465/587,
   deny RFC1918/link-local/metadata. Dropped as `/etc/nftables.conf`
   via the `nftables` ansible role.
-- `scripts/` — ops helpers (`leakcheck.sh` for the shell-side check,
-  restore drill planned for M8).
+- `scripts/` — ops helpers (`leakcheck.sh` for the shell-side check and the
+  PostgreSQL backup/restore verification scripts).
 - `controlplane/` — retired legacy bootstrap surface. Production hosts use
   the manifest-generated split-box inventory and role-aware Ansible targets;
   the image builder uses its isolated image-seed inventory.

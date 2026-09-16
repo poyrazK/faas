@@ -363,7 +363,7 @@ func renderEnvContractDoc() string {
 		{EnvSourceScript, "consumed by a `deploy/scripts/` script"},
 		{EnvSourceInternal, "set by a daemon for its own subprocess"},
 		{EnvSourceClient, "read by the CLI/SDK on the operator's machine"},
-		{EnvSourceDevOnly, "tests / e2e / Lima only — never set in production"},
+		{EnvSourceDevOnly, "tests / e2e / acceptance harness only — never set in production"},
 		{EnvSourceGuest, "read by guest-init inside the microVM"},
 	} {
 		fmt.Fprintf(&b, "| `%s` | %s |\n", s.src, s.desc)

@@ -1,6 +1,6 @@
 # How scaling to zero works
 
-Apps on onebox FaaS scale to zero. When nobody is using your app
+Apps on Gregale FaaS scale to zero. When nobody is using your app
 its instances are parked — a snapshot on disk, zero resident RAM.
 The next request wakes an instance. On the reference SSD node, Gregale targets
 p95 below 350 ms for the platform interval from capacity admission/boot start
@@ -29,11 +29,11 @@ You can detect the wake tier on every routed response:
 ## Opting out: keep N instances warm (Pro, Scale)
 
 On the Pro and Scale plans you can pin a number of instances
-permanently resident via `faas app <slug> --min N`:
+permanently resident via `gregale app <slug> --min N`:
 
 ```bash
-faas app my-api --min 1   # always keep 1 instance warm
-faas app my-api --min 0   # back to scale-to-zero (default)
+gregale app my-api --min 1   # always keep 1 instance warm
+gregale app my-api --min 0   # back to scale-to-zero (default)
 ```
 
 Each warm instance counts as always-resident for billing — the

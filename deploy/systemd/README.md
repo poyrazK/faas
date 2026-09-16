@@ -1,38 +1,44 @@
-# gatewayd-public deploy (historical)
+# Systemd units
 
-This directory contains the legacy systemd unit and nftables ruleset fragment
-for the monolithic gatewayd; the post-ADR-070 split into gatewayd-public
-(edge) and gatewayd-internal (routing/wake) is wired in
-`deploy/ansible/roles/control_plane_service/`. The legacy unit + nftables
-fragment here are retained for diff archaeology only.
+This directory contains the checked-in systemd units used by the split-box
+deployment. The production installer renders and installs the role-specific
+copies through Ansible; do not revive the removed monolithic `gatewayd` unit.
 
-## Install
+The edge is two services:
 
+- `faas-gatewayd-public.service` (and its socket) owns the public listener,
+  receives traffic from the upstream Caddy/Cloudflare edge, and hands it to
+  the node-local gateway. TLS termination is upstream of this plain-HTTP daemon.
+- `faas-gatewayd-internal.service` owns routing, wake coordination, and proxying
+  on the node-local socket.
+
+The remaining units are installed by their owning role: `apid`, `schedd`,
+`vmmd`, `builderd`, `imaged`, `meterd`, `outboundd`, and `realtimed`, plus the
+PostgreSQL backup and WAL-prune timers. The control-plane and compute-only
+plays intentionally install different daemon sets and mask the opposite role.
+See [`deploy/ansible/README.md`](../ansible/README.md) for the supported
+bootstrap and verification flow.
+
+## Manual inspection
+
+To inspect the generated units on a host:
+
+```sh
+systemctl cat faas-gatewayd-public.service
+systemctl cat faas-gatewayd-internal.service
+systemctl --type=service --state=running 'faas-*'
 ```
-sudo install -m 0644 deploy/systemd/faas-gatewayd.service /etc/systemd/system/
-sudo install -m 0644 deploy/nftables/gatewayd.nft /etc/nftables.d/
+
+For a development-only install from this checkout, install the units for the
+role you are testing, then reload systemd:
+
+```sh
+sudo install -m 0644 deploy/systemd/faas-gatewayd-public.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/faas-gatewayd-public.socket /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/faas-gatewayd-internal.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo nft -f /etc/nftables.d/gatewayd.nft
-sudo systemctl enable --now faas-gatewayd
-sudo systemctl status faas-gatewayd
 ```
 
-## SIGHUP
-
-```
-sudo systemctl reload faas-gatewayd
-```
-
-Drops in-memory rate-limit buckets (Limiter.ForgetAll). Safe and idempotent.
-
-## Memory cap
-
-512 MB (`MemoryMax=512M`) per the control-plane budget table at
-spec §13. OOMs in the control-plane slice are deliberately segregated
-from tenant failures — see spec §13.
-
-## Hardening
-
-`User=faas`, `NoNewPrivileges=yes`, `ProtectSystem=strict`, namespaces
-and syscall sets locked down. If a future change needs to bind to
-something outside the allow-list, document the rationale in the PR.
+Do not enable a unit until its role's configuration, secrets, sockets, and
+dependencies have been rendered by the Ansible play. `gregalectl doctor` and
+`make verify-fleet` are the supported post-install checks.

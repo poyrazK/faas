@@ -3,7 +3,8 @@
 The M9 failure-safe acceptance runs on two native x86 compute nodes where each
 node owns one schedd and one vmmd. The control-plane checkout executes the
 test, and the owning schedd reconciles the stopped vmmd. It does not depend on
-Lima or nested virtualization.
+Nested virtualization is not supported; native KVM is the only supported
+acceptance environment.
 
 The gate is intentionally opt-in. Run it only from the designated acceptance
 control-plane checkout, with the pair drained of customer workloads:
@@ -37,4 +38,4 @@ The split-box manifest installs a node-local schedd on every compute host, so
 the service preflight can run against two x86 compute nodes from the control
 plane. The remaining live-migration and partition drills still require
 workload fixtures and are tracked separately. This target is the native
-replacement for the old two-node Lima heartbeat gate.
+replacement for the retired local virtualization heartbeat gate.

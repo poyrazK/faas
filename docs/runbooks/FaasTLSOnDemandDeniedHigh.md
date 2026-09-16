@@ -12,7 +12,8 @@ Severity: warn.
 > daemon. PR #633 stripped certmagic + Hetzner DNS-01 from
 > `gatewayd-public`; the legacy daemon keeps them during the
 > migration window. PR-C sweeps the certmagic packages and
-> this runbook will be archived alongside them.
+> this runbook will be archived alongside them. It is not a current
+> production TLS procedure.
 
 ## Symptom
 
@@ -61,10 +62,10 @@ If the count is dominated by a single SNI, it could be:
   on every request. Fix: pin the LB to forward the SNI correctly,
   or add the LB's SNI to the allowlist.
 
-> **Note:** the original monolithic edge daemon role for this deny check was split by
-> ADR-070; the production check now lives on `gatewayd-public`. An
-> attacker SNI not in the allowlist is rejected at
-> `gatewayd-public`'s certmagic surface.
+> **Note:** the original monolithic edge daemon role for this deny check was
+> split by ADR-070. This alert remains for legacy telemetry; current
+> production TLS and SNI policy are enforced by the upstream Caddy/Cloudflare
+> edge, not by a Gregale CertMagic surface.
 
 ## Silence
 

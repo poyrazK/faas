@@ -6,9 +6,9 @@ separate control-plane and compute-only plays and refuses a single-box role.
 The observability overlay is `site.yml`. It expects a dedicated
 `[observability]` inventory group for Loki, installs Promtail on the
 control-plane and compute groups, and re-converges the `postgres_backup` role
-on the control plane so the M8 restore-drill prerequisites stay wired when the
-overlay is run independently. This separation keeps a FaaS host loss from
-also deleting its incident logs:
+on the control plane so backup and restore verification remains wired when
+the overlay is run independently. This separation keeps a Gregale host loss
+from also deleting its incident logs:
 
 ```
 make ANSIBLE_INVENTORY=/path/to/inventory.ini bootstrap-observability
@@ -47,7 +47,7 @@ In order (each role is independent and verifies its own preconditions):
 | `canary_artifact_retention` | §11 | declared validation roots, durable owner records, hourly bounded sweep, node-exporter metrics | closed path policy + live process/systemd reference proof |
 | `nftables` | §7 | `/etc/nftables.conf` | managed-marker backup + `nft -c` syntax check |
 | `postgres` | §1 (cp slice), §4 | distro PostgreSQL major, `faas` user | apt idempotent, `creates:` on home |
-| `postgres_backup` | §14 M8 | nightly tar-format basebackup + off-host push timers | systemd units, directories, and secret checks are idempotent |
+| `postgres_backup` | §14 backup/restore gates | nightly tar-format basebackup + off-host push timers | systemd units, directories, and secret checks are idempotent |
 | `host_hardening` | §11, ADR-143 | sshd drop-in, fail2ban, unattended security upgrades, auditd rules, kernel sysctls | templates + validated `sshd -t`; lockout guard before disabling password auth |
 | `geoip` | ADR-091 D21, ADR-143 | `/var/lib/faas/geoip/dbip-country-lite.mmdb` (compute) | pinned monthly release + two SHA-256s |
 | `fleet_verify` | ADR-143 | verify-only: enabled → active → dependency-aware `/readyz` → transport fallback → `gregalectl doctor` | read-only |

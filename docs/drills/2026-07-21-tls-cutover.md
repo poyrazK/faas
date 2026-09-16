@@ -1,5 +1,10 @@
 # TLS cut-over drill — 2026-07-21 (M8 acceptance, ADR-024)
 
+> **ARCHIVED — DO NOT EXECUTE.** This template targets the retired
+> CertMagic-in-daemon TLS design. Current public TLS is owned by the upstream
+> Caddy/Cloudflare edge; use [`docs/ops/gatewayd-public-tls-cutover.md`](../ops/gatewayd-public-tls-cutover.md)
+> for the provider-neutral rehearsal and evidence path.
+
 > ⚠️ **PENDING — operator execution required.** This drill template
 > was scaffolded as part of the (now-archived) Tier-1 worktree
 > (Finding 5) but the actual reference-node run

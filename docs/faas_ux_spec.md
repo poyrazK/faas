@@ -1,10 +1,10 @@
-# One-Box FaaS — User Experience Specification
+# Gregale FaaS — User Experience Specification
 
 **Version 1.0 · July 2026 · Confidential, internal**
 **Audience:** engineers and coding agents building the customer-facing surfaces. This is the buildable UX spec. It sits beside `faas_implementation_spec.md` (the system spec) and inherits every limit and constraint from it — where the two disagree on a limit or state name, the implementation spec wins. Business numbers come from `ex44_faas_financial_model.xlsx`.
 
 **Interface decisions (locked, v1):**
-- **CLI-first.** `faas` (the CLI) is the primary interface and the fastest path to a running app. Everything the platform does is possible from the CLI.
+- **CLI-first.** `gregale` (the CLI) is the primary interface and the fastest path to a running app. Everything the platform does is possible from the CLI.
 - **GitHub push-to-deploy at launch.** A GitHub App (auto-deploy on push) ships in v1 as a second, equal deploy path — not post-GA. See §5.
 - **Minimal web surface at launch.** Because connect-repo needs an OAuth callback and a repo picker, a *thin* dashboard exists at launch (auth, GitHub connect, usage, billing, logs). This is a deliberate scope change vs. implementation-spec gap G3 — recorded in §11 and requires ADR-011.
 
@@ -14,7 +14,7 @@
 
 When a design decision is ambiguous, resolve it in this order:
 
-1. **Time-to-first-deploy is the north-star metric.** A new developer with a Node or Python repo should reach a live URL in **under 5 minutes** from `faas login`. Every screen, prompt, and default is judged against that clock.
+1. **Time-to-first-deploy is the north-star metric.** A new developer with a Node or Python repo should reach a live URL in **under 5 minutes** from `gregale login`. Every screen, prompt, and default is judged against that clock.
 2. **Never surprise the bill.** Usage, quotas, and the €0.01/GB-h meter are always visible before they cost money. No dark-pattern upsells; the free tier is honestly free (implementation spec §4.7).
 3. **Explain the magic, especially the slow parts.** Scale-to-zero means the first request after idle is slower (§6). If we don't explain cold wakes, users file "your platform is slow" — the truth is a feature. Transparency is the product.
 4. **Errors are a UX surface, not a failure.** Every error tells the user what happened, why, and the single next action. No stack traces, no opaque codes (§7).
@@ -38,7 +38,7 @@ This is the spine. Each step has a time budget and a defined success/failure sur
 
 ```
 curl -fsSL https://get.gregale.dev | sh          # single static Go binary, no deps
-# or: brew install gregale.dev/tap/gregale · scoop · nix
+# or: npm install -g gregale
 ```
 
 Post-install prints exactly one next step: `Run 'gregale login' to get started.` No telemetry prompt walls, no account required to install.
@@ -55,15 +55,19 @@ Paste token: ●●●●●●●●
 ✓ Logged in as jane@example.com (free plan)
 ```
 
-Token stored in the OS keychain (macOS Keychain / libsecret / wincred), never a plaintext dotfile. `gregale login --token $FAAS_TOKEN` for CI. The browser approval uses the account already authenticated in the Gregale console; new users must complete the normal signup flow first.
+Token stored in the OS keychain (macOS Keychain or Linux libsecret) when available,
+with a mode-0600 file fallback for headless environments. `gregale login --token
+$FAAS_TOKEN` is the CI path. The browser approval uses the account already
+authenticated in the Gregale console; new users must complete the normal signup
+flow first.
 
 ### 2.3 Deploy (budget: the user's 10 seconds; then we work)
 
 Zero-config is the default. In any repo:
 
 ```
-$ faas deploy
-→ No faas app here yet. Creating one:
+$ gregale deploy
+→ No Gregale app here yet. Creating one:
     name  jane-api           (from directory; --name to change)
     plan  free               (--plan to change)
   Detected: Node 22 (package.json, lockfile present)         ← Railpack detect
@@ -105,28 +109,28 @@ See §6 for how this is surfaced everywhere it matters.
 
 ### 2.6 First invoice (never a surprise — §10)
 
-Free stays free (hard-stop at quota, never a bill). Paid plans: `faas usage` mirrors the invoice exactly (same query as `GET /v1/usage`, implementation spec §10), quota-warning emails at 80 %/100 %, and the first invoice contains no line the user hasn't already seen in `faas usage`.
+Free stays free (hard-stop at quota, never a bill). Paid plans: `gregale usage` mirrors the invoice exactly (same query as `GET /v1/usage`, implementation spec §10), quota-warning emails at 80 %/100 %, and the first invoice contains no line the user hasn't already seen in `gregale usage`.
 
 ---
 
-## 3. CLI design (`faas`)
+## 3. CLI design (`gregale`)
 
 ### 3.1 Command surface (maps 1:1 to Appendix A of the implementation spec)
 
 ```
-faas login | logout | whoami
-faas deploy [--name] [--plan] [--dockerfile] [--image REF]   create-or-update, zero-config
-faas apps [ls] · faas app <name> [open|rm|scale|rename]
-faas logs <app> [--follow] [--since]                          tail/stream app stdout+stderr
-faas ps <app>                                                 instances + state (§6 states)
-faas usage [--month YYYY-MM] [--app]                          == the invoice
-faas secrets set|ls|rm  <app> KEY[=VALUE]                     sealed env (impl gap G2)
-faas domains add|ls|rm  <app> <domain>                        Pro+; prints the CNAME to set
-faas env pull|push                                            local .env ↔ app config
-faas connect github                                           link a repo (→ §5)
-faas cron add|ls|rm     <app> "<schedule>" <path>                   (Hobby+; Free → upgrade)
-faas open <app>         · faas dashboard                      open web surfaces
-faas status                                                   platform status page
+gregale login | logout | whoami
+gregale deploy [--name] [--plan] [--dockerfile] [--image REF]   create-or-update, zero-config
+gregale apps [ls] · gregale app <name> [open|rm|scale|rename]
+gregale logs <app> [--follow] [--since]                          tail/stream app stdout+stderr
+gregale ps <app>                                                 instances + state (§6 states)
+gregale usage [--month YYYY-MM] [--app]                          == the invoice
+gregale secrets set|ls|rm  <app> KEY[=VALUE]                     sealed env (impl gap G2)
+gregale domains add|ls|rm  <app> <domain>                        Pro+; prints the CNAME to set
+gregale env pull|push                                            local .env ↔ app config
+gregale connect github                                           link a repo (→ §5)
+gregale cron add|ls|rm     <app> "<schedule>" <path>              (Hobby+; Free → upgrade)
+gregale open <app>         · gregale dashboard                    open web surfaces
+gregale status                                                   platform status page
 ```
 
 ### 3.2 Output conventions (agents: enforce in `pkg/cli`)
@@ -138,7 +142,7 @@ faas status                                                   platform status pa
 - **Exit codes:** 0 ok; 1 user error (bad args, quota); 2 auth; 3 platform/infra; documented so CI can branch.
 - **`--help` is a real doc.** Every command: one-line summary, args, 2–3 realistic examples, the relevant docs URL. Help never assumes you read another command's help first.
 - **Shell completion + man pages ship in the binary** (ADR-083). `gregale completion {bash|zsh|fish|powershell}` emits the per-shell script; `gregale man [command]` emits roff for `man -l -`. The CLI is the source of truth — no checked-in `contrib/completion/` or `docs/man/`. Install paths are documented in [`docs/cli-setup.md`](cli-setup.md).
-- **Idempotency-Key** set automatically on every mutating call (implementation spec §4.2) so a retried `faas deploy` never double-charges or double-creates.
+- **Idempotency-Key** set automatically on every mutating call (implementation spec §4.2) so a retried `gregale deploy` never double-charges or double-creates.
 
 ### 3.3 Error copy standard (CLI)
 
@@ -155,20 +159,24 @@ Sourced from the API's RFC 7807 body (implementation spec: stable `code`, includ
 ```
 ✗ Can't deploy: you're at your plan's app limit.
   Free plan allows 1 deployed app; you have 1 (jane-api).
-  → Remove one with 'faas app <name> rm', or upgrade: faas app <name> scale --plan hobby
+  → Remove one with 'gregale app <name> rm', or upgrade: gregale app <name> scale --plan hobby
 ```
 
 ---
 
 ## 4. Minimal web dashboard (launch scope — thin)
 
-Server-rendered inside `apid` (Go `html/template` + HTMX, no SPA build chain, fits the 6 GB control-plane RAM slice — implementation spec §13). Launch scope is deliberately small; the CLI is primary.
+The dashboard is delivered by the extracted Next.js frontend; `apid` owns the
+session, API, and dashboard data contracts. The CLI remains primary and the web
+surface stays deliberately small.
 
 **At launch, the dashboard does exactly:**
-1. **Auth** — email login (magic link) + the `/cli-auth` code page for §2.2.
+1. **Auth** — the current Google/GitHub OAuth session flow plus the `/cli-auth`
+   code page for §2.2.
 2. **GitHub connect** — OAuth callback + repo picker (§5) — *this is why the dashboard exists at launch at all*.
 3. **Apps list** — name, state, URL, plan; click through to one app's logs (tail), env/secrets (names only, values write-only), usage, and deployments (with rollback button).
-4. **Usage & billing** — the current month's GB-h vs. quota (one honest bar), plan, Stripe customer-portal link for card/invoices.
+4. **Usage & billing** — the current month's GB-h vs. quota (one honest bar),
+   plan, and the configured billing-provider portal for invoices and payment.
 5. **Account** — API keys (create/revoke), plan change, danger-zone (export/delete → implementation gap G6).
 
 **Explicitly NOT at launch:** metrics graphs beyond the usage bar, team/multi-seat, a visual deploy builder, a marketplace. Those are post-GA.
@@ -184,16 +192,16 @@ The connect-repo funnel, shipped in v1. Requires a new component — see §11 / 
 ### 5.1 Connect flow
 
 ```
-$ faas connect github            # or the dashboard "Connect GitHub" button
+$ gregale connect github         # or the dashboard "Connect GitHub" button
 → Opening GitHub to install the FaaS app on the repos you choose…
 ✓ Connected. Repos available: jane/api, jane/site
-$ faas deploy --repo jane/api    # or pick in dashboard
+$ gregale deploy --repo jane/api # or pick in dashboard
 ✓ Linked jane-api → jane/api (branch: main). Pushes to main now auto-deploy.
 ```
 
 ### 5.2 Behaviour
 
-- **On push to the production branch** (default `main`, configurable): the GitHub App webhook → `apid` creates a deployment from that commit → normal build pipeline (implementation spec §9). Same path as `faas deploy`, different trigger.
+- **On push to the production branch** (default `main`, configurable): the GitHub App webhook → `apid` creates a deployment from that commit → normal build pipeline (implementation spec §9). Same path as `gregale deploy`, different trigger.
 - **Build status** is written back to the commit (GitHub Checks API): queued → building → live/failed, with a link to logs.
 - **Rollback** stays one command / one button (previous deployment kept — implementation spec §9.6).
 - **Least privilege:** the GitHub App requests Contents:read + Checks:write + Deployments:write + Issues:write + webhook. Deployments:write is used only for the deployment lifecycle projection; Issues:write is used only to maintain the single idempotent PR preview comment; no org-wide access, per-repo selection honoured.
@@ -217,7 +225,7 @@ Scale-to-zero is the economic engine (founding whitepaper §2.3) and the single 
 2. **Docs** — a "How scaling to zero works" page linked from onboarding: idle → snapshot → wake ≈ 0.3–0.8 s → warm. Framed as a feature (you don't pay for idle).
 3. **Dashboard app view** — a state badge: `● running` (green) / `◌ sleeping` (dim) / `⟳ waking`. Users seeing "sleeping" understand the next hit wakes it.
 4. **Response header** — `x-faas-wake` is present on every routed response: `hot` for an already-running instance, `restored` for a snapshot restore, and `cold` for a fresh boot. Developers can see the wake cost in devtools without guessing.
-5. **Configurable floor** — Pro/Scale can set `min_instances: 1` (keep one warm) via `faas app scale --min 1`, honestly priced as always-resident GB-h. The default stays 0 because that's the deal.
+5. **Configurable floor** — Pro/Scale can set `min_instances: 1` (keep one warm) via `gregale app scale --min 1`, honestly priced as always-resident GB-h. The default stays 0 because that's the deal.
 
 Acceptance: a usability read of the deploy output + docs page by someone who's never used scale-to-zero should leave them expecting the first-request delay, not surprised by it.
 
@@ -257,12 +265,12 @@ All three screens obey the §7 three-line shape (headline → cause → one next
 
 ## 8. Onboarding, empty states, docs
 
-- **First-run (`faas login` → empty account):** the CLI prints a 3-line quickstart, not a wall. "You're in. Deploy your first app: `cd` into a project and run `faas deploy`. No project handy? `faas deploy --template hello-node`."
-- **Templates:** `faas deploy --template <name>` scaffolds a minimal working app (hello-node, hello-python, hello-go, cron-example, function-node, function-python) so a user with no repo still reaches a URL in 5 minutes. **Wave 0 PR-B adds a second template family** for the stateless contract: `faas init --template={s3-uploader,slack-bot,rest-api-postgres,cron-worker}` scaffolds a project whose docs header names the managed service to plug in (S3/R2, Slack signing secret, Neon, Upstash QStash) and fails clearly if the customer forgot to `faas secrets set` the relevant env var.
+- **First-run (`gregale login` → empty account):** the CLI prints a 3-line quickstart, not a wall. "You're in. Deploy your first app: `cd` into a project and run `gregale deploy`. No project handy? `gregale deploy --template hello-node`."
+- **Templates:** `gregale deploy --template <name>` scaffolds a minimal working app (hello-node, hello-python, hello-go, cron-example, function-node, function-python) so a user with no repo still reaches a URL in 5 minutes. **Wave 0 PR-B adds a second template family** for the stateless contract: `gregale init --template={s3-uploader,slack-bot,rest-api-postgres,cron-worker}` scaffolds a project whose docs header names the managed service to plug in (S3/R2, Slack signing secret, Neon, Upstash QStash) and fails clearly if the customer forgot to `gregale secrets set` the relevant env var.
 - **Empty dashboard:** one primary CTA (Connect GitHub / Deploy via CLI), a link to the quickstart, nothing else. No fake sample data.
 - **Docs site (static, launch-critical):** Quickstart · How scale-to-zero works (§6) · Build detection & Dockerfiles · **External storage (stateless contract)** · Plans & pricing (mirrors the model) · Secrets · Custom domains · Functions (node22/python312 contract) · CLI reference (generated from the CLI) · Status. Docs are part of the product, not an afterthought; the €3/mo domain line already budgets hosting.
-- **External storage page:** one canonical `docs.gregale.dev/storage` page. Header: *"This platform is stateless. Your code runs in an ephemeral microVM that wakes, executes, parks, and forgets. Bring your own state."* Sections: **Why stateless** (one paragraph), **Recommended providers** (table — object: S3/R2/B2; SQL: Neon / Supabase / PlanetScale / CockroachDB Cloud; KV/cache: Upstash; document: MongoDB Atlas / Turso; queue: Upstash QStash / SQS — each row names the env-var keys), **Wiring it up** (`faas secrets set` → env injected at wake, app reads it like any env var), **Don't** (VOLUME in your Dockerfile, `postgres:16` as a base image, writes to `/var/lib/postgresql`), **Templates** (one line per `faas init --template=`). The empty-state dashboard CTA also links here when the account has zero apps. Wave 0 PR-B ships this page (`docs/storage.md`); the docs site lifts it when the docs builder lands.
-- **Status page (§12 of impl spec, SLOs):** public, honest about the one-box reality until Gate A, links from `faas status` and every capacity error.
+- **External storage page:** one canonical `docs.gregale.dev/storage` page. Header: *"This platform is stateless. Your code runs in an ephemeral microVM that wakes, executes, parks, and forgets. Bring your own state."* Sections: **Why stateless** (one paragraph), **Recommended providers** (table — object: S3/R2/B2; SQL: Neon / Supabase / PlanetScale / CockroachDB Cloud; KV/cache: Upstash; document: MongoDB Atlas / Turso; queue: Upstash QStash / SQS — each row names the env-var keys), **Wiring it up** (`gregale secrets set` → env injected at wake, app reads it like any env var), **Don't** (VOLUME in your Dockerfile, `postgres:16` as a base image, writes to `/var/lib/postgresql`), **Templates** (one line per `gregale init --template=`). The empty-state dashboard CTA also links here when the account has zero apps. Wave 0 PR-B ships this page (`docs/storage.md`); the docs site lifts it when the docs builder lands.
+- **Status page (§12 of impl spec, SLOs):** public, honest about the current topology, links from `gregale status` and every capacity error.
 
 ---
 
@@ -286,10 +294,15 @@ Events that email the user: email verification; deploy failed (with log link) �
   | Scale | 1024 MB | 4 |
 
   Omitting `vcpu` preserves the plan default and existing custom RAM/profile behavior. Supplying it with a different `ram_mb` pair returns `invalid_cpu_ram_pair` before the app is created.
-- **Usage before cost:** `faas usage` and the dashboard bar always show current GB-h vs. the included quota and any accrued overage at €0.01/GB-h, updated hourly (matches metering push cadence, implementation spec §4.7).
-- **Upgrade is instant and obvious** (Stripe proration handles the money); **downgrade** runs quota checks first and, if the user is over the target plan's limits, returns an actionable task list ("delete 3 apps or reduce RAM on 2") rather than a silent failure (implementation spec §10).
+- **Usage before cost:** `gregale usage` and the dashboard bar always show current GB-h vs. the included quota and any accrued overage at €0.01/GB-h, updated hourly (matches metering push cadence, implementation spec §4.7).
+- **Upgrade is instant and obvious** (the configured billing provider handles
+  the money); **downgrade** runs quota checks first and, if the user is over the
+  target plan's limits, returns an actionable task list ("delete 3 apps or
+  reduce RAM on 2") rather than a silent failure (implementation spec §10).
 - **Dunning is humane:** apps keep running in `past_due` (deploys blocked, clearly messaged) for 7 days before `suspended`; nothing is deleted for 30 days after that. Every step is emailed and shown in the dashboard banner.
-- **Card management** is delegated to the Stripe customer portal (no card data touches us). One "Manage billing" link everywhere billing appears.
+- **Card management** is delegated to the configured billing provider's portal
+  (no card data touches us). One "Manage billing" link everywhere billing
+  appears.
 
 ---
 
@@ -320,9 +333,9 @@ UX work is not a phase at the end; it rides the existing milestones. Deltas:
 
 | Impl milestone | UX additions |
 |---|---|
-| **M5** (apid + deploy pipeline + CLI) | CLI output conventions (§3.2), error-copy standard (§3.3, §7), `faas login` browser-paste (§2.2), templates + quickstart (§8) |
+| **M5** (apid + deploy pipeline + CLI) | CLI output conventions (§3.2), error-copy standard (§3.3, §7), `gregale login` browser-paste (§2.2), templates + quickstart (§8) |
 | **M6** (builderd) | Live streamed build logs + `failure_class` messages (§2.4); zero-config "detected: …" UX |
-| **M7** (meterd + Stripe + functions) | `faas usage` == invoice, quota-warning emails, dunning emails, plan-change task lists (§10); transactional email provider (§9, gap G4) |
+| **M7** (meterd + billing + functions) | `gregale usage` == invoice, quota-warning emails, dunning emails, plan-change task lists (§10); transactional email provider (§9, gap G4) |
 | **M7.5 (new) — git-deploy + thin dashboard** | `githubd`/module + GitHub App (§5), OAuth + repo picker + apps/usage/billing dashboard (§4); ADR-011/012. Slots between M7 and M8 |
 | **M8** (hardening + ops) | Cold-wake transparency surfaces (§6), status page, docs site launch-complete (§8), account export/delete UX (gap G6) |
 
@@ -334,9 +347,9 @@ Acceptance for the UX layer overall (add to M8 gate): a first-time user reaches 
 
 | Question | Needed by | Current lean |
 |---|---|---|
-| Magic-link vs. password for dashboard login? | M7.5 | Magic link (no password store, fewer support tickets) |
+| Which additional identity providers should follow Google/GitHub? | post-GA | Keep the current OAuth flows; add providers only with a documented support and recovery plan |
 | PR preview envs — Pro-only, how many per account? | v1.1 | Pro-only, cap 5, aggressive auto-park (§5.3) |
-| In-CLI upgrade (`faas app scale --plan`) vs. dashboard-only? | M7 | CLI can initiate; card capture bounces to Stripe portal |
+| In-CLI upgrade (`gregale app scale --plan`) vs. dashboard-only? | M7 | CLI can initiate; card capture bounces to the billing portal |
 | Log retention shown to users (10 MB ring — impl gap)? | M8 | State the ring limit honestly; object-storage archive as a Pro add-on later |
 | Onboarding email drip vs. none? | post-GA | None at launch (principle 2); revisit with data |
 

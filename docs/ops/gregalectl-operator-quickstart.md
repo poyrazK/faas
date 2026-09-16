@@ -91,7 +91,8 @@ success, exit 3 on schema violation (the report names the field).
 
 Materialises `/etc/faas/*.toml`, systemd units, cgroup subtree_control,
 and the per-box PKI leaves. `--dry-run` prints the planned writes
-without touching disk (use this for `make metal-lima-splitbox`).
+without touching disk (use this for the native acceptance rehearsal described
+in `docs/ops/native-m9-acceptance.md`).
 
 ### `manifest ansible --manifest-file <yaml> [--output-dir DIR]`
 
@@ -412,7 +413,7 @@ gregalectl host-age status --json    # current: {path, mode, mtime, sha256, key_
 gregalectl host-age prune-previous [--dry-run] [--json]  # removes the previous file when safe
 ```
 
-`prune-previous` is the load-bearing CI gate for `make metal-lima-splitbox`
+`prune-previous` is the load-bearing CI gate for the native acceptance
 — the `--dry-run` lets CI validate prune safety without mutating. The
 JSON shape includes `would_prune: <bool>` + a `kept: [{path, reason}]`
 array so gates can branch on individual kept siblings.

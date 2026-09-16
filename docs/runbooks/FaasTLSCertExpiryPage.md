@@ -14,10 +14,11 @@ Severity: page.
 > migration window. PR-C sweeps the certmagic packages and
 > this runbook will be archived alongside them.
 >
-> The certmagic surface lives on `gatewayd-public` post-ADR-070;
-> the legacy `gatewayd.toml` config file is retained as the
-> historical reference, with the current config at
-> `/etc/faas/gatewayd-public.toml`.
+> The certificate metrics and this runbook are retained for legacy
+> observability only. Current production TLS terminates at the upstream
+> Caddy/Cloudflare edge; use `docs/ops/secrets-rotation.md` for the current
+> provider-token procedure. The legacy `gatewayd.toml` config file is kept
+> only as migration reference.
 
 ## Symptom
 
@@ -54,9 +55,8 @@ dig +short $(grep -E '^\[tls\]' -A 30 /etc/faas/gatewayd.toml | grep wildcard_ce
 If the Hetzner token is the cause, rotate it:
 
 1. Generate a new token in the Hetzner Cloud Console.
-2. Drop the sealed token at `cfg.HetznerDNSAPITokenPath` (re-run
-   `faas secrets seal` on the reference node; the LoadCredential call is
-   what gatewayd-public reads).
+2. Drop the token using the current provider-owned secret procedure (the
+  legacy `LoadCredential` call is what the retired daemon reads).
 3. `systemctl restart faas-gatewayd-public` (the H4 file-watch reload is
    the open follow-up; until then, a restart is the rotation step).
 4. Certmagic will re-mint on the next wake. Watch the gauge

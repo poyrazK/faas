@@ -45,7 +45,7 @@ surface but not customer API:
 | Route                         | Reason                                  |
 | ----------------------------- | --------------------------------------- |
 | `GET /v1/account/dpa`         | Public markdown (no auth).              |
-| `POST /v1/webhooks/stripe`    | HMAC-signed webhook (operator-side).   |
+| `POST /v1/webhooks/stripe`    | HMAC-signed webhook for the legacy Stripe compatibility provider (operator-side).   |
 | `GET\|POST\|DELETE /v1/compute-nodes` | Operator-only (ADR-029).         |
 | `GET /v1/events`              | SSE — cookie OR Bearer, not `s.auth`.  |
 | `GET\|POST /login`, `POST /logout`, `GET /auth/verify` | Dashboard magic-link.       |

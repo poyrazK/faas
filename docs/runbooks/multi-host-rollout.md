@@ -411,7 +411,7 @@ If the table is empty after 30 s, check:
 ```sh
 # Deploy a small fixture app, watch it land on fsn-2 for at least
 # one of the concurrent wakes.
-faas app deploy --image ghcr.io/poyrazk/faas-test:hello
+gregale app deploy --image ghcr.io/poyrazk/faas-test:hello
 psql -c "select node_id, state from instances where app_id='hello' \
          order by created_at desc limit 5"
 ```
@@ -606,9 +606,8 @@ If the handoff stalls in `state='migrating'` past the lease
   `compute_nodes.name WHERE active=true`, standby warm-up,
   drain protocol). Multi-host horizontal-scale (this runbook)
   is now orthogonal: you run BOTH for full HA coverage. A
-  `make ha-failover-drill` target on the two-node Lima fleet
-  (`deploy/lima/faas-metal-2node-ha.yaml`) exercises the
-  failover end-to-end.
+  native two-node acceptance procedure in
+  `docs/ops/native-m9-acceptance.md` exercises the failover end-to-end.
 
 ## Acceptance
 

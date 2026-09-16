@@ -14,10 +14,11 @@ Severity: warn.
 > migration window. PR-C sweeps the certmagic packages and
 > this runbook will be archived alongside them.
 >
-> The certmagic surface lives on `gatewayd-public` post-ADR-070;
-> the legacy `gatewayd.toml` config file is retained as the
-> historical reference, with the current config at
-> `/etc/faas/gatewayd-public.toml`.
+> The certificate metrics and this runbook are retained for legacy
+> observability only. Current production TLS terminates at the upstream
+> Caddy/Cloudflare edge; use `docs/ops/secrets-rotation.md` for the current
+> provider-token procedure. The legacy `gatewayd.toml` config file is kept
+> only as migration reference.
 
 ## Symptom
 

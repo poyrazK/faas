@@ -14,7 +14,8 @@ Before promoting a fleet to active-passive HA, verify:
    `cmd/schedd` has the per-node schedd + parked-app
    rebalance (ADR-064) wired in, the cross-node live-instance
    migration (ADR-066) is operational, and `gatewayd-public`
-   is the TLS-only edge (ADR-070). Without these, the
+   is the public plain-HTTP handoff behind the upstream Caddy/Cloudflare TLS
+   edge (ADR-070). Without these, the
    active-passive topology is half-built — the leader election
    runs but no traffic shifts.
 2. **`compute_nodes` has ≥ 2 active rows.** A single-box
@@ -140,7 +141,9 @@ To switch from `manual` (drill mode) to `cloudflare` (prod mode):
 2. **Seal the token** with `pkg/secretbox.SealBytes`:
 
    ```sh
-   faas secrets seal --namespace=dns_provider --file=cf-token.txt
+   # Provision FAAS_DNS_PROVIDER_SEALED through the provider-owned secret
+   # file described in ../ops/secrets-rotation.md. Do not put the DNS token
+   # in the customer `gregale secrets` store.
    ```
 
    The output is the `FAAS_DNS_PROVIDER_SEALED` env var value
@@ -153,7 +156,7 @@ To switch from `manual` (drill mode) to `cloudflare` (prod mode):
    FAAS_DNS_ZONE=example.com \
    FAAS_DNS_PROVIDER_SEALED=<sealed-blob> \
    FAAS_HOST_KEY_PATH=/etc/faas/secrets/host.age \
-     systemctl restart gatewayd-public
+     systemctl restart faas-gatewayd-public.service
    ```
 
    The `FAAS_HOST_KEY_PATH` env var is the existing
@@ -162,8 +165,8 @@ To switch from `manual` (drill mode) to `cloudflare` (prod mode):
    returns `errSecretBoxUnconfigured` at the first DNS attempt,
    which surfaces as `outcome="dns_stale"` on the failover
    counter (the right behavior: fail loud, never silent no-op).
-4. **Verify the unseal path** by running the drill script
-   (`deploy/lima/run-ha-failover.sh`) on the Lima fleet and
+4. **Verify the unseal path** by running the native acceptance procedure in
+   [`docs/ops/native-m9-acceptance.md`](../ops/native-m9-acceptance.md) and
    confirming `outcome="dns_flipped"` advances (not
    `outcome="manual_drain"`).
 
@@ -202,12 +205,13 @@ The Tier A8 escalation tree (in order of preference):
 - Spec §14 M8 row:
   `docs/faas_implementation_spec.md`
 - Issue #297 (umbrella)
-- Two-node Lima fleet: `deploy/lima/faas-metal-2node-ha.yaml`
+- Native two-node acceptance procedure:
+  `docs/ops/native-m9-acceptance.md`
 
 ## Acceptance
 
 The runbook is closed when ALL of the following pass on the
-two-node Lima fleet (`make ha-failover-drill`):
+native two-node acceptance pair (`make native-m9-acceptance`):
 
 - [ ] A `node_drain` intent for `node-a` succeeds and the drain event fires.
 - [ ] Within `HADNSRecordStaleSeconds = 30 s`:

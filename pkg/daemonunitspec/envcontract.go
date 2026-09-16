@@ -55,7 +55,7 @@ const (
 	EnvSourceInternal EnvSource = "internal"
 	// EnvSourceClient — read by the CLI/SDK on the operator's machine.
 	EnvSourceClient EnvSource = "client"
-	// EnvSourceDevOnly — tests, e2e, Lima. Must never be set in production.
+	// EnvSourceDevOnly — tests and acceptance harnesses. Must never be set in production.
 	EnvSourceDevOnly EnvSource = "dev-only"
 	// EnvSourceGuest — read by guest-init inside the microVM, delivered by
 	// vmmd through the boot manifest, never by host deploy.
@@ -431,17 +431,17 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TEST_BUILDER_BASE_REF", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_TEST_DEPLOY_BASE_REF", Owners: []string{"imaged", "shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
 	{Name: "FAAS_TEST_KERNEL", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
-	{Name: "FAAS_TLS_CONTACT_EMAIL", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_TLS_CONTACT_EMAIL", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "legacy tenant-surface certificate issuer; production public TLS is upstream"},
 	{Name: "FAAS_TLS_CUTOVER_STATE_FILE", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "optional operator override for the durable issue #252 TLS cutover state path"},
 	{Name: "FAAS_TLS_DIR", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
-	{Name: "FAAS_TLS_DNS_PROVIDER", Owners: []string{"shared"}, Source: EnvSourceDefault},
-	{Name: "FAAS_TLS_DNS_TOKEN", Owners: []string{"gatewayd-internal"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal)"},
+	{Name: "FAAS_TLS_DNS_PROVIDER", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "legacy tenant-surface certificate issuer; production public TLS is upstream"},
+	{Name: "FAAS_TLS_DNS_TOKEN", Owners: []string{"gatewayd-internal"}, Source: EnvSourceSecretsEnv, Note: "legacy tenant-surface certificate issuer; delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env (gatewayd-internal)"},
 	{Name: "FAAS_TLS_STAGING", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "must never be set on a production host"},
-	{Name: "FAAS_TLS_STORAGE_DIR", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_TLS_STORAGE_DIR", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "legacy tenant-surface certificate storage; production public TLS is upstream"},
 	{Name: "FAAS_TOKEN", Owners: []string{"shared"}, Source: EnvSourceClient, Note: "read by the CLI/SDK on the operator's machine, never by a daemon"},
 	{Name: "FAAS_TRACE_OBSERVER_TOKEN", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TRACE_RING_CAP", Owners: []string{"shared"}, Source: EnvSourceDefault},
-	{Name: "FAAS_TRUSTED_INGRESS_CIDRS", Owners: []string{"gatewayd-public"}, Source: EnvSourceUnit, Note: "TLS terminator CIDRs allowed to provide canonical forwarding context"},
+	{Name: "FAAS_TRUSTED_INGRESS_CIDRS", Owners: []string{"gatewayd-public"}, Source: EnvSourceUnit, Note: "upstream TLS edge CIDRs allowed to provide canonical forwarding context"},
 	{Name: "FAAS_TRUSTED_PUBLISHERS_DIR", Owners: []string{"apid", "imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TWO_NODE_ADDR_", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "native two-node acceptance fixture; must never be set on a production daemon"},
 	{Name: "FAAS_TWO_NODE_NODE_", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "native two-node acceptance fixture; must never be set on a production daemon"},

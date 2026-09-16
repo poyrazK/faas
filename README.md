@@ -118,9 +118,9 @@ scaling, and metering machinery.
                        └────────────────► schedd ──► vmmd ──► Firecracker VM
                                                 admission     jailer / netns
 
-  client ──TLS──► gatewayd-public ──► gatewayd-internal ──► running VM
-                                            │
-                                            └── cold path ──► schedd / vmmd
+  client ──TLS──► Caddy / Cloudflare ──► gatewayd-public ──► gatewayd-internal ──► running VM
+                                                                                     │
+                                                                                     └── cold path ──► schedd / vmmd
 
   meterd ──► usage and billing       outboundd / realtimed / s3-gatewayd
 ```
@@ -161,7 +161,7 @@ changes are recorded in [ADRs](docs/adr/).
 
 | Component | Responsibility |
 |---|---|
-| `gatewayd-public` | Public listener, TLS, domain and edge ingress. |
+| `gatewayd-public` | Plain-HTTP public listener and handoff from the upstream Caddy/Cloudflare edge. |
 | `gatewayd-internal` | Routing, request policy, wake coordination, accounting, and proxying. |
 | `apid` | Public API, authentication, customer intent, deployment orchestration, and dashboard. |
 | `githubd` | GitHub App integration, source-ref deploys, checks, deployments, and PR previews. |

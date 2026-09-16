@@ -71,8 +71,7 @@ operator-facing surfaces.
 
 ## Preconditions
 
-- `gregale` is on PATH (it's the same binary as `faas`; the
-  installer places it at `/usr/local/bin/gregale`).
+- `gregale` is on PATH; the installer places it at `/usr/local/bin/gregale`.
 - Operator has read access to `/etc/faas/secrets/` (root).
 - Operator has `journalctl` access (root) to bounce daemons.
 - Pre-rotation unseal errors are zero. Check before starting:
@@ -389,10 +388,10 @@ distinguishes it from first-time sets (`secret.rotated` vs
 CLI shape (issue / ADR-089 PR-B):
 
 ```sh
-faas secrets rotate --app my-app STRIPE_KEY \
+gregale secrets rotate --app my-app STRIPE_KEY \
   --value 'sk_live_...'
 # or pipe from stdin / vault
-faas secrets rotate --app my-app STRIPE_KEY < new-key.txt
+gregale secrets rotate --app my-app STRIPE_KEY < new-key.txt
 ```
 
 Response:

@@ -1,10 +1,35 @@
 # Status
 
-Spec §14 milestones M0 → M8. The README has the one-line version;
-this file is the long form (which PR closed which issue, what each
-milestone actually shipped, what's left on the board). Update this
-when a milestone lands — readers coming from the README land here
-for context.
+This file is the long-form engineering record: it preserves milestone history
+and tracks the acceptance evidence that is still open. The README intentionally
+does not mirror this list; customer-facing maturity belongs in the generated
+[capability matrix](capabilities.md). Update the current snapshot below when
+release or acceptance state changes, and keep older milestone notes clearly
+historical.
+
+## Current snapshot — 2026-09-16
+
+- **Product surface:** the `gregale` CLI, API, GitHub integration, dashboard,
+  framework apps, functions, async workloads, edge protocols, and managed data
+  paths are implemented in the current tree. Entitlement and launch status are
+  generated in [`docs/capabilities.md`](capabilities.md), not inferred from
+  milestone labels below.
+- **Deployment:** supported acceptance runs on native x86_64 Linux KVM hosts.
+  The split-box manifest and role-aware Ansible bootstrap are the supported
+  production path; nested virtualization and the retired local harness are not
+  acceptance environments.
+- **Current engineering focus:** M9 multi-box recovery and snapshot fan-out,
+  durable release/rollback safety, debugger and execution observability, and
+  the remaining operator recovery drills. The open evidence list is maintained
+  in [What's next](#whats-next).
+- **Recently merged platform work:** release-safe rollback and snapshot
+  transitions, safe deployment rollout preflight details and CLI diff output,
+  debugger regression/root-cause synthesis with target-mirror replay,
+  durable project-environment promotions, streamed disposable executions,
+  durable wake lifecycle and suspension handling, and customer cache and
+  error-budget metrics. Managed PostgreSQL dependency binding is available as
+  a gated operator preview. These landed after the older milestone prose below
+  and should not be inferred from its historical PR list.
 
 ## M0 — repo scaffold. ✅
 
@@ -31,8 +56,8 @@ boot verified metal-side (`cmd/e2e/deploy_wake_metal_test.go`).
 
 **Fixture follow-up:** the body/trim mismatch originally flagged in PR #55
 was resolved by PRs #151, #159, #135; `deploy_wake_metal_test.go` is now
-exercised by the M8 netns + egress test path. Reference-node + Lima sign-off
-on the §14 metal acceptance gate is tracked under [What's next](#whats-next).
+exercised by the M8 netns + egress test path. Native x86_64 acceptance-node
+sign-off on the §14 metal gate is tracked under [What's next](#whats-next).
 
 ## M3 — snapshots + wake. ✅
 
@@ -60,12 +85,12 @@ Production wiring is in via the pgx-backed `state.PgStore`, real
 plan-quota table-tests (`cmd/e2e/quota_e2e_test.go`), the
 snapshot-prime handshake that flips a deployment to `live` after
 one cold-boot priming cycle, and the G2 sealed-secrets path
-(PR #42); `faas` CLI renders RFC 7807 problems (UX §3.3).
+(PR #42); `gregale` CLI renders RFC 7807 problems (UX §3.3).
 
 **Fixture follow-up:** the body/trim mismatch flagged in PR #55
 was resolved by PRs #151, #159, #135 (same fixture exercised by
-the M8 netns + egress path). Reference-node + Lima sign-off on the §14
-metal acceptance gate is tracked under [What's next](#whats-next).
+the M8 netns + egress path). Native x86_64 acceptance-node sign-off on the
+§14 metal acceptance gate is tracked under [What's next](#whats-next).
 
 **Beta ship-blockers landed** — PR #136 (`PR-A`, ship-blockers
 for the beta cohort) and PR #154 (`PR-B`, atomic supersede +
@@ -81,15 +106,15 @@ no longer reachable through `/login`); PR #174 hardened
 `POST /login` against pre-auth takeover
 (`cmd/apid/handlers_auth.go:112`, closes #165).
 
-**CLI SDK promoted** — PR #157 lifted `cmd/faas/client.go` to
+**CLI SDK promoted** — PR #157 lifted the original CLI client to
 `pkg/api/client.go` as the public SDK (38 exported methods
 covering apps, deployments, plans, domains, crons, keys,
 secrets, usage, and the OAuth device-code flow).
 
 **CLI token now lives in the OS keychain (issue #293, closes gap G5)**
-— `cmd/faas/config.go` writes through `github.com/zalando/go-keyring`
-(macOS Keychain / Linux libsecret via D-Bus / Windows wincred); the
-plaintext file at `~/.config/faas/token` is retained only as a
+— the current `cmd/gregale/config.go` writes through
+`github.com/zalando/go-keyring` (macOS Keychain / Linux libsecret via
+D-Bus); the plaintext file at `~/.config/gregale/token` is retained only as a
 fallback for headless hosts with no D-Bus session (CI runners,
 SSH-only servers), and a WARN recommends installing `gnome-keyring`.
 First successful keychain save one-shot-deletes the legacy
@@ -297,8 +322,8 @@ test, the docs fixes below, and the metal acceptance test.
 - **Acceptance gate:** `pkg/fcvm/tail_metal_linux_test.go` (//go:build
   metal && linux) exercises the full path — handler returns, runner drains
   the tail, schedd park path observes the post-drain `tail_count
-  == 0`, snapshot taken. Run with `make metal-lima RUN_ARGS='-run
-  TestMetal_TailEndToEnd'`. `TestPushHour_ExcludesTailSeconds` and
+  == 0`, snapshot taken. Run with `make test-metal RUN_REGEX='TestMetal_TailEndToEnd'`
+  on the native x86_64 acceptance host. `TestPushHour_ExcludesTailSeconds` and
   the cardinality tests run on every `go test` invocation and are
   the load-bearing pre-metal pre-merge checks.
 - **Acceptance-checkboxes #6, #7, #8 closed (issue #667 follow-up, PR
@@ -323,7 +348,7 @@ test, the docs fixes below, and the metal acceptance test.
   non-5xx response as the original ADR described). The 5 s
   `snapshotAndPark` watchdog is the hard ceiling — if the tail host
   hangs, the park gate fires `tail_failed{reason=forced_at_park}`.
-  Metal run verified on Lima nested KVM. ADR-078 §"Amendment"
+  The supported evidence is a native x86_64 KVM run. ADR-078 §"Amendment"
   documents the change.
 
 ## M7.6 — extracted Next.js dashboard + githubd. ✅
@@ -363,8 +388,8 @@ spinner) and PR #51 (the closeout batch):
 - **§11 cgroup fence verified** — #33 `memory.max = plan + 8 MB`
   after bringUp; unit tests in `pkg/fcvm/cgroup_test.go` green;
   metal test in `pkg/fcvm/manager_metal_test.go::TestMetalMemoryMaxFenceEnforced`
-  runs on a reference control-plane node (`make test-metal`) and Lima (`make metal-lima`),
-  not on a bare dev box.
+  runs on the dedicated native x86_64 acceptance node (`make test-metal`),
+  not on a developer workstation.
 - **§12 SLO dashboard pipeline** — `fcvm_snapshot_fleet_avg_bytes`,
   `fcvm_snapshot_fleet_p95_bytes`, `fcvm_resident_ram_pct`,
   `fcvm_lv_fc_used_pct` (schedd-owned), plus
@@ -405,7 +430,7 @@ spinner) and PR #51 (the closeout batch):
   column, additive `ON CONFLICT` merge; `mb_seconds` retains
   first-write-wins), `GET /v1/usage`, `/v1/usage/summary`, and
   `/v1/account/export` all expose `cpu_usec` / `used_cpu_hours`,
-  and `faas usage` shows a CPU panel. **Informational only — no
+  and `gregale usage` shows a CPU panel. **Informational only — no
   billing change.** `pkg/billing/provider.go`, `pkg/api/limits.go`,
   and the financial model are explicitly untouched. The data
   path is the seam for the future billing PR (extends
@@ -420,7 +445,7 @@ spinner) and PR #51 (the closeout batch):
   accumulate additively in `usage_minutes.net_tx_bytes` (vmmd)
   and `usage_minutes.tx_bytes` (gateway). `usage_monthly` sums
   both columns; `GET /v1/usage`, `/v1/usage/summary`,
-  `/v1/account/export`, and `faas usage` expose the per-(account,
+  `/v1/account/export`, and `gregale usage` expose the per-(account,
   app, month) totals; `pkg/appmetrics` rolls up
   `gateway_response_bytes_total{app,plan}` for the dashboard.
   **Informational only — no billing change.**
@@ -526,8 +551,9 @@ The §14 M8 gates still on the board are listed in [What's next](#whats-next).
   `ActivePassiveFailoversTotal` counter (`<prefix>_gateway_active_passive_failovers_total{outcome}`,
   outcomes: `dns_flipped` | `dns_stale` | `peer_unreachable` | `manual_drain`); probe
   timeout bounded by `HAFailoverProbeTimeoutMS = 500` (in `pkg/api/limits.go`); drain
-  deadline bounded by `HADNSRecordStaleSeconds = 30`. Failure drill: `make ha-failover-drill`
-  on two-node Lima fleet (`deploy/lima/faas-metal-2node-ha.yaml`); standalone runbook at
+  deadline bounded by `HADNSRecordStaleSeconds = 30`. The failure drill is
+  operator-driven on the native two-node acceptance pair; see
+  `docs/ops/native-m9-acceptance.md` and the standalone runbook at
   `docs/runbooks/active-passive-ha.md`. Closes the Gate-A row "2nd box active-passive" in
   spec §14 M8.
 
@@ -540,7 +566,7 @@ The §14 M8 gates still on the board are listed in [What's next](#whats-next).
 - **ADR-110** (declarative split-box manifest, accepted 2026-08-16): versioned YAML + typed schema at `deploy/manifest/splitbox.yaml` + `pkg/manifest/`; SemVer `schema_version (1.0.0)`; canonical validation through `gregalectl manifest validate` + the renderer + the release bundle installer + the doctor + the metal harness. PR-cluster shipped (PRs #912 #913 #914 #915 #917 #918 #919 #920 #921 #922 #923 #924).
 - **ADR-141** (durable imaged→apid audit delivery, accepted 2026-09-03): migration 00590 adds a deduplicated `audit_event_outbox`; imaged keeps `pg_notify` as the fast wakeup, while apid transactionally writes the audit row and replays pending or expired-lease handoffs every two seconds. Failed deliveries back off, dead-letter after twelve attempts, and queue metadata is pruned after 90 days without deleting audit evidence. This closes the signature-audit loss window identified in ADR-058.
 
-End-to-end smoke: `make native-m9-acceptance` exercises the native x86 per-node heartbeat/failure-safe path. It replaces the retired two-node Lima gate; the target requires the acceptance marker, explicit `FAAS_M9_CONFIRM=native-x86`, and a schedd+vmmd pair on each node. The split-box deployment now installs a node-local schedd on every compute host, and peer schedds observe stale heartbeat timestamps so a frozen owner cannot hide its node. Live-migration workload fixtures and the measured snapshot fan-out gate remain follow-up work in the M9 runbook.
+End-to-end smoke: `make native-m9-acceptance` exercises the native x86 per-node heartbeat/failure-safe path. It replaces the retired local virtualization harness; the target requires the acceptance marker, explicit `FAAS_M9_CONFIRM=native-x86`, and a schedd+vmmd pair on each node. The split-box deployment now installs a node-local schedd on every compute host, and peer schedds observe stale heartbeat timestamps so a frozen owner cannot hide its node. Live-migration workload fixtures and the measured snapshot fan-out gate remain follow-up work in the M9 runbook.
 
 ### M8 — alert pipeline. ✅ (this PR)
 
@@ -946,10 +972,10 @@ makes Gregale match that posture for newly-created apps.
   (omitted via `omitempty` on fresh-create apps; surfaces RFC3339
   for grandfathered apps so dashboards can render the
   "since YYYY-MM-DD" suffix).
-- **CLI** — `faas apps list` adds an AUTH column. `AUTH: open` /
+- **CLI** — `gregale apps list` adds an AUTH column. `AUTH: open` /
   `AUTH: required` / `AUTH: required + basic`, suffixed with
   `· since YYYY-MM-DD` on grandfathered apps. Per-app opt-out:
-  `faas app <slug> --no-require-authn`.
+  `gregale app <slug> --no-require-authn`.
 - **Dashboard** — new `Page.ActionRequiredSurface` banner on the
   account view. The banner surfaces the migration date and the
   universal opt-out command (one place; no per-app link rot).
@@ -1003,26 +1029,19 @@ explicitly open issues that the doc otherwise implies are closed.
   and `stripe` nil.~~ **Closed by PR #69** (`worktree-harden-meterd`).
 - ~~**`pkg/stripex/usage.go::PushUsageRecord`** — `nil`-returning
   `TODO stripe-go`.~~ **Closed by PR #69.**
-- **Provider-pluggable billing (Stripe + Paddle)** — see the M7
-  body above. **Note:** the dashboard / CLI surface for
-  `paddle_checkout_url` rendering is still outstanding (the original
-  PR #4 in the paddle-mor series). Track via the issue search.
+- **Provider-pluggable billing (Polar default; Paddle/Stripe compatibility
+  paths)** — see the M7 body above. Customer-facing plan and usage surfaces
+  use the provider-neutral `billing.Provider` contract; do not infer the
+  active provider from this historical milestone section.
 
 ### M8
 
-- **CertMagic TLS** for `gatewayd-public` (`*.gregale.dev` via DNS-01;
-  on-demand HTTP-01 gated by `custom_domains` allowlist). Plumbing
-  landed across `pkg/gateway/tls*.go`, `dns01_hetzner.go`,
-  `allowlist.go`, `acme.go`, `cmd/gatewayd-public/{main,config,secrets}.go`,
-  the systemd unit, and the ansible role; `caddyserver/certmagic`
-  v0.25.4 is pinned in `go.mod:14`. PR #87 closed the reference-node cut-over
-  + the structured acceptance tests; ADR-024 declared H3 (TLS
-  observability — cert-expiry gauge + on-demand-denial counter) and
-  H4 (file-watch secret reload) as known follow-ups. H3 closes in
-  this PR via `pkg/gateway/metrics.go::tlsCertExpiry` + `tlsOnDemandDenied`
-  + `pkg/gateway/cert_expiry.go` refresher, wired into
-  `cmd/gatewayd-public/main.go`; three alert rules land in `faas.rules.yml`;
-  operator runbook at `docs/ops/gatewayd-public-tls-cutover.md` (the legacy `docs/ops/gatewayd-tls-cutover.md` retains the pre-PR-A cut-over steps; current process lives in the public-edge runbook).
+- **TLS edge cutover** — production TLS terminates at the upstream
+  Caddy/Cloudflare edge and forwards trusted plain HTTP to
+  `faas-gatewayd-public.service`. The old CertMagic-in-`gatewayd-public`
+  work is retained in ADRs and legacy alert runbooks for archaeology; the
+  supported operator procedure is
+  [`docs/ops/gatewayd-public-tls-cutover.md`](ops/gatewayd-public-tls-cutover.md).
 - **§14 V2 latency driver** — 100 platform-only park→wake cycles per app class,
   p95 < 350 ms from capacity admission/`wake.boot_started` through the first
   upstream byte on the reference SSD node. The reusable
@@ -1030,8 +1049,8 @@ explicitly open issues that the doc otherwise implies are closed.
   p50/p90/p95/p99 distributions and rejects incomplete runtime cohorts. CDN,
   Internet and client-distance timing stays outside this gate. Reference-SSD
   execution is recorded here
-  when the metal acceptance run is available. Runs on
-  `make metal-lima RUN_ARGS='-run TestDeployWakeMetal'`.
+  when the native x86_64 metal acceptance run is available. Runs on
+  `make test-metal RUN_REGEX='TestDeployWakeMetal'`.
 - **Documented timed restore drill** — §14 M8: PG + one app back
   serving on a clean VM < 30 min, recorded as executed. Run
   `sudo make backup-restore-drill` on EX44; it writes
@@ -1053,7 +1072,7 @@ explicitly open issues that the doc otherwise implies are closed.
 - **M2 / M5 §14 metal gate sign-off** — the body/trim fixture
   mismatch flagged in PR #55 is resolved at the code level
   (PRs #151, #159, #135). The remaining item is a clean-checkout
-  `make metal-lima` run on reference node / Lima recording the gate green.
+  `make test-metal` run on the native acceptance host recording the gate green.
 
 ### Container service follow-ups
 
@@ -1106,7 +1125,7 @@ sometimes implied they were closed; they aren't.
   bare-bearer-default without a usable scope would strand the
   customer. Existing apps are reachable exactly as they were at
   flip-time; opt-out per app via
-  `faas app <slug> --no-require-authn`. Operator dashboard renders
+  `gregale app <slug> --no-require-authn`. Operator dashboard renders
   the migration banner on the account view when
   `count(apps where auth_default_flipped_at is not null) > 0`.
   See ADR-080.
@@ -1162,7 +1181,7 @@ and will flip to ✅ once the review-blocking items clear.
   cassandra / clickhouse). Both paths feed
   `pkg/oci::SentinelToCode` → `deployments.error_code`.
 - **PR-B (PR #417, merged):** customer-facing pattern. Four
-  `faas init --template={s3-uploader, slack-bot,
+  `gregale init --template={s3-uploader, slack-bot,
   rest-api-postgres, cron-worker}` templates plus
   `docs/storage.md` teaching the managed-service pattern.
 - **PR-C (ADR-047, draft PR #421):** runtime advisory. Guest-init
@@ -1176,8 +1195,8 @@ and will flip to ✅ once the review-blocking items clear.
   Surfaced via `GET /v1/audit-events?kind_prefix=stateless.advisory`
   (plus `?app_id=` and `?include_anonymous=` for the dashboard
   drill-down), the new `db.NotifyStatelessAdvisory` SSE channel,
-  `faas audit-events [--kind-prefix=…] [--app-id=…]
-  [--include-anonymous]`, `faas tail --include-stateless`, and the
+  `gregale audit-events [--kind-prefix=…] [--app-id=…]
+  [--include-anonymous]`, `gregale tail --include-stateless`, and the
   dashboard `app_detail.html` "Stateless advisories" link into
   `/dashboard/audit-events?kind_prefix=stateless.advisory&app_id=…`.
   Advisory-only — spec §17 G13 explicitly forbids EROFS for Wave 0.

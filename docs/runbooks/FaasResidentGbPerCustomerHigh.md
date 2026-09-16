@@ -75,4 +75,6 @@ the offending app(s) via the per-account breakdown above and either:
 1. Adjust the customer's idle timeout / max concurrency via
    `apid PATCH /v1/apps/{slug}` (operator action — Pro/Scale only).
 2. Reduce unnecessary residency and let the month-to-date average fall.
-3. Migrate the customer to a higher plan via Stripe self-service.
+3. Move the customer to a higher plan through the configured billing
+   provider's customer portal or checkout flow. Polar is the public-release
+   default; Paddle and Stripe remain compatibility integrations.

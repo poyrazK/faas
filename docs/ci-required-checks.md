@@ -124,7 +124,7 @@ split does not silently lose a load-bearing gate.
 | `make build-clis`                              | Both `gregale` + `gregalectl` compile cleanly                            | `Makefile:16-19`                                      |
 | `make manifest-ansible`                        | `gregalectl manifest ansible` renders the inventory + host_vars tree    | `Makefile:497-498`                                    |
 | `make manifest-scale-check`                    | Generated 1/10/100/1000-node topology + Ansible check-mode gate       | `Makefile:534-535`                                    |
-| `make metal-lima-splitbox`                     | End-to-end smoke: validate → render → release install → doctor --deep    | `Makefile:367`                                        |
+| `make native-m9-acceptance`                    | Native x86_64 two-node failure-safe smoke: validate → render → release install → doctor --deep | `Makefile:504-506` |
 | `commands_completion_test.go::TestCompletion_ManifestDrift` | `main.go` dispatcher ↔ `cli_meta.go` ↔ `commands_completion_test.go` tri-way drift | `cmd/gregalectl/commands_completion_test.go:23` |
 | `json_parity_test.go::TestJSONOutputHonored`   | Every `cmdXxx` that references `jsonOutput`/`jsonEnabled` is exercised by a test (Tier A8.2) | `cmd/gregalectl/json_parity_test.go:38`     |
 | `cmd/e2e/manifest_render_test.go`              | e2e golden path: manifest validate → render → daemon reload              | `cmd/e2e/manifest_render_test.go`                     |
