@@ -482,6 +482,12 @@
               <dt>Error rate</dt><dd>{{printf "%.1f" .Data.Metrics.ErrorRatePct}}%</dd>
               <dt>Cold-start share</dt><dd>{{printf "%.1f" .Data.Metrics.ColdStartPct}}%</dd>
               <dt>Wake latency p95 <small style="color:#888">(fleet)</small></dt><dd>{{printf "%.1f" .Data.Metrics.WakeP95MS}} ms</dd>
+              {{if .Data.Metrics.CacheHitRateAvailable}}
+                <dt>Response-cache hit rate</dt><dd>{{printf "%.1f" .Data.Metrics.CacheHitRatePct}}%</dd>
+              {{end}}
+              {{if .Data.Metrics.ErrorBudgetAvailable}}
+                <dt>Error budget remaining</dt><dd>{{printf "%.1f" .Data.Metrics.ErrorBudgetPct}}%</dd>
+              {{end}}
             </dl>
           {{end}}
         </section>

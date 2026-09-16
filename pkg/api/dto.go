@@ -4545,16 +4545,16 @@ type AppMetricsResponse struct {
 	Wakes24h int64 `json:"wakes_24h,omitempty"`
 
 	// CacheHitRatePct is the share of cache-eligible requests served
-	// from gateway_response_cache (ADR-122) over the window. It is
-	// omitted until the response-cache consumer-facing metric lands;
+	// from gateway_response_cache (ADR-122) over the selected window.
+	// It is absent when the app has no cache telemetry in the window;
 	// an absent value is intentionally distinct from an observed 0%.
 	CacheHitRatePct *float64 `json:"cache_hit_rate_pct,omitempty"`
 
 	// ErrorBudgetPct is the remaining API-availability error budget
-	// as a percentage (0 = exhausted, 100 = full). It is omitted
-	// until the per-plan SLO target and trailing-window query are
-	// wired; an absent value is intentionally distinct from an
-	// observed exhausted budget.
+	// as a percentage (0 = exhausted, 100 = full) over the selected
+	// window. It is absent when the app has no requests in the window;
+	// an absent value is intentionally distinct from an observed
+	// exhausted budget. The current API-availability target is 99.5%.
 	ErrorBudgetPct *float64 `json:"error_budget_pct,omitempty"`
 }
 

@@ -5510,7 +5510,7 @@ haveApp:
 				// (predicate veto) — a follow-on ADR can
 				// widen the counter with a `reason` label
 				// if operators need finer breakdown.
-				h.metricsIncCacheOutcome("store_skipped")
+				h.metricsIncCacheOutcome(app.ID, "store_skipped")
 			}
 			// Refresh the occupancy gauges regardless of the
 			// store outcome — the gauge is a snapshot, not a

@@ -304,10 +304,9 @@ func TestAppMetrics_FreePlanReturns402(t *testing.T) {
 }
 
 // TestAppMetrics_HobbyPlanReturns200 confirms Hobby+ passes the
-// gate. The endpoint returns 200 with the documented shape; the
-// three enrichment fields land on the wire (zeros are expected when
-// the underlying store is MemStore and the PromQL client is nil —
-// both stubs are present-tense fail-soft).
+// gate. The endpoint returns 200 with the documented shape; wakes_24h
+// remains best-effort, while cache_hit_rate_pct and error_budget_pct
+// are omitted when their metric prerequisites are unavailable.
 func TestAppMetrics_HobbyPlanReturns200(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	mustSeedApp(t, e, "my-api")
@@ -389,11 +388,9 @@ func (w wakeBootStartedStore) CountWakeBootStarted24h(_ context.Context, _ strin
 
 // TestAppMetrics_Wakes24hEnrichment pins the wakes_24h wire field
 // end-to-end: when the underlying store returns a positive count,
-// the handler stamps it on the response. The path through
-// s.store.CountWakeBootStarted24h → resp.Wakes24h is the load-
-// bearing bit — everything else (PromQL fetch, route opt-in, SLO
-// budget) stays at zero in this PR and is covered by the open
-// follow-ups in the description of pkg/api/dto.go::AppMetricsResponse.
+// the handler stamps it on the response. The PromQL fixture below
+// represents no traffic, so the optional cache-hit and error-budget
+// fields remain absent; nil is distinct from an observed 0% value.
 func TestAppMetrics_Wakes24hEnrichment(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	mustSeedApp(t, e, "my-api")
@@ -419,22 +416,19 @@ func TestAppMetrics_Wakes24hEnrichment(t *testing.T) {
 	if out.Wakes24h != 47 {
 		t.Errorf("wakes_24h = %d, want 47 (wrapped store returned it)", out.Wakes24h)
 	}
-	// The other two enrichment fields are omitted until their metric
-	// sources are available; nil is distinct from an observed 0% value.
+	// No traffic means the optional metrics are unavailable; nil is
+	// distinct from an observed 0% value.
 	if out.CacheHitRatePct != nil {
-		t.Errorf("cache_hit_rate_pct = %v, want nil (cache not yet wired)", *out.CacheHitRatePct)
+		t.Errorf("cache_hit_rate_pct = %v, want nil (no cache telemetry)", *out.CacheHitRatePct)
 	}
 	if out.ErrorBudgetPct != nil {
-		t.Errorf("error_budget_pct = %v, want nil (SLO target not yet wired)", *out.ErrorBudgetPct)
+		t.Errorf("error_budget_pct = %v, want nil (no requests)", *out.ErrorBudgetPct)
 	}
 }
 
-// TestAppMetrics_UnwiredEnrichmentFieldsAreOmitted pins the
-// contract for the two not-yet-wired metrics: an unavailable value
-// must not be serialized as an observed zero. Consumers use field
-// absence to render an unavailable state until the corresponding
-// metric source lands.
-func TestAppMetrics_UnwiredEnrichmentFieldsAreOmitted(t *testing.T) {
+// TestAppMetrics_NoTrafficMetricsAreOmitted pins the contract that
+// unavailable values are omitted rather than serialized as observed zeroes.
+func TestAppMetrics_NoTrafficMetricsAreOmitted(t *testing.T) {
 	e := setup(t, api.PlanHobby)
 	mustSeedApp(t, e, "my-api")
 	installPromFixture(t, &e, func(q string) string {

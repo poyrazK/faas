@@ -1609,15 +1609,19 @@ func RelativeTime(t time.Time, now time.Time) string {
 // the 2xx-class only — failures surface as ErrorRatePct. WakeP95MS is
 // the FLEET p95; the dashboard template labels it as such.
 type AppMetricsView struct {
-	Range        string // echoed window, e.g. "5m"
-	Source       string // "prometheus" / "degraded: <reason>"
-	RequestCount int64
-	LatencyP50MS float64
-	LatencyP95MS float64
-	LatencyP99MS float64
-	ErrorRatePct float64
-	ColdStartPct float64
-	WakeP95MS    float64
+	Range                 string // echoed window, e.g. "5m"
+	Source                string // "prometheus" / "degraded: <reason>"
+	RequestCount          int64
+	LatencyP50MS          float64
+	LatencyP95MS          float64
+	LatencyP99MS          float64
+	ErrorRatePct          float64
+	ColdStartPct          float64
+	WakeP95MS             float64
+	CacheHitRatePct       float64
+	CacheHitRateAvailable bool
+	ErrorBudgetPct        float64
+	ErrorBudgetAvailable  bool
 }
 
 // RequestAnalyticsView is the dashboard-facing projection of the customer

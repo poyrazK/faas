@@ -112,18 +112,21 @@ export type AppMetricsResponse = {
   wakes_24h?: number;
   /**
    * Share of cache-eligible requests served from
-   * `gateway_response_cache` (ADR-122) over the window.
-   * This field is omitted until the response-cache
-   * consumer-facing metric lands. Absence means unavailable,
-   * not an observed 0% hit rate.
+   * `gateway_response_cache` (ADR-122) over the selected
+   * window. The value is sourced from the additive
+   * `gateway_response_cache_app_total{app,outcome}` metric
+   * and counts only `hit / (hit + miss)`. Absence means the
+   * app had no cache telemetry in the window, not an observed
+   * 0% hit rate.
    *
    */
   cache_hit_rate_pct?: number;
   /**
-   * Trailing-30d API-availability error budget remaining. This
-   * field is omitted until the per-plan SLO target and
-   * trailing-window query are wired. Absence means unavailable,
-   * not an observed exhausted budget.
+   * API-availability error budget remaining over the selected
+   * metrics window, using the current 99.5% API-availability
+   * target. 100 means the full budget remains and 0 means it is
+   * exhausted. Absence means the app had no requests in the
+   * window, not an observed exhausted budget.
    *
    */
   error_budget_pct?: number;

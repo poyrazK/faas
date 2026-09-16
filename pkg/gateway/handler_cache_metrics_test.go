@@ -56,7 +56,7 @@ func TestCacheMetrics_OutcomeCounterClosedSet(t *testing.T) {
 func TestCacheMetrics_HitBumpsCounter(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 	pre := readCounter(t, h.metrics, "gateway_response_cache_total", "outcome", "hit")
-	h.metricsIncCacheOutcome("hit")
+	h.metricsIncCacheOutcome("app-A", "hit")
 	post := readCounter(t, h.metrics, "gateway_response_cache_total", "outcome", "hit")
 	if post != pre+1 {
 		t.Errorf("hit counter delta = %v, want 1", post-pre)
@@ -71,7 +71,7 @@ func TestCacheMetrics_HitBumpsCounter(t *testing.T) {
 func TestCacheMetrics_StoreSkippedBumpsCounter(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 	pre := readCounter(t, h.metrics, "gateway_response_cache_total", "outcome", "store_skipped")
-	h.metricsIncCacheOutcome("store_skipped")
+	h.metricsIncCacheOutcome("app-A", "store_skipped")
 	post := readCounter(t, h.metrics, "gateway_response_cache_total", "outcome", "store_skipped")
 	if post != pre+1 {
 		t.Errorf("store_skipped delta = %v, want 1", post-pre)
@@ -97,6 +97,26 @@ func TestCacheMetrics_WakesAvoidedPerApp(t *testing.T) {
 	}
 }
 
+// TestCacheMetrics_AppOutcomeCounter verifies the customer-facing additive
+// counter keeps cache outcomes attributable to the app without changing the
+// historical global counter shape.
+func TestCacheMetrics_AppOutcomeCounter(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.metricsIncCacheOutcome("app-A", "hit")
+	h.metricsIncCacheOutcome("app-A", "miss")
+	h.metricsIncCacheOutcome("app-B", "hit")
+
+	if got := readCounterLabels(t, h.metrics, "gateway_response_cache_app_total", map[string]string{"app": "app-A", "outcome": "hit"}); got != 1 {
+		t.Fatalf("app-A hit counter = %v, want 1", got)
+	}
+	if got := readCounterLabels(t, h.metrics, "gateway_response_cache_app_total", map[string]string{"app": "app-A", "outcome": "miss"}); got != 1 {
+		t.Fatalf("app-A miss counter = %v, want 1", got)
+	}
+	if got := readCounterLabels(t, h.metrics, "gateway_response_cache_app_total", map[string]string{"app": "app-B", "outcome": "hit"}); got != 1 {
+		t.Fatalf("app-B hit counter = %v, want 1", got)
+	}
+}
+
 // readCounter is a small helper that returns the current value
 // of a (name, labelName, labelValue) tuple. Returns 0 when
 // the label has never been bumped (counters are pre-
@@ -113,6 +133,33 @@ func readCounter(t *testing.T, m *Metrics, name, labelName, labelValue string) f
 			for _, lp := range mt.GetLabel() {
 				if lp.GetName() == labelName && lp.GetValue() == labelValue {
 					matched = true
+				}
+			}
+			if matched {
+				return mt.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
+func readCounterLabels(t *testing.T, m *Metrics, name string, want map[string]string) float64 {
+	t.Helper()
+	families, _ := m.registry.Gather()
+	for _, f := range families {
+		if f.GetName() != name {
+			continue
+		}
+		for _, mt := range f.GetMetric() {
+			labels := make(map[string]string, len(mt.GetLabel()))
+			for _, lp := range mt.GetLabel() {
+				labels[lp.GetName()] = lp.GetValue()
+			}
+			matched := len(labels) == len(want)
+			for key, value := range want {
+				if labels[key] != value {
+					matched = false
+					break
 				}
 			}
 			if matched {

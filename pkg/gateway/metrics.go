@@ -288,6 +288,12 @@ type Metrics struct {
 	// so a customer seeing "why isn't my cache populating?"
 	// has a dashboard chip to consult.
 	responseCache *prometheus.CounterVec
+	// responseCacheByApp is the additive customer-facing view of the
+	// response-cache outcome counter. The operator counter above keeps its
+	// historical global shape; this one adds the app label needed by the
+	// per-app metrics API without changing existing PromQL consumers.
+	// Outcomes use the same closed vocabulary as responseCache.
+	responseCacheByApp *prometheus.CounterVec
 	// responseCacheWakesAvoided (ADR-122 §Decision) counts cache
 	// hits that genuinely displaced a cold boot — i.e. a hit
 	// against an app with zero healthy instances at the moment
@@ -846,6 +852,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_response_cache_total",
 			Help: "Edge response-cache outcomes, labelled by outcome (hit|miss|bypass_authed|bypass_uncacheable|stale_if_error_served|store_skipped). hit_rate = hit / (hit + miss). bypass_* outcomes are NOT counted in hit_rate. ADR-122.",
 		}, []string{"outcome"}),
+		responseCacheByApp: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_response_cache_app_total",
+			Help: "Per-app edge response-cache outcomes, labelled by app and outcome (hit|miss|bypass_authed|bypass_uncacheable|stale_if_error_served|store_skipped). hit_rate = hit / (hit + miss). ADR-122 customer analytics.",
+		}, []string{"app", "outcome"}),
 		responseCacheWakesAvoided: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_response_cache_wakes_avoided_total",
 			Help: "Cache hits that genuinely displaced a cold boot (HealthyCount == 0 at hit time). Per-app; saved-cost surface. ADR-122.",
@@ -1563,7 +1573,7 @@ func NewMetrics() *Metrics {
 	// cartesian) is the same pattern as the rest of the family.
 	// No certificate observation is distinct from a certificate expiring now.
 	m.tlsCertExpiry.Set(math.NaN())
-	reg.MustRegister(m.requests, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
+	reg.MustRegister(m.requests, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.rateLimited, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleApply, m.edgeRuleValidateFailures, m.validateFailures, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
 	// registered on the gateway.Metrics registry so it surfaces
@@ -1938,6 +1948,19 @@ func (m *Metrics) PreInstantiateApp(appID string) {
 	}
 	for _, class := range []string{"2xx", "3xx", "4xx", "5xx"} {
 		m.requestDuration.WithLabelValues(appID, class, emptyDeploymentLabel)
+	}
+}
+
+// ObserveResponseCacheOutcome records both the historical global cache
+// outcome and the additive per-app customer-analytics outcome. Empty app IDs
+// are accepted for test-only callers but do not mint an empty app series.
+func (m *Metrics) ObserveResponseCacheOutcome(appID, outcome string) {
+	if m == nil {
+		return
+	}
+	m.responseCache.WithLabelValues(outcome).Inc()
+	if appID != "" {
+		m.responseCacheByApp.WithLabelValues(appID, outcome).Inc()
 	}
 }
 

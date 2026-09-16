@@ -171,14 +171,14 @@ func TestHasSessionCookie_WithCookie_Mega4(t *testing.T) {
 
 func TestMetricsIncCacheOutcome_NilHandler_Mega4(t *testing.T) {
 	t.Parallel()
-	var h *Handler                  // nil
-	h.metricsIncCacheOutcome("hit") // must not panic
+	var h *Handler                           // nil
+	h.metricsIncCacheOutcome("app-1", "hit") // must not panic
 }
 
 func TestMetricsIncCacheOutcome_NilMetrics_Mega4(t *testing.T) {
 	t.Parallel()
 	h := &Handler{metrics: nil}
-	h.metricsIncCacheOutcome("hit") // must not panic
+	h.metricsIncCacheOutcome("app-1", "hit") // must not panic
 }
 
 func TestMetricsIncCacheOutcome_Success_Mega4(t *testing.T) {
@@ -188,8 +188,8 @@ func TestMetricsIncCacheOutcome_Success_Mega4(t *testing.T) {
 	// but we want to pin the nil-safe branches above + verify the
 	// non-nil path doesn't panic on a real metric.
 	h := &Handler{metrics: NewMetrics()}
-	h.metricsIncCacheOutcome("hit")
-	h.metricsIncCacheOutcome("miss")
+	h.metricsIncCacheOutcome("app-1", "hit")
+	h.metricsIncCacheOutcome("app-1", "miss")
 }
 
 // --- containsToken -----------------------------------------------
