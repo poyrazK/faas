@@ -219,8 +219,9 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	req.Config = sealedConfig
+	source := triggerSourceForConfig(req.Kind, req.Config)
 	t, problem := s.persistCreatedTrigger(w, r.Context(), &req, acct, app.ID, enabled,
-		batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, limits)
+		source, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, limits)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -249,6 +250,7 @@ func (s *server) persistCreatedTrigger(
 	acct state.Account,
 	appID string,
 	enabled bool,
+	source string,
 	batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32,
 	brokerPoisonStrategy string,
 	limits api.Limits,
@@ -256,6 +258,7 @@ func (s *server) persistCreatedTrigger(
 	t, err := s.store.CreateTriggerIfUnderQuota(ctx,
 		appID,
 		string(req.Kind), req.Slug, enabled, []byte(req.Config),
+		source,
 		batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes,
 		brokerPoisonStrategy, limits)
 	if err != nil {
@@ -283,6 +286,22 @@ func (s *server) persistCreatedTrigger(
 		"enabled":    enabled,
 	})
 	return t, nil
+}
+
+func triggerSourceForConfig(kind api.TriggerKind, config json.RawMessage) string {
+	if kind != api.TriggerKindQueue {
+		return ""
+	}
+	var shape struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(config, &shape); err != nil {
+		return ""
+	}
+	if shape.Mode == "queue" || shape.Mode == "delayed_task" {
+		return shape.Mode
+	}
+	return ""
 }
 
 // validateCreateTriggerRequest walks the request shape + kind
@@ -1035,6 +1054,7 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 		created, err := s.store.CreateTriggerIfUnderQuota(r.Context(),
 			req.AppID,
 			string(t.Kind), t.Slug, t.IsEnabled(), sealedConfig,
+			triggerSourceForConfig(kind, sealedConfig),
 			bsm, bwm, ma, pmb, bps, limits)
 		if err != nil {
 			var qe *state.TriggerQuotaError

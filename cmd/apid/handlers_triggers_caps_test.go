@@ -237,6 +237,37 @@ func TestCreateTriggerAcceptsAllowedKafkaConfig(t *testing.T) {
 	}
 }
 
+func TestCreateQueueTriggerPersistsFirstClassSource(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app, err := e.store.CreateApp(t.Context(), state.App{AccountID: e.acct.ID, Slug: "queue-app"})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+		AppID:  app.ID,
+		Kind:   api.TriggerKindQueue,
+		Slug:   "jobs",
+		Config: json.RawMessage(`{"mode":"delayed_task"}`),
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	var trigger api.Trigger
+	if err := json.Unmarshal(rec.Body.Bytes(), &trigger); err != nil {
+		t.Fatalf("decode trigger: %v", err)
+	}
+	if trigger.Source == nil || *trigger.Source != "delayed_task" {
+		t.Fatalf("source = %v, want delayed_task", trigger.Source)
+	}
+	stored, err := e.store.TriggerByID(t.Context(), trigger.ID)
+	if err != nil {
+		t.Fatalf("TriggerByID: %v", err)
+	}
+	if !stored.Source.Valid || stored.Source.String != "delayed_task" {
+		t.Fatalf("stored source = %+v, want delayed_task", stored.Source)
+	}
+}
+
 func TestEnforceCreateTriggerCapsUsesPlanSafeDefaults(t *testing.T) {
 	for _, tc := range []struct {
 		plan api.Plan
