@@ -58,8 +58,8 @@ func TestBuildAppNetworkDoctorReport(t *testing.T) {
 	if !report.Healthy {
 		t.Fatal("report should remain healthy when checks are advisory")
 	}
-	if len(report.Checks) != 5 {
-		t.Fatalf("check count = %d, want 5", len(report.Checks))
+	if len(report.Checks) != 6 {
+		t.Fatalf("check count = %d, want 6", len(report.Checks))
 	}
 	for _, check := range report.Checks {
 		if check.Name == "egress-policy" && check.Status != "ok" {
