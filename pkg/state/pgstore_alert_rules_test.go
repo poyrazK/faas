@@ -59,6 +59,9 @@ func TestPgStore_AlertRule_RoundTrip(t *testing.T) {
 	if created.State != state.AlertStateOk {
 		t.Errorf("default state = %q, want %q", created.State, state.AlertStateOk)
 	}
+	if created.Action != state.AlertActionWebhook {
+		t.Errorf("default action = %q, want %q", created.Action, state.AlertActionWebhook)
+	}
 
 	got, err := s.AlertRuleByID(ctx, created.ID)
 	if err != nil {
@@ -86,6 +89,38 @@ func TestPgStore_AlertRule_RoundTrip(t *testing.T) {
 	}
 	if _, err := s.AlertRuleByID(ctx, created.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("post-delete lookup = %v; want ErrNotFound", err)
+	}
+}
+
+func TestPgStore_AlertRule_ActionRoundTrip(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx)
+	limits := api.MustLimitsFor(api.PlanPro)
+
+	for _, action := range []state.AlertAction{
+		state.AlertActionWebhook,
+		state.AlertActionRollback,
+		state.AlertActionDemote,
+		state.AlertActionPromote,
+	} {
+		t.Run(string(action), func(t *testing.T) {
+			rule := pgSampleAlertRule(acct, app)
+			rule.Action = action
+			created, err := s.CreateAlertRuleIfUnderQuota(ctx, rule, limits)
+			if err != nil {
+				t.Fatalf("CreateAlertRuleIfUnderQuota: %v", err)
+			}
+			if created.Action != action {
+				t.Fatalf("created action = %q, want %q", created.Action, action)
+			}
+			got, err := s.AlertRuleByID(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("AlertRuleByID: %v", err)
+			}
+			if got.Action != action {
+				t.Fatalf("stored action = %q, want %q", got.Action, action)
+			}
+		})
 	}
 }
 

@@ -17865,6 +17865,9 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 	if in.State == "" {
 		in.State = AlertStateOk
 	}
+	if in.Action == "" {
+		in.Action = AlertActionWebhook
+	}
 	if in.ID == "" {
 		in.ID = newID()
 	}
@@ -17945,6 +17948,9 @@ func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, 
 	}
 	if in.State == "" {
 		in.State = AlertStateOk
+	}
+	if in.Action == "" {
+		in.Action = AlertActionWebhook
 	}
 	in.UpdatedAt = in.CreatedAt
 	m.alertRules[in.ID] = in

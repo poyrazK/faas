@@ -157,6 +157,9 @@ func TestCreateAlertRule_HappyPath(t *testing.T) {
 	if out.Metric != "latency_p99_ms" || out.Comparison != "gt" || out.WindowSpec != "5m" {
 		t.Errorf("closed sets drifted: metric=%q comparison=%q window_spec=%q", out.Metric, out.Comparison, out.WindowSpec)
 	}
+	if out.Action != string(state.AlertActionWebhook) {
+		t.Errorf("default action = %q, want %q", out.Action, state.AlertActionWebhook)
+	}
 	// Round-trip via the store: the row carries the sealed
 	// ciphertext (which we never echo) and the plaintext is gone.
 	row, err := e.store.AlertRuleByID(context.Background(), out.ID)
@@ -165,6 +168,31 @@ func TestCreateAlertRule_HappyPath(t *testing.T) {
 	}
 	if len(row.WebhookSecretSealed) == 0 {
 		t.Errorf("WebhookSecretSealed is empty — seal did not happen")
+	}
+}
+
+func TestCreateAlertRule_ActionRoundTrip(t *testing.T) {
+	e := setupAlerts(t, api.PlanPro)
+	mustSeedApp(t, e, "alerts-actions")
+	for _, action := range api.AllowedAlertRuleActions {
+		req := alertRuleReq()
+		req.Name = "action " + action
+		req.Action = &action
+		created := mustCreateAlertRule(t, e, "alerts-actions", req)
+		if created.Action != action {
+			t.Fatalf("create action = %q, want %q", created.Action, action)
+		}
+		rec := e.do(t, "GET", "/v1/apps/alerts-actions/alerts/"+created.ID, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get %q: status %d body=%s", action, rec.Code, rec.Body.String())
+		}
+		var got api.AlertRuleResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Action != action {
+			t.Fatalf("get action = %q, want %q", got.Action, action)
+		}
 	}
 }
 

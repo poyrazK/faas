@@ -11318,7 +11318,7 @@ func (s *PgStore) ReactivateCronsForApp(ctx context.Context, appID string) (int,
 //     via pkg/secretbox.SealOne before calling.
 
 const alertRuleSelectCols = `id, account_id, app_id, name, enabled, metric, comparison,
-       threshold, window_spec, failure_source, webhook_url,
+       threshold, window_spec, failure_source, action, webhook_url,
        webhook_secret_sealed, cooldown_minutes, state,
        last_fired_at, last_evaluated_at, created_at, updated_at`
 
@@ -11353,14 +11353,14 @@ func scanAlertRules(rows pgx.Rows) ([]AlertRule, error) {
 // commit, so a SELECT-write drift cannot silently swallow a column.
 func scanAlertRuleCols(scan func(...any) error) (AlertRule, error) {
 	r := AlertRule{}
-	var metric, comparison, windowSpec, state string
+	var metric, comparison, windowSpec, action, state string
 	var appID, failureSource *string
 	var secret []byte
 	var lastFired, lastEvaluated *time.Time
 	if err := scan(
 		&r.ID, &r.AccountID, &appID, &r.Name, &r.Enabled,
 		&metric, &comparison, &r.Threshold, &windowSpec, &failureSource,
-		&r.WebhookURL, &secret, &r.CooldownMinutes, &state,
+		&action, &r.WebhookURL, &secret, &r.CooldownMinutes, &state,
 		&lastFired, &lastEvaluated, &r.CreatedAt, &r.UpdatedAt,
 	); err != nil {
 		return AlertRule{}, err
@@ -11368,6 +11368,7 @@ func scanAlertRuleCols(scan func(...any) error) (AlertRule, error) {
 	r.Metric = AlertMetric(metric)
 	r.Comparison = AlertComparison(comparison)
 	r.WindowSpec = AlertWindowSpec(windowSpec)
+	r.Action = AlertAction(action)
 	r.State = AlertState(state)
 	if failureSource != nil && *failureSource != "" {
 		r.FailureSource = AlertFailureSource(*failureSource)
@@ -11400,20 +11401,24 @@ func (s *PgStore) CreateAlertRule(ctx context.Context, in AlertRule) (AlertRule,
 	if stateArg == "" {
 		stateArg = string(AlertStateOk)
 	}
+	actionArg := string(in.Action)
+	if actionArg == "" {
+		actionArg = string(AlertActionWebhook)
+	}
 	row := s.pool.QueryRow(ctx, `
 		insert into alert_rules (
 			account_id, app_id, name, enabled, metric, comparison,
-			threshold, window_spec, failure_source, webhook_url,
+			threshold, window_spec, failure_source, action, webhook_url,
 			webhook_secret_sealed, cooldown_minutes, state
 		) values (
 			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10,
-			$11, $12, $13
+			$7, $8, $9, $10, $11,
+			$12, $13, $14
 		)
 		returning `+alertRuleSelectCols,
 		in.AccountID, appIDArg, in.Name, in.Enabled,
 		string(in.Metric), string(in.Comparison), in.Threshold,
-		string(in.WindowSpec), sourceArg, in.WebhookURL,
+		string(in.WindowSpec), sourceArg, actionArg, in.WebhookURL,
 		in.WebhookSecretSealed, in.CooldownMinutes, stateArg,
 	)
 	r, err := scanAlertRule(row)
@@ -11494,20 +11499,24 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 	if in.FailureSource != "" {
 		sourceArg = string(in.FailureSource)
 	}
+	actionArg := string(in.Action)
+	if actionArg == "" {
+		actionArg = string(AlertActionWebhook)
+	}
 	row := tx.QueryRow(ctx, `
 		insert into alert_rules (
 			account_id, app_id, name, enabled, metric, comparison,
-			threshold, window_spec, failure_source, webhook_url,
+			threshold, window_spec, failure_source, action, webhook_url,
 			webhook_secret_sealed, cooldown_minutes, state
 		) values (
 			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10,
-			$11, $12, 'ok'
+			$7, $8, $9, $10, $11,
+			$12, $13, 'ok'
 		)
 		returning `+alertRuleSelectCols,
 		in.AccountID, appIDArg, in.Name, in.Enabled,
 		string(in.Metric), string(in.Comparison), in.Threshold,
-		string(in.WindowSpec), sourceArg, in.WebhookURL,
+		string(in.WindowSpec), sourceArg, actionArg, in.WebhookURL,
 		in.WebhookSecretSealed, in.CooldownMinutes,
 	)
 	r, err := scanAlertRule(row)
