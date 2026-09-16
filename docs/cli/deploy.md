@@ -152,9 +152,9 @@ Cooldowns default to 5 seconds for scale-out and 60 seconds for scale-in when
 omitted. The API remains the final authority for plan gates and workload-class
 compatibility. A project (`--project`) deploy currently rejects the top-level
 block because scaling is app-scoped; configure each workload separately after
-project apply. Source-ref (`--repo`) deploys currently reject the block; apply
-the policy separately after the remote source deploy. A local single-app deploy
-reads the block from the uploaded source.
+project apply. Source-ref (`--repo`) deploys read and apply the block
+server-side from the immutable archive before enqueueing the deployment. A local
+single-app deploy reads the block from the uploaded source.
 
 For a decomposed monorepo deploy (one CLI invocation, N apps), opt into
 project apply with `--project`. The project slug defaults to `--name`, the

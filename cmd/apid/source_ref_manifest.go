@@ -28,11 +28,14 @@ import (
 const sourceRefManifestMaxBytes = 1 << 20
 
 type sourceRefManifestStaged struct {
-	accountID  string
-	appID      string
-	cronIDs    []string
-	triggerIDs []string
-	bindingIDs []string
+	accountID             string
+	appID                 string
+	cronIDs               []string
+	triggerIDs            []string
+	bindingIDs            []string
+	scalingChanged        bool
+	previousScalingPolicy *state.ScalingPolicy
+	appliedScalingPolicy  *state.ScalingPolicy
 }
 
 // loadSourceRefManifest reads the root manifest from the already validated
@@ -165,6 +168,34 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		return staged, problem
 	}
 	staged.bindingIDs = bindingIDs
+	if m.Scaling != nil {
+		limits, ok := api.LimitsFor(acct.Plan)
+		if !ok {
+			return staged, api.ErrCapacity("could not resolve account plan limits")
+		}
+		scalingReq := &api.UpdateAppRequest{ScalingPolicy: m.Scaling.ToAPI()}
+		if prob := validateUpdateApp(scalingReq, acct, limits, app); prob != nil {
+			return staged, prob
+		}
+		desired := policyPtrFromReq(scalingReq)
+		if !scalingPoliciesEqual(app.ScalingPolicy, desired) {
+			updated, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
+				ScalingPolicy:    desired,
+				SetScalingPolicy: true,
+			})
+			if err != nil {
+				return staged, sourceRefScalingStoreProblem(err)
+			}
+			staged.scalingChanged = true
+			staged.previousScalingPolicy = cloneScalingPolicy(app.ScalingPolicy)
+			staged.appliedScalingPolicy = cloneScalingPolicy(updated.ScalingPolicy)
+			if staged.appliedScalingPolicy == nil {
+				staged.appliedScalingPolicy = cloneScalingPolicy(desired)
+			}
+			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","scaling_changed":true}`, app.Slug, app.ID))
+		}
+	}
 	if !applyTriggers || len(m.Triggers) == 0 {
 		return staged, nil
 	}
@@ -253,6 +284,39 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	return staged, nil
 }
 
+func sourceRefScalingStoreProblem(err error) *api.Problem {
+	if errors.Is(err, state.ErrNotFound) {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+	}
+	return api.ErrCapacity("could not apply manifest scaling policy")
+}
+
+func cloneScalingPolicy(policy *state.ScalingPolicy) *state.ScalingPolicy {
+	if policy == nil {
+		return nil
+	}
+	clone := *policy
+	if policy.Target != nil {
+		target := *policy.Target
+		clone.Target = &target
+	}
+	return &clone
+}
+
+func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	if left.MinInstances != right.MinInstances || left.MaxInstances != right.MaxInstances ||
+		left.ScaleOutCooldownS != right.ScaleOutCooldownS || left.ScaleInCooldownS != right.ScaleInCooldownS {
+		return false
+	}
+	if left.Target == nil || right.Target == nil {
+		return left.Target == nil && right.Target == nil
+	}
+	return left.Target.Metric == right.Target.Metric && left.Target.Value == right.Target.Value
+}
+
 func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Problem {
 	if cron {
 		var quota *state.CronQuotaError
@@ -273,6 +337,25 @@ func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Pro
 
 func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRefManifestStaged) error {
 	var errs []error
+	if staged.scalingChanged {
+		// apps.scaling_policy is NOT NULL in PostgreSQL. A nil prior
+		// policy is the legacy empty-policy projection, so restore it as
+		// an explicit zero policy while keeping the operation portable to
+		// the in-memory store.
+		restore := cloneScalingPolicy(staged.previousScalingPolicy)
+		if restore == nil {
+			restore = &state.ScalingPolicy{}
+		}
+		if _, err := s.store.UpdateApp(ctx, staged.appID, state.UpdateAppParams{
+			ScalingPolicy:    restore,
+			SetScalingPolicy: true,
+		}); err != nil {
+			errs = append(errs, err)
+		} else {
+			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+				fmt.Sprintf(`{"kind":"updated","app_id":"%s","scaling_changed":true}`, staged.appID))
+		}
+	}
 	for i := len(staged.bindingIDs) - 1; i >= 0; i-- {
 		if s.managedPostgresBindings == nil {
 			errs = append(errs, managedpostgres.ErrUnavailable)

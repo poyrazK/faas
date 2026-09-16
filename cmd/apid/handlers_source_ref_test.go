@@ -648,6 +648,12 @@ workflows:
     steps:
       - name: charge
         run: charge_order
+scaling:
+  min_instances: 1
+  max_instances: 3
+  target:
+    metric: rps
+    value: 10
 `))}
 	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
 		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
@@ -670,6 +676,19 @@ workflows:
 	if !bytes.Contains(deps[0].Workflows, []byte("process_order")) {
 		t.Fatalf("workflows = %s, want archive workflow", deps[0].Workflows)
 	}
+	updated, err := e.store.AppByID(context.Background(), e.appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if updated.ScalingPolicy == nil {
+		t.Fatal("scaling policy = nil, want archive-declared policy")
+	}
+	if updated.ScalingPolicy.MinInstances != 1 || updated.ScalingPolicy.MaxInstances != 3 {
+		t.Fatalf("scaling policy = %+v, want min=1 max=3", updated.ScalingPolicy)
+	}
+	if updated.ScalingPolicy.Target == nil || updated.ScalingPolicy.Target.Metric != "rps" || updated.ScalingPolicy.Target.Value != 10 {
+		t.Fatalf("scaling target = %+v, want rps/10", updated.ScalingPolicy.Target)
+	}
 }
 
 func TestSourceRef_NoTriggersStillDeploysWorkflows(t *testing.T) {
@@ -684,6 +703,9 @@ workflows:
     steps:
       - name: charge
         run: charge_order
+scaling:
+  min_instances: 1
+  max_instances: 2
 `))}
 	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
 		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567", NoTriggers: true,
@@ -698,6 +720,77 @@ workflows:
 	deps, _ := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
 	if len(deps) != 1 || !bytes.Contains(deps[0].Workflows, []byte("process_order")) {
 		t.Fatalf("workflows not persisted with no_triggers: %+v", deps)
+	}
+	updated, err := e.store.AppByID(context.Background(), e.appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if updated.ScalingPolicy == nil || updated.ScalingPolicy.MinInstances != 1 || updated.ScalingPolicy.MaxInstances != 2 {
+		t.Fatalf("scaling policy = %+v, want min=1 max=2 even with no_triggers", updated.ScalingPolicy)
+	}
+}
+
+func TestSourceRef_ScalingPlanGateFailsBeforeEnqueue(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanFree, "x", 7777)
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, `scaling:
+  max_instances: 1
+`))}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567",
+	})
+	if rec.Code != http.StatusForbidden || bodyCode(t, rec) != api.CodePlanMaxInstancesNotAllowed {
+		t.Fatalf("status/code = %d/%q, want 403/%q; body=%s", rec.Code, bodyCode(t, rec), api.CodePlanMaxInstancesNotAllowed, rec.Body)
+	}
+	updated, err := e.store.AppByID(context.Background(), e.appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if updated.ScalingPolicy != nil {
+		t.Fatalf("scaling policy = %+v, want unchanged after plan rejection", updated.ScalingPolicy)
+	}
+	deps, _ := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if len(deps) != 0 {
+		t.Fatalf("deployment count = %d, want 0 after plan rejection", len(deps))
+	}
+}
+
+func TestSourceRef_ScalingRollsBackWhenAcceptanceFails(t *testing.T) {
+	e := newSourceRefTestServer(t, api.PlanPro, "x", 7777)
+	prior := &state.ScalingPolicy{
+		MinInstances:      2,
+		MaxInstances:      4,
+		ScaleOutCooldownS: 10,
+		ScaleInCooldownS:  120,
+		Target:            &state.ScalingTarget{Metric: "rps", Value: 20},
+	}
+	if _, err := e.store.UpdateApp(context.Background(), e.appID, state.UpdateAppParams{
+		ScalingPolicy: prior, SetScalingPolicy: true,
+	}); err != nil {
+		t.Fatalf("seed prior scaling policy: %v", err)
+	}
+	e.gh.streamBody = nopReadCloser{bytes.NewReader(buildSourceRefTarGzWithManifest(t, `scaling:
+  min_instances: 1
+  max_instances: 3
+  target:
+    metric: rps
+    value: 10
+`))}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{
+		Repo: "onebox-faas/hello", Ref: "0123456789abcdef0123456789abcdef01234567", Tag: "not-a-valid-tag",
+	})
+	if rec.Code != http.StatusUnprocessableEntity || bodyCode(t, rec) != api.CodeValidation {
+		t.Fatalf("status/code = %d/%q, want 422/%q; body=%s", rec.Code, bodyCode(t, rec), api.CodeValidation, rec.Body)
+	}
+	updated, err := e.store.AppByID(context.Background(), e.appID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if !scalingPoliciesEqual(updated.ScalingPolicy, prior) {
+		t.Fatalf("scaling policy after rollback = %+v, want %+v", updated.ScalingPolicy, prior)
+	}
+	deps, _ := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
+	if len(deps) != 0 {
+		t.Fatalf("deployment count = %d, want 0 after acceptance failure", len(deps))
 	}
 }
 

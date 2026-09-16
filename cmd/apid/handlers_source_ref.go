@@ -190,11 +190,6 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, manifestProblem)
 		return
 	}
-	if manifest != nil && manifest.Scaling != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Unsupported manifest declaration", "scaling is supported on local single-app deploys; source-ref deployments must configure scaling separately"))
-		return
-	}
 	var workflowDefs []api.WorkflowSpec
 	if manifest != nil {
 		workflowDefs = manifest.Workflows
@@ -202,7 +197,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	stagedManifest := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
 	manifestCommitted := false
 	defer func(ctx context.Context) {
-		if manifestCommitted || (len(stagedManifest.cronIDs) == 0 && len(stagedManifest.triggerIDs) == 0 && len(stagedManifest.bindingIDs) == 0) {
+		if manifestCommitted || (!stagedManifest.scalingChanged && len(stagedManifest.cronIDs) == 0 && len(stagedManifest.triggerIDs) == 0 && len(stagedManifest.bindingIDs) == 0) {
 			return
 		}
 		if rollbackErr := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), stagedManifest); rollbackErr != nil {
@@ -279,6 +274,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 	manifestCommitted = true
 	sourceAccepted = true
+	s.auditSourceRefManifestScaling(r.Context(), acct, app, stagedManifest)
 	s.auditSourceRefDeploy(r.Context(), acct, app, res, prev, req, resolvedSHA, installID, ann)
 	// Reload the deployment row so the response carries the
 	// canonical wire shape (mirrors createDeployment's
@@ -289,6 +285,23 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(d, app))
+}
+
+func (s *server) auditSourceRefManifestScaling(ctx context.Context, acct state.Account, app state.App, staged sourceRefManifestStaged) {
+	if !staged.scalingChanged {
+		return
+	}
+	s.audit.Emit(ctx, "app.updated", &acct.ID, map[string]any{
+		"app_id": app.ID,
+		"slug":   app.Slug,
+		"old": map[string]any{
+			"scaling_policy": statePolicyToDTO(staged.previousScalingPolicy),
+		},
+		"new": map[string]any{
+			"scaling_policy": statePolicyToDTO(staged.appliedScalingPolicy),
+		},
+		"source": "deploy.source_ref",
+	})
 }
 
 // resolveInstallToken prefers an exact app/repository binding. For an unbound
