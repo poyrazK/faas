@@ -29,7 +29,7 @@ func TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation(t *testing.T) {
 	f.vmmd.SetVersion(instance.ID, "concurrent")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:concurrent\n", 10*time.Second)
 
-	const requestCount = 2 // Hobby's published per-instance limit is two.
+	const requestCount = 2 // Two held streams are enough to prove overlap while keeping this shard fast.
 	gate := f.vmmd.InstallRequestGate(instance.ID, requestCount)
 	defer gate.Release()
 	for i := 0; i < requestCount; i++ {
@@ -128,8 +128,8 @@ func TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation(t *testing.T) {
 
 // TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot pins the gateway's
 // per-instance concurrency boundary. A full Free-plan instance must not
-// receive a second bridge call, and the waiting request must proceed once the
-// first response releases its slot.
+// receive a fifth bridge call, and the waiting request must proceed once the
+// active responses release their slots.
 func TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot(t *testing.T) {
 	f := newNormalPathFixtureWithPlan(t, "normal-backpressure", api.PlanFree)
 	if f == nil {
@@ -139,7 +139,8 @@ func TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot(t *testing.T) {
 	f.vmmd.SetVersion(instance.ID, "backpressure")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:backpressure\n", 10*time.Second)
 
-	gate := f.vmmd.InstallRequestGate(instance.ID, 1)
+	const slotCount = 4 // Free's published per-instance limit.
+	gate := f.vmmd.InstallRequestGate(instance.ID, slotCount)
 	defer gate.Release()
 	client := *f.h.HTTPClient()
 	request := func(path string) <-chan normalPathHTTPResult {
@@ -165,31 +166,42 @@ func TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot(t *testing.T) {
 		return result
 	}
 
-	first := request("/backpressure/first")
-	if !gate.WaitArrived(5 * time.Second) {
-		t.Fatal("first request did not occupy the bridge")
+	active := make([]<-chan normalPathHTTPResult, 0, slotCount)
+	for i := 0; i < slotCount; i++ {
+		active = append(active, request(fmt.Sprintf("/backpressure/active/%d", i)))
 	}
-	second := request("/backpressure/second")
+	if !gate.WaitArrived(5 * time.Second) {
+		t.Fatal("active requests did not fill the bridge slots")
+	}
+	waiter := request("/backpressure/waiter")
 	deadline := time.Now().Add(750 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		for _, capture := range f.vmmd.Requests() {
-			if strings.HasPrefix(capture.Init.GetRequestUri(), "/backpressure/second") {
-				t.Fatal("second request reached the bridge while the instance slot was full")
+			if strings.HasPrefix(capture.Init.GetRequestUri(), "/backpressure/waiter") {
+				t.Fatal("waiter reached the bridge while all instance slots were full")
 			}
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 
 	gate.Release()
-	for name, resultCh := range map[string]<-chan normalPathHTTPResult{"first": first, "second": second} {
+	for i, resultCh := range active {
 		select {
 		case got := <-resultCh:
 			if got.err != nil || got.status != http.StatusOK || string(got.body) != "normal-path:backpressure\n" {
-				t.Errorf("%s response=(status=%d,body=%q,err=%v), want 200/backpressure", name, got.status, got.body, got.err)
+				t.Errorf("active request %d response=(status=%d,body=%q,err=%v), want 200/backpressure", i, got.status, got.body, got.err)
 			}
 		case <-time.After(5 * time.Second):
-			t.Fatalf("%s request did not complete after releasing the instance slot", name)
+			t.Fatalf("active request %d did not complete after releasing the instance slots", i)
 		}
+	}
+	select {
+	case got := <-waiter:
+		if got.err != nil || got.status != http.StatusOK || string(got.body) != "normal-path:backpressure\n" {
+			t.Errorf("waiter response=(status=%d,body=%q,err=%v), want 200/backpressure", got.status, got.body, got.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter did not complete after releasing the instance slots")
 	}
 }
 
