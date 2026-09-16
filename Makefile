@@ -1090,6 +1090,17 @@ capabilities-check: ## Verify the product capability registry and generated matr
 	@cmp -s /tmp/faas-capabilities.md docs/capabilities.md || (echo "docs/capabilities.md is stale; run 'make capabilities-md'"; diff -u docs/capabilities.md /tmp/faas-capabilities.md || true; exit 1)
 	@echo "capabilities-check: OK"
 
+.PHONY: standards-md
+standards-md: ## Regenerate the standards compatibility matrix from the standards registry
+	@$(GO) run ./cmd/standards-md > docs/standards.md
+	@echo "standards-md: docs/standards.md regenerated"
+
+.PHONY: standards-check
+standards-check: ## Verify the standards registry and generated matrix are in sync
+	@$(GO) run ./cmd/standards-md > /tmp/faas-standards.md
+	@cmp -s /tmp/faas-standards.md docs/standards.md || (echo "docs/standards.md is stale; run 'make standards-md'"; diff -u docs/standards.md /tmp/faas-standards.md || true; exit 1)
+	@echo "standards-check: OK"
+
 .PHONY: pricing-md
 pricing-md: ## Regenerate customer plan/pricing page from api limits
 	@$(GO) run ./cmd/pricing-md > docs/plans.md

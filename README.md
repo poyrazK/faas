@@ -28,6 +28,10 @@ README. They are generated from the product registry and published in the
 [capability matrix](docs/capabilities.md), so merged code alone is never
 presented as a launched product capability.
 
+The external contracts Gregale implements, their supported subsets, and the
+evidence behind each compatibility claim are tracked in the generated
+[standards matrix](docs/standards.md).
+
 ## Quickstart
 
 Install the CLI, sign in, and deploy from an existing project:
@@ -182,6 +186,7 @@ registries:
 | Concern | Authoritative source | Published view |
 |---|---|---|
 | Feature maturity, entitlement, flags, and acceptance evidence | `pkg/productcap/catalog.json` | [Capability matrix](docs/capabilities.md) |
+| External standards, compatibility scope, and evidence | `pkg/productstandards/catalog.json` | [Standards matrix](docs/standards.md) |
 | CLI commands, flags, and closed sets | `cmd/gregale/cli_meta.go` | [CLI reference](docs/cli-reference.md), shell completion, and man pages |
 | Plan limits and quotas | `pkg/api/limits.go` | [Plans](docs/plans.md) and generated pricing documentation |
 | Public API contract | `api/openapi.yaml` | Generated SDKs under `sdk/` |
@@ -237,6 +242,7 @@ and snapshot behavior.
 | [Quickstart](docs/quickstart.md) | First deploy and the essential CLI loop. |
 | [CLI reference](docs/cli-reference.md) | Generated command and flag reference. |
 | [Capabilities](docs/capabilities.md) | Customer-facing maturity and acceptance evidence. |
+| [Standards](docs/standards.md) | External protocol and format compatibility claims. |
 | [Implementation whitepaper](docs/faas_implementation_spec.md) | Buildable architecture and invariants. |
 | [UX specification](docs/faas_ux_spec.md) | Customer journeys and interaction rules. |
 | [API-hosting roadmap](docs/api-hosting-roadmap.md) | Product direction and launch discipline. |
