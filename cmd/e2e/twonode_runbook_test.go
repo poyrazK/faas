@@ -34,6 +34,7 @@ func TestRunbook_Drill1_HeartbeatGapFlipsUnavailable(t *testing.T) {
 	// enable. See poolWithSkip in twonode_failure_safe_metal_test.go.
 	pool := poolWithSkip(t)
 	h := e2etest.StartTwoNode(t, pool)
+	h.RequireRemote(t)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 	// Runbook step 1: stale the heartbeat on node-b by 120s.
 	if err := fi.StaleHeartbeat(h.NodeB, 2*time.Minute); err != nil {
@@ -106,6 +107,7 @@ func TestRunbook_Drill3_PgNotifyRecovery(t *testing.T) {
 	// enable. See poolWithSkip in twonode_failure_safe_metal_test.go.
 	pool := poolWithSkip(t)
 	h := e2etest.StartTwoNode(t, pool)
+	h.RequireRemote(t)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 	// StaleHeartbeat is the row-level analog of a SIGSTOP'd
 	// schedd; the recovery path is identical from the row's

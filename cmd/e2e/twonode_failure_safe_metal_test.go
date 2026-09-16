@@ -87,6 +87,7 @@ func poolWithSkip(t *testing.T) *pgxpool.Pool {
 func TestTwoNode_HeartbeatGapFlipsLifecycleUnavailable(t *testing.T) {
 	pool := poolWithSkip(t)
 	h := e2etest.StartTwoNode(t, pool)
+	h.RequireRemote(t)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 
 	// In native mode each compute-only box owns both vmmd and schedd. Stop
