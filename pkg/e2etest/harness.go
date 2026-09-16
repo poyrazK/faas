@@ -982,6 +982,10 @@ func startGatewaySynthStub(t *testing.T, h *Harness) {
 //     and the main HTTP path boots cleanly. The reader-path handlers
 //     (cmd/apid/handlers_app_errors.go) are not affected — they read
 //     from the SQL store regardless of the gRPC listener state.
+//   - FAAS_REQUEST_TELEMETRY_ENABLED=false — the request-telemetry gRPC
+//     listener is opt-in for ordinary E2E fixtures because most tests do not
+//     provide a per-test Unix socket. Telemetry-specific fixtures override
+//     this after testEnvCommon and provide FAAS_APID_REQUEST_TELEMETRY_SOCKET.
 //   - FAAS_MFA_RECOVERY_HMAC_KEY=<per-test hex> — see Harness
 //     .RecoveryHMACKeyHex. apid refuses to boot without a recovery
 //     HMAC key (cmd/apid/main.go:loadOrGenerateRecoveryHMACKey); the
@@ -1011,6 +1015,7 @@ func testEnvCommon(dbURL string) []string {
 		"DATABASE_URL=" + dbURL,
 		"FAAS_SKIP_SOCKET_GROUP=1",
 		"FAAS_APP_ERRORS_ENABLED=false",
+		"FAAS_REQUEST_TELEMETRY_ENABLED=false",
 		// ADR-115 D5 / PR #1191 C2: pkg/mail/factory refuses to boot
 		// when FAAS_MAIL_TRANSPORT is unset on a non-dev box. Every
 		// e2e boot is a dev box for this purpose; without the
