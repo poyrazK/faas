@@ -17,5 +17,9 @@ export type DebugRegressionItem = {
   regression_factor: string;
   first_detected_at: string;
   last_detected_at: string;
+  state: 'active' | 'acknowledged' | 'dismissed' | 'resolved';
+  acknowledged_at?: string;
+  dismissed_until?: string;
+  resolved_at?: string;
 };
 
