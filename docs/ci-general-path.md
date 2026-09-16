@@ -58,6 +58,8 @@ The current contract is intentionally small and high-signal:
 | `TestE2E_NormalPath_CancelledResponseClosesBridge` | client cancellation after response bytes begin closes the real gateway-to-VMMD stream |
 | `TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation` | concurrent bridge streams preserve each request's path, body, and customer headers |
 | `TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot` | a full per-instance concurrency slot holds the next request outside the bridge until release |
+| `TestE2E_NormalPath_CancelledQueuedAdmissionReleasesCapacity` | canceling a queued request leaves it outside VMMD and preserves capacity for the next request |
+| `TestE2E_NormalPath_QueuedAdmissionBudgetExpiryReturns504` | a platform-owned budget expiry while admission is queued returns the canonical 504 problem |
 | `TestE2E_NormalPath_AppProtocolMatrix` | `http1`, `http2`, and `grpc` selectors reach VMMD; gRPC trailers remain trailers |
 | `TestE2E_NormalPath_GuestHopByHopHeadersAreNotExposed` | guest connection-management headers are filtered at the customer response boundary |
 
@@ -74,7 +76,5 @@ does not replace the full sharded gate.
 
 The remaining general-path gaps are intentionally tracked rather than hidden:
 
-- concurrent request cancellation and timeout races under a saturated
-  instance;
 - request-side RFC token-listed hop-by-hop filtering and real guest-side
   HTTP/2/gRPC framing, which require the native guest bridge.

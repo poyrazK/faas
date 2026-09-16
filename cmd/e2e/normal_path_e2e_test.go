@@ -53,6 +53,8 @@
 //   preserve request/body/header isolation across concurrent bridge streams.
 //   apply per-instance backpressure and release the waiting request after
 //   the active request completes.
+//   cancel a queued request without reaching the bridge or leaking capacity.
+//   map a queued platform-budget expiry to the canonical 504 problem.
 //   carry the http1/http2/grpc app-protocol selector through the bridge,
 //   including grpc trailers.
 //   keep guest hop-by-hop response headers off the customer-facing response.
