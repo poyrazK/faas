@@ -812,7 +812,7 @@ type runDeps struct {
 	writeTimeout time.Duration
 	// readTimeout is the http.Server.ReadTimeout override (issue #995
 	// Phase 3 / ADR-121). When 0, gatewayd falls back to
-	// api.GatewaydInternalReadTimeoutSecondsDefault (60s) at the
+	// api.GatewaydInternalReadTimeoutSecondsDefault at the
 	// public-listener site. The control + unix-socket listener uses
 	// a tighter default (30s) set in defaultServer itself.
 	readTimeout time.Duration
@@ -3031,24 +3031,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		srv := deps.newSrv(listenAddr, publicListenerHandler)
 		public := srv
 		public.Addr = listenAddr
-		if public.ReadTimeout == 0 {
-			// Issue #995 Phase 3 / ADR-121: honour the TOML
-			// override (cfg.RequestReadTimeout, propagated via
-			// runDeps). 0 means "use api.GatewaydInternalRead
-			// TimeoutSecondsDefault" (60 s — matches the legacy
-			// default that lived here pre-PR).
-			public.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
-		}
-		if public.WriteTimeout == 0 {
-			// Issue #471 / ADR-047 (PR-A): honour the TOML override
-			// (cfg.ResponseWriteTimeout, propagated via runDeps). 0
-			// means "use the spec §4.1 baseline" — see run() for the
-			// precedence. PR-B lifts the Hobby+ per-plan cap to 900 s
-			// via http.ResponseController and a per-request timeout
-			// (http.Server.WriteTimeout is global, so the per-app
-			// override can never land at this layer).
-			public.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
-		}
+		// The factory also builds the control listener and therefore starts
+		// with its tighter 30 s defaults. Replace both values for this public
+		// listener: http.Server starts WriteTimeout before the handler reads
+		// the body, so either deadline must cover the largest valid upload.
+		public.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
+		public.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
 		if public.MaxHeaderBytes == 0 {
 			// Issue #995 Phase 3 / ADR-121: cap the header block on
 			// the public listener too. gatewayd-public already
@@ -3304,31 +3292,28 @@ func envOrGateway(key, fallback string) string {
 
 // writeTimeoutOrDefault resolves the http.Server.WriteTimeout the
 // gatewayd public listener binds to (issue #471 / ADR-047 PR-A).
-// The precedence is:
+// The effective value is the larger of:
 //
-//  1. cfg.ResponseWriteTimeout (TOML)        — wire via runDeps.writeTimeout
-//  2. api.ResponseWriteTimeoutDefault        — spec §4.1 baseline (300 s)
-//  3. 0 (the go interface default)           — never observed by callers
+//  1. api.CustomerRequestEnvelopeTimeout — upload + platform waits + execution
+//  2. cfg.ResponseWriteTimeout (TOML)     — a wider operator override
 //
-// Steps 1+2 collapse to the same constant when the TOML key is missing,
-// so the call sites read "use the runtime value or fall back to spec";
-// the helper is the single seam that picks the spec baseline so a
-// future drift between pkg/api and the gatewayd default surfaces in
-// one place rather than at every WriteTimeout literal.
+// A shorter operator value cannot make the advertised request-body contract
+// unreachable. Slow clients are still bounded by the handler's total upload
+// allowance and sliding idle read deadline.
 func writeTimeoutOrDefault(d time.Duration) time.Duration {
-	if d > 0 {
+	if d > api.CustomerRequestEnvelopeTimeout {
 		return d
 	}
-	return time.Duration(api.ResponseWriteTimeoutDefault) * time.Second
+	return api.CustomerRequestEnvelopeTimeout
 }
 
 // readTimeoutOrDefault mirrors writeTimeoutOrDefault for the
 // http.Server.ReadTimeout field (issue #995 Phase 3 / ADR-121).
 func readTimeoutOrDefault(d time.Duration) time.Duration {
-	if d > 0 {
+	if d > api.CustomerRequestEnvelopeTimeout {
 		return d
 	}
-	return time.Duration(api.GatewaydInternalReadTimeoutSecondsDefault) * time.Second
+	return api.CustomerRequestEnvelopeTimeout
 }
 
 // assertLoopbackBind rejects non-loopback control-listener addresses.

@@ -1,3 +1,4 @@
+// adr: 093
 package main
 
 import (
@@ -272,23 +273,31 @@ func TestDefaultDeps_ReturnExpected(t *testing.T) {
 // to api.GatewaydInternalReadTimeoutSecondsDefault when the override
 // is zero. Issue #995 Phase 3 / ADR-121.
 func TestReadTimeoutOrDefault(t *testing.T) {
-	if got := readTimeoutOrDefault(0); got != time.Duration(api.GatewaydInternalReadTimeoutSecondsDefault)*time.Second {
-		t.Errorf("readTimeoutOrDefault(0) = %v, want %ds", got, api.GatewaydInternalReadTimeoutSecondsDefault)
+	if got := readTimeoutOrDefault(0); got != api.CustomerRequestEnvelopeTimeout {
+		t.Errorf("readTimeoutOrDefault(0) = %v, want %s", got, api.CustomerRequestEnvelopeTimeout)
 	}
-	if got := readTimeoutOrDefault(7 * time.Second); got != 7*time.Second {
-		t.Errorf("readTimeoutOrDefault(7s) = %v, want 7s", got)
+	if got := readTimeoutOrDefault(7 * time.Second); got != api.CustomerRequestEnvelopeTimeout {
+		t.Errorf("readTimeoutOrDefault(7s) = %v, want upload-safe floor %s", got, api.CustomerRequestEnvelopeTimeout)
+	}
+	wider := api.CustomerRequestEnvelopeTimeout + time.Minute
+	if got := readTimeoutOrDefault(wider); got != wider {
+		t.Errorf("readTimeoutOrDefault(%s) = %v, want wider override", wider, got)
 	}
 }
 
-// TestWriteTimeoutOrDefault still passes its existing shape (Phase 3
-// left the WriteTimeout surface unchanged), but add the symmetric
-// guard here so the two helpers move together.
+// TestWriteTimeoutOrDefault pins the same upload-safe floor. The stdlib starts
+// this deadline before the handler receives the body, so the old 300 s default
+// could expire during a valid Scale upload.
 func TestWriteTimeoutOrDefault(t *testing.T) {
-	if got := writeTimeoutOrDefault(0); got != time.Duration(api.ResponseWriteTimeoutDefault)*time.Second {
-		t.Errorf("writeTimeoutOrDefault(0) = %v, want %ds", got, api.ResponseWriteTimeoutDefault)
+	if got := writeTimeoutOrDefault(0); got != api.CustomerRequestEnvelopeTimeout {
+		t.Errorf("writeTimeoutOrDefault(0) = %v, want %s", got, api.CustomerRequestEnvelopeTimeout)
 	}
-	if got := writeTimeoutOrDefault(7 * time.Second); got != 7*time.Second {
-		t.Errorf("writeTimeoutOrDefault(7s) = %v, want 7s", got)
+	if got := writeTimeoutOrDefault(7 * time.Second); got != api.CustomerRequestEnvelopeTimeout {
+		t.Errorf("writeTimeoutOrDefault(7s) = %v, want upload-safe floor %s", got, api.CustomerRequestEnvelopeTimeout)
+	}
+	wider := api.CustomerRequestEnvelopeTimeout + time.Minute
+	if got := writeTimeoutOrDefault(wider); got != wider {
+		t.Errorf("writeTimeoutOrDefault(%s) = %v, want wider override", wider, got)
 	}
 }
 
