@@ -156,6 +156,49 @@ func TestMemStoreExecutionClaimCompletionAndPayloadErasure(t *testing.T) {
 	}
 }
 
+func TestMemStoreExecutionQueueViewsAndFairClaim(t *testing.T) {
+	store := NewMemStore()
+	accountA := executionTestAccount(t, store, "queue-a")
+	accountB := executionTestAccount(t, store, "queue-b")
+	base := time.Now().UTC().Add(time.Second)
+	first, err := store.CreateExecution(context.Background(), executionTestParams(t, accountA.ID, base, 0, "a1"))
+	if err != nil {
+		t.Fatalf("create account A: %v", err)
+	}
+	if _, err := store.CreateExecution(context.Background(), executionTestParams(t, accountA.ID, base.Add(time.Millisecond), 0, "a2")); err != nil {
+		t.Fatalf("create second account A: %v", err)
+	}
+	second, err := store.CreateExecution(context.Background(), executionTestParams(t, accountB.ID, base.Add(2*time.Millisecond), 0, "b1"))
+	if err != nil {
+		t.Fatalf("create account B: %v", err)
+	}
+
+	stats, err := store.ExecutionQueueStats(context.Background(), base.Add(3*time.Millisecond))
+	if err != nil {
+		t.Fatalf("ExecutionQueueStats: %v", err)
+	}
+	if stats.Queued != 3 || stats.OldestCreatedAt == nil || !stats.OldestCreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("queue stats = %+v, want three rows oldest=%s", stats, first.CreatedAt)
+	}
+	accounts, err := store.ListExecutionQueueAccounts(context.Background(), base.Add(3*time.Millisecond), 10)
+	if err != nil {
+		t.Fatalf("ListExecutionQueueAccounts: %v", err)
+	}
+	if len(accounts) != 2 || accounts[0].AccountID >= accounts[1].AccountID {
+		t.Fatalf("queue accounts = %+v, want sorted two-account view", accounts)
+	}
+	if accounts[0].AccountID == accountA.ID && accounts[0].Queued != 2 {
+		t.Fatalf("account A queue bucket = %+v, want queued=2", accounts[0])
+	}
+	claim, err := store.ClaimExecutionForAccount(context.Background(), accountB.ID, "schedd", base.Add(3*time.Millisecond), time.Second)
+	if err != nil {
+		t.Fatalf("ClaimExecutionForAccount: %v", err)
+	}
+	if claim.ID != second.ID || claim.AccountID != accountB.ID {
+		t.Fatalf("fair claim = %s/%s, want %s/%s", claim.ID, claim.AccountID, second.ID, accountB.ID)
+	}
+}
+
 func TestMemStoreExecutionCancellationWaitsForTeardownAfterClaim(t *testing.T) {
 	store := NewMemStore()
 	account := executionTestAccount(t, store, "cancel")

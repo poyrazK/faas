@@ -276,12 +276,15 @@ type OpsMetrics struct {
 	// terminal API states, phase is the restore/execute/teardown/finalize
 	// lifecycle, and reason is a bounded internal failure class. Execution IDs,
 	// account IDs, source, input, and guest output never become metric labels.
-	executionActive        *prometheus.GaugeVec
-	executionTotal         *prometheus.CounterVec
-	executionPhaseDuration *prometheus.HistogramVec
-	executionFailures      *prometheus.CounterVec
-	executionOutputBytes   *prometheus.CounterVec
-	executionSweeps        *prometheus.CounterVec
+	executionActive          *prometheus.GaugeVec
+	executionTotal           *prometheus.CounterVec
+	executionPhaseDuration   *prometheus.HistogramVec
+	executionFailures        *prometheus.CounterVec
+	executionOutputBytes     *prometheus.CounterVec
+	executionSweeps          *prometheus.CounterVec
+	executionQueueDepth      prometheus.Gauge
+	executionQueueOldestWait prometheus.Gauge
+	executionWorkers         prometheus.Gauge
 	// wakeFailure (issue #1059 / ADR-127) — operator-facing wake
 	// failure-mode counter. Labelled by (box, reason). The closed
 	// reason vocabulary is
@@ -2152,6 +2155,18 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_execution_sweeps_total",
 		Help: "Disposable execution recovery sweeps, labelled by bounded outcome {ok, error}.",
 	}, []string{"outcome"})
+	executionQueueDepth := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_execution_queue_depth",
+		Help: "Eligible queued disposable executions awaiting dispatch. The gauge contains no tenant, execution, or payload labels.",
+	})
+	executionQueueOldestWait := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_execution_queue_oldest_wait_seconds",
+		Help: "Age in seconds of the oldest eligible queued disposable execution awaiting dispatch.",
+	})
+	executionWorkers := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prefix + "_execution_workers",
+		Help: "Configured bounded disposable-execution dispatch workers.",
+	})
 	executionRuntimes := []string{"node22", "node24", "python312", "python313", "unknown"}
 	executionStatuses := []string{"succeeded", "failed", "timed_out", "out_of_memory", "cancelled", "unknown"}
 	executionPhases := []string{"restore", "execute", "teardown", "finalize"}
@@ -3398,7 +3413,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
-		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -4663,6 +4678,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		executionFailures:                          executionFailures,
 		executionOutputBytes:                       executionOutputBytes,
 		executionSweeps:                            executionSweeps,
+		executionQueueDepth:                        executionQueueDepth,
+		executionQueueOldestWait:                   executionQueueOldestWait,
+		executionWorkers:                           executionWorkers,
 		wakeFailure:                                wakeFailure,
 		wakeLatency:                                wakeLatency,
 		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
@@ -5517,6 +5535,40 @@ func (m *OpsMetrics) RecordExecutionSweep(err error) {
 		outcome = "error"
 	}
 	m.executionSweeps.WithLabelValues(outcome).Inc()
+}
+
+// SetExecutionQueue records payload-free queue pressure for the scheduler.
+// Values are clamped at zero so a clock adjustment or defensive caller cannot
+// produce a misleading negative dashboard signal.
+func (m *OpsMetrics) SetExecutionQueue(depth int, oldestWait time.Duration) {
+	if m == nil {
+		return
+	}
+	if depth < 0 {
+		depth = 0
+	}
+	seconds := oldestWait.Seconds()
+	if seconds < 0 {
+		seconds = 0
+	}
+	if m.executionQueueDepth != nil {
+		m.executionQueueDepth.Set(float64(depth))
+	}
+	if m.executionQueueOldestWait != nil {
+		m.executionQueueOldestWait.Set(seconds)
+	}
+}
+
+// SetExecutionWorkers exposes the bounded dispatch-pool size without adding
+// an account or execution label.
+func (m *OpsMetrics) SetExecutionWorkers(workers int) {
+	if m == nil || m.executionWorkers == nil {
+		return
+	}
+	if workers < 0 {
+		workers = 0
+	}
+	m.executionWorkers.Set(float64(workers))
 }
 
 // WakeFailure returns the per-(box, app, reason) counter the

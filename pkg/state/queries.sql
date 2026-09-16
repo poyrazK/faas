@@ -3209,6 +3209,48 @@ FROM candidate
 WHERE execution.id = candidate.id
 RETURNING execution.*;
 
+-- name: ExecutionClaimNextForAccount :one
+WITH candidate AS (
+  SELECT id, deadline_at
+  FROM executions
+  WHERE executions.account_id = sqlc.arg(account_id)
+    AND executions.status = 'queued'
+    AND executions.cancel_requested_at IS NULL
+    AND executions.created_at <= sqlc.arg(claimed_at)::timestamptz
+    AND executions.deadline_at > sqlc.arg(claimed_at)::timestamptz
+  ORDER BY executions.created_at, executions.id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+)
+UPDATE executions AS execution
+SET status = 'restoring',
+    lease_token = sqlc.arg(lease_token),
+    lease_owner = sqlc.arg(lease_owner),
+    lease_expires_at = LEAST(sqlc.arg(lease_expires_at)::timestamptz, candidate.deadline_at),
+    updated_at = sqlc.arg(claimed_at)
+FROM candidate
+WHERE execution.id = candidate.id
+RETURNING execution.*;
+
+-- name: ExecutionQueueStats :one
+SELECT count(*)::bigint AS queued, min(created_at) AS oldest_created_at
+FROM executions
+WHERE status = 'queued'
+  AND cancel_requested_at IS NULL
+  AND created_at <= sqlc.arg(at)::timestamptz
+  AND deadline_at > sqlc.arg(at)::timestamptz;
+
+-- name: ExecutionQueueAccounts :many
+SELECT executions.account_id, count(*)::bigint AS queued_count, min(executions.created_at) AS oldest_created_at
+FROM executions
+WHERE executions.status = 'queued'
+  AND executions.cancel_requested_at IS NULL
+  AND executions.created_at <= sqlc.arg(at)::timestamptz
+  AND executions.deadline_at > sqlc.arg(at)::timestamptz
+GROUP BY executions.account_id
+ORDER BY executions.account_id
+LIMIT sqlc.arg(page_limit)::int;
+
 -- name: ExecutionPayloadForLease :one
 SELECT payload.execution_id, payload.sealed_payload, payload.kid, payload.created_at
 FROM execution_payloads AS payload

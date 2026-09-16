@@ -1896,6 +1896,85 @@ func (q *Queries) ExecutionClaimNext(ctx context.Context, db DBTX, arg Execution
 	return i, err
 }
 
+const executionClaimNextForAccount = `-- name: ExecutionClaimNextForAccount :one
+WITH candidate AS (
+  SELECT id, deadline_at
+  FROM executions
+  WHERE executions.account_id = $5
+    AND executions.status = 'queued'
+    AND executions.cancel_requested_at IS NULL
+    AND executions.created_at <= $4::timestamptz
+    AND executions.deadline_at > $4::timestamptz
+  ORDER BY executions.created_at, executions.id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+)
+UPDATE executions AS execution
+SET status = 'restoring',
+    lease_token = $1,
+    lease_owner = $2,
+    lease_expires_at = LEAST($3::timestamptz, candidate.deadline_at),
+    updated_at = $4
+FROM candidate
+WHERE execution.id = candidate.id
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at
+`
+
+type ExecutionClaimNextForAccountParams struct {
+	LeaseToken     pgtype.UUID
+	LeaseOwner     pgtype.Text
+	LeaseExpiresAt pgtype.Timestamptz
+	ClaimedAt      pgtype.Timestamptz
+	AccountID      pgtype.UUID
+}
+
+func (q *Queries) ExecutionClaimNextForAccount(ctx context.Context, db DBTX, arg ExecutionClaimNextForAccountParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionClaimNextForAccount,
+		arg.LeaseToken,
+		arg.LeaseOwner,
+		arg.LeaseExpiresAt,
+		arg.ClaimedAt,
+		arg.AccountID,
+	)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const executionCountActive = `-- name: ExecutionCountActive :one
 SELECT count(*) FROM executions
 WHERE account_id = $1
@@ -2809,6 +2888,70 @@ func (q *Queries) ExecutionPayloadInsert(ctx context.Context, db DBTX, arg Execu
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const executionQueueAccounts = `-- name: ExecutionQueueAccounts :many
+SELECT executions.account_id, count(*)::bigint AS queued_count, min(executions.created_at) AS oldest_created_at
+FROM executions
+WHERE executions.status = 'queued'
+  AND executions.cancel_requested_at IS NULL
+  AND executions.created_at <= $1::timestamptz
+  AND executions.deadline_at > $1::timestamptz
+GROUP BY executions.account_id
+ORDER BY executions.account_id
+LIMIT $2::int
+`
+
+type ExecutionQueueAccountsParams struct {
+	At        pgtype.Timestamptz
+	PageLimit int32
+}
+
+type ExecutionQueueAccountsRow struct {
+	AccountID       pgtype.UUID
+	QueuedCount     int64
+	OldestCreatedAt interface{}
+}
+
+func (q *Queries) ExecutionQueueAccounts(ctx context.Context, db DBTX, arg ExecutionQueueAccountsParams) ([]ExecutionQueueAccountsRow, error) {
+	rows, err := db.Query(ctx, executionQueueAccounts, arg.At, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExecutionQueueAccountsRow{}
+	for rows.Next() {
+		var i ExecutionQueueAccountsRow
+		if err := rows.Scan(&i.AccountID, &i.QueuedCount, &i.OldestCreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const executionQueueStats = `-- name: ExecutionQueueStats :one
+SELECT count(*)::bigint AS queued, min(created_at) AS oldest_created_at
+FROM executions
+WHERE status = 'queued'
+  AND cancel_requested_at IS NULL
+  AND created_at <= $1::timestamptz
+  AND deadline_at > $1::timestamptz
+`
+
+type ExecutionQueueStatsRow struct {
+	Queued          int64
+	OldestCreatedAt interface{}
+}
+
+func (q *Queries) ExecutionQueueStats(ctx context.Context, db DBTX, at pgtype.Timestamptz) (ExecutionQueueStatsRow, error) {
+	row := db.QueryRow(ctx, executionQueueStats, at)
+	var i ExecutionQueueStatsRow
+	err := row.Scan(&i.Queued, &i.OldestCreatedAt)
+	return i, err
 }
 
 const executionRenewLease = `-- name: ExecutionRenewLease :execrows

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 func TestExecutionDispatchEnabled(t *testing.T) {
@@ -17,6 +18,20 @@ func TestExecutionDispatchEnabled(t *testing.T) {
 	} {
 		if got := executionDispatchEnabled(value); got != want {
 			t.Errorf("executionDispatchEnabled(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
+
+func TestExecutionDispatchConcurrencyFromEnv(t *testing.T) {
+	for value, want := range map[string]int{"": sched.DefaultExecutionDispatchConcurrency, "1": 1, "8": 8, "32": sched.MaxExecutionDispatchConcurrency} {
+		got, err := executionDispatchConcurrencyFromEnv(value)
+		if err != nil || got != want {
+			t.Errorf("executionDispatchConcurrencyFromEnv(%q) = %d, %v; want %d, nil", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"0", "33", "-1", "workers", "1.5"} {
+		if got, err := executionDispatchConcurrencyFromEnv(value); err == nil || got != 0 {
+			t.Errorf("executionDispatchConcurrencyFromEnv(%q) = %d, %v; want error", value, got, err)
 		}
 	}
 }

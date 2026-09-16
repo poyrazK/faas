@@ -9430,6 +9430,8 @@ CREATE INDEX executions_account_created_idx ON public.executions USING btree (ac
 
 CREATE INDEX executions_claim_idx ON public.executions USING btree (created_at, id) WHERE ((status = 'queued'::text) AND (cancel_requested_at IS NULL));
 
+CREATE INDEX executions_queue_account_idx ON public.executions USING btree (account_id, created_at, id) WHERE ((status = 'queued'::text) AND (cancel_requested_at IS NULL));
+
 CREATE INDEX executions_lease_expiry_idx ON public.executions USING btree (lease_expires_at, id) WHERE (status = ANY (ARRAY['restoring'::text, 'running'::text]));
 
 ALTER TABLE ONLY public.executions

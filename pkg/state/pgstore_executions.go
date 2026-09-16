@@ -18,6 +18,7 @@ import (
 )
 
 var _ ExecutionStore = (*PgStore)(nil)
+var _ ExecutionQueueStore = (*PgStore)(nil)
 
 func executionTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
@@ -45,6 +46,40 @@ func executionIntPtr(v pgtype.Int4) *int {
 	}
 	value := int(v.Int32)
 	return &value
+}
+
+// executionNullableTime converts sqlc's nullable aggregate timestamp. The
+// generated query uses interface{} because the project-wide sqlc config does
+// not currently map nullable min(timestamptz) expressions to a concrete
+// pgtype, so keep the adapter tolerant of pgx's concrete scan variants.
+func executionNullableTime(value interface{}) (*time.Time, error) {
+	switch v := value.(type) {
+	case nil:
+		return nil, nil
+	case time.Time:
+		t := v.UTC()
+		return &t, nil
+	case *time.Time:
+		if v == nil {
+			return nil, nil
+		}
+		t := v.UTC()
+		return &t, nil
+	case pgtype.Timestamptz:
+		if !v.Valid {
+			return nil, nil
+		}
+		t := v.Time.UTC()
+		return &t, nil
+	case *pgtype.Timestamptz:
+		if v == nil || !v.Valid {
+			return nil, nil
+		}
+		t := v.Time.UTC()
+		return &t, nil
+	default:
+		return nil, fmt.Errorf("state: unexpected nullable execution timestamp type %T", value)
+	}
 }
 
 func executionFromSQL(row sqlc.Execution) Execution {
@@ -207,7 +242,76 @@ func (s *PgStore) ListExecutionsByStatus(ctx context.Context, accountID string, 
 	return executionRowsFromSQL(rows), nil
 }
 
+func (s *PgStore) ExecutionQueueStats(ctx context.Context, at time.Time) (ExecutionQueueStats, error) {
+	if at.IsZero() {
+		return ExecutionQueueStats{}, fmt.Errorf("%w: queue observation time is required", ErrExecutionInvalid)
+	}
+	row, err := sqlc.New().ExecutionQueueStats(ctx, s.pool, executionTime(at))
+	if err != nil {
+		return ExecutionQueueStats{}, mapErr(err)
+	}
+	oldest, err := executionNullableTime(row.OldestCreatedAt)
+	if err != nil {
+		return ExecutionQueueStats{}, err
+	}
+	queued := row.Queued
+	if queued < 0 {
+		queued = 0
+	}
+	return ExecutionQueueStats{Queued: int(queued), OldestCreatedAt: oldest}, nil
+}
+
+func (s *PgStore) ListExecutionQueueAccounts(ctx context.Context, at time.Time, limit int) ([]ExecutionQueueAccount, error) {
+	if at.IsZero() {
+		return nil, fmt.Errorf("%w: queue observation time is required", ErrExecutionInvalid)
+	}
+	if limit <= 0 {
+		limit = 64
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	rows, err := sqlc.New().ExecutionQueueAccounts(ctx, s.pool, sqlc.ExecutionQueueAccountsParams{
+		At: executionTime(at), PageLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	accounts := make([]ExecutionQueueAccount, 0, len(rows))
+	for _, row := range rows {
+		oldest, err := executionNullableTime(row.OldestCreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		if oldest == nil {
+			continue
+		}
+		queued := row.QueuedCount
+		if queued < 0 {
+			queued = 0
+		}
+		accounts = append(accounts, ExecutionQueueAccount{
+			AccountID:       pgUUIDString(row.AccountID),
+			Queued:          int(queued),
+			OldestCreatedAt: *oldest,
+		})
+	}
+	return accounts, nil
+}
+
 func (s *PgStore) ClaimExecution(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
+	return s.claimExecution(ctx, "", owner, claimedAt, leaseDuration)
+}
+
+func (s *PgStore) ClaimExecutionForAccount(ctx context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return ExecutionClaim{}, fmt.Errorf("%w: account id is required", ErrExecutionInvalid)
+	}
+	return s.claimExecution(ctx, accountID, owner, claimedAt, leaseDuration)
+}
+
+func (s *PgStore) claimExecution(ctx context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" || claimedAt.IsZero() || leaseDuration <= 0 {
 		return ExecutionClaim{}, fmt.Errorf("%w: claim owner, time, and positive lease are required", ErrExecutionInvalid)
@@ -221,12 +325,23 @@ func (s *PgStore) ClaimExecution(ctx context.Context, owner string, claimedAt ti
 	token := uuid.New()
 	tokenPG := pgtype.UUID{Bytes: token, Valid: true}
 	q := sqlc.New()
-	row, err := q.ExecutionClaimNext(ctx, tx, sqlc.ExecutionClaimNextParams{
-		LeaseToken:     tokenPG,
-		LeaseOwner:     pgtype.Text{String: owner, Valid: true},
-		LeaseExpiresAt: executionTime(claimedAt.Add(leaseDuration)),
-		ClaimedAt:      executionTime(claimedAt),
-	})
+	var row sqlc.Execution
+	if accountID == "" {
+		row, err = q.ExecutionClaimNext(ctx, tx, sqlc.ExecutionClaimNextParams{
+			LeaseToken:     tokenPG,
+			LeaseOwner:     pgtype.Text{String: owner, Valid: true},
+			LeaseExpiresAt: executionTime(claimedAt.Add(leaseDuration)),
+			ClaimedAt:      executionTime(claimedAt),
+		})
+	} else {
+		row, err = q.ExecutionClaimNextForAccount(ctx, tx, sqlc.ExecutionClaimNextForAccountParams{
+			LeaseToken:     tokenPG,
+			LeaseOwner:     pgtype.Text{String: owner, Valid: true},
+			LeaseExpiresAt: executionTime(claimedAt.Add(leaseDuration)),
+			ClaimedAt:      executionTime(claimedAt),
+			AccountID:      mustPgUUID(accountID),
+		})
+	}
 	if err != nil {
 		return ExecutionClaim{}, mapErr(err)
 	}

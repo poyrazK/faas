@@ -122,6 +122,65 @@ func executionCoordinatorTestConfig() ExecutionCoordinatorConfig {
 	}
 }
 
+func TestExecutionCoordinatorConfigBoundsDispatchPool(t *testing.T) {
+	config := normalizeExecutionCoordinatorConfig(ExecutionCoordinatorConfig{MaxConcurrent: 0})
+	if config.MaxConcurrent != DefaultExecutionDispatchConcurrency {
+		t.Fatalf("default MaxConcurrent = %d, want %d", config.MaxConcurrent, DefaultExecutionDispatchConcurrency)
+	}
+	config = normalizeExecutionCoordinatorConfig(ExecutionCoordinatorConfig{MaxConcurrent: MaxExecutionDispatchConcurrency + 1, QueueAccountLimit: 5000})
+	if config.MaxConcurrent != MaxExecutionDispatchConcurrency || config.QueueAccountLimit != 1000 {
+		t.Fatalf("bounded config = %+v, want max workers=%d/account limit=1000", config, MaxExecutionDispatchConcurrency)
+	}
+}
+
+func TestExecutionCoordinatorFairClaimsAcrossAccounts(t *testing.T) {
+	store := state.NewMemStore()
+	accountA, err := store.CreateAccount(context.Background(), "fair-a@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount A: %v", err)
+	}
+	accountB, err := store.CreateAccount(context.Background(), "fair-b@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount B: %v", err)
+	}
+	request := api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return input", Input: []byte(`{"ok":true}`)}
+	resolved, problem := request.Resolve(api.PlanPro)
+	if problem != nil {
+		t.Fatalf("Resolve: %v", problem)
+	}
+	base := time.Now().UTC().Add(-time.Second)
+	for i, accountID := range []string{accountA.ID, accountA.ID, accountB.ID} {
+		admittedAt := base.Add(time.Duration(i) * time.Millisecond)
+		_, err := store.CreateExecution(context.Background(), state.CreateExecutionParams{
+			AccountID: accountID, Request: resolved, SourceBytes: len(request.Source), InputBytes: len(request.Input),
+			AdmittedAt: admittedAt, DeadlineAt: admittedAt.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
+			SealedPayload: []byte("sealed"), PayloadKID: "kid",
+		})
+		if err != nil {
+			t.Fatalf("CreateExecution(%d): %v", i, err)
+		}
+	}
+	var claimed []string
+	backend := executionBackendFunc(func(_ context.Context, req ExecutionRestoreRequest) (ExecutionSession, error) {
+		claimed = append(claimed, req.AccountID)
+		return executionSessionFuncs{
+			execute: func(context.Context, ExecutionPayload) (ExecutionOutcome, error) {
+				return ExecutionOutcome{Status: api.ExecutionStatusSucceeded}, nil
+			},
+			destroy: func(context.Context) error { return nil },
+		}, nil
+	})
+	coordinator := NewExecutionCoordinator(store, backend, executionCoordinatorTestConfig(), nil)
+	for i := 0; i < 2; i++ {
+		if processed, err := coordinator.ProcessNext(context.Background()); err != nil || !processed {
+			t.Fatalf("ProcessNext(%d) = %v, %v", i, processed, err)
+		}
+	}
+	if len(claimed) != 2 || claimed[0] == claimed[1] {
+		t.Fatalf("claimed account order = %v, want two distinct accounts", claimed)
+	}
+}
+
 func TestExecutionCoordinatorDispatchFenceAndTeardownBeforeCompletion(t *testing.T) {
 	store, account, executions, sealed := newExecutionCoordinatorFixture(t, 1, 2000)
 	destroyed := &atomic.Bool{}
@@ -189,6 +248,13 @@ func TestExecutionCoordinatorEmitsBoundedLifecycleMetrics(t *testing.T) {
 	config := executionCoordinatorTestConfig()
 	config.Metrics = ops
 	coordinator := NewExecutionCoordinator(store, backend, config, nil)
+	coordinator.observeQueuePressure(context.Background())
+	if got := executionMetricValue(t, ops, "schedd_execution_queue_depth", nil); got != 1 {
+		t.Fatalf("queue depth = %v, want 1", got)
+	}
+	if got := executionMetricValue(t, ops, "schedd_execution_queue_oldest_wait_seconds", nil); got < 0 {
+		t.Fatalf("queue oldest wait = %v, want non-negative", got)
+	}
 
 	if processed, err := coordinator.ProcessNext(context.Background()); err != nil || !processed {
 		t.Fatalf("ProcessNext = %v, %v", processed, err)

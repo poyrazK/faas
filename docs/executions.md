@@ -75,6 +75,11 @@ payload does not erase usage history.
 The control-plane and scheduler gates are explicit. Set
 `FAAS_EXECUTION_API_ENABLED=1` on apid and `FAAS_EXECUTION_DISPATCH=1` on
 schedd only after the host's restore/execute/destroy isolation checks pass.
+When dispatch is enabled, schedd uses one worker by default. Set
+`FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY` to a value from 1 to 32 to raise
+the bounded worker pool; each account's plan concurrency limit still applies,
+and the scheduler rotates claims across accounts so one busy tenant cannot
+monopolize the pool.
 
 ## Scheduler observability
 
@@ -86,6 +91,9 @@ The schedd `/metrics` registry exposes payload-free execution signals:
 * `schedd_execution_failures_total{runtime,reason}` — bounded restore, transport, teardown, finalization, lease, protocol, and output-limit failures.
 * `schedd_execution_output_bytes_total{runtime}` — result/stdout/stderr byte volume, without output content.
 * `schedd_execution_sweeps_total{outcome}` — recovery-sweep success and error counts.
+* `schedd_execution_queue_depth` — eligible queued runs awaiting dispatch.
+* `schedd_execution_queue_oldest_wait_seconds` — age of the oldest eligible queued run.
+* `schedd_execution_workers` — configured bounded dispatch-worker count.
 
 Runtime, status, phase, and reason labels are closed sets. Execution IDs,
 account IDs, source, input, guest output, and raw backend errors are not

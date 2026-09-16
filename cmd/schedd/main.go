@@ -320,6 +320,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	executionEnabled := executionDispatchEnabled(os.Getenv("FAAS_EXECUTION_DISPATCH"))
+	executionDispatchConcurrency := sched.DefaultExecutionDispatchConcurrency
+	if executionEnabled {
+		executionDispatchConcurrency, err = executionDispatchConcurrencyFromEnv(os.Getenv(executionDispatchConcurrencyEnv))
+		if err != nil {
+			return err
+		}
+	}
 	var executionHostAgeIdentities []*age.X25519Identity
 	if executionEnabled {
 		if deps.executionArtifacts == nil {
@@ -1807,9 +1814,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		backend := sched.NewRoutedVmmdExecutionBackendWithBundle(vmmRouter, decoder)
 		executionCoordinator = sched.NewExecutionCoordinator(store, backend, sched.ExecutionCoordinatorConfig{
-			Enabled: true,
-			Owner:   executionNodeID,
-			Metrics: ops,
+			Enabled:       true,
+			Owner:         executionNodeID,
+			MaxConcurrent: executionDispatchConcurrency,
+			Metrics:       ops,
 		}, log).WithClaimResolver(resolver)
 		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "storage-digest-pair")
 	}

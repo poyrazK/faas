@@ -167,7 +167,80 @@ func (m *MemStore) listExecutions(accountID string, status api.ExecutionStatus, 
 	return rows, nil
 }
 
+func (m *MemStore) ExecutionQueueStats(_ context.Context, at time.Time) (ExecutionQueueStats, error) {
+	if at.IsZero() {
+		return ExecutionQueueStats{}, ErrExecutionInvalid
+	}
+	at = at.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stats := ExecutionQueueStats{}
+	for _, row := range m.executions {
+		if row.Status != api.ExecutionStatusQueued || row.CancelRequested != nil ||
+			row.CreatedAt.After(at) || !row.DeadlineAt.After(at) {
+			continue
+		}
+		stats.Queued++
+		if stats.OldestCreatedAt == nil || row.CreatedAt.Before(*stats.OldestCreatedAt) {
+			created := row.CreatedAt
+			stats.OldestCreatedAt = &created
+		}
+	}
+	return stats, nil
+}
+
+func (m *MemStore) ListExecutionQueueAccounts(_ context.Context, at time.Time, limit int) ([]ExecutionQueueAccount, error) {
+	if at.IsZero() {
+		return nil, ErrExecutionInvalid
+	}
+	if limit <= 0 {
+		limit = 64
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	at = at.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	byAccount := make(map[string]ExecutionQueueAccount)
+	for _, row := range m.executions {
+		if row.Status != api.ExecutionStatusQueued || row.CancelRequested != nil ||
+			row.CreatedAt.After(at) || !row.DeadlineAt.After(at) {
+			continue
+		}
+		entry := byAccount[row.AccountID]
+		entry.AccountID = row.AccountID
+		entry.Queued++
+		if entry.OldestCreatedAt.IsZero() || row.CreatedAt.Before(entry.OldestCreatedAt) {
+			entry.OldestCreatedAt = row.CreatedAt
+		}
+		byAccount[row.AccountID] = entry
+	}
+	accounts := make([]ExecutionQueueAccount, 0, len(byAccount))
+	for _, account := range byAccount {
+		accounts = append(accounts, account)
+	}
+	sort.Slice(accounts, func(i, j int) bool {
+		return accounts[i].AccountID < accounts[j].AccountID
+	})
+	if len(accounts) > limit {
+		accounts = accounts[:limit]
+	}
+	return accounts, nil
+}
+
 func (m *MemStore) ClaimExecution(_ context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
+	return m.claimExecution(owner, "", claimedAt, leaseDuration)
+}
+
+// ClaimExecutionForAccount is the fair-queue variant used by the production
+// coordinator. The account filter is applied while holding the same store lock
+// as the claim, so a selected queue head cannot be displaced by another worker.
+func (m *MemStore) ClaimExecutionForAccount(_ context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
+	return m.claimExecution(owner, strings.TrimSpace(accountID), claimedAt, leaseDuration)
+}
+
+func (m *MemStore) claimExecution(owner, accountID string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" || claimedAt.IsZero() || leaseDuration <= 0 {
 		return ExecutionClaim{}, fmt.Errorf("%w: claim owner, time, and positive lease are required", ErrExecutionInvalid)
@@ -178,6 +251,7 @@ func (m *MemStore) ClaimExecution(_ context.Context, owner string, claimedAt tim
 	for _, stored := range m.executions {
 		row := stored
 		if row.Status != api.ExecutionStatusQueued || row.CancelRequested != nil ||
+			(accountID != "" && row.AccountID != accountID) ||
 			row.CreatedAt.After(claimedAt) || !row.DeadlineAt.After(claimedAt) {
 			continue
 		}

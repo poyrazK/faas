@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,13 +18,16 @@ import (
 )
 
 const (
-	defaultExecutionLeaseDuration      = 15 * time.Second
-	defaultExecutionLeaseRenewInterval = 5 * time.Second
-	defaultExecutionPollInterval       = 200 * time.Millisecond
-	defaultExecutionSweepInterval      = time.Second
-	defaultExecutionDestroyTimeout     = 10 * time.Second
-	defaultExecutionFinalizeTimeout    = 5 * time.Second
-	defaultExecutionSweepLimit         = 100
+	DefaultExecutionDispatchConcurrency = 1
+	MaxExecutionDispatchConcurrency     = 32
+	defaultExecutionQueueAccountLimit   = 64
+	defaultExecutionLeaseDuration       = 15 * time.Second
+	defaultExecutionLeaseRenewInterval  = 5 * time.Second
+	defaultExecutionPollInterval        = 200 * time.Millisecond
+	defaultExecutionSweepInterval       = time.Second
+	defaultExecutionDestroyTimeout      = 10 * time.Second
+	defaultExecutionFinalizeTimeout     = 5 * time.Second
+	defaultExecutionSweepLimit          = 100
 )
 
 // ErrExecutionCoordinatorNotWired prevents an enabled coordinator from
@@ -35,9 +39,12 @@ var ErrExecutionCoordinatorNotWired = errors.New("sched: execution coordinator i
 // Enabled defaults to false so adding the coordinator to schedd cannot expose
 // execution before the vmmd adapter and isolation acceptance suite land.
 type ExecutionCoordinatorConfig struct {
-	Enabled            bool
-	Owner              string
-	MaxConcurrent      int
+	Enabled       bool
+	Owner         string
+	MaxConcurrent int
+	// QueueAccountLimit bounds the number of account buckets consulted for a
+	// fair claim. It is a scheduler bound, not a customer-facing quota.
+	QueueAccountLimit  int
 	LeaseDuration      time.Duration
 	LeaseRenewInterval time.Duration
 	PollInterval       time.Duration
@@ -125,6 +132,8 @@ type ExecutionCoordinator struct {
 	metrics       *wire.OpsMetrics
 	log           *slog.Logger
 	now           func() time.Time
+	fairMu        sync.Mutex
+	fairCursor    string
 }
 
 // ExecutionClaimRequestResolver supplies the trusted machine envelope for a
@@ -161,7 +170,16 @@ func normalizeExecutionCoordinatorConfig(config ExecutionCoordinatorConfig) Exec
 		config.Owner = "schedd"
 	}
 	if config.MaxConcurrent <= 0 {
-		config.MaxConcurrent = 1
+		config.MaxConcurrent = DefaultExecutionDispatchConcurrency
+	}
+	if config.MaxConcurrent > MaxExecutionDispatchConcurrency {
+		config.MaxConcurrent = MaxExecutionDispatchConcurrency
+	}
+	if config.QueueAccountLimit <= 0 {
+		config.QueueAccountLimit = defaultExecutionQueueAccountLimit
+	}
+	if config.QueueAccountLimit > 1000 {
+		config.QueueAccountLimit = 1000
 	}
 	if config.LeaseDuration <= 0 {
 		config.LeaseDuration = defaultExecutionLeaseDuration
@@ -202,9 +220,13 @@ func (c *ExecutionCoordinator) Run(ctx context.Context) error {
 	if c.store == nil || c.backend == nil {
 		return ErrExecutionCoordinatorNotWired
 	}
+	if c.metrics != nil {
+		c.metrics.SetExecutionWorkers(c.config.MaxConcurrent)
+	}
 	if _, err := c.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		c.log.Warn("schedd: execution initial recovery sweep failed", "error_class", executionErrorClass(err))
 	}
+	c.observeQueuePressure(ctx)
 
 	var workers sync.WaitGroup
 	workers.Add(c.config.MaxConcurrent + 1)
@@ -229,7 +251,7 @@ func (c *ExecutionCoordinator) ProcessNext(ctx context.Context) (bool, error) {
 	if c == nil || c.store == nil || c.backend == nil {
 		return false, ErrExecutionCoordinatorNotWired
 	}
-	claim, err := c.store.ClaimExecution(ctx, c.config.Owner, c.now().UTC(), c.config.LeaseDuration)
+	claim, err := c.claimNext(ctx)
 	if errors.Is(err, state.ErrNotFound) {
 		return false, nil
 	}
@@ -240,6 +262,82 @@ func (c *ExecutionCoordinator) ProcessNext(ctx context.Context) (bool, error) {
 		return true, fmt.Errorf("sched: claimed execution %s without lease token", claim.ID)
 	}
 	return true, c.processClaim(ctx, claim)
+}
+
+// claimNext spreads concurrent workers across accounts when the durable store
+// exposes the queue-account extension. The cursor is process-local and only
+// chooses the starting bucket; PostgreSQL/MemStore still provide the durable
+// SKIP LOCKED claim fence. Older stores retain the global oldest-first path.
+func (c *ExecutionCoordinator) claimNext(ctx context.Context) (state.ExecutionClaim, error) {
+	claimedAt := c.now().UTC()
+	queueStore, ok := c.store.(state.ExecutionQueueStore)
+	if !ok {
+		return c.store.ClaimExecution(ctx, c.config.Owner, claimedAt, c.config.LeaseDuration)
+	}
+	accounts, err := queueStore.ListExecutionQueueAccounts(ctx, claimedAt, c.config.QueueAccountLimit)
+	if err != nil {
+		return state.ExecutionClaim{}, fmt.Errorf("sched: list execution queue accounts: %w", err)
+	}
+	if len(accounts) == 0 {
+		return state.ExecutionClaim{}, state.ErrNotFound
+	}
+	sort.Slice(accounts, func(i, j int) bool {
+		return accounts[i].AccountID < accounts[j].AccountID
+	})
+	for i := 0; i < len(accounts); i++ {
+		accountID := c.nextFairAccount(accounts)
+		claim, err := queueStore.ClaimExecutionForAccount(ctx, accountID, c.config.Owner, claimedAt, c.config.LeaseDuration)
+		if errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return state.ExecutionClaim{}, err
+		}
+		return claim, nil
+	}
+	return state.ExecutionClaim{}, state.ErrNotFound
+}
+
+func (c *ExecutionCoordinator) nextFairAccount(accounts []state.ExecutionQueueAccount) string {
+	c.fairMu.Lock()
+	defer c.fairMu.Unlock()
+	start := 0
+	if c.fairCursor != "" {
+		start = len(accounts)
+		for i, account := range accounts {
+			if account.AccountID > c.fairCursor {
+				start = i
+				break
+			}
+		}
+		if start == len(accounts) {
+			start = 0
+		}
+	}
+	selected := accounts[start].AccountID
+	c.fairCursor = selected
+	return selected
+}
+
+func (c *ExecutionCoordinator) observeQueuePressure(ctx context.Context) {
+	if c == nil || c.metrics == nil {
+		return
+	}
+	queueStore, ok := c.store.(state.ExecutionQueueStore)
+	if !ok {
+		return
+	}
+	at := c.now().UTC()
+	stats, err := queueStore.ExecutionQueueStats(ctx, at)
+	if err != nil {
+		c.log.Warn("schedd: execution queue metrics failed", "error_class", executionErrorClass(err))
+		return
+	}
+	var oldestWait time.Duration
+	if stats.OldestCreatedAt != nil && at.After(*stats.OldestCreatedAt) {
+		oldestWait = at.Sub(*stats.OldestCreatedAt)
+	}
+	c.metrics.SetExecutionQueue(stats.Queued, oldestWait)
 }
 
 // SweepOnce recovers expired durable intents. Restores may requeue; running
@@ -574,6 +672,7 @@ func (c *ExecutionCoordinator) runSweeper(ctx context.Context) {
 			if _, err := c.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				c.log.Warn("schedd: execution recovery sweep failed", "error_class", executionErrorClass(err))
 			}
+			c.observeQueuePressure(ctx)
 		}
 	}
 }

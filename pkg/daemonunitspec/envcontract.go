@@ -395,6 +395,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SCAN_SPOOL_ROOT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCHEDD_ADDR", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCHEDD_CONFIG", Owners: []string{"schedd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "bounded disposable-execution worker pool; 1 by default and at most 32; only consulted when FAAS_EXECUTION_DISPATCH=1"},
 	{Name: "FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCHEDD_ROLE", Owners: []string{"schedd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_SCHEDD_SOCKET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin},

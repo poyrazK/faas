@@ -5,16 +5,31 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 )
 
+const executionDispatchConcurrencyEnv = "FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY"
+
 // executionDispatchEnabled is an exact opt-in. Execution remains disabled
 // during rollout unless an operator explicitly sets the feature gate to 1.
 func executionDispatchEnabled(value string) bool {
 	return strings.TrimSpace(value) == "1"
+}
+
+func executionDispatchConcurrencyFromEnv(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return sched.DefaultExecutionDispatchConcurrency, nil
+	}
+	concurrency, err := strconv.Atoi(value)
+	if err != nil || concurrency < 1 || concurrency > sched.MaxExecutionDispatchConcurrency {
+		return 0, fmt.Errorf("%s must be an integer between 1 and %d: %q", executionDispatchConcurrencyEnv, sched.MaxExecutionDispatchConcurrency, value)
+	}
+	return concurrency, nil
 }
 
 // executionRuntimeArtifactsFromEnv reads release-owned runtime metadata. The

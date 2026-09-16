@@ -129,6 +129,35 @@ type ExecutionSweepResult struct {
 	PayloadsDeleted  int
 }
 
+// ExecutionQueueStats is a payload-free snapshot of work that is eligible for
+// dispatch at a point in time. OldestCreatedAt is nil when the queue is empty.
+// It is intentionally separate from Execution so queue dashboards never need
+// to read source, input, or terminal output.
+type ExecutionQueueStats struct {
+	Queued          int
+	OldestCreatedAt *time.Time
+}
+
+// ExecutionQueueAccount is the bounded scheduling view for one account with
+// queued execution work. AccountID is used only by the scheduler to select a
+// fair claim; it must never be exported as a metric label.
+type ExecutionQueueAccount struct {
+	AccountID       string
+	Queued          int
+	OldestCreatedAt time.Time
+}
+
+// ExecutionQueueStore is an optional scheduler extension. Older focused test
+// doubles may implement only ExecutionStore and continue to use the global
+// oldest-first claim path. Production stores implement these methods so the
+// coordinator can spread workers across accounts without changing the durable
+// execution state machine.
+type ExecutionQueueStore interface {
+	ExecutionQueueStats(ctx context.Context, at time.Time) (ExecutionQueueStats, error)
+	ListExecutionQueueAccounts(ctx context.Context, at time.Time, limit int) ([]ExecutionQueueAccount, error)
+	ClaimExecutionForAccount(ctx context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error)
+}
+
 // ExecutionUsageSummary is the account-scoped aggregate of terminal
 // disposable executions in one UTC calendar month. It is backed by the
 // append-only execution usage ledger rather than the payload-bearing
