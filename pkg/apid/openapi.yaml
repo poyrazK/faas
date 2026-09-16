@@ -23457,8 +23457,8 @@ components:
           example: webhook
         state:
           type: string
-          enum: [ok, firing]
-          description: 'Cool-down state machine.'
+          enum: [ok, firing, degraded]
+          description: "Evaluation state. degraded means the rule's own metric source is unavailable."
         last_fired_at: { type: string, format: date-time }
         last_evaluated_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }

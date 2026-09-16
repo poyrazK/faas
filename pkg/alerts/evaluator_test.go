@@ -62,6 +62,14 @@ func (s *stubPromQL) QueryScalar(_ context.Context, _ string) (float64, error) {
 	return s.value, s.err
 }
 
+type selectivePromQL struct {
+	fn func(string) (float64, error)
+}
+
+func (s *selectivePromQL) QueryScalar(_ context.Context, query string) (float64, error) {
+	return s.fn(query)
+}
+
 // recordingDispatcher captures every Dispatch call so tests assert on
 // the URL + payload without spinning an httptest.Server. Implements
 // alerts.Dispatcher; safe for concurrent use (the evaluator wraps the
@@ -319,6 +327,32 @@ func TestEvaluator_DegradedSource(t *testing.T) {
 	}
 	if got.LastEvaluatedAt.IsZero() {
 		t.Errorf("LastEvaluatedAt is zero; expected non-zero even on degraded tick")
+	}
+	if got.State != state.AlertStateDegraded {
+		t.Errorf("State = %q; want degraded when the rule's own source is unavailable", got.State)
+	}
+}
+
+func TestEvaluator_RequestCountIgnoresUnrelatedMissingSeries(t *testing.T) {
+	store := state.NewMemStore()
+	_, ident, _ := seedRule(t, store, state.AlertMetricRequestCount, state.AlertGt, 0)
+	dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200, Attempts: 1}}
+	queries := 0
+	prom := &selectivePromQL{fn: func(query string) (float64, error) {
+		queries++
+		if strings.Contains(query, "gateway_request_duration_seconds_count") && strings.Contains(query, "increase(") {
+			return 3, nil
+		}
+		return 0, errors.New("unrelated series missing")
+	}}
+	ev, _ := makeEvaluator(t, store, prom, ident, dispatch)
+
+	stats, err := ev.RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queries != 1 || stats.Fired != 1 || stats.Delivered != 1 || dispatch.callCount() != 1 {
+		t.Fatalf("queries=%d stats=%+v deliveries=%d, want one isolated query and delivery", queries, stats, dispatch.callCount())
 	}
 }
 

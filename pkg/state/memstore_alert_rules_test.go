@@ -283,6 +283,10 @@ func TestMemStoreAlertRule_StateTransition(t *testing.T) {
 	if err != nil || changed {
 		t.Errorf("repeat = (%v, %v); want (false, nil)", changed, err)
 	}
+	changed, err = m.SetAlertRuleState(ctx, rule.ID, AlertStateDegraded, time.Now())
+	if err != nil || !changed {
+		t.Errorf("degraded = (%v, %v); want (true, nil)", changed, err)
+	}
 	// real transition back
 	changed, err = m.SetAlertRuleState(ctx, rule.ID, AlertStateOk, time.Now())
 	if err != nil || !changed {

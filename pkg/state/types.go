@@ -2689,16 +2689,18 @@ const (
 )
 
 // AlertState is the cool-down state machine (issue #396 criterion 4).
-// ok   — no current breach; a fresh evaluate can transition to firing.
-// firing — the rule is mid-cooldown. The ClaimAlertFire store method
+// ok       — no current breach; a fresh evaluate can transition to firing.
+// firing   — the rule is mid-cooldown. The ClaimAlertFire store method
+// degraded — the rule's own metric source could not be evaluated.
 //
 //	refuses to enqueue a second delivery until the rule returns
 //	to 'ok' AND the cool-down bucket has elapsed.
 type AlertState string
 
 const (
-	AlertStateOk     AlertState = "ok"
-	AlertStateFiring AlertState = "firing"
+	AlertStateOk       AlertState = "ok"
+	AlertStateFiring   AlertState = "firing"
+	AlertStateDegraded AlertState = "degraded"
 )
 
 // AlertDeliveryStatus is the terminal state of one alert_deliveries row.

@@ -365,6 +365,10 @@ func TestPgStore_AlertRule_StateTransition(t *testing.T) {
 	if err != nil || changed {
 		t.Errorf("repeat = (%v, %v); want (false, nil)", changed, err)
 	}
+	changed, err = s.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, time.Now())
+	if err != nil || !changed {
+		t.Errorf("degraded = (%v, %v); want (true, nil)", changed, err)
+	}
 	changed, err = s.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, time.Now())
 	if err != nil || !changed {
 		t.Errorf("revert = (%v, %v); want (true, nil)", changed, err)

@@ -104,6 +104,47 @@ func TestAppMetrics_Fetch_HappyPath(t *testing.T) {
 	}
 }
 
+func TestFetchAlertMetricQueriesOnlyRequestedSeries(t *testing.T) {
+	tests := []struct {
+		metric string
+		want   []string
+	}{
+		{"request_count", []string{"increase(gateway_request_duration_seconds_count", "or vector(0)"}},
+		{"error_rate_pct", []string{`class=~"[45]xx"`, "or vector(0)"}},
+		{"latency_p50_ms", []string{"histogram_quantile(0.5", "or vector(0)"}},
+		{"latency_p95_ms", []string{"histogram_quantile(0.95", "or vector(0)"}},
+		{"latency_p99_ms", []string{"histogram_quantile(0.99", "or vector(0)"}},
+		{"cold_start_pct", []string{"gateway_cold_boot_total", "or vector(0)"}},
+		{"queue_depth", []string{"gateway_queue_depth", "or vector(0)"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.metric, func(t *testing.T) {
+			calls := 0
+			stub := &stubPromQL{fn: func(query string) (float64, error) {
+				calls++
+				for _, fragment := range tc.want {
+					if !strings.Contains(query, fragment) {
+						t.Errorf("query %q missing %q", query, fragment)
+					}
+				}
+				return 7, nil
+			}}
+			value, source := appmetrics.FetchAlertMetric(context.Background(), stub, slog.Default(), "app-1", "5m", tc.metric)
+			if calls != 1 || value != 7 || source != appmetrics.SourcePrometheus {
+				t.Fatalf("calls=%d value=%v source=%q, want one query, 7, prometheus", calls, value, source)
+			}
+		})
+	}
+}
+
+func TestFetchAlertMetricOwnSourceFailureIsDegraded(t *testing.T) {
+	stub := &stubPromQL{fn: func(string) (float64, error) { return 0, errors.New("prometheus unavailable") }}
+	value, source := appmetrics.FetchAlertMetric(context.Background(), stub, slog.Default(), "app-1", "5m", "request_count")
+	if value != 0 || !appmetrics.IsDegradedSource(source) {
+		t.Fatalf("value=%v source=%q, want zero with degraded source", value, source)
+	}
+}
+
 func TestAppMetrics_FetchCustomerCompleteness(t *testing.T) {
 	stub := &stubPromQL{fn: func(query string) (float64, error) {
 		switch {

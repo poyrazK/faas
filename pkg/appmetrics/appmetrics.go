@@ -90,6 +90,68 @@ func HistogramQuantileMSQuery(quantile float64, buckets, count string) string {
 	return fmt.Sprintf(`((histogram_quantile(%g, %s) * 1000) and ((%s) > 0)) or vector(0)`, quantile, buckets, count)
 }
 
+// FetchAlertMetric evaluates exactly one Prometheus-backed customer alert
+// metric. Alert rules must not depend on the aggregate Fetch response: a
+// missing latency series, for example, cannot suppress a valid request-count
+// alert. Each query defines an idle value of zero while transport and query
+// failures remain degraded so the rule can expose that its own source is
+// unavailable.
+func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng, metric string) (float64, string) {
+	if log == nil {
+		log = slog.Default()
+	}
+	if fetcher == nil {
+		return 0, SourceDegradedPrefix + "prometheus not configured"
+	}
+	if c, ok := fetcher.(*promql.Client); ok && c == nil {
+		return 0, SourceDegradedPrefix + "prometheus not configured"
+	}
+	if strings.ContainsAny(appID, "\"\n\\") {
+		return 0, SourceDegradedPrefix + "invalid app id"
+	}
+	if !IsValidRange(rng) {
+		return 0, SourceDegradedPrefix + "invalid range"
+	}
+
+	var query string
+	var normalize = SafeFloat
+	switch metric {
+	case "request_count":
+		query = fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{app=%q}[%s])) or vector(0)`, appID, rng)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "error_rate_pct":
+		query = fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"[45]xx"}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng)))
+		normalize = SafePercent
+	case "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
+		quantile := map[string]float64{"latency_p50_ms": .50, "latency_p95_ms": .95, "latency_p99_ms": .99}[metric]
+		query = HistogramQuantileMSQuery(
+			quantile,
+			fmt.Sprintf(`sum by (le) (rate(gateway_request_duration_seconds_bucket{app=%q,class="2xx"}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="2xx"}[%s]))`, appID, rng))
+	case "cold_start_pct":
+		query = fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
+			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng)))
+		normalize = SafePercent
+	case "queue_depth":
+		query = fmt.Sprintf(`sum(gateway_queue_depth{app=%q,account_id=~".+"}) or vector(0)`, appID)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	default:
+		return 0, SourceDegradedPrefix + "unsupported alert metric"
+	}
+
+	value, err := fetcher.QueryScalar(ctx, query)
+	if err != nil {
+		msg := strings.ReplaceAll(err.Error(), "\r", "")
+		msg = strings.ReplaceAll(msg, "\n", "")
+		log.Warn("appmetrics: alert metric query failed", "metric", metric, "app_id", appID, "err", msg)
+		return 0, SourceDegradedPrefix + msg
+	}
+	return normalize(value), SourcePrometheus
+}
+
 // Fetch runs the per-app PromQL queries and assembles an
 // AppMetricsResponse. Returns the response and a Source string
 // ("prometheus" on success, "degraded: <reason>" on failure). Safe

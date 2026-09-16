@@ -349,6 +349,9 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			}
 			e.log.Warn("alerts: eval skipped degraded source",
 				"rule", rule.ID, "metric", string(rule.Metric))
+			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, now); err != nil {
+				e.log.Warn("alerts: set state degraded", "rule", rule.ID, "err", err)
+			}
 		case skipNoIdentity:
 			stats.SkippedNoIdentity++
 			e.log.Warn("alerts: eval skipped no identity",
@@ -367,11 +370,11 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if !comparisonResult {
 		// Healthy tick — comparison false. If we were firing,
 		// flip back to ok and emit audit.resolved.
-		if rule.State == state.AlertStateFiring {
+		if rule.State != state.AlertStateOk {
 			changed, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
 			if err != nil {
 				e.log.Warn("alerts: set state ok", "rule", rule.ID, "err", err)
-			} else if changed && e.audit != nil {
+			} else if changed && rule.State == state.AlertStateFiring && e.audit != nil {
 				e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
 					"rule_id": rule.ID,
 					"rule":    rule.Name,
@@ -445,6 +448,11 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if !won {
 		// Duplicate inside the cool-down bucket. Silent skip per
 		// the contract at state.Store.ClaimAlertFire.
+		if rule.State == state.AlertStateDegraded {
+			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
+				e.log.Warn("alerts: restore firing state", "rule", rule.ID, "err", err)
+			}
+		}
 		return
 	}
 	stats.Fired++
@@ -800,8 +808,9 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		}
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
 	default:
-		// PromQL-driven metrics.
-		resp, source := appmetrics.Fetch(ctx, e.promQL, e.log, rule.AppID, string(rule.WindowSpec))
+		// PromQL-driven metrics. Fetch only the series required by this rule;
+		// unrelated optional or empty series must not suppress evaluation.
+		observed, source := appmetrics.FetchAlertMetric(ctx, e.promQL, e.log, rule.AppID, string(rule.WindowSpec), string(rule.Metric))
 		if !appmetrics.IsDegradedSource(source) && source != appmetrics.SourcePrometheus {
 			// Defensive: any unexpected Source value is treated
 			// as degraded so a future appmetrics source type
@@ -809,32 +818,6 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			return 0, false, skipDegraded
 		}
 		if appmetrics.IsDegradedSource(source) {
-			return 0, false, skipDegraded
-		}
-		var observed float64
-		switch rule.Metric {
-		case state.AlertMetricErrorRate:
-			observed = resp.ErrorRatePct
-		case state.AlertMetricLatencyP50:
-			observed = resp.LatencyP50MS
-		case state.AlertMetricLatencyP95:
-			observed = resp.LatencyP95MS
-		case state.AlertMetricLatencyP99:
-			observed = resp.LatencyP99MS
-		case state.AlertMetricColdStartPct:
-			observed = resp.ColdStartPct
-		case state.AlertMetricRequestCount:
-			observed = float64(resp.RequestCount)
-		case state.AlertMetricQueueDepth:
-			// Issue #1233 / ADR-123. gateway_queue_depth{app}
-			// is fed by SetQueueDepth in pkg/gateway/handler.go;
-			// appmetrics.Fetch surfaces it on resp.QueueDepth.
-			observed = float64(resp.QueueDepth)
-		default:
-			// Unknown / future metric — skip silently. The
-			// closed vocabulary at state.AlertMetric rejects
-			// unknown values at creation, but a defensive
-			// default keeps a future metric type safe.
 			return 0, false, skipDegraded
 		}
 		return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
