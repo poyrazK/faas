@@ -1668,7 +1668,7 @@ func (p *normalPathCancellationProbe) markCanceled() {
 	p.canceledOnce.Do(func() { close(p.canceled) })
 }
 
-func (p *normalPathCancellationProbe) release() {
+func (p *normalPathCancellationProbe) Release() {
 	p.releaseOnce.Do(func() { close(p.release) })
 }
 
@@ -1787,7 +1787,7 @@ func (s *normalPathVMMD) InstallCancellationProbe(instanceID string, blockReques
 
 func (s *normalPathVMMD) ReleaseProbe(probe *normalPathCancellationProbe) {
 	if probe != nil {
-		probe.release()
+		probe.Release()
 	}
 }
 
