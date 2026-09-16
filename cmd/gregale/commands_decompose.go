@@ -659,8 +659,13 @@ func printPlanDetectionWarnings(w io.Writer, warnings []api.PlanDetectionWarning
 	}
 	items := append([]api.PlanDetectionWarning(nil), warnings...)
 	sort.SliceStable(items, func(i, j int) bool {
-		if strings.ToLower(items[i].Workload) != strings.ToLower(items[j].Workload) {
-			return strings.ToLower(items[i].Workload) < strings.ToLower(items[j].Workload)
+		leftWorkload := strings.ToLower(items[i].Workload)
+		rightWorkload := strings.ToLower(items[j].Workload)
+		if leftWorkload < rightWorkload {
+			return true
+		}
+		if leftWorkload > rightWorkload {
+			return false
 		}
 		if items[i].Outcome != items[j].Outcome {
 			return items[i].Outcome < items[j].Outcome

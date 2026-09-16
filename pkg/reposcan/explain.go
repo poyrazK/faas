@@ -134,8 +134,13 @@ func mergedDetectionWarnings(workloads []Workload) []DetectionWarning {
 
 func sortDetectionWarnings(warnings []DetectionWarning) {
 	sort.SliceStable(warnings, func(i, j int) bool {
-		if strings.ToLower(warnings[i].Workload) != strings.ToLower(warnings[j].Workload) {
-			return strings.ToLower(warnings[i].Workload) < strings.ToLower(warnings[j].Workload)
+		leftWorkload := strings.ToLower(warnings[i].Workload)
+		rightWorkload := strings.ToLower(warnings[j].Workload)
+		if leftWorkload < rightWorkload {
+			return true
+		}
+		if leftWorkload > rightWorkload {
+			return false
 		}
 		if warnings[i].Outcome != warnings[j].Outcome {
 			return warnings[i].Outcome < warnings[j].Outcome
