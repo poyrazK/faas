@@ -23,24 +23,28 @@ type ObjectUploadRoute struct {
 	UpdatedAt           time.Time
 }
 
-// ObjectUploadCompletion is an append-only receipt for an edge upload. It is
-// safe to return a projection of this record to the caller without exposing
-// provider placement or credentials.
+// ObjectUploadCompletion is the durable receipt for an edge upload. An
+// idempotent upload is first persisted as pending, then updated to completed
+// or failed after the provider call. It is safe to return a projection of
+// this record to the caller without exposing provider placement or
+// credentials.
 type ObjectUploadCompletion struct {
-	ID          string
-	RouteID     string
-	AccountID   string
-	AppID       string
-	BucketID    string
-	SubjectID   string
-	Key         string
-	Bytes       int64
-	ContentType string
-	ETag        string
-	Status      string
-	ErrorCode   string
-	RequestID   string
-	CreatedAt   time.Time
+	ID                 string
+	RouteID            string
+	AccountID          string
+	AppID              string
+	BucketID           string
+	SubjectID          string
+	Key                string
+	Bytes              int64
+	ContentType        string
+	ETag               string
+	Status             string
+	ErrorCode          string
+	RequestID          string
+	IdempotencyKey     string
+	RequestFingerprint string
+	CreatedAt          time.Time
 }
 
 type ObjectUploadRouteStore interface {
@@ -49,4 +53,7 @@ type ObjectUploadRouteStore interface {
 	UpsertObjectUploadRoute(context.Context, ObjectUploadRoute) (ObjectUploadRoute, error)
 	DeleteObjectUploadRoute(context.Context, string, string, string) error
 	RecordObjectUploadCompletion(context.Context, ObjectUploadCompletion) (ObjectUploadCompletion, error)
+	CreateObjectUploadIntent(context.Context, ObjectUploadCompletion) (ObjectUploadCompletion, error)
+	GetObjectUploadIntent(context.Context, string, string, string) (ObjectUploadCompletion, error)
+	UpdateObjectUploadCompletion(context.Context, ObjectUploadCompletion) (ObjectUploadCompletion, error)
 }

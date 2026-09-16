@@ -826,7 +826,7 @@ paths:
     post:
       operationId: createObjectUploadRoute
       summary: Create or update an authenticated upload route
-      description: Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object key, enforces the byte/content-type policy, streams directly to the selected provider, and records a completion receipt.
+      description: Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object key, enforces the byte/content-type policy, streams directly to the selected provider, and records a completion receipt. The public upload endpoint accepts an optional Idempotency-Key header (up to 128 bytes) to replay a completed or failed attempt without repeating provider work; conflicting request metadata returns 409.
       tags: [storage]
       requestBody:
         required: true

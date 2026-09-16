@@ -591,9 +591,21 @@ runtime, declare an edge route with `POST /v1/apps/{slug}/upload-routes`:
 The public app hostname then accepts `POST /uploads/avatar`. Gregale requires a
 Bearer API key belonging to the app account, requires `Content-Length`, checks
 the route byte and content-type policy, and streams the body directly to the
-selected provider. The generated key is `key_prefix/{api-key-id}/{uuid}`; the
-caller receives an object reference and an opaque completion ID. A durable
-completion receipt is written for completed, rejected, and failed attempts.
+selected provider. Without an idempotency key, the generated key is
+`key_prefix/{api-key-id}/{uuid}`; the caller receives an object reference and
+an opaque completion ID. A durable completion receipt is written for
+completed, rejected, and failed attempts.
+
+Clients that may retry a request can send an `Idempotency-Key` (up to 128
+bytes). The key is scoped to the upload route and authenticated API-key
+subject. Gregale persists a pending intent before writing the object, then
+replays the same completion response after a successful write; a retry with
+different request metadata returns `409 Conflict`, and a retry while the first
+write is still pending also returns `409`. Provider failures are persisted and
+replayed as `502 Bad Gateway`. The request fingerprint covers the route,
+subject, byte count, normalized content type, and optional `Content-MD5` or
+`Digest` headers; applications that need body-level equivalence should supply
+one of those digest headers.
 
 The route policy is provider-neutral. It uses the registry's optional streaming
 writer, so switching an immutable bucket placement between OVH, R2, AWS, GCS,

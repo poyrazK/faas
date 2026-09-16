@@ -85,19 +85,61 @@ func (s *PgStore) DeleteObjectUploadRoute(ctx context.Context, accountID, appID,
 }
 
 func (s *PgStore) RecordObjectUploadCompletion(ctx context.Context, completion ObjectUploadCompletion) (ObjectUploadCompletion, error) {
-	var id, routeID, accountID, appID, bucketID pgtype.UUID
-	var out ObjectUploadCompletion
-	err := s.pool.QueryRow(ctx, `
+	return scanObjectUploadCompletion(s.pool.QueryRow(ctx, `
 		INSERT INTO object_upload_completions
 			(id, route_id, account_id, app_id, bucket_id, subject_id, object_key,
-			 bytes, content_type, etag, status, error_code, request_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			 bytes, content_type, etag, status, error_code, request_id, idempotency_key, request_fingerprint)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key,
-		          bytes, content_type, etag, status, error_code, request_id, created_at`,
+		          bytes, content_type, etag, status, error_code, request_id, idempotency_key, request_fingerprint, created_at`,
 		mustPgUUID(completion.ID), mustPgUUID(completion.RouteID), mustPgUUID(completion.AccountID),
 		mustPgUUID(completion.AppID), mustPgUUID(completion.BucketID), completion.SubjectID, completion.Key,
-		completion.Bytes, completion.ContentType, completion.ETag, completion.Status, completion.ErrorCode, completion.RequestID).
-		Scan(&id, &routeID, &accountID, &appID, &bucketID, &out.SubjectID, &out.Key, &out.Bytes, &out.ContentType, &out.ETag, &out.Status, &out.ErrorCode, &out.RequestID, &out.CreatedAt)
+		completion.Bytes, completion.ContentType, completion.ETag, completion.Status, completion.ErrorCode, completion.RequestID,
+		completion.IdempotencyKey, completion.RequestFingerprint))
+}
+
+func (s *PgStore) CreateObjectUploadIntent(ctx context.Context, intent ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	if intent.IdempotencyKey == "" || intent.RequestFingerprint == "" || intent.Status != "pending" {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
+	return scanObjectUploadCompletion(s.pool.QueryRow(ctx, `
+		INSERT INTO object_upload_completions
+			(id, route_id, account_id, app_id, bucket_id, subject_id, object_key,
+			 bytes, content_type, etag, status, error_code, request_id, idempotency_key, request_fingerprint)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key,
+		          bytes, content_type, etag, status, error_code, request_id, idempotency_key, request_fingerprint, created_at`,
+		mustPgUUID(intent.ID), mustPgUUID(intent.RouteID), mustPgUUID(intent.AccountID),
+		mustPgUUID(intent.AppID), mustPgUUID(intent.BucketID), intent.SubjectID, intent.Key,
+		intent.Bytes, intent.ContentType, intent.ETag, intent.Status, intent.ErrorCode, intent.RequestID,
+		intent.IdempotencyKey, intent.RequestFingerprint))
+}
+
+func (s *PgStore) GetObjectUploadIntent(ctx context.Context, routeID, subjectID, idempotencyKey string) (ObjectUploadCompletion, error) {
+	return scanObjectUploadCompletion(s.pool.QueryRow(ctx, `
+		SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key,
+		       bytes, content_type, etag, status, error_code, request_id, idempotency_key, request_fingerprint, created_at
+		  FROM object_upload_completions
+		 WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3`,
+		mustPgUUID(routeID), subjectID, idempotencyKey))
+}
+
+func (s *PgStore) UpdateObjectUploadCompletion(ctx context.Context, completion ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	return scanObjectUploadCompletion(s.pool.QueryRow(ctx, `
+		UPDATE object_upload_completions
+		   SET etag=$2, status=$3, error_code=$4, request_id=$5
+		 WHERE id=$1 AND idempotency_key <> ''
+		RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key,
+		          bytes, content_type, etag, status, error_code, request_id, idempotency_key, request_fingerprint, created_at`,
+		mustPgUUID(completion.ID), completion.ETag, completion.Status, completion.ErrorCode, completion.RequestID))
+}
+
+func scanObjectUploadCompletion(row pgx.Row) (ObjectUploadCompletion, error) {
+	var id, routeID, accountID, appID, bucketID pgtype.UUID
+	var out ObjectUploadCompletion
+	err := row.Scan(&id, &routeID, &accountID, &appID, &bucketID, &out.SubjectID, &out.Key, &out.Bytes,
+		&out.ContentType, &out.ETag, &out.Status, &out.ErrorCode, &out.RequestID, &out.IdempotencyKey,
+		&out.RequestFingerprint, &out.CreatedAt)
 	if err != nil {
 		return ObjectUploadCompletion{}, mapErr(err)
 	}

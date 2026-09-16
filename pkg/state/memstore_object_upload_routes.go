@@ -84,3 +84,53 @@ func (m *MemStore) RecordObjectUploadCompletion(_ context.Context, completion Ob
 	m.objectUploadCompletions[completion.ID] = completion
 	return completion, nil
 }
+
+func (m *MemStore) CreateObjectUploadIntent(_ context.Context, intent ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	if intent.ID == "" || intent.RouteID == "" || intent.Key == "" || intent.Bytes < 0 || intent.IdempotencyKey == "" || intent.RequestFingerprint == "" || intent.Status != "pending" {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.objectUploadCompletions {
+		if existing.RouteID == intent.RouteID && existing.SubjectID == intent.SubjectID && existing.IdempotencyKey == intent.IdempotencyKey {
+			return ObjectUploadCompletion{}, ErrConflict
+		}
+	}
+	if intent.CreatedAt.IsZero() {
+		intent.CreatedAt = time.Now().UTC()
+	}
+	m.objectUploadCompletions[intent.ID] = intent
+	return intent, nil
+}
+
+func (m *MemStore) GetObjectUploadIntent(_ context.Context, routeID, subjectID, idempotencyKey string) (ObjectUploadCompletion, error) {
+	if routeID == "" || subjectID == "" || idempotencyKey == "" {
+		return ObjectUploadCompletion{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, completion := range m.objectUploadCompletions {
+		if completion.RouteID == routeID && completion.SubjectID == subjectID && completion.IdempotencyKey == idempotencyKey {
+			return completion, nil
+		}
+	}
+	return ObjectUploadCompletion{}, ErrNotFound
+}
+
+func (m *MemStore) UpdateObjectUploadCompletion(_ context.Context, completion ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+	if completion.ID == "" || completion.IdempotencyKey == "" || completion.Status == "pending" {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.objectUploadCompletions[completion.ID]
+	if !ok || existing.IdempotencyKey == "" {
+		return ObjectUploadCompletion{}, ErrNotFound
+	}
+	existing.ETag = completion.ETag
+	existing.Status = completion.Status
+	existing.ErrorCode = completion.ErrorCode
+	existing.RequestID = completion.RequestID
+	m.objectUploadCompletions[completion.ID] = existing
+	return existing, nil
+}

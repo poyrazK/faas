@@ -22,6 +22,7 @@ import (
 type uploadTestProvider struct {
 	Provider
 	err         error
+	writes      int
 	body        []byte
 	bucket      string
 	key         string
@@ -29,6 +30,7 @@ type uploadTestProvider struct {
 }
 
 func (p *uploadTestProvider) WriteObject(_ context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
+	p.writes++
 	p.bucket = bucket
 	p.key = key
 	p.contentType = metadata.ContentType
@@ -57,11 +59,21 @@ func (a *uploadTestAccounting) AdmitObjectURL(context.Context, string, string, s
 	return a.err
 }
 
+type failingUploadRouteStore struct {
+	state.ObjectUploadRouteStore
+	err error
+}
+
+func (s *failingUploadRouteStore) UpdateObjectUploadCompletion(context.Context, state.ObjectUploadCompletion) (state.ObjectUploadCompletion, error) {
+	return state.ObjectUploadCompletion{}, s.err
+}
+
 type uploadFixture struct {
 	handler    http.Handler
 	store      *state.MemStore
 	provider   *uploadTestProvider
 	accounting *uploadTestAccounting
+	registry   *Registry
 	account    state.Account
 	app        state.App
 	key        state.APIKey
@@ -144,14 +156,21 @@ func newUploadFixture(t *testing.T) uploadFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return uploadFixture{handler: handler, store: store, provider: provider, accounting: accounting, account: account, app: app, key: key, route: route, token: token}
+	return uploadFixture{handler: handler, store: store, provider: provider, accounting: accounting, registry: registry, account: account, app: app, key: key, route: route, token: token}
 }
 
 func (f uploadFixture) request(method, path, body, contentType string) *httptest.ResponseRecorder {
+	return f.requestWithIdempotency(method, path, body, contentType, "")
+}
+
+func (f uploadFixture) requestWithIdempotency(method, path, body, contentType, idempotencyKey string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, "https://upload-test.apps.test"+path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+f.token)
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 	res := httptest.NewRecorder()
 	f.handler.ServeHTTP(res, req)
@@ -250,5 +269,104 @@ func TestUploadHandlerReturnsProviderFailure(t *testing.T) {
 	res := f.request(http.MethodPost, "/uploads/avatar", "avatar", "image/png")
 	if res.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, body = %s; want %d", res.Code, res.Body.String(), http.StatusBadGateway)
+	}
+}
+
+func TestUploadHandlerIdempotencyReplaysCompletedUpload(t *testing.T) {
+	f := newUploadFixture(t)
+	first := f.requestWithIdempotency(http.MethodPost, "/uploads/avatar", "avatar", "image/png", "avatar-1")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first status = %d, body = %s", first.Code, first.Body.String())
+	}
+	var firstResponse map[string]any
+	if err := json.NewDecoder(first.Body).Decode(&firstResponse); err != nil {
+		t.Fatal(err)
+	}
+	second := f.requestWithIdempotency(http.MethodPost, "/uploads/avatar", "avatar", "image/png", "avatar-1")
+	if second.Code != http.StatusCreated {
+		t.Fatalf("replay status = %d, body = %s", second.Code, second.Body.String())
+	}
+	var secondResponse map[string]any
+	if err := json.NewDecoder(second.Body).Decode(&secondResponse); err != nil {
+		t.Fatal(err)
+	}
+	if firstResponse["id"] != secondResponse["id"] || firstResponse["key"] != secondResponse["key"] || firstResponse["etag"] != secondResponse["etag"] {
+		t.Fatalf("replay response changed: first=%v second=%v", firstResponse, secondResponse)
+	}
+	if f.provider.writes != 1 || f.accounting.calls != 1 {
+		t.Fatalf("replay repeated provider/accounting work: writes=%d accounting=%d", f.provider.writes, f.accounting.calls)
+	}
+}
+
+func TestUploadHandlerIdempotencyRejectsConflictingRequest(t *testing.T) {
+	f := newUploadFixture(t)
+	if res := f.requestWithIdempotency(http.MethodPost, "/uploads/avatar", "avatar", "image/png", "avatar-2"); res.Code != http.StatusCreated {
+		t.Fatalf("first status = %d, body = %s", res.Code, res.Body.String())
+	}
+	res := f.requestWithIdempotency(http.MethodPost, "/uploads/avatar", "different", "image/png", "avatar-2")
+	if res.Code != http.StatusConflict {
+		t.Fatalf("conflict status = %d, body = %s; want %d", res.Code, res.Body.String(), http.StatusConflict)
+	}
+	if f.provider.writes != 1 || f.accounting.calls != 1 {
+		t.Fatalf("conflicting replay reached provider/accounting: writes=%d accounting=%d", f.provider.writes, f.accounting.calls)
+	}
+}
+
+func TestUploadHandlerIdempotencyReplaysProviderFailure(t *testing.T) {
+	f := newUploadFixture(t)
+	f.provider.err = errors.New("upstream unavailable")
+	first := f.requestWithIdempotency(http.MethodPost, "/uploads/avatar", "avatar", "image/png", "avatar-3")
+	if first.Code != http.StatusBadGateway {
+		t.Fatalf("first status = %d, body = %s", first.Code, first.Body.String())
+	}
+	f.provider.err = nil
+	second := f.requestWithIdempotency(http.MethodPost, "/uploads/avatar", "avatar", "image/png", "avatar-3")
+	if second.Code != http.StatusBadGateway {
+		t.Fatalf("replay status = %d, body = %s; want %d", second.Code, second.Body.String(), http.StatusBadGateway)
+	}
+	if f.provider.writes != 1 {
+		t.Fatalf("failed replay retried provider write: writes=%d", f.provider.writes)
+	}
+}
+
+func TestUploadHandlerDoesNotReportSuccessWhenCompletionCannotPersist(t *testing.T) {
+	f := newUploadFixture(t)
+	handler, err := NewUploadHandler(UploadConfig{
+		Store: f.store, Routes: &failingUploadRouteStore{ObjectUploadRouteStore: f.store, err: errors.New("completion store unavailable")},
+		Buckets: f.store, Authenticator: f.store, Registry: f.registry, Accounting: f.accounting,
+		AppsDomain: "apps.test", Next: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "https://upload-test.apps.test/uploads/avatar", strings.NewReader("avatar"))
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	req.Header.Set("Content-Type", "image/png")
+	req.Header.Set("Idempotency-Key", "avatar-persist-failure")
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, req)
+	if first.Code != http.StatusServiceUnavailable {
+		t.Fatalf("first status = %d, body = %s; want %d", first.Code, first.Body.String(), http.StatusServiceUnavailable)
+	}
+	if f.provider.writes != 1 {
+		t.Fatalf("provider writes = %d, want one write before receipt failure", f.provider.writes)
+	}
+	second := f.requestWithIdempotency(http.MethodPost, "/uploads/avatar", "avatar", "image/png", "avatar-persist-failure")
+	if second.Code != http.StatusConflict {
+		t.Fatalf("pending replay status = %d, body = %s; want %d", second.Code, second.Body.String(), http.StatusConflict)
+	}
+	if f.provider.writes != 1 {
+		t.Fatalf("pending replay retried provider write: writes=%d", f.provider.writes)
+	}
+}
+
+func TestUploadHandlerRejectsInvalidIdempotencyKey(t *testing.T) {
+	f := newUploadFixture(t)
+	res := f.requestWithIdempotency(http.MethodPost, "/uploads/avatar", "avatar", "image/png", strings.Repeat("x", maxUploadIdempotencyKeyBytes+1))
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s; want %d", res.Code, res.Body.String(), http.StatusBadRequest)
+	}
+	if f.provider.writes != 0 {
+		t.Fatalf("invalid idempotency key reached provider")
 	}
 }

@@ -83,6 +83,30 @@ func TestMemObjectUploadRoutesLifecycle(t *testing.T) {
 	if completion.CreatedAt.IsZero() || completion.Bytes != 0 {
 		t.Fatalf("completion = %+v, want timestamped zero-byte receipt", completion)
 	}
+	intent, err := store.CreateObjectUploadIntent(ctx, ObjectUploadCompletion{
+		ID: "intent-1", RouteID: route.ID, AccountID: route.AccountID, AppID: route.AppID,
+		BucketID: route.BucketID, SubjectID: "key-1", Key: "uploads/idempotent", Bytes: 3,
+		ContentType: "image/png", Status: "pending", IdempotencyKey: "request-1", RequestFingerprint: "fingerprint-1",
+	})
+	if err != nil || intent.Status != "pending" {
+		t.Fatalf("create upload intent = %+v, err=%v", intent, err)
+	}
+	if _, err := store.CreateObjectUploadIntent(ctx, ObjectUploadCompletion{
+		ID: "intent-2", RouteID: route.ID, AccountID: route.AccountID, AppID: route.AppID,
+		BucketID: route.BucketID, SubjectID: "key-1", Key: "uploads/other", Bytes: 3,
+		Status: "pending", IdempotencyKey: "request-1", RequestFingerprint: "fingerprint-1",
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate upload intent error = %v, want ErrConflict", err)
+	}
+	fetchedIntent, err := store.GetObjectUploadIntent(ctx, route.ID, "key-1", "request-1")
+	if err != nil || fetchedIntent.ID != intent.ID {
+		t.Fatalf("get upload intent = %+v, err=%v", fetchedIntent, err)
+	}
+	fetchedIntent.Status, fetchedIntent.ETag = "completed", "etag-1"
+	updatedIntent, err := store.UpdateObjectUploadCompletion(ctx, fetchedIntent)
+	if err != nil || updatedIntent.Status != "completed" || updatedIntent.ETag != "etag-1" {
+		t.Fatalf("update upload completion = %+v, err=%v", updatedIntent, err)
+	}
 
 	if err := store.DeleteObjectUploadRoute(ctx, route.AccountID, route.AppID, route.Name); err != nil {
 		t.Fatalf("delete route: %v", err)
