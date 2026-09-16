@@ -12,9 +12,11 @@ import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnviro
 import type { ProjectEnvironmentApprovalStatusResponse } from '../models/ProjectEnvironmentApprovalStatusResponse.js';
 import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
+import type { ProjectEnvironmentPromotionListResponse } from '../models/ProjectEnvironmentPromotionListResponse.js';
 import type { ProjectEnvironmentPromotionPreviewResponse } from '../models/ProjectEnvironmentPromotionPreviewResponse.js';
 import type { ProjectEnvironmentPromotionResponse } from '../models/ProjectEnvironmentPromotionResponse.js';
 import type { ProjectEnvironmentPromotionStatusResponse } from '../models/ProjectEnvironmentPromotionStatusResponse.js';
+import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnvironmentReleaseListResponse.js';
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
@@ -490,6 +492,46 @@ export class ProjectsService {
     });
   }
   /**
+   * Get current live releases for a project environment.
+   * Returns one non-secret release record for every project workload.
+   * Workloads without a live deployment are returned with
+   * `status=not_deployed`. Configuration values and secret material are
+   * never included.
+   *
+   * @returns ProjectEnvironmentReleaseListResponse Current environment release inventory.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentReleases({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project slug owning the environment release inventory.
+     */
+    slug: string,
+    /**
+     * Environment whose current live releases are requested.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentReleaseListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/releases',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Compare two environment configuration snapshots.
    * @returns ProjectEnvironmentConfigDiffResponse Stable key-level configuration diff ordered by key.
    * @throws ApiError
@@ -716,6 +758,69 @@ export class ProjectsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * List project environment promotion history.
+   * Returns newest-first compact promotion history. Use the promotion status endpoint for per-workload checkpoints.
+   * @returns ProjectEnvironmentPromotionListResponse Cursor-paginated promotion history.
+   * @throws ApiError
+   */
+  public static listProjectEnvironmentPromotions({
+    slug,
+    environment,
+    before,
+    limit = 50,
+    from,
+    status,
+  }: {
+    /**
+     * Project slug owning the promotion history.
+     */
+    slug: string,
+    /**
+     * Target environment whose promotion history is requested.
+     */
+    environment: string,
+    /**
+     * Opaque cursor returned as next_before.
+     */
+    before?: string,
+    /**
+     * Page size, capped at 100.
+     */
+    limit?: number,
+    /**
+     * Restrict history to promotions from this source environment.
+     */
+    from?: string,
+    /**
+     * Restrict history to a promotion lifecycle status.
+     */
+    status?: 'running' | 'succeeded' | 'failed',
+  }): CancelablePromise<ProjectEnvironmentPromotionListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/promotions',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+        'from': from,
+        'status': status,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

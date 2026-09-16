@@ -433,11 +433,15 @@ export type { ProjectEnvironmentConfigChange } from './ProjectEnvironmentConfigC
 export type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';
 export type { ProjectEnvironmentConfigResponse } from './ProjectEnvironmentConfigResponse.js';
 export type { ProjectEnvironmentPromotionChange } from './ProjectEnvironmentPromotionChange.js';
+export type { ProjectEnvironmentPromotionListResponse } from './ProjectEnvironmentPromotionListResponse.js';
 export type { ProjectEnvironmentPromotionPreviewResponse } from './ProjectEnvironmentPromotionPreviewResponse.js';
 export type { ProjectEnvironmentPromotionResponse } from './ProjectEnvironmentPromotionResponse.js';
 export type { ProjectEnvironmentPromotionStatusResponse } from './ProjectEnvironmentPromotionStatusResponse.js';
 export type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './ProjectEnvironmentPromotionStatusWorkloadResponse.js';
+export type { ProjectEnvironmentPromotionSummaryResponse } from './ProjectEnvironmentPromotionSummaryResponse.js';
 export type { ProjectEnvironmentPromotionWorkloadResponse } from './ProjectEnvironmentPromotionWorkloadResponse.js';
+export type { ProjectEnvironmentReleaseListResponse } from './ProjectEnvironmentReleaseListResponse.js';
+export type { ProjectEnvironmentReleaseWorkloadResponse } from './ProjectEnvironmentReleaseWorkloadResponse.js';
 export type { ProjectEnvironmentResponse } from './ProjectEnvironmentResponse.js';
 export type { ProjectResponse } from './ProjectResponse.js';
 export type { ProjectScanRequest } from './ProjectScanRequest.js';

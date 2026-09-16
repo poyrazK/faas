@@ -63,6 +63,32 @@ type ProjectEnvironmentResponse struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+// ProjectEnvironmentReleaseListResponse is the current non-secret release
+// inventory for one project environment. It intentionally reports every
+// project workload, including workloads that have not been deployed there.
+type ProjectEnvironmentReleaseListResponse struct {
+	ProjectSlug string                                      `json:"project_slug"`
+	Environment string                                      `json:"environment"`
+	Workloads   []ProjectEnvironmentReleaseWorkloadResponse `json:"workloads"`
+}
+
+// ProjectEnvironmentReleaseWorkloadResponse identifies the live deployment
+// serving one project workload in an environment. It contains release
+// metadata only; environment configuration and secret values are excluded.
+type ProjectEnvironmentReleaseWorkloadResponse struct {
+	WorkloadSlug   string `json:"workload_slug"`
+	WorkloadName   string `json:"workload_name"`
+	Status         string `json:"status"`
+	DeploymentID   string `json:"deployment_id,omitempty"`
+	BuildID        string `json:"build_id,omitempty"`
+	ImageDigest    string `json:"image_digest,omitempty"`
+	SourceURL      string `json:"source_url,omitempty"`
+	CommitSHA      string `json:"commit_sha,omitempty"`
+	SourceSHA256   string `json:"source_sha256,omitempty"`
+	TrafficPercent int    `json:"traffic_percent,omitempty"`
+	CreatedAt      string `json:"created_at,omitempty"`
+}
+
 // CreateProjectEnvironmentRequest registers a named project environment.
 type CreateProjectEnvironmentRequest struct {
 	Slug      string `json:"slug"`
@@ -263,4 +289,33 @@ type ProjectEnvironmentPromotionStatusResponse struct {
 	VerificationStartedAt   string                                              `json:"verification_started_at,omitempty"`
 	VerificationCompletedAt string                                              `json:"verification_completed_at,omitempty"`
 	Workloads               []ProjectEnvironmentPromotionStatusWorkloadResponse `json:"workloads"`
+}
+
+// ProjectEnvironmentPromotionSummaryResponse is the compact, non-secret
+// history shape for one environment promotion. Workload checkpoints remain
+// available from the promotion status endpoint.
+type ProjectEnvironmentPromotionSummaryResponse struct {
+	PromotionID             string `json:"promotion_id"`
+	ProjectSlug             string `json:"project_slug"`
+	FromEnvironment         string `json:"from_environment"`
+	ToEnvironment           string `json:"to_environment"`
+	PromotionHash           string `json:"promotion_hash"`
+	Status                  string `json:"status"`
+	Error                   string `json:"error,omitempty"`
+	CreatedAt               string `json:"created_at"`
+	UpdatedAt               string `json:"updated_at"`
+	CompletedAt             string `json:"completed_at,omitempty"`
+	RollbackStatus          string `json:"rollback_status,omitempty"`
+	RollbackError           string `json:"rollback_error,omitempty"`
+	VerificationStatus      string `json:"verification_status,omitempty"`
+	VerificationError       string `json:"verification_error,omitempty"`
+	VerificationCompletedAt string `json:"verification_completed_at,omitempty"`
+}
+
+// ProjectEnvironmentPromotionListResponse is the cursor-paginated promotion
+// history for one target environment. NextBefore is opaque and should be
+// passed back unchanged as the before query parameter.
+type ProjectEnvironmentPromotionListResponse struct {
+	Items      []ProjectEnvironmentPromotionSummaryResponse `json:"items"`
+	NextBefore string                                       `json:"next_before,omitempty"`
 }

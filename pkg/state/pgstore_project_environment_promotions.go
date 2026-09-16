@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -131,6 +132,66 @@ func (s *PgStore) ProjectEnvironmentPromotionByIdempotencyKey(ctx context.Contex
 		return ProjectEnvironmentPromotion{}, nil, err
 	}
 	return promotion, workloads, nil
+}
+
+// ListProjectEnvironmentPromotionsBefore returns newest-first promotion
+// history for one target environment. The compound (created_at, id) cursor
+// keeps equal-timestamp rows stable across pages and uses the existing
+// account/project/environment lookup index.
+func (s *PgStore) ListProjectEnvironmentPromotionsBefore(ctx context.Context, accountID, projectSlug, targetEnvironment, sourceEnvironment, status string, before time.Time, beforeID string, limit int) ([]ProjectEnvironmentPromotion, error) {
+	conditions := []string{
+		"account_id = $1",
+		"project_slug = $2",
+		"to_environment = $3",
+	}
+	args := []any{accountID, projectSlug, targetEnvironment}
+	if sourceEnvironment != "" {
+		args = append(args, sourceEnvironment)
+		conditions = append(conditions, fmt.Sprintf("from_environment = $%d", len(args)))
+	}
+	if status != "" {
+		args = append(args, status)
+		conditions = append(conditions, fmt.Sprintf("status = $%d", len(args)))
+	}
+	if !before.IsZero() {
+		args = append(args, before)
+		beforePos := len(args)
+		if beforeID != "" {
+			args = append(args, beforeID)
+			conditions = append(conditions, fmt.Sprintf("(created_at, id) < ($%d, $%d::uuid)", beforePos, len(args)))
+		} else {
+			conditions = append(conditions, fmt.Sprintf("created_at < $%d", beforePos))
+		}
+	}
+	query := `select id, account_id, project_id, project_slug, from_environment, to_environment,
+	                 promotion_hash, idempotency_key, status, error, created_at, updated_at, completed_at,
+	                 rollback_status, rollback_idempotency_key, rollback_error, rollback_started_at,
+	                 rollback_completed_at, verification_status, verification_error,
+	                 verification_started_at, verification_completed_at
+	            from project_environment_promotions
+	           where ` + strings.Join(conditions, " and ") + `
+	           order by created_at desc, id desc`
+	if limit > 0 {
+		args = append(args, limit)
+		query += fmt.Sprintf(" limit $%d", len(args))
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("state: list environment promotions: %w", err)
+	}
+	defer rows.Close()
+	items := make([]ProjectEnvironmentPromotion, 0)
+	for rows.Next() {
+		promotion, err := scanProjectEnvironmentPromotion(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, promotion)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list environment promotions rows: %w", err)
+	}
+	return items, nil
 }
 
 func (s *PgStore) listProjectEnvironmentPromotionWorkloads(ctx context.Context, promotionID string) ([]ProjectEnvironmentPromotionWorkload, error) {

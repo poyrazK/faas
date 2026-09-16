@@ -10530,6 +10530,37 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/releases:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the environment release inventory.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose current live releases are requested.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentReleases
+      summary: Get current live releases for a project environment.
+      description: |
+        Returns one non-secret release record for every project workload.
+        Workloads without a live deployment are returned with
+        `status=not_deployed`. Configuration values and secret material are
+        never included.
+      responses:
+        '200':
+          description: Current environment release inventory.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentReleaseListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/config/diff:
     parameters:
       - name: slug
@@ -10709,6 +10740,54 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/promotions:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the promotion history.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Target environment whose promotion history is requested.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: before
+        in: query
+        required: false
+        description: Opaque cursor returned as next_before.
+        schema: { type: string }
+      - name: limit
+        in: query
+        required: false
+        description: Page size, capped at 100.
+        schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      - name: from
+        in: query
+        required: false
+        description: Restrict history to promotions from this source environment.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: status
+        in: query
+        required: false
+        description: Restrict history to a promotion lifecycle status.
+        schema: { type: string, enum: [running, succeeded, failed] }
+    get:
+      tags: [projects]
+      operationId: listProjectEnvironmentPromotions
+      summary: List project environment promotion history.
+      description: Returns newest-first compact promotion history. Use the promotion status endpoint for per-workload checkpoints.
+      responses:
+        '200':
+          description: Cursor-paginated promotion history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/promotions/{promotion}:
@@ -22210,6 +22289,34 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
+    ProjectEnvironmentReleaseListResponse:
+      description: Current non-secret release inventory for a project environment.
+      type: object
+      required: [project_slug, environment, workloads]
+      properties:
+        project_slug: { type: string }
+        environment: { type: string }
+        workloads:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentReleaseWorkloadResponse' }
+
+    ProjectEnvironmentReleaseWorkloadResponse:
+      description: Current live deployment metadata for one project workload.
+      type: object
+      required: [workload_slug, workload_name, status]
+      properties:
+        workload_slug: { type: string }
+        workload_name: { type: string }
+        status: { type: string, enum: [live, not_deployed] }
+        deployment_id: { type: string }
+        build_id: { type: string }
+        image_digest: { type: string }
+        source_url: { type: string }
+        commit_sha: { type: string }
+        source_sha256: { type: string }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        created_at: { type: string, format: date-time }
+
     UpdateProjectEnvironmentConfigRequest:
       description: Non-secret JSON configuration to append as a new environment version.
       type: object
@@ -22439,6 +22546,37 @@ components:
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusWorkloadResponse' }
+
+    ProjectEnvironmentPromotionSummaryResponse:
+      description: Compact non-secret summary of one project environment promotion.
+      type: object
+      required: [promotion_id, project_slug, from_environment, to_environment, promotion_hash, status, created_at, updated_at]
+      properties:
+        promotion_id: { type: string }
+        project_slug: { type: string }
+        from_environment: { type: string }
+        to_environment: { type: string }
+        promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        status: { type: string, enum: [running, succeeded, failed] }
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        rollback_status: { type: string, enum: [rolling_back, rolled_back, rollback_failed] }
+        rollback_error: { type: string }
+        verification_status: { type: string, enum: [pending, verifying, verified, failed] }
+        verification_error: { type: string }
+        verification_completed_at: { type: string, format: date-time }
+
+    ProjectEnvironmentPromotionListResponse:
+      description: Cursor-paginated project environment promotion history.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionSummaryResponse' }
+        next_before: { type: string, description: Opaque cursor for the next older page. }
 
     UpdateProjectEnvironmentRequest:
       description: Protection policy update for a project environment.

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"sort"
 	"time"
 )
 
@@ -113,6 +114,42 @@ func (m *MemStore) ProjectEnvironmentPromotionByIdempotencyKey(_ context.Context
 		}
 	}
 	return ProjectEnvironmentPromotion{}, nil, ErrNotFound
+}
+
+// ListProjectEnvironmentPromotionsBefore returns newest-first promotion
+// history for one target environment. The compound (created_at, id) cursor
+// keeps equal-timestamp rows stable across pages and mirrors PgStore.
+func (m *MemStore) ListProjectEnvironmentPromotionsBefore(_ context.Context, accountID, projectSlug, targetEnvironment, sourceEnvironment, status string, before time.Time, beforeID string, limit int) ([]ProjectEnvironmentPromotion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	items := make([]ProjectEnvironmentPromotion, 0)
+	for _, promotion := range m.projectEnvironmentPromotions {
+		if promotion.AccountID != accountID || promotion.ProjectSlug != projectSlug || promotion.ToEnvironment != targetEnvironment {
+			continue
+		}
+		if sourceEnvironment != "" && promotion.FromEnvironment != sourceEnvironment {
+			continue
+		}
+		if status != "" && promotion.Status != status {
+			continue
+		}
+		if !before.IsZero() {
+			if promotion.CreatedAt.After(before) || (promotion.CreatedAt.Equal(before) && (beforeID == "" || promotion.ID >= beforeID)) {
+				continue
+			}
+		}
+		items = append(items, cloneProjectEnvironmentPromotion(promotion))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
 }
 
 func (m *MemStore) StartProjectEnvironmentPromotionRollback(_ context.Context, accountID, id, idempotencyKey string) (ProjectEnvironmentPromotion, error) {

@@ -439,11 +439,15 @@ export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironment
 export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';
 export type { ProjectEnvironmentConfigResponse } from './models/ProjectEnvironmentConfigResponse.js';
 export type { ProjectEnvironmentPromotionChange } from './models/ProjectEnvironmentPromotionChange.js';
+export type { ProjectEnvironmentPromotionListResponse } from './models/ProjectEnvironmentPromotionListResponse.js';
 export type { ProjectEnvironmentPromotionPreviewResponse } from './models/ProjectEnvironmentPromotionPreviewResponse.js';
 export type { ProjectEnvironmentPromotionResponse } from './models/ProjectEnvironmentPromotionResponse.js';
 export type { ProjectEnvironmentPromotionStatusResponse } from './models/ProjectEnvironmentPromotionStatusResponse.js';
 export type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './models/ProjectEnvironmentPromotionStatusWorkloadResponse.js';
+export type { ProjectEnvironmentPromotionSummaryResponse } from './models/ProjectEnvironmentPromotionSummaryResponse.js';
 export type { ProjectEnvironmentPromotionWorkloadResponse } from './models/ProjectEnvironmentPromotionWorkloadResponse.js';
+export type { ProjectEnvironmentReleaseListResponse } from './models/ProjectEnvironmentReleaseListResponse.js';
+export type { ProjectEnvironmentReleaseWorkloadResponse } from './models/ProjectEnvironmentReleaseWorkloadResponse.js';
 export type { ProjectEnvironmentResponse } from './models/ProjectEnvironmentResponse.js';
 export type { ProjectResponse } from './models/ProjectResponse.js';
 export type { ProjectScanRequest } from './models/ProjectScanRequest.js';

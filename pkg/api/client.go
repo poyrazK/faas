@@ -1434,6 +1434,14 @@ func (c *Client) GetProjectEnvironment(ctx context.Context, projectSlug, environ
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
+// GetProjectEnvironmentReleases returns the current non-secret live release
+// inventory for every workload in one project environment.
+func (c *Client) GetProjectEnvironmentReleases(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentReleaseListResponse, error) {
+	var out ProjectEnvironmentReleaseListResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/releases"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
 // CreateProjectEnvironment adds a named environment to a project.
 func (c *Client) CreateProjectEnvironment(ctx context.Context, projectSlug string, req CreateProjectEnvironmentRequest) (ProjectEnvironmentResponse, error) {
 	var out ProjectEnvironmentResponse
@@ -1569,6 +1577,31 @@ func (c *Client) PostProjectsSlugEnvironmentsEnvironmentPromote(ctx context.Cont
 func (c *Client) GetProjectEnvironmentPromotionStatus(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
 	var out ProjectEnvironmentPromotionStatusResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotions/" + url.PathEscape(promotionID)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// ListProjectEnvironmentPromotions returns the newest promotion history for a
+// target environment. before is an opaque cursor from NextBefore; status and
+// sourceEnvironment are optional filters.
+func (c *Client) ListProjectEnvironmentPromotions(ctx context.Context, projectSlug, targetEnvironment, before string, limit int, sourceEnvironment, status string) (ProjectEnvironmentPromotionListResponse, error) {
+	var out ProjectEnvironmentPromotionListResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotions"
+	query := url.Values{}
+	if before != "" {
+		query.Set("before", before)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	if sourceEnvironment != "" {
+		query.Set("from", sourceEnvironment)
+	}
+	if status != "" {
+		query.Set("status", status)
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
 }
 
