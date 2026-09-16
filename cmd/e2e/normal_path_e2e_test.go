@@ -46,6 +46,10 @@
 //   retry a durable invocation after a guest 503, then persist the recovery.
 //   stop a running instance and invalidate the cached route.
 //   restart gatewayd and reload the durable route from Postgres.
+//   terminate an in-flight response during a gateway restart and serve the
+//   next request from a fresh gateway process.
+//   reclaim an abandoned async dispatch after schedd restart and complete it
+//   exactly once from its durable lease.
 //
 // Deployment creation is seeded at the state boundary here because the
 // source/build/image pipeline is intentionally owned by the native acceptance
@@ -1377,6 +1381,161 @@ func TestE2E_NormalPath_GatewayRestartReloadsDurableRoute(t *testing.T) {
 	}
 }
 
+// TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse protects the
+// process-lifecycle boundary for ordinary HTTP traffic. A gateway restart
+// must not leave a client or the VMMD stream blocked forever, and the fresh
+// gateway must still route the same durable instance immediately afterwards.
+func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
+	f := newNormalPathFixture(t, "normal-restart-stream")
+	if f == nil {
+		return
+	}
+	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "restart-stream")
+	f.vmmd.SetVersion(instance.ID, "restart-stream")
+	waitForNormalPathResponse(t, f.h, f.host, "normal-path:restart-stream\n", 10*time.Second)
+
+	probe := f.vmmd.InstallCancellationProbe(instance.ID, false, true)
+	f.vmmd.SetResponse(instance.ID, normalPathResponse{
+		status:  http.StatusOK,
+		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "text/plain"}},
+		chunks:  [][]byte{[]byte("partial-response\n"), []byte("must-not-arrive\n")},
+	})
+
+	requestCtx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, f.h.GatewayURL+"/restart-stream", nil)
+	if err != nil {
+		t.Fatalf("new restart stream request: %v", err)
+	}
+	req.Host = f.host
+	client := *f.h.HTTPClient()
+	type responseResult struct {
+		resp *http.Response
+		err  error
+	}
+	responseDone := make(chan responseResult, 1)
+	bodyDone := make(chan struct{})
+	go func() {
+		resp, requestErr := client.Do(req)
+		responseDone <- responseResult{resp: resp, err: requestErr}
+		if resp != nil {
+			_, _ = io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+		}
+		close(bodyDone)
+	}()
+
+	waitNormalPathProbe(t, probe.headersSent, "restart response headers")
+	waitNormalPathProbe(t, probe.firstResponseBody, "restart first response body")
+	select {
+	case result := <-responseDone:
+		if result.err != nil {
+			t.Fatalf("in-flight response failed before restart: %v", result.err)
+		}
+		if result.resp == nil || result.resp.StatusCode != http.StatusOK {
+			t.Fatalf("in-flight response=%v, want HTTP 200", result.resp)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("in-flight response headers did not reach the client")
+	}
+
+	// Stop every real daemon while the response is blocked. The fake VMMD
+	// remains alive so the test can distinguish a gateway lifecycle failure
+	// from a bridge outage.
+	f.h.Stop()
+	waitNormalPathProbe(t, probe.canceled, "restart bridge cancellation")
+	select {
+	case <-bodyDone:
+		// The old response must terminate once its owning gateway exits.
+	case <-time.After(5 * time.Second):
+		t.Fatal("in-flight response remained blocked after gateway restart")
+	}
+
+	f.vmmd.ReleaseProbe(probe)
+	f.vmmd.SetResponse(instance.ID, normalPathResponse{
+		status: http.StatusOK,
+		body:   []byte("restart-recovered\n"),
+	})
+	h2 := e2etest.Start(t, f.h.Pool, e2etest.Schedd|e2etest.Gatewayd)
+	_, body, statusCode := doReqHeaders(t, h2, f.host, http.MethodGet, "/after-restart", nil)
+	if statusCode != http.StatusOK || string(body) != "restart-recovered\n" {
+		t.Fatalf("post-restart response: status=%d body=%q, want 200/restart-recovered", statusCode, body)
+	}
+	if request := f.vmmd.LastRequest(); request == nil || request.Instance != instance.ID {
+		t.Fatalf("post-restart request instance=%q, want %q", requestInstance(request), instance.ID)
+	}
+}
+
+// TestE2E_NormalPath_ScheddRestartReclaimsAbandonedDispatch protects the
+// durable-worker recovery contract. If schedd disappears after claiming an
+// invocation but before completion, a replacement schedd must reclaim the
+// expired lease and complete the original row instead of losing or duplicating
+// the customer's work.
+func TestE2E_NormalPath_ScheddRestartReclaimsAbandonedDispatch(t *testing.T) {
+	f := newNormalPathFixture(t, "normal-schedd-recovery")
+	if f == nil {
+		return
+	}
+	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "schedd-recovery")
+	f.vmmd.SetVersion(instance.ID, "schedd-recovery")
+	waitForNormalPathResponse(t, f.h, f.host, "normal-path:schedd-recovery\n", 10*time.Second)
+
+	probe := f.vmmd.InstallCancellationProbe(instance.ID, false, true)
+	f.vmmd.SetResponse(instance.ID, normalPathResponse{
+		status:  http.StatusOK,
+		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		body:    []byte(`{"recovered":true}`),
+	})
+
+	body, statusCode := doReq(t, f.h, f.key, http.MethodPost,
+		"/v1/apps/normal-schedd-recovery/invoke/async", api.InvokeRequest{
+			Payload: json.RawMessage(`{"restart":true}`),
+		})
+	if statusCode != http.StatusAccepted {
+		t.Fatalf("POST /invoke/async: status=%d body=%s", statusCode, body)
+	}
+	var accepted api.AsyncInvokeResponse
+	if err := json.Unmarshal(body, &accepted); err != nil {
+		t.Fatalf("decode async response: %v body=%s", err, body)
+	}
+
+	waitNormalPathProbe(t, probe.firstResponseBody, "abandoned dispatch response")
+	dispatching := waitForNormalPathInvocationState(t, f.store, accepted.ID, state.InvocationDispatching, 5*time.Second)
+	if dispatching.Attempts != 1 || dispatching.LeaseExpiresAt == nil {
+		t.Fatalf("in-flight invocation=(attempts=%d,lease=%v), want first leased dispatch", dispatching.Attempts, dispatching.LeaseExpiresAt)
+	}
+
+	f.h.Stop()
+	waitNormalPathProbe(t, probe.canceled, "abandoned dispatch cancellation")
+	if _, err := f.h.Pool.Exec(f.ctx, `
+		update invocations
+		   set lease_expires_at = now() - interval '1 second'
+		 where id = $1 and state = 'dispatching'`, accepted.ID); err != nil {
+		t.Fatalf("expire abandoned invocation lease: %v", err)
+	}
+	f.vmmd.ReleaseProbe(probe)
+	f.vmmd.SetResponse(instance.ID, normalPathResponse{
+		status:  http.StatusOK,
+		headers: []*vmmdpb.Header{{Name: "Content-Type", Value: "application/json"}},
+		body:    []byte(`{"recovered":true}`),
+	})
+
+	h2 := e2etest.Start(t, f.h.Pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
+	inv := pollUntilCompleted(t, h2, f.key, accepted.ID, 15*time.Second)
+	if inv.State != string(state.InvocationCompleted) {
+		t.Fatalf("recovered invocation state=%q last_error=%q, want completed", inv.State, inv.LastError)
+	}
+	if inv.Attempts != 2 {
+		t.Fatalf("recovered invocation attempts=%d, want exactly 2", inv.Attempts)
+	}
+	if string(inv.Result) != `{"recovered":true}` {
+		t.Fatalf("recovered invocation result=%s, want recovered JSON", inv.Result)
+	}
+	if got := f.vmmd.ForwardCount(); got < 2 {
+		t.Fatalf("bridge forward count=%d, want initial abandoned attempt plus recovery", got)
+	}
+}
+
 func notifyNormalPathDeploymentChanged(t *testing.T, f *normalPathFixture, deploymentID string) {
 	t.Helper()
 	payload, err := json.Marshal(map[string]string{
@@ -1473,6 +1632,7 @@ type normalPathCancellationProbe struct {
 	headersOnce       sync.Once
 	firstResponseOnce sync.Once
 	canceledOnce      sync.Once
+	releaseOnce       sync.Once
 }
 
 func newNormalPathCancellationProbe(blockRequestBody, blockResponseBody bool) *normalPathCancellationProbe {
@@ -1506,6 +1666,10 @@ func (p *normalPathCancellationProbe) markFirstResponseBody() {
 
 func (p *normalPathCancellationProbe) markCanceled() {
 	p.canceledOnce.Do(func() { close(p.canceled) })
+}
+
+func (p *normalPathCancellationProbe) release() {
+	p.releaseOnce.Do(func() { close(p.release) })
 }
 
 type normalPathVMMD struct {
@@ -1619,6 +1783,31 @@ func (s *normalPathVMMD) InstallCancellationProbe(instanceID string, blockReques
 	probe := newNormalPathCancellationProbe(blockRequestBody, blockResponseBody)
 	s.probes[instanceID] = probe
 	return probe
+}
+
+func (s *normalPathVMMD) ReleaseProbe(probe *normalPathCancellationProbe) {
+	if probe != nil {
+		probe.release()
+	}
+}
+
+func waitForNormalPathInvocationState(t *testing.T, store *state.PgStore, id string, want state.InvocationState, timeout time.Duration) state.Invocation {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last state.Invocation
+	for time.Now().Before(deadline) {
+		inv, err := store.InvocationByID(context.Background(), id)
+		if err != nil {
+			t.Fatalf("read invocation %s: %v", id, err)
+		}
+		last = inv
+		if inv.State == want {
+			return inv
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("invocation %s state=%q, want %q within %s", id, last.State, want, timeout)
+	return last
 }
 
 func (s *normalPathVMMD) Heartbeat(context.Context, *vmmdpb.HeartbeatRequest) (*vmmdpb.HeartbeatResponse, error) {

@@ -52,6 +52,8 @@ The current contract is intentionally small and high-signal:
 | `TestE2E_NormalPath_BridgeUnavailableSurfaces503` | VMMD outage maps to a customer-visible 503 |
 | `TestE2E_NormalPath_StoppedInstanceInvalidatesRoute` | stopped instance state invalidates a previously cached route |
 | `TestE2E_NormalPath_GatewayRestartReloadsDurableRoute` | gateway restart rehydrates routing from Postgres |
+| `TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse` | an in-flight bridge response is terminated on gateway restart and the fresh gateway serves the durable route |
+| `TestE2E_NormalPath_ScheddRestartReclaimsAbandonedDispatch` | an expired async dispatch lease is reclaimed after schedd restart and completed exactly once |
 | `TestE2E_NormalPath_CancelledUploadClosesBridge` | client cancellation during upload closes the real gateway-to-VMMD stream |
 | `TestE2E_NormalPath_CancelledResponseClosesBridge` | client cancellation after response bytes begin closes the real gateway-to-VMMD stream |
 
