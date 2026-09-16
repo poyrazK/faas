@@ -101,8 +101,10 @@ def sync_detailed(
      Revalidates the supplied promotion token against current live
     deployments and environment configuration before promoting immutable
     source artifacts. Protected targets also require an approval token
-    issued for that exact promotion. Target configuration and secrets are
-    never copied from the source environment.
+    issued for that exact promotion. After cutover, every target artifact
+    is verified against its source release and target environment. A
+    failed verification automatically rolls back the promotion. Target
+    configuration and secrets are never copied from the source environment.
 
     Args:
         slug (str):
@@ -146,8 +148,10 @@ def sync(
      Revalidates the supplied promotion token against current live
     deployments and environment configuration before promoting immutable
     source artifacts. Protected targets also require an approval token
-    issued for that exact promotion. Target configuration and secrets are
-    never copied from the source environment.
+    issued for that exact promotion. After cutover, every target artifact
+    is verified against its source release and target environment. A
+    failed verification automatically rolls back the promotion. Target
+    configuration and secrets are never copied from the source environment.
 
     Args:
         slug (str):
@@ -186,8 +190,10 @@ async def asyncio_detailed(
      Revalidates the supplied promotion token against current live
     deployments and environment configuration before promoting immutable
     source artifacts. Protected targets also require an approval token
-    issued for that exact promotion. Target configuration and secrets are
-    never copied from the source environment.
+    issued for that exact promotion. After cutover, every target artifact
+    is verified against its source release and target environment. A
+    failed verification automatically rolls back the promotion. Target
+    configuration and secrets are never copied from the source environment.
 
     Args:
         slug (str):
@@ -229,8 +235,10 @@ async def asyncio(
      Revalidates the supplied promotion token against current live
     deployments and environment configuration before promoting immutable
     source artifacts. Protected targets also require an approval token
-    issued for that exact promotion. Target configuration and secrets are
-    never copied from the source environment.
+    issued for that exact promotion. After cutover, every target artifact
+    is verified against its source release and target environment. A
+    failed verification automatically rolls back the promotion. Target
+    configuration and secrets are never copied from the source environment.
 
     Args:
         slug (str):

@@ -160,8 +160,18 @@ func cmdProjectsEnvironmentPromotionStatus(args []string) int {
 		return jsonOut(writeJSON(status))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Promotion %s: %s -> %s (%s)\n", status.PromotionID, status.FromEnvironment, status.ToEnvironment, status.Status)
+	if status.VerificationStatus != "" {
+		line := "  verification: " + status.VerificationStatus
+		if status.VerificationError != "" {
+			line += " — " + status.VerificationError
+		}
+		_, _ = fmt.Fprintln(osStdout, line)
+	}
 	for _, workload := range status.Workloads {
 		line := fmt.Sprintf("  %-20s %s", workload.WorkloadSlug, workload.Status)
+		if workload.VerificationStatus != "" {
+			line += " (verification: " + workload.VerificationStatus + ")"
+		}
 		if workload.Error != "" {
 			line += " — " + workload.Error
 		}

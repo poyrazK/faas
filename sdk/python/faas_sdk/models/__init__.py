@@ -830,12 +830,18 @@ from .project_environment_promotion_status_response_rollback_status import (
     ProjectEnvironmentPromotionStatusResponseRollbackStatus,
 )
 from .project_environment_promotion_status_response_status import ProjectEnvironmentPromotionStatusResponseStatus
+from .project_environment_promotion_status_response_verification_status import (
+    ProjectEnvironmentPromotionStatusResponseVerificationStatus,
+)
 from .project_environment_promotion_status_workload_response import ProjectEnvironmentPromotionStatusWorkloadResponse
 from .project_environment_promotion_status_workload_response_rollback_status import (
     ProjectEnvironmentPromotionStatusWorkloadResponseRollbackStatus,
 )
 from .project_environment_promotion_status_workload_response_status import (
     ProjectEnvironmentPromotionStatusWorkloadResponseStatus,
+)
+from .project_environment_promotion_status_workload_response_verification_status import (
+    ProjectEnvironmentPromotionStatusWorkloadResponseVerificationStatus,
 )
 from .project_environment_promotion_workload_response import ProjectEnvironmentPromotionWorkloadResponse
 from .project_environment_promotion_workload_response_status import ProjectEnvironmentPromotionWorkloadResponseStatus
@@ -1932,9 +1938,11 @@ __all__ = (
     "ProjectEnvironmentPromotionStatusResponse",
     "ProjectEnvironmentPromotionStatusResponseRollbackStatus",
     "ProjectEnvironmentPromotionStatusResponseStatus",
+    "ProjectEnvironmentPromotionStatusResponseVerificationStatus",
     "ProjectEnvironmentPromotionStatusWorkloadResponse",
     "ProjectEnvironmentPromotionStatusWorkloadResponseRollbackStatus",
     "ProjectEnvironmentPromotionStatusWorkloadResponseStatus",
+    "ProjectEnvironmentPromotionStatusWorkloadResponseVerificationStatus",
     "ProjectEnvironmentPromotionWorkloadResponse",
     "ProjectEnvironmentPromotionWorkloadResponseStatus",
     "ProjectEnvironmentResponse",

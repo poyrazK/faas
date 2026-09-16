@@ -20,6 +20,9 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(_ context.Context, promotio
 	if promotion.Status == "" {
 		promotion.Status = "running"
 	}
+	if promotion.VerificationStatus == "" {
+		promotion.VerificationStatus = "pending"
+	}
 	if promotion.CreatedAt.IsZero() {
 		promotion.CreatedAt = now
 	}
@@ -34,6 +37,9 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(_ context.Context, promotio
 		if workload.Status == "" {
 			workload.Status = "pending"
 		}
+		if workload.VerificationStatus == "" {
+			workload.VerificationStatus = "pending"
+		}
 		if workload.CreatedAt.IsZero() {
 			workload.CreatedAt = now
 		}
@@ -42,6 +48,50 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(_ context.Context, promotio
 	}
 	m.projectEnvironmentPromotionWorkloads[promotion.ID] = items
 	return cloneProjectEnvironmentPromotion(promotion), cloneProjectEnvironmentPromotionWorkloads(items), nil
+}
+
+func (m *MemStore) UpdateProjectEnvironmentPromotionVerification(_ context.Context, accountID, id, status, errorMessage string, startedAt, completedAt *time.Time) (ProjectEnvironmentPromotion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	promotion, ok := m.projectEnvironmentPromotions[id]
+	if !ok || promotion.AccountID != accountID {
+		return ProjectEnvironmentPromotion{}, ErrNotFound
+	}
+	promotion.VerificationStatus = status
+	promotion.VerificationError = errorMessage
+	promotion.UpdatedAt = time.Now().UTC()
+	if startedAt != nil {
+		stamp := startedAt.UTC()
+		promotion.VerificationStartedAt = &stamp
+	}
+	if completedAt != nil {
+		stamp := completedAt.UTC()
+		promotion.VerificationCompletedAt = &stamp
+	}
+	m.projectEnvironmentPromotions[id] = promotion
+	return cloneProjectEnvironmentPromotion(promotion), nil
+}
+
+func (m *MemStore) UpdateProjectEnvironmentPromotionVerificationWorkload(_ context.Context, accountID, promotionID, workloadID, status, errorMessage string) (ProjectEnvironmentPromotionWorkload, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	promotion, ok := m.projectEnvironmentPromotions[promotionID]
+	if !ok || promotion.AccountID != accountID {
+		return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
+	}
+	items := m.projectEnvironmentPromotionWorkloads[promotionID]
+	for i, workload := range items {
+		if workload.ID != workloadID {
+			continue
+		}
+		workload.VerificationStatus = status
+		workload.VerificationError = errorMessage
+		workload.UpdatedAt = time.Now().UTC()
+		items[i] = workload
+		m.projectEnvironmentPromotionWorkloads[promotionID] = items
+		return workload, nil
+	}
+	return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
 }
 
 func (m *MemStore) ProjectEnvironmentPromotionByID(_ context.Context, accountID, projectSlug, targetEnvironment, id string) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error) {
@@ -185,6 +235,14 @@ func cloneProjectEnvironmentPromotion(promotion ProjectEnvironmentPromotion) Pro
 	if promotion.RollbackCompletedAt != nil {
 		stamp := *promotion.RollbackCompletedAt
 		promotion.RollbackCompletedAt = &stamp
+	}
+	if promotion.VerificationStartedAt != nil {
+		stamp := *promotion.VerificationStartedAt
+		promotion.VerificationStartedAt = &stamp
+	}
+	if promotion.VerificationCompletedAt != nil {
+		stamp := *promotion.VerificationCompletedAt
+		promotion.VerificationCompletedAt = &stamp
 	}
 	return promotion
 }

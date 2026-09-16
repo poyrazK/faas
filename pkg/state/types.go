@@ -5580,24 +5580,28 @@ type ProjectEnvironmentConfig struct {
 // project-environment promotion. The operation remains available after the
 // request ends so a caller can inspect or resume a partial promotion.
 type ProjectEnvironmentPromotion struct {
-	ID                     string
-	AccountID              string
-	ProjectID              string
-	ProjectSlug            string
-	FromEnvironment        string
-	ToEnvironment          string
-	PromotionHash          string
-	IdempotencyKey         string
-	Status                 string
-	Error                  string
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
-	CompletedAt            *time.Time
-	RollbackStatus         string
-	RollbackIdempotencyKey string
-	RollbackError          string
-	RollbackStartedAt      *time.Time
-	RollbackCompletedAt    *time.Time
+	ID                      string
+	AccountID               string
+	ProjectID               string
+	ProjectSlug             string
+	FromEnvironment         string
+	ToEnvironment           string
+	PromotionHash           string
+	IdempotencyKey          string
+	Status                  string
+	Error                   string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+	CompletedAt             *time.Time
+	RollbackStatus          string
+	RollbackIdempotencyKey  string
+	RollbackError           string
+	RollbackStartedAt       *time.Time
+	RollbackCompletedAt     *time.Time
+	VerificationStatus      string
+	VerificationError       string
+	VerificationStartedAt   *time.Time
+	VerificationCompletedAt *time.Time
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.
@@ -5616,6 +5620,8 @@ type ProjectEnvironmentPromotionWorkload struct {
 	RollbackStatus             string
 	RestoredTargetDeploymentID string
 	RollbackError              string
+	VerificationStatus         string
+	VerificationError          string
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
 }

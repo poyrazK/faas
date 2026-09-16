@@ -244,6 +244,7 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		AccountID: acct.ID, ProjectID: plan.ProjectID, ProjectSlug: projectSlug,
 		FromEnvironment: fromEnvironment, ToEnvironment: toEnvironment,
 		PromotionHash: plan.Preview.PromotionHash, IdempotencyKey: idempotencyKey, Status: "running",
+		VerificationStatus: "pending",
 	}, projectEnvironmentPromotionWorkloads(plan))
 	if err != nil {
 		if !errors.Is(err, state.ErrConflict) {
@@ -331,50 +332,20 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 		return
 	}
 
-	apps, err := s.store.AppsForProject(r.Context(), acct.ID, promotion.ProjectID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list project workloads for rollback"))
+	if err := s.applyProjectEnvironmentPromotionRollback(r.Context(), acct, promotion, workloads); err != nil {
+		_, _, loadErr := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+		if loadErr != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not load environment rollback result"))
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Rollback refused", err.Error()))
+		} else {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Rollback failed", err.Error()))
+		}
 		return
 	}
-	appsBySlug := make(map[string]state.App, len(apps))
-	for _, app := range apps {
-		appsBySlug[app.Slug] = app
-	}
-	for _, workload := range workloads {
-		if workload.RollbackStatus == "restored" || workload.RollbackStatus == "cleared" ||
-			workload.RollbackStatus == "unchanged" || workload.RollbackStatus == "skipped" {
-			continue
-		}
-		app, ok := appsBySlug[workload.WorkloadSlug]
-		if !ok {
-			if problem := s.failProjectEnvironmentPromotionRollback(r.Context(), acct, promotion, workload,
-				errors.New("workload no longer belongs to the project")); problem != nil {
-				api.WriteProblem(w, problem)
-			}
-			return
-		}
-		rollbackStatus, restoredID, rollbackErr := rollbackProjectEnvironmentPromotionWorkload(
-			r.Context(), s.store, promotion, workload, app.ID)
-		if rollbackErr != nil {
-			if problem := s.failProjectEnvironmentPromotionRollback(r.Context(), acct, promotion, workload, rollbackErr); problem != nil {
-				api.WriteProblem(w, problem)
-			}
-			return
-		}
-		if _, err := s.store.UpdateProjectEnvironmentPromotionRollbackWorkload(r.Context(), acct.ID, promotion.ID,
-			workload.ID, rollbackStatus, restoredID, ""); err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not update environment rollback checkpoint"))
-			return
-		}
-	}
-
-	now := time.Now().UTC()
-	completed, err := s.store.UpdateProjectEnvironmentPromotionRollback(r.Context(), acct.ID, promotion.ID, "rolled_back", "", &now)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not complete environment promotion rollback"))
-		return
-	}
-	_, finalWorkloads, err := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+	completed, finalWorkloads, err := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load environment rollback result"))
 		return
@@ -387,19 +358,53 @@ func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusOK, projectEnvironmentPromotionStatusResponse(completed, finalWorkloads))
 }
 
-func (s *server) failProjectEnvironmentPromotionRollback(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workload state.ProjectEnvironmentPromotionWorkload, cause error) *api.Problem {
+func (s *server) applyProjectEnvironmentPromotionRollback(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload) error {
+	apps, err := s.store.AppsForProject(ctx, acct.ID, promotion.ProjectID)
+	if err != nil {
+		return fmt.Errorf("could not list project workloads for rollback: %w", err)
+	}
+	appsBySlug := make(map[string]state.App, len(apps))
+	for _, app := range apps {
+		appsBySlug[app.Slug] = app
+	}
+	for _, workload := range workloads {
+		if workload.RollbackStatus == "restored" || workload.RollbackStatus == "cleared" ||
+			workload.RollbackStatus == "unchanged" || workload.RollbackStatus == "skipped" {
+			continue
+		}
+		app, ok := appsBySlug[workload.WorkloadSlug]
+		if !ok {
+			return s.recordProjectEnvironmentPromotionRollbackFailure(ctx, acct, promotion, workload,
+				errors.New("workload no longer belongs to the project"))
+		}
+		rollbackStatus, restoredID, rollbackErr := rollbackProjectEnvironmentPromotionWorkload(
+			ctx, s.store, promotion, workload, app.ID)
+		if rollbackErr != nil {
+			return s.recordProjectEnvironmentPromotionRollbackFailure(ctx, acct, promotion, workload, rollbackErr)
+		}
+		if _, err := s.store.UpdateProjectEnvironmentPromotionRollbackWorkload(ctx, acct.ID, promotion.ID,
+			workload.ID, rollbackStatus, restoredID, ""); err != nil {
+			return fmt.Errorf("could not update environment rollback checkpoint: %w", err)
+		}
+	}
+
+	now := time.Now().UTC()
+	if _, err := s.store.UpdateProjectEnvironmentPromotionRollback(ctx, acct.ID, promotion.ID, "rolled_back", "", &now); err != nil {
+		return fmt.Errorf("could not complete environment promotion rollback: %w", err)
+	}
+	return nil
+}
+
+func (s *server) recordProjectEnvironmentPromotionRollbackFailure(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workload state.ProjectEnvironmentPromotionWorkload, cause error) error {
 	message := cause.Error()
 	if _, err := s.store.UpdateProjectEnvironmentPromotionRollbackWorkload(ctx, acct.ID, promotion.ID, workload.ID, "failed", "", message); err != nil {
-		return api.ErrCapacity("could not record environment rollback failure")
+		return fmt.Errorf("could not record environment rollback failure: %w", err)
 	}
 	now := time.Now().UTC()
 	if _, err := s.store.UpdateProjectEnvironmentPromotionRollback(ctx, acct.ID, promotion.ID, "rollback_failed", message, &now); err != nil {
-		return api.ErrCapacity("could not complete environment rollback failure")
+		return fmt.Errorf("could not complete environment rollback failure: %w", err)
 	}
-	if errors.Is(cause, state.ErrConflict) {
-		return api.NewProblem(http.StatusConflict, api.CodeValidation, "Rollback refused", message)
-	}
-	return api.NewProblem(http.StatusConflict, api.CodeValidation, "Rollback failed", message)
+	return cause
 }
 
 func rollbackProjectEnvironmentPromotionWorkload(ctx context.Context, store state.Store, promotion state.ProjectEnvironmentPromotion, workload state.ProjectEnvironmentPromotionWorkload, appID string) (string, string, error) {
@@ -468,6 +473,7 @@ func projectEnvironmentPromotionWorkloads(plan projectEnvironmentPromotionPlan) 
 			SourceDeploymentID:         change.SourceDeploymentID,
 			PreviousTargetDeploymentID: change.TargetDeploymentID,
 			TargetDeploymentID:         change.TargetDeploymentID, Status: status,
+			VerificationStatus: "pending",
 		})
 	}
 	return workloads
@@ -543,6 +549,25 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 			return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not update environment promotion checkpoint")
 		}
 	}
+
+	verificationStarted := time.Now().UTC()
+	if _, err := s.store.UpdateProjectEnvironmentPromotionVerification(ctx, acct.ID, promotion.ID,
+		"verifying", "", &verificationStarted, nil); err != nil {
+		return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not start environment promotion verification")
+	}
+	if err := s.verifyProjectEnvironmentPromotion(ctx, acct, promotion, plan); err != nil {
+		verificationCompleted := time.Now().UTC()
+		message := err.Error()
+		_, _ = s.store.UpdateProjectEnvironmentPromotionVerification(ctx, acct.ID, promotion.ID,
+			"failed", message, nil, &verificationCompleted)
+		_, _ = s.store.UpdateProjectEnvironmentPromotion(ctx, acct.ID, promotion.ID, "failed", message, &verificationCompleted)
+		if rollbackErr := s.autoRollbackProjectEnvironmentPromotion(ctx, acct, promotion); rollbackErr != nil {
+			return api.ProjectEnvironmentPromotionResponse{}, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Promotion verification failed", message+"; automatic rollback failed: "+rollbackErr.Error())
+		}
+		return api.ProjectEnvironmentPromotionResponse{}, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Promotion verification failed", message+"; promotion was automatically rolled back")
+	}
 	now := time.Now().UTC()
 	updated, err := s.store.UpdateProjectEnvironmentPromotion(ctx, acct.ID, promotion.ID, "succeeded", "", &now)
 	if err != nil {
@@ -558,6 +583,88 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 		"promotion_hash": promotion.PromotionHash, "workload_count": len(finalWorkloads),
 	})
 	return projectEnvironmentPromotionResponse(updated, finalWorkloads), nil
+}
+
+func (s *server) verifyProjectEnvironmentPromotion(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, plan projectEnvironmentPromotionPlan) error {
+	_, workloads, err := s.store.ProjectEnvironmentPromotionByID(ctx, acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+	if err != nil {
+		return fmt.Errorf("could not load promotion verification checkpoints: %w", err)
+	}
+	for _, workload := range workloads {
+		app, ok := plan.Apps[workload.WorkloadSlug]
+		if !ok {
+			return fmt.Errorf("workload %q is no longer in the project", workload.WorkloadSlug)
+		}
+		source, ok := plan.Sources[workload.WorkloadSlug]
+		if !ok {
+			return fmt.Errorf("workload %q has no source deployment", workload.WorkloadSlug)
+		}
+		if workload.TargetDeploymentID == "" {
+			return fmt.Errorf("workload %q has no target deployment", workload.WorkloadSlug)
+		}
+		target, err := s.store.DeploymentByID(ctx, workload.TargetDeploymentID)
+		if err != nil {
+			return fmt.Errorf("could not load target deployment for workload %q: %w", workload.WorkloadSlug, err)
+		}
+		if target.AppID != app.ID || target.Scope != promotion.ToEnvironment || target.Status != state.DeployLive {
+			return fmt.Errorf("workload %q target deployment is not live in %s", workload.WorkloadSlug, promotion.ToEnvironment)
+		}
+		if workload.Status == "promoted" && target.Reason != projectEnvironmentPromotionDeploymentReason(promotion.ID) {
+			return fmt.Errorf("workload %q target deployment is not owned by this promotion", workload.WorkloadSlug)
+		}
+		if workload.Status == "promoted" && !sameProjectEnvironmentPromotionArtifact(source, target) {
+			return fmt.Errorf("workload %q target artifact does not match the source release", workload.WorkloadSlug)
+		}
+		if _, err := s.store.UpdateProjectEnvironmentPromotionVerificationWorkload(ctx, acct.ID, promotion.ID,
+			workload.ID, "verified", ""); err != nil {
+			return fmt.Errorf("could not record verification for workload %q: %w", workload.WorkloadSlug, err)
+		}
+	}
+	completed := time.Now().UTC()
+	if _, err := s.store.UpdateProjectEnvironmentPromotionVerification(ctx, acct.ID, promotion.ID,
+		"verified", "", nil, &completed); err != nil {
+		return fmt.Errorf("could not complete environment promotion verification: %w", err)
+	}
+	return nil
+}
+
+func sameProjectEnvironmentPromotionArtifact(source, target state.Deployment) bool {
+	if source.Kind != target.Kind || source.SourceSHA256 != target.SourceSHA256 ||
+		source.ImageDigest != target.ImageDigest || source.CommitSHA != target.CommitSHA {
+		return false
+	}
+	if source.RootfsKey != "" || target.RootfsKey != "" {
+		return source.RootfsKey != "" && source.RootfsKey == target.RootfsKey && source.RootfsBytes == target.RootfsBytes
+	}
+	return source.RootfsPath != "" && source.RootfsPath == target.RootfsPath && source.RootfsBytes == target.RootfsBytes
+}
+
+func (s *server) autoRollbackProjectEnvironmentPromotion(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion) error {
+	key := "auto-verification/" + promotion.ID
+	started, err := s.store.StartProjectEnvironmentPromotionRollback(ctx, acct.ID, promotion.ID, key)
+	if err != nil {
+		return fmt.Errorf("could not start automatic rollback: %w", err)
+	}
+	if started.RollbackStatus == "rolled_back" {
+		return nil
+	}
+	current, workloads, err := s.store.ProjectEnvironmentPromotionByID(ctx, acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+	if err != nil {
+		return fmt.Errorf("could not load automatic rollback state: %w", err)
+	}
+	if err := s.applyProjectEnvironmentPromotionRollback(ctx, acct, current, workloads); err != nil {
+		return err
+	}
+	_, finalWorkloads, err := s.store.ProjectEnvironmentPromotionByID(ctx, acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+	if err != nil {
+		return fmt.Errorf("could not load automatic rollback result: %w", err)
+	}
+	s.audit.Emit(ctx, "project.environment.promotion_auto_rolled_back", &acct.ID, map[string]any{
+		"promotion_id": promotion.ID, "project_slug": promotion.ProjectSlug,
+		"from_environment": promotion.FromEnvironment, "to_environment": promotion.ToEnvironment,
+		"workload_count": len(finalWorkloads), "reason": "verification_failed",
+	})
+	return nil
 }
 
 func (s *server) failProjectEnvironmentPromotion(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workload state.ProjectEnvironmentPromotionWorkload, message string) (api.ProjectEnvironmentPromotionResponse, *api.Problem) {
@@ -591,7 +698,8 @@ func projectEnvironmentPromotionStatusResponse(promotion state.ProjectEnvironmen
 			PreviousTargetDeploymentID: workload.PreviousTargetDeploymentID,
 			TargetDeploymentID:         workload.TargetDeploymentID, Error: workload.Error,
 			RollbackStatus: workload.RollbackStatus, RestoredTargetDeploymentID: workload.RestoredTargetDeploymentID,
-			RollbackError: workload.RollbackError,
+			RollbackError: workload.RollbackError, VerificationStatus: workload.VerificationStatus,
+			VerificationError: workload.VerificationError,
 		})
 	}
 	return api.ProjectEnvironmentPromotionStatusResponse{
@@ -601,8 +709,11 @@ func projectEnvironmentPromotionStatusResponse(promotion state.ProjectEnvironmen
 		RollbackStatus: promotion.RollbackStatus, RollbackError: promotion.RollbackError,
 		RollbackStartedAt:   formatOptionalTime(promotion.RollbackStartedAt),
 		RollbackCompletedAt: formatOptionalTime(promotion.RollbackCompletedAt),
-		CreatedAt:           promotion.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:           promotion.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		VerificationStatus:  promotion.VerificationStatus, VerificationError: promotion.VerificationError,
+		VerificationStartedAt:   formatOptionalTime(promotion.VerificationStartedAt),
+		VerificationCompletedAt: formatOptionalTime(promotion.VerificationCompletedAt),
+		CreatedAt:               promotion.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:               promotion.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		CompletedAt: func() string {
 			if promotion.CompletedAt == nil {
 				return ""

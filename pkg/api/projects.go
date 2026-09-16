@@ -205,24 +205,30 @@ type ProjectEnvironmentPromotionStatusWorkloadResponse struct {
 	RollbackStatus             string `json:"rollback_status,omitempty"`
 	RestoredTargetDeploymentID string `json:"restored_target_deployment_id,omitempty"`
 	RollbackError              string `json:"rollback_error,omitempty"`
+	VerificationStatus         string `json:"verification_status,omitempty"`
+	VerificationError          string `json:"verification_error,omitempty"`
 }
 
 // ProjectEnvironmentPromotionStatusResponse is the durable status view for
 // one promotion operation.
 type ProjectEnvironmentPromotionStatusResponse struct {
-	PromotionID         string                                              `json:"promotion_id"`
-	ProjectSlug         string                                              `json:"project_slug"`
-	FromEnvironment     string                                              `json:"from_environment"`
-	ToEnvironment       string                                              `json:"to_environment"`
-	PromotionHash       string                                              `json:"promotion_hash"`
-	Status              string                                              `json:"status"`
-	Error               string                                              `json:"error,omitempty"`
-	CreatedAt           string                                              `json:"created_at"`
-	UpdatedAt           string                                              `json:"updated_at"`
-	CompletedAt         string                                              `json:"completed_at,omitempty"`
-	RollbackStatus      string                                              `json:"rollback_status,omitempty"`
-	RollbackError       string                                              `json:"rollback_error,omitempty"`
-	RollbackStartedAt   string                                              `json:"rollback_started_at,omitempty"`
-	RollbackCompletedAt string                                              `json:"rollback_completed_at,omitempty"`
-	Workloads           []ProjectEnvironmentPromotionStatusWorkloadResponse `json:"workloads"`
+	PromotionID             string                                              `json:"promotion_id"`
+	ProjectSlug             string                                              `json:"project_slug"`
+	FromEnvironment         string                                              `json:"from_environment"`
+	ToEnvironment           string                                              `json:"to_environment"`
+	PromotionHash           string                                              `json:"promotion_hash"`
+	Status                  string                                              `json:"status"`
+	Error                   string                                              `json:"error,omitempty"`
+	CreatedAt               string                                              `json:"created_at"`
+	UpdatedAt               string                                              `json:"updated_at"`
+	CompletedAt             string                                              `json:"completed_at,omitempty"`
+	RollbackStatus          string                                              `json:"rollback_status,omitempty"`
+	RollbackError           string                                              `json:"rollback_error,omitempty"`
+	RollbackStartedAt       string                                              `json:"rollback_started_at,omitempty"`
+	RollbackCompletedAt     string                                              `json:"rollback_completed_at,omitempty"`
+	VerificationStatus      string                                              `json:"verification_status,omitempty"`
+	VerificationError       string                                              `json:"verification_error,omitempty"`
+	VerificationStartedAt   string                                              `json:"verification_started_at,omitempty"`
+	VerificationCompletedAt string                                              `json:"verification_completed_at,omitempty"`
+	Workloads               []ProjectEnvironmentPromotionStatusWorkloadResponse `json:"workloads"`
 }

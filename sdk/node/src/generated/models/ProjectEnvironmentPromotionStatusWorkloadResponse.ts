@@ -16,5 +16,7 @@ export type ProjectEnvironmentPromotionStatusWorkloadResponse = {
   rollback_status?: 'pending' | 'restored' | 'cleared' | 'unchanged' | 'skipped' | 'failed';
   restored_target_deployment_id?: string;
   rollback_error?: string;
+  verification_status?: 'pending' | 'verified' | 'failed';
+  verification_error?: string;
 };
 

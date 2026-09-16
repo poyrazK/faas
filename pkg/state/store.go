@@ -2167,6 +2167,8 @@ type Store interface {
 	StartProjectEnvironmentPromotionRollback(ctx context.Context, accountID, id, idempotencyKey string) (ProjectEnvironmentPromotion, error)
 	UpdateProjectEnvironmentPromotionRollback(ctx context.Context, accountID, id, status, errorMessage string, completedAt *time.Time) (ProjectEnvironmentPromotion, error)
 	UpdateProjectEnvironmentPromotionRollbackWorkload(ctx context.Context, accountID, promotionID, workloadID, status, restoredTargetDeploymentID, errorMessage string) (ProjectEnvironmentPromotionWorkload, error)
+	UpdateProjectEnvironmentPromotionVerification(ctx context.Context, accountID, id, status, errorMessage string, startedAt, completedAt *time.Time) (ProjectEnvironmentPromotion, error)
+	UpdateProjectEnvironmentPromotionVerificationWorkload(ctx context.Context, accountID, promotionID, workloadID, status, errorMessage string) (ProjectEnvironmentPromotionWorkload, error)
 	UpdateProjectEnvironmentPromotion(ctx context.Context, accountID, id, status, errorMessage string, completedAt *time.Time) (ProjectEnvironmentPromotion, error)
 	UpdateProjectEnvironmentPromotionWorkload(ctx context.Context, accountID, promotionID, workloadID, status, targetDeploymentID, errorMessage string) (ProjectEnvironmentPromotionWorkload, error)
 

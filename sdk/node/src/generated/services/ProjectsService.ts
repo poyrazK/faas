@@ -628,8 +628,10 @@ export class ProjectsService {
    * Revalidates the supplied promotion token against current live
    * deployments and environment configuration before promoting immutable
    * source artifacts. Protected targets also require an approval token
-   * issued for that exact promotion. Target configuration and secrets are
-   * never copied from the source environment.
+   * issued for that exact promotion. After cutover, every target artifact
+   * is verified against its source release and target environment. A
+   * failed verification automatically rolls back the promotion. Target
+   * configuration and secrets are never copied from the source environment.
    *
    * @returns ProjectEnvironmentPromotionResponse Promotion result for each project workload.
    * @throws ApiError
@@ -680,8 +682,8 @@ export class ProjectsService {
   }
   /**
    * Get durable project environment promotion status.
-   * Returns the operation status and non-secret per-workload checkpoints for a promotion.
-   * @returns ProjectEnvironmentPromotionStatusResponse Durable promotion status.
+   * Returns the operation status, post-cutover verification result, and non-secret per-workload checkpoints for a promotion.
+   * @returns ProjectEnvironmentPromotionStatusResponse Durable promotion status, including post-cutover verification and any automatic rollback.
    * @throws ApiError
    */
   public static getProjectEnvironmentPromotionStatus({

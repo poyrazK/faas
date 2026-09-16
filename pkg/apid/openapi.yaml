@@ -10578,8 +10578,10 @@ paths:
         Revalidates the supplied promotion token against current live
         deployments and environment configuration before promoting immutable
         source artifacts. Protected targets also require an approval token
-        issued for that exact promotion. Target configuration and secrets are
-        never copied from the source environment.
+        issued for that exact promotion. After cutover, every target artifact
+        is verified against its source release and target environment. A
+        failed verification automatically rolls back the promotion. Target
+        configuration and secrets are never copied from the source environment.
       requestBody:
         required: true
         content:
@@ -10618,10 +10620,10 @@ paths:
       tags: [projects]
       operationId: getProjectEnvironmentPromotionStatus
       summary: Get durable project environment promotion status.
-      description: Returns the operation status and non-secret per-workload checkpoints for a promotion.
+      description: Returns the operation status, post-cutover verification result, and non-secret per-workload checkpoints for a promotion.
       responses:
         '200':
-          description: Durable promotion status.
+          description: Durable promotion status, including post-cutover verification and any automatic rollback.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusResponse' }
@@ -22254,6 +22256,10 @@ components:
           enum: [pending, restored, cleared, unchanged, skipped, failed]
         restored_target_deployment_id: { type: string }
         rollback_error: { type: string }
+        verification_status:
+          type: string
+          enum: [pending, verified, failed]
+        verification_error: { type: string }
 
     ProjectEnvironmentPromotionStatusResponse:
       description: Durable status for a project environment promotion operation.
@@ -22278,6 +22284,12 @@ components:
         rollback_error: { type: string }
         rollback_started_at: { type: string, format: date-time }
         rollback_completed_at: { type: string, format: date-time }
+        verification_status:
+          type: string
+          enum: [pending, verifying, verified, failed]
+        verification_error: { type: string }
+        verification_started_at: { type: string, format: date-time }
+        verification_completed_at: { type: string, format: date-time }
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusWorkloadResponse' }
