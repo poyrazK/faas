@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -3068,6 +3069,7 @@ func severityOrdinal(s string) int {
 // https://github.com/<app-slug>/pull/N (which 404s — App.Slug is the
 // app slug, not the GitHub owner/name).
 func dashboardDeploymentItem(d state.Deployment) dashboard.DeploymentItem {
+	repoURL, commitURL, checksURL, commitSHA, commitShort := githubDeploymentLinks(d.SourceURL, d.CommitSHA)
 	return dashboard.DeploymentItem{
 		ID:                d.ID,
 		Status:            string(d.Status),
@@ -3095,12 +3097,44 @@ func dashboardDeploymentItem(d state.Deployment) dashboard.DeploymentItem {
 		// the dashboard deploy detail page. nil/zero values drop
 		// out at the template layer (annotation-chip conditional)
 		// so pre-feature rows stay visually identical.
-		Reason:       d.Reason,
-		Tag:          d.Tag,
-		DeployedBy:   d.DeployedBy,
-		PRNumber:     d.PRNumber,
-		RepoFullName: repoFullNameFromSourceURL(d.SourceURL),
+		Reason:          d.Reason,
+		Tag:             d.Tag,
+		DeployedBy:      d.DeployedBy,
+		PRNumber:        d.PRNumber,
+		RepoFullName:    repoFullNameFromSourceURL(d.SourceURL),
+		CommitSHA:       commitSHA,
+		CommitShort:     commitShort,
+		GitHubRepoURL:   repoURL,
+		GitHubCommitURL: commitURL,
+		GitHubChecksURL: checksURL,
 	}
+}
+
+// githubDeploymentLinks returns safe external links for a GitHub deployment.
+// SourceURL is legacy provenance and may be the only place the commit exists,
+// so an empty Deployment.CommitSHA falls back to its canonical @suffix.
+// Non-canonical revisions and malformed repository names deliberately produce
+// no links rather than turning stored provenance into an arbitrary URL.
+func githubDeploymentLinks(sourceURL, commitSHA string) (repoURL, commitURL, checksURL, resolvedSHA, commitShort string) {
+	repoFullName := repoFullNameFromSourceURL(sourceURL)
+	if !validProjectRepoFullName(repoFullName) {
+		return "", "", "", "", ""
+	}
+	if commitSHA == "" {
+		const prefix = "github://"
+		if strings.HasPrefix(sourceURL, prefix) {
+			body := sourceURL[len(prefix):]
+			if at := strings.IndexByte(body, '@'); at >= 0 {
+				commitSHA = body[at+1:]
+			}
+		}
+	}
+	if !isCanonicalCommitSHA(commitSHA) {
+		return "", "", "", "", ""
+	}
+	parts := strings.SplitN(repoFullName, "/", 2)
+	base := "https://github.com/" + url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1])
+	return base, base + "/commit/" + commitSHA, base + "/checks", commitSHA, commitSHA[:7]
 }
 
 // repoFullNameFromSourceURL extracts the "owner/name" string from a

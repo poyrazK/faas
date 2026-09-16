@@ -235,6 +235,14 @@ type DeploymentItem struct {
 	// app slug, not the repo owner/name) so a clickable `#4242`
 	// chip actually lands on GitHub.
 	RepoFullName string
+	// GitHub source links are populated only for deployments with a
+	// validated GitHub repository and canonical commit SHA. Empty values
+	// preserve the existing rendering for non-GitHub and legacy rows.
+	CommitSHA       string
+	CommitShort     string
+	GitHubRepoURL   string
+	GitHubCommitURL string
+	GitHubChecksURL string
 	// ScanSummary is the per-deploy grype scan chip rendered
 	// in the deploy list (issue #464 / ADR-055). Nil when no
 	// scan has run yet (the deploy is mid-pipeline or predates
