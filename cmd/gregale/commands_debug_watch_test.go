@@ -123,6 +123,10 @@ func TestCmdDebugBundleWritesRedactedInvestigation(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.DebugRegressionsResponse{
 				Since: "1h", Regressions: []api.DebugRegressionItem{{DeploymentID: "dep-1", Route: "/checkout", Factor: "2.00"}},
 			})
+		case r.URL.Path == "/v1/apps/my-app/debug/coverage":
+			_ = json.NewEncoder(w).Encode(api.DebugCoverageResponse{
+				Since: "1h", TelemetryRows: 10, RepresentedRequests: 8,
+			})
 		case r.URL.Path == "/v1/apps/my-app/debug/compare":
 			_ = json.NewEncoder(w).Encode(api.DebugCompareResponse{
 				Source: "source", Mirror: "mirror", Routes: []api.DebugCompareRouteStats{{Route: "/checkout", SourceP95: 300, MirrorP95: 350}},
@@ -155,7 +159,7 @@ func TestCmdDebugBundleWritesRedactedInvestigation(t *testing.T) {
 	if err := json.Unmarshal(b, &bundle); err != nil {
 		t.Fatalf("bundle JSON: %v", err)
 	}
-	if bundle.SchemaVersion != debugIncidentBundleSchema || bundle.Compare == nil || bundle.Request.ID != "request-1" {
+	if bundle.SchemaVersion != debugIncidentBundleSchema || bundle.Compare == nil || bundle.Request.ID != "request-1" || bundle.Coverage.TelemetryRows != 10 {
 		t.Fatalf("bundle = %#v", bundle)
 	}
 	if bundle.Redaction.Profile != "debugger-safe" || len(bundle.Redaction.Excluded) == 0 {
