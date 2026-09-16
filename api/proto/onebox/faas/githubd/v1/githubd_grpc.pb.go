@@ -38,6 +38,7 @@ const (
 	Githubd_BindAppRepo_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/BindAppRepo"
 	Githubd_UnbindAppRepo_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/UnbindAppRepo"
 	Githubd_GetAppBinding_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/GetAppBinding"
+	Githubd_GetAppActivity_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/GetAppActivity"
 	Githubd_CreateDeploymentFromPush_FullMethodName = "/onebox.faas.githubd.v1.Githubd/CreateDeploymentFromPush"
 	Githubd_EnqueueBuild_FullMethodName             = "/onebox.faas.githubd.v1.Githubd/EnqueueBuild"
 	Githubd_WriteCheck_FullMethodName               = "/onebox.faas.githubd.v1.Githubd/WriteCheck"
@@ -82,6 +83,10 @@ type GithubdClient interface {
 	// GetAppBinding returns the current binding for an app, or empty
 	// fields when the app is not bound to any repo.
 	GetAppBinding(ctx context.Context, in *GetAppBindingRequest, opts ...grpc.CallOption) (*GetAppBindingResponse, error)
+	// GetAppActivity returns a redacted, account/app-scoped view of recent
+	// webhook processing and Check Run synchronization. Payloads, delivery
+	// identifiers, retry controls, and worker error text are not returned.
+	GetAppActivity(ctx context.Context, in *GetAppActivityRequest, opts ...grpc.CallOption) (*GetAppActivityResponse, error)
 	// CreateDeploymentFromPush turns a verified GitHub push webhook into
 	// a deployment row in apid's `deployments` table. githubd calls this
 	// after gatewayd-public forwards the request and the HMAC check passes.
@@ -254,6 +259,16 @@ func (c *githubdClient) GetAppBinding(ctx context.Context, in *GetAppBindingRequ
 	return out, nil
 }
 
+func (c *githubdClient) GetAppActivity(ctx context.Context, in *GetAppActivityRequest, opts ...grpc.CallOption) (*GetAppActivityResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAppActivityResponse)
+	err := c.cc.Invoke(ctx, Githubd_GetAppActivity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *githubdClient) CreateDeploymentFromPush(ctx context.Context, in *CreateDeploymentFromPushRequest, opts ...grpc.CallOption) (*CreateDeploymentFromPushResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateDeploymentFromPushResponse)
@@ -386,6 +401,10 @@ type GithubdServer interface {
 	// GetAppBinding returns the current binding for an app, or empty
 	// fields when the app is not bound to any repo.
 	GetAppBinding(context.Context, *GetAppBindingRequest) (*GetAppBindingResponse, error)
+	// GetAppActivity returns a redacted, account/app-scoped view of recent
+	// webhook processing and Check Run synchronization. Payloads, delivery
+	// identifiers, retry controls, and worker error text are not returned.
+	GetAppActivity(context.Context, *GetAppActivityRequest) (*GetAppActivityResponse, error)
 	// CreateDeploymentFromPush turns a verified GitHub push webhook into
 	// a deployment row in apid's `deployments` table. githubd calls this
 	// after gatewayd-public forwards the request and the HMAC check passes.
@@ -515,6 +534,9 @@ func (UnimplementedGithubdServer) UnbindAppRepo(context.Context, *UnbindAppRepoR
 }
 func (UnimplementedGithubdServer) GetAppBinding(context.Context, *GetAppBindingRequest) (*GetAppBindingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetAppBinding not implemented")
+}
+func (UnimplementedGithubdServer) GetAppActivity(context.Context, *GetAppActivityRequest) (*GetAppActivityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAppActivity not implemented")
 }
 func (UnimplementedGithubdServer) CreateDeploymentFromPush(context.Context, *CreateDeploymentFromPushRequest) (*CreateDeploymentFromPushResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateDeploymentFromPush not implemented")
@@ -668,6 +690,24 @@ func _Githubd_GetAppBinding_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(GithubdServer).GetAppBinding(ctx, req.(*GetAppBindingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Githubd_GetAppActivity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAppActivityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).GetAppActivity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_GetAppActivity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).GetAppActivity(ctx, req.(*GetAppActivityRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -857,6 +897,10 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetAppBinding",
 			Handler:    _Githubd_GetAppBinding_Handler,
+		},
+		{
+			MethodName: "GetAppActivity",
+			Handler:    _Githubd_GetAppActivity_Handler,
 		},
 		{
 			MethodName: "CreateDeploymentFromPush",

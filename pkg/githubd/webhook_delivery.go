@@ -26,6 +26,12 @@ type WebhookDelivery struct {
 	EventType  string
 	Payload    []byte
 	Attempts   int
+	// These fields are a safe, bounded projection of the payload identity.
+	// The raw payload remains in the private inbox and never crosses the
+	// customer-facing activity RPC.
+	InstallationID int64
+	RepoFullName   string
+	CommitSHA      string
 }
 
 // WebhookDeliveryRecord is the operator-safe delivery view. Payload is
@@ -52,6 +58,25 @@ type WebhookDeliveryStore interface {
 	Prune(ctx context.Context, before time.Time) error
 }
 
+// WebhookActivityRecord is the redacted app-scoped view of an inbound
+// delivery. It intentionally excludes the GitHub delivery ID, payload,
+// attempts, retry schedule, and worker error text.
+type WebhookActivityRecord struct {
+	EventType   string
+	Status      string
+	CommitSHA   string
+	ReceivedAt  time.Time
+	ProcessedAt *time.Time
+	UpdatedAt   time.Time
+}
+
+// WebhookActivityStore is the customer-safe read seam used by the activity
+// projection. Account and app IDs are both required so the implementation
+// can enforce tenant ownership in the SQL join.
+type WebhookActivityStore interface {
+	ListWebhookDeliveriesForApp(ctx context.Context, accountID, appID string, limit int) ([]WebhookActivityRecord, error)
+}
+
 type PGWebhookStore struct{ pool *pgxpool.Pool }
 
 func NewPGWebhookDeliveryStore(pool *pgxpool.Pool) *PGWebhookStore {
@@ -60,14 +85,23 @@ func NewPGWebhookDeliveryStore(pool *pgxpool.Pool) *PGWebhookStore {
 
 func (s *PGWebhookStore) Enqueue(ctx context.Context, delivery WebhookDelivery) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
-		insert into github_webhook_deliveries (delivery_id, event_type, payload)
-		values ($1, $2, $3)
+		insert into github_webhook_deliveries
+			(delivery_id, event_type, payload, installation_id, repo_full_name, commit_sha)
+		values ($1, $2, $3, $4, $5, $6)
 		on conflict (delivery_id) do nothing`,
-		delivery.DeliveryID, delivery.EventType, delivery.Payload)
+		delivery.DeliveryID, delivery.EventType, delivery.Payload,
+		delivery.InstallationID, nullableText(delivery.RepoFullName), nullableText(delivery.CommitSHA))
 	if err != nil {
 		return false, fmt.Errorf("githubd: enqueue webhook delivery: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+func nullableText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (s *PGWebhookStore) Claim(ctx context.Context) (WebhookDelivery, error) {
@@ -133,6 +167,39 @@ func (s *PGWebhookStore) Prune(ctx context.Context, before time.Time) error {
 		return fmt.Errorf("githubd: prune webhook deliveries: %w", err)
 	}
 	return nil
+}
+
+// ListWebhookDeliveriesForApp returns only deliveries whose safe identity
+// matches the app's current account-scoped GitHub binding. Historical rows
+// without correlation metadata remain private rather than being guessed into
+// a tenant's activity feed.
+func (s *PGWebhookStore) ListWebhookDeliveriesForApp(ctx context.Context, accountID, appID string, limit int) ([]WebhookActivityRecord, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	rows, err := s.pool.Query(ctx, `
+		select d.event_type, d.status, coalesce(d.commit_sha, ''),
+		       d.received_at, d.processed_at, d.updated_at
+		from github_webhook_deliveries d
+		join apps a on a.id = $2 and a.account_id = $1
+		where d.installation_id = a.github_install_id
+		  and d.repo_full_name = a.github_repo_full_name
+		order by d.received_at desc
+		limit $3`, accountID, appID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("githubd: list app webhook activity: %w", err)
+	}
+	defer rows.Close()
+	out := make([]WebhookActivityRecord, 0)
+	for rows.Next() {
+		var record WebhookActivityRecord
+		if err := rows.Scan(&record.EventType, &record.Status, &record.CommitSHA,
+			&record.ReceivedAt, &record.ProcessedAt, &record.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("githubd: scan app webhook activity: %w", err)
+		}
+		out = append(out, record)
+	}
+	return out, rows.Err()
 }
 
 func (s *PGWebhookStore) ListWebhookDeliveries(ctx context.Context, status string, limit int) ([]WebhookDeliveryRecord, error) {

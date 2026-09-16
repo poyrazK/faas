@@ -1060,8 +1060,37 @@ type GitHubConnectionView struct {
 	LastReconcileError           string
 	LastReconcileRepositoryCount int
 	LastReconcileDetachedCount   int
+	Activity                     *GitHubActivityView
 	CSRFToken                    string
 	Flash                        string
+}
+
+// GitHubActivityView is the customer-facing projection of recent GitHub
+// ingress and Check Run synchronization. Status labels and links are
+// prepared by the handler so templates never reconstruct provider URLs.
+type GitHubActivityView struct {
+	WebhookDeliveries []GitHubWebhookActivityView
+	CheckUpdates      []GitHubCheckActivityView
+}
+
+type GitHubWebhookActivityView struct {
+	EventType   string
+	Status      string
+	StatusClass string
+	CommitShort string
+	CommitURL   string
+	ReceivedAt  string
+	Guidance    string
+}
+
+type GitHubCheckActivityView struct {
+	DeploymentID  string
+	DeploymentURL string
+	Status        string
+	StatusClass   string
+	CommitShort   string
+	UpdatedAt     string
+	Guidance      string
 }
 
 // WorkflowRunItem is the dashboard projection of one durable workflow run.

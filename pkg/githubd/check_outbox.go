@@ -36,6 +36,21 @@ type CheckUpdateRecord struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
+// CheckActivityRecord is the customer-safe projection of a Check Run sync
+// update linked to one of the account's deployments.
+type CheckActivityRecord struct {
+	DeploymentID string
+	Status       string
+	CommitSHA    string
+	ProcessedAt  *time.Time
+	UpdatedAt    time.Time
+}
+
+// CheckActivityStore is the app-scoped read seam for Check Run sync state.
+type CheckActivityStore interface {
+	ListCheckUpdatesForApp(ctx context.Context, accountID, appID string, limit int) ([]CheckActivityRecord, error)
+}
+
 type CheckUpdateStore interface {
 	Claim(ctx context.Context) (CheckUpdate, error)
 	Complete(ctx context.Context, update CheckUpdate) error
@@ -102,6 +117,37 @@ func (s *PGCheckUpdateStore) Fail(ctx context.Context, update CheckUpdate, messa
 		return fmt.Errorf("githubd: fail check update: %w", err)
 	}
 	return nil
+}
+
+// ListCheckUpdatesForApp returns Check Run sync state only for deployments
+// owned by the requested account and app. It deliberately omits worker error
+// text and retry internals from the customer-facing projection.
+func (s *PGCheckUpdateStore) ListCheckUpdatesForApp(ctx context.Context, accountID, appID string, limit int) ([]CheckActivityRecord, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	rows, err := s.pool.Query(ctx, `
+		select u.deployment_id, u.status, coalesce(d.commit_sha, ''), u.processed_at, u.updated_at
+		from github_check_updates u
+		join deployments d on d.id = u.deployment_id
+		join apps a on a.id = d.app_id and a.id = $2 and a.account_id = $1
+		where d.kind in ('github', 'preview')
+		order by u.updated_at desc
+		limit $3`, accountID, appID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("githubd: list app check activity: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CheckActivityRecord, 0)
+	for rows.Next() {
+		var record CheckActivityRecord
+		if err := rows.Scan(&record.DeploymentID, &record.Status, &record.CommitSHA,
+			&record.ProcessedAt, &record.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("githubd: scan app check activity: %w", err)
+		}
+		out = append(out, record)
+	}
+	return out, rows.Err()
 }
 
 func (s *PGCheckUpdateStore) ListCheckUpdates(ctx context.Context, status string, limit int) ([]CheckUpdateRecord, error) {

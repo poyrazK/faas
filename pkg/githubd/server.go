@@ -359,10 +359,14 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 			observe(errors.New("githubd: missing webhook metadata"))
 			return
 		}
+		installationID, repoFullName, commitSHA := webhookDeliveryMetadata(eventType, body)
 		inserted, enqueueErr := s.Deliveries.Enqueue(r.Context(), WebhookDelivery{
-			DeliveryID: deliveryID,
-			EventType:  eventType,
-			Payload:    body,
+			DeliveryID:     deliveryID,
+			EventType:      eventType,
+			Payload:        body,
+			InstallationID: installationID,
+			RepoFullName:   repoFullName,
+			CommitSHA:      commitSHA,
 		})
 		if enqueueErr != nil {
 			s.Log.Error("githubd webhook enqueue", "err", enqueueErr)
@@ -402,6 +406,29 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.Service.HandlePushRequest(r.Context(), body)
 	s.writeWebhookResult(w, result, err, observe)
+}
+
+// webhookDeliveryMetadata extracts only the identity needed for a customer
+// activity join. Decode failures are intentionally ignored here: the durable
+// worker still records the authenticated delivery and is the authority for
+// processing success or failure.
+func webhookDeliveryMetadata(eventType string, body []byte) (installationID int64, repoFullName, commitSHA string) {
+	switch eventType {
+	case "push":
+		event, err := DecodePush(body)
+		if err != nil {
+			return 0, "", ""
+		}
+		return event.Installation.ID, event.Repository.FullName, event.After
+	case "pull_request":
+		event, err := DecodePullRequest(body)
+		if err != nil {
+			return 0, "", ""
+		}
+		return event.Installation.ID, event.Repository.FullName, event.PullRequest.HeadSHA
+	default:
+		return 0, "", ""
+	}
 }
 
 func (s *Server) writeWebhookResult(w http.ResponseWriter, result reconcile.Result, err error, observe func(error)) {

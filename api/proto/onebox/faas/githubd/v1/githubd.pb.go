@@ -645,6 +645,278 @@ func (x *RetryRecoveryItemResponse) GetRetried() bool {
 	return false
 }
 
+type GetAppActivityRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	AppId         string                 `protobuf:"bytes,2,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAppActivityRequest) Reset() {
+	*x = GetAppActivityRequest{}
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAppActivityRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAppActivityRequest) ProtoMessage() {}
+
+func (x *GetAppActivityRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAppActivityRequest.ProtoReflect.Descriptor instead.
+func (*GetAppActivityRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *GetAppActivityRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *GetAppActivityRequest) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *GetAppActivityRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type WebhookActivity struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EventType     string                 `protobuf:"bytes,1,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	CommitSha     string                 `protobuf:"bytes,3,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	ReceivedAt    string                 `protobuf:"bytes,4,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"`
+	ProcessedAt   string                 `protobuf:"bytes,5,opt,name=processed_at,json=processedAt,proto3" json:"processed_at,omitempty"`
+	UpdatedAt     string                 `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WebhookActivity) Reset() {
+	*x = WebhookActivity{}
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WebhookActivity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WebhookActivity) ProtoMessage() {}
+
+func (x *WebhookActivity) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WebhookActivity.ProtoReflect.Descriptor instead.
+func (*WebhookActivity) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *WebhookActivity) GetEventType() string {
+	if x != nil {
+		return x.EventType
+	}
+	return ""
+}
+
+func (x *WebhookActivity) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *WebhookActivity) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
+func (x *WebhookActivity) GetReceivedAt() string {
+	if x != nil {
+		return x.ReceivedAt
+	}
+	return ""
+}
+
+func (x *WebhookActivity) GetProcessedAt() string {
+	if x != nil {
+		return x.ProcessedAt
+	}
+	return ""
+}
+
+func (x *WebhookActivity) GetUpdatedAt() string {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return ""
+}
+
+type CheckActivity struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DeploymentId  string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	CommitSha     string                 `protobuf:"bytes,3,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	ProcessedAt   string                 `protobuf:"bytes,4,opt,name=processed_at,json=processedAt,proto3" json:"processed_at,omitempty"`
+	UpdatedAt     string                 `protobuf:"bytes,5,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckActivity) Reset() {
+	*x = CheckActivity{}
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckActivity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckActivity) ProtoMessage() {}
+
+func (x *CheckActivity) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckActivity.ProtoReflect.Descriptor instead.
+func (*CheckActivity) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CheckActivity) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *CheckActivity) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *CheckActivity) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
+func (x *CheckActivity) GetProcessedAt() string {
+	if x != nil {
+		return x.ProcessedAt
+	}
+	return ""
+}
+
+func (x *CheckActivity) GetUpdatedAt() string {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return ""
+}
+
+type GetAppActivityResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Webhooks      []*WebhookActivity     `protobuf:"bytes,1,rep,name=webhooks,proto3" json:"webhooks,omitempty"`
+	Checks        []*CheckActivity       `protobuf:"bytes,2,rep,name=checks,proto3" json:"checks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAppActivityResponse) Reset() {
+	*x = GetAppActivityResponse{}
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAppActivityResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAppActivityResponse) ProtoMessage() {}
+
+func (x *GetAppActivityResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAppActivityResponse.ProtoReflect.Descriptor instead.
+func (*GetAppActivityResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *GetAppActivityResponse) GetWebhooks() []*WebhookActivity {
+	if x != nil {
+		return x.Webhooks
+	}
+	return nil
+}
+
+func (x *GetAppActivityResponse) GetChecks() []*CheckActivity {
+	if x != nil {
+		return x.Checks
+	}
+	return nil
+}
+
 type VerifyInstallationRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	InstallationId int64                  `protobuf:"varint,1,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
@@ -658,7 +930,7 @@ type VerifyInstallationRequest struct {
 
 func (x *VerifyInstallationRequest) Reset() {
 	*x = VerifyInstallationRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[7]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -670,7 +942,7 @@ func (x *VerifyInstallationRequest) String() string {
 func (*VerifyInstallationRequest) ProtoMessage() {}
 
 func (x *VerifyInstallationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[7]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -683,7 +955,7 @@ func (x *VerifyInstallationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyInstallationRequest.ProtoReflect.Descriptor instead.
 func (*VerifyInstallationRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{7}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *VerifyInstallationRequest) GetInstallationId() int64 {
@@ -711,7 +983,7 @@ type VerifyInstallationResponse struct {
 
 func (x *VerifyInstallationResponse) Reset() {
 	*x = VerifyInstallationResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[8]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -723,7 +995,7 @@ func (x *VerifyInstallationResponse) String() string {
 func (*VerifyInstallationResponse) ProtoMessage() {}
 
 func (x *VerifyInstallationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[8]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -736,7 +1008,7 @@ func (x *VerifyInstallationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyInstallationResponse.ProtoReflect.Descriptor instead.
 func (*VerifyInstallationResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{8}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *VerifyInstallationResponse) GetVerified() bool {
@@ -771,7 +1043,7 @@ type GetInstallStateRequest struct {
 
 func (x *GetInstallStateRequest) Reset() {
 	*x = GetInstallStateRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[9]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -783,7 +1055,7 @@ func (x *GetInstallStateRequest) String() string {
 func (*GetInstallStateRequest) ProtoMessage() {}
 
 func (x *GetInstallStateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[9]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -796,7 +1068,7 @@ func (x *GetInstallStateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetInstallStateRequest.ProtoReflect.Descriptor instead.
 func (*GetInstallStateRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{9}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *GetInstallStateRequest) GetAccountId() string {
@@ -817,7 +1089,7 @@ type GetInstallStateResponse struct {
 
 func (x *GetInstallStateResponse) Reset() {
 	*x = GetInstallStateResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[10]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -829,7 +1101,7 @@ func (x *GetInstallStateResponse) String() string {
 func (*GetInstallStateResponse) ProtoMessage() {}
 
 func (x *GetInstallStateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[10]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -842,7 +1114,7 @@ func (x *GetInstallStateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetInstallStateResponse.ProtoReflect.Descriptor instead.
 func (*GetInstallStateResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{10}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *GetInstallStateResponse) GetState() InstallState {
@@ -880,7 +1152,7 @@ type ExchangeOAuthCodeRequest struct {
 
 func (x *ExchangeOAuthCodeRequest) Reset() {
 	*x = ExchangeOAuthCodeRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[11]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -892,7 +1164,7 @@ func (x *ExchangeOAuthCodeRequest) String() string {
 func (*ExchangeOAuthCodeRequest) ProtoMessage() {}
 
 func (x *ExchangeOAuthCodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[11]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -905,7 +1177,7 @@ func (x *ExchangeOAuthCodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExchangeOAuthCodeRequest.ProtoReflect.Descriptor instead.
 func (*ExchangeOAuthCodeRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{11}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ExchangeOAuthCodeRequest) GetAccountId() string {
@@ -939,7 +1211,7 @@ type ExchangeOAuthCodeResponse struct {
 
 func (x *ExchangeOAuthCodeResponse) Reset() {
 	*x = ExchangeOAuthCodeResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[12]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -951,7 +1223,7 @@ func (x *ExchangeOAuthCodeResponse) String() string {
 func (*ExchangeOAuthCodeResponse) ProtoMessage() {}
 
 func (x *ExchangeOAuthCodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[12]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -964,7 +1236,7 @@ func (x *ExchangeOAuthCodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExchangeOAuthCodeResponse.ProtoReflect.Descriptor instead.
 func (*ExchangeOAuthCodeResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{12}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ExchangeOAuthCodeResponse) GetInstallationId() string {
@@ -993,7 +1265,7 @@ type Repo struct {
 
 func (x *Repo) Reset() {
 	*x = Repo{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[13]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1005,7 +1277,7 @@ func (x *Repo) String() string {
 func (*Repo) ProtoMessage() {}
 
 func (x *Repo) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[13]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1018,7 +1290,7 @@ func (x *Repo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Repo.ProtoReflect.Descriptor instead.
 func (*Repo) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{13}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Repo) GetId() int64 {
@@ -1059,7 +1331,7 @@ type ListInstallableReposRequest struct {
 
 func (x *ListInstallableReposRequest) Reset() {
 	*x = ListInstallableReposRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[14]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1071,7 +1343,7 @@ func (x *ListInstallableReposRequest) String() string {
 func (*ListInstallableReposRequest) ProtoMessage() {}
 
 func (x *ListInstallableReposRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[14]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1084,7 +1356,7 @@ func (x *ListInstallableReposRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListInstallableReposRequest.ProtoReflect.Descriptor instead.
 func (*ListInstallableReposRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{14}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ListInstallableReposRequest) GetAccountId() string {
@@ -1110,7 +1382,7 @@ type ListInstallableReposResponse struct {
 
 func (x *ListInstallableReposResponse) Reset() {
 	*x = ListInstallableReposResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[15]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1122,7 +1394,7 @@ func (x *ListInstallableReposResponse) String() string {
 func (*ListInstallableReposResponse) ProtoMessage() {}
 
 func (x *ListInstallableReposResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[15]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1135,7 +1407,7 @@ func (x *ListInstallableReposResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListInstallableReposResponse.ProtoReflect.Descriptor instead.
 func (*ListInstallableReposResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{15}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListInstallableReposResponse) GetRepos() []*Repo {
@@ -1159,7 +1431,7 @@ type BindAppRepoRequest struct {
 
 func (x *BindAppRepoRequest) Reset() {
 	*x = BindAppRepoRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[16]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1171,7 +1443,7 @@ func (x *BindAppRepoRequest) String() string {
 func (*BindAppRepoRequest) ProtoMessage() {}
 
 func (x *BindAppRepoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[16]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1184,7 +1456,7 @@ func (x *BindAppRepoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindAppRepoRequest.ProtoReflect.Descriptor instead.
 func (*BindAppRepoRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{16}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *BindAppRepoRequest) GetAppId() string {
@@ -1231,7 +1503,7 @@ type BindAppRepoResponse struct {
 
 func (x *BindAppRepoResponse) Reset() {
 	*x = BindAppRepoResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[17]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1243,7 +1515,7 @@ func (x *BindAppRepoResponse) String() string {
 func (*BindAppRepoResponse) ProtoMessage() {}
 
 func (x *BindAppRepoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[17]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1256,7 +1528,7 @@ func (x *BindAppRepoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindAppRepoResponse.ProtoReflect.Descriptor instead.
 func (*BindAppRepoResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{17}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *BindAppRepoResponse) GetBindingId() string {
@@ -1276,7 +1548,7 @@ type UnbindAppRepoRequest struct {
 
 func (x *UnbindAppRepoRequest) Reset() {
 	*x = UnbindAppRepoRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[18]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1288,7 +1560,7 @@ func (x *UnbindAppRepoRequest) String() string {
 func (*UnbindAppRepoRequest) ProtoMessage() {}
 
 func (x *UnbindAppRepoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[18]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1301,7 +1573,7 @@ func (x *UnbindAppRepoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnbindAppRepoRequest.ProtoReflect.Descriptor instead.
 func (*UnbindAppRepoRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{18}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *UnbindAppRepoRequest) GetAppId() string {
@@ -1326,7 +1598,7 @@ type UnbindAppRepoResponse struct {
 
 func (x *UnbindAppRepoResponse) Reset() {
 	*x = UnbindAppRepoResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[19]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1338,7 +1610,7 @@ func (x *UnbindAppRepoResponse) String() string {
 func (*UnbindAppRepoResponse) ProtoMessage() {}
 
 func (x *UnbindAppRepoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[19]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1351,7 +1623,7 @@ func (x *UnbindAppRepoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnbindAppRepoResponse.ProtoReflect.Descriptor instead.
 func (*UnbindAppRepoResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{19}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{23}
 }
 
 type GetAppBindingRequest struct {
@@ -1364,7 +1636,7 @@ type GetAppBindingRequest struct {
 
 func (x *GetAppBindingRequest) Reset() {
 	*x = GetAppBindingRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[20]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1376,7 +1648,7 @@ func (x *GetAppBindingRequest) String() string {
 func (*GetAppBindingRequest) ProtoMessage() {}
 
 func (x *GetAppBindingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[20]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1389,7 +1661,7 @@ func (x *GetAppBindingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAppBindingRequest.ProtoReflect.Descriptor instead.
 func (*GetAppBindingRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{20}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GetAppBindingRequest) GetAppId() string {
@@ -1417,7 +1689,7 @@ type GetAppBindingResponse struct {
 
 func (x *GetAppBindingResponse) Reset() {
 	*x = GetAppBindingResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[21]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1429,7 +1701,7 @@ func (x *GetAppBindingResponse) String() string {
 func (*GetAppBindingResponse) ProtoMessage() {}
 
 func (x *GetAppBindingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[21]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1442,7 +1714,7 @@ func (x *GetAppBindingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAppBindingResponse.ProtoReflect.Descriptor instead.
 func (*GetAppBindingResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{21}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetAppBindingResponse) GetRepoFullName() string {
@@ -1480,7 +1752,7 @@ type CreateDeploymentFromPushRequest struct {
 
 func (x *CreateDeploymentFromPushRequest) Reset() {
 	*x = CreateDeploymentFromPushRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[22]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1492,7 +1764,7 @@ func (x *CreateDeploymentFromPushRequest) String() string {
 func (*CreateDeploymentFromPushRequest) ProtoMessage() {}
 
 func (x *CreateDeploymentFromPushRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[22]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1505,7 +1777,7 @@ func (x *CreateDeploymentFromPushRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateDeploymentFromPushRequest.ProtoReflect.Descriptor instead.
 func (*CreateDeploymentFromPushRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{22}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *CreateDeploymentFromPushRequest) GetRepoFullName() string {
@@ -1549,7 +1821,7 @@ type CreateDeploymentFromPushResponse struct {
 
 func (x *CreateDeploymentFromPushResponse) Reset() {
 	*x = CreateDeploymentFromPushResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[23]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1561,7 +1833,7 @@ func (x *CreateDeploymentFromPushResponse) String() string {
 func (*CreateDeploymentFromPushResponse) ProtoMessage() {}
 
 func (x *CreateDeploymentFromPushResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[23]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1574,7 +1846,7 @@ func (x *CreateDeploymentFromPushResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateDeploymentFromPushResponse.ProtoReflect.Descriptor instead.
 func (*CreateDeploymentFromPushResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{23}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *CreateDeploymentFromPushResponse) GetDeploymentId() string {
@@ -1606,7 +1878,7 @@ type WriteCheckRequest struct {
 
 func (x *WriteCheckRequest) Reset() {
 	*x = WriteCheckRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[24]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1618,7 +1890,7 @@ func (x *WriteCheckRequest) String() string {
 func (*WriteCheckRequest) ProtoMessage() {}
 
 func (x *WriteCheckRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[24]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1631,7 +1903,7 @@ func (x *WriteCheckRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteCheckRequest.ProtoReflect.Descriptor instead.
 func (*WriteCheckRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{24}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *WriteCheckRequest) GetRepoFullName() string {
@@ -1677,7 +1949,7 @@ type WriteCheckResponse struct {
 
 func (x *WriteCheckResponse) Reset() {
 	*x = WriteCheckResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[25]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1689,7 +1961,7 @@ func (x *WriteCheckResponse) String() string {
 func (*WriteCheckResponse) ProtoMessage() {}
 
 func (x *WriteCheckResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[25]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1702,7 +1974,7 @@ func (x *WriteCheckResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteCheckResponse.ProtoReflect.Descriptor instead.
 func (*WriteCheckResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{25}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{29}
 }
 
 // EnqueueBuildRequest is the githubd → apid per-app build enqueue
@@ -1800,7 +2072,7 @@ type EnqueueBuildRequest struct {
 
 func (x *EnqueueBuildRequest) Reset() {
 	*x = EnqueueBuildRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[26]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1812,7 +2084,7 @@ func (x *EnqueueBuildRequest) String() string {
 func (*EnqueueBuildRequest) ProtoMessage() {}
 
 func (x *EnqueueBuildRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[26]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1825,7 +2097,7 @@ func (x *EnqueueBuildRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnqueueBuildRequest.ProtoReflect.Descriptor instead.
 func (*EnqueueBuildRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{26}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *EnqueueBuildRequest) GetAccountId() string {
@@ -1958,7 +2230,7 @@ type EnqueueBuildResponse struct {
 
 func (x *EnqueueBuildResponse) Reset() {
 	*x = EnqueueBuildResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[27]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1970,7 +2242,7 @@ func (x *EnqueueBuildResponse) String() string {
 func (*EnqueueBuildResponse) ProtoMessage() {}
 
 func (x *EnqueueBuildResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[27]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1983,7 +2255,7 @@ func (x *EnqueueBuildResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnqueueBuildResponse.ProtoReflect.Descriptor instead.
 func (*EnqueueBuildResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{27}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *EnqueueBuildResponse) GetBuildId() string {
@@ -2023,7 +2295,7 @@ type MintInstallationTokenRequest struct {
 
 func (x *MintInstallationTokenRequest) Reset() {
 	*x = MintInstallationTokenRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[28]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2035,7 +2307,7 @@ func (x *MintInstallationTokenRequest) String() string {
 func (*MintInstallationTokenRequest) ProtoMessage() {}
 
 func (x *MintInstallationTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[28]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2048,7 +2320,7 @@ func (x *MintInstallationTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MintInstallationTokenRequest.ProtoReflect.Descriptor instead.
 func (*MintInstallationTokenRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{28}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *MintInstallationTokenRequest) GetAccountId() string {
@@ -2084,7 +2356,7 @@ type MintInstallationTokenResponse struct {
 
 func (x *MintInstallationTokenResponse) Reset() {
 	*x = MintInstallationTokenResponse{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[29]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2096,7 +2368,7 @@ func (x *MintInstallationTokenResponse) String() string {
 func (*MintInstallationTokenResponse) ProtoMessage() {}
 
 func (x *MintInstallationTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[29]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2109,7 +2381,7 @@ func (x *MintInstallationTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MintInstallationTokenResponse.ProtoReflect.Descriptor instead.
 func (*MintInstallationTokenResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{29}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *MintInstallationTokenResponse) GetToken() string {
@@ -2155,7 +2427,7 @@ type StreamSourceRefRequest struct {
 
 func (x *StreamSourceRefRequest) Reset() {
 	*x = StreamSourceRefRequest{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[30]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2167,7 +2439,7 @@ func (x *StreamSourceRefRequest) String() string {
 func (*StreamSourceRefRequest) ProtoMessage() {}
 
 func (x *StreamSourceRefRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[30]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2180,7 +2452,7 @@ func (x *StreamSourceRefRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamSourceRefRequest.ProtoReflect.Descriptor instead.
 func (*StreamSourceRefRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{30}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *StreamSourceRefRequest) GetAccountId() string {
@@ -2248,7 +2520,7 @@ type StreamSourceRefChunk struct {
 
 func (x *StreamSourceRefChunk) Reset() {
 	*x = StreamSourceRefChunk{}
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[31]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2260,7 +2532,7 @@ func (x *StreamSourceRefChunk) String() string {
 func (*StreamSourceRefChunk) ProtoMessage() {}
 
 func (x *StreamSourceRefChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[31]
+	mi := &file_onebox_faas_githubd_v1_githubd_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2273,7 +2545,7 @@ func (x *StreamSourceRefChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamSourceRefChunk.ProtoReflect.Descriptor instead.
 func (*StreamSourceRefChunk) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{31}
+	return file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *StreamSourceRefChunk) GetData() []byte {
@@ -2351,7 +2623,34 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x17RetryCheckUpdateRequest\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\"5\n" +
 	"\x19RetryRecoveryItemResponse\x12\x18\n" +
-	"\aretried\x18\x01 \x01(\bR\aretried\"k\n" +
+	"\aretried\x18\x01 \x01(\bR\aretried\"c\n" +
+	"\x15GetAppActivityRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
+	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\"\xca\x01\n" +
+	"\x0fWebhookActivity\x12\x1d\n" +
+	"\n" +
+	"event_type\x18\x01 \x01(\tR\teventType\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\x03 \x01(\tR\tcommitSha\x12\x1f\n" +
+	"\vreceived_at\x18\x04 \x01(\tR\n" +
+	"receivedAt\x12!\n" +
+	"\fprocessed_at\x18\x05 \x01(\tR\vprocessedAt\x12\x1d\n" +
+	"\n" +
+	"updated_at\x18\x06 \x01(\tR\tupdatedAt\"\xad\x01\n" +
+	"\rCheckActivity\x12#\n" +
+	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\x03 \x01(\tR\tcommitSha\x12!\n" +
+	"\fprocessed_at\x18\x04 \x01(\tR\vprocessedAt\x12\x1d\n" +
+	"\n" +
+	"updated_at\x18\x05 \x01(\tR\tupdatedAt\"\x9c\x01\n" +
+	"\x16GetAppActivityResponse\x12C\n" +
+	"\bwebhooks\x18\x01 \x03(\v2'.onebox.faas.githubd.v1.WebhookActivityR\bwebhooks\x12=\n" +
+	"\x06checks\x18\x02 \x03(\v2%.onebox.faas.githubd.v1.CheckActivityR\x06checks\"k\n" +
 	"\x19VerifyInstallationRequest\x12'\n" +
 	"\x0finstallation_id\x18\x01 \x01(\x03R\x0einstallationId\x12%\n" +
 	"\x0eexpected_login\x18\x02 \x01(\tR\rexpectedLogin\"\x84\x01\n" +
@@ -2493,14 +2792,15 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x15EnqueueBuildEventKind\x12\x1a\n" +
 	"\x16EVENT_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fEVENT_KIND_PUSH\x10\x01\x12\x1b\n" +
-	"\x17EVENT_KIND_PULL_REQUEST\x10\x022\x98\x0e\n" +
+	"\x17EVENT_KIND_PULL_REQUEST\x10\x022\x89\x0f\n" +
 	"\aGithubd\x12r\n" +
 	"\x0fGetInstallState\x12..onebox.faas.githubd.v1.GetInstallStateRequest\x1a/.onebox.faas.githubd.v1.GetInstallStateResponse\x12x\n" +
 	"\x11ExchangeOAuthCode\x120.onebox.faas.githubd.v1.ExchangeOAuthCodeRequest\x1a1.onebox.faas.githubd.v1.ExchangeOAuthCodeResponse\x12\x81\x01\n" +
 	"\x14ListInstallableRepos\x123.onebox.faas.githubd.v1.ListInstallableReposRequest\x1a4.onebox.faas.githubd.v1.ListInstallableReposResponse\x12f\n" +
 	"\vBindAppRepo\x12*.onebox.faas.githubd.v1.BindAppRepoRequest\x1a+.onebox.faas.githubd.v1.BindAppRepoResponse\x12l\n" +
 	"\rUnbindAppRepo\x12,.onebox.faas.githubd.v1.UnbindAppRepoRequest\x1a-.onebox.faas.githubd.v1.UnbindAppRepoResponse\x12l\n" +
-	"\rGetAppBinding\x12,.onebox.faas.githubd.v1.GetAppBindingRequest\x1a-.onebox.faas.githubd.v1.GetAppBindingResponse\x12\x8d\x01\n" +
+	"\rGetAppBinding\x12,.onebox.faas.githubd.v1.GetAppBindingRequest\x1a-.onebox.faas.githubd.v1.GetAppBindingResponse\x12o\n" +
+	"\x0eGetAppActivity\x12-.onebox.faas.githubd.v1.GetAppActivityRequest\x1a..onebox.faas.githubd.v1.GetAppActivityResponse\x12\x8d\x01\n" +
 	"\x18CreateDeploymentFromPush\x127.onebox.faas.githubd.v1.CreateDeploymentFromPushRequest\x1a8.onebox.faas.githubd.v1.CreateDeploymentFromPushResponse\x12i\n" +
 	"\fEnqueueBuild\x12+.onebox.faas.githubd.v1.EnqueueBuildRequest\x1a,.onebox.faas.githubd.v1.EnqueueBuildResponse\x12c\n" +
 	"\n" +
@@ -2525,7 +2825,7 @@ func file_onebox_faas_githubd_v1_githubd_proto_rawDescGZIP() []byte {
 }
 
 var file_onebox_faas_githubd_v1_githubd_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_onebox_faas_githubd_v1_githubd_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_onebox_faas_githubd_v1_githubd_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_onebox_faas_githubd_v1_githubd_proto_goTypes = []any{
 	(InstallState)(0),                        // 0: onebox.faas.githubd.v1.InstallState
 	(CheckPhase)(0),                          // 1: onebox.faas.githubd.v1.CheckPhase
@@ -2537,74 +2837,82 @@ var file_onebox_faas_githubd_v1_githubd_proto_goTypes = []any{
 	(*RetryWebhookDeliveryRequest)(nil),      // 7: onebox.faas.githubd.v1.RetryWebhookDeliveryRequest
 	(*RetryCheckUpdateRequest)(nil),          // 8: onebox.faas.githubd.v1.RetryCheckUpdateRequest
 	(*RetryRecoveryItemResponse)(nil),        // 9: onebox.faas.githubd.v1.RetryRecoveryItemResponse
-	(*VerifyInstallationRequest)(nil),        // 10: onebox.faas.githubd.v1.VerifyInstallationRequest
-	(*VerifyInstallationResponse)(nil),       // 11: onebox.faas.githubd.v1.VerifyInstallationResponse
-	(*GetInstallStateRequest)(nil),           // 12: onebox.faas.githubd.v1.GetInstallStateRequest
-	(*GetInstallStateResponse)(nil),          // 13: onebox.faas.githubd.v1.GetInstallStateResponse
-	(*ExchangeOAuthCodeRequest)(nil),         // 14: onebox.faas.githubd.v1.ExchangeOAuthCodeRequest
-	(*ExchangeOAuthCodeResponse)(nil),        // 15: onebox.faas.githubd.v1.ExchangeOAuthCodeResponse
-	(*Repo)(nil),                             // 16: onebox.faas.githubd.v1.Repo
-	(*ListInstallableReposRequest)(nil),      // 17: onebox.faas.githubd.v1.ListInstallableReposRequest
-	(*ListInstallableReposResponse)(nil),     // 18: onebox.faas.githubd.v1.ListInstallableReposResponse
-	(*BindAppRepoRequest)(nil),               // 19: onebox.faas.githubd.v1.BindAppRepoRequest
-	(*BindAppRepoResponse)(nil),              // 20: onebox.faas.githubd.v1.BindAppRepoResponse
-	(*UnbindAppRepoRequest)(nil),             // 21: onebox.faas.githubd.v1.UnbindAppRepoRequest
-	(*UnbindAppRepoResponse)(nil),            // 22: onebox.faas.githubd.v1.UnbindAppRepoResponse
-	(*GetAppBindingRequest)(nil),             // 23: onebox.faas.githubd.v1.GetAppBindingRequest
-	(*GetAppBindingResponse)(nil),            // 24: onebox.faas.githubd.v1.GetAppBindingResponse
-	(*CreateDeploymentFromPushRequest)(nil),  // 25: onebox.faas.githubd.v1.CreateDeploymentFromPushRequest
-	(*CreateDeploymentFromPushResponse)(nil), // 26: onebox.faas.githubd.v1.CreateDeploymentFromPushResponse
-	(*WriteCheckRequest)(nil),                // 27: onebox.faas.githubd.v1.WriteCheckRequest
-	(*WriteCheckResponse)(nil),               // 28: onebox.faas.githubd.v1.WriteCheckResponse
-	(*EnqueueBuildRequest)(nil),              // 29: onebox.faas.githubd.v1.EnqueueBuildRequest
-	(*EnqueueBuildResponse)(nil),             // 30: onebox.faas.githubd.v1.EnqueueBuildResponse
-	(*MintInstallationTokenRequest)(nil),     // 31: onebox.faas.githubd.v1.MintInstallationTokenRequest
-	(*MintInstallationTokenResponse)(nil),    // 32: onebox.faas.githubd.v1.MintInstallationTokenResponse
-	(*StreamSourceRefRequest)(nil),           // 33: onebox.faas.githubd.v1.StreamSourceRefRequest
-	(*StreamSourceRefChunk)(nil),             // 34: onebox.faas.githubd.v1.StreamSourceRefChunk
+	(*GetAppActivityRequest)(nil),            // 10: onebox.faas.githubd.v1.GetAppActivityRequest
+	(*WebhookActivity)(nil),                  // 11: onebox.faas.githubd.v1.WebhookActivity
+	(*CheckActivity)(nil),                    // 12: onebox.faas.githubd.v1.CheckActivity
+	(*GetAppActivityResponse)(nil),           // 13: onebox.faas.githubd.v1.GetAppActivityResponse
+	(*VerifyInstallationRequest)(nil),        // 14: onebox.faas.githubd.v1.VerifyInstallationRequest
+	(*VerifyInstallationResponse)(nil),       // 15: onebox.faas.githubd.v1.VerifyInstallationResponse
+	(*GetInstallStateRequest)(nil),           // 16: onebox.faas.githubd.v1.GetInstallStateRequest
+	(*GetInstallStateResponse)(nil),          // 17: onebox.faas.githubd.v1.GetInstallStateResponse
+	(*ExchangeOAuthCodeRequest)(nil),         // 18: onebox.faas.githubd.v1.ExchangeOAuthCodeRequest
+	(*ExchangeOAuthCodeResponse)(nil),        // 19: onebox.faas.githubd.v1.ExchangeOAuthCodeResponse
+	(*Repo)(nil),                             // 20: onebox.faas.githubd.v1.Repo
+	(*ListInstallableReposRequest)(nil),      // 21: onebox.faas.githubd.v1.ListInstallableReposRequest
+	(*ListInstallableReposResponse)(nil),     // 22: onebox.faas.githubd.v1.ListInstallableReposResponse
+	(*BindAppRepoRequest)(nil),               // 23: onebox.faas.githubd.v1.BindAppRepoRequest
+	(*BindAppRepoResponse)(nil),              // 24: onebox.faas.githubd.v1.BindAppRepoResponse
+	(*UnbindAppRepoRequest)(nil),             // 25: onebox.faas.githubd.v1.UnbindAppRepoRequest
+	(*UnbindAppRepoResponse)(nil),            // 26: onebox.faas.githubd.v1.UnbindAppRepoResponse
+	(*GetAppBindingRequest)(nil),             // 27: onebox.faas.githubd.v1.GetAppBindingRequest
+	(*GetAppBindingResponse)(nil),            // 28: onebox.faas.githubd.v1.GetAppBindingResponse
+	(*CreateDeploymentFromPushRequest)(nil),  // 29: onebox.faas.githubd.v1.CreateDeploymentFromPushRequest
+	(*CreateDeploymentFromPushResponse)(nil), // 30: onebox.faas.githubd.v1.CreateDeploymentFromPushResponse
+	(*WriteCheckRequest)(nil),                // 31: onebox.faas.githubd.v1.WriteCheckRequest
+	(*WriteCheckResponse)(nil),               // 32: onebox.faas.githubd.v1.WriteCheckResponse
+	(*EnqueueBuildRequest)(nil),              // 33: onebox.faas.githubd.v1.EnqueueBuildRequest
+	(*EnqueueBuildResponse)(nil),             // 34: onebox.faas.githubd.v1.EnqueueBuildResponse
+	(*MintInstallationTokenRequest)(nil),     // 35: onebox.faas.githubd.v1.MintInstallationTokenRequest
+	(*MintInstallationTokenResponse)(nil),    // 36: onebox.faas.githubd.v1.MintInstallationTokenResponse
+	(*StreamSourceRefRequest)(nil),           // 37: onebox.faas.githubd.v1.StreamSourceRefRequest
+	(*StreamSourceRefChunk)(nil),             // 38: onebox.faas.githubd.v1.StreamSourceRefChunk
 }
 var file_onebox_faas_githubd_v1_githubd_proto_depIdxs = []int32{
 	4,  // 0: onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse.deliveries:type_name -> onebox.faas.githubd.v1.WebhookDeliveryRecord
 	5,  // 1: onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse.check_updates:type_name -> onebox.faas.githubd.v1.CheckUpdateRecord
-	0,  // 2: onebox.faas.githubd.v1.GetInstallStateResponse.state:type_name -> onebox.faas.githubd.v1.InstallState
-	16, // 3: onebox.faas.githubd.v1.ListInstallableReposResponse.repos:type_name -> onebox.faas.githubd.v1.Repo
-	1,  // 4: onebox.faas.githubd.v1.WriteCheckRequest.phase:type_name -> onebox.faas.githubd.v1.CheckPhase
-	2,  // 5: onebox.faas.githubd.v1.EnqueueBuildRequest.event_kind:type_name -> onebox.faas.githubd.v1.EnqueueBuildEventKind
-	12, // 6: onebox.faas.githubd.v1.Githubd.GetInstallState:input_type -> onebox.faas.githubd.v1.GetInstallStateRequest
-	14, // 7: onebox.faas.githubd.v1.Githubd.ExchangeOAuthCode:input_type -> onebox.faas.githubd.v1.ExchangeOAuthCodeRequest
-	17, // 8: onebox.faas.githubd.v1.Githubd.ListInstallableRepos:input_type -> onebox.faas.githubd.v1.ListInstallableReposRequest
-	19, // 9: onebox.faas.githubd.v1.Githubd.BindAppRepo:input_type -> onebox.faas.githubd.v1.BindAppRepoRequest
-	21, // 10: onebox.faas.githubd.v1.Githubd.UnbindAppRepo:input_type -> onebox.faas.githubd.v1.UnbindAppRepoRequest
-	23, // 11: onebox.faas.githubd.v1.Githubd.GetAppBinding:input_type -> onebox.faas.githubd.v1.GetAppBindingRequest
-	25, // 12: onebox.faas.githubd.v1.Githubd.CreateDeploymentFromPush:input_type -> onebox.faas.githubd.v1.CreateDeploymentFromPushRequest
-	29, // 13: onebox.faas.githubd.v1.Githubd.EnqueueBuild:input_type -> onebox.faas.githubd.v1.EnqueueBuildRequest
-	27, // 14: onebox.faas.githubd.v1.Githubd.WriteCheck:input_type -> onebox.faas.githubd.v1.WriteCheckRequest
-	10, // 15: onebox.faas.githubd.v1.Githubd.VerifyInstallation:input_type -> onebox.faas.githubd.v1.VerifyInstallationRequest
-	31, // 16: onebox.faas.githubd.v1.Githubd.MintInstallationToken:input_type -> onebox.faas.githubd.v1.MintInstallationTokenRequest
-	33, // 17: onebox.faas.githubd.v1.Githubd.StreamSourceRef:input_type -> onebox.faas.githubd.v1.StreamSourceRefRequest
-	3,  // 18: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:input_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsRequest
-	7,  // 19: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:input_type -> onebox.faas.githubd.v1.RetryWebhookDeliveryRequest
-	8,  // 20: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:input_type -> onebox.faas.githubd.v1.RetryCheckUpdateRequest
-	13, // 21: onebox.faas.githubd.v1.Githubd.GetInstallState:output_type -> onebox.faas.githubd.v1.GetInstallStateResponse
-	15, // 22: onebox.faas.githubd.v1.Githubd.ExchangeOAuthCode:output_type -> onebox.faas.githubd.v1.ExchangeOAuthCodeResponse
-	18, // 23: onebox.faas.githubd.v1.Githubd.ListInstallableRepos:output_type -> onebox.faas.githubd.v1.ListInstallableReposResponse
-	20, // 24: onebox.faas.githubd.v1.Githubd.BindAppRepo:output_type -> onebox.faas.githubd.v1.BindAppRepoResponse
-	22, // 25: onebox.faas.githubd.v1.Githubd.UnbindAppRepo:output_type -> onebox.faas.githubd.v1.UnbindAppRepoResponse
-	24, // 26: onebox.faas.githubd.v1.Githubd.GetAppBinding:output_type -> onebox.faas.githubd.v1.GetAppBindingResponse
-	26, // 27: onebox.faas.githubd.v1.Githubd.CreateDeploymentFromPush:output_type -> onebox.faas.githubd.v1.CreateDeploymentFromPushResponse
-	30, // 28: onebox.faas.githubd.v1.Githubd.EnqueueBuild:output_type -> onebox.faas.githubd.v1.EnqueueBuildResponse
-	28, // 29: onebox.faas.githubd.v1.Githubd.WriteCheck:output_type -> onebox.faas.githubd.v1.WriteCheckResponse
-	11, // 30: onebox.faas.githubd.v1.Githubd.VerifyInstallation:output_type -> onebox.faas.githubd.v1.VerifyInstallationResponse
-	32, // 31: onebox.faas.githubd.v1.Githubd.MintInstallationToken:output_type -> onebox.faas.githubd.v1.MintInstallationTokenResponse
-	34, // 32: onebox.faas.githubd.v1.Githubd.StreamSourceRef:output_type -> onebox.faas.githubd.v1.StreamSourceRefChunk
-	6,  // 33: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:output_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse
-	9,  // 34: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
-	9,  // 35: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
-	21, // [21:36] is the sub-list for method output_type
-	6,  // [6:21] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	11, // 2: onebox.faas.githubd.v1.GetAppActivityResponse.webhooks:type_name -> onebox.faas.githubd.v1.WebhookActivity
+	12, // 3: onebox.faas.githubd.v1.GetAppActivityResponse.checks:type_name -> onebox.faas.githubd.v1.CheckActivity
+	0,  // 4: onebox.faas.githubd.v1.GetInstallStateResponse.state:type_name -> onebox.faas.githubd.v1.InstallState
+	20, // 5: onebox.faas.githubd.v1.ListInstallableReposResponse.repos:type_name -> onebox.faas.githubd.v1.Repo
+	1,  // 6: onebox.faas.githubd.v1.WriteCheckRequest.phase:type_name -> onebox.faas.githubd.v1.CheckPhase
+	2,  // 7: onebox.faas.githubd.v1.EnqueueBuildRequest.event_kind:type_name -> onebox.faas.githubd.v1.EnqueueBuildEventKind
+	16, // 8: onebox.faas.githubd.v1.Githubd.GetInstallState:input_type -> onebox.faas.githubd.v1.GetInstallStateRequest
+	18, // 9: onebox.faas.githubd.v1.Githubd.ExchangeOAuthCode:input_type -> onebox.faas.githubd.v1.ExchangeOAuthCodeRequest
+	21, // 10: onebox.faas.githubd.v1.Githubd.ListInstallableRepos:input_type -> onebox.faas.githubd.v1.ListInstallableReposRequest
+	23, // 11: onebox.faas.githubd.v1.Githubd.BindAppRepo:input_type -> onebox.faas.githubd.v1.BindAppRepoRequest
+	25, // 12: onebox.faas.githubd.v1.Githubd.UnbindAppRepo:input_type -> onebox.faas.githubd.v1.UnbindAppRepoRequest
+	27, // 13: onebox.faas.githubd.v1.Githubd.GetAppBinding:input_type -> onebox.faas.githubd.v1.GetAppBindingRequest
+	10, // 14: onebox.faas.githubd.v1.Githubd.GetAppActivity:input_type -> onebox.faas.githubd.v1.GetAppActivityRequest
+	29, // 15: onebox.faas.githubd.v1.Githubd.CreateDeploymentFromPush:input_type -> onebox.faas.githubd.v1.CreateDeploymentFromPushRequest
+	33, // 16: onebox.faas.githubd.v1.Githubd.EnqueueBuild:input_type -> onebox.faas.githubd.v1.EnqueueBuildRequest
+	31, // 17: onebox.faas.githubd.v1.Githubd.WriteCheck:input_type -> onebox.faas.githubd.v1.WriteCheckRequest
+	14, // 18: onebox.faas.githubd.v1.Githubd.VerifyInstallation:input_type -> onebox.faas.githubd.v1.VerifyInstallationRequest
+	35, // 19: onebox.faas.githubd.v1.Githubd.MintInstallationToken:input_type -> onebox.faas.githubd.v1.MintInstallationTokenRequest
+	37, // 20: onebox.faas.githubd.v1.Githubd.StreamSourceRef:input_type -> onebox.faas.githubd.v1.StreamSourceRefRequest
+	3,  // 21: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:input_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsRequest
+	7,  // 22: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:input_type -> onebox.faas.githubd.v1.RetryWebhookDeliveryRequest
+	8,  // 23: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:input_type -> onebox.faas.githubd.v1.RetryCheckUpdateRequest
+	17, // 24: onebox.faas.githubd.v1.Githubd.GetInstallState:output_type -> onebox.faas.githubd.v1.GetInstallStateResponse
+	19, // 25: onebox.faas.githubd.v1.Githubd.ExchangeOAuthCode:output_type -> onebox.faas.githubd.v1.ExchangeOAuthCodeResponse
+	22, // 26: onebox.faas.githubd.v1.Githubd.ListInstallableRepos:output_type -> onebox.faas.githubd.v1.ListInstallableReposResponse
+	24, // 27: onebox.faas.githubd.v1.Githubd.BindAppRepo:output_type -> onebox.faas.githubd.v1.BindAppRepoResponse
+	26, // 28: onebox.faas.githubd.v1.Githubd.UnbindAppRepo:output_type -> onebox.faas.githubd.v1.UnbindAppRepoResponse
+	28, // 29: onebox.faas.githubd.v1.Githubd.GetAppBinding:output_type -> onebox.faas.githubd.v1.GetAppBindingResponse
+	13, // 30: onebox.faas.githubd.v1.Githubd.GetAppActivity:output_type -> onebox.faas.githubd.v1.GetAppActivityResponse
+	30, // 31: onebox.faas.githubd.v1.Githubd.CreateDeploymentFromPush:output_type -> onebox.faas.githubd.v1.CreateDeploymentFromPushResponse
+	34, // 32: onebox.faas.githubd.v1.Githubd.EnqueueBuild:output_type -> onebox.faas.githubd.v1.EnqueueBuildResponse
+	32, // 33: onebox.faas.githubd.v1.Githubd.WriteCheck:output_type -> onebox.faas.githubd.v1.WriteCheckResponse
+	15, // 34: onebox.faas.githubd.v1.Githubd.VerifyInstallation:output_type -> onebox.faas.githubd.v1.VerifyInstallationResponse
+	36, // 35: onebox.faas.githubd.v1.Githubd.MintInstallationToken:output_type -> onebox.faas.githubd.v1.MintInstallationTokenResponse
+	38, // 36: onebox.faas.githubd.v1.Githubd.StreamSourceRef:output_type -> onebox.faas.githubd.v1.StreamSourceRefChunk
+	6,  // 37: onebox.faas.githubd.v1.Githubd.ListRecoveryQueueItems:output_type -> onebox.faas.githubd.v1.ListRecoveryQueueItemsResponse
+	9,  // 38: onebox.faas.githubd.v1.Githubd.RetryWebhookDelivery:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
+	9,  // 39: onebox.faas.githubd.v1.Githubd.RetryCheckUpdate:output_type -> onebox.faas.githubd.v1.RetryRecoveryItemResponse
+	24, // [24:40] is the sub-list for method output_type
+	8,  // [8:24] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_onebox_faas_githubd_v1_githubd_proto_init() }
@@ -2618,7 +2926,7 @@ func file_onebox_faas_githubd_v1_githubd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_githubd_v1_githubd_proto_rawDesc), len(file_onebox_faas_githubd_v1_githubd_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   32,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

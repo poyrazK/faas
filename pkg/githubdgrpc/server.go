@@ -77,6 +77,14 @@ type Service interface {
 	RetryCheckUpdate(ctx context.Context, deploymentID string) (bool, error)
 }
 
+// AppActivityService is an optional extension implemented by the recovery
+// decorator. Keeping it outside Service lets older/test RealService
+// implementations retain the existing OAuth contract while the production
+// wrapper adds the database-backed activity read.
+type AppActivityService interface {
+	GetAppActivity(ctx context.Context, accountID, appID string, limit int) (AppActivity, error)
+}
+
 // Server implements githubdpb.GithubdServer. It wraps a Service so
 // unit tests can pass a fake (see bufconn_test.go). Slice 1 returns
 // Unimplemented everywhere; slice 7 wires CreateDeploymentFromPush +
@@ -215,6 +223,26 @@ func (s *Server) GetAppBinding(ctx context.Context, req *githubdpb.GetAppBinding
 	}, nil
 }
 
+// GetAppActivity exposes the customer-safe activity projection. The account
+// ID is carried through to githubd so the SQL join enforces tenant scope even
+// though apid already authenticated the request.
+func (s *Server) GetAppActivity(ctx context.Context, req *githubdpb.GetAppActivityRequest) (*githubdpb.GetAppActivityResponse, error) {
+	const op = "GetAppActivity"
+	start := time.Now()
+	activitySvc, ok := s.svc.(AppActivityService)
+	if !ok {
+		err := status.Error(codes.Unimplemented, "githubd: app activity not wired")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
+	}
+	activity, err := activitySvc.GetAppActivity(ctx, req.GetAccountId(), req.GetAppId(), int(req.GetLimit()))
+	s.ops.Observe(op, time.Since(start), err)
+	if err != nil {
+		return nil, toStatusErr(err)
+	}
+	return appActivityToProto(activity), nil
+}
+
 // CreateDeploymentFromPush passes through to Service.CreateDeploymentFromPush.
 func (s *Server) CreateDeploymentFromPush(ctx context.Context, req *githubdpb.CreateDeploymentFromPushRequest) (*githubdpb.CreateDeploymentFromPushResponse, error) {
 	const op = "CreateDeploymentFromPush"
@@ -277,6 +305,29 @@ func (s *Server) RetryCheckUpdate(ctx context.Context, req *githubdpb.RetryCheck
 		return nil, toStatusErr(err)
 	}
 	return &githubdpb.RetryRecoveryItemResponse{Retried: retried}, nil
+}
+
+func appActivityToProto(activity AppActivity) *githubdpb.GetAppActivityResponse {
+	out := &githubdpb.GetAppActivityResponse{
+		Webhooks: make([]*githubdpb.WebhookActivity, 0, len(activity.Webhooks)),
+		Checks:   make([]*githubdpb.CheckActivity, 0, len(activity.Checks)),
+	}
+	for _, item := range activity.Webhooks {
+		out.Webhooks = append(out.Webhooks, &githubdpb.WebhookActivity{
+			EventType: item.EventType, Status: item.Status, CommitSha: item.CommitSHA,
+			ReceivedAt:  formatRecoveryTime(item.ReceivedAt),
+			ProcessedAt: formatOptionalRecoveryTime(item.ProcessedAt),
+			UpdatedAt:   formatRecoveryTime(item.UpdatedAt),
+		})
+	}
+	for _, item := range activity.Checks {
+		out.Checks = append(out.Checks, &githubdpb.CheckActivity{
+			DeploymentId: item.DeploymentID, Status: item.Status, CommitSha: item.CommitSHA,
+			ProcessedAt: formatOptionalRecoveryTime(item.ProcessedAt),
+			UpdatedAt:   formatRecoveryTime(item.UpdatedAt),
+		})
+	}
+	return out
 }
 
 func recoveryQueueItemsToProto(items RecoveryQueueItems) *githubdpb.ListRecoveryQueueItemsResponse {
@@ -494,6 +545,10 @@ func (UnimplementedService) UnbindAppRepo(string, string) error {
 // GetAppBinding returns Unimplemented. Slice 8 replaces this.
 func (UnimplementedService) GetAppBinding(string, string) (AppBinding, error) {
 	return AppBinding{}, status.Error(codes.Unimplemented, "githubd: GetAppBinding not yet wired (slice 8)")
+}
+
+func (UnimplementedService) GetAppActivity(context.Context, string, string, int) (AppActivity, error) {
+	return AppActivity{}, status.Error(codes.Unimplemented, "githubd: app activity not wired")
 }
 
 // CreateDeploymentFromPush returns Unimplemented. Slice 7 replaces this.

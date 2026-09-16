@@ -76,6 +76,31 @@ type CheckUpdateRecord struct {
 	UpdatedAt    time.Time
 }
 
+// AppActivity is the customer-safe projection of GitHub ingress and Check
+// Run sync state for one account-owned app. It contains no payloads, queue
+// identifiers, retry controls, or raw worker errors.
+type AppActivity struct {
+	Webhooks []WebhookActivity
+	Checks   []CheckActivity
+}
+
+type WebhookActivity struct {
+	EventType   string
+	Status      string
+	CommitSHA   string
+	ReceivedAt  time.Time
+	ProcessedAt *time.Time
+	UpdatedAt   time.Time
+}
+
+type CheckActivity struct {
+	DeploymentID string
+	Status       string
+	CommitSHA    string
+	ProcessedAt  *time.Time
+	UpdatedAt    time.Time
+}
+
 // RecoveryQueueItems groups the two githubd-owned recovery queues.
 type RecoveryQueueItems struct {
 	Deliveries   []WebhookDeliveryRecord

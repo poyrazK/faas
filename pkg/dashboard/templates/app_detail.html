@@ -67,6 +67,9 @@
     .cron-section header { font-weight: 600; }
     .cron-flash-ok      { background: #d1fae5; color: #065f46; padding: 0.5rem 0.75rem; border-radius: 4px; margin: 0.5rem 0; }
     .cron-flash-error   { background: #fee2e2; color: #991b1b; padding: 0.5rem 0.75rem; border-radius: 4px; margin: 0.5rem 0; }
+    .github-activity { margin: 0.75rem 0 1rem; padding: 0.6rem 0.75rem; background: #fafafa; border-radius: 4px; }
+    .github-activity h3 { margin: 0.2rem 0 0.35rem; font-size: 1rem; }
+    .github-activity .guidance { color: #6b7280; font-size: 0.85rem; }
     /* Durable workflow run panel. Keep the row dense like cron runs while
        making terminal and active states readable at a glance. */
     .workflow-run       { margin: 0.4rem 0 0.7rem 0; padding: 0.5rem 0.6rem; background: #fafafa; border-radius: 4px; }
@@ -239,6 +242,50 @@
           <input type="hidden" name="csrf_token" value="{{.Data.GitHubConnection.CSRFToken}}">
           <button type="submit">Disconnect</button>
         </form>
+        {{if .Data.GitHubConnection.Activity}}
+          <section class="github-activity" aria-label="GitHub activity">
+            <h3>Recent GitHub events</h3>
+            <p class="muted">This confirms whether GitHub reached Gregale and whether deployment status was sent back.</p>
+            {{if .Data.GitHubConnection.Activity.WebhookDeliveries}}
+              <table aria-label="Recent GitHub webhook processing">
+                <thead><tr><th>Received</th><th>Event</th><th>Processing</th><th>Commit</th><th>Guidance</th></tr></thead>
+                <tbody>
+                  {{range .Data.GitHubConnection.Activity.WebhookDeliveries}}
+                    <tr>
+                      <td>{{.ReceivedAt}}</td>
+                      <td>{{.EventType}}</td>
+                      <td><span class="badge {{.StatusClass}}">{{.Status}}</span></td>
+                      <td>{{if .CommitURL}}<a href="{{.CommitURL}}" target="_blank" rel="noopener"><code>{{.CommitShort}}</code></a>{{else}}—{{end}}</td>
+                      <td class="guidance">{{if .Guidance}}{{.Guidance}}{{else}}—{{end}}</td>
+                    </tr>
+                  {{end}}
+                </tbody>
+              </table>
+            {{else}}
+              <p>No correlated GitHub events have reached this app yet. Push to the configured production branch to see the first one.</p>
+            {{end}}
+
+            <h3>Check Run sync</h3>
+            {{if .Data.GitHubConnection.Activity.CheckUpdates}}
+              <table aria-label="Recent GitHub Check Run synchronization">
+                <thead><tr><th>Updated</th><th>Commit</th><th>Sync</th><th>Deployment</th><th>Guidance</th></tr></thead>
+                <tbody>
+                  {{range .Data.GitHubConnection.Activity.CheckUpdates}}
+                    <tr>
+                      <td>{{.UpdatedAt}}</td>
+                      <td>{{if .CommitShort}}<code>{{.CommitShort}}</code>{{else}}—{{end}}</td>
+                      <td><span class="badge {{.StatusClass}}">{{.Status}}</span></td>
+                      <td>{{if .DeploymentURL}}<a href="{{.DeploymentURL}}">View deployment →</a>{{else}}—{{end}}</td>
+                      <td class="guidance">{{if .Guidance}}{{.Guidance}}{{else}}—{{end}}</td>
+                    </tr>
+                  {{end}}
+                </tbody>
+              </table>
+            {{else}}
+              <p>No deployment Check Run updates yet.</p>
+            {{end}}
+          </section>
+        {{end}}
       {{else if eq .Data.GitHubConnection.State "installed"}}
         <p>GitHub is connected for <code>{{.Data.GitHubConnection.GitHubLogin}}</code>, but this app has no repository binding.</p>
         <p><a href="/dashboard/apps/new">Bind a repository from the deploy wizard →</a></p>

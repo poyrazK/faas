@@ -2,6 +2,7 @@ package githubd
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 )
@@ -71,4 +72,40 @@ func (s *RecoveryService) RetryWebhookDelivery(ctx context.Context, deliveryID s
 
 func (s *RecoveryService) RetryCheckUpdate(ctx context.Context, deploymentID string) (bool, error) {
 	return s.checks.RetryCheckUpdate(ctx, deploymentID)
+}
+
+func (s *RecoveryService) GetAppActivity(ctx context.Context, accountID, appID string, limit int) (githubdgrpc.AppActivity, error) {
+	deliveries, ok := s.deliveries.(WebhookActivityStore)
+	if !ok {
+		return githubdgrpc.AppActivity{}, fmt.Errorf("githubd: app webhook activity is not configured")
+	}
+	checks, ok := s.checks.(CheckActivityStore)
+	if !ok {
+		return githubdgrpc.AppActivity{}, fmt.Errorf("githubd: app check activity is not configured")
+	}
+	webhooks, err := deliveries.ListWebhookDeliveriesForApp(ctx, accountID, appID, limit)
+	if err != nil {
+		return githubdgrpc.AppActivity{}, err
+	}
+	checkUpdates, err := checks.ListCheckUpdatesForApp(ctx, accountID, appID, limit)
+	if err != nil {
+		return githubdgrpc.AppActivity{}, err
+	}
+	out := githubdgrpc.AppActivity{
+		Webhooks: make([]githubdgrpc.WebhookActivity, 0, len(webhooks)),
+		Checks:   make([]githubdgrpc.CheckActivity, 0, len(checkUpdates)),
+	}
+	for _, item := range webhooks {
+		out.Webhooks = append(out.Webhooks, githubdgrpc.WebhookActivity{
+			EventType: item.EventType, Status: item.Status, CommitSHA: item.CommitSHA,
+			ReceivedAt: item.ReceivedAt, ProcessedAt: item.ProcessedAt, UpdatedAt: item.UpdatedAt,
+		})
+	}
+	for _, item := range checkUpdates {
+		out.Checks = append(out.Checks, githubdgrpc.CheckActivity{
+			DeploymentID: item.DeploymentID, Status: item.Status, CommitSHA: item.CommitSHA,
+			ProcessedAt: item.ProcessedAt, UpdatedAt: item.UpdatedAt,
+		})
+	}
+	return out, nil
 }

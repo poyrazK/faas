@@ -557,22 +557,9 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	}
 	deps := make([]dashboard.DeploymentItem, 0, len(rows))
 	for _, d := range rows {
-		item := dashboard.DeploymentItem{
-			ID:        d.ID,
-			Status:    string(d.Status),
-			Kind:      string(d.Kind),
-			CreatedAt: d.CreatedAt.UTC().Format(time.RFC3339),
-			Error:     d.Error,
-			// Issue #606 / SAFE-RELEASES-E.1: deploy list rows
-			// get a compact via-only chip rendered via the
-			// existing app_detail.html badge palette. The full
-			// triple (user / pusher / IP) is reserved for the
-			// drill-down page (deployment_detail.html).
-			DeployedByUserID: d.DeployedByUserID,
-			DeployedVia:      d.DeployedVia,
-			DeployedFromIP:   d.DeployedFromIP,
-			PusherLogin:      d.PusherLogin,
-		}
+		// Keep the app list and deployment detail projections in lockstep so
+		// GitHub rows carry the same commit/check links on both surfaces.
+		item := dashboardDeploymentItem(d)
 		// Per-deploy grype scan summary (issue #464 / ADR-075).
 		// Populate ScanSummary only when the row carries a
 		// scan_status; nil means "scan pending" on the template.

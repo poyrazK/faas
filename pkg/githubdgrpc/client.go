@@ -167,6 +167,57 @@ func (c *Client) GetAppBinding(ctx context.Context, appID, accountID string) (Ap
 	}, nil
 }
 
+// GetAppActivity returns the redacted, account/app-scoped GitHub activity
+// projection. It never carries webhook payloads or operator recovery data.
+func (c *Client) GetAppActivity(ctx context.Context, accountID, appID string, limit int) (AppActivity, error) {
+	if limit < 0 || limit > math.MaxInt32 {
+		return AppActivity{}, fmt.Errorf("githubdgrpc: activity limit %d is outside int32 range", limit)
+	}
+	resp, err := c.cli.GetAppActivity(ctx, &githubdpb.GetAppActivityRequest{
+		AccountId: accountID, AppId: appID, Limit: int32(limit),
+	})
+	if err != nil {
+		return AppActivity{}, liftErr(err)
+	}
+	out := AppActivity{
+		Webhooks: make([]WebhookActivity, 0, len(resp.GetWebhooks())),
+		Checks:   make([]CheckActivity, 0, len(resp.GetChecks())),
+	}
+	for _, item := range resp.GetWebhooks() {
+		received, err := parseRecoveryTime(item.GetReceivedAt())
+		if err != nil {
+			return AppActivity{}, err
+		}
+		updated, err := parseRecoveryTime(item.GetUpdatedAt())
+		if err != nil {
+			return AppActivity{}, err
+		}
+		processed, err := parseOptionalRecoveryTime(item.GetProcessedAt())
+		if err != nil {
+			return AppActivity{}, err
+		}
+		out.Webhooks = append(out.Webhooks, WebhookActivity{
+			EventType: item.GetEventType(), Status: item.GetStatus(), CommitSHA: item.GetCommitSha(),
+			ReceivedAt: received, ProcessedAt: processed, UpdatedAt: updated,
+		})
+	}
+	for _, item := range resp.GetChecks() {
+		updated, err := parseRecoveryTime(item.GetUpdatedAt())
+		if err != nil {
+			return AppActivity{}, err
+		}
+		processed, err := parseOptionalRecoveryTime(item.GetProcessedAt())
+		if err != nil {
+			return AppActivity{}, err
+		}
+		out.Checks = append(out.Checks, CheckActivity{
+			DeploymentID: item.GetDeploymentId(), Status: item.GetStatus(), CommitSHA: item.GetCommitSha(),
+			ProcessedAt: processed, UpdatedAt: updated,
+		})
+	}
+	return out, nil
+}
+
 // CreateDeploymentFromPush is the webhook-triggered path: githubd
 // turns a verified GitHub push into a deployment row in apid. Returns
 // ("", "", nil) when no app is bound to the repo.
