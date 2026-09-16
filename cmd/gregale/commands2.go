@@ -3084,6 +3084,14 @@ func cmdRollback(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(dep))
 	}
+	if dep.Status != "live" {
+		if to != "" {
+			PrintOK(osStdout, "Rollback started for %s (%s); validating explicit target %s", dep.ID, dep.Status, to)
+			return 0
+		}
+		PrintOK(osStdout, "Rollback started for %s (%s)", dep.ID, dep.Status)
+		return 0
+	}
 	if to != "" {
 		PrintOK(osStdout, "Rolled back to %s (%s) via explicit target %s", dep.ID, dep.Status, to)
 		return 0

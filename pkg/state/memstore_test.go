@@ -6188,6 +6188,63 @@ func TestMemStore_AutoRollbackDeploymentsTx(t *testing.T) {
 			t.Errorf("AutoRollbackDeploymentsTx on non-live: err = %v, want ErrNotFound", err)
 		}
 	})
+
+	t.Run("moves_status_traffic_and_rollout_atomically", func(t *testing.T) {
+		m := NewMemStore()
+		acc, err := m.CreateAccount(ctx, "rollback-traffic@example.com", api.PlanPro)
+		if err != nil {
+			t.Fatalf("CreateAccount: %v", err)
+		}
+		app, err := m.CreateApp(ctx, App{
+			AccountID: acc.ID, Slug: "rollback-traffic", Type: AppTypeApp,
+			RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60, Status: AppActive,
+		})
+		if err != nil {
+			t.Fatalf("CreateApp: %v", err)
+		}
+		now := time.Now().UTC()
+		target := Deployment{
+			ID: uuid.NewString(), AppID: app.ID, Status: DeploySuperseded,
+			Scope: DefaultEnvScope, TrafficPercent: 100, RolloutState: "aborted",
+			RolloutAbortedAt: &now, RolloutAbortedReason: "old failure",
+			CreatedAt: now.Add(-2 * time.Minute),
+		}
+		current := Deployment{
+			ID: uuid.NewString(), AppID: app.ID, Status: DeployLive,
+			Scope: DefaultEnvScope, TrafficPercent: 0, RolloutState: "rolling_out",
+			RolloutStartedAt: &now, CreatedAt: now,
+		}
+		sibling := Deployment{
+			ID: uuid.NewString(), AppID: app.ID, Status: DeployLive,
+			Scope: DefaultEnvScope, TrafficPercent: 100, RolloutState: "complete",
+			RolloutCompletedAt: &now, CreatedAt: now.Add(-time.Minute),
+		}
+		m.deployments[target.ID] = target
+		m.deployments[current.ID] = current
+		m.deployments[sibling.ID] = sibling
+
+		gotID, err := m.AutoRollbackDeploymentsTx(ctx, app.ID, current.ID)
+		if err != nil {
+			t.Fatalf("AutoRollbackDeploymentsTx: %v", err)
+		}
+		if gotID != target.ID {
+			t.Fatalf("target id = %s, want %s", gotID, target.ID)
+		}
+		gotTarget := m.deployments[target.ID]
+		if gotTarget.Status != DeployLive || gotTarget.TrafficPercent != 100 || gotTarget.RolloutState != "complete" || gotTarget.RolloutCompletedAt == nil || gotTarget.RolloutAbortedAt != nil || gotTarget.RolloutAbortedReason != "" {
+			t.Fatalf("target projection = %+v", gotTarget)
+		}
+		for _, id := range []string{current.ID, sibling.ID} {
+			got := m.deployments[id]
+			if got.Status != DeploySuperseded || got.TrafficPercent != 0 || got.RolloutState != "aborted" || got.RolloutAbortedAt == nil || got.RolloutCompletedAt != nil {
+				t.Fatalf("retired projection %s = %+v", id, got)
+			}
+		}
+		gotCurrent := m.deployments[current.ID]
+		if gotCurrent.LastAutoRollbackAt == nil || gotCurrent.LastAutoRollbackReason != "threshold_exceeded" {
+			t.Fatalf("auto rollback audit anchor = %+v", gotCurrent)
+		}
+	})
 }
 
 // TestDeployment_DeploymentPreviewActive (issue #976 / ADR-122 /

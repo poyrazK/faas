@@ -238,6 +238,12 @@ type server struct {
 	// sbomStorage reads the same logical artifact keys imaged writes. It
 	// is required on split-node/OCI deployments where /srv/fc is not shared.
 	sbomStorage artifactstorage.StorageBackend
+	// rollbackArtifactVerifier proves a historical deployment's immutable
+	// rootfs and signature are both present before apid starts a readiness-
+	// gated rollback. Production wires the same verifier/key as schedd.
+	rollbackArtifactVerifier interface {
+		Verify(context.Context, string, string) error
+	}
 	// billingProvider is the per-deployment Provider apid's webhook
 	// + changePlan handlers dispatch through. Wired via WithBillingProvider
 	// from cmd/apid/main.go::LoadProviderForAPID. nil = "Stripe path
@@ -498,6 +504,13 @@ func (s *server) WithSBOMRoot(root string) *server {
 // filesystem root remains as a compatibility fallback for single-box tests.
 func (s *server) WithSBOMStorage(backend artifactstorage.StorageBackend) *server {
 	s.sbomStorage = backend
+	return s
+}
+
+func (s *server) WithRollbackArtifactVerifier(verifier interface {
+	Verify(context.Context, string, string) error
+}) *server {
+	s.rollbackArtifactVerifier = verifier
 	return s
 }
 

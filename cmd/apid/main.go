@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing"
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
@@ -1481,6 +1482,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: load SBOM storage backend: %w", err)
 	}
 	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage)
+	if signPubPath := strings.TrimSpace(deps.getenv("FAAS_SIGN_PUB")); signPubPath != "" {
+		rollbackVerifier, verifyErr := cosign.NewLocalVerifier(signPubPath, sbomStorage)
+		if verifyErr != nil {
+			return fmt.Errorf("apid: load rollback artifact verifier: %w", verifyErr)
+		}
+		srv.WithRollbackArtifactVerifier(rollbackVerifier)
+		log.Info("apid: rollback artifact verifier ready", "pub", signPubPath)
+	}
 
 	// Issue #98 / ADR-028: admin allowlist for /v1/compute-nodes.
 	// Empty in dev = all admin routes 403 with code admin_required;

@@ -8830,11 +8830,10 @@ func (s *PgStore) MarkAutoRollback(ctx context.Context, deploymentID, reason str
 }
 
 // AutoRollbackDeploymentsTx performs the §6.2-1-safe rollback inside
-// a single tx: supersede the current (failed) deploy and promote the
-// latest superseded deploy back to live, stamping last_auto_rollback_at
-// + last_auto_rollback_reason on the failed row. The instances-park
-// belongs to schedd (the ONLY writer to instances per CLAUDE.md);
-// this method mutates deployments only.
+// a single tx. Status, traffic, and rollout projections move together so
+// readers can never observe a live 0% target beside a superseded 100% row.
+// The instances-park belongs to schedd (the ONLY writer to instances per
+// CLAUDE.md); this method mutates deployments only.
 //
 // Returns the new live deployment ID, or (empty, nil) if no
 // superseded deploy exists (the rollback is a no-op — the failed
@@ -8849,18 +8848,29 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	// Follow MarkDeploymentLive's lock order. Serializing on the app keeps a
+	// concurrent canary advance or manual cutover from interleaving with the
+	// release projection repair below.
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&locked); err != nil {
+		return "", mapErr(err)
+	}
+
 	// (1) Verify current row exists and is live. Prevents a stale
 	// auto-rollback signal from schedd from rolling back an already-
 	// superseded deploy (which would leave the previous live row
 	// unstamped).
-	var currentExists bool
+	var scope string
 	if err := tx.QueryRow(ctx,
-		`select exists(select 1 from deployments where id = $1 and app_id = $2 and status = 'live')`,
-		currentDeploymentID, appID).Scan(&currentExists); err != nil {
+		`select scope from deployments where id = $1 and app_id = $2 and status = 'live' for update`,
+		currentDeploymentID, appID).Scan(&scope); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
 		return "", mapErr(err)
 	}
-	if !currentExists {
-		return "", ErrNotFound
+	if scope == "" {
+		scope = DefaultEnvScope
 	}
 
 	// (2) Find the latest superseded deploy on this app (the rollback
@@ -8870,9 +8880,10 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 	var targetID string
 	err = tx.QueryRow(ctx, `
 		select id from deployments
-		 where app_id = $1 and status = 'superseded' and id <> $2
+		 where app_id = $1 and scope = $3 and status = 'superseded' and id <> $2
 		 order by created_at desc
-		 limit 1`, appID, currentDeploymentID).Scan(&targetID)
+		 limit 1
+		 for update`, appID, currentDeploymentID, scope).Scan(&targetID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// No rollback target — succeed as a no-op so schedd does
@@ -8884,27 +8895,40 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 		return "", mapErr(err)
 	}
 
-	// (3) Status swap. The order matches the manual rollback path:
-	// supersede current THEN promote target. Both are conditional on
-	// the source status to keep the path idempotent against a
-	// concurrent rollback signal.
-	if _, err := tx.Exec(ctx,
-		`update deployments set status = 'superseded' where id = $1 and status = 'live'`,
-		currentDeploymentID); err != nil {
-		return "", err
-	}
-	if _, err := tx.Exec(ctx,
-		`update deployments set status = 'live' where id = $1 and status = 'superseded'`,
-		targetID); err != nil {
+	// (3) Retire every currently-live sibling in this scope. A canary may
+	// leave two live rows, so updating only currentDeploymentID is not enough
+	// to establish one serving projection. Rollout timestamps close the rows
+	// consistently with their zero traffic weight.
+	if _, err := tx.Exec(ctx, `
+		update deployments
+		   set status = 'superseded',
+		       traffic_percent = 0,
+		       rollout_state = 'aborted',
+		       rollout_completed_at = null,
+		       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+		       rollout_aborted_reason = coalesce(nullif(rollout_aborted_reason, ''), 'automatic rollback'),
+		       last_auto_rollback_at = case when id = $3 then coalesce(last_auto_rollback_at, now()) else last_auto_rollback_at end,
+		       last_auto_rollback_reason = case when id = $3 then coalesce(last_auto_rollback_reason, 'threshold_exceeded') else last_auto_rollback_reason end
+		 where app_id = $1 and scope = $2 and status = 'live'`,
+		appID, scope, currentDeploymentID); err != nil {
 		return "", err
 	}
 
-	// (4) Stamp the audit anchor on the failed deploy.
+	// (4) Promote the historical target as the sole 100% serving projection
+	// and close any stale canary/rollout metadata from its prior lifetime.
 	if _, err := tx.Exec(ctx, `
 		update deployments
-		   set last_auto_rollback_at = coalesce(last_auto_rollback_at, now()),
-		       last_auto_rollback_reason = coalesce(last_auto_rollback_reason, 'threshold_exceeded')
-		 where id = $1`, currentDeploymentID); err != nil {
+		   set status = 'live',
+		       error = '',
+		       traffic_percent = 100,
+		       canary_step = canary_total_steps,
+		       canary_step_started_at = case when canary_total_steps > 0 then now() else canary_step_started_at end,
+		       rollout_state = 'complete',
+		       rollout_started_at = coalesce(rollout_started_at, now()),
+		       rollout_completed_at = now(),
+		       rollout_aborted_at = null,
+		       rollout_aborted_reason = ''
+		 where id = $1 and status = 'superseded'`, targetID); err != nil {
 		return "", err
 	}
 
@@ -8912,6 +8936,72 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 		return "", err
 	}
 	return targetID, nil
+}
+
+// PrepareDeploymentRollback starts a readiness-gated manual rollback while
+// preserving the current serving release. Historical canary state is cleared:
+// rollback is an incident-recovery operation and its validated target must
+// become the stable 100% release when activation completes.
+func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDeploymentID string) (Deployment, error) {
+	if appID == "" || targetDeploymentID == "" {
+		return Deployment{}, ErrInvalidArgument
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: prepare rollback begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&locked); err != nil {
+		return Deployment{}, mapErr(err)
+	}
+	target, err := scanDeploymentWithRootfs(tx.QueryRow(ctx,
+		`select `+deploymentSelectColumnsWithRootfs+`
+		   from deployments where id = $1 and app_id = $2 for update`,
+		targetDeploymentID, appID))
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
+			return Deployment{}, ErrNoRollbackTarget
+		}
+		return Deployment{}, fmt.Errorf("state: prepare rollback load target: %w", err)
+	}
+	if target.Status != DeploySuperseded {
+		return Deployment{}, ErrRollbackTargetAlreadyLive
+	}
+
+	now := time.Now().UTC()
+	prepared, err := scanDeploymentWithRootfs(tx.QueryRow(ctx, `
+		update deployments
+		   set status = 'snapshotting',
+		       error = '', error_code = '',
+		       traffic_percent = 0,
+		       traffic_percent_explicit = false,
+		       canary_preset = 'none',
+		       canary_step = 0,
+		       canary_total_steps = 0,
+		       canary_step_started_at = $3,
+		       canary_stages = null,
+		       rollout_state = 'pending',
+		       rollout_started_at = null,
+		       rollout_completed_at = null,
+		       rollout_aborted_at = null,
+		       rollout_aborted_reason = '',
+		       stage_state = jsonb_build_object(
+		           'current', 'snapshot_prepare',
+		           'current_started_at', to_jsonb($3::timestamptz),
+		           'history', coalesce(stage_state->'history', '[]'::jsonb)
+		       )
+		 where id = $1 and app_id = $2 and status = 'superseded'
+		 returning `+deploymentSelectColumnsWithRootfs,
+		targetDeploymentID, appID, now))
+	if err != nil {
+		return Deployment{}, fmt.Errorf("state: prepare rollback update target: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Deployment{}, fmt.Errorf("state: prepare rollback commit: %w", err)
+	}
+	return prepared, nil
 }
 
 func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string, bytes int64) error {

@@ -33,6 +33,9 @@ func seedDashboardRollback(t *testing.T) (http.Handler, *http.Cookie, *state.Mem
 	if err := store.MarkDeploymentLive(t.Context(), prior.ID); err != nil {
 		t.Fatalf("prior live: %v", err)
 	}
+	if err := store.SetDeploymentRootfs(t.Context(), prior.ID, "/srv/fc/apps/rollbackapp/prior.ext4", "apps/rollbackapp/prior.ext4", 1); err != nil {
+		t.Fatalf("prior rootfs: %v", err)
+	}
 	current, err := store.CreateDeployment(t.Context(), state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:current", Kind: state.DeploymentKindImage,
 		Status: state.DeployBuilding, CreatedAt: now.Add(time.Second),
@@ -87,25 +90,14 @@ func TestDashboardRollback_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rollback target: %v", err)
 	}
-	if target.Status != state.DeployLive {
-		t.Fatalf("rollback target = %s/%s, want %s/live", target.ID, target.Status, prior.ID)
+	if target.Status != state.DeploySnapshotting {
+		t.Fatalf("rollback target = %s/%s, want %s/snapshotting", target.ID, target.Status, prior.ID)
 	}
 	current, err := store.LatestDeployment(t.Context(), app.ID)
-	if err != nil || current.Status != state.DeploySuperseded {
-		t.Fatalf("previous current deployment = %#v, want superseded", current)
+	if err != nil || current.Status != state.DeployLive {
+		t.Fatalf("previous current deployment = %#v, want live until target readiness", current)
 	}
-	rows, err := store.ListDeploymentsForApp(t.Context(), app.ID, 10, 0)
-	if err != nil {
-		t.Fatalf("deployments: %v", err)
-	}
-	var supersededID string
-	for _, row := range rows {
-		if row.Status == state.DeploySuperseded && row.ID != prior.ID {
-			supersededID = row.ID
-			break
-		}
-	}
-	audits, err := store.ListDeploymentAudit(t.Context(), supersededID, 10)
+	audits, err := store.ListDeploymentAudit(t.Context(), current.ID, 10)
 	if err != nil {
 		t.Fatalf("audit: %v", err)
 	}

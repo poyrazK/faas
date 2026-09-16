@@ -1027,6 +1027,9 @@ func seedDeploymentForAudit(t *testing.T, e testEnv, slug string) string {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode seed deploy: %v", err)
 	}
+	if err := e.store.SetDeploymentRootfs(context.Background(), out.ID, "/srv/fc/apps/"+slug+"/"+out.ID+".ext4", "apps/"+slug+"/"+out.ID+".ext4", 1); err != nil {
+		t.Fatalf("seed deployment rootfs: %v", err)
+	}
 	return out.ID
 }
 
@@ -1244,11 +1247,11 @@ func TestAuditEvents_AppDeletedEmitsEvent(t *testing.T) {
 	}
 }
 
-// TestAuditEvents_AppRolledBackEmitsEvent (issue #291) drives
+// TestAuditEvents_AppRollbackRequestedEmitsEvent (issue #291) drives
 // /v1/apps/{slug}/rollback with two seeded deployments (the second
-// live) and asserts app.rolled_back records from=retired_id,
-// to=promoted_id.
-func TestAuditEvents_AppRolledBackEmitsEvent(t *testing.T) {
+// live) and asserts the readiness-gated rollback request records its
+// current and target deployment IDs.
+func TestAuditEvents_AppRollbackRequestedEmitsEvent(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	app := seedAppForAudit(t, e, "audit-app-rollback")
 	// LatestSupersededDeployment only returns rows that already have
@@ -1273,8 +1276,8 @@ func TestAuditEvents_AppRolledBackEmitsEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	found := findEventByKind(rows, "app.rolled_back")
-	found = mustAuditEvent(t, found, fmt.Sprintf("no app.rolled_back event row; rows=%+v", rows))
+	found := findEventByKind(rows, "app.rollback_requested")
+	found = mustAuditEvent(t, found, fmt.Sprintf("no app.rollback_requested event row; rows=%+v", rows))
 	var data map[string]any
 	if err := json.Unmarshal(found.Data, &data); err != nil {
 		t.Fatalf("Data not valid JSON: %v", err)

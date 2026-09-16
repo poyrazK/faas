@@ -1719,15 +1719,17 @@ type Store interface {
 	// in the same transaction; the audit row that carries
 	// trigger="auto_5xx" is the customer-visible signal.
 	MarkAutoRollback(ctx context.Context, deploymentID, reason string, when time.Time) (Deployment, error)
-	// AutoRollbackDeploymentsTx wraps the deployments status
-	// swap in a tx: (a) current live → superseded, (b) most
-	// recent superseded → live, (c) markAutoRollback on the
-	// rolled-back id. Returns the new live deployment id (the
-	// one schedd needs to park instances for). The instances
-	// mutation belongs to schedd per CLAUDE.md — this tx
-	// does NOT touch instances; schedd does that in a
-	// sibling call after this returns.
+	// AutoRollbackDeploymentsTx atomically transfers status, traffic, and
+	// rollout state from the current live projection to the most recent
+	// same-scope superseded deployment. Returns the new live deployment id
+	// (the one schedd needs to park instances for). The instances mutation
+	// belongs to schedd; this transaction only mutates deployments.
 	AutoRollbackDeploymentsTx(ctx context.Context, appID, currentDeploymentID string) (newLiveDeploymentID string, err error)
+	// PrepareDeploymentRollback moves a superseded target into the
+	// snapshotting/readiness pipeline without touching the current live
+	// deployment. The eventual MarkDeploymentLive call performs the atomic
+	// cutover after a real cold boot and public smoke have succeeded.
+	PrepareDeploymentRollback(ctx context.Context, appID, targetDeploymentID string) (Deployment, error)
 	AppBySlug(ctx context.Context, slug string) (App, error)
 	// AppBySlugIncludingDeleted is the restore-side lookup. The normal
 	// AppBySlug intentionally hides tombstones from customer reads.

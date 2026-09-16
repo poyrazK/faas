@@ -740,6 +740,10 @@ const (
 	// target exists but is cancelled, failed, or still progressing. Only a
 	// superseded deployment is a valid historical rollback target.
 	CodeRollbackTargetIneligible = "rollback_target_ineligible"
+	// CodeRollbackTargetUnavailable means the historical release exists in
+	// state, but its immutable cold-boot artifact or attestation cannot be
+	// verified. The current serving deployment is left untouched.
+	CodeRollbackTargetUnavailable = "rollback_target_unavailable"
 	// CodeDeploySignatureInvalid is returned by apid when the
 	// customer's OCI image deploy is rejected at the accept-time
 	// signature-enforcement gate (issue #472 / ADR-054). Three
@@ -4119,6 +4123,13 @@ func ErrRollbackTargetAlreadyLive(detail string) *Problem {
 func ErrRollbackTargetIneligible(detail string) *Problem {
 	return NewProblem(http.StatusConflict, CodeRollbackTargetIneligible,
 		"Rollback target is not eligible",
+		detail).
+		WithDocs(docsBase + "/deploys#rollback")
+}
+
+func ErrRollbackTargetUnavailable(detail string) *Problem {
+	return NewProblem(http.StatusConflict, CodeRollbackTargetUnavailable,
+		"Rollback target is unavailable",
 		detail).
 		WithDocs(docsBase + "/deploys#rollback")
 }
