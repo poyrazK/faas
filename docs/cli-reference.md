@@ -708,6 +708,7 @@ Wait until a deployment is live (or safe rollout completes)
 | Flag | Meaning | |
 |---|---|---|
 | `--rollout` | wait for safe rollout to reach 100% traffic |  |
+| `--progress` | print rollout transitions while waiting (human output only) |  |
 | `--timeout <SECONDS>` | maximum seconds to wait |  |
 
 ### deployment set-min-instances

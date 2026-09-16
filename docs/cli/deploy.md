@@ -96,9 +96,13 @@ for the full rollout with:
 
 ```bash
 gregale deployment wait <deployment-id> --rollout
+gregale deployment wait <deployment-id> --rollout --progress
 ```
 
-If the wait times out, the JSON receipt includes the exact resume command.
+With `--progress`, the CLI prints one line for each lifecycle or rollout
+transition, such as `1% traffic · step 1/4` followed by `10% traffic · step
+2/4`. JSON output remains a single deployment record. If the wait times out,
+the JSON receipt includes the exact resume command.
 
 Every deploy also has a stable retry key derived from the app, source digest,
 and deploy intent. Pass `--idempotency-key KEY` when an external CI workflow

@@ -592,6 +592,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Flags: []cliFlag{
 				{Name: "rollout", Short: "wait for safe rollout to reach 100% traffic"},
+				{Name: "progress", Short: "print rollout transitions while waiting (human output only)"},
 				{Name: "timeout", Short: "maximum seconds to wait", Value: "SECONDS"},
 			}},
 			{Name: "set-min-instances", Short: "Set the per-deployment cold-wake floor"},
