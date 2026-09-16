@@ -3,9 +3,12 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"log"
 	"path/filepath"
 	"regexp"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pressly/goose/v3"
 
 	"github.com/onebox-faas/faas/migrations"
@@ -16,6 +19,46 @@ import (
 // a missing historical reservation is safe; a real legacy migration must
 // continue to fail closed.
 var reservationMigrationFilenameRe = regexp.MustCompile(`(?i)^[0-9]{5}_(.*_)?(reservation|reserve_slot)(_[^/]*)?\.sql$`)
+
+// undefinedTableSQLState is Postgres's code for "relation does not exist".
+const undefinedTableSQLState = "42P01"
+
+// errNoLedgerYet reports whether err means goose_db_version is not there.
+//
+// A database with no ledger has no migration history, and this whole file
+// exists to reconcile history: it compares the ledger against the migration
+// files to spot versions goose would reject as missing. With no ledger there
+// is nothing to reconcile, so the answer is "no options" — exactly what the
+// current <= 0 branch already returns for a fresh database.
+//
+// Treating the absence as a failure instead turned a legitimate state into a
+// migration error:
+//
+//	migrate: db: inspect migration ledger: ERROR: relation "goose_db_version"
+//	does not exist (SQLSTATE 42P01)
+//
+// which failed pg-shard tests intermittently (for example
+// TestPgReconcile_RemoveAndReaddRestoresIdentity in CI run 35052140508)
+// against a database that goose would have initialised moments later —
+// goose.UpContext creates the ledger itself and then applies every migration.
+//
+// This does not hide a ledger that disappears mid-migration: goose still
+// recreates it and replays, and replaying against a schema that already has
+// the objects fails loudly through annotateSchemaDrift.
+func errNoLedgerYet(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == undefinedTableSQLState
+}
+
+// logNoLedger records that the reconcile pre-flight found no ledger.
+//
+// Proceeding is correct, but it must not be silent. A brand-new database hits
+// this once and goose initialises it; the same line appearing against a
+// database that HAS been migrated means the ledger went missing, which is
+// worth investigating even though the migration recovers.
+func logNoLedger(err error) {
+	log.Printf("db: no migration ledger yet; skipping history reconcile and letting goose initialise it (%v)", err)
+}
 
 // missingHistoricalMigrations returns the migration files that Goose would
 // reject as missing before the database's current version. The known set
@@ -86,10 +129,18 @@ func migrationOptionsForHistoricalGaps(current int64, known map[int64]struct{}, 
 func historicalMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.OptionsFunc, []int64, error) {
 	reportedCurrent, err := goose.GetDBVersionContext(ctx, sqlDB)
 	if err != nil {
+		if errNoLedgerYet(err) {
+			logNoLedger(err)
+			return nil, nil, nil
+		}
 		return nil, nil, err
 	}
 	applied, err := appliedMigrationVersions(ctx, sqlDB)
 	if err != nil {
+		if errNoLedgerYet(err) {
+			logNoLedger(err)
+			return nil, nil, nil
+		}
 		return nil, nil, err
 	}
 	current := effectiveMigrationVersion(reportedCurrent, applied)
@@ -99,6 +150,10 @@ func historicalMigrationOption(ctx context.Context, sqlDB *sql.DB) (goose.Option
 
 	known, err := ledgerMigrationVersions(ctx, sqlDB)
 	if err != nil {
+		if errNoLedgerYet(err) {
+			logNoLedger(err)
+			return nil, nil, nil
+		}
 		return nil, nil, err
 	}
 
