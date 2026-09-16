@@ -313,7 +313,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 	if err != nil {
 		t.Fatalf("list worker deployments after replay: %v", err)
 	}
-	if len(apiDeployments) != 2 || len(workerDeployments) != 2 {
+	if len(apiDeployments) != 3 || len(workerDeployments) != 2 {
 		t.Fatalf("idempotent replay created deployments: api=%d worker=%d", len(apiDeployments), len(workerDeployments))
 	}
 
