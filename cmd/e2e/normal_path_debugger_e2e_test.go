@@ -52,11 +52,12 @@ func TestE2E_NormalPath_DebuggerTelemetryAndReplay(t *testing.T) {
 	sourceDeployment, sourceInstance := createNormalPathLiveDeployment(
 		t, f.ctx, f.store, f.app.ID, f.nodeID, "debugger-source")
 	f.vmmd.SetVersion(sourceInstance.ID, "debugger-source")
-	waitForNormalPathResponse(t, f.h, f.host, "normal-path:debugger-source\n", 10*time.Second)
+	waitForNormalPathDebuggerResponse(t, f, "normal-path:debugger-source\n", 10*time.Second)
 
 	const secret = "customer-secret-must-not-cross-debugger"
 	_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet,
 		"/debugger/telemetry", nil, map[string]string{
+			"Authorization":     "Bearer " + f.key,
 			"X-Customer-Secret": secret,
 		})
 	if statusCode != http.StatusOK || string(body) != "normal-path:debugger-source\n" {
@@ -252,4 +253,21 @@ func waitForNormalPathDebuggerRequest(t *testing.T, f *normalPathFixture, deploy
 	}
 	t.Fatalf("debugger request for deployment %s did not arrive within %s; last page=%+v", deploymentID, timeout, last)
 	return api.DebugTelemetryRequestItem{}
+}
+
+func waitForNormalPathDebuggerResponse(t *testing.T, f *normalPathFixture, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastStatus int
+	var lastBody []byte
+	for time.Now().Before(deadline) {
+		_, lastBody, lastStatus = doReqHeaders(t, f.h, f.host, http.MethodGet, "/", nil, map[string]string{
+			"Authorization": "Bearer " + f.key,
+		})
+		if lastStatus == http.StatusOK && string(lastBody) == want {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("GET %s/ did not return %q within %s; last status=%d body=%s", f.host, want, timeout, lastStatus, lastBody)
 }
