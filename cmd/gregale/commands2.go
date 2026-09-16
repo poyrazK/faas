@@ -1698,6 +1698,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		*canaryPreset = "balanced"
 	}
+	if *safeDeploy && projectRequested {
+		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))
+	}
 	if *environment != "" {
 		if !api.ValidProjectEnvironmentSlug(*environment) {
 			return printErr("Invalid --environment", fmt.Errorf("must be a lowercase project environment slug; got %q", *environment))
@@ -2613,6 +2616,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		opts.Workflows = previewWorkflows
 		opts.PRNumber = *prNumber
 		opts.NoTriggers = *noTriggers
+		opts.Safe = *safeDeploy
 		opts.JSON = *diffJSON
 		// --strict is the default; --lenient opts out.
 		opts.Strict = !*diffLenient

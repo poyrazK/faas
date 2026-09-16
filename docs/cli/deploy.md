@@ -78,6 +78,18 @@ waits for the rollout to reach 100% traffic before returning success. The
 server's smoke verification, configured health gates, and rollback behavior
 remain the source of truth. Safe rollouts require a Pro or Scale plan.
 
+Preview the safe-release plan before uploading:
+
+```bash
+gregale deploy --safe --dry-run
+gregale deploy --safe --dry-run --json | jq '.diff.safe_release'
+```
+
+The preview shows the next rollout step, the actionable alert-gate status,
+and the previous deployment that would be the rollback target. If no enabled
+`rollback` or `demote` alert rule exists, the preview warns that the rollout
+has no actionable health gate.
+
 The existing deploy default remains unchanged. For an explicitly configured
 canary, a normal deploy returns once the candidate is live; inspect or wait
 for the full rollout with:

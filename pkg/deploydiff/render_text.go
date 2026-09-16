@@ -46,6 +46,9 @@ func RenderText(w io.Writer, d Diff) {
 	if d.Slug != "" {
 		_, _ = fmt.Fprintf(w, "Deployment diff for %q\n\n", d.Slug)
 	}
+	if d.SafeRelease != nil {
+		renderSafeReleaseText(w, *d.SafeRelease)
+	}
 
 	// 1. App-level scalars. Pick the ones that render nicely:
 	// memory, concurrency, min_instances, idle_timeout_s,
@@ -158,13 +161,49 @@ func RenderText(w io.Writer, d Diff) {
 	// Final gate line. Mirrors the "Fix before deploy" UX from the
 	// user's example: when there are blocking breaks, render the
 	// warning so the customer's eye lands on it.
-	if d.HasBlockingBreaks() {
+	if d.SafeRelease != nil && d.SafeRelease.HealthGate.Status == SafeReleaseHealthBlocked {
+		_, _ = fmt.Fprintln(w, "Health gate blocks rollout.")
+	} else if d.SafeRelease != nil && d.SafeRelease.HealthGate.Status == SafeReleaseHealthUnavailable {
+		_, _ = fmt.Fprintln(w, "Health gate status unavailable.")
+	} else if d.HasBlockingBreaks() {
 		_, _ = fmt.Fprintln(w, "Fix before deploy.")
 	} else if len(d.Changes) > 0 {
 		_, _ = fmt.Fprintln(w, "Ready to deploy.")
 	} else {
 		_, _ = fmt.Fprintln(w, "No changes.")
 	}
+}
+
+func renderSafeReleaseText(w io.Writer, p SafeReleasePreview) {
+	_, _ = fmt.Fprintln(w, "Safe rollout:")
+	if p.Rollout.TotalSteps > 0 {
+		_, _ = fmt.Fprintf(w, "  Plan:         %s\n", formatSafeReleaseStages(p.Rollout.Stages))
+		_, _ = fmt.Fprintf(w, "  Next step:    %d%% traffic · step %d/%d\n", p.Rollout.TrafficPercent, p.Rollout.Step, p.Rollout.TotalSteps)
+	}
+	switch p.HealthGate.Status {
+	case SafeReleaseHealthReady:
+		_, _ = fmt.Fprintf(w, "  Health gate:  ready (%d actionable rule(s), %d firing)\n", p.HealthGate.Configured, p.HealthGate.Firing)
+	case SafeReleaseHealthBlocked:
+		_, _ = fmt.Fprintf(w, "  Health gate:  BLOCKED (%d firing actionable rule(s))\n", p.HealthGate.Firing)
+	case SafeReleaseHealthNotConfigured:
+		_, _ = fmt.Fprintln(w, "  Health gate:  NOT CONFIGURED (no actionable alert rule)")
+	default:
+		_, _ = fmt.Fprintf(w, "  Health gate:  %s\n", strings.ToUpper(p.HealthGate.Status))
+	}
+	if p.RollbackTarget == "" {
+		_, _ = fmt.Fprintln(w, "  Rollback:     none (initial release)")
+	} else {
+		_, _ = fmt.Fprintf(w, "  Rollback:     %s\n", p.RollbackTarget)
+	}
+	_, _ = fmt.Fprintln(w)
+}
+
+func formatSafeReleaseStages(stages []SafeReleaseStage) string {
+	parts := make([]string, 0, len(stages))
+	for _, stage := range stages {
+		parts = append(parts, fmt.Sprintf("%d%% (%s)", stage.TrafficPercent, stage.Duration))
+	}
+	return strings.Join(parts, " → ")
 }
 
 // isHeadlineScalar gates which [Change.Field] values land in the

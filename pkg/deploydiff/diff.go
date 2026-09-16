@@ -229,12 +229,65 @@ type Break struct {
 	Limit    anyJSON `json:"limit,omitempty"`
 }
 
+// SafeReleasePreview is the read-only operator view attached to a safe
+// deploy preview. It is deliberately separate from Changes: rollout policy,
+// health-gate state, and rollback context are operational facts rather than
+// app mutations.
+type SafeReleasePreview struct {
+	Preset         string                `json:"preset"`
+	Rollout        SafeReleaseRollout    `json:"rollout"`
+	HealthGate     SafeReleaseHealthGate `json:"health_gate"`
+	RollbackTarget string                `json:"rollback_target"`
+}
+
+// SafeReleaseRollout describes the next server-side rollout step. Step is
+// one-based because that is the form an operator can act on ("step 1/4").
+type SafeReleaseRollout struct {
+	Step           int                `json:"step"`
+	TotalSteps     int                `json:"total_steps"`
+	TrafficPercent int                `json:"traffic_percent"`
+	Stages         []SafeReleaseStage `json:"stages"`
+}
+
+// SafeReleaseStage is a display-safe projection of a canary stage.
+type SafeReleaseStage struct {
+	TrafficPercent int    `json:"traffic_percent"`
+	Duration       string `json:"duration"`
+}
+
+// SafeReleaseHealthGate is the promotion-side health-gate snapshot. Only
+// enabled rollback/demote rules are included because webhook-only and
+// promote rules do not block canary promotion in the orchestrator.
+type SafeReleaseHealthGate struct {
+	Status     string                  `json:"status"`
+	Configured int                     `json:"configured"`
+	Firing     int                     `json:"firing"`
+	Rules      []SafeReleaseHealthRule `json:"rules,omitempty"`
+}
+
+const (
+	SafeReleaseHealthReady         = "ready"
+	SafeReleaseHealthBlocked       = "blocked"
+	SafeReleaseHealthNotConfigured = "not_configured"
+	SafeReleaseHealthUnavailable   = "unavailable"
+)
+
+// SafeReleaseHealthRule is the non-secret operator projection of one
+// actionable alert rule.
+type SafeReleaseHealthRule struct {
+	Name   string `json:"name"`
+	Metric string `json:"metric"`
+	Action string `json:"action"`
+	State  string `json:"state"`
+}
+
 // Diff is the engine's output. Renders the human / JSON view; the
 // gate (exit 1) reads [Diff.HasBlockingBreaks].
 type Diff struct {
-	Slug    string   `json:"slug"`
-	Changes []Change `json:"changes"`
-	Breaks  []Break  `json:"breaks"`
+	Slug        string              `json:"slug"`
+	Changes     []Change            `json:"changes"`
+	Breaks      []Break             `json:"breaks"`
+	SafeRelease *SafeReleasePreview `json:"safe_release,omitempty"`
 	// Plan is echoed back so the renderer can show plan-tier
 	// context ("Hobby plan: 256 MB cap").
 	Plan Plan `json:"plan"`
