@@ -1107,7 +1107,16 @@ jobs:
           # ansible-core can retain a malformed Galaxy response cache on a
           # hosted runner. Do not let that cache turn this repository contract
           # into an unrelated infrastructure failure.
-          ansible-galaxy collection install --no-cache -r requirements.yml
+          for attempt in 1 2 3 4 5; do
+            if ansible-galaxy collection install --no-cache -r requirements.yml; then
+              break
+            fi
+            if [ "${attempt}" = "5" ]; then
+              echo "::error::Ansible Galaxy collection install failed after ${attempt} attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook
