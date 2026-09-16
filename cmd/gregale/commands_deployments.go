@@ -345,7 +345,7 @@ func cmdAppDeploymentsAll(ctx context.Context, client *api.Client, slug string, 
 // The 3-word verb shape mirrors cmdWebhookRotateSecret (commands_webhooks.go:361).
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--timeout SECONDS] | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--timeout SECONDS] | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
@@ -359,20 +359,22 @@ func cmdDeployment(args []string) int {
 	return cmdDeploymentGet(args)
 }
 
-// cmdDeploymentWait polls a deployment until it is live or terminal. It is
-// intentionally a separate verb so CI callers do not have to reconstruct the
-// platform's status vocabulary (or mistake an HTTP 200 for a successful
-// deployment). --timeout is expressed in seconds to keep the GitHub Action
-// input and CLI contract identical.
+// cmdDeploymentWait polls a deployment until it is live or terminal. With
+// --rollout, a canary deployment must also reach rollout_state=complete before
+// the command reports success. It is intentionally a separate verb so CI
+// callers do not have to reconstruct the platform's status vocabulary (or
+// mistake an HTTP 200 for a successful deployment). --timeout is expressed in
+// seconds to keep the GitHub Action input and CLI contract identical.
 func cmdDeploymentWait(args []string) int {
 	flags, pos := splitArgsForFlags(args)
 	fs := newFlagSet("deployment wait", flag.ContinueOnError)
+	rollout := fs.Bool("rollout", false, "wait for a safe rollout to reach 100% traffic")
 	timeoutSeconds := fs.Int("timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum seconds to wait (default %d)", defaultDeployWaitTimeoutSeconds))
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(pos) != 1 || *timeoutSeconds <= 0 || !deploymentIDPattern.MatchString(pos[0]) {
-		PrintUsage(os.Stderr, "usage: gregale deployment wait <id> [--timeout SECONDS]", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment wait <id> [--rollout] [--timeout SECONDS]", "deployment")
 		return 1
 	}
 	client, err := authedClient()
@@ -381,12 +383,16 @@ func cmdDeploymentWait(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSeconds)*time.Second)
 	defer cancel()
+	waitTarget := "live"
+	if *rollout {
+		waitTarget = "live and rollout-complete"
+	}
 
 	for {
 		d, getErr := client.GetDeployment(ctx, pos[0])
 		if getErr != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become live within %ds", pos[0], *timeoutSeconds))
+				return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become %s within %ds", pos[0], waitTarget, *timeoutSeconds))
 			}
 			return printErr("Could not fetch deployment", getErr)
 		}
@@ -397,11 +403,27 @@ func cmdDeploymentWait(args []string) int {
 				}
 				return printErr("Deployment did not become live", fmt.Errorf("deployment %s reached terminal status %s: %s", d.ID, d.Status, d.Error))
 			}
-			if jsonOutput {
-				return jsonOut(writeJSON(d))
+			if *rollout && d.CanaryTotalSteps > 0 && d.RolloutState == rolloutStateAborted {
+				if jsonOutput {
+					_ = writeJSON(d)
+				}
+				reason := d.RolloutAbortedReason
+				if reason == "" {
+					reason = "the rollout was aborted"
+				}
+				return printErr("Safe rollout did not complete", fmt.Errorf("deployment %s stopped before 100%% traffic: %s", d.ID, reason))
 			}
-			PrintOK(osStdout, "Deployment %s is live.", d.ID)
-			return 0
+			if !*rollout || deploymentRolloutComplete(d) {
+				if jsonOutput {
+					return jsonOut(writeJSON(d))
+				}
+				if *rollout {
+					PrintOK(osStdout, "Deployment %s rollout is complete.", d.ID)
+				} else {
+					PrintOK(osStdout, "Deployment %s is live.", d.ID)
+				}
+				return 0
+			}
 		}
 
 		timer := time.NewTimer(2 * time.Second)
@@ -409,6 +431,9 @@ func cmdDeploymentWait(args []string) int {
 		case <-ctx.Done():
 			if !timer.Stop() {
 				<-timer.C
+			}
+			if *rollout {
+				return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not reach 100%% traffic within %ds", d.ID, *timeoutSeconds))
 			}
 			return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become live within %ds", d.ID, *timeoutSeconds))
 		case <-timer.C:
