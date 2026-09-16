@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
