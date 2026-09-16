@@ -767,9 +767,13 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if access != "read_write" && access != "read_only" {
 			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only}", i, access)
 		}
-		key := strings.Join([]string{dependency.App, dependency.Database, dependency.EffectiveScope(), dependency.EffectiveEnvironmentKey()}, "\x00")
+		// A database dependency targets one environment variable on one
+		// workload. Different databases must not silently compete for the
+		// same target; the binding store enforces the same invariant at
+		// apply time, so reject it while the manifest is still immutable.
+		key := strings.Join([]string{dependency.App, dependency.EffectiveScope(), dependency.EffectiveEnvironmentKey()}, "\x00")
 		if _, duplicate := seenDatabases[key]; duplicate {
-			return fmt.Errorf("database[%d]: duplicate (app, database, scope, env) dependency", i)
+			return fmt.Errorf("database[%d]: duplicate (app, scope, env) dependency", i)
 		}
 		seenDatabases[key] = struct{}{}
 	}

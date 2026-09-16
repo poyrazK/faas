@@ -94,6 +94,28 @@ func TestDeployManifestPostgresBindingsStopsOnNotReady(t *testing.T) {
 	}
 }
 
+func TestDeployManifestPostgresBindingsResolvesAllBeforeCreating(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, `databases:
+  - database: orders
+  - database: missing
+    app: api
+    scope: staging
+    env: ANALYTICS_DATABASE_URL
+`)
+	fake := &fakeManifestPostgresClient{
+		app:       api.AppResponse{ID: "app-id", Slug: "api"},
+		databases: api.ManagedPostgresDatabaseList{Items: []api.ManagedPostgresDatabase{{ID: "db-id", Name: "orders", State: "ready"}}},
+		binding:   api.ManagedPostgresBinding{ID: "binding-id", State: "ready"},
+	}
+	if err := deployManifestPostgresBindings(context.Background(), fake, "api", dir); err == nil {
+		t.Fatal("err = nil, want missing dependency")
+	}
+	if len(fake.requests) != 0 {
+		t.Fatalf("created %d bindings before resolving all dependencies", len(fake.requests))
+	}
+}
+
 func TestResolveManagedPostgresDatabaseRejectsMissingReference(t *testing.T) {
 	fake := &fakeManifestPostgresClient{databases: api.ManagedPostgresDatabaseList{Items: []api.ManagedPostgresDatabase{{ID: "db-id", Name: "orders"}}}}
 	if _, err := resolveManagedPostgresDatabase(context.Background(), fake, "missing"); err == nil {
@@ -139,5 +161,32 @@ func TestManifestPostgresDeploymentScopeRejectsMixedScopes(t *testing.T) {
 `)
 	if _, err := manifestPostgresDeploymentScope("api", dir); err == nil || !strings.Contains(err.Error(), "multiple scopes") {
 		t.Fatalf("err = %v, want mixed-scope validation", err)
+	}
+}
+
+func TestManifestPostgresEnvironmentOverridesOmittedScope(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, "databases:\n  - database: orders\n")
+	fake := &fakeManifestPostgresClient{
+		app:       api.AppResponse{ID: "app-id", Slug: "api"},
+		databases: api.ManagedPostgresDatabaseList{Items: []api.ManagedPostgresDatabase{{ID: "db-id", Name: "orders", State: "ready"}}},
+		binding:   api.ManagedPostgresBinding{ID: "binding-id", State: "ready", EnvironmentKey: "DATABASE_URL"},
+	}
+	if err := deployManifestPostgresBindings(context.Background(), fake, "api", dir, "staging"); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if got := fake.requests[0].Scope; got != "staging" {
+		t.Fatalf("binding scope = %q, want staging", got)
+	}
+	if got, err := manifestPostgresDeploymentScope("api", dir, "staging"); err != nil || got != "" {
+		t.Fatalf("deployment scope = %q, err = %v; want omitted wire scope", got, err)
+	}
+}
+
+func TestManifestPostgresRejectsEnvironmentScopeMismatch(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, "databases:\n  - database: orders\n    scope: production\n")
+	if _, err := manifestPostgresDeploymentScope("api", dir, "staging"); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("err = %v, want environment mismatch", err)
 	}
 }

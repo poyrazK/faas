@@ -97,19 +97,29 @@ func NewBindingService(registry *Registry, databases Store, bindings BindingStor
 }
 
 func (s *BindingService) Create(ctx context.Context, request CreateBindingRequest) (Binding, error) {
+	binding, _, err := s.CreateWithResult(ctx, request)
+	return binding, err
+}
+
+// CreateWithResult is the same idempotent binding operation as Create, but
+// also reports whether this invocation reserved a new binding row. Deploy
+// orchestration uses that bit to compensate only rows it created when a
+// later manifest dependency fails; pre-existing customer bindings are never
+// deleted during rollback.
+func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBindingRequest) (Binding, bool, error) {
 	if !s.provisioningEnabled() {
-		return Binding{}, ErrUnavailable
+		return Binding{}, false, ErrUnavailable
 	}
 	if request.AccountID == "" || request.DatabaseID == "" || request.AppID == "" ||
 		!validBindingScope(request.Scope) || !validEnvironmentKey(request.EnvironmentKey) ||
 		(request.Access != CredentialReadWrite && request.Access != CredentialReadOnly) {
-		return Binding{}, ErrInvalid
+		return Binding{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
-		return Binding{}, ErrUnavailable
+		return Binding{}, false, ErrUnavailable
 	}
 	now := s.now()
-	binding, _, err := s.bindings.ReserveBinding(ctx, Binding{
+	binding, created, err := s.bindings.ReserveBinding(ctx, Binding{
 		ID:                   s.newID(),
 		AccountID:            request.AccountID,
 		DatabaseID:           request.DatabaseID,
@@ -124,19 +134,26 @@ func (s *BindingService) Create(ctx context.Context, request CreateBindingReques
 		UpdatedAt:            now,
 	})
 	if err != nil {
-		return Binding{}, err
+		return Binding{}, false, err
 	}
 	if binding.DatabaseID != request.DatabaseID || binding.AppID != request.AppID ||
 		binding.Scope != request.Scope || binding.EnvironmentKey != request.EnvironmentKey || binding.Access != request.Access {
-		return Binding{}, ErrConflict
+		return Binding{}, false, ErrConflict
 	}
 	if binding.State == BindingStateReady {
-		return binding, nil
+		return binding, created, nil
 	}
 	if binding.State == BindingStateDeleting || binding.State == BindingStateDeleted {
-		return Binding{}, ErrConflict
+		return Binding{}, false, ErrConflict
 	}
-	return s.Reconcile(ctx, request.AccountID, binding.ID)
+	ready, err := s.Reconcile(ctx, request.AccountID, binding.ID)
+	if err != nil {
+		// Preserve the reserved row identity so callers can compensate a
+		// failed multi-binding operation without guessing which row was
+		// created. The legacy Create wrapper still exposes only the error.
+		return binding, created, err
+	}
+	return ready, created, nil
 }
 
 func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID string) (Binding, error) {

@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tarball"
 )
@@ -27,9 +28,11 @@ import (
 const sourceRefManifestMaxBytes = 1 << 20
 
 type sourceRefManifestStaged struct {
+	accountID  string
 	appID      string
 	cronIDs    []string
 	triggerIDs []string
+	bindingIDs []string
 }
 
 // loadSourceRefManifest reads the root manifest from the already validated
@@ -148,9 +151,21 @@ func sourceRefManifestCandidates(sourcePath, sourceRoot string) ([]string, error
 // the public trigger endpoints, while deduplicating declarations already
 // present on the app. The caller compensates the returned rows if enqueueing
 // the deployment fails.
-func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest) (sourceRefManifestStaged, *api.Problem) {
-	staged := sourceRefManifestStaged{appID: app.ID}
-	if m == nil || len(m.Triggers) == 0 {
+func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, deploymentScope string, applyTriggers bool) (sourceRefManifestStaged, *api.Problem) {
+	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	if m == nil {
+		return staged, nil
+	}
+	resolved, problem := s.resolveManifestPostgresBindings(ctx, acct, m, []string{app.Slug}, deploymentScope)
+	if problem != nil {
+		return staged, problem
+	}
+	bindingIDs, problem := s.bindResolvedManagedPostgresBindings(ctx, acct, resolved, []state.App{app})
+	if problem != nil {
+		return staged, problem
+	}
+	staged.bindingIDs = bindingIDs
+	if !applyTriggers || len(m.Triggers) == 0 {
 		return staged, nil
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
@@ -258,6 +273,15 @@ func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Pro
 
 func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRefManifestStaged) error {
 	var errs []error
+	for i := len(staged.bindingIDs) - 1; i >= 0; i-- {
+		if s.managedPostgresBindings == nil {
+			errs = append(errs, managedpostgres.ErrUnavailable)
+			continue
+		}
+		if _, err := s.managedPostgresBindings.Delete(ctx, staged.accountID, staged.bindingIDs[i]); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	for i := len(staged.triggerIDs) - 1; i >= 0; i-- {
 		if err := s.store.DeleteTrigger(ctx, staged.triggerIDs[i], staged.appID); err != nil {
 			errs = append(errs, err)

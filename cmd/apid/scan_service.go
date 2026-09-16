@@ -1331,6 +1331,21 @@ func (s *server) scanService(
 		return nil, state.Project{}, nil, nil, nil, nil, api.ErrInternal(
 			fmt.Sprintf("list account apps: %v", listErr))
 	}
+	// Resolve managed-Postgres declarations before project/app mutation.
+	// This makes scan previews honest and prevents a missing database,
+	// environment mismatch, or provisioning database from leaving a
+	// partially-applied project behind. The resolved declarations are
+	// intentionally reloaded after reconcile for the binding write; the
+	// provider-neutral service remains the sole owner of database IDs.
+	selectedDatabaseWorkloads := make([]string, 0, len(filteredW))
+	for _, workload := range filteredW {
+		selectedDatabaseWorkloads = append(selectedDatabaseWorkloads, workload.Name)
+	}
+	resolvedManifestBindings, manifestProblem := s.loadAndResolveManifestPostgresBindings(
+		r.Context(), acct, req.ScanDir, selectedDatabaseWorkloads, req.Environment)
+	if manifestProblem != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, manifestProblem
+	}
 	var stalePersistedSlugs []string
 	if len(req.Exclude) > 0 {
 		scanNames := make(map[string]bool, len(result.Workloads)*2)
@@ -1954,6 +1969,21 @@ func (s *server) scanService(
 	for _, id := range rec.Removed {
 		if slug, ok := preRemoveIdToSlug[id]; ok {
 			removedSlugs = append(removedSlugs, slug)
+		}
+	}
+	if len(resolvedManifestBindings) > 0 {
+		// Reconcile has already committed the project/app rows. A binding
+		// provider error is therefore returned without deleting a newly
+		// created project: the next deploy can retry the idempotent binding
+		// operation against the durable app instead of orphaning active apps
+		// when project_id is nulled by rollback.
+		bindingApps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if appsErr != nil {
+			prob := api.ErrInternal(fmt.Sprintf("load apps for managed PostgreSQL bindings: %v", appsErr))
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		if _, prob := s.bindResolvedManagedPostgresBindings(r.Context(), acct, resolvedManifestBindings, bindingApps); prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 	}
 

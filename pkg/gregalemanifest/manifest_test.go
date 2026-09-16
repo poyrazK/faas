@@ -884,6 +884,16 @@ func TestValidate_DatabaseDependencyRejectsDuplicate(t *testing.T) {
 	}
 }
 
+func TestValidate_DatabaseDependencyRejectsDifferentDatabasesSameTarget(t *testing.T) {
+	m := &Manifest{Databases: []DatabaseDependency{
+		{Database: "orders", App: "api"},
+		{Database: "analytics", App: "api"},
+	}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate (app, scope, env)") {
+		t.Fatalf("err = %v, want duplicate target dependency", err)
+	}
+}
+
 // jsonRaw is a tiny helper that returns a json.RawMessage from a
 // literal. Keeps the table-driven fixtures readable.
 func jsonRaw(s string) json.RawMessage { return json.RawMessage(s) }

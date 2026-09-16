@@ -2861,7 +2861,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Workflow manifest validation failed", err)
 		}
 	}
-	databaseDeploymentScope, err := manifestPostgresDeploymentScope(slug, sourceDir)
+	databaseDeploymentScope, err := manifestPostgresDeploymentScope(slug, sourceDir, *environment)
 	if err != nil {
 		return printErr("Manifest database scope resolution failed", err)
 	}
@@ -2874,7 +2874,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not create or fetch app", err)
 		}
 		if *createOnly {
-			if err := deployManifestPostgresBindings(ctx, client, slug, sourceDir); err != nil {
+			if err := deployManifestPostgresBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 				return printErr("Manifest database bindings failed", err)
 			}
 			if jsonOutput {
@@ -2894,7 +2894,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not update app resource profile", err)
 		}
 	}
-	if err := deployManifestPostgresBindings(ctx, client, slug, sourceDir); err != nil {
+	if err := deployManifestPostgresBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest database bindings failed", err)
 	}
 	if len(deploySecrets) > 0 {

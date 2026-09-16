@@ -306,13 +306,18 @@ databases:
 ```
 
 The `app` field can be supplied for a multi-app project manifest; when it is
-omitted, the declaration applies to the app currently being deployed. The CLI
-resolves the database name/ID, requires a ready binding response, and then
-relies on the existing sealed app-secret injection path. A binding that is
-still provisioning blocks the deployment with a retryable error; credentials
-are never written to the manifest or printed by the CLI. All dependencies for
-one deployment must use the same scope; that scope is carried onto the
-deployment so compute and the sealed database secret resolve together.
+omitted, the declaration applies to the app currently being deployed. For a
+project deploy with multiple selected workloads, `app` is required so each
+binding has an unambiguous target. Project deploys and immutable GitHub
+source-ref deploys perform the same server-side resolution and binding step as
+the single-app CLI path, before compute is queued. The CLI resolves the
+database name/ID, requires a ready binding response, and then relies on the
+existing sealed app-secret injection path. A binding that is still provisioning
+blocks the deployment with a retryable error; credentials are never written to
+the manifest or printed by the CLI. All dependencies for one deployment must
+use the same scope; an explicit `--environment` selects that scope and rejects
+conflicting manifest scopes so compute and the sealed database secret resolve
+together.
 
 Pass `--json` to any read or write command for automation. JSON responses use
 the same DTOs as the public API and deliberately contain no password, endpoint,

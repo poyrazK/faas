@@ -56,7 +56,7 @@ func resolveManagedPostgresDatabase(ctx context.Context, client managedPostgresC
 // before the deployment upload, so compute only starts with a ready sealed
 // credential. Re-running deploy is safe because the API binding reservation
 // is idempotent for the same app/database/scope/environment/access tuple.
-func deployManifestPostgresBindings(ctx context.Context, client manifestPostgresClient, slug, cwd string) error {
+func deployManifestPostgresBindings(ctx context.Context, client manifestPostgresClient, slug, cwd string, environments ...string) error {
 	manifest, present, err := gregalemanifest.Load(cwd)
 	if err != nil {
 		return err
@@ -88,14 +88,39 @@ func deployManifestPostgresBindings(ctx context.Context, client manifestPostgres
 		return fmt.Errorf("list managed databases for %q: %w", slug, err)
 	}
 	catalog := managedPostgresCatalog{items: databases.Items}
+	environment := ""
+	if len(environments) > 0 {
+		environment = strings.TrimSpace(environments[0])
+	}
+	type bindingPlan struct {
+		dependency gregalemanifest.DatabaseDependency
+		database   api.ManagedPostgresDatabase
+		scope      string
+	}
+	// Resolve and validate every dependency before creating the first
+	// binding. A typo or a still-provisioning database must not leave an
+	// earlier dependency attached when the command is retried.
+	plans := make([]bindingPlan, 0, len(matching))
 	for i, dependency := range matching {
 		database, err := resolveManagedPostgresDatabase(ctx, catalog, dependency.Database)
 		if err != nil {
 			return fmt.Errorf("database dependency %d (%q): %w", i+1, dependency.Database, err)
 		}
+		if database.State != "ready" {
+			return fmt.Errorf("database dependency %d (%q): database is %s; retry after provisioning completes", i+1, dependency.Database, database.State)
+		}
+		scope, err := manifestDependencyScope(dependency, environment)
+		if err != nil {
+			return fmt.Errorf("database dependency %d (%q): %w", i+1, dependency.Database, err)
+		}
+		plans = append(plans, bindingPlan{dependency: dependency, database: database, scope: scope})
+	}
+	for i, plan := range plans {
+		dependency := plan.dependency
+		database := plan.database
 		binding, err := client.CreateManagedPostgresBinding(ctx, database.ID, api.CreateManagedPostgresBindingRequest{
 			AppID:          app.ID,
-			Scope:          dependency.EffectiveScope(),
+			Scope:          plan.scope,
 			EnvironmentKey: dependency.EffectiveEnvironmentKey(),
 			Access:         dependency.EffectiveAccess(),
 		})
@@ -117,7 +142,7 @@ func deployManifestPostgresBindings(ctx context.Context, client manifestPostgres
 // scope, so mixing scopes in one manifest would otherwise make one binding
 // invisible to the resulting compute workload. The default scope is omitted
 // on the wire to preserve the existing deployment behavior.
-func manifestPostgresDeploymentScope(slug, cwd string) (string, error) {
+func manifestPostgresDeploymentScope(slug, cwd string, environments ...string) (string, error) {
 	manifest, present, err := gregalemanifest.Load(cwd)
 	if err != nil {
 		return "", err
@@ -128,12 +153,19 @@ func manifestPostgresDeploymentScope(slug, cwd string) (string, error) {
 	if err := manifest.Validate(); err != nil {
 		return "", err
 	}
+	environment := ""
+	if len(environments) > 0 {
+		environment = strings.TrimSpace(environments[0])
+	}
 	var scope string
 	for _, dependency := range manifest.Databases {
 		if dependency.App != "" && dependency.App != slug {
 			continue
 		}
-		current := dependency.EffectiveScope()
+		current, scopeErr := manifestDependencyScope(dependency, environment)
+		if scopeErr != nil {
+			return "", scopeErr
+		}
 		if scope == "" {
 			scope = current
 			continue
@@ -142,10 +174,22 @@ func manifestPostgresDeploymentScope(slug, cwd string) (string, error) {
 			return "", fmt.Errorf("database dependencies for app %q use multiple scopes (%q and %q); use one scope per deployment", slug, scope, current)
 		}
 	}
-	if scope == api.DefaultEnvScope {
+	if environment != "" || scope == api.DefaultEnvScope {
 		return "", nil
 	}
 	return scope, nil
+}
+
+func manifestDependencyScope(dependency gregalemanifest.DatabaseDependency, environment string) (string, error) {
+	environment = strings.TrimSpace(environment)
+	scope := strings.TrimSpace(dependency.EffectiveScope())
+	if environment == "" {
+		return scope, nil
+	}
+	if dependency.Scope != "" && scope != environment {
+		return "", fmt.Errorf("scope %q does not match deployment environment %q", scope, environment)
+	}
+	return environment, nil
 }
 
 type managedPostgresCatalog struct {
