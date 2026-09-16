@@ -1,5 +1,5 @@
 // vmmd — the only root component, owns firecracker+jailer (spec §4.4, ADR-013,
-// ADR-014, ADR-016). All five RPCs map 1:1 to spec §4.4 line 138. Wire shape
+// ADR-014, ADR-016). RPCs map 1:1 to spec §4.4 line 138. Wire shape
 // stays narrow: the caller resolves `(app)` into AppSpec; vmmd never queries
 // apid or postgres on its own.
 
@@ -25,6 +25,9 @@ const (
 	Vmmd_CreateFromSnapshot_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
 	Vmmd_CreateColdBoot_FullMethodName          = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
 	Vmmd_JobColdBoot_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
+	Vmmd_ExecuteExecution_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
+	Vmmd_ExecuteExecutionStream_FullMethodName  = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
+	Vmmd_RestoreExecution_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
 	Vmmd_WaitJobExit_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_WarmSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
@@ -72,6 +75,19 @@ type VmmdClient interface {
 	// command, environment, and timeout, so they use a dedicated flat wire
 	// shape instead of AppSpec and never enter the snapshot/readiness path.
 	JobColdBoot(ctx context.Context, in *JobColdBootRequest, opts ...grpc.CallOption) (*JobColdBootResponse, error)
+	// ExecuteExecution sends exactly one caller payload to an already restored
+	// disposable execution VM. Restore/cold-boot is intentionally a separate
+	// RPC so source and input never cross the restore boundary. vmmd enforces
+	// the networkless guest contract and destroys the instance before returning.
+	ExecuteExecution(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (*ExecuteExecutionResponse, error)
+	// ExecuteExecutionStream is the live-output variant of ExecuteExecution.
+	// It carries bounded stdout/stderr chunks as they arrive, followed by one
+	// terminal response. The unary RPC remains available for older schedulers.
+	ExecuteExecutionStream(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteExecutionEvent], error)
+	// RestoreExecution creates a fresh, networkless disposable execution VM.
+	// The envelope contains only immutable machine/artifact metadata; caller
+	// source and input cross the boundary later through ExecuteExecution.
+	RestoreExecution(ctx context.Context, in *RestoreExecutionRequest, opts ...grpc.CallOption) (*RestoreExecutionResponse, error)
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error)
@@ -425,6 +441,45 @@ func (c *vmmdClient) JobColdBoot(ctx context.Context, in *JobColdBootRequest, op
 	return out, nil
 }
 
+func (c *vmmdClient) ExecuteExecution(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (*ExecuteExecutionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExecuteExecutionResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ExecuteExecution_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) ExecuteExecutionStream(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteExecutionEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[0], Vmmd_ExecuteExecutionStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExecuteExecutionRequest, ExecuteExecutionEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExecuteExecutionStreamClient = grpc.ServerStreamingClient[ExecuteExecutionEvent]
+
+func (c *vmmdClient) RestoreExecution(ctx context.Context, in *RestoreExecutionRequest, opts ...grpc.CallOption) (*RestoreExecutionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreExecutionResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RestoreExecution_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JobExitResponse)
@@ -567,7 +622,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[0], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[1], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -586,7 +641,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[1], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -599,7 +654,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -719,6 +774,19 @@ type VmmdServer interface {
 	// command, environment, and timeout, so they use a dedicated flat wire
 	// shape instead of AppSpec and never enter the snapshot/readiness path.
 	JobColdBoot(context.Context, *JobColdBootRequest) (*JobColdBootResponse, error)
+	// ExecuteExecution sends exactly one caller payload to an already restored
+	// disposable execution VM. Restore/cold-boot is intentionally a separate
+	// RPC so source and input never cross the restore boundary. vmmd enforces
+	// the networkless guest contract and destroys the instance before returning.
+	ExecuteExecution(context.Context, *ExecuteExecutionRequest) (*ExecuteExecutionResponse, error)
+	// ExecuteExecutionStream is the live-output variant of ExecuteExecution.
+	// It carries bounded stdout/stderr chunks as they arrive, followed by one
+	// terminal response. The unary RPC remains available for older schedulers.
+	ExecuteExecutionStream(*ExecuteExecutionRequest, grpc.ServerStreamingServer[ExecuteExecutionEvent]) error
+	// RestoreExecution creates a fresh, networkless disposable execution VM.
+	// The envelope contains only immutable machine/artifact metadata; caller
+	// source and input cross the boundary later through ExecuteExecution.
+	RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error)
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error)
@@ -1051,6 +1119,15 @@ func (UnimplementedVmmdServer) CreateColdBoot(context.Context, *CreateColdBootRe
 func (UnimplementedVmmdServer) JobColdBoot(context.Context, *JobColdBootRequest) (*JobColdBootResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method JobColdBoot not implemented")
 }
+func (UnimplementedVmmdServer) ExecuteExecution(context.Context, *ExecuteExecutionRequest) (*ExecuteExecutionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExecuteExecution not implemented")
+}
+func (UnimplementedVmmdServer) ExecuteExecutionStream(*ExecuteExecutionRequest, grpc.ServerStreamingServer[ExecuteExecutionEvent]) error {
+	return status.Error(codes.Unimplemented, "method ExecuteExecutionStream not implemented")
+}
+func (UnimplementedVmmdServer) RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreExecution not implemented")
+}
 func (UnimplementedVmmdServer) WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitJobExit not implemented")
 }
@@ -1200,6 +1277,53 @@ func _Vmmd_JobColdBoot_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).JobColdBoot(ctx, req.(*JobColdBootRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ExecuteExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteExecutionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ExecuteExecution(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ExecuteExecution_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ExecuteExecution(ctx, req.(*ExecuteExecutionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ExecuteExecutionStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ExecuteExecutionRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VmmdServer).ExecuteExecutionStream(m, &grpc.GenericServerStream[ExecuteExecutionRequest, ExecuteExecutionEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExecuteExecutionStreamServer = grpc.ServerStreamingServer[ExecuteExecutionEvent]
+
+func _Vmmd_RestoreExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreExecutionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RestoreExecution(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RestoreExecution_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RestoreExecution(ctx, req.(*RestoreExecutionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1663,6 +1787,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_JobColdBoot_Handler,
 		},
 		{
+			MethodName: "ExecuteExecution",
+			Handler:    _Vmmd_ExecuteExecution_Handler,
+		},
+		{
+			MethodName: "RestoreExecution",
+			Handler:    _Vmmd_RestoreExecution_Handler,
+		},
+		{
 			MethodName: "WaitJobExit",
 			Handler:    _Vmmd_WaitJobExit_Handler,
 		},
@@ -1756,6 +1888,11 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ExecuteExecutionStream",
+			Handler:       _Vmmd_ExecuteExecutionStream_Handler,
+			ServerStreams: true,
+		},
 		{
 			StreamName:    "Logs",
 			Handler:       _Vmmd_Logs_Handler,

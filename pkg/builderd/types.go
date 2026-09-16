@@ -40,9 +40,11 @@ type VMRequest struct {
 	DeploymentID   string
 	SourcePath     string // tarball or dockerfile source on disk
 	SourceRoot     string // repository-relative build root inside the archive; empty = archive root
+	DockerfilePath string // relative to SourceRoot; empty selects Dockerfile
 	Framework      Framework
 	Runtime        string // app runtime id (node22, python312, go124-alpine, ...)
 	RuntimeBaseRef string // resolved OCI ref used by Railpack for this build
+	Function       bool   // handler build; allows markerless Node/Python sources
 	// DependencyCacheKey is a platform-derived, tenant-scoped digest. Empty
 	// keeps the builder fully ephemeral; developer sessions set it so matching
 	// BuildKit layers can cross otherwise-isolated builder VM lifetimes.
@@ -86,6 +88,13 @@ type BuildHandle struct {
 	DependencyCacheKey      string    // cache generation to publish after success
 	DependencyCacheRestored bool      // a prior BuildKit cache was staged into drive1
 	WarmScopeKey            string    // scope bound to a retained warm drive
+	// BuilderSliceOOMKillsAtStart snapshots the parent builder slice's
+	// cumulative oom_kill counter before vmmd starts this operation. With the
+	// host fence limited to one admitted builder, a later delta belongs to
+	// this build and can be reported even when Firecracker dies before writing
+	// build-done.json.
+	BuilderSliceOOMKillsAtStart uint64
+	BuilderSliceOOMCounterValid bool
 }
 
 // BuildOutcome is what WaitForCompletion returns. The orchestrator at
@@ -93,11 +102,15 @@ type BuildHandle struct {
 // or a marked-failed build row on failure. Named BuildOutcome to avoid
 // clashing with the orchestrator's BuildResult (whole-ProcessOne return).
 type BuildOutcome struct {
-	BuildID      string // echoes handle.BuildID
-	InstanceID   string // echoes handle.Instance
-	ExportDir    string // host dir the artifacts live in (caller may rm)
+	BuildID    string // echoes handle.BuildID
+	InstanceID string // echoes handle.Instance
+	// ExportDir is the node-local handoff directory. imaged leases image.tar
+	// while publishing; BuildExportSweepLoop removes it after the durable
+	// deployment reference is released or the bounded recovery window expires.
+	ExportDir    string
 	OCIImage     string // absolute path to the produced OCI tarball
 	LogTailBytes int64  // bytes guest-init wrote to build-done.json's `log_tail`
+	LogTail      string // bounded guest/Railpack output recovered from build-done.json
 	ExitCode     int    // the in-VM build's exit code (0 = success)
 	FailureClass string // mirrors builderd's FailureClass table; "" on success
 	// FailureCode is the RFC 7807 stable code guest-init stamped on
@@ -124,4 +137,7 @@ type BuildOutcome struct {
 	// WarmSnapshotError reports a non-fatal cache-capture failure. The build
 	// artifact remains authoritative and can still complete successfully.
 	WarmSnapshotError string
+	// BuilderSliceOOMKills is the parent faas-cp-build.slice oom_kill delta
+	// observed while this build owned the single host builder slot.
+	BuilderSliceOOMKills uint64
 }

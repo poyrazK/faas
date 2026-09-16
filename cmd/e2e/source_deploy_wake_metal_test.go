@@ -95,11 +95,18 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", sourceDeployHelloBody)
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+	// Digest-pinned, not ":latest": imaged refuses a tag with
+	//
+	//	FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference
+	//
+	// and EXITS at boot. AddImage already returns the pinned ref; this used
+	// to discard it and hand-build a tag, so imaged died on every one of
+	// these tests and the failure surfaced later as a deploy timeout.
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 	// Opt the reference-node acceptance into the public gateway smoke. The
 	// harness passes the actual gateway origin to imaged, so this verifies the
 	// same route a developer's first API request will use.
@@ -147,14 +154,14 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	t.Run("source-deployed-live", func(t *testing.T) {
 		defer h.DumpLogs(t)
 
-		bctx, bcancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		bctx, bcancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 		defer bcancel()
 		if _, err := e2etest.WaitForBuildStatus(bctx, t, pool, buildID, state.BuildSucceeded, 5*time.Minute); err != nil {
 			t.Fatalf("build %s did not reach succeeded: %v", buildID, err)
 		}
-		dctx, dcancel := context.WithTimeout(context.Background(), 4*time.Minute)
+		dctx, dcancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 		defer dcancel()
-		dep, err := e2etest.WaitForDeploymentLive(dctx, t, pool, depID, 4*time.Minute)
+		dep, err := e2etest.WaitForDeploymentLive(dctx, t, pool, depID, sourceDeployLiveDeadline())
 		if err != nil {
 			t.Fatalf("deployment %s did not reach live: %v", depID, err)
 		}

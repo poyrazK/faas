@@ -21,6 +21,36 @@ type APIConsumerUsageStatementStore interface {
 	FinalizeAPIConsumerUsageStatement(context.Context, string, string, string, string) (APIConsumerUsageStatement, bool, error)
 }
 
+// APIConsumerUsageStatementHandoffStore is the persistence boundary for the
+// provider-neutral invoice handoff. It is optional so existing Store test
+// doubles remain source-compatible.
+type APIConsumerUsageStatementHandoffStore interface {
+	CreateAPIConsumerUsageStatementHandoff(context.Context, APIConsumerUsageStatementHandoffInput) (APIConsumerUsageStatementHandoff, bool, error)
+	GetAPIConsumerUsageStatementHandoff(context.Context, string, string, string, string) (APIConsumerUsageStatementHandoff, error)
+}
+
+const maxAPIConsumerUsageStatementExternalInvoiceIDBytes = 255
+
+func validateAPIConsumerUsageStatementHandoffInput(input APIConsumerUsageStatementHandoffInput) error {
+	for name, value := range map[string]string{
+		"account_id": input.AccountID, "app_id": input.AppID, "consumer_id": input.ConsumerID, "statement_id": input.StatementID,
+	} {
+		if _, err := uuid.Parse(value); err != nil {
+			return fmt.Errorf("consumer usage statement handoff: %s must be a UUID: %w", name, err)
+		}
+	}
+	if input.ExternalInvoiceID == "" {
+		return fmt.Errorf("consumer usage statement handoff: external_invoice_id is required")
+	}
+	if len(input.ExternalInvoiceID) > maxAPIConsumerUsageStatementExternalInvoiceIDBytes {
+		return fmt.Errorf("consumer usage statement handoff: external_invoice_id exceeds %d bytes", maxAPIConsumerUsageStatementExternalInvoiceIDBytes)
+	}
+	if strings.TrimSpace(input.ExternalInvoiceID) != input.ExternalInvoiceID {
+		return fmt.Errorf("consumer usage statement handoff: external_invoice_id must not have leading or trailing whitespace")
+	}
+	return nil
+}
+
 func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput) error {
 	for name, value := range map[string]string{
 		"account_id": input.AccountID, "app_id": input.AppID, "consumer_id": input.ConsumerID,
@@ -97,6 +127,10 @@ func cloneAPIConsumerUsageStatement(statement APIConsumerUsageStatement) APICons
 		statement.FinalizedAt = &finalizedAt
 	}
 	return statement
+}
+
+func cloneAPIConsumerUsageStatementHandoff(handoff APIConsumerUsageStatementHandoff) APIConsumerUsageStatementHandoff {
+	return handoff
 }
 
 func normalizeStatementCurrency(currency string) string {

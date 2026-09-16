@@ -11,10 +11,12 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.app_manifest import AppManifest
     from ..models.build_plan import BuildPlan
+    from ..models.canary_preset_spec import CanaryPresetSpec
     from ..models.create_cron_request import CreateCronRequest
     from ..models.create_edge_rule_request import CreateEdgeRuleRequest
     from ..models.diff_app_config_patch import DiffAppConfigPatch
     from ..models.diff_request_env_by_scope import DiffRequestEnvByScope
+    from ..models.workflow_spec import WorkflowSpec
 
 
 T = TypeVar("T", bound="DiffRequest")
@@ -68,9 +70,17 @@ class DiffRequest:
     """Effective build plan surfaced on DeploymentResponse (issue #961 / zero-config profile PR). Captured from the
     exact source archive at enqueue time and retained after spool cleanup; legacy rows fall back to marker detection
     when the spool is still available. Embedded on DeploymentResponse; never returned by a dedicated route."""
+    traffic_percent: int | None | Unset = UNSET
+    """Proposed initial deployment traffic weight. Mutually exclusive with canary."""
+    canary: CanaryPresetSpec | None | Unset = UNSET
+    """Proposed canary rollout policy. Mutually exclusive with traffic_percent."""
+    workflows: list[WorkflowSpec] | Unset = UNSET
+    """Workflow declarations that the deployment would persist."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.canary_preset_spec import CanaryPresetSpec
+
         app_config: dict[str, Any] | Unset = UNSET
         if not isinstance(self.app_config, Unset):
             app_config = self.app_config.to_dict()
@@ -109,6 +119,27 @@ class DiffRequest:
         if not isinstance(self.build_plan, Unset):
             build_plan = self.build_plan.to_dict()
 
+        traffic_percent: int | None | Unset
+        if isinstance(self.traffic_percent, Unset):
+            traffic_percent = UNSET
+        else:
+            traffic_percent = self.traffic_percent
+
+        canary: dict[str, Any] | None | Unset
+        if isinstance(self.canary, Unset):
+            canary = UNSET
+        elif isinstance(self.canary, CanaryPresetSpec):
+            canary = self.canary.to_dict()
+        else:
+            canary = self.canary
+
+        workflows: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.workflows, Unset):
+            workflows = []
+            for workflows_item_data in self.workflows:
+                workflows_item = workflows_item_data.to_dict()
+                workflows.append(workflows_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -128,6 +159,12 @@ class DiffRequest:
             field_dict["scope"] = scope
         if build_plan is not UNSET:
             field_dict["build_plan"] = build_plan
+        if traffic_percent is not UNSET:
+            field_dict["traffic_percent"] = traffic_percent
+        if canary is not UNSET:
+            field_dict["canary"] = canary
+        if workflows is not UNSET:
+            field_dict["workflows"] = workflows
 
         return field_dict
 
@@ -135,10 +172,12 @@ class DiffRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_manifest import AppManifest
         from ..models.build_plan import BuildPlan
+        from ..models.canary_preset_spec import CanaryPresetSpec
         from ..models.create_cron_request import CreateCronRequest
         from ..models.create_edge_rule_request import CreateEdgeRuleRequest
         from ..models.diff_app_config_patch import DiffAppConfigPatch
         from ..models.diff_request_env_by_scope import DiffRequestEnvByScope
+        from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
         _app_config = d.pop("app_config", UNSET)
@@ -198,6 +237,41 @@ class DiffRequest:
         else:
             build_plan = BuildPlan.from_dict(_build_plan)
 
+        def _parse_traffic_percent(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        traffic_percent = _parse_traffic_percent(d.pop("traffic_percent", UNSET))
+
+        def _parse_canary(data: object) -> CanaryPresetSpec | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                canary_type_0 = CanaryPresetSpec.from_dict(data)
+
+                return canary_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(CanaryPresetSpec | None | Unset, data)
+
+        canary = _parse_canary(d.pop("canary", UNSET))
+
+        _workflows = d.pop("workflows", UNSET)
+        workflows: list[WorkflowSpec] | Unset = UNSET
+        if _workflows is not UNSET:
+            workflows = []
+            for workflows_item_data in _workflows:
+                workflows_item = WorkflowSpec.from_dict(workflows_item_data)
+
+                workflows.append(workflows_item)
+
         diff_request = cls(
             app_config=app_config,
             image=image,
@@ -207,6 +281,9 @@ class DiffRequest:
             edge_rules=edge_rules,
             scope=scope,
             build_plan=build_plan,
+            traffic_percent=traffic_percent,
+            canary=canary,
+            workflows=workflows,
         )
 
         diff_request.additional_properties = d

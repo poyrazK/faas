@@ -15,10 +15,8 @@
 #   2. Creates the local spool roots /var/log/faas/archive and
 #      /var/log/faas/vmmd-archive (faas:faas, 0750) so both
 #      shippers have somewhere to retain files before upload. Spec §11.
-#   3. Removes the legacy gatewayd-internal archive drop-in. The
-#      gatewayd-internal base unit now owns the optional credential
-#      declaration, keeping the source of truth independent of whether
-#      the operator has provisioned the envelope yet.
+#   3. Removes the legacy gatewayd-internal archive drop-in. The shared
+#      optional_credentials role owns conditional projection for every daemon.
 #
 # What this role does NOT do (and why):
 #   * No cron purge unit — the apid shipper's PurgeInterval
@@ -52,6 +50,36 @@
 # root is a no-op on a converged box; the asserts are read-only.
 # Re-running produces zero `changed`.
 
+# GCE production uses the attached service account, so this envelope contains
+# routing metadata only. Converging it here keeps apid, vmmd, and the archive
+# read path on one source of truth and repairs an old two-byte placeholder.
+- name: log_archive — create archive credential directory for metadata auth
+  ansible.builtin.file:
+    path: /etc/faas/secrets/storage-box
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: faas_log_archive_bucket | trim | length > 0
+
+- name: log_archive — converge keyless archive metadata envelope
+  ansible.builtin.copy:
+    dest: /etc/faas/secrets/storage-box/archive-creds.json
+    owner: root
+    group: root
+    mode: "0400"
+    content: >-
+      {{ {
+        'endpoint': faas_log_archive_endpoint,
+        'region': faas_log_archive_region,
+        'bucket': faas_log_archive_bucket,
+        'auth_mode': faas_log_archive_auth_mode
+      } | to_nice_json }}
+  when: faas_log_archive_bucket | trim | length > 0
+  notify:
+    - daemon-reload log_archive
+    - activate log archive configuration
+
 # Fail-closed assert: the archive creds envelope MUST be 0400
 # root:root. PID 1 reads this source and systemd stages a
 # service-scoped copy under `$CREDENTIALS_DIRECTORY` for each
@@ -61,6 +89,17 @@
     path: /etc/faas/secrets/storage-box/archive-creds.json
   register: log_archive_creds_stat
   failed_when: false  # chroot/CI may not have /etc/faas/secrets
+
+- name: log_archive — require archive credentials on public fleets
+  ansible.builtin.assert:
+    that:
+      - log_archive_creds_stat.stat.exists
+      - (log_archive_creds_stat.stat.size | default(0) | int) > 2
+    fail_msg: >-
+      This fleet advertises customer log retention, but
+      /etc/faas/secrets/storage-box/archive-creds.json is missing or still a
+      placeholder. Provision the off-host bucket credentials before rollout.
+  when: faas_log_archive_required | bool
 
 # Skipped in chroot/CI (no /etc/faas/secrets/ yet). On a real
 # production box the v1 bootstrap.sh step that unseals host.age-sealed
@@ -81,6 +120,24 @@
       unseal-archive-creds` (PR-A CLI leaf) to repopulate from
       the host.age-sealed form. systemd reads the source as root
       and stages it privately for apid, vmmd, and gatewayd-internal.
+  when: log_archive_creds_stat.stat.exists
+
+- name: log_archive — validate archive credential fields without exposing secrets
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import json,sys;
+        d=json.load(open(sys.argv[1], encoding='utf-8'));
+        required=('endpoint','bucket');
+        assert all(isinstance(d.get(k),str) and d[k].strip() for k in required);
+        hmac=all(isinstance(d.get(k),str) and d[k].strip() for k in ('key_id','secret'));
+        metadata=d.get('auth_mode') == 'gcp_metadata' and not d.get('key_id') and not d.get('secret');
+        assert hmac or metadata
+      - /etc/faas/secrets/storage-box/archive-creds.json
+  changed_when: false
+  no_log: true
   when: log_archive_creds_stat.stat.exists
 
 # Spec §11: /var/log/faas/archive is the spool root the apid
@@ -145,20 +202,18 @@
     fail_msg: "/var/log/faas/vmmd-archive must be 0750 or tighter, faas:faas"
   when: log_archive_vmmd_spool_stat.stat.exists
 
-# The gatewayd-internal base unit owns the optional LoadCredential= line.
-# Remove the old role-owned drop-in from previously provisioned hosts so
-# there is one source of truth and no duplicate credential declarations.
+# Remove the old role-owned drop-in from previously provisioned hosts. The
+# optional_credentials role installs a supported directive only when the
+# source exists.
 - name: log_archive — remove legacy gateway archive drop-in
   ansible.builtin.file:
     path: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-log-archive.conf
     state: absent
   notify: daemon-reload log_archive
 
-# daemon-reload so the gatewayd-internal unit picks up the
-# new LoadCredential= on the next restart. We don't restart
-# the daemon here — `systemctl restart faas-gatewayd-internal`
-# is an operator action (deployed boxes have a customer SLO
-# and the role never silently bounces the edge).
+# Reload systemd for credential projection. A changed metadata envelope also
+# queues the activation handler above, which try-restarts active consumers at
+# the end of the play after optional_credentials has rendered its drop-ins.
 - name: log_archive — daemon-reload
   ansible.builtin.systemd:
     daemon_reload: true

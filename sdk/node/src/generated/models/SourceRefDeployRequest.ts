@@ -31,6 +31,14 @@ export type SourceRefDeployRequest = {
    */
   format?: 'tarball';
   /**
+   * Registered project environment to target for this source-ref deployment.
+   */
+  environment?: string;
+  /**
+   * Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed.
+   */
+  no_triggers?: boolean;
+  /**
    * Free-form operator note (≤280 chars). Example: 'Emergency rollback after payment provider incident'.
    */
   reason?: string;
@@ -54,5 +62,9 @@ export type SourceRefDeployRequest = {
    * Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent.
    */
   canary?: (CanaryPresetSpec | null);
+  /**
+   * Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
+   */
+  rollback_on_5xx?: boolean | null;
 };
 

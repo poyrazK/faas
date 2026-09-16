@@ -140,11 +140,11 @@ func scanProjectMultipartWithExclude(t *testing.T, h *e2etest.Harness,
 // singleWorkloadFixture is defined in apply_project_guards_e2e_test.go
 // (one convention-detector workload named `api`). We reuse it here so
 // the partition assertions stay small and the convention detector
-// walks `services/api/` exactly once.
+// walks `services/backend/` exactly once.
 //
 // TestScanExclude_BrandNewExcluded pins the operator's
 // "skip this workload for now" intent on the scan path. The
-// workload exists in the scan (RootDir="services/api", Name="api"),
+// workload exists in the scan (RootDir="services/backend", Name="backend"),
 // the operator excludes it, and the partition must reflect the
 // intent:
 //
@@ -173,7 +173,7 @@ func TestScanExclude_BrandNewExcluded(t *testing.T) {
 	key := h.SeedAccount(context.Background(), api.PlanPro, "exclude-brand-new")
 
 	plan, status, body := scanProjectMultipartWithExclude(t, h, key,
-		"exclude-brand-new", "", "api", singleWorkloadFixture(t))
+		"exclude-brand-new", "", "backend", singleWorkloadFixture(t))
 	if status != http.StatusOK {
 		t.Fatalf("scan status = %d, want 200 (body=%s)", status, body)
 	}
@@ -184,7 +184,7 @@ func TestScanExclude_BrandNewExcluded(t *testing.T) {
 
 	// The excluded workload must NOT appear in WillDeploy.
 	for _, w := range plan.WillDeploy {
-		if w.Slug == "api" {
+		if w.Slug == "backend" {
 			t.Errorf("WillDeploy carries excluded slug %q; want absent", w.Slug)
 		}
 	}
@@ -192,7 +192,7 @@ func TestScanExclude_BrandNewExcluded(t *testing.T) {
 	// The excluded workload MUST appear in Skipped with Action="noop".
 	var sawAPI bool
 	for _, s := range plan.Skipped {
-		if s.Slug == "api" {
+		if s.Slug == "backend" {
 			sawAPI = true
 			if s.Action != "noop" {
 				t.Errorf("Skipped[api].Action = %q, want noop", s.Action)
@@ -339,7 +339,7 @@ func TestScanExclude_MultiSlug(t *testing.T) {
 	key := h.SeedAccount(context.Background(), api.PlanPro, "exclude-multi-slug")
 
 	plan, status, body := scanProjectMultipartWithExclude(t, h, key,
-		"exclude-multi-slug", "", "api,web,worker", scanProjectFixture(t))
+		"exclude-multi-slug", "", "services/api,web,services/worker", scanProjectFixture(t))
 	if status != http.StatusOK {
 		t.Fatalf("scan status = %d, want 200 (body=%s)", status, body)
 	}
@@ -360,11 +360,26 @@ func TestScanExclude_MultiSlug(t *testing.T) {
 		}
 	}
 
-	// None of the excluded slugs may appear in WillDeploy.
-	for _, w := range plan.WillDeploy {
-		if want[w.Slug] {
-			t.Errorf("WillDeploy carries excluded slug %q; want absent", w.Slug)
+	// Root-qualified selectors exclude only the matching workload identity.
+	// The fixture deliberately contains a root Compose "api" plus a
+	// services/api "api", and root Compose/Procfile "worker" entries plus a
+	// services/worker "worker". Those same-name root workloads must remain;
+	// asserting only on Slug would incorrectly treat them as the excluded
+	// convention workloads.
+	for _, w := range plan.Workloads {
+		if w.RootDir == "services/api" || w.RootDir == "services/worker" {
+			t.Errorf("workloads carries excluded identity %q at root %q", w.Name, w.RootDir)
 		}
+		if w.Name == "web" {
+			t.Errorf("workloads carries excluded root workload %q", w.Name)
+		}
+	}
+	willCounts := make(map[string]int)
+	for _, w := range plan.WillDeploy {
+		willCounts[w.Slug]++
+	}
+	if willCounts["api"] != 1 || willCounts["worker"] != 2 || willCounts["web"] != 0 {
+		t.Errorf("WillDeploy duplicate-name projection = %#v, want api=1 worker=2 web=0", willCounts)
 	}
 }
 
@@ -391,7 +406,7 @@ func TestScanExclude_OnlyMutexRejected(t *testing.T) {
 
 	status, body := func() (int, string) {
 		_, s, b := scanProjectMultipartWithExclude(t, h, key,
-			"exclude-mutex", "api", "api", singleWorkloadFixture(t))
+			"exclude-mutex", "backend", "backend", singleWorkloadFixture(t))
 		return s, b
 	}()
 	if status != http.StatusConflict {

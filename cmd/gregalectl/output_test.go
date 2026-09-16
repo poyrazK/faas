@@ -173,7 +173,7 @@ func TestPrintUsage_Shape(t *testing.T) {
 	if !strings.Contains(got, "usage: gregalectl foo\n") {
 		t.Errorf("PrintUsage missing usage line: %q", got)
 	}
-	if !strings.Contains(got, "Docs: https://docs.gregale.dev/cli/foo") {
+	if !strings.Contains(got, "Docs: https://gregale.dev/docs/cli/foo") {
 		t.Errorf("PrintUsage missing docs line: %q", got)
 	}
 }

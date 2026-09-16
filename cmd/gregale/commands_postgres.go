@@ -51,7 +51,7 @@ func cmdPostgres(args []string) int {
 // app slug and database name customers already use in their project.
 func cmdPostgresAttach(args []string) int {
 	args = normalizePostgresAttachArgs(args)
-	fs := flag.NewFlagSet("postgres attach", flag.ContinueOnError)
+	fs := newFlagSet("postgres attach", flag.ContinueOnError)
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
@@ -134,7 +134,7 @@ func (a *stringAlias) Set(value string) error {
 }
 
 func cmdPostgresUsage(args []string) int {
-	fs := flag.NewFlagSet("postgres usage", flag.ContinueOnError)
+	fs := newFlagSet("postgres usage", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		PrintUsage(os.Stderr, "usage: gregale postgres usage", "postgres")
 		return 1
@@ -172,7 +172,7 @@ func formatPostgresObservedAt(observedAt *time.Time) string {
 }
 
 func cmdPostgresList(args []string) int {
-	fs := flag.NewFlagSet("postgres list", flag.ContinueOnError)
+	fs := newFlagSet("postgres list", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		PrintUsage(os.Stderr, "usage: gregale postgres list", "postgres")
 		return 1
@@ -201,7 +201,7 @@ func cmdPostgresList(args []string) int {
 
 func cmdPostgresCreate(args []string) int {
 	args = normalizePostgresArgs(args)
-	fs := flag.NewFlagSet("postgres create", flag.ContinueOnError)
+	fs := newFlagSet("postgres create", flag.ContinueOnError)
 	region := fs.String("region", "", "provider-neutral region (required)")
 	major := fs.Int("postgres-major", 16, "PostgreSQL major version")
 	serviceClass := fs.String("class", "development", "service class: development|burstable|production")
@@ -281,7 +281,7 @@ func cmdPostgresDelete(args []string) int {
 
 func cmdPostgresRestore(args []string) int {
 	args = normalizePostgresArgs(args)
-	fs := flag.NewFlagSet("postgres restore", flag.ContinueOnError)
+	fs := newFlagSet("postgres restore", flag.ContinueOnError)
 	name := fs.String("name", "", "name for the restored database (required)")
 	pointInTime := fs.String("point-in-time", "", "RFC3339 restore timestamp (required)")
 	if err := fs.Parse(args); err != nil {
@@ -354,7 +354,7 @@ func cmdPostgresBindingsList(args []string) int {
 
 func cmdPostgresBindingsCreate(args []string) int {
 	args = normalizePostgresArgs(args)
-	fs := flag.NewFlagSet("postgres bindings create", flag.ContinueOnError)
+	fs := newFlagSet("postgres bindings create", flag.ContinueOnError)
 	app := fs.String("app", "", "app ID (required)")
 	scope := fs.String("scope", "", "environment scope (required)")
 	environmentKey := fs.String("environment-key", "", "environment variable name (required)")
@@ -423,7 +423,7 @@ func cmdPostgresBindingsDelete(args []string) int {
 
 func onePostgresID(command string, args []string) (string, bool) {
 	args = normalizePostgresArgs(args)
-	fs := flag.NewFlagSet(command, flag.ContinueOnError)
+	fs := newFlagSet(command, flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 || strings.TrimSpace(fs.Arg(0)) == "" {
 		PrintUsage(os.Stderr, "usage: gregale "+strings.ReplaceAll(command, " ", " ")+" ID", "postgres")
 		return "", false

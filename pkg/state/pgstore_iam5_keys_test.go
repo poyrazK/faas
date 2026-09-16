@@ -65,6 +65,35 @@ func TestPg_CreateAPIKeyWithExpiry_FutureExpiryPersistsValue(t *testing.T) {
 	}
 }
 
+func TestPg_APIKeyLastUsedPreservesNullAndTimestamp(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID := createAccount(t, s, ctx, pgTestEmail(t))
+	k, err := s.CreateAPIKeyWithExpiry(ctx, acctID, []byte{0xA1, 0xB2}, "never-used", []string{"apps:read"}, nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKeyWithExpiry: %v", err)
+	}
+	if k.LastUsedAt != nil {
+		t.Fatalf("fresh key LastUsedAt = %v, want nil", k.LastUsedAt)
+	}
+	listed, err := s.ListAPIKeys(ctx, acctID)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("ListAPIKeys = (%v, %v)", listed, err)
+	}
+	if listed[0].LastUsedAt != nil {
+		t.Fatalf("listed fresh key LastUsedAt = %v, want nil", listed[0].LastUsedAt)
+	}
+	if err := s.TouchKeyLastUsed(ctx, k.ID); err != nil {
+		t.Fatalf("TouchKeyLastUsed: %v", err)
+	}
+	used, err := s.GetAPIKey(ctx, acctID, k.ID)
+	if err != nil {
+		t.Fatalf("GetAPIKey: %v", err)
+	}
+	if used.LastUsedAt == nil || used.LastUsedAt.Before(time.Now().Add(-time.Minute)) {
+		t.Fatalf("used key LastUsedAt = %v, want recent timestamp", used.LastUsedAt)
+	}
+}
+
 // --- CountAPIKeys ------------------------------------------------------------
 
 func TestPg_CountAPIKeys_ExcludesRevoked(t *testing.T) {

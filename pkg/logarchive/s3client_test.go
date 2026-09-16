@@ -23,6 +23,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/oauth2"
 )
 
 // fakeS3 is a minimal S3-compatible server: it captures the
@@ -62,6 +65,35 @@ func TestS3_NewClientAuthMissing(t *testing.T) {
 	}
 	if _, err := NewS3Client("https://s3.example", "us-east-1", "b", "k", ""); !errors.Is(err, ErrAuthMissing) {
 		t.Errorf("empty secret: err=%v, want ErrAuthMissing", err)
+	}
+}
+
+func TestS3_GCPMetadataAuthUsesShortLivedBearerToken(t *testing.T) {
+	var authorization string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c, err := NewS3Client(srv.URL, "auto", "mybucket", "", "", "gcp_metadata")
+	if err != nil {
+		t.Fatalf("NewS3Client: %v", err)
+	}
+	c.TokenSource = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "short-lived-token", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)})
+	if err := c.PutObject(context.Background(), "k", "application/gzip", bytes.NewReader([]byte("x")), 1); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	if authorization != "Bearer short-lived-token" {
+		t.Fatalf("Authorization = %q, want metadata bearer token", authorization)
+	}
+}
+
+func TestS3_GCPMetadataAuthRejectsMixedOrUnknownCredentials(t *testing.T) {
+	if _, err := NewS3Client("https://storage.googleapis.com", "auto", "b", "key", "secret", "gcp_metadata"); err == nil {
+		t.Fatal("gcp_metadata accepted long-lived HMAC credentials")
+	}
+	if _, err := NewS3Client("https://storage.googleapis.com", "auto", "b", "", "", "unknown"); err == nil {
+		t.Fatal("unknown archive auth mode accepted")
 	}
 }
 

@@ -154,6 +154,13 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrSourceTooLarge(limits, req.TotalSize))
 		return
 	}
+	if req.DeployOptions != nil {
+		rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: req.DeployOptions.RollbackOn5xx}
+		if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	app, err := s.store.AppBySlug(r.Context(), req.AppSlug)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -559,6 +566,17 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx}
+	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if opts.Scope != "" {
+		if prob := api.ValidateScope(opts.Scope); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	if prob := validateSourceProvenance(opts.SourceURL, opts.CommitSHA); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -580,11 +598,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
-	if opts.Scope != "" {
-		if prob := api.ValidateScope(opts.Scope); prob != nil {
-			api.WriteProblem(w, prob)
-			return
-		}
+	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	if app.Type == state.AppTypeFunction {
 		if opts.Dockerfile {
@@ -631,6 +647,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	if opts.Dockerfile {
 		kind = state.DeploymentKindDockerfile
 	}
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
 	sourceURL := opts.SourceURL
 	if sourceURL == "" {
 		sourceURL = "local-tar://upload-session/" + uploadID
@@ -657,7 +676,8 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		DeployedBy:       opts.DeployedBy,
 		PRNumber:         opts.PRNumber,
 		Workflows:        marshalWorkflowDefinitions(opts.Workflows),
-		Scope:            opts.Scope,
+		Scope:            rolloutReq.Scope,
+		RollbackOn5xx:    opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
 		HostingObserver:  s.ops,
 		HostingFlow:      "first_deploy",
 		ServiceRollout:   app.Manifest.ExecutionMode == api.ExecutionModeService,

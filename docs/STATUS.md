@@ -379,13 +379,16 @@ spinner) and PR #51 (the closeout batch):
   now emit from the build lifecycle, and `apid /status` computes the
   build-success SLO from real build data instead of the old vmmd
   cold-boot proxy (which measured wake, not build).
-- **§12 public status page** — `apid` serves `GET /status` (static
-  HTML, `deploy/statuspage/index.html`) and `GET /status/slo.json`
-  (4 PromQL queries against the local Prometheus with a 30 s
-  in-process cache and graceful degradation on transient failures;
-  never 5xx the route). The fourth query drives the `degraded` flag
-  surfaced by the alert pipeline — see
-  [M8 — alert pipeline](#m8--alert-pipeline--this-pr) below.
+- **§12 public status page** — `apid` serves the unauthenticated
+  `GET /v1/status` overview and `GET /v1/status/incidents/{public_id}`
+  timeline. A five-minute evaluator maps labeled alerts into five public
+  capabilities, overlays operator incidents/maintenance, and persists real
+  UTC rollup buckets for 30-day uptime and coverage. Admin publishing is
+  guarded by admin scope, allowlist, MFA, recent step-up, same-origin, and
+  idempotency checks. `GET /status/slo.json` remains a compatible, always-JSON
+  projection with its existing best-effort 30-day invocation rollup and recent
+  operator incident history, while `GET /status` remains the minimal API-host fallback. The
+  indexed React experience is served by `faas-web` at `/status`; see ADR-130.
 - **§14 restore drill wired** —
   `deploy/scripts/faas-m8-restore-drill.sh` plus WAL-archiving
   knobs in the postgres ansible role. The drill now extracts the tar-format
@@ -532,12 +535,12 @@ The §14 M8 gates still on the board are listed in [What's next](#whats-next).
 
 - **ADR-066** (Tier A5 cross-node live-instance migration, accepted 2026-08-07): four-phase handoff (Park → mint lease → `MigrateInstanceOwner` → ack), `schedd_live_migration_decisions_total{outcome}` counter, `apps.migrated_at` + `instances.migrated_at` stamped in the same transaction. Bundled with PR #509 (Tier A4 per-node schedd), PRs in the ADR-066 → 067 → 068 cluster.
 - **ADR-062** (per-node schedd + async placement claim, accepted 2026-08-16): single-writer-per-host invariant survives multi-host deploys; `apid_control_plane_only` depguard in `.golangci.yml` prevents a control-plane path from calling a compute-only peer.
-- **ADR-063** (snapshot de-localization, revised 2026-08-26; issue #1054): snapshots use the shared OCI backend as the authoritative transport, while each active node's vmmd asynchronously prepositions both restore blobs through a durable event-cursor plus `snapshot_replicas` queue. Origin metadata restricts new fan-out to the producer's region; wake placement prefers ready local replicas and retains on-demand restore/cold-boot fallback. vmmd now samples durable queue-to-ready latency (`snapshothipd_fanout_latency_seconds`) on a 100 ms cursor cadence; the two-node ≤200 ms measurement and 100-cycle leak drill remain M9 acceptance work.
+- **ADR-063** (snapshot de-localization, revised 2026-08-26; issue #1054): snapshots use the shared OCI backend as the authoritative transport, while each active node's vmmd asynchronously prepositions both restore blobs through a durable event-cursor plus `snapshot_replicas` queue. Origin metadata restricts new fan-out to the producer's region; wake placement prefers ready local replicas and retains on-demand restore/cold-boot fallback. vmmd now samples durable queue-to-ready latency (`snapshothipd_fanout_latency_seconds`) on a 100 ms cursor cadence, and per-claim lease fencing prevents late workers from overwriting reclaimed jobs; the two-node ≤200 ms measurement and 100-cycle leak drill remain M9 acceptance work.
 - **ADR-067** (migrating-instance watchdog, accepted 2026-08-16): 1 s ticker self-heals stuck `state='migrating'` rows that never committed (peer died mid-handoff, gRPC dropped, operator killed the new owner). The watchdog is the only writer that can move a row out of `migrating` without a peer commit.
 - **ADR-110** (declarative split-box manifest, accepted 2026-08-16): versioned YAML + typed schema at `deploy/manifest/splitbox.yaml` + `pkg/manifest/`; SemVer `schema_version (1.0.0)`; canonical validation through `gregalectl manifest validate` + the renderer + the release bundle installer + the doctor + the metal harness. PR-cluster shipped (PRs #912 #913 #914 #915 #917 #918 #919 #920 #921 #922 #923 #924).
 - **ADR-141** (durable imaged→apid audit delivery, accepted 2026-09-03): migration 00590 adds a deduplicated `audit_event_outbox`; imaged keeps `pg_notify` as the fast wakeup, while apid transactionally writes the audit row and replays pending or expired-lease handoffs every two seconds. Failed deliveries back off, dead-letter after twelve attempts, and queue metadata is pruned after 90 days without deleting audit evidence. This closes the signature-audit loss window identified in ADR-058.
 
-End-to-end smoke: `make native-m9-acceptance` exercises the native x86 per-node heartbeat/failure-safe path. It replaces the retired two-node Lima gate; the target requires the acceptance marker, explicit `FAAS_M9_CONFIRM=native-x86`, and a schedd+vmmd pair on each node. The split-box deployment now installs a node-local schedd on every compute host; live-migration/partition fixtures and the measured snapshot fan-out gate remain follow-up work in the M9 runbook.
+End-to-end smoke: `make native-m9-acceptance` exercises the native x86 per-node heartbeat/failure-safe path. It replaces the retired two-node Lima gate; the target requires the acceptance marker, explicit `FAAS_M9_CONFIRM=native-x86`, and a schedd+vmmd pair on each node. The split-box deployment now installs a node-local schedd on every compute host, and peer schedds observe stale heartbeat timestamps so a frozen owner cannot hide its node. Live-migration workload fixtures and the measured snapshot fan-out gate remain follow-up work in the M9 runbook.
 
 ### M8 — alert pipeline. ✅ (this PR)
 
@@ -594,6 +597,28 @@ The §12 dashboard pipeline is wired end-to-end:
   `ALERTS{}` not yet populated, e.g. on a freshly-reloaded Prometheus)
   is treated as "no firing alerts" rather than poisoning the snapshot
   — the flag is intentionally conservative.
+
+#### Status page history contract
+
+- `uptime_30d_pct` is the time-weighted availability of complete five-minute
+  platform observations for the last 30 UTC calendar days. It is derived from
+  the same component telemetry and operator incident overlays as the public
+  status endpoint; customer function results, timeouts, dead letters, and
+  cancellations never lower platform uptime.
+- `uptime_30d` always contains 30 daily points. The compatibility fields
+  `successful` and `total` count available and observed five-minute platform
+  intervals. A day with no complete platform telemetry has `total: 0` and
+  `uptime_pct: null`, so missing coverage is not published as an outage.
+- The switch to platform observations intentionally resets the legacy 30-day
+  history to the observation-bucket retention window. Historical customer
+  invocation failures are not backfilled into the new series.
+- `incidents` contains incidents posted in the last 30 days, plus any still-
+  open older incident. The public projection includes `started_at`,
+  `resolved_at`, `severity`, `summary`, and the affected `component`.
+- The history query is capped at 100 incidents and has a 2 s database timeout.
+  If Postgres is unavailable, the endpoint still serves the current
+  Prometheus-backed snapshot and leaves history empty/default for that
+  refresh.
 
 #### Runbook index
 
@@ -699,13 +724,10 @@ ADR-075 / issue #475 / migration 00138.
   (per-app / per-account → 422 `plan_webhook_quota`). Closed enum
   drift on `retry_policy` and `event_filter` surfaces as 400
   `app_webhook_invalid` BEFORE the row is created.
-- **Event vocabulary (issue #1395 B5 + API consumer billing delivery)** — the closed event set is shared by
-  state, API/OpenAPI, CLI, SDK, and the delivery-ledger CHECK: `cron.fired`,
-  `cron.fired.manually`, `app.created`, `app.deleted`, `app.deployed`,
-  `app.scaled`, `app.parked`, `app.woken`, `build.succeeded`,
-  `build.failed`, `deployment.failed`, `rollout.aborted`, `error.new`,
-  `job.finished`, `preview.created`, `budget.threshold`, and
-  `usage_statement.finalized`. Producers call
+- **Event vocabulary (issue #2444)** — new subscriptions expose only the
+  producer-backed events `app.parked`, `app.woken`, and
+  `usage_statement.finalized`. The delivery ledger retains its historical
+  closed set so old delivery rows remain readable across upgrades. Producers call
   `pkg/webhook.Emit` after their source mutation commits; it stores the raw
   JSON payload in one durable row per enabled matching subscription, so the
   existing retry endpoint can replay every event. OpenAPI carries a payload
@@ -1002,13 +1024,12 @@ explicitly open issues that the doc otherwise implies are closed.
   `cmd/gatewayd-public/main.go`; three alert rules land in `faas.rules.yml`;
   operator runbook at `docs/ops/gatewayd-public-tls-cutover.md` (the legacy `docs/ops/gatewayd-tls-cutover.md` retains the pre-PR-A cut-over steps; current process lives in the public-edge runbook).
 - **§14 V2 latency driver** — 100 platform-only park→wake cycles per app class,
-  p95 < 350 ms from `wake.boot_started` through `wake.boot_completed` on
-  the reference SSD node. The internal gateway first-byte cohort now also
-  enforces p99 ≤ 500 ms and p999 ≤ 800 ms in
-  `TestDeployWakeMetal/wake-latency-p99-100cycles`; its per-phase p99/p999
-  view is the `Wake phase latency (p99 / p999)` dashboard panel. The gate is
-  wired via `pkg/fcvm/TestMetalParkWakeCycle`; the internal gateway cohort
-  remains a separate diagnostic. Reference-SSD execution is recorded here
+  p95 < 350 ms from capacity admission/`wake.boot_started` through the first
+  upstream byte on the reference SSD node. The reusable
+  `scripts/ops/wake_performance_gate.py` reports the full-wake and raw-restore
+  p50/p90/p95/p99 distributions and rejects incomplete runtime cohorts. CDN,
+  Internet and client-distance timing stays outside this gate. Reference-SSD
+  execution is recorded here
   when the metal acceptance run is available. Runs on
   `make metal-lima RUN_ARGS='-run TestDeployWakeMetal'`.
 - **Documented timed restore drill** — §14 M8: PG + one app back
@@ -1040,14 +1061,22 @@ explicitly open issues that the doc otherwise implies are closed.
   app's sticky-warm hint and choose by current fleet headroom, so a two-node
   fleet can keep desired replicas on separate compute nodes. The scheduler
   coverage lives in `TestConvergeServiceReplicasSpreadsAcrossComputeNodes`.
+- **Replica lifecycle observability** — schedd now exports the bounded
+  `schedd_service_replicas{app,state}` gauge with desired, ready, starting,
+  draining, and unavailable capacity. Terminal and parked history rows are
+  excluded from the live projection, so operators can see rollout or
+  recovery shortfalls without inferring them from scheduler logs.
 - **Workload networking** — the gateway exposes a deterministic cross-VM
   service endpoint registry (ADR-167), a trusted node-local service proxy
   (ADR-168), and a tenant-bridge guest listener with HostIP caller binding
   (ADR-169). ADR-170 adds node-local DNS for `<slug>.svc.gregale`, backed by
   the same `HostBridgeIP:10080` proxy; the netns firewall admits DNS and proxy
-  traffic before the lateral-movement deny. Host ports and public multi-port
-  routing remain separate follow-ups; loopback discovery within one task remains
-  supported (ADR-164 and ADR-165).
+  traffic before the lateral-movement deny. Named TCP public multi-port routing
+  now uses the `app--port-<name>` selector and the existing vmmd bridge
+  (ADR-176); durable node-local host-port leasing now reserves declared TCP
+  and UDP listeners (ADR-177). Direct socket binding, UDP ingress, and custom
+  per-port TLS remain separate follow-ups. Loopback discovery within one task remains supported
+  (ADR-164 and ADR-165).
 - **Resource and cost isolation** — named RAM/CPU profiles, per-node vCPU
   admission, ephemeral disk ceilings, and the account-level compute + S3 +
   managed-PostgreSQL usage projection are present; runtime per-container
@@ -1057,8 +1086,8 @@ explicitly open issues that the doc otherwise implies are closed.
   64 MiB default for inherited profiles. ADR-175 adds a customer-selectable
   16..512 MiB sidecar scratch quota and named per-workload guest `io.weight`
   policies (`low`, `standard`, `high`); omitted values preserve the inherited
-  defaults. Persistent volumes, host-port allocation, and public multi-port
-  routing remain follow-up work.
+  defaults. Persistent volumes remain follow-up work; public named TCP listeners
+  are now covered by ADR-176 and host-port allocation by ADR-177.
 
 ### Open security & infrastructure issues
 

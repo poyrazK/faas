@@ -108,8 +108,8 @@ def sync_detailed(
     the body, is sealed with secretbox.SealBytes under the
     APP_WEBHOOK namespace, and is NEVER returned in plaintext
     — the response shape carries the masked constant. event_filter
-    is an optional allowlist; empty subscribes to every event in
-    the closed vocabulary.
+    is an optional allowlist; empty subscribes to every currently
+    supported producer-backed event.
 
     Args:
         slug (str):
@@ -117,8 +117,7 @@ def sync_detailed(
             webhook_secret is HMAC-SHA256 sealed at rest with the host
             X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
-            'event_filter': ['cron.fired', 'app.created'], 'retry_policy': 'default', 'enabled':
-            True}.
+            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -154,8 +153,8 @@ def sync(
     the body, is sealed with secretbox.SealBytes under the
     APP_WEBHOOK namespace, and is NEVER returned in plaintext
     — the response shape carries the masked constant. event_filter
-    is an optional allowlist; empty subscribes to every event in
-    the closed vocabulary.
+    is an optional allowlist; empty subscribes to every currently
+    supported producer-backed event.
 
     Args:
         slug (str):
@@ -163,8 +162,7 @@ def sync(
             webhook_secret is HMAC-SHA256 sealed at rest with the host
             X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
-            'event_filter': ['cron.fired', 'app.created'], 'retry_policy': 'default', 'enabled':
-            True}.
+            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,8 +193,8 @@ async def asyncio_detailed(
     the body, is sealed with secretbox.SealBytes under the
     APP_WEBHOOK namespace, and is NEVER returned in plaintext
     — the response shape carries the masked constant. event_filter
-    is an optional allowlist; empty subscribes to every event in
-    the closed vocabulary.
+    is an optional allowlist; empty subscribes to every currently
+    supported producer-backed event.
 
     Args:
         slug (str):
@@ -204,8 +202,7 @@ async def asyncio_detailed(
             webhook_secret is HMAC-SHA256 sealed at rest with the host
             X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
-            'event_filter': ['cron.fired', 'app.created'], 'retry_policy': 'default', 'enabled':
-            True}.
+            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -239,8 +236,8 @@ async def asyncio(
     the body, is sealed with secretbox.SealBytes under the
     APP_WEBHOOK namespace, and is NEVER returned in plaintext
     — the response shape carries the masked constant. event_filter
-    is an optional allowlist; empty subscribes to every event in
-    the closed vocabulary.
+    is an optional allowlist; empty subscribes to every currently
+    supported producer-backed event.
 
     Args:
         slug (str):
@@ -248,8 +245,7 @@ async def asyncio(
             webhook_secret is HMAC-SHA256 sealed at rest with the host
             X25519 recipient (namespace `APP_WEBHOOK`).
              Example: {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh',
-            'event_filter': ['cron.fired', 'app.created'], 'retry_policy': 'default', 'enabled':
-            True}.
+            'event_filter': ['app.parked', 'app.woken'], 'retry_policy': 'default', 'enabled': True}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

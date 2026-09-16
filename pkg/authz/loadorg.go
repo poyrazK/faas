@@ -4,7 +4,8 @@
 // see the same membership. This is half of the authz seam PR 4 of
 // issue #190 / IAM-6 / ADR-061 ships alongside the AuthorizeOrgAction table.
 //
-// Header (X-Active-Org) wins over query (?org=); neither set → pass-through.
+// Header (X-Active-Org) wins over query (?org=), which wins over the
+// route's {slug} path value. Neither set → pass-through.
 // Unknown slug → 404 org_not_found; known org but caller is not a
 // member → 403 org_role_forbidden (IDOR-safe — both 4xx so a
 // non-member of an existing org sees the same shape as a non-member
@@ -159,6 +160,13 @@ func handleLoadOrg(cfg LoadOrgConfig, r OrgResolver, w http.ResponseWriter, req 
 	slug := strings.TrimSpace(req.Header.Get(cfg.HeaderName))
 	if slug == "" {
 		slug = strings.TrimSpace(req.URL.Query().Get(cfg.QueryName))
+	}
+	if slug == "" {
+		// Org-scoped routes already carry their authoritative slug in the
+		// Go 1.22 ServeMux path value. Requiring every client to duplicate it
+		// in X-Active-Org left the normal CLI path without a membership and
+		// caused the downstream authorization gate to return a wiring 500.
+		slug = strings.TrimSpace(req.PathValue("slug"))
 	}
 	if slug == "" || len(slug) > maxSlugLen {
 		// Passthrough: no active org requested (or the hint is

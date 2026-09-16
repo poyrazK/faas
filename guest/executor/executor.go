@@ -34,22 +34,30 @@ const (
 // installation.
 type commandBuilder func(context.Context, string, ...string) *exec.Cmd
 
+// commandResolver resolves the fixed interpreter command for a validated
+// request. It is kept as a narrow seam so tests can exercise deadline and
+// teardown behaviour with a deterministic helper process.
+type commandResolver func(executionproto.Request) (string, []string, string, error)
+
 // Executor is the guest-side execution protocol handler.
 type Executor struct {
-	build commandBuilder
-	now   func() time.Time
+	build   commandBuilder
+	resolve commandResolver
+	now     func() time.Time
 }
 
 // New returns the production executor. The returned handler is safe to use
 // for exactly one request, as required by executionproto.Serve; the VM exits
 // after that exchange and therefore no state is retained between callers.
 func New() *Executor {
-	return &Executor{
+	e := &Executor{
 		build: func(ctx context.Context, path string, args ...string) *exec.Cmd {
 			return exec.CommandContext(ctx, path, args...)
 		},
 		now: time.Now,
 	}
+	e.resolve = e.command
+	return e
 }
 
 // Handle implements executionproto.Handler.
@@ -60,7 +68,16 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	if err := req.Validate(); err != nil {
 		return executionproto.Result{}, err
 	}
-	interpreter, args, sourceName, err := e.command(req)
+	requestCtx, cancelRequest := context.WithTimeout(ctx, time.Duration(req.TimeoutMS)*time.Millisecond)
+	defer cancelRequest()
+	if err := requestCtx.Err(); err != nil {
+		return executionproto.Result{}, err
+	}
+	resolve := e.resolve
+	if resolve == nil {
+		resolve = e.command
+	}
+	interpreter, args, sourceName, err := resolve(req)
 	if err != nil {
 		return executionproto.Result{}, err
 	}
@@ -75,7 +92,12 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	sourcePath := filepath.Join(workdir, sourceName)
 	inputPath := filepath.Join(workdir, "input.json")
 	resultPath := filepath.Join(workdir, "result.json")
-	if err := writeGuestFile(sourcePath, []byte(req.Source)); err != nil {
+	if len(req.Files) != 0 {
+		if err := stageBundle(workdir, req.Entrypoint, req.Files); err != nil {
+			return executionproto.Result{}, errors.New("execution bundle staging failed")
+		}
+		sourcePath = filepath.Join(workdir, filepath.FromSlash(req.Entrypoint))
+	} else if err := writeGuestFile(sourcePath, []byte(req.Source)); err != nil {
 		return executionproto.Result{}, errors.New("execution source staging failed")
 	}
 	if err := writeGuestFile(inputPath, req.Input); err != nil {
@@ -84,13 +106,16 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	if err := writeGuestFile(resultPath, nil); err != nil {
 		return executionproto.Result{}, errors.New("execution result staging failed")
 	}
+	if err := requestCtx.Err(); err != nil {
+		return executionproto.Result{}, err
+	}
 
 	maxResult := req.MaxOutput
 	if maxResult > resultReserve {
 		maxResult -= resultReserve
 	}
 	args = append(args, sourcePath, inputPath, resultPath, req.ExecutionID, string(req.Runtime), fmt.Sprint(maxResult))
-	commandCtx, cancel := context.WithCancel(ctx)
+	commandCtx, cancel := context.WithCancel(requestCtx)
 	defer cancel()
 	cmd := e.build(commandCtx, interpreter, args...)
 	if cmd == nil {
@@ -125,14 +150,14 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 		if errors.Is(writerErr, executionproto.ErrOutputLimitExceeded) {
 			return failedResultWithUsage(started, e.now(), "output_limit", true, budget.Used()), nil
 		}
-		if errors.Is(writerErr, context.Canceled) && ctx.Err() == nil {
+		if errors.Is(writerErr, context.Canceled) && requestCtx.Err() == nil {
 			return failedResult(started, e.now(), "guest_error"), nil
 		}
 	}
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+	if errors.Is(requestCtx.Err(), context.DeadlineExceeded) || errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 		return executionproto.Result{}, context.DeadlineExceeded
 	}
-	if errors.Is(ctx.Err(), context.Canceled) {
+	if errors.Is(requestCtx.Err(), context.Canceled) {
 		return executionproto.Result{}, context.Canceled
 	}
 	if runErr != nil {
@@ -207,6 +232,22 @@ func writeGuestFile(path string, data []byte) error {
 		// If we are not PID 1/root, retain a readable mode for the current test
 		// user. In the production guest chown succeeds and the file stays 0600.
 		if err := os.Chmod(path, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func stageBundle(workdir, entrypoint string, files []api.ExecutionFile) error {
+	if err := api.ValidateExecutionBundle(entrypoint, files, api.ExecutionPlaintextFieldMaxBytes); err != nil {
+		return err
+	}
+	for _, file := range files {
+		filePath := filepath.Join(workdir, filepath.FromSlash(file.Path))
+		if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+			return err
+		}
+		if err := writeGuestFile(filePath, file.Content); err != nil {
 			return err
 		}
 	}
@@ -349,8 +390,9 @@ fs.writeFileSync(resultPath, encoded, { encoding: "utf8", mode: 0o600 });
 `
 
 const pythonWrapper = `
-import asyncio, importlib.util, inspect, json, sys
+import asyncio, importlib.util, inspect, json, os, sys
 source_path, input_path, result_path, execution_id, runtime, max_bytes = sys.argv[1:]
+sys.path.insert(0, os.path.dirname(source_path))
 spec = importlib.util.spec_from_file_location("faas_execution", source_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

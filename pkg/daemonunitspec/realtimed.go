@@ -9,21 +9,20 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitRealtimed() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas realtimed — managed realtime connection owner",
-		Documentation: "https://docs.gregale.dev/ops/realtime",
+		Documentation: "https://gregale.dev/docs/ops/realtime",
 		After:         []string{"faas-cp.slice", "faas-vmmd.service"},
 		Wants:         []string{"faas-cp.slice", "faas-vmmd.service"},
 
-		Type:               "simple",
-		User:               "faas",
-		Group:              "faas",
-		ExecStart:          "/opt/faas/current/bin/realtimed",
-		Restart:            "on-failure",
-		RestartSec:         "2s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
-		Slice:              FaasCPSlice,
-		MemoryMax:          "512M",
+		Type:       "simple",
+		User:       "faas",
+		Group:      "faas",
+		ExecStart:  "/opt/faas/current/bin/realtimed",
+		Restart:    "on-failure",
+		RestartSec: "2s",
+		Slice:      FaasCPSlice,
+		MemoryMax:  "512M",
 
-		EnvironmentFile: "-/etc/faas/secrets/realtimed/realtimed.env",
+		EnvironmentFile: "-/etc/faas/secrets/realtimed/realtimed.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
 		},

@@ -403,14 +403,16 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		configPath:          envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
-		detectFC:            fcvm.DetectFirecrackerVersion,
-		listen:              wire.ListenAs,
-		openDB:              db.Open,
+		configPath: envOr("FAAS_VMMD_CONFIG", "/etc/faas/vmmd.toml"),
+		detectFC:   fcvm.DetectFirecrackerVersion,
+		listen:     wire.ListenAs,
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-vmmd")
+		},
 		openStore:           state.NewPgStore,
 		detectOverlayIP:     nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
 		loadHostKey:         secretbox.LoadHostKey,
-		loadHostKeys:        secretbox.LoadHostKeys,
+		loadHostKeys:        secretbox.LoadFleetAndHostKeys,
 		genAndSaveKey:       secretbox.GenerateAndSaveHostKey,
 		writeRecipient:      secretbox.WriteRecipientFile,
 		popCounters:         netns.PopCounters,
@@ -580,7 +582,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		deps.loadHostKey = secretbox.LoadHostKey
 	}
 	if deps.loadHostKeys == nil {
-		deps.loadHostKeys = secretbox.LoadHostKeys
+		deps.loadHostKeys = secretbox.LoadFleetAndHostKeys
 	}
 	if deps.genAndSaveKey == nil {
 		deps.genAndSaveKey = secretbox.GenerateAndSaveHostKey
@@ -772,9 +774,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if storage.AsCacheBackend(storageBackend) == nil {
 			return errors.New("vmmd: OCI snapshot fan-out requires the local read-through cache")
 		}
-		replicaStore, ok := store.(state.SnapshotReplicaStore)
+		replicaStore, ok := store.(state.SnapshotReplicaLeaseStore)
 		if !ok {
-			return errors.New("vmmd: OCI snapshot fan-out requires a snapshot replica store")
+			return errors.New("vmmd: OCI snapshot fan-out requires a lease-aware snapshot replica store")
 		}
 		fanoutRegion := ""
 		if node, regionErr := store.ComputeNodeByID(ctx, nodeID); regionErr != nil {
@@ -927,10 +929,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// (pkg/events.Platform) on the VMM. vmmd is the canonical emit
 	// site for wake.readiness_200 (the first 2xx probe) and a
-	// corroborating observation for wake.boot_started (mirror at
-	// the gRPC server boundary). nil events opts out (legacy
+	// corroborating wake.boot_observed event at the gRPC server
+	// boundary. nil events opts out (legacy
 	// default-local path). Schedd is the canonical writer for
-	// wake.boot_started — vmmd's mirror is a sanity check that the
+	// wake.boot_started — the vmmd observation is a sanity check that the
 	// boot RPC actually entered the FC bring-up path.
 	vmm := mgr.VMM()
 	if vmm != nil && store != nil {
@@ -1075,16 +1077,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//     test container, build hosts without /dev/vsock): bind
 	//     returns EADDRNOTAVAIL. The unit-test seam must keep
 	//     running — the warm-tier path is dormant but the rest of
-	//     vmmd (gRPC, host key, capacity publisher) still needs to
-	//     come up so cmd/vmmd tests can exercise it.
-	//
-	// The production-only vsock path is opt-in: an operator running
-	// the full vmmd on a host whose kernel supports vsock would
-	// see the receiver come up. If bind fails on a real production
-	// host, the warm-tier migration is silently dropped — but the
-	// gRPC server still serves readiness, and the watchdog tick
-	// (memory `schedd-watchdog-tick`) is unaffected.
-	recv, err := StartFrameworkReadyReceiver(ctx, log, mgr)
+	// Guest-initiated platform channels are registered here and bound as
+	// per-instance Firecracker Unix listeners during boot/restore. Registration
+	// remains soft at process startup so diagnostics stay available, but the
+	// receiver health signals below hold /readyz at 503 on failure.
+	guestReceiverHealth := newGuestVsockReceiverHealth(ops.Registry())
+	jailer.WithGuestVsockTransportObserver(guestReceiverHealth.Observe)
+	recv, err := StartFrameworkReadyReceiver(ctx, log, mgr, jailer)
 	if err != nil {
 		log.Warn("vmmd: framework_ready receiver unavailable", "err", err, "goos", runtime.GOOS)
 		recv = nil
@@ -1129,7 +1128,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if identityErr != nil {
 		log.Warn("vmmd: workload identity signer unavailable", "err", identityErr)
 	}
-	identityRecv, identityRecvErr := StartWorkloadIdentityReceiver(ctx, log, mgr, identitySigner)
+	identityRecv, identityRecvErr := StartWorkloadIdentityReceiver(ctx, log, mgr, identitySigner, jailer)
 	if identityRecvErr != nil {
 		log.Warn("vmmd: workload identity receiver unavailable", "err", identityRecvErr, "goos", runtime.GOOS)
 	} else {
@@ -1256,6 +1255,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// BuildReadinessProbe call's failure path (the probe is
 	// ready regardless).
 	vmmdProbe, grpcBound := BuildReadinessProbe()
+	vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverEvents), nil)
+	vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverIdentity), nil)
 	vmmdProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("vmmd", ready, reason)
 	})
@@ -1288,9 +1289,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
 		WithNodeID(nodeID)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
-	// on the gRPC server. vmmd is the corroborating-observation
-	// source for wake.boot_started (mirror at the gRPC server
-	// boundary) and the canonical emit site for wake.readiness_200
+	// on the gRPC server. vmmd is the source for the corroborating wake.boot_observed event at the
+	// gRPC server boundary and the canonical emit site for wake.readiness_200
 	// (the first 2xx probe). nil events opts out (legacy default-
 	// local path).
 	if store != nil {
@@ -1307,6 +1307,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Optional /metrics endpoint.
 	var httpSrv *http.Server
 	if cfg.MetricsAddr != "" {
+		// Issue #2350: sample compute-host journal pressure and remaining
+		// networkd-dispatcher errors out of band. vmmd's endpoint is already
+		// discovered per active compute node, so these host signals reach the
+		// control-plane Prometheus without exposing node_exporter on a new port.
+		hostMetrics := newHostJournalMetrics(ops.Registry(), nil, nil)
+		go hostMetrics.runSampler(ctx, log)
 		mux := newMetricsMux(ops, cbm, frm, wpm, dsm)
 		if identitySigner != nil {
 			mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {
@@ -1444,9 +1450,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.startCapacityPublish != nil {
 			deps.startCapacityPublish(ctx, mgr, nodeID, cfg.ComputeNode, deps.scheddTarget, deps.scheddClientTLS, interval, resident, nodeKey, nodeKeyID, log)
 		} else {
-			stats := telemetryReader(func(statsCtx context.Context) (*vmmdpb.StatsResponse, error) {
+			stats := capacityTelemetryGuard(mgr, nodeID, telemetryReader(func(statsCtx context.Context) (*vmmdpb.StatsResponse, error) {
 				return impl.Stats(statsCtx, &vmmdpb.StatsRequest{})
-			})
+			}), ops, log)
 			go runCapacityPublish(ctx, mgr, nodeID, cfg.ComputeNode, deps.scheddTarget, deps.scheddClientTLS, interval, resident, nodeKey, nodeKeyID, log, stats)
 		}
 		log.Info("vmmd: capacity publisher wired", "node_id", nodeID, "target", deps.scheddTarget, "interval", interval.String())

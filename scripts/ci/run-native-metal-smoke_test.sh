@@ -18,7 +18,10 @@ expanded="$(
   make -n -C "${repo_root}" GO=/usr/bin/true PKGS=./pkg/fcvm \
     RUN_ARGS="${run_args}" test-metal
 )"
-expected='/usr/bin/true test -tags metal -race -count=1 -timeout=30m -v ./pkg/fcvm'
+# The `"$@"` placeholder is test-metal's RUN_REGEX slot: with RUN_REGEX unset it
+# expands to nothing, so this gate's runtime invocation is unchanged. It appears
+# here because `make -n` prints the recipe text, not the post-shell argv.
+expected='/usr/bin/true test -tags metal -race -count=1 -timeout=30m -v "$@" ./pkg/fcvm'
 
 grep -Fq -- "${expected}" <<<"${expanded}" || {
   echo "native metal invocation expanded incorrectly:" >&2
@@ -37,6 +40,13 @@ fi
 # A green check must mean tests executed. Zero-executed has to be a failure,
 # which is exactly how the old self-hosted job looked dormant rather than
 # broken for 100 consecutive dispatches.
+# A RUN_REGEX exported anywhere upstream would silently filter this gate, which
+# is the same "gate quietly shrinks" failure the -run pin above guards against.
+grep -Fq 'unset RUN_REGEX' "${runner}" || {
+  echo "native metal wrapper does not clear RUN_REGEX; an inherited filter would silently shrink the fcvm gate" >&2
+  exit 1
+}
+
 grep -Fq 'native metal smoke: no metal test executed' "${runner}" || {
   echo "native metal wrapper does not fail when zero tests execute" >&2
   exit 1

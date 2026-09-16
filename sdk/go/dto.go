@@ -27,25 +27,27 @@ type (
 	DeclaredRoute          = api.DeclaredRoute
 
 	// End-customer consumers and credentials (ADR-120).
-	CreateAPIConsumerRequest                = api.CreateAPIConsumerRequest
-	APIConsumerResponse                     = api.APIConsumerResponse
-	APIConsumerListResponse                 = api.APIConsumerListResponse
-	CreateConsumerKeyRequest                = api.CreateConsumerKeyRequest
-	ConsumerKeyResponse                     = api.ConsumerKeyResponse
-	ConsumerKeyListResponse                 = api.ConsumerKeyListResponse
-	APIConsumerUsageBucketResponse          = api.APIConsumerUsageBucketResponse
-	APIConsumerUsageResponse                = api.APIConsumerUsageResponse
-	CreateAPIConsumerRateCardRequest        = api.CreateAPIConsumerRateCardRequest
-	APIConsumerRateCardResponse             = api.APIConsumerRateCardResponse
-	APIConsumerRateCardListResponse         = api.APIConsumerRateCardListResponse
-	APIConsumerUsageQuoteBucketResponse     = api.APIConsumerUsageQuoteBucketResponse
-	APIConsumerUsageQuoteResponse           = api.APIConsumerUsageQuoteResponse
-	CreateAPIConsumerUsageStatementRequest  = api.CreateAPIConsumerUsageStatementRequest
-	APIConsumerUsageStatementBucketResponse = api.APIConsumerUsageStatementBucketResponse
-	APIConsumerUsageStatementResponse       = api.APIConsumerUsageStatementResponse
-	APIConsumerUsageStatementListResponse   = api.APIConsumerUsageStatementListResponse
-	ResourceProfile                         = api.ResourceProfile
-	ResourceProfileSpec                     = api.ResourceProfileSpec
+	CreateAPIConsumerRequest                 = api.CreateAPIConsumerRequest
+	APIConsumerResponse                      = api.APIConsumerResponse
+	APIConsumerListResponse                  = api.APIConsumerListResponse
+	CreateConsumerKeyRequest                 = api.CreateConsumerKeyRequest
+	ConsumerKeyResponse                      = api.ConsumerKeyResponse
+	ConsumerKeyListResponse                  = api.ConsumerKeyListResponse
+	APIConsumerUsageBucketResponse           = api.APIConsumerUsageBucketResponse
+	APIConsumerUsageResponse                 = api.APIConsumerUsageResponse
+	CreateAPIConsumerRateCardRequest         = api.CreateAPIConsumerRateCardRequest
+	APIConsumerRateCardResponse              = api.APIConsumerRateCardResponse
+	APIConsumerRateCardListResponse          = api.APIConsumerRateCardListResponse
+	APIConsumerUsageQuoteBucketResponse      = api.APIConsumerUsageQuoteBucketResponse
+	APIConsumerUsageQuoteResponse            = api.APIConsumerUsageQuoteResponse
+	CreateAPIConsumerUsageStatementRequest   = api.CreateAPIConsumerUsageStatementRequest
+	APIConsumerUsageStatementBucketResponse  = api.APIConsumerUsageStatementBucketResponse
+	APIConsumerUsageStatementResponse        = api.APIConsumerUsageStatementResponse
+	APIConsumerUsageStatementListResponse    = api.APIConsumerUsageStatementListResponse
+	ClaimAPIConsumerUsageStatementRequest    = api.ClaimAPIConsumerUsageStatementRequest
+	APIConsumerUsageStatementHandoffResponse = api.APIConsumerUsageStatementHandoffResponse
+	ResourceProfile                          = api.ResourceProfile
+	ResourceProfileSpec                      = api.ResourceProfileSpec
 
 	// Deployments.
 	CreateDeploymentRequest        = api.CreateDeploymentRequest
@@ -67,6 +69,8 @@ type (
 	GdprAuditExportResponse = api.GdprAuditExportResponse
 	AppSecretExportResponse = api.AppSecretExportResponse
 	StatusPage              = api.StatusPage
+	StatusUptimeBucket      = api.StatusUptimeBucket
+	StatusIncident          = api.StatusIncident
 
 	// API keys.
 	APIKeyResponse   = api.APIKeyResponse
@@ -85,11 +89,34 @@ type (
 	InstanceResponse = api.InstanceResponse
 
 	// Usage.
-	UsageResponse                = api.UsageResponse
-	UsageSummaryResponse         = api.UsageSummaryResponse
-	AccountUsageResponse         = api.AccountUsageResponse
-	ObjectStorageUsageResponse   = api.ObjectStorageUsageResponse
-	ManagedPostgresUsageResponse = api.ManagedPostgresUsageResponse
+	UsageResponse                 = api.UsageResponse
+	UsageSummaryResponse          = api.UsageSummaryResponse
+	ExecutionUsageSummaryResponse = api.ExecutionUsageSummaryResponse
+	AccountUsageResponse          = api.AccountUsageResponse
+	ObjectStorageUsageResponse    = api.ObjectStorageUsageResponse
+	ManagedPostgresUsageResponse  = api.ManagedPostgresUsageResponse
+
+	// Disposable agent executions. Source and input are accepted only by
+	// CreateExecutionRequest and are never returned in execution receipts.
+	ExecutionRuntime         = api.ExecutionRuntime
+	ExecutionNetworkMode     = api.ExecutionNetworkMode
+	ExecutionNetworkPolicy   = api.ExecutionNetworkPolicy
+	ExecutionLimitRequest    = api.ExecutionLimitRequest
+	ExecutionFile            = api.ExecutionFile
+	CreateExecutionRequest   = api.CreateExecutionRequest
+	ResolvedExecutionLimits  = api.ResolvedExecutionLimits
+	ExecutionUsage           = api.ExecutionUsage
+	ExecutionFailure         = api.ExecutionFailure
+	ExecutionStatus          = api.ExecutionStatus
+	ExecutionResponse        = api.ExecutionResponse
+	ExecutionListResponse    = api.ExecutionListResponse
+	ExecutionEventType       = api.ExecutionEventType
+	ExecutionEventData       = api.ExecutionEventData
+	ExecutionEvent           = api.ExecutionEvent
+	ExecutionEventParseError = api.ExecutionEventParseError
+	WatchExecutionOptions    = api.WatchExecutionOptions
+	ExecutionWatcher         = api.ExecutionWatcher
+	RunOptions               = api.RunOptions
 
 	// Auth (password).
 	PasswordLoginRequest  = api.PasswordLoginRequest
@@ -169,4 +196,25 @@ const (
 	ResourceProfileXLarge    = api.ResourceProfileXLarge
 	ConsumerAuthModeOptional = api.ConsumerAuthModeOptional
 	ConsumerAuthModeRequired = api.ConsumerAuthModeRequired
+
+	ExecutionRuntimeNode22    = api.ExecutionRuntimeNode22
+	ExecutionRuntimeNode24    = api.ExecutionRuntimeNode24
+	ExecutionRuntimePython312 = api.ExecutionRuntimePython312
+	ExecutionRuntimePython313 = api.ExecutionRuntimePython313
+	ExecutionNetworkNone      = api.ExecutionNetworkNone
+
+	ExecutionStatusQueued      = api.ExecutionStatusQueued
+	ExecutionStatusRestoring   = api.ExecutionStatusRestoring
+	ExecutionStatusRunning     = api.ExecutionStatusRunning
+	ExecutionStatusSucceeded   = api.ExecutionStatusSucceeded
+	ExecutionStatusFailed      = api.ExecutionStatusFailed
+	ExecutionStatusTimedOut    = api.ExecutionStatusTimedOut
+	ExecutionStatusOutOfMemory = api.ExecutionStatusOutOfMemory
+	ExecutionStatusCancelled   = api.ExecutionStatusCancelled
+
+	ExecutionEventStatus   = api.ExecutionEventStatus
+	ExecutionEventStdout   = api.ExecutionEventStdout
+	ExecutionEventStderr   = api.ExecutionEventStderr
+	ExecutionEventTerminal = api.ExecutionEventTerminal
+	ExecutionEventError    = api.ExecutionEventError
 )

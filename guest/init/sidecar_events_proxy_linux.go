@@ -10,7 +10,7 @@
 //     an init sidecar (type=="init" workload) exits, regardless
 //     of whether the exit was clean. status="init_ok" or
 //     "init_failed"; the exit code and elapsed millis travel
-//     alongside. vmmd translates the datagram into a
+//     alongside. vmmd translates the frame into a
 //     pkg/events.SidecarInitExit event AND, on init_failed,
 //     stamps the deployments-side audit row with
 //     failure_class: user_error (AC #1).
@@ -21,7 +21,7 @@
 //     vmmd_sidecar_restart_total{app,sidecar} and emits
 //     pkg/events.SidecarRestart (AC #3).
 //
-// Wire (guest-init → vsock DGRAM, port 1027):
+// Wire (guest-init → vsock STREAM, port 1027):
 //
 //	[1B type=0x02 | 0x03][json envelope bytes (UTF-8)]
 //
@@ -43,18 +43,14 @@
 // backpressure; the closed enum + bounded payload keeps the
 // single-socket design safe in PR-C.
 //
-// Why DGRAM, not unix-domain? The runner-facing framework_ready
-// proxy already binds this port; mirroring the same channel here
-// means guest-init needs no new unix socket, no new proxy
-// goroutine, and the host's existing recv loop covers all three
-// event classes (framework_ready, sidecar_init_exit,
-// sidecar_restart).
+// Each event uses a fresh stream. EOF is the frame boundary at the
+// per-instance host listener, so a broken connection cannot poison a later
+// lifecycle event.
 //
 // Lifecycle: outbox (sender only). startSidecarEventsProxy is
 // called once from boot() before the supervisor starts, so the
 // first init-exit can't race the proxy coming up. Returns are
-// tolerated — bind failures log at Warn and the contract is
-// "no signal" not "won't boot".
+// tolerated — send failures log at Warn and do not stop the workload.
 package main
 
 import (
@@ -62,8 +58,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-
-	"golang.org/x/sys/unix"
+	"time"
 )
 
 // VsockSidecarEventsPort mirrors cmd/vmmd/framework_ready_recv.go
@@ -86,7 +81,7 @@ const VsockSidecarEventsTypeRestart byte = 0x03
 
 // VsockTailEventType (issue #667 / ADR-078) is the discriminator
 // byte for the waitUntil(post-response tail) terminal-event
-// envelope. Same DGRAM port 1027 channel as the framework_ready /
+// envelope. Same STREAM port 1027 channel as the framework_ready /
 // sidecar_init_exit / sidecar_restart events; the host's recv
 // loop (cmd/vmmd/framework_ready_recv.go) dispatches on the
 // leading type byte. The 1-byte outcome + 8-byte elapsed_ms BE
@@ -97,7 +92,7 @@ const VsockSidecarEventsTypeRestart byte = 0x03
 //	[1B type=0x04][1B outcome][6B reserved][8B elapsed_ms BE uint64]
 //
 // Reserved bytes stay 0x00 in PR 3 — the host resolves instance
-// identity from the DGRAM peer CID (same join the framework_ready
+// identity from the STREAM peer CID (same join the framework_ready
 // / sidecar paths use). The reserved space gives a follow-up PR
 // a wire-incompatible-free upgrade path (e.g. an explicit
 // instance_id if the peer CID join ever needs to be relaxed for
@@ -156,49 +151,23 @@ type sidecarRestartEnvelope struct {
 // bounded by api.SidecarCapMax=2 + a reasonable length bound
 // (~32 chars); the JSON envelope settles well under 256 bytes
 // for any realistic payload. 512 is a generous future-proof
-// margin that still fits in a single vsock DGRAM (kernel
-// default vsock_dgram_send_size on Linux is far larger —
-// ≤4 KiB on most distributions).
+// margin below the host receiver's 1024-byte frame cap.
 const sidecarMaxDatagram = 512
 
-// startSidecarEventsProxy binds an AF_VSOCK DGRAM socket on
-// VMADDR_CID_ANY:VsockSidecarEventsPort (the same port the host
-// binds for receiving). The outbound socket is connectionless,
-// so SendmsgN to VMADDR_CID_HOST is the only direction. Bind
-// failures are returned so the caller (boot) can log +
-// continue — the platform contract is "no signal" not "won't
-// boot". On bind success, the returned proxy's send methods
-// are reachable from runWorkloads + the supervisor's OnCrash
-// hook. The socket's lifetime matches the guest's PID 1; no
-// shutdown is needed.
+// startSidecarEventsProxy installs the outbound sender used by runWorkloads
+// and the supervisor's OnCrash hook. A socket is opened per send.
 func startSidecarEventsProxy(log *slog.Logger) (*sidecarEventsProxy, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	vsock, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return nil, fmt.Errorf("sidecar events vsock socket: %w", err)
-	}
-	if err := unix.Bind(vsock, &unix.SockaddrVM{
-		CID:  unix.VMADDR_CID_ANY,
-		Port: VsockSidecarEventsPort,
-	}); err != nil {
-		_ = unix.Close(vsock)
-		return nil, fmt.Errorf("sidecar events vsock bind %d: %w", VsockSidecarEventsPort, err)
-	}
-	p := &sidecarEventsProxy{fd: vsock, log: log}
-	log.Info("sidecar events proxy started", "vsock_port", VsockSidecarEventsPort)
+	p := &sidecarEventsProxy{log: log}
+	log.Info("sidecar events proxy started", "vsock_port", VsockSidecarEventsPort, "transport", "stream")
 	return p, nil
 }
 
 // sidecarEventsProxy is the outbound-only sender for the two
-// sidecar event classes. The fd is held for the guest's
-// lifetime; closed implicitly when guest-init exits. The
-// receiver uses unix.SendmsgN directly so a frame larger than
-// the kernel's per-message limit surfaces a runtime error to
-// the caller — we never silently drop the signal.
+// sidecar event classes.
 type sidecarEventsProxy struct {
-	fd  int
 	log *slog.Logger
 }
 
@@ -256,7 +225,7 @@ func (p *sidecarEventsProxy) SendRestart(sidecar string, attempt int) error {
 //	[1B type=0x04][1B outcome][6B reserved][8B elapsed_ms BE uint64]
 //
 // Reserved bytes are 0x00 in PR 3 — the host resolves
-// instance identity from the DGRAM peer CID. elapsedMs is
+// instance identity from the STREAM peer CID. elapsedMs is
 // the wall-clock duration from waitUntil registration to
 // terminal (in milliseconds); the host reads it for the
 // telemetry histogram (PR 5). A send error is logged at the
@@ -289,11 +258,7 @@ func (p *sidecarEventsProxy) sendTail(outcome byte, elapsedMs int64) error {
 	buf[1] = outcome
 	// buf[2:8] reserved, already zero from make().
 	binary.BigEndian.PutUint64(buf[8:16], uint64(elapsedMs))
-	dst := &unix.SockaddrVM{
-		CID:  unix.VMADDR_CID_HOST,
-		Port: VsockSidecarEventsPort,
-	}
-	if _, err := unix.SendmsgN(p.fd, buf, nil, dst, 0); err != nil {
+	if err := sendGuestEventFrame(buf, time.Second); err != nil {
 		return fmt.Errorf("tail event vsock send: %w", err)
 	}
 	return nil
@@ -309,11 +274,7 @@ func (p *sidecarEventsProxy) send(t byte, body []byte) error {
 	buf := make([]byte, sidecarMaxDatagram)[:1+bodyLen]
 	buf[0] = t
 	copy(buf[1:], body)
-	dst := &unix.SockaddrVM{
-		CID:  unix.VMADDR_CID_HOST,
-		Port: VsockSidecarEventsPort,
-	}
-	if _, err := unix.SendmsgN(p.fd, buf, nil, dst, 0); err != nil {
+	if err := sendGuestEventFrame(buf, time.Second); err != nil {
 		return fmt.Errorf("sidecar event vsock send: %w", err)
 	}
 	return nil

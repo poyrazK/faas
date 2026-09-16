@@ -29,6 +29,7 @@
     {"path": "env", "source": "docs/env.md"},
     {"path": "errors", "source": "docs/errors.md"},
     {"path": "event-driven", "source": "docs/event-driven.md"},
+    {"path": "executions", "source": "docs/executions.md"},
     {"path": "faas_openapi_spec", "source": "docs/faas_openapi_spec.md"},
     {"path": "functions", "source": "docs/functions.md"},
     {"path": "gdpr", "source": "docs/account.md"},

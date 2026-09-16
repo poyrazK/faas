@@ -2,11 +2,13 @@ package sched
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func TestInstanceModeForApp(t *testing.T) {
@@ -49,6 +51,38 @@ func TestClassifyServiceReplicasSeparatesReadiness(t *testing.T) {
 	}
 	if got.inFlight() != 4 || got.managed() != 5 {
 		t.Fatalf("service replica capacity = in_flight:%d managed:%d, want in_flight:4 managed:5", got.inFlight(), got.managed())
+	}
+}
+
+// adr: 137 — service replica readiness and desired-capacity projection.
+func TestObserveServiceReplicaStatusProjectsCapacity(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, deployment := seedApp(t, store, api.PlanPro, 128, 5)
+	app.Manifest = state.AppManifest{
+		ExecutionMode:   api.ExecutionModeService,
+		ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 4, Desired: 4},
+	}
+	for i, replicaState := range []state.State{state.StateRunning, state.StateColdBooting, state.StateFailed} {
+		if _, err := store.CreateInstanceWithMode(context.Background(), app.ID, deployment.ID,
+			string(replicaState), app.RAMMB, "node-1", "status-wake-"+string(rune('1'+i)), string(state.InstanceModeService)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ops := wire.NewOpsMetrics("schedd")
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	e.observeServiceReplicaStatus(context.Background(), app, []state.Deployment{deployment})
+
+	body := getMetricsBody(t, ops)
+	for _, want := range []string{
+		`schedd_service_replicas{app="` + app.ID + `",state="desired"} 4`,
+		`schedd_service_replicas{app="` + app.ID + `",state="ready"} 1`,
+		`schedd_service_replicas{app="` + app.ID + `",state="starting"} 1`,
+		`schedd_service_replicas{app="` + app.ID + `",state="draining"} 0`,
+		`schedd_service_replicas{app="` + app.ID + `",state="unavailable"} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in /metrics:\n%s", want, body)
+		}
 	}
 }
 
@@ -124,6 +158,43 @@ func TestAllocateServiceReplicaTargets(t *testing.T) {
 				t.Fatalf("allocated replicas = %d, want %d: %+v", sum, tt.desired, got)
 			}
 		})
+	}
+}
+
+// TestDrainDeploymentInstances_ReleasesHotSupersededRevision covers the
+// request-mode cutover path. A hot old revision must be parked before a new
+// request can consume a one-instance plan's only slot.
+func TestDrainDeploymentInstances_ReleasesHotSupersededRevision(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, oldDep := seedApp(t, store, api.PlanFree, 128, 1)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	res, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake old revision: %v", err)
+	}
+	newDep, err := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:new", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if err := store.MarkDeploymentLive(context.Background(), newDep.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive: %v", err)
+	}
+	e.drainDeploymentInstances(context.Background(), oldDep.ID, true)
+	old, err := store.InstanceByID(context.Background(), res.InstanceID)
+	if err != nil {
+		t.Fatalf("InstanceByID: %v", err)
+	}
+	if old.State != string(state.StateParked) {
+		t.Fatalf("old instance state = %q, want parked", old.State)
+	}
+	if vmm.snapshots != 1 {
+		t.Fatalf("old revision snapshots = %d, want 1", vmm.snapshots)
+	}
+	if _, err := e.Wake(context.Background(), app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake new revision after drain: %v", err)
 	}
 }
 

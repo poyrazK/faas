@@ -9,7 +9,7 @@
 // (streamDeploymentLogs on TopicDeploymentLog), and no one publishes.
 //
 // This goroutine is the single producer. It owns one reconnecting LISTEN
-// across the seven SSE-relevant channels and republishes each notification
+// across the eight SSE-relevant channels and republishes each notification
 // into the broadcaster under the same channel name. The dashboard
 // handler keeps using its own per-request subscription for
 // account-scoping; the broadcaster is the route any in-process handler
@@ -34,7 +34,8 @@ import (
 // sseChannels is the set of pg_notify channels the fan-in republishes.
 // Mirrors cmd/apid/handlers_events.go::eventsChannels plus
 // NotifyInvocationDone (added in Move 3 so the dashboard reacts when an
-// async invoke / queue / delayed-task / cron row lands). One set, kept
+// async invoke / queue / delayed-task / cron row lands) and
+// NotifyDebugRegressionChanged (live debugger lifecycle updates). One set, kept
 // in sync between the per-request subscriber and the fan-in: the
 // fan-in's job is to make the broadcaster a faithful mirror of
 // pg_notify for in-process consumers; the per-request subscriber's
@@ -47,6 +48,7 @@ var sseChannels = []string{
 	db.NotifyQuotaWarning,
 	db.NotifyBillingPastDue,
 	db.NotifyInvocationDone,
+	db.NotifyDebugRegressionChanged,
 	// Wave 0 PR-C / ADR-047: stateless-advisory fan-in mirror.
 	// MUST stay in lock-step with cmd/apid/handlers_events.go::
 	// eventsChannels — see the comment there.

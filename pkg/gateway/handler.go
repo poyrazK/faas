@@ -193,6 +193,10 @@ type App struct {
 	// the App struct keeps the hot path allocation-free
 	// after first sight.
 	Sidecars []AppSidecar
+	// Ports is the app-owned listener roster. The public edge only selects
+	// TCP entries through the reserved `--port-<name>` hostname form;
+	// UDP entries remain guest-only.
+	Ports []AppPort
 	// RequireAuthn (issue #560) is the per-deployment
 	// token-gate opt-in. When true, ServeHTTP demands a
 	// valid `Authorization: Bearer <token>` header on every
@@ -355,11 +359,11 @@ const (
 
 // docsTypeBase is the canonical docs path prefix for problem
 // `type:` URLs emitted from the gateway (RFC 7807 §3.1). Sourced
-// from wire.DocsHost so a rotation only edits pkg/wire/docs.go,
+// from wire.DocsBaseURL so a rotation only edits pkg/wire/docs.go,
 // not this file. Distinct from pkg/api's `docsBase` because the
 // gateway emits problem types (full URN-shaped slugs) rather
 // than topic-path docs URLs.
-var docsTypeBase = "https://" + wire.DocsHost + "/errors"
+var docsTypeBase = wire.DocsBaseURL + "/errors"
 
 // Authn-failure reason taxonomy (issue #560 + issue #477).
 // The strings land on the `reason` field of the audit row
@@ -400,6 +404,15 @@ const (
 type AppSidecar struct {
 	Name string
 	Port int
+}
+
+// AppPort is the gateway-local projection of one app listener declaration.
+// Protocol is kept as a string to avoid making the gateway depend on the
+// state-layer manifest type.
+type AppPort struct {
+	Name     string
+	Port     int
+	Protocol string
 }
 
 // RequireAuthnAuthenticator (issue #560) is the narrow slice of
@@ -482,6 +495,10 @@ type PublicAuthUnsealer interface {
 // last_request_at touches (spec §4.1) and to stamp x-faas-instance on
 // the request before proxying.
 type Target struct {
+	// AppID is authoritative admission/cache identity. Lifecycle telemetry
+	// must not depend on an optional request header, especially for cron and
+	// other synthetic invocations.
+	AppID      string
 	NodeID     string
 	InstanceID string
 	WakeID     string
@@ -2347,6 +2364,7 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	}
 	raw := bearerTokenFromHeader(r.Header.Get("Authorization"))
 	if raw == "" {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="apps"`)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
 			api.CodeUnauthorized, "Missing bearer token",
 			"Authorization: Bearer <token> required for this edge rule"))
@@ -2355,6 +2373,7 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	}
 	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, rule)
 	if err != nil {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="apps"`)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
 			api.CodeUnauthorized, "JWT verification failed", "the bearer token did not satisfy this edge rule"))
 		h.jwtEmit(r.Context(), "jwt", "failed", rule.ID, r.Host, nil, map[string]any{"err": err.Error()})
@@ -5037,12 +5056,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Request ID is generated once per request and set on the response BEFORE
 	// any error path so even 4xx responses are correlatable. Inbound
 	// x-faas-request-id overrides (lets curl/clients supply their own trace).
-	rid := r.Header.Get("x-faas-request-id")
+	rid := r.Header.Get(api.RequestIDHeader)
 	if rid == "" {
 		rid = newRequestID()
 	}
-	w.Header().Set("x-faas-request-id", rid)
+	w.Header().Set(api.RequestIDHeader, rid)
+	// The response, scheduler RPC metadata, and first-byte event all consume
+	// this canonical header/context pair. Generated IDs used to exist only in
+	// the response and gateway-private context, leaving cold-wake timelines
+	// without the customer-visible correlation handle.
+	r.Header.Set(api.RequestIDHeader, rid)
+	// Direct HTTP calls do not have a scheduler invocation row. Give function
+	// adapters the same public-safe correlation id returned to the caller,
+	// while preserving the durable id already attached to synthetic work.
+	if !isSyntheticInvocation(r.Context()) {
+		r.Header.Set(api.InvocationIDHeader, rid)
+	}
 	r = r.WithContext(WithRequestID(r.Context(), rid)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+	correlation, _ := wire.FromContext(r.Context())
+	correlation.RequestID = rid
+	r = r.WithContext(wire.WithContext(r.Context(), correlation))
 
 	host := hostname(r.Host)
 
@@ -5270,16 +5303,14 @@ haveApp:
 	// ADR-119: per-app ingress 'internal_only' mode runs AFTER
 	// applyIngressIPAllowlist (so an IP-blocked request short-
 	// circuits first) and BEFORE applyEdgeRuleIP (so a JWT-failed
-	// request never wakes a Firecracker). Trust chain: gatewayd-
-	// public MUST strip inbound Authorization (see
-	// internal_proxy.go:~351 — added in this PR) so external
-	// callers can never reach this gate with an Authorization
-	// header intact. Only daemons that dial gatewayd-internal
-	// directly via /run/faas/gatewayd-internal.sock reach this
-	// gate. The synth-side gate (SynthServer.handleSynthesize,
-	// pkg/gateway/synth.go) is the parallel cron-fired path —
-	// both gates share the same verifier (cmd/gatewayd-internal/
-	// internal_svc_verifier.go).
+	// request never wakes a Firecracker). The public proxy keeps
+	// customer Authorization headers intact for the normal
+	// bearer/basic/consumer-auth gates; internal_only is selected
+	// only on the daemon-authenticated path through
+	// /run/faas/gatewayd-internal.sock. The synth-side gate
+	// (SynthServer.handleSynthesize, pkg/gateway/synth.go) is the
+	// parallel cron-fired path — both gates share the same verifier
+	// (cmd/gatewayd-internal/internal_svc_verifier.go).
 	if h.applyIngressInternalSvc(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -5497,21 +5528,24 @@ haveApp:
 		// resolved above, no point doing it twice).
 	}
 
-	// Issue #463 / ADR-069 / ADR-071 / PR-C §5: resolve the
-	// sidecar port when sidecarName != "". A sidecarName
-	// that doesn't match the deployment's sidecar roster
-	// is a 404 — the customer-facing URL `host--sidecar`
-	// only succeeds if the deployment actually declares
-	// that sidecar. The port is stored on a local variable
-	// so the picker's Target.Port assignment later in this
-	// handler sees the sidecar override instead of the
-	// main app's port.
+	// Resolve a selector when sidecarName != "". Existing sidecar selectors
+	// keep the ADR-069 hostname contract; the reserved `port-` namespace
+	// selects an app-owned TCP listener (ADR-176). Unknown selectors are a 404.
 	if sidecarName != "" {
-		port, sidecarOK := SidecarSelectorForApp(app, sidecarName)
-		if !sidecarOK {
+		port := 0
+		selectorOK := false
+		selectorProblem := "No such sidecar"
+		selectorDetail := fmt.Sprintf("app %q has no sidecar named %q", app.ID, sidecarName)
+		if strings.HasPrefix(sidecarName, PublicPortSelectorPrefix) {
+			port, selectorOK = PublicPortSelectorForApp(app, sidecarName)
+			selectorProblem = "No such public port"
+			selectorDetail = fmt.Sprintf("app %q has no public TCP listener named %q", app.ID, strings.TrimPrefix(sidecarName, PublicPortSelectorPrefix))
+		} else {
+			port, selectorOK = SidecarSelectorForApp(app, sidecarName)
+		}
+		if !selectorOK {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound,
-				api.CodeNotFound, "No such sidecar",
-				fmt.Sprintf("app %q has no sidecar named %q", app.ID, sidecarName)))
+				api.CodeNotFound, selectorProblem, selectorDetail))
 			h.observe(r, rec.status, app.ID, "", false, Target{})
 			return
 		}
@@ -5593,10 +5627,12 @@ haveApp:
 	defer burstDone()
 	limits, _ := api.LimitsFor(app.Plan)
 	var (
-		cold       bool
-		wakeID     string
-		wakeMethod WakeMethod
-		err        error
+		cold              bool
+		wakeID            string
+		wakeMethod        WakeMethod
+		platformWakeStart time.Time
+		platformWakeTrace *wakePhaseTrace
+		err               error
 	)
 
 	// PickWarm is the combined warm-path decision for the production backend. A
@@ -5624,6 +5660,12 @@ haveApp:
 		}
 	}
 	if !pick.OK {
+		// This is the canonical platform-only boundary. Authentication,
+		// routing, rate limiting, and the public edge have already completed;
+		// scheduler admission, VM restore, and the internal first-byte hop are
+		// included.
+		platformWakeStart = time.Now()
+		platformWakeTrace = newWakePhaseTrace(platformWakeStart)
 		// Per-app fan-out admission (issue #168). The WakeGate's
 		// shouldWake predicate runs HealthyCount against the plan's
 		// effective max_concurrency, so a burst of N requests admits up to
@@ -5633,6 +5675,7 @@ haveApp:
 		// render a useful page while the WakeGate's detached leader keeps
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
+		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
 		var cancelWakePage context.CancelFunc
 		showWakePage := acceptsWakePage(r)
 		if showWakePage {
@@ -5666,6 +5709,16 @@ haveApp:
 				h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())
 				w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
 				writeWakePage(w, r.Header.Get("x-faas-wake-id"))
+				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+				return
+			}
+			if !showWakePage && requestBudgetExpired(r.Context()) && h.gate.WakeInProgress(app.ID) {
+				// Function requests have a three-second default budget. A
+				// snapshot miss can legitimately fall back to a longer cold boot;
+				// keep the one detached boot alive and return an explicit async
+				// result instead of misclassifying every attached caller as fleet
+				// capacity failure.
+				writeWakeInProgress(w, requestIDFrom(r))
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
@@ -5726,6 +5779,9 @@ haveApp:
 	// hits are recovered via the next deployment_changed notify
 	// that re-seeds the cache.
 	if !pick.OK && pick.ColdBucket != "" {
+		if platformWakeStart.IsZero() {
+			platformWakeStart = time.Now()
+		}
 		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(r.Context(), "gateway.wake_fanout",
 			attribute.String("app_id", app.ID),
 			attribute.String("deployment_id", pick.ColdBucket),
@@ -5772,7 +5828,20 @@ haveApp:
 	// the request waits on the selected VM until its own budget expires.
 	var vmRelease func()
 	var vmWaited bool
-	pick, vmRelease, vmWaited, err = h.acquireVMTarget(r.Context(), app, pick, perVMConcurrency)
+	capacityCtx, capacitySpan := pkgtrace.StartSpan(r.Context(), "gateway.capacity_wait",
+		attribute.String("app_id", app.ID),
+		attribute.String("instance_id", pick.Target.InstanceID),
+		attribute.Int("concurrency_per_vm", perVMConcurrency),
+	)
+	pick, vmRelease, vmWaited, err = h.acquireVMTarget(capacityCtx, app, pick, perVMConcurrency)
+	capacitySpan.SetAttributes(
+		attribute.Bool("waited", vmWaited),
+		attribute.String("selected_instance_id", pick.Target.InstanceID),
+	)
+	if err != nil {
+		capacitySpan.RecordError(err)
+	}
+	capacitySpan.End()
 	if vmWaited {
 		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
 	}
@@ -5783,6 +5852,12 @@ haveApp:
 	}
 	defer vmRelease()
 	target := pick.Target
+	// This is platform-authored deployment evidence and is exposed only to an
+	// authenticated hosting smoke. Guest response headers with the same name
+	// are stripped by forwardedResponseHeader.
+	if h.authorizedDeploymentSmoke(r, app) {
+		w.Header().Set(api.DeploymentIDHeader, target.DeploymentID)
+	}
 	// A selected target proves the app is live, including a newly completed
 	// wake. Health probes can reuse this state while the app later parks.
 	h.markHealthReady(app.ID)
@@ -5792,10 +5867,11 @@ haveApp:
 	if cold && wakeID != "" && target.WakeID != "" {
 		wakeID = target.WakeID
 	}
-	// The cached target retains the VM's original wake ID. Only this
-	// request's admission belongs in a wake timeline; warm traffic must not
-	// append synchronous wake events for the rest of the VM's lifetime.
-	target.WakeID = wakeID
+	// Consume the wake generation's first-byte metadata exactly once. This
+	// also covers the first warm-looking browser retry after a detached wake
+	// page: the cached target still carries the completed wake ID even though
+	// this retry did not perform admission itself.
+	r, target = h.armWakeFirstByte(r, app.ID, target, wakeID)
 
 	// Semantic bridge span. The request context is passed through the existing
 	// otelgrpc client instrumentation, so vmmd's forwarding server span and
@@ -6118,6 +6194,7 @@ haveApp:
 		return
 	}
 	if h.proxyByNode != nil {
+		platformWakeTrace.markProxyStarted(time.Now())
 		// Issue #98 / ADR-028: Target.NodeID is the compute_node.id;
 		// the forwarder dials the per-node vmmd over the overlay and
 		// bridges the HTTP bytes through the instance netns via the
@@ -6154,6 +6231,7 @@ haveApp:
 		r.Header.Set("x-faas-protocol", decideProtocol(app))
 		h.proxyByNode(target).ServeHTTP(capped, r)
 	} else {
+		platformWakeTrace.markProxyStarted(time.Now())
 		// Legacy addr-based path. Target.NodeID is treated as a
 		// host:port by defaultProxy — preserved for tests and the
 		// e2e harness without a vmmd overlay.
@@ -6247,6 +6325,10 @@ haveApp:
 			firstByteAt = time.Now()
 		}
 		h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceIDFromContext(r.Context()))
+		if !platformWakeStart.IsZero() {
+			h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceIDFromContext(r.Context()))
+			platformWakeTrace.observe(h.metrics, firstByteAt)
+		}
 		// Wake-locality classifier (PR scale-out readiness). Increment
 		// AFTER the existing first-byte observation so the 350 ms
 		// measurement path is unchanged. Only fires on a real admit
@@ -7230,7 +7312,11 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 		cold           bool
 		method         WakeMethod
 	)
-	h.beginWakePageCycle(appID)
+	acceptedAt := time.Now()
+	if requestAt, ok := StartTimeFromContext(ctx); ok {
+		acceptedAt = requestAt
+	}
+	h.beginWakePageCycle(appID, acceptedAt)
 	policy := WakeAdmissionPolicyForPlan(plan)
 	werr := h.gate.WaitWithPolicy(ctx, appID, accountID, policy,
 		func() bool {
@@ -7272,9 +7358,17 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 					if e != nil {
 						return e
 					}
-					if !atCapacity {
-						admittedWakeID, method, cold = id, m, true
+					if atCapacity {
+						h.finishWakePageCycle(admitCtx, appID, "")
+						return nil
 					}
+					admittedWakeID, method, cold = id, m, true
+					// Keep the capacity-aware production path identical to the
+					// single-admit path below: publish the scheduler wake ID before
+					// the first request is forwarded. Without this transition,
+					// armWakeFirstByte cannot claim the cycle and silently drops the
+					// per-wake proxy-first-byte event.
+					h.finishWakePageCycle(admitCtx, appID, id)
 					return nil
 				}
 				if ensurer, ok := h.backend.(warmEnsurer); ok && scope == "" {
@@ -7401,6 +7495,18 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		}
 		api.WriteProblem(w, api.ErrCapacity("wake failed"))
 	}
+}
+
+func writeWakeInProgress(w http.ResponseWriter, requestID string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Retry-After", "1")
+	w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
+	if requestID != "" {
+		w.Header().Set(api.RequestIDHeader, requestID)
+	}
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = fmt.Fprintf(w, `{"status":202,"code":%q,"title":"App is waking","detail":"retry the request after the Retry-After interval"}`+"\n", api.CodeWakeInProgress)
 }
 
 func wakeRetryAfterSeconds(err error, fallback int) int {

@@ -152,6 +152,7 @@ def regen(overwrite: bool = True) -> None:
             "_sse.py",
             "_transport.py",
             "idempotency.py",
+            "executions.py",
         ]
         target = OUT / "faas_sdk"
         if target.exists():
@@ -183,15 +184,16 @@ def regen(overwrite: bool = True) -> None:
     # images. The module form is the canonical, always-available
     # invocation.
     #
-    # Stash pyproject.toml BEFORE the generator runs — the generator
-    # emits a Poetry-default pyproject.toml at OUT that would clobber
-    # our hand-curated pytest config + per-file ruff ignores.
+    # Stash hand-curated project files BEFORE the generator runs — the
+    # generator emits its own README and Poetry-default pyproject.toml
+    # at OUT, which would otherwise clobber our SDK docs and pytest
+    # config + per-file ruff ignores.
     project_stash = Path(tempfile.mkdtemp(prefix="faas-sdk-project-"))
-    pyproject_src = OUT / "pyproject.toml"
-    pyproject_stashed = False
-    if pyproject_src.exists():
-        shutil.copy2(pyproject_src, project_stash / "pyproject.toml")
-        pyproject_stashed = True
+    project_files = ("pyproject.toml", "README.md")
+    for name in project_files:
+        src = OUT / name
+        if src.exists():
+            shutil.copy2(src, project_stash / name)
 
     spec_for_generator = pre_normalize_spec(SPEC)
     try:
@@ -264,10 +266,12 @@ def regen(overwrite: bool = True) -> None:
     _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
     _patch_generator_bugs(OUT / "faas_sdk")
 
-    # Restore the hand-curated pyproject.toml that we stashed
-    # before the generator ran (see comment block above).
-    if pyproject_stashed and pyproject_src.exists():
-        shutil.copy2(project_stash / "pyproject.toml", pyproject_src)
+    # Restore the hand-curated project files that we stashed before
+    # the generator ran (see comment block above).
+    for name in project_files:
+        src = project_stash / name
+        if src.exists():
+            shutil.copy2(src, OUT / name)
     if project_stash.exists():
         shutil.rmtree(project_stash)
 
@@ -325,7 +329,7 @@ def regen(overwrite: bool = True) -> None:
                     "--quiet",
                     str(sdk_root),
                     "--exclude",
-                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,__init__.py",
+                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,__init__.py",
                 ],
                 check=False,
                 capture_output=True,
@@ -606,6 +610,8 @@ Public surface:
   sentinels.
 * `SseEvent`, `iter_sse`, `aiter_sse` - Server-Sent Events
   parser for the long-lived `/v1/apps/{slug}/logs` endpoint.
+* `ExecutionEvent`, `watch_execution`, `awatch_execution` - typed,
+  resumable streams for disposable agent executions.
 """
 
 from ._rfc7807 import (
@@ -622,6 +628,7 @@ from ._rfc7807 import (
     raise_for_problem,
 )
 from ._sse import SseEvent, aiter_sse, iter_sse
+from .executions import ExecutionEvent, ExecutionID, awatch_execution, watch_execution
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
@@ -660,6 +667,10 @@ __all__ = (
     "SseEvent",
     "iter_sse",
     "aiter_sse",
+    "ExecutionEvent",
+    "ExecutionID",
+    "watch_execution",
+    "awatch_execution",
     "__version__",
 )
 '''
@@ -691,7 +702,7 @@ def _canonicalise_to_head(
     --exit-code` still surfaces real schema drift.
 
     Wrapper files (`_wrapper.py`, `_rfc7807.py`, `_sse.py`,
-    `_transport.py`, `idempotency.py`, `__init__.py`) are
+    `_transport.py`, `idempotency.py`, `executions.py`, `__init__.py`) are
     unaffected: they are restored from `wrapper_stash` /
     overwritten by `_rewrite_init_py` to equal HEAD bytes, so their
     regen SHA matches HEAD's and the loop's `continue` fires.

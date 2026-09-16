@@ -13,11 +13,8 @@ import (
 // malformed, or newer profile is intentionally ignored so legacy deployments
 // retain the detector fallback.
 func persistedProfileFramework(dep state.Deployment) (Framework, string, bool) {
-	if len(dep.InferredProfile) == 0 {
-		return FrameworkUnknown, "", false
-	}
-	var profile frameworkprofile.Profile
-	if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil || profile.Version != frameworkprofile.Version {
+	profile, ok := persistedProfile(dep)
+	if !ok {
 		return FrameworkUnknown, "", false
 	}
 	fw, ok := frameworkFromProfile(profile.Framework)
@@ -25,6 +22,25 @@ func persistedProfileFramework(dep state.Deployment) (Framework, string, bool) {
 		return FrameworkUnknown, "", false
 	}
 	return fw, profile.FrameworkVer, true
+}
+
+func persistedProfile(dep state.Deployment) (frameworkprofile.Profile, bool) {
+	if len(dep.InferredProfile) == 0 {
+		return frameworkprofile.Profile{}, false
+	}
+	var profile frameworkprofile.Profile
+	if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil || profile.Version != frameworkprofile.Version {
+		return frameworkprofile.Profile{}, false
+	}
+	return profile, true
+}
+
+func persistedDockerfilePath(dep state.Deployment) (string, bool) {
+	profile, ok := persistedProfile(dep)
+	if !ok || profile.DockerfilePath == "" {
+		return "", false
+	}
+	return profile.DockerfilePath, true
 }
 
 // functionRuntimeFramework selects the builder pipeline from the app's

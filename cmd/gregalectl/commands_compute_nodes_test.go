@@ -721,6 +721,38 @@ func TestComputeNodeReadsUseAuthenticatedAPI(t *testing.T) {
 		t.Fatalf("show = %+v", shown)
 	}
 
+	// run() strips the process-wide --json flag before dispatch. These leaves
+	// must still honor jsonOutput or the shipped binary silently emits the
+	// human key/value form even though its documented global flag was set.
+	previousJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = previousJSON })
+	out.Reset()
+	stderr.Reset()
+	if code := cmdComputeNodesShow([]string{"--node=alpha"}); code != 0 {
+		t.Fatalf("show with global JSON exit = %d stderr=%s", code, stderr.String())
+	}
+	shown = computeNodeShowJSON{}
+	if err := json.Unmarshal(out.Bytes(), &shown); err != nil {
+		t.Fatalf("decode show with global JSON: %v (raw: %q)", err, out.String())
+	}
+	if shown.Name != "alpha" || shown.LiveInstanceCount != 2 {
+		t.Fatalf("show with global JSON = %+v", shown)
+	}
+
+	out.Reset()
+	stderr.Reset()
+	if code := cmdComputeNodesList(nil); code != 0 {
+		t.Fatalf("list with global JSON exit = %d stderr=%s", code, stderr.String())
+	}
+	listed = computeNodesListJSON{}
+	if err := json.Unmarshal(out.Bytes(), &listed); err != nil {
+		t.Fatalf("decode list with global JSON: %v (raw: %q)", err, out.String())
+	}
+	if listed.Count != 1 || listed.Nodes[0].Name != "alpha" {
+		t.Fatalf("list with global JSON = %+v", listed)
+	}
+
 	out.Reset()
 	stderr.Reset()
 	if code := cmdComputeNodesShow([]string{"--node=ghost", "--json"}); code != 3 {

@@ -96,3 +96,50 @@ func (m *MemStore) FinalizeAPIConsumerUsageStatement(_ context.Context, accountI
 	m.apiConsumerUsageStatements[statement.ID] = statement
 	return cloneAPIConsumerUsageStatement(statement), true, nil
 }
+
+func (m *MemStore) CreateAPIConsumerUsageStatementHandoff(_ context.Context, input APIConsumerUsageStatementHandoffInput) (APIConsumerUsageStatementHandoff, bool, error) {
+	if err := validateAPIConsumerUsageStatementHandoffInput(input); err != nil {
+		return APIConsumerUsageStatementHandoff{}, false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	statement, ok := m.apiConsumerUsageStatements[input.StatementID]
+	if !ok || statement.AccountID != input.AccountID || statement.AppID != input.AppID || statement.ConsumerID != input.ConsumerID {
+		return APIConsumerUsageStatementHandoff{}, false, ErrNotFound
+	}
+	if statement.Status != APIConsumerUsageStatementFinalized {
+		return APIConsumerUsageStatementHandoff{}, false, ErrConflict
+	}
+	if existing, ok := m.apiConsumerUsageStatementHandoffs[input.StatementID]; ok {
+		if existing.ExternalInvoiceID != input.ExternalInvoiceID {
+			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
+		}
+		return cloneAPIConsumerUsageStatementHandoff(existing), false, nil
+	}
+	for _, existing := range m.apiConsumerUsageStatementHandoffs {
+		if existing.AccountID == input.AccountID && existing.ExternalInvoiceID == input.ExternalInvoiceID {
+			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
+		}
+	}
+	handoff := APIConsumerUsageStatementHandoff{
+		ID: uuid.NewString(), AccountID: input.AccountID, AppID: input.AppID,
+		ConsumerID: input.ConsumerID, StatementID: input.StatementID,
+		ExternalInvoiceID: input.ExternalInvoiceID, Currency: statement.Currency,
+		AmountMillicents: statement.AmountMillicents, CreatedAt: time.Now().UTC(),
+	}
+	m.apiConsumerUsageStatementHandoffs[input.StatementID] = handoff
+	return cloneAPIConsumerUsageStatementHandoff(handoff), true, nil
+}
+
+func (m *MemStore) GetAPIConsumerUsageStatementHandoff(_ context.Context, accountID, appID, consumerID, statementID string) (APIConsumerUsageStatementHandoff, error) {
+	if accountID == "" || appID == "" || consumerID == "" || statementID == "" {
+		return APIConsumerUsageStatementHandoff{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	handoff, ok := m.apiConsumerUsageStatementHandoffs[statementID]
+	if !ok || handoff.AccountID != accountID || handoff.AppID != appID || handoff.ConsumerID != consumerID {
+		return APIConsumerUsageStatementHandoff{}, ErrNotFound
+	}
+	return cloneAPIConsumerUsageStatementHandoff(handoff), nil
+}

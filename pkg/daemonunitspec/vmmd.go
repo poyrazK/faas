@@ -34,16 +34,18 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitVmmd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas vmmd — microVM supervisor (the only root component, spec §4.4)",
-		Documentation: "https://docs.gregale.dev/ops/vmmd",
+		Documentation: "https://gregale.dev/docs/ops/vmmd",
 		After: []string{
 			"faas-tenant.slice", "faas-cp.slice", "faas-cp-build.slice",
 			"faas-tenant-free.slice", "faas-tenant-hobby.slice",
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
+			"nftables.service", "br-tenants-up.service",
 		},
 		Wants: []string{
 			"faas-tenant.slice", "faas-cp.slice", "faas-cp-build.slice",
 			"faas-tenant-free.slice", "faas-tenant-hobby.slice",
 			"faas-tenant-pro.slice", "faas-tenant-scale.slice",
+			"nftables.service", "br-tenants-up.service",
 		},
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
@@ -72,8 +74,7 @@ func UnitVmmd() daemonunit.Unit {
 		// Postgres became reachable and left the node failed permanently.
 		// Fifteen seconds keeps transient recovery automatic without turning a
 		// permanent configuration error into a tight restart loop.
-		RestartSec:         "15s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		RestartSec: "15s",
 
 		Slice: "faas-cp.slice",
 
@@ -206,7 +207,7 @@ func UnitVmmd() daemonunit.Unit {
 		ProtectHostname:         true,
 		ProtectClock:            true,
 
-		ReadWritePaths: []string{"/etc/faas/secrets", "/run/faas", "/run/netns", "/srv/fc", "/var/log/faas", "/var/lib/faas/cache"},
+		ReadWritePaths: []string{"/etc/faas/secrets", "/run/faas", "/run/netns", "/srv/fc", "/var/log/faas", "/var/lib/faas/cache", "/sys/fs/cgroup/faas.slice"},
 
 		WantedBy: "multi-user.target",
 	}

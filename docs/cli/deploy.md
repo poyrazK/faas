@@ -55,12 +55,14 @@ Deploy waits for readiness by default. Use `--no-wait` for queue-only CI steps,
 or bound the wait explicitly with `--timeout` (seconds):
 
 ```bash
-gregale deploy --timeout 900
+gregale deploy --timeout 1200
 gregale deploy --no-wait
 ```
 
-The default wait is 300 seconds. A timed-out wait returns a non-zero exit code
-but retains the accepted deployment ID in `--json` output; resume it with
+The default wait is 1200 seconds (20 minutes), covering the server's 15-minute
+cold-build budget plus post-build scanning and snapshot preparation. A timed-out
+wait returns a non-zero exit code but retains the accepted deployment ID in
+`--json` output, along with an exact `resume_command`; resume it with
 `gregale deployment wait <deployment-id> --timeout ...`.
 
 Every deploy also has a stable retry key derived from the app, source digest,
@@ -88,11 +90,22 @@ The CLI validates the block before creating the app; the same values are
 applied to the server-side profile captured from the exact uploaded source.
 Omitting the block leaves the normal framework profile unchanged.
 
-For a decomposed monorepo deploy (one CLI invocation, N apps), use
-`gregale scan --path .` and the project-plan apply path; see the
-decomposition PR (issue #791 / ADR-090). A direct `--path` deploy is
-still one app per invocation, with the selected workspace member as its
-working directory.
+For a decomposed monorepo deploy (one CLI invocation, N apps), opt into
+project apply with `--project`. The project slug defaults to `--name`, the
+selected `--path`, the tarball basename, or the current directory (in that
+order); use `--project-slug` when the slug must be stable across CI runners:
+
+```bash
+gregale deploy --path . --project --yes
+gregale deploy --tarball ./shop.tar.gz --project-slug shop --yes
+```
+
+Run `gregale scan --path . --project-slug shop` first when you want a
+read-only plan. `--only`, `--exclude`, `--show-affected`, and `--dry-run`
+continue to use the same project planner. A direct `--path` deploy without
+`--project` is still one app per invocation, with the selected workspace
+member as its working directory. Source-ref (`--repo`) deployments remain
+single-app only.
 
 ## Monorepo / nested-project detection
 

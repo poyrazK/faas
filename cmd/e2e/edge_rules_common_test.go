@@ -29,6 +29,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -80,7 +81,14 @@ func gatewayReq(t *testing.T, h *e2etest.Harness, method, path string, body any,
 	ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 	defer cancel()
 	req = req.WithContext(ctx)
-	resp, err := h.HTTPClient().Do(req)
+	client := *h.HTTPClient()
+	// Edge-rule tests assert redirect status and Location themselves. The
+	// default client follows 3xx responses and turns a local contract check
+	// into an external DNS request.
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s (Host=%s): %v", method, path, opts.Host, err)
 	}
@@ -193,6 +201,30 @@ func resetEdgeRuleCache(t *testing.T, h *e2etest.Harness) {
 		return
 	}
 	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("edge-rule reset: status=%d, want 204", resp.StatusCode)
+	}
+}
+
+// assertBackendFallthrough accepts the two valid harness outcomes after an
+// edge rule passes: a router miss, or a capacity response when the routed app
+// reaches the wake path without schedd/vmmd in this test bitmask.
+func assertBackendFallthrough(t *testing.T, status int, body []byte) {
+	t.Helper()
+	if status == http.StatusNotFound {
+		return
+	}
+	var problem api.Problem
+	if status == http.StatusServiceUnavailable && json.Unmarshal(body, &problem) == nil && problem.Code == api.CodeCapacity {
+		return
+	}
+	t.Errorf("backend fallthrough: status=%d body=%s", status, body)
+}
+
+func problemCode(body []byte) string {
+	var problem api.Problem
+	_ = json.Unmarshal(body, &problem)
+	return problem.Code
 }
 
 // seedRouteSubstitute seeds the `kind=route` precondition rule that
@@ -204,9 +236,10 @@ func seedRouteSubstitute(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	return seedEdgeRuleDirect(t, ctx, pool, accountID, appID, host,
 		state.EdgeRuleKindRoute,
 		map[string]any{
-			"kind":            "route",
-			"target_app_id":   appID,
-			"target_app_slug": appSlug,
+			"kind": "route",
+			"route": map[string]any{
+				"target_app_slug": appSlug,
+			},
 		},
 	)
 }

@@ -78,11 +78,18 @@ func TestE2E_Streaming_Metal_TTFBUnder1s(t *testing.T) {
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", "x")
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+	// Digest-pinned, not ":latest": imaged refuses a tag with
+	//
+	//	FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference
+	//
+	// and EXITS at boot. AddImage already returns the pinned ref; this used
+	// to discard it and hand-build a tag, so imaged died on every one of
+	// these tests and the failure surfaced later as a deploy timeout.
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	// Operator FAAS_GATEWAY_STREAMING toggle ON so the streaming
 	// path is exercised end-to-end. The per-app flag is the
@@ -112,12 +119,12 @@ func TestE2E_Streaming_Metal_TTFBUnder1s(t *testing.T) {
 	}
 	depID, _ := parseQueuedDeployment(t, raw)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 120*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, sourceDeployLiveDeadline()); err != nil {
 		t.Fatalf("no parked instance: %v", err)
 	}
 
@@ -167,11 +174,18 @@ func TestE2E_Streaming_Metal_TxBytesAccuracy(t *testing.T) {
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", "x")
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+	// Digest-pinned, not ":latest": imaged refuses a tag with
+	//
+	//	FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference
+	//
+	// and EXITS at boot. AddImage already returns the pinned ref; this used
+	// to discard it and hand-build a tag, so imaged died on every one of
+	// these tests and the failure surfaced later as a deploy timeout.
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.StartWithEnv(t, pool, e2etest.DeployWake, []string{
 		"FAAS_GATEWAY_STREAMING=true",
@@ -195,12 +209,12 @@ func TestE2E_Streaming_Metal_TxBytesAccuracy(t *testing.T) {
 	}
 	depID, _ := parseQueuedDeployment(t, raw)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 120*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, sourceDeployLiveDeadline()); err != nil {
 		t.Fatalf("no parked instance: %v", err)
 	}
 
@@ -257,11 +271,18 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", "x")
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+	// Digest-pinned, not ":latest": imaged refuses a tag with
+	//
+	//	FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference
+	//
+	// and EXITS at boot. AddImage already returns the pinned ref; this used
+	// to discard it and hand-build a tag, so imaged died on every one of
+	// these tests and the failure surfaced later as a deploy timeout.
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.StartWithEnv(t, pool, e2etest.DeployWake, []string{
 		"FAAS_GATEWAY_STREAMING=true",
@@ -298,12 +319,12 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 			}
 			depID, _ := parseQueuedDeployment(t, raw)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 			defer cancel()
-			if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 120*time.Second); err != nil {
+			if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
 				t.Fatalf("deployment did not reach live: %v", err)
 			}
-			if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
+			if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, sourceDeployLiveDeadline()); err != nil {
 				t.Fatalf("no parked instance: %v", err)
 			}
 
@@ -355,11 +376,18 @@ func TestE2E_Streaming_Metal_QuotaNonCounting(t *testing.T) {
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", "x")
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+	// Digest-pinned, not ":latest": imaged refuses a tag with
+	//
+	//	FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference
+	//
+	// and EXITS at boot. AddImage already returns the pinned ref; this used
+	// to discard it and hand-build a tag, so imaged died on every one of
+	// these tests and the failure surfaced later as a deploy timeout.
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.StartWithEnv(t, pool, e2etest.DeployWake, []string{
 		"FAAS_GATEWAY_STREAMING=true",
@@ -383,12 +411,12 @@ func TestE2E_Streaming_Metal_QuotaNonCounting(t *testing.T) {
 	}
 	depID, _ := parseQueuedDeployment(t, raw)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 120*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, sourceDeployLiveDeadline()); err != nil {
 		t.Fatalf("no parked instance: %v", err)
 	}
 
@@ -466,11 +494,18 @@ func TestE2E_Streaming_Metal_H2CInnerLeg(t *testing.T) {
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", "x")
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+	// Digest-pinned, not ":latest": imaged refuses a tag with
+	//
+	//	FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference
+	//
+	// and EXITS at boot. AddImage already returns the pinned ref; this used
+	// to discard it and hand-build a tag, so imaged died on every one of
+	// these tests and the failure surfaced later as a deploy timeout.
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.StartWithEnv(t, pool, e2etest.DeployWake, []string{
 		"FAAS_GATEWAY_STREAMING=true",
@@ -499,12 +534,12 @@ func TestE2E_Streaming_Metal_H2CInnerLeg(t *testing.T) {
 	}
 	depID, _ := parseQueuedDeployment(t, raw)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 120*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, sourceDeployLiveDeadline()); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, sourceDeployLiveDeadline()); err != nil {
 		t.Fatalf("no parked instance: %v", err)
 	}
 

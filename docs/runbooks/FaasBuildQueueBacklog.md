@@ -7,10 +7,9 @@ Severity: warn (no page tier per spec; builds are not customer-blocking).
 
 ## Symptom
 
-Builds are queueing > 300 s at p95 over a 5-minute window. The 2nd
-opportunistic builder slot (ADR-003 — runs only when tenant residency
-< 60%) is the most common cause: tenant wakes filled the box, the
-2nd slot got revoked, and now the 1 guaranteed slot can't drain.
+Builds are queueing > 300 s at p95 over a 5-minute window. Each compute
+node admits one builder because two ordinary builders can exceed the 5 GiB
+parent cgroup. The queue grows when arrival rate exceeds that safe drain rate.
 
 ## Verify
 
@@ -24,13 +23,13 @@ curl -fsS 'http://127.0.0.1:9095/api/v1/query?query=histogram_quantile(0.95,sum(
 ```bash
 systemctl status builderd
 journalctl -u builderd --since '-15m' --no-pager | grep -iE 'slot|admit|reject'
-cat /sys/fs/cgroup/faas-build.slice/memory.current
+cat /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/memory.current
 cat /sys/fs/cgroup/faas-tenant.slice/memory.current
 ```
 
-If tenant residency is > 60%, the 2nd slot is intentionally offline —
-the build queue is operating correctly under that constraint, and the
-"fix" is customer traffic draining, not operator intervention.
+If the sole slot is occupied by a healthy build, the queue is operating
+within its memory fence. Add an eligible compute node when sustained build
+arrival rate exceeds one slot per node.
 
 ## Silence
 

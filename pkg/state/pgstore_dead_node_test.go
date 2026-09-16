@@ -1,14 +1,17 @@
+// adr: 137
 // pgstore_dead_node_test.go — PgStore parity tests for the
 // dead-node billing-leak reconciler's two Store methods:
 //
 //   - ListRunningInstancesOnDeadNodes — the conditional SELECT that
 //     drives the reconciler. Must filter on
-//     (n.active = false OR n.last_heartbeat_at < $1), order by
+//     (n.active = false OR n.last_heartbeat_at < $1), exclude
+//     app rows owned by recovery-managed lifecycles, order by
 //     (heartbeat ASC, id ASC) for deterministic capped-tick drain
 //     (F3 from the PR-A review), and respect limit > 0.
 //
 //   - FailRunningInstanceOnDeadNode — the conditional UPDATE that
-//     transitions state='running' + node_id=$2 → state='failed'.
+//     transitions state='running' + node_id=$2 on a still-dead node
+//     outside recovery ownership → state='failed'.
 //     RowsAffected()==0 must surface as ErrConflict (not
 //     pgx.ErrNoRows, which the Store interface translates to
 //     ErrNotFound) so the reconciler's metric distinguishes a
@@ -84,6 +87,15 @@ func pgTestComputeNode(t *testing.T, ctx context.Context, s *state.PgStore, acti
 	return n.ID
 }
 
+func pgTestMaintenanceNode(t *testing.T, ctx context.Context, s *state.PgStore) string {
+	t.Helper()
+	id := pgTestComputeNode(t, ctx, s, false, 0)
+	if err := s.NodeSetLifecycle(ctx, id, state.NodeLifecycleUnavailable, state.NodeLifecycleMaintenance); err != nil {
+		t.Fatalf("NodeSetLifecycle(unavailable→maintenance): %v", err)
+	}
+	return id
+}
+
 // pgTestSeedRunningInstance creates an account + app + deployment +
 // RUNNING instance on the given node. MemStore accepts empty
 // deployment_id and empty wakeID strings; pgstore requires a valid
@@ -127,13 +139,14 @@ func pgTestSeedRunningInstance(t *testing.T, ctx context.Context, s *state.PgSto
 
 // TestPg_ListRunningInstancesOnDeadNodes_FilterByActiveOrStale pins
 // the join predicate: an active node with a fresh heartbeat must
-// NOT appear; an inactive node OR a node whose heartbeat predates
-// the threshold MUST appear.
+// NOT appear; a terminally inactive node OR a node whose heartbeat
+// predates the threshold MUST appear. Recovery-managed app rows are
+// tested separately because their transitions belong to the arbiter.
 func TestPg_ListRunningInstancesOnDeadNodes_FilterByActiveOrStale(t *testing.T) {
 	s, ctx, _ := pgWithPool(t)
 
-	// active=false → eligible regardless of heartbeat freshness
-	deadNodeID := pgTestComputeNode(t, ctx, s, false, 0)
+	// maintenance/active=false → eligible regardless of heartbeat freshness
+	deadNodeID := pgTestMaintenanceNode(t, ctx, s)
 	_, deadInsID := pgTestSeedRunningInstance(t, ctx, s, deadNodeID)
 
 	// active=true, fresh heartbeat → NOT eligible
@@ -166,6 +179,89 @@ func TestPg_ListRunningInstancesOnDeadNodes_FilterByActiveOrStale(t *testing.T) 
 	}
 }
 
+func TestPg_ListRunningInstancesOnDeadNodes_RecoveryManagedAppRowsExcluded(t *testing.T) {
+	s, ctx, _ := pgWithPool(t)
+	for _, lifecycle := range []state.NodeLifecycle{
+		state.NodeLifecycleDraining,
+		state.NodeLifecycleForceDraining,
+		state.NodeLifecycleUnavailable,
+		state.NodeLifecycleRecovering,
+	} {
+		lifecycle := lifecycle
+		t.Run(string(lifecycle), func(t *testing.T) {
+			nodeID := pgTestComputeNode(t, ctx, s, lifecycle == state.NodeLifecycleRecovering, 0)
+			start := state.NodeLifecycleUnavailable
+			if lifecycle == state.NodeLifecycleRecovering {
+				start = state.NodeLifecycleActive
+			}
+			if lifecycle != start {
+				if err := s.NodeSetLifecycle(ctx, nodeID, start, lifecycle); err != nil {
+					t.Fatalf("NodeSetLifecycle(%s→%s): %v", start, lifecycle, err)
+				}
+			}
+			_, insID := pgTestSeedRunningInstance(t, ctx, s, nodeID)
+			threshold := time.Now().UTC().Add(time.Minute)
+			rows, err := s.ListRunningInstancesOnDeadNodes(ctx, threshold, 500)
+			if err != nil {
+				t.Fatalf("ListRunningInstancesOnDeadNodes: %v", err)
+			}
+			for _, row := range rows {
+				if row.ID == insID {
+					t.Fatalf("recovery-managed app row %s returned", insID)
+				}
+			}
+			if err := s.FailRunningInstanceOnDeadNode(ctx, insID, nodeID, threshold); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("FailRunningInstanceOnDeadNode err=%v, want ErrConflict", err)
+			}
+		})
+	}
+}
+
+func TestPg_DeadNodeReconciler_OrphanRowEligible(t *testing.T) {
+	s, ctx, pool := pgWithPool(t)
+	validNodeID := pgTestComputeNode(t, ctx, s, false, 0)
+	orphanNodeID := uuid.NewString()
+	_, insID := pgTestSeedRunningInstance(t, ctx, s, validNodeID)
+	// Production schema integrity normally prevents an instance from
+	// referencing a missing compute node. The reconciler still needs to
+	// recover rows left behind by an interrupted repair or an older schema,
+	// so inject that corruption deliberately while retaining the app's valid
+	// owner. session_replication_role disables the FK trigger only for this
+	// isolated test connection.
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `set session_replication_role = replica`); err != nil {
+		t.Fatalf("disable FK triggers: %v", err)
+	}
+	if _, err := conn.Exec(ctx, `update instances set node_id = $1 where id = $2`, orphanNodeID, insID); err != nil {
+		t.Fatalf("inject orphan instance: %v", err)
+	}
+	if _, err := conn.Exec(ctx, `set session_replication_role = origin`); err != nil {
+		t.Fatalf("restore FK triggers: %v", err)
+	}
+	threshold := time.Now().UTC().Add(-time.Minute)
+	rows, err := s.ListRunningInstancesOnDeadNodes(ctx, threshold, 50)
+	if err != nil {
+		t.Fatalf("ListRunningInstancesOnDeadNodes: %v", err)
+	}
+	found := false
+	for _, row := range rows {
+		if row.ID == insID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("orphan instance %s absent from dead-node reconciliation set", insID)
+	}
+	if err := s.FailRunningInstanceOnDeadNode(ctx, insID, orphanNodeID, threshold); err != nil {
+		t.Fatalf("FailRunningInstanceOnDeadNode(orphan): %v", err)
+	}
+}
+
 // TestPg_ListRunningInstancesOnDeadNodes_LimitGuard pins the input
 // contract: limit must be > 0.
 func TestPg_ListRunningInstancesOnDeadNodes_LimitGuard(t *testing.T) {
@@ -186,15 +282,16 @@ func TestPg_FailRunningInstanceOnDeadNode_ConditionalMatches(t *testing.T) {
 	s, ctx := pgStore(t)
 
 	// Seed: dead node + RUNNING instance → transition succeeds.
-	deadNodeID := pgTestComputeNode(t, ctx, s, false, 0)
+	deadNodeID := pgTestMaintenanceNode(t, ctx, s)
 	_, insID := pgTestSeedRunningInstance(t, ctx, s, deadNodeID)
+	threshold := time.Now().UTC().Add(-time.Minute)
 
-	if err := s.FailRunningInstanceOnDeadNode(ctx, insID, deadNodeID); err != nil {
+	if err := s.FailRunningInstanceOnDeadNode(ctx, insID, deadNodeID, threshold); err != nil {
 		t.Fatalf("first FailRunningInstanceOnDeadNode: %v", err)
 	}
 
 	// Second call: state is now 'failed', not 'running' → ErrConflict.
-	err := s.FailRunningInstanceOnDeadNode(ctx, insID, deadNodeID)
+	err := s.FailRunningInstanceOnDeadNode(ctx, insID, deadNodeID, threshold)
 	if !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("second call err=%v want ErrConflict (the state predicate must protect against re-running)", err)
 	}
@@ -203,10 +300,23 @@ func TestPg_FailRunningInstanceOnDeadNode_ConditionalMatches(t *testing.T) {
 	// running on a different node, the node_id mismatch must
 	// surface as ErrConflict (the conditional UPDATE has TWO
 	// predicates, not one).
-	wrongNodeID := pgTestComputeNode(t, ctx, s, false, 0)
-	err = s.FailRunningInstanceOnDeadNode(ctx, insID, wrongNodeID)
+	wrongNodeID := pgTestMaintenanceNode(t, ctx, s)
+	err = s.FailRunningInstanceOnDeadNode(ctx, insID, wrongNodeID, threshold)
 	if !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("wrong-node call err=%v want ErrConflict (node_id mismatch must protect against misrouting)", err)
+	}
+}
+
+func TestPg_FailRunningInstanceOnDeadNode_NodeRecoveredReturnsConflict(t *testing.T) {
+	s, ctx, _ := pgWithPool(t)
+	nodeID := pgTestMaintenanceNode(t, ctx, s)
+	_, insID := pgTestSeedRunningInstance(t, ctx, s, nodeID)
+	threshold := time.Now().UTC().Add(-time.Minute)
+	if err := s.NodeSetLifecycle(ctx, nodeID, state.NodeLifecycleMaintenance, state.NodeLifecycleActive); err != nil {
+		t.Fatalf("NodeSetLifecycle(maintenance→active): %v", err)
+	}
+	if err := s.FailRunningInstanceOnDeadNode(ctx, insID, nodeID, threshold); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("post-recovery fail err=%v, want ErrConflict", err)
 	}
 }
 
@@ -214,10 +324,10 @@ func TestPg_FailRunningInstanceOnDeadNode_ConditionalMatches(t *testing.T) {
 // contract: empty instanceID / nodeID both error.
 func TestPg_FailRunningInstanceOnDeadNode_EmptyArgs(t *testing.T) {
 	s, ctx := pgStore(t)
-	if err := s.FailRunningInstanceOnDeadNode(ctx, "", "n"); err == nil {
+	if err := s.FailRunningInstanceOnDeadNode(ctx, "", "n", time.Now()); err == nil {
 		t.Fatalf("empty instanceID must error")
 	}
-	if err := s.FailRunningInstanceOnDeadNode(ctx, "i", ""); err == nil {
+	if err := s.FailRunningInstanceOnDeadNode(ctx, "i", "", time.Now()); err == nil {
 		t.Fatalf("empty nodeID must error")
 	}
 }

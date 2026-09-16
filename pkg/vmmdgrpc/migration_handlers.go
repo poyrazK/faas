@@ -239,6 +239,10 @@ type migrationResumer interface {
 	ResumeVM(context.Context, string) error
 }
 
+type migrationSnapshotDeleter interface {
+	DeleteWarmSnapshot(context.Context, string, string) error
+}
+
 type migrationInstanceReader interface {
 	MigrationInstanceByID(context.Context, string) (state.Instance, error)
 }
@@ -250,7 +254,7 @@ type migrationInstanceReader interface {
 //	codes.InvalidArgument   missing instanceID or snapshot_storage_key
 //	codes.AlreadyExists     duplicate Phase 1 for this instance
 //	codes.Unimplemented     vmmd does not expose the keep-alive snapshot and
-//	                        resume seams required for a safe handoff
+//	                        resume/cleanup seams required for a safe handoff
 //	codes.Internal          snapshot failed (FC uAPI / storage); the paused
 //	                        VM is resumed best-effort before returning.
 func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLiveMigrationRequest) (*vmmdpb.PrepareLiveMigrationResponse, error) {
@@ -259,7 +263,7 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 	if req.GetInstanceId() == "" || req.GetSnapshotStorageKey() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing fields",
-			"instance_id and snapshot_storage_key are required").WithDocs("https://" + wire.DocsHost + "/vmmd#prepare")
+			"instance_id and snapshot_storage_key are required").WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -279,20 +283,26 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 
 	if s.migrations == nil {
 		err := api.NewProblem(int(codes.Unavailable), "unavailable",
-			"Migration unavailable", "migration lease tracking is not wired").WithDocs("https://" + wire.DocsHost + "/vmmd#prepare")
+			"Migration unavailable", "migration lease tracking is not wired").WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
 	snapshotter, ok := s.vmm.(migrationSnapshotter)
 	if !ok {
 		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
-			"Migration unavailable", "vmmd does not support keep-alive snapshots").WithDocs("https://" + wire.DocsHost + "/vmmd#prepare")
+			"Migration unavailable", "vmmd does not support keep-alive snapshots").WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
 	if _, ok := s.vmm.(migrationResumer); !ok {
 		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
-			"Migration unavailable", "vmmd does not support migration resume").WithDocs("https://" + wire.DocsHost + "/vmmd#prepare")
+			"Migration unavailable", "vmmd does not support migration resume").WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	if _, ok := s.vmm.(migrationSnapshotDeleter); !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Migration unavailable", "vmmd does not support migration snapshot cleanup").WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -302,7 +312,7 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 	m, err := s.migrations.reserve(req.GetInstanceId(), start)
 	if err != nil {
 		err2 := api.NewProblem(int(codes.AlreadyExists), api.CodeConflict,
-			"Migration already active", err.Error()).WithDocs("https://" + wire.DocsHost + "/vmmd#prepare")
+			"Migration already active", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#prepare")
 		s.ops.Observe(op, time.Since(start), err2)
 		return nil, grpcerr.ToStatus(err2)
 	}
@@ -381,7 +391,7 @@ func migrationLeaseProblem(err error, phase string) *api.Problem {
 		code, apiCode = int(codes.NotFound), api.CodeNotFound
 	}
 	return api.NewProblem(code, apiCode, "Lease lookup failed", fmt.Sprintf("%s migration: %v", phase, err)).
-		WithDocs("https://" + wire.DocsHost + "/vmmd#" + phase)
+		WithDocs(wire.DocsBaseURL + "/vmmd#" + phase)
 }
 
 func (s *Server) destroyMigrationVM(ctx context.Context, instanceID string) error {
@@ -427,7 +437,7 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing fields",
 			"instance_id, mem_storage_key, vmstate_storage_key, and lease_token are required").
-			WithDocs("https://" + wire.DocsHost + "/vmmd#adopt")
+			WithDocs(wire.DocsBaseURL + "/vmmd#adopt")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -490,7 +500,7 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 	if req.GetInstanceId() == "" || req.GetLeaseToken() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing fields",
-			"instance_id and lease_token are required").WithDocs("https://" + wire.DocsHost + "/vmmd#ack")
+			"instance_id and lease_token are required").WithDocs(wire.DocsBaseURL + "/vmmd#ack")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -498,7 +508,8 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 		s.ops.Observe(op, time.Since(start), nil)
 		return &vmmdpb.AcknowledgeMigrationResponse{}, nil
 	}
-	if _, getErr := s.migrations.get(req.GetInstanceId(), req.GetLeaseToken()); getErr != nil {
+	m, getErr := s.migrations.get(req.GetInstanceId(), req.GetLeaseToken())
+	if getErr != nil {
 		// Stale ack — lease already cleared. Idempotent
 		// success. The error is intentionally swallowed so
 		// a peer that re-sends the ack on a stale lease
@@ -511,6 +522,13 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	if err := s.deleteMigrationSnapshot(ctx, m); err != nil {
+		// The destination has already restored the snapshot and the source is
+		// gone, but keep the tracker entry so the expiry loop can retry the
+		// remote object cleanup.
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
 	s.migrations.deleteByLeaseToken(req.GetLeaseToken())
 	s.ops.Observe(op, time.Since(start), nil)
 	return &vmmdpb.AcknowledgeMigrationResponse{}, nil
@@ -520,8 +538,7 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 //
 // The new owner vmmd's schedd tells the dying vmmd "abort —
 // don't commit Phase 3". Resume the paused source VM, then
-// delete the lease. The canonical snapshot stays in storage
-// until the normal snapshot-drift sweep reaps it.
+// delete the temporary snapshot pair and lease.
 //
 // Wire errors:
 //
@@ -533,7 +550,7 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 	if req.GetInstanceId() == "" || req.GetLeaseToken() == "" {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Missing fields",
-			"instance_id and lease_token are required").WithDocs("https://" + wire.DocsHost + "/vmmd#cancel")
+			"instance_id and lease_token are required").WithDocs(wire.DocsBaseURL + "/vmmd#cancel")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
@@ -541,7 +558,8 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 		s.ops.Observe(op, time.Since(start), nil)
 		return &vmmdpb.CancelLiveMigrationResponse{}, nil
 	}
-	if _, getErr := s.migrations.get(req.GetInstanceId(), req.GetLeaseToken()); getErr != nil {
+	m, getErr := s.migrations.get(req.GetInstanceId(), req.GetLeaseToken())
+	if getErr != nil {
 		// Stale cancel — idempotent success. The error is
 		// intentionally swallowed: a re-sent cancel on a
 		// stale lease is a no-op (the lease is gone).
@@ -560,13 +578,35 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 		// VmmdAPI that cannot do that is miswired; fail closed so expiry
 		// can retry after the process is corrected.
 		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
-			"Migration unavailable", "vmmd does not support migration resume").WithDocs("https://" + wire.DocsHost + "/vmmd#cancel")
+			"Migration unavailable", "vmmd does not support migration resume").WithDocs(wire.DocsBaseURL + "/vmmd#cancel")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
+	}
+	if err := s.deleteMigrationSnapshot(ctx, m); err != nil {
+		// The source is serving again. Retain the lease only as a durable
+		// retry record for deleting the temporary capture.
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	s.migrations.deleteByLeaseToken(req.GetLeaseToken())
 	s.ops.Observe(op, time.Since(start), nil)
 	return &vmmdpb.CancelLiveMigrationResponse{}, nil
+}
+
+func (s *Server) deleteMigrationSnapshot(ctx context.Context, m *activeMigration) error {
+	if m == nil || (m.memKey == "" && m.vmstateKey == "") {
+		return nil
+	}
+	deleter, ok := s.vmm.(migrationSnapshotDeleter)
+	if !ok {
+		return fmt.Errorf("vmmd: migration snapshot cleanup unavailable")
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	if err := deleter.DeleteWarmSnapshot(cleanupCtx, m.memKey, m.vmstateKey); err != nil {
+		return fmt.Errorf("vmmd: delete migration snapshot: %w", err)
+	}
+	return nil
 }
 
 // cleanupExpiredMigration reconciles the durable row before choosing the
@@ -664,6 +704,15 @@ func (s *Server) LeaseExpiryLoop(ctx context.Context) {
 				if err := s.cleanupExpiredMigration(ctx, m); err != nil {
 					if s.log != nil {
 						s.log.Warn("vmmd: migration lease cleanup failed",
+							"instance_id", m.instanceID,
+							"err", err,
+						)
+					}
+					continue
+				}
+				if err := s.deleteMigrationSnapshot(ctx, m); err != nil {
+					if s.log != nil {
+						s.log.Warn("vmmd: migration snapshot cleanup failed",
 							"instance_id", m.instanceID,
 							"err", err,
 						)

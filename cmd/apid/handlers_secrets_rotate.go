@@ -114,6 +114,10 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 	// to fingerprint (no identities loaded) returns 503 — refusing
 	// to seal without a kid is consistent with refusing to seal
 	// without a recipient.
+	if mfaIdentities == nil {
+		api.WriteProblem(w, api.ErrCapacity("host age identities not loaded — refusing to seal"))
+		return
+	}
 	idents := mfaIdentities()
 	if len(idents) == 0 {
 		api.WriteProblem(w, api.ErrCapacity("host age identities not loaded — refusing to seal"))

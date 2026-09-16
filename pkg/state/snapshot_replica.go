@@ -80,10 +80,18 @@ type SnapshotReplicaJob struct {
 	NodeID           string
 	Region           string
 	Attempts         int
-	// QueuedAt is the durable enqueue timestamp. Workers use it to expose
-	// end-to-end prepositioning latency (queue wait plus artifact reads), not
-	// just the time spent copying bytes after a claim.
+	// Revalidation distinguishes a periodic local-cache check from the first
+	// fan-out of an immutable snapshot. Workers exclude these checks from the
+	// initial queue-to-ready metrics.
+	Revalidation bool
+	// QueuedAt is the durable initial enqueue timestamp, or the start of the
+	// current cache check for revalidation jobs. Workers expose the former as
+	// end-to-end prepositioning latency and exclude the latter from fan-out.
 	QueuedAt time.Time
+	// LeaseToken identifies this specific claim. Completion must present the
+	// same token so a worker whose lease was reclaimed cannot overwrite the
+	// newer attempt.
+	LeaseToken string
 }
 
 // SnapshotOriginStore records the node/locality that produced a snapshot.
@@ -94,10 +102,9 @@ type SnapshotOriginStore interface {
 }
 
 // SnapshotReplicaStore is intentionally optional instead of being folded into
-// Store. That keeps existing test seams and external state implementations
-// source-compatible while PgStore and MemStore gain the same production
-// capability. A worker only starts when the concrete store implements this
-// interface.
+// Store. It exposes only queue and locality reads; lease ownership and
+// completion are carried by SnapshotReplicaLeaseStore so callers cannot
+// accidentally complete a job without its fencing token.
 type SnapshotReplicaStore interface {
 	// EnqueueSnapshotReplicasForNode consumes the global snapshot fan-out event
 	// cursor for this node and creates idempotent warming jobs. Implementations
@@ -108,9 +115,19 @@ type SnapshotReplicaStore interface {
 	// ClaimSnapshotReplica atomically leases one pending/retryable job for the
 	// node. ErrNotFound means the queue is empty.
 	ClaimSnapshotReplica(ctx context.Context, nodeID string) (SnapshotReplicaJob, error)
-	MarkSnapshotReplicaReady(ctx context.Context, snapshotID, nodeID string) error
-	MarkSnapshotReplicaFailed(ctx context.Context, snapshotID, nodeID string, cause error) error
 	// ReadySnapshotReplicaNodes returns nodes whose local cache has a complete
 	// copy of the snapshot's restore blobs.
 	ReadySnapshotReplicaNodes(ctx context.Context, snapshotID string) ([]string, error)
+}
+
+// SnapshotReplicaLeaseStore is the complete durable worker contract. Every
+// claim must be renewed and completed with its fencing token; implementations
+// must reject unscoped or stale writes.
+type SnapshotReplicaLeaseStore interface {
+	SnapshotReplicaStore
+	// RenewSnapshotReplicaLease extends the current claim without changing its
+	// fencing token. ErrConflict means another worker reclaimed the row.
+	RenewSnapshotReplicaLease(ctx context.Context, snapshotID, nodeID, leaseToken string) error
+	MarkSnapshotReplicaReadyWithLease(ctx context.Context, snapshotID, nodeID, leaseToken string) error
+	MarkSnapshotReplicaFailedWithLease(ctx context.Context, snapshotID, nodeID, leaseToken string, cause error) error
 }

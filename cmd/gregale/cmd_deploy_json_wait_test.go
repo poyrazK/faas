@@ -41,7 +41,7 @@ func TestCmdDeploy_JSONDefaultWaitPropagatesTerminalFailure(t *testing.T) {
 	osStdout = &stdout
 	defer func() { osStdout = oldOut }()
 
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app"}); code != 1 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 1 {
 		t.Fatalf("cmdDeploy --json exit = %d, want terminal failure exit 1", code)
 	}
 	if deploymentReads.Load() == 0 {
@@ -85,7 +85,7 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	defer func() { osStdout, osStderr = oldOut, oldErr }()
 
 	started := time.Now()
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:abc", "--name", "my-app", "--timeout", "1"}); code != 3 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app", "--timeout", "1"}); code != 3 {
 		t.Fatalf("cmdDeploy --json --timeout 1 exit = %d, want timeout exit 3", code)
 	}
 	elapsed := time.Since(started)
@@ -98,11 +98,17 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	if !strings.Contains(stderr.String(), "wait deadline") {
 		t.Fatalf("stderr missing timeout explanation: %s", stderr.String())
 	}
-	var receipt api.DeploymentResponse
+	var receipt DeployReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
 	}
 	if receipt.ID != "d1" || receipt.Status != "pending" {
 		t.Fatalf("timeout receipt = id %q status %q, want accepted d1 pending", receipt.ID, receipt.Status)
+	}
+	if !receipt.TimedOut {
+		t.Fatal("timeout receipt timed_out = false, want true")
+	}
+	if got, want := receipt.ResumeCommand, "gregale deployment wait d1 --timeout 1"; got != want {
+		t.Fatalf("timeout receipt resume_command = %q, want %q", got, want)
 	}
 }

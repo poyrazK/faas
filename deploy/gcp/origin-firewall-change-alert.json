@@ -1,0 +1,21 @@
+{
+  "displayName": "Gregale origin firewall changes",
+  "documentation": {
+    "content": "A production VPC firewall rule changed. Run `python3 scripts/ops/gcp_public_beta_audit.py` immediately and confirm TCP/80+443 remain limited to the pinned Cloudflare ranges and `gregale-origin` target tag.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "enabled": true,
+  "alertStrategy": {
+    "notificationRateLimit": {"period": "300s"},
+    "autoClose": "86400s"
+  },
+  "conditions": [
+    {
+      "displayName": "Production origin firewall rule changed",
+      "conditionMatchedLog": {
+        "filter": "log_id(\"cloudaudit.googleapis.com/activity\") AND resource.type=\"gce_firewall_rule\" AND protoPayload.methodName:(\"compute.firewalls.insert\" OR \"compute.firewalls.patch\" OR \"compute.firewalls.update\" OR \"compute.firewalls.delete\")"
+      }
+    }
+  ]
+}

@@ -34,6 +34,10 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
+	cron, err := m.CreateCron(ctx, app.ID, "*/5 * * * *", "/cleanup", true)
+	if err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
 
 	graceUntil := time.Now().UTC().Add(24 * time.Hour)
 	deleted, err := m.ScheduleAppDeletion(ctx, app.ID, graceUntil)
@@ -69,6 +73,9 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	if _, err := m.RestoreApp(ctx, app.ID); err != nil {
 		t.Fatalf("RestoreApp: %v", err)
 	}
+	if _, err := m.CronByID(ctx, cron.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CronByID after app restore = %v, want ErrNotFound; deleted app schedules must stay removed", err)
+	}
 	if restored, err := m.AppBySlug(ctx, app.Slug); err != nil || restored.Status != AppActive || restored.DeletedAt != nil || restored.DeleteGraceUntil != nil {
 		t.Fatalf("restored app = %+v, %v", restored, err)
 	}
@@ -79,6 +86,12 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	// An expired tombstone is eligible for permanent purge.
 	if _, err := m.ScheduleAppDeletion(ctx, app.ID, time.Now().UTC().Add(-time.Minute)); err != nil {
 		t.Fatalf("expired ScheduleAppDeletion: %v", err)
+	}
+	if err := m.ClaimAppDeletion(ctx, app.ID); err != nil {
+		t.Fatalf("ClaimAppDeletion: %v", err)
+	}
+	if _, err := m.RestoreApp(ctx, app.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
 	}
 	if err := m.DeleteAppPermanently(ctx, app.ID); err != nil {
 		t.Fatalf("DeleteAppPermanently: %v", err)
@@ -91,5 +104,39 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	}
 	if _, err := m.ScheduleAppDeletion(ctx, "missing-app", graceUntil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ScheduleAppDeletion missing app = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMemStoreSoftDeleteCascadeAlwaysStampsDeadlineAndDeduplicatesSharedArtifacts(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	acct, err := m.CreateAccount(ctx, "shared-artifact@example.com", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "first", Status: AppActive})
+	second, _ := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "second", Status: AppActive})
+	firstDep, _ := m.CreateDeployment(ctx, Deployment{ID: "first-dep", AppID: first.ID, Status: DeployLive})
+	secondDep, _ := m.CreateDeployment(ctx, Deployment{ID: "second-dep", AppID: second.ID, Status: DeployLive})
+	const shared = "apps/shared/rootfs.ext4"
+	if err := m.SetDeploymentRootfs(ctx, firstDep.ID, "/first", shared, 1024); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDeploymentRootfs(ctx, secondDep.ID, "/second", shared, 1024); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := m.SoftDeleteAppCascade(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.DeletedAt == nil || deleted.DeleteGraceUntil == nil || !deleted.DeleteGraceUntil.After(*deleted.DeletedAt) {
+		t.Fatalf("incomplete deletion deadline: %+v", deleted)
+	}
+	artifacts, err := m.ListAppDeletionArtifacts(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 0 {
+		t.Fatalf("shared artifact returned as exclusively deletable: %+v", artifacts)
 	}
 }

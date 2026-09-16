@@ -17,14 +17,22 @@ SSD compute node. The measured interval is the platform wake from
 `wake.boot_started.at` through `wake.boot_completed.at`. Cloudflare, public
 network distance, proxying, and application execution are outside that gate.
 
+The platform-level companion gate — the whole `./cmd/e2e` suite on the same
+node — is documented in [`e2e-native-ci.md`](e2e-native-ci.md). Both workflows
+share the `builder-native-compute-node-2` concurrency group and the
+`/var/lock/faas-builder-acceptance.lock` host lock.
+
 The workflow uses GitHub OIDC through this keyless GCP identity:
 
 - workload identity pool: `github-actions`
 - provider: `gregale-builder-native`
 - service account: `gregale-builder-ci@project-5ae37259-04cf-4070-bef.iam.gserviceaccount.com`
 
-The provider condition admits only `poyrazK/faas`, `refs/heads/main`, and
-`.github/workflows/builder-native.yml@refs/heads/main`. The service account has
+The provider condition admits only `poyrazK/faas`, `refs/heads/main`, and an
+exact-equality list of workflow files — `.github/workflows/builder-native.yml`
+and, since 2026-09-12, `.github/workflows/e2e-native.yml`, each pinned
+`@refs/heads/main`. A workflow absent from that list fails at the auth step.
+The service account has
 project-level `roles/compute.viewer`, instance-level
 `roles/compute.osAdminLogin` on compute node 2, and the custom
 `gregaleBuilderNodeLifecycle` role. Its lifecycle binding is conditioned on

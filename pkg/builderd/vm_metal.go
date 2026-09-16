@@ -42,6 +42,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+const builderSliceMemoryEventsPath = "/sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/memory.events"
+
 // VMMDriver is the metal VM driver. It owns a single gRPC connection to
 // vmmd's unix socket (the same one schedd uses, ADR-014/015). Builder VMs
 // are produced by: CreateBuildDrive1 → gRPC CreateColdBoot with BuildSpec;
@@ -55,6 +57,12 @@ type VMMDriver struct {
 	// buildkit/Railpack/etc. Default is the canonical per-architecture
 	// runner-builder path.
 	builderBase string
+
+	// builderBaseDigest is where the base's digest sidecar actually lives.
+	// Empty means "sibling of builderBase", which is right for the local
+	// backend and wrong for the OCI one, whose read-through cache is
+	// content-addressed. See WithBuilderBaseDigest.
+	builderBaseDigest string
 
 	// driveDir hosts the temporary per-VM drive1 images we create at
 	// CreateBuildDrive1 time. Cleanup happens via WaitForCompletion's
@@ -119,10 +127,27 @@ func (d *VMMDriver) Close() error {
 	return d.conn.Close()
 }
 
+// WithBuilderBaseDigest points the driver at the base's digest sidecar when it
+// is not a sibling of the base image. Returns the driver so it can be chained
+// onto a constructor.
+//
+// The sibling derivation holds for the local backend but not for OCI, where
+// the base resolves into a content-addressed read-through cache
+// (/var/lib/faas/cache/<aa>/<hash>) that has no sibling ".digest" — the
+// sidecar is its own storage key. cmd/builderd resolves both through the same
+// backend and wires the result here. An empty path keeps the derivation.
+func (d *VMMDriver) WithBuilderBaseDigest(path string) *VMMDriver {
+	if d == nil {
+		return nil
+	}
+	d.builderBaseDigest = strings.TrimSpace(path)
+	return d
+}
+
 // BuildEnvironment binds deployment-cache reuse to the staged builder image,
 // its injected boot contract, and the architecture selected by this binary.
 func (d *VMMDriver) BuildEnvironment() (BuildEnvironment, error) {
-	return readBuildEnvironment(d.builderBase, runtime.GOOS+"/"+runtime.GOARCH)
+	return readBuildEnvironment(d.builderBase, d.builderBaseDigest, runtime.GOOS+"/"+runtime.GOARCH)
 }
 
 // FirecrackerVersion asks vmmd for the version of the running Firecracker
@@ -147,6 +172,10 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 	if err != nil {
 		return api.BuildManifest{}, fmt.Errorf("builderd: source root: %w", err)
 	}
+	dockerfilePath, err := buildDockerfilePath(req.DockerfilePath)
+	if err != nil {
+		return api.BuildManifest{}, fmt.Errorf("builderd: Dockerfile path: %w", err)
+	}
 	return api.BuildManifest{
 		SchemaVersion:   1,
 		BuildID:         req.BuildID,
@@ -155,10 +184,12 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 		SourceTarPath:   "/build/src.tar",
 		BuildContext:    "/build/src",
 		Workdir:         workdir,
+		DockerfilePath:  dockerfilePath,
 		OutDir:          "/build/out",
 		Framework:       MapFramework(req.Framework),
 		Runtime:         req.Runtime,
 		RuntimeBaseRef:  req.RuntimeBaseRef,
+		Function:        req.Function,
 		DependencyCache: req.DependencyCacheKey != "",
 		KeepWarm:        req.KeepWarm,
 		TimeoutSec:      timeoutSec,
@@ -244,6 +275,20 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	// 2. Cold-boot. BuildSpec carries the export dir; vmmd's Destroy will
 	//    loopback-mount drive1 and copy out /build/out/* + build-done.json.
 	buildExportDir := filepath.Join(d.exportDir, req.BuildID)
+	oomKillsAtStart, oomCounterErr := readCgroupOOMKills(builderSliceMemoryEventsPath)
+	handle := BuildHandle{
+		Instance:                    instance,
+		HostDrive1:                  drive1Path,
+		ExportDir:                   buildExportDir,
+		BuildID:                     req.BuildID,
+		TimeoutSec:                  timeoutSec,
+		StartedAt:                   time.Now(),
+		DependencyCacheKey:          req.DependencyCacheKey,
+		DependencyCacheRestored:     cacheRestored,
+		WarmScopeKey:                req.WarmScopeKey,
+		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
+		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+	}
 	resp, err := d.cli.CreateColdBoot(ctx, &vmmdpb.CreateColdBootRequest{
 		Instance: instance,
 		App: &vmmdpb.AppSpec{
@@ -268,24 +313,20 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	})
 	if err != nil {
 		os.Remove(drive1Path)
+		if delta := builderSliceOOMDelta(handle, builderSliceMemoryEventsPath); delta > 0 {
+			return handle, &builderSliceOOMError{Delta: delta}
+		}
 		return BuildHandle{}, fmt.Errorf("builderd: cold boot: %w", err)
 	}
 	if resp == nil {
 		os.Remove(drive1Path)
+		if delta := builderSliceOOMDelta(handle, builderSliceMemoryEventsPath); delta > 0 {
+			return handle, &builderSliceOOMError{Delta: delta}
+		}
 		return BuildHandle{}, fmt.Errorf("builderd: nil wake outcome")
 	}
 
-	return BuildHandle{
-		Instance:                instance,
-		HostDrive1:              drive1Path,
-		ExportDir:               buildExportDir,
-		BuildID:                 req.BuildID,
-		TimeoutSec:              timeoutSec,
-		StartedAt:               time.Now(),
-		DependencyCacheKey:      req.DependencyCacheKey,
-		DependencyCacheRestored: cacheRestored,
-		WarmScopeKey:            req.WarmScopeKey,
-	}, nil
+	return handle, nil
 }
 
 // RestoreWarmBuilder refreshes only the per-build inputs on a retained
@@ -323,6 +364,20 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 	}
 	instance := "build-" + req.BuildID
 	buildExportDir := filepath.Join(d.exportDir, req.BuildID)
+	oomKillsAtStart, oomCounterErr := readCgroupOOMKills(builderSliceMemoryEventsPath)
+	handle := BuildHandle{
+		Instance:                    instance,
+		HostDrive1:                  snapshot.LayerPath,
+		ExportDir:                   buildExportDir,
+		BuildID:                     req.BuildID,
+		TimeoutSec:                  timeoutSec,
+		StartedAt:                   time.Now(),
+		DependencyCacheKey:          req.DependencyCacheKey,
+		DependencyCacheRestored:     true,
+		WarmScopeKey:                req.WarmScopeKey,
+		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
+		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+	}
 	resp, err := d.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance: instance,
 		App: &vmmdpb.AppSpec{
@@ -344,9 +399,15 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 		AccountId: req.TenantID,
 	})
 	if err != nil {
+		if delta := builderSliceOOMDelta(handle, builderSliceMemoryEventsPath); delta > 0 {
+			return handle, &builderSliceOOMError{Delta: delta}
+		}
 		return BuildHandle{}, fmt.Errorf("builderd: warm restore: %w", err)
 	}
 	if resp == nil {
+		if delta := builderSliceOOMDelta(handle, builderSliceMemoryEventsPath); delta > 0 {
+			return handle, &builderSliceOOMError{Delta: delta}
+		}
 		return BuildHandle{}, fmt.Errorf("builderd: nil warm restore outcome")
 	}
 	if resp.GetMethod() != vmmdpb.WakeMethod_WAKE_RESTORE {
@@ -356,17 +417,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 		}
 		return BuildHandle{}, fmt.Errorf("builderd: warm restore fell back to cold boot")
 	}
-	return BuildHandle{
-		Instance:                instance,
-		HostDrive1:              snapshot.LayerPath,
-		ExportDir:               buildExportDir,
-		BuildID:                 req.BuildID,
-		TimeoutSec:              timeoutSec,
-		StartedAt:               time.Now(),
-		DependencyCacheKey:      req.DependencyCacheKey,
-		DependencyCacheRestored: true,
-		WarmScopeKey:            req.WarmScopeKey,
-	}, nil
+	return handle, nil
 }
 
 // WaitForWarmCompletion waits for the guest's successful build handoff,
@@ -383,10 +434,16 @@ func (d *VMMDriver) WaitForWarmCompletion(ctx context.Context, h BuildHandle) (B
 	readyResp, err := d.cli.WaitBuilderReady(waitCtx, &vmmdpb.WaitBuilderReadyRequest{Instance: h.Instance})
 	if err != nil {
 		cleanupErr := d.cleanupWarmBuilderStart(context.WithoutCancel(ctx), h)
+		if out, oom := builderSliceOOMOutcome(h, builderSliceMemoryEventsPath); oom {
+			return out, WarmSnapshot{}, nil
+		}
 		return BuildOutcome{}, WarmSnapshot{}, errors.Join(fmt.Errorf("builderd: wait builder ready: %w", err), cleanupErr)
 	}
 	if readyResp == nil {
 		cleanupErr := d.cleanupWarmBuilderStart(context.WithoutCancel(ctx), h)
+		if out, oom := builderSliceOOMOutcome(h, builderSliceMemoryEventsPath); oom {
+			return out, WarmSnapshot{}, nil
+		}
 		return BuildOutcome{}, WarmSnapshot{}, errors.Join(errors.New("builderd: nil builder readiness outcome"), cleanupErr)
 	}
 	if !readyResp.GetReady() {
@@ -501,9 +558,10 @@ func (d *VMMDriver) stopAndDestroy(ctx context.Context, instance string) error {
 	return errors.Join(stopErr, destroyErr)
 }
 
-// DeleteWarmSnapshot removes both vmmd-owned snapshot blobs and the retained
-// local builder drive. The latter is part of the warm snapshot because
-// Firecracker's memory snapshot does not include virtio block-device bytes.
+// DeleteWarmSnapshot removes vmmd-owned snapshot blobs and local warm state.
+// The retained builder drive is part of the warm snapshot because Firecracker
+// memory snapshots do not include virtio block-device bytes. VMStatePath is
+// kept for legacy local snapshots whose vmstate was not stored through vmmd.
 func (d *VMMDriver) DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapshot) error {
 	if d == nil || d.cli == nil {
 		return fmt.Errorf("builderd: VMMDriver not wired")
@@ -521,6 +579,11 @@ func (d *VMMDriver) DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapsho
 	if snapshot.LayerPath != "" {
 		if err := os.Remove(snapshot.LayerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, fmt.Errorf("remove warm builder drive: %w", err))
+		}
+	}
+	if snapshot.VMStatePath != "" {
+		if err := os.Remove(snapshot.VMStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("remove warm vmstate: %w", err))
 		}
 	}
 	return errors.Join(errs...)
@@ -567,6 +630,9 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 	dctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	resp, err := d.cli.Destroy(dctx, &vmmdpb.DestroyRequest{Instance: h.Instance})
+	if out, oom := builderSliceOOMOutcome(h, builderSliceMemoryEventsPath); oom {
+		return out, nil
+	}
 	if err != nil {
 		return BuildOutcome{}, fmt.Errorf("builderd: destroy: %w", err)
 	}
@@ -593,6 +659,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		exitCode = done.ExitCode
 		res.ExitCode = exitCode
 		res.LogTailBytes = int64(len(done.LogTail))
+		res.LogTail = done.LogTail
 		res.FailureClass = done.FailureClass
 		res.FailureCode = done.FailureCode
 		res.FailurePkg = done.FailurePkg
@@ -816,40 +883,6 @@ func (d *VMMDriver) runJanitor() {
 	d.dependencyCacheMu.Lock()
 	_ = sweepDependencyCaches(d.driveDir, time.Now())
 	d.dependencyCacheMu.Unlock()
-}
-
-// classifyBuildFailure resolves the failure class for a non-zero build exit.
-// It prefers BuildDone.FailureClass (guest-init's classification) when
-// /build-done.json exists in the export, then falls back to the canonical
-// exit-code table (137→OOM, 124→Timeout, else UserError). The vocabulary
-// here matches the canonical names used by pkg/state.FailureClass:
-// "FailureUserError" / "FailureInfra" / "FailureOOM" / "FailureTimeout".
-// builderd.go's ProcessOne translates these to the column-friendly
-// strings ("oom" etc) at the state.Store boundary.
-//
-// Error-explanations cluster (spec §6.4 amendment 1): the second
-// return value is the RFC 7807 stable code guest-init stamped on
-// BuildDone.FailureCode (app_arch_mismatch / dep_install_failed),
-// plus the package manager discriminator for dep_install_failed
-// (npm / pip / go / cargo). Empty strings when guest-init fell back
-// to the coarse FailureClass only — the caller stamps the legacy
-// CodeDeployFailed path.
-func classifyBuildFailure(exitCode int, exportDir string) (string, string, string) {
-	done := filepath.Join(exportDir, "build-done.json")
-	if data, err := os.ReadFile(done); err == nil {
-		var bd api.BuildDone
-		if json.Unmarshal(data, &bd) == nil && bd.FailureClass != "" {
-			return bd.FailureClass, bd.FailureCode, bd.FailurePkg
-		}
-	}
-	switch exitCode {
-	case 137:
-		return "FailureOOM", "", ""
-	case 124:
-		return "FailureTimeout", "", ""
-	default:
-		return "FailureUserError", "", ""
-	}
 }
 
 // unused import guard.

@@ -6,6 +6,11 @@ NOT enable or start imaged — the operator runs
 `systemctl enable --now faas-imaged` once `/etc/faas/compute-db.env` is
 populated with both `DATABASE_URL` and `FAAS_VMMD_DBURL` (gap G2).
 
+The node-local schedd unit is compute-specific and has no dependency on a
+local PostgreSQL service. Compute daemons use the remote control-plane DSN
+from `/etc/faas/compute-db.env`, so adopting a control-plane image cannot add
+the local database's boot time to scheduler readiness.
+
 ## Drop-ins
 
 - `99-faas-node-name.conf.j2` (linked from `_shared/`) — exposes this box's

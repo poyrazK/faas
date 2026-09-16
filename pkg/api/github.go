@@ -38,3 +38,17 @@ func (c *Client) DisconnectGitHubConnection(ctx context.Context, slug string) (G
 	var out GitHubInstallStatus
 	return out, c.do(ctx, "DELETE", "/v1/apps/"+slug+"/github", nil, &out)
 }
+
+// GetGitHubDeploymentPolicy returns the project-level GitHub deployment
+// policy used by githubd for source staging and PR previews.
+func (c *Client) GetGitHubDeploymentPolicy(ctx context.Context, slug string) (GitHubDeploymentPolicy, error) {
+	var out GitHubDeploymentPolicy
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/github/deployment-policy", nil, &out)
+}
+
+// PatchGitHubDeploymentPolicy updates the project-level GitHub deployment
+// policy. Omitted fields retain their current values.
+func (c *Client) PatchGitHubDeploymentPolicy(ctx context.Context, slug string, req GitHubDeploymentPolicyPatch) (GitHubDeploymentPolicy, error) {
+	var out GitHubDeploymentPolicy
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/github/deployment-policy", req, &out)
+}

@@ -275,12 +275,26 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 			"Cache lookup failed", cacheErr.Error()))
 		return
 	}
+	protected, protectionProblem := s.projectDeploymentEnvironmentProtection(r.Context(), acct, slug, pt.Environment)
+	if protectionProblem != nil {
+		api.WriteProblem(w, protectionProblem)
+		return
+	}
+	approvalToken := ""
+	if protected {
+		var approvalProblem *api.Problem
+		approvalToken, _, approvalProblem = s.issueProjectEnvironmentApproval(r.Context(), acct, slug, pt.Environment, planToken)
+		if approvalProblem != nil {
+			api.WriteProblem(w, approvalProblem)
+			return
+		}
+	}
 	// Build synthetic multipart request from cached source +
 	// checked exclude slugs. Each exclude slug becomes its own
 	// multipart part so parseScanMultipart's comma-split /
 	// lowercase / trim normalises identically to the live form.
 	exclude := r.Form["exclude"]
-	synthReq, buildErr := buildCachedSourceRequest(cachedPath, slug, exclude)
+	synthReq, buildErr := buildCachedSourceRequest(cachedPath, slug, exclude, approvalToken)
 	if buildErr != nil {
 		log.Error("dashboard project_preview apply: build synth req",
 			"account_id", acct.ID, "slug", slug, "err", buildErr)

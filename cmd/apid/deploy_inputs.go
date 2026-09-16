@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -122,12 +123,14 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		sourceURL      string
 		commitSHA      string
 		scope          string
+		environment    string
 		kind           state.DeploymentKind
 		sourceAccepted bool
 		workflows      []api.WorkflowSpec
 		devSource      devSourceMetadata
 		trafficPercent *int
 		canarySpec     *api.CanaryPresetSpec
+		rollbackOn5xx  *bool
 		ann            annotationForm
 	)
 	defer func() {
@@ -207,6 +210,13 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			scope = strings.TrimSpace(string(b))
+		case "environment":
+			b, readErr := io.ReadAll(io.LimitReader(part, api.MaxEnvScopeLen+1))
+			if readErr != nil || len(b) > api.MaxEnvScopeLen {
+				api.WriteProblem(w, api.ErrSourceInvalid("environment is too long"))
+				return
+			}
+			environment = strings.TrimSpace(string(b))
 		case "workflows":
 			b, readErr := io.ReadAll(io.LimitReader(part, 1<<20))
 			if readErr != nil || !json.Valid(b) {
@@ -237,6 +247,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			canarySpec = &spec
+		case "rollback_on_5xx":
+			value := isFlagSet(part)
+			rollbackOn5xx = &value
 		case "reason":
 			b, _ := io.ReadAll(io.LimitReader(part, 2048))
 			ann.Reason = string(b)
@@ -279,7 +292,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{TrafficPercent: trafficPercent, Canary: canarySpec, Scope: scope}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx}
+	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if scope != "" {
 		if prob := api.ValidateScope(scope); prob != nil {
 			api.WriteProblem(w, prob)
@@ -287,6 +304,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -378,6 +399,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	}
 
 	if sourcePath != "" {
+		if !s.admitAccountDeploy(w, r, acct) {
+			return
+		}
 		// PR-B: the prior-deployment supersede is folded into
 		// store.CreateDeployment's tx (pkg/state/pgstore.go). The tarball
 		// branch picks up the parity the image: branch used to lack —
@@ -416,6 +440,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			PRNumber:               ann.PRNumber,
 			TrafficPercent:         rollout.TrafficPercent,
 			TrafficPercentExplicit: rollout.TrafficPercentExplicit,
+			RollbackOn5xx:          rollout.RollbackOn5xx,
 			CanaryPreset:           rollout.CanaryPreset,
 			CanaryStep:             rollout.CanaryStep,
 			CanaryTotalSteps:       rollout.CanaryTotalSteps,
@@ -560,48 +585,24 @@ func validateSourceProvenance(sourceURL, commitSHA string) *api.Problem {
 //
 //nolint:forbidigo // path is the tmp file apid just wrote via os.Create in validateAndSpool above with a fresh random id; apid OWNS the parent directory AND the inode, customer never touched them — symlink-attack impossible. Tarball-shape validation re-reads the bytes to enforce spec §9.
 func validateTarballShape(path string) *api.Problem {
-	f, err := os.Open(path)
-	if err != nil {
-		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
+	err := tarball.ValidateShape(path, maxSourceFiles)
+	if err == nil {
+		return nil
 	}
-	defer func() { _ = f.Close() }()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Not gzip", "source must be tar.gz")
+	var shapeErr *tarball.ShapeError
+	if !errors.As(err, &shapeErr) {
+		return api.ErrSourceInvalid(err.Error())
 	}
-	defer func() { _ = gz.Close() }()
-	tr := tar.NewReader(gz)
-	count := 0
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad tar", err.Error())
-		}
-		// PR-A: every name-based escape check runs BEFORE count++ so a
-		// tarball mixing 10k valid entries with one escaping symlink
-		// trips the escape check first, not the file-count cap
-		// (review ordering pin).
-		if escapesArchiveRoot(hdr.Name) {
-			return api.ErrSourceInvalid("absolute paths or '..' entries are rejected")
-		}
-		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
-			// Symlink/hardlink target uses the same predicate as the
-			// entry name. tar's tar.Reader doesn't resolve targets —
-			// builderd's unpack does — so we just reject anything that
-			// could escape when resolved relative to the entry's parent.
-			if escapesArchiveRoot(hdr.Linkname) {
-				return api.ErrSourceInvalid("symlink/hardlink with absolute or '..' target rejected")
-			}
-		}
-		count++
-		if count > maxSourceFiles {
-			return api.ErrSourceInvalid(fmt.Sprintf("too many files (>%d)", maxSourceFiles))
-		}
+	switch shapeErr.Kind {
+	case tarball.ShapeOpen:
+		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", shapeErr.Detail)
+	case tarball.ShapeNotGzip:
+		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Not gzip", shapeErr.Detail)
+	case tarball.ShapeBadTar:
+		return api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad tar", shapeErr.Detail)
+	default:
+		return api.ErrSourceInvalid(shapeErr.Detail)
 	}
-	return nil
 }
 
 // escapesArchiveRoot reports whether p would, when cleaned and joined
@@ -611,20 +612,7 @@ func validateTarballShape(path string) *api.Problem {
 // splitting on the path separator and checking each component is the
 // tightest predicate that still closes the escape.
 func escapesArchiveRoot(p string) bool {
-	if p == "" {
-		return false
-	}
-	if strings.HasPrefix(p, "/") {
-		return true
-	}
-	// filepath.SplitList won't help; split manually so we don't pull in
-	// OS semantics (tar paths are always forward-slash on the wire).
-	for _, part := range strings.Split(p, "/") {
-		if part == ".." {
-			return true
-		}
-	}
-	return false
+	return tarball.EscapesRoot(p)
 }
 
 // statefulTopLevelDirs is the set of top-level directory names that

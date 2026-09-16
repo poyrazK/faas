@@ -784,7 +784,7 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 	if t, fire := m.sessionDebounce.shouldTouch(env.Sid, time.Now(), m.sessionTouchWindow()); fire {
 		go func(parentCtx context.Context, sid string, ticket *TouchTicket) {
 			defer ticket.AfterFire(m.sessionTouchWindow())
-			c, cancel := context.WithTimeout(parentCtx, 2*time.Second)
+			c, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), 2*time.Second)
 			defer cancel()
 			if err := m.Lookups.TouchSessionLastSeen(c, sid); err != nil && m.Log != nil {
 				m.Log.Warn("session last_seen_at touch failed", "sid", logsanitize.Field(sid), "error", err.Error())
@@ -873,7 +873,88 @@ func (m *Middleware) RequireLimited(next AccountHandler) http.HandlerFunc {
 		CountStatuses: []int{http.StatusUnauthorized},
 		Log:           m.Log,
 	}
+	cfg.OnLimited = func(w http.ResponseWriter, r *http.Request) {
+		// The IP budget is exhausted, but rejecting before authentication lets
+		// one stale token deny every valid user behind the same NAT. Probe only
+		// the authentication layer. A successful principal runs the real
+		// handler directly against the original writer, preserving streaming and
+		// hijacking. Authentication failures remain in this small capture and are
+		// replaced with the stable Problem JSON 429 contract below.
+		capture := newAuthResponseCapture()
+		authenticated := false
+		m.RequireSession(func(_ http.ResponseWriter, authenticatedRequest *http.Request, acct state.Account) {
+			authenticated = true
+			next(w, authenticatedRequest, acct)
+		})(capture, r)
+		if authenticated {
+			return
+		}
+		if capture.status != http.StatusUnauthorized {
+			capture.replay(w)
+			return
+		}
+
+		// Preserve security-relevant auth headers such as a session-cookie
+		// deletion, but replace the captured 401 body/content type.
+		for key, values := range capture.header {
+			if strings.EqualFold(key, "Content-Type") || strings.EqualFold(key, "Content-Length") {
+				continue
+			}
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeAuthRateLimited,
+			"Too many failed authentication attempts", "provide valid credentials or retry after 60 seconds").WithHeader("Retry-After", "60"))
+		if m.Log != nil {
+			m.Log.Warn("auth_limit blocked invalid credential",
+				"ip", logsanitize.Field(middleware.ClientIP(r)),
+				"path", logsanitize.Field(r.URL.Path),
+				"request_id", logsanitize.Field(middleware.RequestIDFrom(r)),
+			)
+		}
+	}
 	return middleware.AuthLimitWithLimiter(cfg, m.Limiter)(h).ServeHTTP
+}
+
+// authResponseCapture buffers only RequireSession's terminal auth responses
+// while an IP is already limited. Successful principals bypass it before the
+// customer handler runs, so large responses, SSE and upgraded connections are
+// never buffered.
+type authResponseCapture struct {
+	header http.Header
+	status int
+	body   strings.Builder
+}
+
+func newAuthResponseCapture() *authResponseCapture {
+	return &authResponseCapture{header: make(http.Header), status: http.StatusOK}
+}
+
+func (c *authResponseCapture) Header() http.Header { return c.header }
+
+func (c *authResponseCapture) WriteHeader(status int) {
+	if c.status != http.StatusOK {
+		return
+	}
+	c.status = status
+}
+
+func (c *authResponseCapture) Write(p []byte) (int, error) {
+	if c.status == http.StatusOK {
+		c.status = http.StatusOK
+	}
+	return c.body.Write(p)
+}
+
+func (c *authResponseCapture) replay(w http.ResponseWriter) {
+	for key, values := range c.header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(c.status)
+	_, _ = w.Write([]byte(c.body.String()))
 }
 
 // --- RequireMFA ----------------------------------------------------------

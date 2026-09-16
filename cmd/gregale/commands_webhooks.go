@@ -21,6 +21,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -91,9 +93,12 @@ func cmdWebhooks(args []string) int {
 }
 
 func cmdWebhooksList(args []string) int {
-	fs := flag.NewFlagSet("webhooks-list", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-list", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if *slug == "" {
@@ -119,7 +124,7 @@ func cmdWebhooksList(args []string) int {
 }
 
 func cmdWebhooksAdd(args []string) int {
-	fs := flag.NewFlagSet("webhooks-add", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	target := fs.String("target-url", "", "HTTPS target URL (required)")
 	secret := fs.String("secret", "", "HMAC-SHA256 secret (optional; auto-minted if empty)")
@@ -129,9 +134,21 @@ func cmdWebhooksAdd(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if *slug == "" || *target == "" {
 		PrintUsage(os.Stderr, "usage: gregale webhooks add --app <slug> --target-url <url> [--event <evt>]... [--retry-policy default|aggressive|none] [--secret <hmac-secret>]", "webhooks")
 		return 1
+	}
+	generatedSecret := false
+	if *secret == "" {
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			return printErr("Could not generate webhook secret", err)
+		}
+		*secret = base64.RawURLEncoding.EncodeToString(raw)
+		generatedSecret = true
 	}
 	// Closed-set drift test BEFORE the round-trip — same posture as
 	// the --eviction-priority check in cmdApp (PR #647). Surfaces a
@@ -154,22 +171,29 @@ func cmdWebhooksAdd(args []string) int {
 		EventFilter: events,
 		RetryPolicy: *policy,
 	}
-	if *secret != "" {
-		req.WebhookSecret = *secret
-	}
+	req.WebhookSecret = *secret
 	out, err := client.CreateAppWebhook(context.Background(), *slug, req)
 	if err != nil {
 		return printErr("Create failed", err)
 	}
 	if jsonOutput {
+		if generatedSecret {
+			return jsonOut(writeJSON(struct {
+				api.AppWebhookResponse
+				WebhookSecret string `json:"webhook_secret"`
+			}{AppWebhookResponse: out, WebhookSecret: *secret}))
+		}
 		return jsonOut(writeJSON(out))
 	}
 	PrintOK(osStdout, "Webhook subscribed: %s -> %s", out.ID, out.TargetURL)
+	if generatedSecret {
+		PrintProgress(osStdout, "Signing secret (shown ONCE): %s", *secret)
+	}
 	return 0
 }
 
 func cmdWebhooksUpdate(args []string) int {
-	fs := flag.NewFlagSet("webhooks-update", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-update", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	target := fs.String("target-url", "", "new target URL")
 	policy := fs.String("retry-policy", "", "new retry policy (default|aggressive|none)")
@@ -178,7 +202,7 @@ func cmdWebhooksUpdate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *slug == "" || len(fs.Args()) == 0 {
+	if *slug == "" || len(fs.Args()) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale webhooks update <id> --app <slug> [--target-url X] [--retry-policy X] [--enable|--disable]", "webhooks")
 		return 1
 	}
@@ -221,7 +245,7 @@ func cmdWebhooksUpdate(args []string) int {
 }
 
 func cmdWebhooksRm(args []string) int {
-	fs := flag.NewFlagSet("webhooks-rm", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -249,7 +273,7 @@ func cmdWebhooksRm(args []string) int {
 }
 
 func cmdWebhookDeliveries(args []string) int {
-	fs := flag.NewFlagSet("webhooks-deliveries", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-deliveries", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	status := fs.String("status", "", "filter by status (pending|in_flight|succeeded|failed|dead)")
 	pageSize := fs.Int("page-size", 50, "page size (1..100)")
@@ -257,7 +281,7 @@ func cmdWebhookDeliveries(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if *slug == "" || len(fs.Args()) == 0 {
+	if *slug == "" || len(fs.Args()) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale webhooks deliveries --app <slug> <id> [--status X] [--page-size N] [--page-token T]", "webhooks")
 		return 1
 	}
@@ -299,7 +323,7 @@ func cmdWebhookDeliveries(args []string) int {
 // server (pkg/api/webhooks.go:230-233) — only the masked
 // WebhookSecretSealedMasked sentinel is shown.
 func cmdWebhookInfo(args []string) int {
-	fs := flag.NewFlagSet("webhooks-info", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-info", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -336,7 +360,7 @@ func cmdWebhookInfo(args []string) int {
 }
 
 func cmdWebhookRetry(args []string) int {
-	fs := flag.NewFlagSet("webhooks-retry", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-retry", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -368,7 +392,7 @@ func cmdWebhookRetry(args []string) int {
 // cmdWebhookRotateSecret installs a caller-supplied replacement. Reading from
 // stdin keeps the value out of shell history; the API response stays masked.
 func cmdWebhookRotateSecret(args []string) int {
-	fs := flag.NewFlagSet("webhooks-rotate-secret", flag.ContinueOnError)
+	fs := newFlagSet("webhooks-rotate-secret", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	secret := fs.String("secret", "", "replacement HMAC-SHA256 secret")
 	fromStdin := fs.Bool("from-stdin", false, "read the replacement secret from stdin (one line)")
@@ -420,35 +444,17 @@ func cmdWebhookRotateSecret(args []string) int {
 // ids. Same convention as deploymentIDPattern / cronIDPattern.
 var webhookIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// validAppWebhookEvents is the closed vocabulary accepted by the
-// --event flag. Mirrors the CHECK constraint at
-// migrations/20260906171000000_webhook_event_allowlist_b5.sql and the
-// `app_webhook_deliveries_event_chk` migration tests.
+// validAppWebhookEvents is the producer-backed vocabulary accepted by the
+// --event flag. The delivery ledger retains historical values, while new
+// subscriptions expose only events that the running platform can emit.
 var validAppWebhookEvents = map[string]struct{}{
-	"cron.fired":                {},
-	"cron.fired.manually":       {},
-	"app.created":               {},
-	"app.deleted":               {},
-	"app.deployed":              {},
-	"app.scaled":                {},
 	"app.parked":                {},
 	"app.woken":                 {},
-	"build.succeeded":           {},
-	"build.failed":              {},
-	"deployment.failed":         {},
-	"rollout.aborted":           {},
-	"error.new":                 {},
-	"job.finished":              {},
-	"preview.created":           {},
-	"budget.threshold":          {},
 	"usage_statement.finalized": {},
 }
 
 var webhookEventVocab = []string{
-	"cron.fired", "cron.fired.manually",
-	"app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken",
-	"build.succeeded", "build.failed",
-	"deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold", "usage_statement.finalized",
+	"app.parked", "app.woken", "usage_statement.finalized",
 }
 
 func validAppWebhookEvent(s string) bool {
@@ -472,7 +478,7 @@ func truncate(s string, n int) string {
 
 // multiFlag is a flag.Value that accumulates repeated occurrences.
 // Mirrors the same pattern in cmd/gregale/commands2.go's flag.Var
-// usage for crons; lets `--event cron.fired --event app.deployed`
+// usage for crons; lets `--event app.parked --event app.woken`
 // build a 2-element slice without quoting tricks. Empty values are
 // skipped so callers can omit the flag entirely.
 type multiFlag []string

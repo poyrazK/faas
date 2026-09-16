@@ -137,14 +137,15 @@ func (e *fakeErr) Error() string { return e.m }
 // the production wiring lands.
 func TestSSEChannels_Contract(t *testing.T) {
 	want := map[string]bool{
-		db.NotifyAppChanged:        true,
-		db.NotifyDeploymentChanged: true,
-		db.NotifyInstanceChanged:   true,
-		db.NotifyCronFired:         true,
-		db.NotifyQuotaWarning:      true,
-		db.NotifyBillingPastDue:    true,
-		db.NotifyInvocationDone:    true,
-		db.NotifyStatelessAdvisory: true,
+		db.NotifyAppChanged:             true,
+		db.NotifyDeploymentChanged:      true,
+		db.NotifyInstanceChanged:        true,
+		db.NotifyCronFired:              true,
+		db.NotifyQuotaWarning:           true,
+		db.NotifyBillingPastDue:         true,
+		db.NotifyInvocationDone:         true,
+		db.NotifyDebugRegressionChanged: true,
+		db.NotifyStatelessAdvisory:      true,
 	}
 	got := map[string]bool{}
 	for _, ch := range sseChannels {

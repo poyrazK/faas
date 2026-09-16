@@ -20,6 +20,20 @@ type executionPayload struct {
 	createdAt time.Time
 }
 
+type executionUsageLedgerRow struct {
+	ExecutionID  string
+	AccountID    string
+	Runtime      api.ExecutionRuntime
+	Status       api.ExecutionStatus
+	WallTimeMS   int64
+	CPUTimeMS    int64
+	PeakMemoryMB int64
+	OutputBytes  int64
+	StartedAt    *time.Time
+	FinishedAt   time.Time
+	CreatedAt    time.Time
+}
+
 func cloneExecution(row Execution) Execution {
 	row.Result = append([]byte(nil), row.Result...)
 	if row.LeaseToken != nil {
@@ -105,6 +119,7 @@ func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionPara
 		sealed: append([]byte(nil), params.SealedPayload...), kid: params.PayloadKID,
 		createdAt: params.AdmittedAt.UTC(),
 	}
+	m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventStatus, executionStatusPayload(row.Status), params.AdmittedAt)
 	return cloneExecution(row), nil
 }
 
@@ -119,12 +134,20 @@ func (m *MemStore) ExecutionByID(_ context.Context, accountID, executionID strin
 }
 
 func (m *MemStore) ListExecutions(_ context.Context, accountID string, limit, offset int) ([]Execution, error) {
+	return m.listExecutions(accountID, "", limit, offset)
+}
+
+func (m *MemStore) ListExecutionsByStatus(_ context.Context, accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
+	return m.listExecutions(accountID, status, limit, offset)
+}
+
+func (m *MemStore) listExecutions(accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
 	limit, offset = normalizeExecutionPage(limit, offset)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rows := make([]Execution, 0)
 	for _, row := range m.executions {
-		if row.AccountID == accountID {
+		if row.AccountID == accountID && (status == "" || row.Status == status) {
 			rows = append(rows, cloneExecution(row))
 		}
 	}
@@ -144,7 +167,80 @@ func (m *MemStore) ListExecutions(_ context.Context, accountID string, limit, of
 	return rows, nil
 }
 
+func (m *MemStore) ExecutionQueueStats(_ context.Context, at time.Time) (ExecutionQueueStats, error) {
+	if at.IsZero() {
+		return ExecutionQueueStats{}, ErrExecutionInvalid
+	}
+	at = at.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stats := ExecutionQueueStats{}
+	for _, row := range m.executions {
+		if row.Status != api.ExecutionStatusQueued || row.CancelRequested != nil ||
+			row.CreatedAt.After(at) || !row.DeadlineAt.After(at) {
+			continue
+		}
+		stats.Queued++
+		if stats.OldestCreatedAt == nil || row.CreatedAt.Before(*stats.OldestCreatedAt) {
+			created := row.CreatedAt
+			stats.OldestCreatedAt = &created
+		}
+	}
+	return stats, nil
+}
+
+func (m *MemStore) ListExecutionQueueAccounts(_ context.Context, at time.Time, limit int) ([]ExecutionQueueAccount, error) {
+	if at.IsZero() {
+		return nil, ErrExecutionInvalid
+	}
+	if limit <= 0 {
+		limit = 64
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	at = at.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	byAccount := make(map[string]ExecutionQueueAccount)
+	for _, row := range m.executions {
+		if row.Status != api.ExecutionStatusQueued || row.CancelRequested != nil ||
+			row.CreatedAt.After(at) || !row.DeadlineAt.After(at) {
+			continue
+		}
+		entry := byAccount[row.AccountID]
+		entry.AccountID = row.AccountID
+		entry.Queued++
+		if entry.OldestCreatedAt.IsZero() || row.CreatedAt.Before(entry.OldestCreatedAt) {
+			entry.OldestCreatedAt = row.CreatedAt
+		}
+		byAccount[row.AccountID] = entry
+	}
+	accounts := make([]ExecutionQueueAccount, 0, len(byAccount))
+	for _, account := range byAccount {
+		accounts = append(accounts, account)
+	}
+	sort.Slice(accounts, func(i, j int) bool {
+		return accounts[i].AccountID < accounts[j].AccountID
+	})
+	if len(accounts) > limit {
+		accounts = accounts[:limit]
+	}
+	return accounts, nil
+}
+
 func (m *MemStore) ClaimExecution(_ context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
+	return m.claimExecution(owner, "", claimedAt, leaseDuration)
+}
+
+// ClaimExecutionForAccount is the fair-queue variant used by the production
+// coordinator. The account filter is applied while holding the same store lock
+// as the claim, so a selected queue head cannot be displaced by another worker.
+func (m *MemStore) ClaimExecutionForAccount(_ context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
+	return m.claimExecution(owner, strings.TrimSpace(accountID), claimedAt, leaseDuration)
+}
+
+func (m *MemStore) claimExecution(owner, accountID string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" || claimedAt.IsZero() || leaseDuration <= 0 {
 		return ExecutionClaim{}, fmt.Errorf("%w: claim owner, time, and positive lease are required", ErrExecutionInvalid)
@@ -155,6 +251,7 @@ func (m *MemStore) ClaimExecution(_ context.Context, owner string, claimedAt tim
 	for _, stored := range m.executions {
 		row := stored
 		if row.Status != api.ExecutionStatusQueued || row.CancelRequested != nil ||
+			(accountID != "" && row.AccountID != accountID) ||
 			row.CreatedAt.After(claimedAt) || !row.DeadlineAt.After(claimedAt) {
 			continue
 		}
@@ -182,6 +279,7 @@ func (m *MemStore) ClaimExecution(_ context.Context, owner string, claimedAt tim
 	candidate.LeaseExpiresAt = &expiresAt
 	candidate.UpdatedAt = claimedAt
 	m.executions[candidate.ID] = *candidate
+	m.appendExecutionEventLocked(candidate.AccountID, candidate.ID, ExecutionEventStatus, executionStatusPayload(candidate.Status), claimedAt)
 	return ExecutionClaim{
 		Execution: cloneExecution(*candidate), SealedPayload: append([]byte(nil), payload.sealed...), PayloadKID: payload.kid,
 	}, nil
@@ -204,6 +302,7 @@ func (m *MemStore) MarkExecutionRunning(_ context.Context, executionID, leaseTok
 	row.StartedAt = &startedAt
 	row.UpdatedAt = startedAt
 	m.executions[row.ID] = row
+	m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventStatus, executionStatusPayload(row.Status), startedAt)
 	return cloneExecution(row), nil
 }
 
@@ -276,8 +375,79 @@ func (m *MemStore) CompleteExecution(_ context.Context, params CompleteExecution
 	row.FinishedAt = &finishedAt
 	row.UpdatedAt = finishedAt
 	m.executions[row.ID] = row
+	m.recordExecutionUsageLocked(row)
+	if !params.OutputEventsPersisted {
+		appendExecutionOutputEventsLocked(m, row, finishedAt)
+	}
+	m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), finishedAt)
 	delete(m.executionPayloads, row.ID)
 	return cloneExecution(row), nil
+}
+
+// recordExecutionUsageLocked is the MemStore mirror of the Postgres
+// execution_usage_ledger insert. The execution ID is the idempotency key;
+// repeated terminalization/recovery attempts are no-ops.
+func (m *MemStore) recordExecutionUsageLocked(row Execution) {
+	if !row.Status.Terminal() {
+		return
+	}
+	if _, exists := m.executionUsageLedger[row.ID]; exists {
+		return
+	}
+	startedAt := cloneTimePtr(row.StartedAt)
+	m.executionUsageLedger[row.ID] = executionUsageLedgerRow{
+		ExecutionID:  row.ID,
+		AccountID:    row.AccountID,
+		Runtime:      row.Runtime,
+		Status:       row.Status,
+		WallTimeMS:   row.Usage.WallTimeMS,
+		CPUTimeMS:    row.Usage.CPUTimeMS,
+		PeakMemoryMB: int64(row.Usage.PeakMemoryMB),
+		OutputBytes:  int64(len(row.Result) + len(row.Stdout) + len(row.Stderr)),
+		StartedAt:    startedAt,
+		FinishedAt:   derefTime(row.FinishedAt),
+		CreatedAt:    row.CreatedAt,
+	}
+}
+
+// ExecutionUsageByAccount returns a month-scoped aggregate over the durable
+// ledger. The month is interpreted as a UTC calendar month and must be the
+// first day of that month (or it is normalized defensively).
+func (m *MemStore) ExecutionUsageByAccount(_ context.Context, accountID string, month time.Time) (ExecutionUsageSummary, error) {
+	if strings.TrimSpace(accountID) == "" || month.IsZero() {
+		return ExecutionUsageSummary{}, ErrExecutionInvalid
+	}
+	month = month.UTC()
+	start := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	summary := ExecutionUsageSummary{AccountID: accountID, Month: start}
+	for _, row := range m.executionUsageLedger {
+		if row.AccountID != accountID || row.FinishedAt.Before(start) || !row.FinishedAt.Before(end) {
+			continue
+		}
+		summary.Runs++
+		summary.WallTimeMS += row.WallTimeMS
+		summary.CPUTimeMS += row.CPUTimeMS
+		if row.PeakMemoryMB > summary.PeakMemoryMB {
+			summary.PeakMemoryMB = row.PeakMemoryMB
+		}
+		summary.OutputBytes += row.OutputBytes
+		switch row.Status {
+		case api.ExecutionStatusSucceeded:
+			summary.Succeeded++
+		case api.ExecutionStatusFailed:
+			summary.Failed++
+		case api.ExecutionStatusTimedOut:
+			summary.TimedOut++
+		case api.ExecutionStatusOutOfMemory:
+			summary.OutOfMemory++
+		case api.ExecutionStatusCancelled:
+			summary.Cancelled++
+		}
+	}
+	return summary, nil
 }
 
 func copyInt(value *int) *int {
@@ -307,6 +477,7 @@ func (m *MemStore) RequestExecutionCancellation(_ context.Context, accountID, ex
 		return Execution{}, ErrNotFound
 	}
 	if row.Status.Terminal() {
+		m.recordExecutionUsageLocked(row)
 		delete(m.executionPayloads, row.ID)
 		return cloneExecution(row), nil
 	}
@@ -319,6 +490,8 @@ func (m *MemStore) RequestExecutionCancellation(_ context.Context, accountID, ex
 	if row.Status == api.ExecutionStatusQueued {
 		row.Status = api.ExecutionStatusCancelled
 		row.FinishedAt = &requestedAt
+		m.recordExecutionUsageLocked(row)
+		m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), requestedAt)
 		delete(m.executionPayloads, row.ID)
 	}
 	m.executions[row.ID] = row
@@ -376,6 +549,8 @@ func (m *MemStore) SweepExecutions(_ context.Context, at time.Time, limit int) (
 		row := m.executions[id]
 		finishExecutionForSweep(&row, api.ExecutionStatusTimedOut, at, "deadline_exceeded", "execution deadline elapsed before dispatch")
 		m.executions[id] = row
+		m.recordExecutionUsageLocked(row)
+		m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), at)
 		if _, ok := m.executionPayloads[id]; ok {
 			delete(m.executionPayloads, id)
 			result.PayloadsDeleted++
@@ -394,6 +569,8 @@ func (m *MemStore) SweepExecutions(_ context.Context, at time.Time, limit int) (
 		status, code, message := sweepTerminal(row, at, "execution deadline elapsed during restore")
 		finishExecutionForSweep(&row, status, at, code, message)
 		m.executions[id] = row
+		m.recordExecutionUsageLocked(row)
+		m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), at)
 		if _, ok := m.executionPayloads[id]; ok {
 			delete(m.executionPayloads, id)
 			result.PayloadsDeleted++
@@ -432,6 +609,8 @@ func (m *MemStore) SweepExecutions(_ context.Context, at time.Time, limit int) (
 		}
 		finishExecutionForSweep(&row, status, at, code, message)
 		m.executions[id] = row
+		m.recordExecutionUsageLocked(row)
+		m.appendExecutionEventLocked(row.AccountID, row.ID, ExecutionEventTerminal, executionTerminalPayload(row), at)
 		if _, ok := m.executionPayloads[id]; ok {
 			delete(m.executionPayloads, id)
 			result.PayloadsDeleted++

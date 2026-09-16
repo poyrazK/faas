@@ -353,6 +353,17 @@ func (d *Drain) dispatchParallel(ctx context.Context, rows []state.Invocation) {
 // underlying HTTP status is 4xx; the engine's Wake surfaces
 // ErrPermanentWake on no-such-app / no-live-deployment.
 func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
+	// All schedulers can see the shared durable queue. Resolve ownership
+	// before claiming so an owner-less control-plane scheduler cannot steal
+	// work from the compute-local scheduler that can actually wake the app.
+	app, err := d.store.AppByID(ctx, inv.AppID)
+	if err != nil {
+		d.log.Warn("drain: resolve app owner", "inv", inv.ID, "app_id", inv.AppID, "err", err)
+		return
+	}
+	if !d.engine.ownsApp(app) {
+		return
+	}
 	// 1. Cap re-check (delayed_task source only — the plan may have
 	// been downgraded between EnqueueInvocation and now).
 	if inv.Source == state.InvocationDelayedTask {

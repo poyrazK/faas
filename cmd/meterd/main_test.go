@@ -916,6 +916,10 @@ func (c *failingEgressStreamClient) StreamBytes(context.Context, *egresspb.Strea
 	return nil, errors.New("gateway unavailable")
 }
 
+func (c *failingEgressStreamClient) AckBytes(context.Context, *egresspb.AckBytesRequest, ...grpc.CallOption) (*egresspb.AckBytesResponse, error) {
+	return &egresspb.AckBytesResponse{}, nil
+}
+
 func TestGatewayEgressAdapter_StreamOpenFailureBacksOff(t *testing.T) {
 	client := &failingEgressStreamClient{}
 	a := &gatewayEgressAdapter{

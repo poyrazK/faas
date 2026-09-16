@@ -19,10 +19,60 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 )
+
+// The PKI renewal job invokes this exact dispatcher path. run consumes the
+// global JSON flag before the leaf FlagSet sees it, so the leaf must honor the
+// package-level setting for both --json and FAAS_JSON=1.
+func TestRunComputeNodesListHonorsGlobalJSON(t *testing.T) {
+	resetMemStore(t)
+	seedNode(t, "alpha", "unix:///run/faas/alpha.sock")
+	out, stderr, restore := captureOperatorIO()
+	defer restore()
+	previousJSON := jsonOutput
+	t.Cleanup(func() { jsonOutput = previousJSON })
+
+	t.Setenv("FAAS_JSON", "")
+	cases := []struct {
+		name string
+		args []string
+		env  string
+	}{
+		{
+			name: "trailing flag",
+			args: []string{"compute-nodes", "list", "--active-only", "--break-glass-db", "--json"},
+		},
+		{
+			name: "environment",
+			args: []string{"compute-nodes", "list", "--active-only", "--break-glass-db"},
+			env:  "1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			jsonOutput = false
+			out.Reset()
+			stderr.Reset()
+			if err := os.Setenv("FAAS_JSON", tc.env); err != nil {
+				t.Fatal(err)
+			}
+			if code := run(tc.args); code != 0 {
+				t.Fatalf("run exit = %d; stderr=%s", code, stderr.String())
+			}
+			var report computeNodesListJSON
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatalf("dispatcher output is not JSON: %v (raw: %q)", err, out.String())
+			}
+			if report.Count < 1 {
+				t.Fatalf("dispatcher report = %#v", report)
+			}
+		})
+	}
+}
 
 // resetRunGlobals is the per-subtest reset for run() side-effects.
 // jsonOutput must be false for every non-JSON subtest; osStdout

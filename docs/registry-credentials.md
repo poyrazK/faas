@@ -4,7 +4,7 @@ Registry credentials let Gregale pull private OCI images during a deployment.
 
 ```bash
 gregale registry list --app APP_ID
-gregale registry set --app APP_ID --registry registry-1.docker.io --user USER --password "$REGISTRY_TOKEN"
+printf '%s\n' "$REGISTRY_TOKEN" | gregale registry set --app APP_ID --registry registry-1.docker.io --user USER --password-stdin
 gregale registry rm --app APP_ID --registry registry-1.docker.io
 ```
 

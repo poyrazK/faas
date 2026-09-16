@@ -32,7 +32,7 @@ func TestEdgeRulesCORS_E2E(t *testing.T) {
 
 	slug := "cors-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}
@@ -138,7 +138,7 @@ func TestEdgeRulesCORS_NonPreflight_HappyPath(t *testing.T) {
 
 	slug := "cors-nonpreflight-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}

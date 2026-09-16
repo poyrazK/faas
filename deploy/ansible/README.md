@@ -44,6 +44,7 @@ In order (each role is independent and verifies its own preconditions):
 | `xfs` | §8 | dedicated fast-root mount, XFS features, `/srv/fc/jail` tmpfs | explicit device contract + `/etc/fstab` |
 | `firecracker` | §4.4 | `/usr/local/bin/{firecracker,jailer}`, `/srv/fc/base/vmlinux-6.1` | content checksums + config-aware rebuild |
 | `systemd_slices` | §13 | three `.slice` unit drops | `creates:` on each |
+| `canary_artifact_retention` | §11 | declared validation roots, durable owner records, hourly bounded sweep, node-exporter metrics | closed path policy + live process/systemd reference proof |
 | `nftables` | §7 | `/etc/nftables.conf` | managed-marker backup + `nft -c` syntax check |
 | `postgres` | §1 (cp slice), §4 | distro PostgreSQL major, `faas` user | apt idempotent, `creates:` on home |
 | `postgres_backup` | §14 M8 | nightly tar-format basebackup + off-host push timers | systemd units, directories, and secret checks are idempotent |
@@ -88,8 +89,8 @@ final play restarts and verifies every compute daemon after installation.
 Every unit, drop-in and config task notifies a `try-restart` handler (ADR-143):
 active daemons pick the change up, disabled ones are left alone.
 
-`node_join.yml` fingerprints the bootstrap play, role tree, group variables,
-and pinned collection requirements. After a successful full convergence it
+`node_join.yml` fingerprints the compute bootstrap plays, their referenced
+roles and shared files, and pinned collection requirements. After a successful full convergence it
 records that contract on the compute host. A later rollout skips the OS and
 role convergence only when the fingerprint still matches and the KVM device,
 fast-root mount, release link, runtime configuration, and enabled compute
@@ -135,6 +136,12 @@ ephemeral pinned `known_hosts` file; never disable host-key verification for a
 production run. The GitHub compute rollout workflow requires the same
 fingerprint for legacy dispatches and obtains it from signed claims for the
 declarative paths.
+
+The workflow also requires `COMPUTE_KNOWN_HOSTS`, an operator-verified trust
+set covering every stable host address in the production manifest.
+`join-node` copies it into a private run directory, adds the selected provider
+endpoint after fingerprint verification, and applies it to the complete-fleet
+preflight. A reprovisioned peer therefore cannot inherit a stale runner key.
 
 For a provider whose default route is public, define
 `faas_private_address` in provider-owned `host_vars` or inventory variables.

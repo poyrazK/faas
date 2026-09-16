@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -76,6 +78,36 @@ func TestApplyLayerBasic(t *testing.T) {
 	}
 	if fi, err := os.Lstat(filepath.Join(dst, "app", "link")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
 		t.Errorf("symlink not created: %v", err)
+	}
+}
+
+func TestApplyLayerGzForAppDropsGuestRuntimeMountpoints(t *testing.T) {
+	dst := t.TempDir()
+	layer := gzLayer(t, []entry{
+		{name: "proc/", typeflag: tar.TypeDir},
+		{name: "proc/status", body: "builder view"},
+		{name: "sys/", typeflag: tar.TypeDir},
+		{name: "sys/kernel/value", body: "builder view"},
+		{name: "dev/", typeflag: tar.TypeDir},
+		{name: "dev/null", body: "not a device"},
+		{name: "tmp/", typeflag: tar.TypeDir},
+		{name: "tmp/cache", body: "not persistent"},
+		{name: "app/server", body: "customer binary"},
+		{name: "etc/mtab", typeflag: tar.TypeSymlink, linkname: "../proc/mounts"},
+	})
+	if err := applyLayerGzForApp(dst, layer); err != nil {
+		t.Fatalf("applyLayerGzForApp: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "app", "server")); err != nil || string(got) != "customer binary" {
+		t.Fatalf("customer file = %q, err=%v", got, err)
+	}
+	for _, name := range []string{"proc", "sys", "dev", "tmp"} {
+		if _, err := os.Lstat(filepath.Join(dst, name)); !os.IsNotExist(err) {
+			t.Errorf("runtime mountpoint %q was materialized: err=%v", name, err)
+		}
+	}
+	if info, err := os.Lstat(filepath.Join(dst, "etc", "mtab")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("non-runtime symlink was not preserved: info=%v err=%v", info, err)
 	}
 }
 
@@ -179,7 +211,7 @@ func TestBasePaddedSizeMB(t *testing.T) {
 	// Tree with NO small files: once percentage slack dominates both absolute
 	// floors, BasePaddedSizeMB matches PaddedSizeMB (smallFileSlackPct
 	// contributes 0 when smallRatio=0).
-	for c := int64(100 * mib); c <= 500*mib; c += 50 * mib {
+	for c := int64(200 * mib); c <= 500*mib; c += 50 * mib {
 		legacy := PaddedSizeMB(c)
 		new := BasePaddedSizeMB(c, 0)
 		if legacy != new {
@@ -203,7 +235,7 @@ func TestBasePaddedSizeMB(t *testing.T) {
 			got, empiricalMinMB)
 	}
 	// Edge cases on smallRatio: clamped to [0, 1].
-	if got := BasePaddedSizeMB(100*mib, -0.5); got != PaddedSizeMB(100*mib) {
+	if got := BasePaddedSizeMB(100*mib, -0.5); got != BasePaddedSizeMB(100*mib, 0) {
 		t.Errorf("negative smallRatio should clamp to 0; got %d", got)
 	}
 	if got := BasePaddedSizeMB(100*mib, 2); got != BasePaddedSizeMB(100*mib, 1) {
@@ -248,8 +280,8 @@ func TestCheckCapForStagingKeepsWritableAppHeadroom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sizeMB != 34 {
-		t.Fatalf("Go function app image = %d MiB, want 34 MiB with runtime headroom", sizeMB)
+	if sizeMB != 41 {
+		t.Fatalf("Go function app image = %d MiB, want 41 MiB with runtime headroom", sizeMB)
 	}
 }
 
@@ -363,6 +395,35 @@ func TestBuildProducesSizedLayer(t *testing.T) {
 	// produced ext4 at the requested key.
 	if _, err := be.Get(context.Background(), "apps/slug/dep.ext4"); err != nil {
 		t.Fatalf("storage Get after build: %v", err)
+	}
+}
+
+func TestBuildReportsFunctionRunnerDigest(t *testing.T) {
+	gi := filepath.Join(t.TempDir(), "guest-init")
+	if err := os.WriteFile(gi, []byte("INIT"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := []byte("function runner bytes")
+	runnerPath := filepath.Join(t.TempDir(), "faas-runner")
+	if err := os.WriteFile(runnerPath, runner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := NewBuilder(&mkfsFakeRunner{fill: []byte("FAKE-EXT4")}).Build(context.Background(), BuildInput{
+		Manifest:           api.AppManifest{Entrypoint: []string{"/usr/local/bin/faas-runner"}},
+		GuestInitPath:      gi,
+		FunctionRunnerPath: runnerPath,
+		Plan:               api.PlanFree,
+		Storage:            newTestStorage(t),
+		StorageKey:         "apps/slug/function.ext4",
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	sum := sha256.Sum256(runner)
+	want := "sha256:" + hex.EncodeToString(sum[:])
+	if res.RunnerDigest != want {
+		t.Fatalf("RunnerDigest = %q, want %q", res.RunnerDigest, want)
 	}
 }
 

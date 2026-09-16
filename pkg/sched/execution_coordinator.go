@@ -6,22 +6,28 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 const (
-	defaultExecutionLeaseDuration      = 15 * time.Second
-	defaultExecutionLeaseRenewInterval = 5 * time.Second
-	defaultExecutionPollInterval       = 200 * time.Millisecond
-	defaultExecutionSweepInterval      = time.Second
-	defaultExecutionDestroyTimeout     = 10 * time.Second
-	defaultExecutionFinalizeTimeout    = 5 * time.Second
-	defaultExecutionSweepLimit         = 100
+	DefaultExecutionDispatchConcurrency = 1
+	MaxExecutionDispatchConcurrency     = 32
+	defaultExecutionQueueAccountLimit   = 64
+	defaultExecutionLeaseDuration       = 15 * time.Second
+	defaultExecutionLeaseRenewInterval  = 5 * time.Second
+	defaultExecutionPollInterval        = 200 * time.Millisecond
+	defaultExecutionSweepInterval       = time.Second
+	defaultExecutionDestroyTimeout      = 10 * time.Second
+	defaultExecutionFinalizeTimeout     = 5 * time.Second
+	defaultExecutionSweepLimit          = 100
 )
 
 // ErrExecutionCoordinatorNotWired prevents an enabled coordinator from
@@ -33,9 +39,12 @@ var ErrExecutionCoordinatorNotWired = errors.New("sched: execution coordinator i
 // Enabled defaults to false so adding the coordinator to schedd cannot expose
 // execution before the vmmd adapter and isolation acceptance suite land.
 type ExecutionCoordinatorConfig struct {
-	Enabled            bool
-	Owner              string
-	MaxConcurrent      int
+	Enabled       bool
+	Owner         string
+	MaxConcurrent int
+	// QueueAccountLimit bounds the number of account buckets consulted for a
+	// fair claim. It is a scheduler bound, not a customer-facing quota.
+	QueueAccountLimit  int
 	LeaseDuration      time.Duration
 	LeaseRenewInterval time.Duration
 	PollInterval       time.Duration
@@ -43,18 +52,33 @@ type ExecutionCoordinatorConfig struct {
 	DestroyTimeout     time.Duration
 	FinalizeTimeout    time.Duration
 	SweepLimit         int
+	// Metrics is optional. When supplied, the coordinator emits only bounded,
+	// payload-free execution lifecycle signals through the schedd registry.
+	Metrics *wire.OpsMetrics
 }
 
 // ExecutionRestoreRequest is the payload-free machine envelope supplied to
-// the disposable-VM backend. Restore must prepare a fresh jail, network
-// namespace, cgroup, and scratch drive, but must not run caller code.
+// the disposable-VM backend. Restore must prepare a fresh jail, cgroup, and
+// scratch drive with no tenant network namespace, but must not run caller code.
 type ExecutionRestoreRequest struct {
 	ID          string
 	AccountID   string
+	NodeID      string
+	Plan        api.Plan
 	Runtime     api.ExecutionRuntime
 	NetworkMode api.ExecutionNetworkMode
 	Limits      api.ResolvedExecutionLimits
 	DeadlineAt  time.Time
+	// Machine fields are resolved by the scheduler from the immutable runtime
+	// snapshot catalog. They are payload-free and are forwarded only to vmmd's
+	// dedicated RestoreExecution RPC.
+	KernelKey     string
+	BaseKey       string
+	LayerKey      string
+	Snapshot      SnapshotRef
+	VcpuCount     int
+	MemSizeMiB    int
+	CPUMillicores int
 }
 
 // ExecutionPayload stays opaque to the coordinator. The future vmmd adapter
@@ -77,6 +101,10 @@ type ExecutionOutcome struct {
 	FailureCode     string
 	FailureMessage  string
 	Usage           api.ExecutionUsage
+	// OutputEventsPersisted tells the store that stdout/stderr were already
+	// appended by the live event sink and must not be emitted again during
+	// terminalization.
+	OutputEventsPersisted bool
 }
 
 // ExecutionSession is one restored-or-cold-booted disposable microVM.
@@ -97,11 +125,22 @@ type ExecutionBackend interface {
 // leases, fences payload dispatch, and acknowledges terminal state only after
 // the disposable VM has been destroyed.
 type ExecutionCoordinator struct {
-	store   state.ExecutionStore
-	backend ExecutionBackend
-	config  ExecutionCoordinatorConfig
-	log     *slog.Logger
-	now     func() time.Time
+	store         state.ExecutionStore
+	backend       ExecutionBackend
+	claimResolver ExecutionClaimRequestResolver
+	config        ExecutionCoordinatorConfig
+	metrics       *wire.OpsMetrics
+	log           *slog.Logger
+	now           func() time.Time
+	fairMu        sync.Mutex
+	fairCursor    string
+}
+
+// ExecutionClaimRequestResolver supplies the trusted machine envelope for a
+// claimed execution. Keeping this as an optional seam preserves the narrow
+// coordinator tests while allowing schedd to attach catalog/plan resolution.
+type ExecutionClaimRequestResolver interface {
+	ResolveExecutionClaim(context.Context, state.ExecutionClaim) (ExecutionRestoreRequest, error)
 }
 
 // NewExecutionCoordinator constructs a disabled-by-default scheduler. Callers
@@ -111,8 +150,18 @@ func NewExecutionCoordinator(store state.ExecutionStore, backend ExecutionBacken
 		log = slog.Default()
 	}
 	return &ExecutionCoordinator{
-		store: store, backend: backend, config: normalizeExecutionCoordinatorConfig(config), log: log, now: time.Now,
+		store: store, backend: backend, config: normalizeExecutionCoordinatorConfig(config), metrics: config.Metrics, log: log, now: time.Now,
 	}
+}
+
+// WithClaimResolver attaches the scheduler-owned claim-to-machine resolver.
+// A nil resolver leaves the legacy request projection in place; production
+// execution dispatch supplies one before enabling the coordinator.
+func (c *ExecutionCoordinator) WithClaimResolver(resolver ExecutionClaimRequestResolver) *ExecutionCoordinator {
+	if c != nil {
+		c.claimResolver = resolver
+	}
+	return c
 }
 
 func normalizeExecutionCoordinatorConfig(config ExecutionCoordinatorConfig) ExecutionCoordinatorConfig {
@@ -121,7 +170,16 @@ func normalizeExecutionCoordinatorConfig(config ExecutionCoordinatorConfig) Exec
 		config.Owner = "schedd"
 	}
 	if config.MaxConcurrent <= 0 {
-		config.MaxConcurrent = 1
+		config.MaxConcurrent = DefaultExecutionDispatchConcurrency
+	}
+	if config.MaxConcurrent > MaxExecutionDispatchConcurrency {
+		config.MaxConcurrent = MaxExecutionDispatchConcurrency
+	}
+	if config.QueueAccountLimit <= 0 {
+		config.QueueAccountLimit = defaultExecutionQueueAccountLimit
+	}
+	if config.QueueAccountLimit > 1000 {
+		config.QueueAccountLimit = 1000
 	}
 	if config.LeaseDuration <= 0 {
 		config.LeaseDuration = defaultExecutionLeaseDuration
@@ -162,9 +220,13 @@ func (c *ExecutionCoordinator) Run(ctx context.Context) error {
 	if c.store == nil || c.backend == nil {
 		return ErrExecutionCoordinatorNotWired
 	}
-	if _, err := c.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		c.log.Warn("schedd: execution initial recovery sweep failed", "err", err)
+	if c.metrics != nil {
+		c.metrics.SetExecutionWorkers(c.config.MaxConcurrent)
 	}
+	if _, err := c.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		c.log.Warn("schedd: execution initial recovery sweep failed", "error_class", executionErrorClass(err))
+	}
+	c.observeQueuePressure(ctx)
 
 	var workers sync.WaitGroup
 	workers.Add(c.config.MaxConcurrent + 1)
@@ -189,7 +251,7 @@ func (c *ExecutionCoordinator) ProcessNext(ctx context.Context) (bool, error) {
 	if c == nil || c.store == nil || c.backend == nil {
 		return false, ErrExecutionCoordinatorNotWired
 	}
-	claim, err := c.store.ClaimExecution(ctx, c.config.Owner, c.now().UTC(), c.config.LeaseDuration)
+	claim, err := c.claimNext(ctx)
 	if errors.Is(err, state.ErrNotFound) {
 		return false, nil
 	}
@@ -202,6 +264,82 @@ func (c *ExecutionCoordinator) ProcessNext(ctx context.Context) (bool, error) {
 	return true, c.processClaim(ctx, claim)
 }
 
+// claimNext spreads concurrent workers across accounts when the durable store
+// exposes the queue-account extension. The cursor is process-local and only
+// chooses the starting bucket; PostgreSQL/MemStore still provide the durable
+// SKIP LOCKED claim fence. Older stores retain the global oldest-first path.
+func (c *ExecutionCoordinator) claimNext(ctx context.Context) (state.ExecutionClaim, error) {
+	claimedAt := c.now().UTC()
+	queueStore, ok := c.store.(state.ExecutionQueueStore)
+	if !ok {
+		return c.store.ClaimExecution(ctx, c.config.Owner, claimedAt, c.config.LeaseDuration)
+	}
+	accounts, err := queueStore.ListExecutionQueueAccounts(ctx, claimedAt, c.config.QueueAccountLimit)
+	if err != nil {
+		return state.ExecutionClaim{}, fmt.Errorf("sched: list execution queue accounts: %w", err)
+	}
+	if len(accounts) == 0 {
+		return state.ExecutionClaim{}, state.ErrNotFound
+	}
+	sort.Slice(accounts, func(i, j int) bool {
+		return accounts[i].AccountID < accounts[j].AccountID
+	})
+	for i := 0; i < len(accounts); i++ {
+		accountID := c.nextFairAccount(accounts)
+		claim, err := queueStore.ClaimExecutionForAccount(ctx, accountID, c.config.Owner, claimedAt, c.config.LeaseDuration)
+		if errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return state.ExecutionClaim{}, err
+		}
+		return claim, nil
+	}
+	return state.ExecutionClaim{}, state.ErrNotFound
+}
+
+func (c *ExecutionCoordinator) nextFairAccount(accounts []state.ExecutionQueueAccount) string {
+	c.fairMu.Lock()
+	defer c.fairMu.Unlock()
+	start := 0
+	if c.fairCursor != "" {
+		start = len(accounts)
+		for i, account := range accounts {
+			if account.AccountID > c.fairCursor {
+				start = i
+				break
+			}
+		}
+		if start == len(accounts) {
+			start = 0
+		}
+	}
+	selected := accounts[start].AccountID
+	c.fairCursor = selected
+	return selected
+}
+
+func (c *ExecutionCoordinator) observeQueuePressure(ctx context.Context) {
+	if c == nil || c.metrics == nil {
+		return
+	}
+	queueStore, ok := c.store.(state.ExecutionQueueStore)
+	if !ok {
+		return
+	}
+	at := c.now().UTC()
+	stats, err := queueStore.ExecutionQueueStats(ctx, at)
+	if err != nil {
+		c.log.Warn("schedd: execution queue metrics failed", "error_class", executionErrorClass(err))
+		return
+	}
+	var oldestWait time.Duration
+	if stats.OldestCreatedAt != nil && at.After(*stats.OldestCreatedAt) {
+		oldestWait = at.Sub(*stats.OldestCreatedAt)
+	}
+	c.metrics.SetExecutionQueue(stats.Queued, oldestWait)
+}
+
 // SweepOnce recovers expired durable intents. Restores may requeue; running
 // rows are terminalized by the store and are never replayed.
 func (c *ExecutionCoordinator) SweepOnce(ctx context.Context) (state.ExecutionSweepResult, error) {
@@ -209,6 +347,9 @@ func (c *ExecutionCoordinator) SweepOnce(ctx context.Context) (state.ExecutionSw
 		return state.ExecutionSweepResult{}, ErrExecutionCoordinatorNotWired
 	}
 	result, err := c.store.SweepExecutions(ctx, c.now().UTC(), c.config.SweepLimit)
+	if c.metrics != nil {
+		c.metrics.RecordExecutionSweep(err)
+	}
 	if err != nil {
 		return state.ExecutionSweepResult{}, fmt.Errorf("sched: sweep executions: %w", err)
 	}
@@ -224,6 +365,10 @@ const (
 )
 
 func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.ExecutionClaim) error {
+	if c.metrics != nil {
+		c.metrics.RecordExecutionStarted(string(claim.Runtime))
+		defer c.metrics.RecordExecutionFinished(string(claim.Runtime))
+	}
 	defer clear(claim.SealedPayload)
 	workCtx, cancelWork := context.WithDeadline(parent, claim.DeadlineAt)
 	defer cancelWork()
@@ -244,8 +389,27 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 		ID: claim.ID, AccountID: claim.AccountID, Runtime: claim.Runtime,
 		NetworkMode: claim.NetworkMode, Limits: claim.Limits, DeadlineAt: claim.DeadlineAt,
 	}
+	restoreStarted := c.now()
+	var resolveErr error
+	if c.claimResolver != nil {
+		request, resolveErr = c.claimResolver.ResolveExecutionClaim(workCtx, claim)
+	}
+	if resolveErr != nil {
+		c.observeExecutionPhase(claim.Runtime, "restore", restoreStarted)
+		c.recordExecutionFailure(claim.Runtime, "restore")
+		signal := stopLeaseMonitor()
+		if handled, err := c.finishInterrupted(parent, workCtx, claim, signal); handled {
+			return err
+		}
+		c.log.Warn("schedd: execution claim resolution failed", "execution_id", claim.ID, "error_class", executionErrorClass(resolveErr))
+		return c.complete(parent, claim, executionFailure(
+			"restore_failed", "execution environment could not be prepared",
+		), c.now().UTC())
+	}
 	session, restoreErr := c.backend.Restore(workCtx, request)
+	c.observeExecutionPhase(claim.Runtime, "restore", restoreStarted)
 	if restoreErr != nil || session == nil {
+		c.recordExecutionFailure(claim.Runtime, "restore")
 		signal := stopLeaseMonitor()
 		if restoreErr == nil {
 			restoreErr = errors.New("backend returned a nil execution session")
@@ -253,7 +417,7 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 		if handled, err := c.finishInterrupted(parent, workCtx, claim, signal); handled {
 			return err
 		}
-		c.log.Warn("schedd: execution restore failed", "execution_id", claim.ID, "err", restoreErr)
+		c.log.Warn("schedd: execution restore failed", "execution_id", claim.ID, "error_class", executionErrorClass(restoreErr))
 		return c.complete(parent, claim, executionFailure(
 			"restore_failed", "execution environment could not be prepared",
 		), c.now().UTC())
@@ -262,7 +426,7 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 	markAt := c.now().UTC()
 	_, markErr := c.store.MarkExecutionRunning(parent, claim.ID, *claim.LeaseToken, markAt)
 	if markErr != nil {
-		destroyErr := c.destroy(parent, claim.ID, session)
+		destroyErr := c.destroy(parent, claim.ID, claim.Runtime, session)
 		signal := stopLeaseMonitor()
 		if destroyErr != nil {
 			return destroyErr
@@ -276,9 +440,34 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 	payload := ExecutionPayload{
 		Sealed: append([]byte(nil), claim.SealedPayload...), KID: claim.PayloadKID,
 	}
-	outcome, executeErr := session.Execute(workCtx, payload)
+	executeStarted := c.now()
+	var outputSink *executionOutputEventSink
+	if eventStore, ok := c.store.(state.ExecutionEventStore); ok {
+		outputSink = newExecutionOutputEventSink(eventStore, claim.AccountID, claim.ID, c.now)
+	}
+	var outputReceiver executionproto.OutputReceiver
+	if outputSink != nil {
+		outputReceiver = outputSink.Receive
+	}
+	var outcome ExecutionOutcome
+	var executeErr error
+	if outputReceiver != nil {
+		if streamingSession, ok := session.(interface {
+			ExecuteWithOutput(context.Context, ExecutionPayload, executionproto.OutputReceiver) (ExecutionOutcome, error)
+		}); ok {
+			outcome, executeErr = streamingSession.ExecuteWithOutput(workCtx, payload, outputReceiver)
+		} else {
+			outcome, executeErr = session.Execute(workCtx, payload)
+		}
+	} else {
+		outcome, executeErr = session.Execute(workCtx, payload)
+	}
+	c.observeExecutionPhase(claim.Runtime, "execute", executeStarted)
+	if executeErr != nil {
+		c.recordExecutionFailure(claim.Runtime, "execute")
+	}
 	clear(payload.Sealed)
-	destroyErr := c.destroy(parent, claim.ID, session)
+	destroyErr := c.destroy(parent, claim.ID, claim.Runtime, session)
 	signal := stopLeaseMonitor()
 	if destroyErr != nil {
 		return destroyErr
@@ -287,10 +476,19 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 		return err
 	}
 	if executeErr != nil {
-		c.log.Warn("schedd: execution transport failed", "execution_id", claim.ID, "err", executeErr)
+		c.log.Warn("schedd: execution transport failed", "execution_id", claim.ID, "error_class", executionErrorClass(executeErr))
 		outcome = executionFailure("execution_transport_failed", "execution result channel closed unexpectedly")
 	}
+	if outputSink != nil && outputSink.Persisted() {
+		outcome.OutputEventsPersisted = true
+	}
 	outcome = normalizeExecutionOutcome(outcome, claim.Limits.MaxOutputBytes)
+	switch outcome.FailureCode {
+	case "guest_protocol_error":
+		c.recordExecutionFailure(claim.Runtime, "protocol")
+	case "output_limit_exceeded":
+		c.recordExecutionFailure(claim.Runtime, "output_limit")
+	}
 	return c.complete(parent, claim, outcome, c.now().UTC())
 }
 
@@ -350,27 +548,35 @@ func (c *ExecutionCoordinator) finishInterrupted(parent, workCtx context.Context
 		return true, err
 	}
 	if signal == executionLeaseLost {
+		c.recordExecutionFailure(claim.Runtime, "lease_lost")
 		return true, state.ErrExecutionLeaseLost
 	}
 	return false, nil
 }
 
-func (c *ExecutionCoordinator) destroy(parent context.Context, executionID string, session ExecutionSession) error {
+func (c *ExecutionCoordinator) destroy(parent context.Context, executionID string, runtime api.ExecutionRuntime, session ExecutionSession) error {
+	started := c.now()
 	destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), c.config.DestroyTimeout)
 	defer cancel()
 	if err := session.Destroy(destroyCtx); err != nil {
-		c.log.Error("schedd: execution teardown failed; terminal acknowledgement withheld", "execution_id", executionID, "err", err)
+		c.observeExecutionPhase(runtime, "teardown", started)
+		c.recordExecutionFailure(runtime, "teardown")
+		c.log.Error("schedd: execution teardown failed; terminal acknowledgement withheld", "execution_id", executionID, "error_class", executionErrorClass(err))
 		return fmt.Errorf("sched: destroy execution %s: %w", executionID, err)
 	}
+	c.observeExecutionPhase(runtime, "teardown", started)
 	return nil
 }
 
 func (c *ExecutionCoordinator) complete(parent context.Context, claim state.ExecutionClaim, outcome ExecutionOutcome, finishedAt time.Time) error {
+	started := c.now()
 	completeCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), c.config.FinalizeTimeout)
 	defer cancel()
 	params := completionParams(claim, outcome, finishedAt)
 	_, err := c.store.CompleteExecution(completeCtx, params)
 	if err == nil {
+		c.observeExecutionPhase(claim.Runtime, "finalize", started)
+		c.recordExecutionTerminal(claim.Runtime, outcome)
 		return nil
 	}
 	// Cancellation can race a successful Execute after the last renewal.
@@ -384,8 +590,12 @@ func (c *ExecutionCoordinator) complete(parent context.Context, claim state.Exec
 		}
 	}
 	if err != nil {
+		c.observeExecutionPhase(claim.Runtime, "finalize", started)
+		c.recordExecutionFailure(claim.Runtime, "finalize")
 		return fmt.Errorf("sched: complete execution %s: %w", claim.ID, err)
 	}
+	c.observeExecutionPhase(claim.Runtime, "finalize", started)
+	c.recordExecutionTerminal(claim.Runtime, ExecutionOutcome{Status: api.ExecutionStatusCancelled})
 	return nil
 }
 
@@ -400,6 +610,7 @@ func completionParams(claim state.ExecutionClaim, outcome ExecutionOutcome, fini
 		Result: append(json.RawMessage(nil), outcome.Result...), Stdout: outcome.Stdout, Stderr: outcome.Stderr,
 		OutputTruncated: outcome.OutputTruncated, ExitCode: outcome.ExitCode,
 		FailureCode: failureCode, FailureMessage: failureMessage, Usage: outcome.Usage, FinishedAt: finishedAt,
+		OutputEventsPersisted: outcome.OutputEventsPersisted,
 	}
 }
 
@@ -439,7 +650,7 @@ func (c *ExecutionCoordinator) runWorker(ctx context.Context) {
 	for ctx.Err() == nil {
 		processed, err := c.ProcessNext(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, state.ErrExecutionLeaseLost) {
-			c.log.Warn("schedd: execution worker failed", "err", err)
+			c.log.Warn("schedd: execution worker failed", "error_class", executionErrorClass(err))
 		}
 		if processed && err == nil {
 			continue
@@ -459,8 +670,9 @@ func (c *ExecutionCoordinator) runSweeper(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if _, err := c.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				c.log.Warn("schedd: execution recovery sweep failed", "err", err)
+				c.log.Warn("schedd: execution recovery sweep failed", "error_class", executionErrorClass(err))
 			}
+			c.observeQueuePressure(ctx)
 		}
 	}
 }
@@ -473,5 +685,48 @@ func waitExecutionInterval(ctx context.Context, interval time.Duration) bool {
 		return false
 	case <-timer.C:
 		return true
+	}
+}
+
+func (c *ExecutionCoordinator) observeExecutionPhase(runtime api.ExecutionRuntime, phase string, started time.Time) {
+	if c == nil || c.metrics == nil {
+		return
+	}
+	c.metrics.ObserveExecutionPhase(string(runtime), phase, c.now().Sub(started))
+}
+
+func (c *ExecutionCoordinator) recordExecutionFailure(runtime api.ExecutionRuntime, reason string) {
+	if c == nil || c.metrics == nil {
+		return
+	}
+	c.metrics.RecordExecutionFailure(string(runtime), reason)
+}
+
+func (c *ExecutionCoordinator) recordExecutionTerminal(runtime api.ExecutionRuntime, outcome ExecutionOutcome) {
+	if c == nil || c.metrics == nil {
+		return
+	}
+	c.metrics.RecordExecutionTerminal(string(runtime), string(outcome.Status))
+	outputBytes := len(outcome.Result) + len(outcome.Stdout) + len(outcome.Stderr)
+	c.metrics.ObserveExecutionOutput(string(runtime), outputBytes)
+}
+
+// executionErrorClass is the only error detail allowed into execution logs.
+// Backend errors can wrap protocol frames or other tenant-derived text, so
+// retaining their Error() string would violate the disposable-run privacy
+// boundary. Callers still return the original error to the worker for retry
+// and diagnostics; logs receive this bounded classification instead.
+func executionErrorClass(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, state.ErrExecutionLeaseLost):
+		return "lease_lost"
+	default:
+		return "internal"
 	}
 }

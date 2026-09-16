@@ -1,0 +1,7 @@
+title: Gregale backup writer
+description: Append and verify PostgreSQL backups without delete or IAM authority.
+stage: GA
+includedPermissions:
+  - storage.objects.create
+  - storage.objects.get
+  - storage.objects.list

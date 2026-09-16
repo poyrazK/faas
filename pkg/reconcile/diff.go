@@ -61,9 +61,9 @@ type Action struct {
 // The diff is INTENTIONALLY conservative: a (RootDir, WorkloadName)
 // present in both scan and existing but with identical columns is
 // NOT emitted as an update. The update path only fires when at
-// least one of RootDir / WorkloadName / StartCommand actually
-// changed. This keeps the audit log clean and avoids spurious
-// project.workload.changed rows on every scan.
+// least one of RootDir / WorkloadName / WorkloadClass /
+// StartCommand actually changed. This keeps the audit log clean and
+// avoids spurious project.workload.changed rows on every scan.
 func workloadDiff(
 	scan reposcan.Result,
 	_ state.Project,
@@ -86,16 +86,18 @@ func workloadDiff(
 		}
 		existing = filtered
 	}
-	// Build the (RootDir, Name) index of existing apps.
-	existingByKey := make(map[workloadKey]state.App, len(existing))
+	// workload_name is the durable project identity. RootDir is mutable build
+	// metadata, so moving a service directory must produce one update instead
+	// of a destructive remove/create pair.
+	existingByName := make(map[string]state.App, len(existing))
 	for _, a := range existing {
-		existingByKey[workloadKey{RootDir: a.RootDir, Name: a.WorkloadName}] = a
+		existingByName[a.WorkloadName] = a
 	}
 
-	// Build the (RootDir, Name) index of scan workloads.
-	scanByKey := make(map[workloadKey]reposcan.Workload, len(scan.Workloads))
+	// Build the workload-name index of scan workloads.
+	scanByName := make(map[string]reposcan.Workload, len(scan.Workloads))
 	for _, w := range scan.Workloads {
-		scanByKey[workloadKey{RootDir: w.RootDir, Name: w.Name}] = w
+		scanByName[w.Name] = w
 	}
 
 	var creates []Action
@@ -103,8 +105,7 @@ func workloadDiff(
 	var removes []Action
 
 	for _, w := range scan.Workloads {
-		key := workloadKey{RootDir: w.RootDir, Name: w.Name}
-		a, ok := existingByKey[key]
+		a, ok := existingByName[w.Name]
 		if !ok {
 			creates = append(creates, Action{
 				Op:           "create",
@@ -114,7 +115,7 @@ func workloadDiff(
 			continue
 		}
 		desired := resolveStartCommand(w)
-		changed := diffFieldsChanged(a, w, desired)
+		changed := diffFieldsChanged(a, w, desired, workloadNameSet(scan.Workloads))
 		if len(changed) == 0 {
 			// No-op: same key, same columns. Skip.
 			continue
@@ -129,8 +130,7 @@ func workloadDiff(
 	}
 
 	for _, a := range existing {
-		key := workloadKey{RootDir: a.RootDir, Name: a.WorkloadName}
-		if _, ok := scanByKey[key]; ok {
+		if _, ok := scanByName[a.WorkloadName]; ok {
 			continue
 		}
 		removes = append(removes, Action{
@@ -139,10 +139,15 @@ func workloadDiff(
 		})
 	}
 
-	// Stable ordering. The diff's order is observable in the
-	// audit log (each Action emits its own row), and we want the
-	// order to be invariant to map-iteration randomness.
-	sortActionsByName(creates, true)
+	// Stable ordering. The diff's order is observable in the audit log
+	// and drives the sequential project build enqueue path. Prefer a
+	// dependency order for creates; fall back to lexical order for a
+	// direct caller that bypassed admission validation.
+	if order, err := reposcan.DependencyOrder(scan.Workloads, scan.Managed); err == nil {
+		sortActionsByDependencyOrder(creates, order)
+	} else {
+		sortActionsByName(creates, true)
+	}
 	sortActionsByName(updates, false)
 	sortActionsByName(removes, false)
 
@@ -151,6 +156,30 @@ func workloadDiff(
 	out = append(out, updates...)
 	out = append(out, removes...)
 	return out
+}
+
+func sortActionsByDependencyOrder(as []Action, order []string) {
+	position := make(map[string]int, len(order))
+	for i, name := range order {
+		position[strings.ToLower(name)] = i
+	}
+	for i := 1; i < len(as); i++ {
+		for j := i; j > 0; j-- {
+			left, okLeft := position[strings.ToLower(as[j-1].Workload.Name)]
+			right, okRight := position[strings.ToLower(as[j].Workload.Name)]
+			if !okLeft {
+				left = len(order)
+			}
+			if !okRight {
+				right = len(order)
+			}
+			if left > right {
+				as[j-1], as[j] = as[j], as[j-1]
+				continue
+			}
+			break
+		}
+	}
 }
 
 func sortActionsByName(as []Action, byWorkload bool) {
@@ -189,22 +218,42 @@ func resolveStartCommand(w reposcan.Workload) string {
 	// practice: never; start_command is a process-spec, not a
 	// value) must NEVER be logged. We log the length, not the
 	// content, in the audit row.
-	return strings.Join(w.Command, " ")
+	if w.CommandShell {
+		return w.Command[0]
+	}
+	quoted := make([]string, len(w.Command))
+	for i, arg := range w.Command {
+		quoted[i] = quoteShellArg(arg)
+	}
+	return strings.Join(quoted, " ")
+}
+
+func quoteShellArg(arg string) string {
+	if arg != "" && strings.IndexFunc(arg, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') &&
+			(r < '0' || r > '9') && !strings.ContainsRune("_@%+=:,./-", r)
+	}) == -1 {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 }
 
 // diffFieldsChanged returns the subset of {"root_dir", "workload_name",
-// "start_command"} that actually changed between the existing
-// state.App and the new scan-derived workload. The columns
+// "workload_class", "start_command", "source", "dockerfile", "service_env"} that actually changed
+// between the existing state.App and the new scan-derived workload. The columns
 // RootDir and WorkloadName are NOT NULL DEFAULT ” in the schema
 // so equality is on the empty-string vs populated distinction —
 // no NULL handling needed.
-func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string) []string {
+func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, available ...map[string]struct{}) []string {
 	var changed []string
 	if a.RootDir != w.RootDir {
 		changed = append(changed, "root_dir")
 	}
 	if a.WorkloadName != w.Name {
 		changed = append(changed, "workload_name")
+	}
+	if a.WorkloadClass != workloadClassFromScan(w) {
+		changed = append(changed, "workload_class")
 	}
 	// StartCommand is NULL-able; the existing App has "" for the
 	// unset case (memstore mirrors pgstore via the NULL → ""
@@ -213,7 +262,28 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string) []stri
 	if a.StartCommand != startCmd {
 		changed = append(changed, "start_command")
 	}
+	if a.Manifest.ProjectSourceSHA256 != w.SourceSHA256 {
+		changed = append(changed, "source")
+	}
+	if a.Manifest.BuildDockerfile != w.Dockerfile {
+		changed = append(changed, "dockerfile")
+	}
+	var serviceNames map[string]struct{}
+	if len(available) > 0 {
+		serviceNames = available[0]
+	}
+	if !serviceEnvEqual(a.Manifest.Env, serviceEnvForWorkloadWithAvailable(nil, w, serviceNames)) {
+		changed = append(changed, "service_env")
+	}
 	return changed
+}
+
+func workloadNameSet(workloads []reposcan.Workload) map[string]struct{} {
+	set := make(map[string]struct{}, len(workloads))
+	for _, workload := range workloads {
+		set[strings.ToLower(strings.TrimSpace(workload.Name))] = struct{}{}
+	}
+	return set
 }
 
 // DeriveScanSource picks the project scan_source from the
@@ -249,27 +319,82 @@ var composeSourceFilenames = []string{
 }
 
 func DeriveScanSource(workloads []reposcan.Workload) state.ProjectScanSource {
-	// Priority order matches the detector fan-out in
-	// pkg/reposcan/scan.go:145-156. The first match wins.
-	//
-	// The compose detector emits source strings starting with the
-	// actual manifest filename (e.g. "docker-compose.yml: api"),
-	// not a literal "compose:" prefix. We probe both the
-	// detector-class name and the filename set per entry so the
-	// priority list reads as detector classes, not filenames.
-	priority := []string{
-		"compose", "procfile", "k8s", "render", "fly",
-		"serverless", "app.yaml", "workspaces", "convention",
+	structured := false
+	for _, workload := range workloads {
+		if workload.DetectedBy.Detector != "" {
+			structured = true
+			break
+		}
 	}
-	for _, want := range priority {
-		for _, w := range workloads {
-			if matchDetectorSource(want, w.Source) {
-				return state.ProjectScanSource(want)
+	if !structured {
+		// Compatibility for callers constructing the pre-Detection workload
+		// shape. Real scanner output always takes the structured path below.
+		priority := []string{
+			"compose", "procfile", "k8s", "render", "fly",
+			"serverless", "app.yaml", "workspaces", "convention",
+		}
+		for _, want := range priority {
+			for _, workload := range workloads {
+				if matchDetectorSource(want, workload.Source) {
+					if want == "app.yaml" {
+						return state.ProjectScanSourceSingle
+					}
+					if want == "workspaces" {
+						return state.ProjectScanSourceWorkspace
+					}
+					return state.ProjectScanSource(want)
+				}
+			}
+		}
+		if len(workloads) == 1 {
+			return state.ProjectScanSourceSingle
+		}
+		return state.ProjectScanSourceUnknown
+	}
+
+	// Use the scanner's structured provenance. Source is display text and
+	// legitimately varies by filename (Procfile, go.work, k8s/foo.yaml); parsing
+	// it made scan_source depend on workload count and filename spelling.
+	priority := []struct {
+		detector string
+		source   state.ProjectScanSource
+	}{
+		{"compose", state.ProjectScanSourceCompose},
+		{"procfile", state.ProjectScanSourceProcfile},
+		{"k8s", state.ProjectScanSourceK8s},
+		{"render", state.ProjectScanSourceRender},
+		{"fly", state.ProjectScanSourceFly},
+		{"serverless", state.ProjectScanSourceServerless},
+	}
+	for _, candidate := range priority {
+		for _, workload := range workloads {
+			if workload.DetectedBy.Detector == candidate.detector {
+				return candidate.source
 			}
 		}
 	}
-	if len(workloads) == 1 {
+
+	// Workspace, convention, and root-floor seeds intentionally share the
+	// "other" detector. Their confidence tier is the structured discriminator.
+	bestTier := reposcan.Tier(0)
+	for _, workload := range workloads {
+		if workload.Tier > bestTier {
+			bestTier = workload.Tier
+		}
+	}
+	switch bestTier {
+	case reposcan.TierWorkspace:
+		return state.ProjectScanSourceWorkspace
+	case reposcan.TierConvention:
+		return state.ProjectScanSourceConvention
+	case reposcan.TierSingle:
 		return state.ProjectScanSourceSingle
+	case reposcan.TierCompose:
+		// app.yaml has no separate persisted scan-source enum. It is a
+		// single-app declaration, so retain the established single label.
+		if len(workloads) > 0 {
+			return state.ProjectScanSourceSingle
+		}
 	}
 	return state.ProjectScanSourceUnknown
 }

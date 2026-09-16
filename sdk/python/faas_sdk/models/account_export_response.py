@@ -7,11 +7,16 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.account_export_response_schema_version import (
+    AccountExportResponseSchemaVersion,
+    check_account_export_response_schema_version,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.account_response import AccountResponse
     from ..models.api_key_export_response import APIKeyExportResponse
+    from ..models.api_key_response import APIKeyResponse
     from ..models.app_response import AppResponse
     from ..models.app_secret_export_response import AppSecretExportResponse
     from ..models.build_export_response import BuildExportResponse
@@ -20,6 +25,9 @@ if TYPE_CHECKING:
     from ..models.deployment_response import DeploymentResponse
     from ..models.gdpr_audit_export_response import GdprAuditExportResponse
     from ..models.instance_response import InstanceResponse
+    from ..models.org_invitation_response import OrgInvitationResponse
+    from ..models.org_membership_export_response import OrgMembershipExportResponse
+    from ..models.org_response import OrgResponse
     from ..models.usage_export_response import UsageExportResponse
 
 
@@ -28,15 +36,22 @@ T = TypeVar("T", bound="AccountExportResponse")
 
 @_attrs_define
 class AccountExportResponse:
-    """GDPR export bundle: the account itself, every owned app, deployment, build, instance, usage record, domain, cron,
-    API key, and sealed-secret envelope, plus the audit trail.
+    """Versioned GDPR export bundle: the account and organization identity graph, owned runtime resources, redacted key
+    metadata, sealed-secret envelopes, and audit trail.
 
     """
 
+    schema_version: AccountExportResponseSchemaVersion
+    """Export schema version used by restore and portability tooling."""
     exported_at: datetime.datetime
     account: AccountResponse
     """Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-
     app count, and developer-environment count."""
+    organizations: list[OrgResponse]
+    org_memberships: list[OrgMembershipExportResponse]
+    org_invitations: list[OrgInvitationResponse]
+    org_api_keys: list[APIKeyResponse]
+    """Org-bound API key metadata; plaintext and hashes are never exported."""
     apps: list[AppResponse]
     deployments: list[DeploymentResponse]
     builds: list[BuildExportResponse]
@@ -50,9 +65,31 @@ class AccountExportResponse:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        schema_version: int = self.schema_version
+
         exported_at = self.exported_at.isoformat()
 
         account = self.account.to_dict()
+
+        organizations = []
+        for organizations_item_data in self.organizations:
+            organizations_item = organizations_item_data.to_dict()
+            organizations.append(organizations_item)
+
+        org_memberships = []
+        for org_memberships_item_data in self.org_memberships:
+            org_memberships_item = org_memberships_item_data.to_dict()
+            org_memberships.append(org_memberships_item)
+
+        org_invitations = []
+        for org_invitations_item_data in self.org_invitations:
+            org_invitations_item = org_invitations_item_data.to_dict()
+            org_invitations.append(org_invitations_item)
+
+        org_api_keys = []
+        for org_api_keys_item_data in self.org_api_keys:
+            org_api_keys_item = org_api_keys_item_data.to_dict()
+            org_api_keys.append(org_api_keys_item)
 
         apps = []
         for apps_item_data in self.apps:
@@ -110,8 +147,13 @@ class AccountExportResponse:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "schema_version": schema_version,
                 "exported_at": exported_at,
                 "account": account,
+                "organizations": organizations,
+                "org_memberships": org_memberships,
+                "org_invitations": org_invitations,
+                "org_api_keys": org_api_keys,
                 "apps": apps,
                 "deployments": deployments,
                 "builds": builds,
@@ -132,6 +174,7 @@ class AccountExportResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.account_response import AccountResponse
         from ..models.api_key_export_response import APIKeyExportResponse
+        from ..models.api_key_response import APIKeyResponse
         from ..models.app_response import AppResponse
         from ..models.app_secret_export_response import AppSecretExportResponse
         from ..models.build_export_response import BuildExportResponse
@@ -140,12 +183,45 @@ class AccountExportResponse:
         from ..models.deployment_response import DeploymentResponse
         from ..models.gdpr_audit_export_response import GdprAuditExportResponse
         from ..models.instance_response import InstanceResponse
+        from ..models.org_invitation_response import OrgInvitationResponse
+        from ..models.org_membership_export_response import OrgMembershipExportResponse
+        from ..models.org_response import OrgResponse
         from ..models.usage_export_response import UsageExportResponse
 
         d = dict(src_dict)
+        schema_version = check_account_export_response_schema_version(d.pop("schema_version"))
+
         exported_at = datetime.datetime.fromisoformat(d.pop("exported_at"))
 
         account = AccountResponse.from_dict(d.pop("account"))
+
+        organizations = []
+        _organizations = d.pop("organizations")
+        for organizations_item_data in _organizations:
+            organizations_item = OrgResponse.from_dict(organizations_item_data)
+
+            organizations.append(organizations_item)
+
+        org_memberships = []
+        _org_memberships = d.pop("org_memberships")
+        for org_memberships_item_data in _org_memberships:
+            org_memberships_item = OrgMembershipExportResponse.from_dict(org_memberships_item_data)
+
+            org_memberships.append(org_memberships_item)
+
+        org_invitations = []
+        _org_invitations = d.pop("org_invitations")
+        for org_invitations_item_data in _org_invitations:
+            org_invitations_item = OrgInvitationResponse.from_dict(org_invitations_item_data)
+
+            org_invitations.append(org_invitations_item)
+
+        org_api_keys = []
+        _org_api_keys = d.pop("org_api_keys")
+        for org_api_keys_item_data in _org_api_keys:
+            org_api_keys_item = APIKeyResponse.from_dict(org_api_keys_item_data)
+
+            org_api_keys.append(org_api_keys_item)
 
         apps = []
         _apps = d.pop("apps")
@@ -220,8 +296,13 @@ class AccountExportResponse:
                 audit_trail.append(audit_trail_item)
 
         account_export_response = cls(
+            schema_version=schema_version,
             exported_at=exported_at,
             account=account,
+            organizations=organizations,
+            org_memberships=org_memberships,
+            org_invitations=org_invitations,
+            org_api_keys=org_api_keys,
             apps=apps,
             deployments=deployments,
             builds=builds,

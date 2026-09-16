@@ -14,19 +14,22 @@ ExecStartPre=/opt/faas/current/bin/schedd-brokerq-apply
 ExecStart=/opt/faas/current/bin/schedd --config /etc/faas/schedd.toml
 Restart=on-failure
 RestartSec=2s
-RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
 Slice=faas-cp.slice
 MemoryMax=256M
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/schedd/schedd.env
 EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=TMPDIR=/var/lib/faas/oci-tmp
 Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/host.age
+Environment=FAAS_SIGN_PUB=%d/faas_sign_pub
 Environment=FAAS_JOBS_DISPATCH=1
 Environment=FAAS_WORKFLOWS_ENABLED=1
+LoadCredential=fleet.age:/etc/faas/secrets/fleet.age
 LoadCredential=host.age:/etc/faas/secrets/host.age
-LoadCredential=host.age.previous:-/etc/faas/secrets/host.age.previous
+LoadCredential=faas_sign_pub:/etc/faas/secrets/sign-pub.pem
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

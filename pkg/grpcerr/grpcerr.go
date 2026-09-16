@@ -187,6 +187,10 @@ func FromStatus(err error) (*api.Problem, bool) {
 	// emit the right status rather than WriteHeader(0). The gRPC code is lossy
 	// (both 429 and 503 map to ResourceExhausted), so we key off the Code.
 	p.Status = api.StatusForCode(p.Code)
+	// ToStatus carries the human-readable cause in status.message. Preserve it
+	// as Detail as well as Title so error wrapping and structured logs do not
+	// collapse a remote failure to the stable code alone.
+	p.Detail = st.Message()
 	return p, true
 }
 

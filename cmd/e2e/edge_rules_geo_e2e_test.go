@@ -44,11 +44,9 @@ import (
 )
 
 // TestEdgeRulesGeo_E2E_FailOpenUnderMissingDB pins the §4.1.2.8b
-// fail-open posture: with no .mmdb loaded, a kind=geo rule does
-// NOT short-circuit the request. The synthetic host's only rule
-// is the geo allowlist (deny all except DE); without a DB the
-// gate skips and the request falls through to Backend.Pick
-// (404 — synthetic host, no production mapping).
+// fail-closed posture: with no .mmdb loaded, a kind=geo rule returns
+// 503 because the platform cannot safely decide whether the request
+// is allowed.
 func TestEdgeRulesGeo_E2E_FailOpenUnderMissingDB(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -64,7 +62,7 @@ func TestEdgeRulesGeo_E2E_FailOpenUnderMissingDB(t *testing.T) {
 
 	slug := "geo-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}
@@ -96,21 +94,20 @@ func TestEdgeRulesGeo_E2E_FailOpenUnderMissingDB(t *testing.T) {
 	resetEdgeRuleCache(t, h)
 
 	// Request 1: X-Forwarded-For 8.8.8.8 (US) — under a loaded DB
-	// this would 403 via the Deny list. Under fail-open, it falls
-	// through to Backend.Pick (404 because the synthetic host has
-	// no production target).
+	// this would 403 via the Deny list. Without the database the gate
+	// fails closed with 503.
 	_, _, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil,
 		map[string]string{"X-Forwarded-For": "8.8.8.8"})
-	if status != http.StatusNotFound {
-		t.Errorf("fail-open on US-IP: status=%d, want 404 (gate fail-opened)", status)
+	if status != http.StatusServiceUnavailable {
+		t.Errorf("missing geo DB on US-IP: status=%d, want 503", status)
 	}
 
 	// Request 2: DE-bound IP (would PASS allow-list under loaded DB).
-	// Same posture: 404 because the gate didn't fire.
+	// Same posture: country cannot be resolved, so the gate returns 503.
 	_, _, status = doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil,
 		map[string]string{"X-Forwarded-For": "9.9.9.9"})
-	if status != http.StatusNotFound {
-		t.Errorf("fail-open on DE-IP: status=%d, want 404 (gate fail-opened)", status)
+	if status != http.StatusServiceUnavailable {
+		t.Errorf("missing geo DB on DE-IP: status=%d, want 503", status)
 	}
 }
 
@@ -144,7 +141,7 @@ func TestEdgeRulesGeo_E2E_FreeQuotaRejected(t *testing.T) {
 
 	slug := "geo-quota-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}
@@ -160,10 +157,11 @@ func TestEdgeRulesGeo_E2E_FreeQuotaRejected(t *testing.T) {
 
 	body1, _ := json.Marshal(api.CreateEdgeRuleRequest{
 		MatchHost: host1,
+		MatchPath: "/*",
 		Kind:      string(state.EdgeRuleKindGeo),
 		Action:    mustMarshalGeoAction(t, []string{"DE"}, nil),
 	})
-	_, status1 := doReq(t, h, key, http.MethodPost, "/v1/edge-rules", json.RawMessage(body1))
+	_, status1 := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", json.RawMessage(body1))
 	if status1 != http.StatusCreated {
 		t.Fatalf("first geo create: status=%d, want 201 (under cap)", status1)
 	}
@@ -172,10 +170,11 @@ func TestEdgeRulesGeo_E2E_FreeQuotaRejected(t *testing.T) {
 	host2 := "free-geo-2.apps.test.example"
 	body2, _ := json.Marshal(api.CreateEdgeRuleRequest{
 		MatchHost: host2,
+		MatchPath: "/*",
 		Kind:      string(state.EdgeRuleKindGeo),
 		Action:    mustMarshalGeoAction(t, []string{"FR"}, nil),
 	})
-	raw2, status2 := doReq(t, h, key, http.MethodPost, "/v1/edge-rules", json.RawMessage(body2))
+	raw2, status2 := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", json.RawMessage(body2))
 	if status2 != http.StatusForbidden {
 		t.Errorf("second geo create: status=%d, want 403 (Free per-kind cap=1)", status2)
 	}

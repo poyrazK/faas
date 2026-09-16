@@ -45,13 +45,19 @@ func authedClientWithDeployTimeout(timeout time.Duration) (*Client, error) {
 // 0600 perms (config.go::saveToken) so subsequent commands can use
 // the bearer token without re-authenticating.
 func cmdLogin(args []string) int {
-	fs := flag.NewFlagSet("login", flag.ContinueOnError)
+	fs := newFlagSet("login", flag.ContinueOnError)
 	fs.Usage = func() {
+		if jsonOutput && !jsonUsageHelp {
+			return
+		}
 		PrintUsage(os.Stderr, "usage: gregale login [--token T]", "auth")
 		fs.PrintDefaults()
 	}
 	token := fs.String("token", "", "API token (CI/non-interactive)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 
@@ -565,6 +571,10 @@ func renderAPIError(w io.Writer, e *APIError) {
 	// rest of cmd/gregale — see output.go::writeStatus).
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
+	}
+	if p.RetryAfterSeconds != nil {
+		retryAfter := time.Duration(*p.RetryAfterSeconds) * time.Second
+		_, _ = fmt.Fprintf(w, "  Retry after: %s (%d seconds)\n", retryAfter, *p.RetryAfterSeconds)
 	}
 	// Billing hand-off URLs (402 CodePayment). The provider-neutral
 	// checkout_url wins; the portal URL is the fallback for accounts

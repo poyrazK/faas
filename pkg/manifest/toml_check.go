@@ -207,6 +207,14 @@ var HostKeys = map[string]HostBlock{
 		},
 		ComputeNodeBlock: nil,
 	},
+	"outboundd": {
+		Daemon: "outboundd",
+		PrivateKeys: []string{
+			"listen_addr",
+			"db_url",
+		},
+		ComputeNodeBlock: nil,
+	},
 	"githubd": {
 		Daemon: "githubd",
 		PrivateKeys: []string{

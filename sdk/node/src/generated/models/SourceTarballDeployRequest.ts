@@ -16,6 +16,10 @@ export type SourceTarballDeployRequest = {
    */
   ref?: string | null;
   /**
+   * Registered project environment to target for this local tarball deployment.
+   */
+  environment?: string;
+  /**
    * Free-form operator note on the tarball deploy request (≤280 chars). Example: 'Emergency rollback after payment provider incident'.
    */
   reason?: string;
@@ -39,5 +43,9 @@ export type SourceTarballDeployRequest = {
    * Canary rollout policy for this source-tarball deployment. Mutually exclusive with traffic_percent.
    */
   canary?: (CanaryPresetSpec | null);
+  /**
+   * Source-tarball deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
+   */
+  rollback_on_5xx?: boolean | null;
 };
 

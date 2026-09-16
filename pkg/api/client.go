@@ -66,7 +66,9 @@ import (
 // 401/302. The companion tripwire
 // (pkg/api/lint_tripwires_test.go) ensures no other pkg/api file
 // composes a path that matches this regex.
-var cookieOnlyPathRE = regexp.MustCompile(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password)$`)
+const cookieOnlyAdminStatusPath = "/v1/admin/status/incidents"
+
+var cookieOnlyPathRE = regexp.MustCompile(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
 // NewClient (30s default timeout) or NewClientWithDeployTimeout
@@ -381,6 +383,14 @@ func apiErrorFromResponse(resp *http.Response, data []byte) error {
 	}
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
 		p = *p.WithHeader("Retry-After", ra)
+		if seconds, err := strconv.ParseInt(strings.TrimSpace(ra), 10, 64); err == nil && seconds >= 0 {
+			p.RetryAfterSeconds = &seconds
+		}
+	}
+	for _, name := range []string{"RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"} {
+		if value := resp.Header.Get(name); value != "" {
+			p = *p.WithHeader(name, value)
+		}
 	}
 	return &APIError{Problem: p}
 }
@@ -394,6 +404,21 @@ var ErrNoBody = errors.New("api: response body was empty")
 func (c *Client) Whoami(ctx context.Context) (AccountResponse, error) {
 	var out AccountResponse
 	return out, c.do(ctx, "GET", "/v1/account", nil, &out)
+}
+
+// PatchAccountBilling updates the authenticated account's legal billing
+// identity. Omitted fields are preserved; an explicitly empty string clears
+// that field. The response is the refreshed account profile.
+func (c *Client) PatchAccountBilling(ctx context.Context, req UpdateAccountBillingInfoRequest) (AccountResponse, error) {
+	var out AccountResponse
+	return out, c.do(ctx, "PATCH", "/v1/account/billing", req, &out)
+}
+
+// GetAccountRateLimits returns the authenticated account's current deploy
+// rate window and plan-derived limit.
+func (c *Client) GetAccountRateLimits(ctx context.Context) (AccountRateLimitsResponse, error) {
+	var out AccountRateLimitsResponse
+	return out, c.do(ctx, "GET", "/v1/account/rate-limits", nil, &out)
 }
 
 // GetCapabilities returns the canonical feature maturity and plan
@@ -653,6 +678,21 @@ func (c *Client) GetAPIConsumerUsageStatement(ctx context.Context, slug, consume
 func (c *Client) FinalizeAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementResponse, error) {
 	var out APIConsumerUsageStatementResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/finalize", struct{}{}, &out)
+}
+
+// ClaimAPIConsumerUsageStatement records the customer's external invoice
+// reference for a finalized statement. Repeating the same claim is safe and
+// returns the original immutable handoff receipt.
+func (c *Client) ClaimAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string, req ClaimAPIConsumerUsageStatementRequest) (APIConsumerUsageStatementHandoffResponse, error) {
+	var out APIConsumerUsageStatementHandoffResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/handoff", req, &out)
+}
+
+// GetAPIConsumerUsageStatementHandoff returns the customer's immutable
+// invoice-handoff receipt for a finalized statement.
+func (c *Client) GetAPIConsumerUsageStatementHandoff(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementHandoffResponse, error) {
+	var out APIConsumerUsageStatementHandoffResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/handoff", nil, &out)
 }
 
 // RevokeAPIConsumer revokes an end-customer identity and all future key issuance for it.
@@ -1116,8 +1156,8 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	}
 	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
 	// (the server treats missing sidecar as zero provenance).
-	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
-		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil {
+	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Environment != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
+		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil {
 		sidecarJSON, err := json.Marshal(sidecar)
 		if err != nil {
 			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
@@ -1207,19 +1247,41 @@ func (c *Client) DestroyPreview(ctx context.Context, slug string) error {
 	return c.do(ctx, "POST", "/v1/preview/"+slug+"/destroy", nil, nil)
 }
 
-// ScanProject ships a source tarball to the dry-run endpoint. The
-// response carries the discovered workloads, managed services,
-// derived scan_source, and a plan_token that ApplyProjectPlan can
-// echo back on the same multipart body to skip the second extract
-// in the interactive flow. No writes — POST /v1/projects/scan.
+// ScanProject ships a source tarball to the dry-run endpoint without a
+// GitHub project binding. It preserves the original SDK shape; callers that
+// need push reconciliation should use ScanProjectWithBinding.
 func (c *Client) ScanProject(
 	ctx context.Context,
 	source io.Reader, sourceName, projectSlug, productionBranch string,
-	installID int64, only, exclude []string, persistExclude bool,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+) (PlanResponse, error) {
+	return c.ScanProjectWithBinding(ctx, source, sourceName, projectSlug, "", productionBranch,
+		installID, only, exclude, persistExclude, noTriggers)
+}
+
+// ScanProjectWithBinding is ScanProject with the repository identity needed
+// for GitHub push reconciliation.
+func (c *Client) ScanProjectWithBinding(
+	ctx context.Context,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+) (PlanResponse, error) {
+	return c.ScanProjectWithBindingEnvironment(ctx, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, "")
+}
+
+// ScanProjectWithBindingEnvironment scans a project while selecting a
+// registered project environment. The environment is carried through the
+// plan token so apply cannot target a different environment than the scan.
+func (c *Client) ScanProjectWithBindingEnvironment(
+	ctx context.Context,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment string,
 ) (PlanResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, productionBranch, installID, only, exclude, persistExclude); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment); err != nil {
 		return PlanResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -1237,20 +1299,64 @@ func (c *Client) ScanProject(
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
 
-// ApplyProjectPlan ships the same multipart body as ScanProject
-// plus a plan_token query parameter to /v1/projects. The token is
-// optional — pass "" to force a fresh extract + scan + quota check
-// on the server. On over-quota the response carries the matching
-// 402/403 RFC 7807 problem with zero rows inserted.
+// ScanProjectSourceRef resolves a connected GitHub installation on the
+// control plane and scans the fetched commit without exposing an installation
+// token to the CLI.
+func (c *Client) ScanProjectSourceRef(ctx context.Context, request ProjectSourceRefScanRequest) (PlanResponse, error) {
+	var out PlanResponse
+	return out, c.do(ctx, "POST", "/v1/projects/scan/source-ref", request, &out)
+}
+
+// ApplyProjectPlan ships the same multipart body as ScanProject without a
+// GitHub project binding. It preserves the original SDK shape; callers that
+// need push reconciliation should use ApplyProjectPlanWithBinding.
 func (c *Client) ApplyProjectPlan(
 	ctx context.Context,
 	planToken string,
 	source io.Reader, sourceName, projectSlug, productionBranch string,
-	installID int64, only, exclude []string, persistExclude bool,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+) (ApplyResponse, error) {
+	return c.ApplyProjectPlanWithBinding(ctx, planToken, source, sourceName, projectSlug, "", productionBranch,
+		installID, only, exclude, persistExclude, noTriggers)
+}
+
+// ApplyProjectPlanWithBinding applies a project plan while carrying the
+// repository identity needed for GitHub push reconciliation.
+func (c *Client) ApplyProjectPlanWithBinding(
+	ctx context.Context,
+	planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+) (ApplyResponse, error) {
+	return c.ApplyProjectPlanWithBindingEnvironment(ctx, planToken, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, "")
+}
+
+// ApplyProjectPlanWithBindingEnvironment applies a scanned project to the
+// same registered environment that was used during scanning.
+func (c *Client) ApplyProjectPlanWithBindingEnvironment(
+	ctx context.Context,
+	planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment string,
+) (ApplyResponse, error) {
+	return c.ApplyProjectPlanWithBindingEnvironmentApproval(ctx, planToken, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, environment, "")
+}
+
+// ApplyProjectPlanWithBindingEnvironmentApproval applies a plan and, when
+// needed, carries the short-lived approval for a protected environment.
+func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
+	ctx context.Context,
+	planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment, approvalToken string,
 ) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, productionBranch, installID, only, exclude, persistExclude); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	if err := w.Close(); err != nil {
@@ -1268,7 +1374,15 @@ func (c *Client) ApplyProjectPlan(
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("Idempotency-Key", newUUIDv4())
+	// Multipart project applies bypass Client.do because the request body
+	// carries a file. Preserve the caller's logical retry key just like the
+	// JSON and single-app multipart paths; only mint a key for legacy callers
+	// that did not attach one to the context.
+	idempotencyKey := IdempotencyKeyFromContext(ctx)
+	if idempotencyKey == "" {
+		idempotencyKey = newUUIDv4()
+	}
+	req.Header.Set("Idempotency-Key", idempotencyKey)
 	var out ApplyResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
@@ -1287,14 +1401,189 @@ func (c *Client) DeleteDeploymentScopeExclusion(ctx context.Context, projectSlug
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
+// ListProjects returns durable projects owned by the current account.
+func (c *Client) ListProjects(ctx context.Context) ([]ProjectSummaryResponse, error) {
+	var out []ProjectSummaryResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/projects", nil, &out)
+}
+
+// GetProject returns one project with workloads and recovery metadata.
+func (c *Client) GetProject(ctx context.Context, slug string) (ProjectResponse, error) {
+	var out ProjectResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(slug), nil, &out)
+}
+
+// UpdateProject changes a project's repository or production branch.
+func (c *Client) UpdateProject(ctx context.Context, slug string, req UpdateProjectRequest) (ProjectResponse, error) {
+	var out ProjectResponse
+	return out, c.do(ctx, http.MethodPatch, "/v1/projects/"+url.PathEscape(slug), req, &out)
+}
+
+// ListProjectEnvironments returns the durable environment registry for a
+// project.
+func (c *Client) ListProjectEnvironments(ctx context.Context, projectSlug string) ([]ProjectEnvironmentResponse, error) {
+	var out []ProjectEnvironmentResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectEnvironment returns one durable project environment.
+func (c *Client) GetProjectEnvironment(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentResponse, error) {
+	var out ProjectEnvironmentResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// CreateProjectEnvironment adds a named environment to a project.
+func (c *Client) CreateProjectEnvironment(ctx context.Context, projectSlug string, req CreateProjectEnvironmentRequest) (ProjectEnvironmentResponse, error) {
+	var out ProjectEnvironmentResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// UpdateProjectEnvironment changes only the protection policy for an
+// environment. Runtime and deployment behavior are intentionally unchanged by
+// this registry surface.
+func (c *Client) UpdateProjectEnvironment(ctx context.Context, projectSlug, environmentSlug string, req UpdateProjectEnvironmentRequest) (ProjectEnvironmentResponse, error) {
+	var out ProjectEnvironmentResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug)
+	return out, c.do(ctx, http.MethodPatch, path, req, &out)
+}
+
+// GetProjectEnvironmentConfig returns the latest non-secret configuration
+// snapshot for one project environment. An unconfigured environment returns
+// version zero with an empty object and its canonical empty hash.
+func (c *Client) GetProjectEnvironmentConfig(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentConfigResponse, error) {
+	var out ProjectEnvironmentConfigResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/config"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// UpdateProjectEnvironmentConfig appends an immutable non-secret
+// configuration version for one project environment.
+func (c *Client) UpdateProjectEnvironmentConfig(ctx context.Context, projectSlug, environmentSlug string, req UpdateProjectEnvironmentConfigRequest) (ProjectEnvironmentConfigResponse, error) {
+	var out ProjectEnvironmentConfigResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/config"
+	return out, c.do(ctx, http.MethodPut, path, req, &out)
+}
+
+// GetProjectEnvironmentConfigDiff compares the latest snapshots in the
+// source environment and the requested target environment.
+func (c *Client) GetProjectEnvironmentConfigDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentConfigDiffResponse, error) {
+	var out ProjectEnvironmentConfigDiffResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/config/diff?from=" + url.QueryEscape(sourceEnvironment)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectsSlugEnvironmentsEnvironmentConfig is the route-shaped alias
+// used by the SDK coverage contract. Prefer GetProjectEnvironmentConfig for
+// new Go callers.
+func (c *Client) GetProjectsSlugEnvironmentsEnvironmentConfig(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentConfigResponse, error) {
+	return c.GetProjectEnvironmentConfig(ctx, projectSlug, environmentSlug)
+}
+
+// PutProjectsSlugEnvironmentsEnvironmentConfig is the route-shaped alias used
+// by the SDK coverage contract. Prefer UpdateProjectEnvironmentConfig for new
+// Go callers.
+func (c *Client) PutProjectsSlugEnvironmentsEnvironmentConfig(ctx context.Context, projectSlug, environmentSlug string, req UpdateProjectEnvironmentConfigRequest) (ProjectEnvironmentConfigResponse, error) {
+	return c.UpdateProjectEnvironmentConfig(ctx, projectSlug, environmentSlug, req)
+}
+
+// GetProjectsSlugEnvironmentsEnvironmentConfigDiff is the route-shaped alias
+// used by the SDK coverage contract. Prefer GetProjectEnvironmentConfigDiff
+// for new Go callers.
+func (c *Client) GetProjectsSlugEnvironmentsEnvironmentConfigDiff(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentConfigDiffResponse, error) {
+	return c.GetProjectEnvironmentConfigDiff(ctx, projectSlug, targetEnvironment, sourceEnvironment)
+}
+
+// GetProjectEnvironmentPromotionPreview returns a read-only promotion plan
+// from one registered environment to another. The promotion token is an
+// identity for a future execute step; this call never mutates deployments.
+func (c *Client) GetProjectEnvironmentPromotionPreview(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentPromotionPreviewResponse, error) {
+	var out ProjectEnvironmentPromotionPreviewResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotion-preview?from=" + url.QueryEscape(sourceEnvironment)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectsSlugEnvironmentsEnvironmentPromotionPreview is the route-shaped
+// alias used by SDK coverage. Prefer GetProjectEnvironmentPromotionPreview
+// for new Go callers.
+func (c *Client) GetProjectsSlugEnvironmentsEnvironmentPromotionPreview(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentPromotionPreviewResponse, error) {
+	return c.GetProjectEnvironmentPromotionPreview(ctx, projectSlug, targetEnvironment, sourceEnvironment)
+}
+
+// ApproveProjectEnvironment authorizes one exact plan for a protected
+// environment. The returned token is short-lived and must be passed to apply.
+func (c *Client) ApproveProjectEnvironment(ctx context.Context, projectSlug, environmentSlug string, req CreateProjectEnvironmentApprovalRequest) (ProjectEnvironmentApprovalResponse, error) {
+	var out ProjectEnvironmentApprovalResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environmentSlug) + "/approvals"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// PostProjectsSlugEnvironmentsEnvironmentApprovals is the route-shaped SDK
+// alias used by the SDK coverage contract. Prefer ApproveProjectEnvironment
+// for new Go callers.
+func (c *Client) PostProjectsSlugEnvironmentsEnvironmentApprovals(ctx context.Context, projectSlug, environmentSlug string, req CreateProjectEnvironmentApprovalRequest) (ProjectEnvironmentApprovalResponse, error) {
+	return c.ApproveProjectEnvironment(ctx, projectSlug, environmentSlug, req)
+}
+
+// PromoteProjectEnvironment executes a previously previewed promotion after
+// revalidating the promotion token against current live releases and config.
+func (c *Client) PromoteProjectEnvironment(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
+	var out ProjectEnvironmentPromotionResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
+// PromoteProjectEnvironmentWithIdempotencyKey executes a promotion with an
+// explicit retry key. An empty key keeps the normal SDK auto-mint behavior.
+func (c *Client) PromoteProjectEnvironmentWithIdempotencyKey(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest, idempotencyKey string) (ProjectEnvironmentPromotionResponse, error) {
+	var out ProjectEnvironmentPromotionResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promote"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, req, &out, idempotencyKey)
+}
+
+// PostProjectsSlugEnvironmentsEnvironmentPromote is the route-shaped SDK
+// alias used by SDK coverage. Prefer PromoteProjectEnvironment for new Go
+// callers.
+func (c *Client) PostProjectsSlugEnvironmentsEnvironmentPromote(ctx context.Context, projectSlug, targetEnvironment string, req PromoteProjectEnvironmentRequest) (ProjectEnvironmentPromotionResponse, error) {
+	return c.PromoteProjectEnvironment(ctx, projectSlug, targetEnvironment, req)
+}
+
+// GetProjectEnvironmentPromotionStatus returns the durable operation and its
+// per-workload checkpoints.
+func (c *Client) GetProjectEnvironmentPromotionStatus(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
+	var out ProjectEnvironmentPromotionStatusResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotions/" + url.PathEscape(promotionID)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectsSlugEnvironmentsEnvironmentPromotionsPromotion is the
+// route-shaped SDK alias used by SDK coverage.
+func (c *Client) GetProjectsSlugEnvironmentsEnvironmentPromotionsPromotion(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
+	return c.GetProjectEnvironmentPromotionStatus(ctx, projectSlug, targetEnvironment, promotionID)
+}
+
+// PreviewDeleteProject returns the state related to a project deletion.
+func (c *Client) PreviewDeleteProject(ctx context.Context, slug string) (ProjectDeletePreviewResponse, error) {
+	var out ProjectDeletePreviewResponse
+	path := "/v1/projects/" + url.PathEscape(slug) + "/delete-preview"
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// DeleteProject removes the project row and detaches its live workloads.
+func (c *Client) DeleteProject(ctx context.Context, slug string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug), nil, nil)
+}
+
 // writeProjectMultipartFields serializes the multipart body shared
 // by ScanProject + ApplyProjectPlan. The fields exactly mirror the
 // OpenAPI ProjectScanRequest schema (the spec-compliance AST gate
 // enforces the field-for-field mapping).
 func writeProjectMultipartFields(
 	w *multipart.Writer, source io.Reader, sourceName, projectSlug,
-	productionBranch string, installID int64, only, exclude []string,
-	persistExclude bool,
+	repoFullName, productionBranch string, installID int64, only, exclude []string,
+	persistExclude, noTriggers bool, environmentAndApproval ...string,
 ) error {
 	fw, err := w.CreateFormFile("source", sourceName)
 	if err != nil {
@@ -1305,6 +1594,11 @@ func writeProjectMultipartFields(
 	}
 	if projectSlug != "" {
 		if err := w.WriteField("project_slug", projectSlug); err != nil {
+			return err
+		}
+	}
+	if repoFullName != "" {
+		if err := w.WriteField("repo_full_name", repoFullName); err != nil {
 			return err
 		}
 	}
@@ -1339,6 +1633,21 @@ func writeProjectMultipartFields(
 	// existing wire captures stable.
 	if persistExclude {
 		if err := w.WriteField("persist_exclude", "true"); err != nil {
+			return err
+		}
+	}
+	if noTriggers {
+		if err := w.WriteField("no_triggers", "true"); err != nil {
+			return err
+		}
+	}
+	if len(environmentAndApproval) > 0 && strings.TrimSpace(environmentAndApproval[0]) != "" {
+		if err := w.WriteField("environment", strings.TrimSpace(environmentAndApproval[0])); err != nil {
+			return err
+		}
+	}
+	if len(environmentAndApproval) > 1 && strings.TrimSpace(environmentAndApproval[1]) != "" {
+		if err := w.WriteField("approval_token", strings.TrimSpace(environmentAndApproval[1])); err != nil {
 			return err
 		}
 	}
@@ -1558,8 +1867,16 @@ func (c *Client) PurgeAppCache(ctx context.Context, slug, pathGlob string) error
 }
 
 func (c *Client) ListInstances(ctx context.Context, slug string) ([]InstanceResponse, error) {
+	return c.ListInstancesWithHistory(ctx, slug, false)
+}
+
+func (c *Client) ListInstancesWithHistory(ctx context.Context, slug string, history bool) ([]InstanceResponse, error) {
 	var out []InstanceResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/instances", nil, &out)
+	endpoint := "/v1/apps/" + slug + "/instances"
+	if history {
+		endpoint += "?history=true"
+	}
+	return out, c.do(ctx, "GET", endpoint, nil, &out)
 }
 
 // GetInstances returns every live instance across the caller's account
@@ -1605,6 +1922,13 @@ func (c *Client) DeleteDomain(ctx context.Context, domain string) error {
 func (c *Client) VerifyDomain(ctx context.Context, domain string) (CustomDomainResponse, error) {
 	var out CustomDomainResponse
 	return out, c.do(ctx, "POST", "/v1/domains/"+domain+"/verify", nil, &out)
+}
+
+// RetryDomainVerification re-arms a pending domain after its bounded polling
+// backoff or retry budget expires. The server returns 202 with no response
+// body; mutating-call idempotency is supplied by Client.do.
+func (c *Client) RetryDomainVerification(ctx context.Context, domain string) error {
+	return c.do(ctx, "POST", "/v1/domains/"+domain+"/retry", nil, nil)
 }
 
 // GetDomain (issue #961 / Mega-A PR-3) returns a domain's durable
@@ -1738,10 +2062,9 @@ func (c *Client) DeleteCron(ctx context.Context, id string) error {
 // Methods mirror the /v1/jobs surface added in M11.4. Routes are
 // keyed on the customer's slug (`name`) for create/list/update/delete;
 // runs + tasks use the opaque run id (uuid) so cross-account
-// enumeration cannot scrape run ids. Logs are read from vmmd's tail
-// endpoint (same path the dashboard uses for live app logs); the
-// handler proxies the call to the compute node that owns the
-// instance. The CLI surface lives in cmd/gregale/commands_jobs.go.
+// enumeration cannot scrape run ids. Task logs are a durable combined
+// stdout/stderr tail captured before the terminal microVM is destroyed.
+// The CLI surface lives in cmd/gregale/commands_jobs.go.
 
 // ListJobs returns one account-scoped page of jobs (the /v1/jobs GET route).
 // The optional arguments are limit and offset; omitting them, or passing zero
@@ -1866,8 +2189,8 @@ func (c *Client) ListJobRunTasks(ctx context.Context, name, runID string) (ListJ
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs/"+runID+"/tasks", nil, &out)
 }
 
-// GetJobTaskLogs tails the task's stdout/stderr via vmmd's tail
-// endpoint (issue #1184 Workstream A). Wire shape:
+// GetJobTaskLogs returns the task's durable combined stdout/stderr tail
+// (issue #1184 Workstream A). Wire shape:
 // JobTaskLogResponse (task_status + log_content + truncated +
 // max_bytes). Truncated=true means the tail was capped at
 // MaxBytes; clients should re-fetch with a larger limit to see
@@ -2088,15 +2411,12 @@ func (c *Client) DeleteAlertRule(ctx context.Context, slug, id string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/alerts/"+id, nil, nil)
 }
 
-// RotateAlertRuleSecret server-mints a fresh 32-byte HMAC secret and
-// overwrites the row's sealed ciphertext in place. The plaintext is
-// NEVER returned in the response — only the masked constant + a
-// rotated_at timestamp. The customer must capture the new secret via
-// out-of-band mechanism if they need it on the receiving end; PR 4's
-// dashboard adds a one-time-display UX.
-func (c *Client) RotateAlertRuleSecret(ctx context.Context, slug, id string) (RotateAlertRuleSecretResponse, error) {
+// RotateAlertRuleSecret installs a caller-supplied HMAC secret immediately.
+// Customers should provision the receiver first; there is no old-key overlap.
+// The response remains masked and never echoes the plaintext.
+func (c *Client) RotateAlertRuleSecret(ctx context.Context, slug, id string, req RotateAlertRuleSecretRequest) (RotateAlertRuleSecretResponse, error) {
 	var out RotateAlertRuleSecretResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/alerts/"+id+"/rotate-secret", nil, &out)
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/alerts/"+id+"/rotate-secret", req, &out)
 }
 
 // ListAlertRuleDeliveries returns the most-recent alert_deliveries
@@ -3341,23 +3661,19 @@ func (c *Client) GetAppThrottleSuggestionsOpts(ctx context.Context, slug, rng st
 }
 
 // GetAppRoutes returns the per-route label snapshot for the named
-// app (ADR-093). The bounded label set is served by the
-// gatewayd-internal control listener and reverse-proxied by apid;
+// app (ADR-093). Production returns the bounded union from every active
+// compute collector through the control-plane Prometheus aggregate;
 // each entry is "METHOD /raw/path" with overflow collapsed to
 // "__route_other__" when the per-app cap (50) is exceeded. Source
-// is "live" on success and "unavailable" when the control
-// listener dial failed — callers should render both branches the
-// same way (empty list, distinct chip).
+// is "live" for complete collection, "partial" when some collectors are
+// unavailable, and "unavailable" when the fleet bridge failed. Collector
+// counts distinguish those states from healthy no traffic.
 //
-// CapHit (ADR-093 Tier B item #1) is true iff the app's route
-// label set reached RouteMetricsPerAppCap (50) and additional
-// routes are collapsing into the reserved __route_other__ bucket.
-// When true, len(Routes) == 52 (50 real + reserved empty +
-// __route_other__). When false, the dashboard can render "you have
-// N admitted routes" without counting. CapHit is the zero value
+// CapHit (ADR-093 Tier B item #1) is true iff the fleet route union
+// reached RouteMetricsPerAppCap (50) or a collector emitted the
+// reserved __route_other__ bucket. CapHit is the zero value
 // (false) on the source: unavailable path — the cap state is
-// unknown when the gatewayd-internal dial fails, so the field is
-// not part of the unreliable wire.
+// unknown when collection fails.
 func (c *Client) GetAppRoutes(ctx context.Context, slug string) (AppRoutesResponse, error) {
 	var out AppRoutesResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/routes", nil, &out)
@@ -3549,7 +3865,8 @@ func (c *Client) GetAppErrorSample(ctx context.Context, slug, fingerprint string
 }
 
 // UsageSummary returns the account-wide monthly roll-up
-// (used_gb_hours, included_gb_hours, overage_gb_hours, overage_cents).
+// (used_gb_hours, included_gb_hours, overage_gb_hours, overage_cents), plus
+// optional disposable-execution usage from the terminal usage ledger.
 // Distinct from GetUsage which returns per-app rows; empty month falls
 // back to the server's default (current month).
 func (c *Client) UsageSummary(ctx context.Context, month string) (UsageSummaryResponse, error) {
@@ -3671,6 +3988,17 @@ func (c *Client) GetBillingPortalFull(ctx context.Context) (BillingPortalRespons
 	var out BillingPortalResponse
 	if err := c.do(ctx, "GET", "/v1/billing/portal", nil, &out); err != nil {
 		return BillingPortalResponse{}, err
+	}
+	return out, nil
+}
+
+// GetBillingStatus returns the authenticated customer's provider-independent
+// billing projection. Unlike the operator catalog surface, this endpoint is
+// available to ordinary usage:read credentials and works for every provider.
+func (c *Client) GetBillingStatus(ctx context.Context) (BillingStatusResponse, error) {
+	var out BillingStatusResponse
+	if err := c.do(ctx, "GET", "/v1/billing/status", nil, &out); err != nil {
+		return BillingStatusResponse{}, err
 	}
 	return out, nil
 }
@@ -4184,6 +4512,63 @@ func (c *Client) RetryAppWebhookDelivery(ctx context.Context, slug, id, delivery
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks/"+id+"/deliveries/"+deliveryID+"/retry", nil, &out)
 }
 
+// --- Managed realtime endpoints (ADR-156) -------------------------------
+
+func (c *Client) ListManagedRealtimeEndpoints(ctx context.Context, slug string) ([]ManagedRealtimeEndpointResponse, error) {
+	var out []ManagedRealtimeEndpointResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/realtime/endpoints", nil, &out)
+}
+
+func (c *Client) CreateManagedRealtimeEndpoint(ctx context.Context, slug string, req CreateManagedRealtimeEndpointRequest) (ManagedRealtimeEndpointResponse, error) {
+	var out ManagedRealtimeEndpointResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints", req, &out)
+}
+
+func (c *Client) GetManagedRealtimeEndpoint(ctx context.Context, slug, id string) (ManagedRealtimeEndpointResponse, error) {
+	var out ManagedRealtimeEndpointResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/realtime/endpoints/"+id, nil, &out)
+}
+
+func (c *Client) UpdateManagedRealtimeEndpoint(ctx context.Context, slug, id string, req UpdateManagedRealtimeEndpointRequest) (ManagedRealtimeEndpointResponse, error) {
+	var out ManagedRealtimeEndpointResponse
+	return out, c.do(ctx, "PATCH", "/v1/apps/"+slug+"/realtime/endpoints/"+id, req, &out)
+}
+
+func (c *Client) DeleteManagedRealtimeEndpoint(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+id, nil, nil)
+}
+
+// SendManagedRealtimeConnection queues a binary-safe message for one live
+// connection owned by the endpoint.
+func (c *Client) SendManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID string, req ManagedRealtimeMessageRequest) error {
+	return c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/send", req, nil)
+}
+
+// CloseManagedRealtimeConnection asks the realtime owner to close one live
+// connection. A missing or already-closed connection returns an API 410.
+func (c *Client) CloseManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID string, req ManagedRealtimeCloseRequest) error {
+	return c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/close", req, nil)
+}
+
+// SubscribeManagedRealtimeConnection adds a live connection to an endpoint
+// channel.
+func (c *Client) SubscribeManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID, channel string) error {
+	return c.do(ctx, "PUT", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/subscriptions/"+channel, nil, nil)
+}
+
+// UnsubscribeManagedRealtimeConnection removes a live connection from an
+// endpoint channel.
+func (c *Client) UnsubscribeManagedRealtimeConnection(ctx context.Context, slug, endpointID, connectionID, channel string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/connections/"+connectionID+"/subscriptions/"+channel, nil, nil)
+}
+
+// PublishManagedRealtimeChannel publishes a message to subscribed live
+// connections on an endpoint channel.
+func (c *Client) PublishManagedRealtimeChannel(ctx context.Context, slug, endpointID, channel string, req ManagedRealtimeMessageRequest) (ManagedRealtimePublishResponse, error) {
+	var out ManagedRealtimePublishResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/realtime/endpoints/"+endpointID+"/channels/"+channel+"/publish", req, &out)
+}
+
 // --- Customer runtime log drains (issue #1398 O4) -------------------------
 
 func (c *Client) ListAppLogDrains(ctx context.Context, slug string) ([]AppLogDrainResponse, error) {
@@ -4239,9 +4624,9 @@ func (c *Client) GetAccountDPA(ctx context.Context) ([]byte, error) {
 
 // --- /v1/orgs/me (IAM-6 / ADR-061) ----------------------------------------
 //
-// Returns the caller's currently-active org + membership role, or
-// {"org": null} when neither X-Active-Org nor ?org= was supplied
-// (cmd/apid/handlers_org_me.go:59). Drives `gregale orgs me`.
+// Returns the caller's currently-active org + membership role. Without an
+// explicit X-Active-Org / ?org= hint, the server returns the caller's personal
+// organization. Drives `gregale orgs me`.
 func (c *Client) GetMyOrg(ctx context.Context) (OrgMeResponse, error) {
 	var out OrgMeResponse
 	return out, c.do(ctx, "GET", "/v1/orgs/me", nil, &out)
@@ -4753,6 +5138,42 @@ func (c *Client) GetAppDebugCoverage(ctx context.Context, slug, since string) (D
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppDebugRunning returns the observed scheduler explanations for why an
+// app remains resident. The response includes the newest causes, current
+// floor/idle configuration, and bounded history. It reports observations only
+// and never estimates a hypothetical saving.
+func (c *Client) GetAppDebugRunning(ctx context.Context, slug, since string) (DebugRunningResponse, error) {
+	var out DebugRunningResponse
+	path := "/v1/apps/" + slug + "/debug/running"
+	q := url.Values{}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugRunningWithLimit is the bounded-history form of
+// GetAppDebugRunning. Limit is sent only when positive so the API default is
+// preserved for callers that do not need a custom history size.
+func (c *Client) GetAppDebugRunningWithLimit(ctx context.Context, slug, since string, limit int) (DebugRunningResponse, error) {
+	var out DebugRunningResponse
+	path := "/v1/apps/" + slug + "/debug/running"
+	q := url.Values{}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // GetAppDebugRequest returns one request-telemetry row by id. The
 // server scopes the lookup to the app resolved from slug, so a request
 // id from another app is indistinguishable from a missing request.
@@ -4784,6 +5205,23 @@ func (c *Client) ListAppDebugRegressions(ctx context.Context, slug, since string
 		path += "?since=" + url.QueryEscape(since)
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// UpdateAppDebugRegression changes the workflow state of one regression
+// observation. The server validates the deployment/route pair within the
+// app and keeps the operation idempotent under the SDK's normal PATCH
+// request handling.
+func (c *Client) UpdateAppDebugRegression(ctx context.Context, slug string, req DebugRegressionActionRequest) (DebugRegressionActionResponse, error) {
+	var out DebugRegressionActionResponse
+	path := "/v1/apps/" + slug + "/debug/regressions"
+	return out, c.do(ctx, "PATCH", path, req, &out)
+}
+
+// PatchAppsSlugDebugRegressions is the route-shaped SDK alias required by
+// the public SDK coverage gate. UpdateAppDebugRegression remains the
+// descriptive helper for new callers.
+func (c *Client) PatchAppsSlugDebugRegressions(ctx context.Context, slug string, req DebugRegressionActionRequest) (DebugRegressionActionResponse, error) {
+	return c.UpdateAppDebugRegression(ctx, slug, req)
 }
 
 // CompareAppDebugDeployments compares two deployments' per-route

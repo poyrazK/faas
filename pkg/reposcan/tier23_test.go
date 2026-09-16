@@ -2,26 +2,30 @@ package reposcan
 
 import (
 	"sort"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
 
 // TestDetectWorkspaces_PnpmMonorepo covers the canonical pnpm
-// workspace shape: a top-level packages/* glob with three members.
-// Each member carries a marker (Dockerfile OR language marker)
-// and so qualifies as a workload. README-only dirs are filtered.
+// workspace shape: a top-level packages/* glob with runnable services, a
+// worker, and multiple shared libraries.
+// Runnable members carry a Dockerfile or executable package target.
+// Package libraries and README-only dirs are filtered.
 func TestDetectWorkspaces_PnpmMonorepo(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"pnpm-workspace.yaml": &fstest.MapFile{
 			Data: []byte("packages:\n  - \"packages/*\"\n"),
 		},
-		"packages/api/Dockerfile":   &fstest.MapFile{Data: []byte("FROM scratch")},
-		"packages/web/Dockerfile":   &fstest.MapFile{Data: []byte("FROM scratch")},
-		"packages/lib/package.json": &fstest.MapFile{Data: []byte("{}")},
-		"packages/docs/README.md":   &fstest.MapFile{Data: []byte("# docs\n")},
+		"packages/api/Dockerfile":      &fstest.MapFile{Data: []byte("FROM scratch")},
+		"packages/web/Dockerfile":      &fstest.MapFile{Data: []byte("FROM scratch")},
+		"packages/worker/package.json": &fstest.MapFile{Data: []byte(`{"scripts":{"worker":"node worker.js"}}`)},
+		"packages/lib/package.json":    &fstest.MapFile{Data: []byte("{}")},
+		"packages/shared/package.json": &fstest.MapFile{Data: []byte(`{"main":"index.js"}`)},
+		"packages/docs/README.md":      &fstest.MapFile{Data: []byte("# docs\n")},
 	}
-	seeds, _, err := detectWorkspaces(fsys)
+	seeds, warnings, err := detectWorkspaces(fsys)
 	if err != nil {
 		t.Fatalf("detectWorkspaces: %v", err)
 	}
@@ -30,8 +34,17 @@ func TestDetectWorkspaces_PnpmMonorepo(t *testing.T) {
 		namesGot[i] = s.name
 	}
 	sort.Strings(namesGot)
-	if !equalSet(namesGot, []string{"api", "web", "lib"}) {
-		t.Errorf("seed names = %v, want {api,web,lib} (lib has package.json marker; docs is README-only)", namesGot)
+	if !equalSet(namesGot, []string{"api", "web", "worker"}) {
+		t.Errorf("seed names = %v, want {api,web,worker}", namesGot)
+	}
+	if len(warnings) != 2 || !strings.Contains(strings.Join(warnings, "\n"), "packages/lib") ||
+		!strings.Contains(strings.Join(warnings, "\n"), "packages/shared") {
+		t.Errorf("warnings = %v, want both library skip explanations", warnings)
+	}
+	for _, seed := range seeds {
+		if seed.name == "worker" && (seed.class != ClassWorker || !seed.commandShell) {
+			t.Fatalf("worker seed = %#v", seed)
+		}
 	}
 }
 
@@ -72,7 +85,7 @@ func TestDetectConvention_DotDirs(t *testing.T) {
 		"services/lib/package.json":    &fstest.MapFile{Data: []byte("{}")},
 		"services/empty/README.md":     &fstest.MapFile{Data: []byte("# nothing here\n")},
 	}
-	seeds, _, err := detectConvention(fsys)
+	seeds, warnings, err := detectConvention(fsys)
 	if err != nil {
 		t.Fatalf("detectConvention: %v", err)
 	}
@@ -81,8 +94,11 @@ func TestDetectConvention_DotDirs(t *testing.T) {
 		namesGot[i] = s.name
 	}
 	sort.Strings(namesGot)
-	if !equalSet(namesGot, []string{"auth", "payments", "lib"}) {
-		t.Errorf("seed names = %v, want {auth,payments,lib}", namesGot)
+	if !equalSet(namesGot, []string{"auth", "payments"}) {
+		t.Errorf("seed names = %v, want {auth,payments}", namesGot)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "services/lib") {
+		t.Errorf("warnings = %v, want skipped library explanation", warnings)
 	}
 }
 

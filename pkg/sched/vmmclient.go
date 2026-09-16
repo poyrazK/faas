@@ -16,11 +16,13 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
@@ -160,6 +162,60 @@ type VMM interface {
 	// "abort — resume the paused VM". Idempotent on an
 	// already-resumed VM.
 	CancelLiveMigration(ctx context.Context, dyingNodeID, instanceID, leaseToken string) error
+}
+
+// ExecutionVMM is the optional post-restore execution capability. It is kept
+// outside VMM so existing lifecycle fakes and older vmmd nodes remain source
+// compatible while the capability is rolled out independently.
+type ExecutionVMM interface {
+	ExecuteExecution(context.Context, string, executionproto.Request) (executionproto.Result, error)
+}
+
+// ExecutionOutputVMM is the optional live-output capability. It is kept
+// separate from ExecutionVMM so mixed-version nodes can continue using the
+// unary execution path.
+type ExecutionOutputVMM interface {
+	ExecuteExecutionWithOutput(context.Context, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
+}
+
+// ExecutionRestoreVMM is the optional capability that creates a fresh,
+// networkless execution VM. Kept separate from ExecutionVMM so old nodes and
+// test doubles can negotiate the post-restore surface independently.
+type ExecutionRestoreVMM interface {
+	RestoreExecution(context.Context, ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error)
+}
+
+type ExecutionRestoreOutcome struct {
+	Instance        string
+	LeaseUID        int
+	Method          fcvm.WakeMethod
+	RequestedMethod fcvm.WakeMethod
+}
+
+// RestoreExecution creates the fresh networkless VM and returns only its
+// lifecycle identity. The caller must subsequently use ExecuteExecution for
+// source/input delivery; this RPC never carries either field.
+func (c *VMMClient) RestoreExecution(ctx context.Context, req ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error) {
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	wireReq := &vmmdpb.RestoreExecutionRequest{
+		Instance: req.ID, AccountId: req.AccountID, Plan: string(req.Plan),
+		Runtime: string(req.Runtime), KernelKey: req.KernelKey, BaseKey: req.BaseKey,
+		LayerKey: req.LayerKey, VcpuCount: int32(req.VcpuCount),
+		MemSizeMib: int32(req.MemSizeMiB), CpuMillicores: int32(req.CPUMillicores),
+	}
+	if req.Snapshot.StorageKey != "" || req.Snapshot.VMStateStorageKey != "" || req.Snapshot.VMStatePath != "" {
+		wireReq.Snapshot = &vmmdpb.SnapshotRef{
+			DeploymentId: req.Snapshot.DeploymentID, VmstatePath: req.Snapshot.VMStatePath,
+			FcVersion: req.Snapshot.FCVersion, StorageKey: req.Snapshot.StorageKey,
+			VmstateStorageKey: req.Snapshot.VMStateStorageKey, Networkless: true,
+		}
+	}
+	resp, err := c.cli.RestoreExecution(ctx, wireReq)
+	if err != nil {
+		return nil, liftErr(err)
+	}
+	return &ExecutionRestoreOutcome{Instance: resp.GetInstance(), LeaseUID: int(resp.GetLeaseUid()), Method: fcvm.WakeMethod(resp.GetMethod()), RequestedMethod: fcvm.WakeMethod(resp.GetRequestedMethod())}, nil
 }
 
 // LogReceiver is the per-instance callback the vmmd Logs RPC hands
@@ -435,6 +491,8 @@ type AppSpec struct {
 // only populates one for a given wake: empty for default-local, the
 // canonical key for remote nodes. Cold-boot-fallback still requires
 // StorageKey (mem F-1 contract).
+// Networkless is reserved for the runtime snapshot catalog and is only
+// serialized by RestoreExecution; ordinary app wakes leave it false.
 type SnapshotRef struct {
 	DeploymentID string
 	VMStatePath  string
@@ -444,6 +502,7 @@ type SnapshotRef struct {
 	// vmstate blob (issue #121 / ADR-025 axis 2 slice 4). Empty on
 	// default-local; populated on remote compute nodes.
 	VMStateStorageKey string
+	Networkless       bool
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -601,6 +660,126 @@ func (c *VMMClient) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmRes
 	return JobVmmResult{InstanceID: resp.GetInstance(), NodeID: resp.GetNodeId()}, nil
 }
 
+// ExecuteExecution sends one request to an already restored disposable VM.
+// The vmmd side owns teardown; this wrapper only carries the bounded result
+// back into the scheduler's execution protocol type.
+func (c *VMMClient) ExecuteExecution(ctx context.Context, instance string, req executionproto.Request) (executionproto.Result, error) {
+	var zero executionproto.Result
+	if c == nil || c.cli == nil {
+		return zero, errors.New("sched: nil vmmd execution client")
+	}
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	resp, err := c.cli.ExecuteExecution(ctx, &vmmdpb.ExecuteExecutionRequest{
+		Instance:       instance,
+		Version:        uint32(req.Version),
+		ExecutionId:    req.ExecutionID,
+		Runtime:        string(req.Runtime),
+		Source:         req.Source,
+		Input:          append([]byte(nil), req.Input...),
+		TimeoutMs:      int32(req.TimeoutMS),
+		MaxOutputBytes: int32(req.MaxOutput),
+		NetworkMode:    string(req.NetworkMode),
+	})
+	if err != nil {
+		return zero, liftErr(err)
+	}
+	return executionResultFromResponse(resp), nil
+}
+
+// ExecuteExecutionWithOutput sends one request over vmmd's additive
+// server-streaming RPC and forwards each bounded output chunk to receive.
+// Older vmmd nodes return Unimplemented; callers can fall back to the unary
+// ExecuteExecution method without changing the execution contract.
+func (c *VMMClient) ExecuteExecutionWithOutput(ctx context.Context, instance string, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	var zero executionproto.Result
+	if c == nil || c.cli == nil {
+		return zero, errors.New("sched: nil vmmd execution client")
+	}
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
+	stream, err := c.cli.ExecuteExecutionStream(ctx, &vmmdpb.ExecuteExecutionRequest{
+		Instance:       instance,
+		Version:        uint32(req.Version),
+		ExecutionId:    req.ExecutionID,
+		Runtime:        string(req.Runtime),
+		Source:         req.Source,
+		Input:          append([]byte(nil), req.Input...),
+		TimeoutMs:      int32(req.TimeoutMS),
+		MaxOutputBytes: int32(req.MaxOutput),
+		NetworkMode:    string(req.NetworkMode),
+	})
+	if err != nil {
+		return zero, liftErr(err)
+	}
+	var result executionproto.Result
+	for {
+		event, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			return zero, errors.New("sched: execution stream ended before terminal result")
+		}
+		if recvErr != nil {
+			return zero, liftErr(recvErr)
+		}
+		if event == nil {
+			return zero, errors.New("sched: execution stream returned a nil event")
+		}
+		if output := event.GetOutput(); output != nil {
+			streamName := output.GetStream()
+			if streamName != "stdout" && streamName != "stderr" {
+				return zero, errors.New("sched: execution stream returned an invalid output stream")
+			}
+			chunk := output.GetChunk()
+			if len(result.Stdout)+len(result.Stderr)+len(chunk) > req.MaxOutput {
+				return zero, executionproto.ErrOutputLimitExceeded
+			}
+			if streamName == "stdout" {
+				result.Stdout = append(result.Stdout, chunk...)
+			} else {
+				result.Stderr = append(result.Stderr, chunk...)
+			}
+			if receive != nil {
+				if err := receive(ctx, streamName, chunk); err != nil {
+					return zero, err
+				}
+			}
+			continue
+		}
+		if terminal := event.GetTerminal(); terminal != nil {
+			result = mergeExecutionResponse(result, terminal)
+			if err := result.Validate(req.MaxOutput); err != nil {
+				return zero, err
+			}
+			return result, nil
+		}
+		return zero, errors.New("sched: execution stream returned an empty event")
+	}
+}
+
+func executionResultFromResponse(resp *vmmdpb.ExecuteExecutionResponse) executionproto.Result {
+	return mergeExecutionResponse(executionproto.Result{}, resp)
+}
+
+func mergeExecutionResponse(result executionproto.Result, resp *vmmdpb.ExecuteExecutionResponse) executionproto.Result {
+	result.Status = api.ExecutionStatus(resp.GetStatus())
+	result.Result = append([]byte(nil), resp.GetResult()...)
+	result.OutputTruncated = resp.GetOutputTruncated()
+	result.FailureCode = resp.GetFailureCode()
+	result.FailureMessage = resp.GetFailureMessage()
+	result.Stdout = append(result.Stdout, resp.GetStdout()...)
+	result.Stderr = append(result.Stderr, resp.GetStderr()...)
+	result.Usage = api.ExecutionUsage{
+		WallTimeMS:   resp.GetWallTimeMs(),
+		CPUTimeMS:    resp.GetCpuTimeMs(),
+		PeakMemoryMB: int(resp.GetPeakMemoryMb()),
+	}
+	if exitCode := resp.GetExitCode(); exitCode != nil {
+		value := int(exitCode.GetValue())
+		result.ExitCode = &value
+	}
+	return result
+}
+
 // WaitJobExit waits for the guest supervisor's terminal receipt. The caller
 // owns the task deadline on ctx; vmmd also applies its own bounded fallback.
 func (c *VMMClient) WaitJobExit(ctx context.Context, spec JobExitSpec) (JobExitResult, error) {
@@ -632,6 +811,7 @@ func (c *VMMClient) CreateFromSnapshot(ctx context.Context, instance string, app
 			FcVersion:         snap.FCVersion,
 			StorageKey:        snap.StorageKey,
 			VmstateStorageKey: snap.VMStateStorageKey,
+			Networkless:       snap.Networkless,
 		},
 		WakeId: fields.WakeID,
 	})

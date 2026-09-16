@@ -323,6 +323,23 @@ type APIConsumerUsageStatementListResponse struct {
 	Statements []APIConsumerUsageStatementResponse `json:"statements"`
 }
 
+// ClaimAPIConsumerUsageStatementRequest records the customer's external
+// invoice reference for a finalized statement.
+type ClaimAPIConsumerUsageStatementRequest struct {
+	ExternalInvoiceID string `json:"external_invoice_id"`
+}
+
+// APIConsumerUsageStatementHandoffResponse is the immutable invoice-handoff
+// receipt for a finalized statement.
+type APIConsumerUsageStatementHandoffResponse struct {
+	ID                string    `json:"id"`
+	StatementID       string    `json:"statement_id"`
+	ExternalInvoiceID string    `json:"external_invoice_id"`
+	Currency          string    `json:"currency,omitempty"`
+	AmountMillicents  int64     `json:"amount_millicents"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
 // RenameAppRequest is the body of POST /v1/apps/{slug}/rename (issue #63).
 // Validated server-side via the same validSlug regex used at CreateApp
 // time; rejected on conflict with 409 CodeAppRenameFailed when another
@@ -685,15 +702,16 @@ type DomainDoctorCheck struct {
 // crons serialize as "" — the dashboard only shows the column
 // when populated.
 type CronResponse struct {
-	ID            string `json:"id"`
-	AppID         string `json:"app_id"`
-	Schedule      string `json:"schedule"`
-	Path          string `json:"path"`
-	Enabled       bool   `json:"enabled"`
-	Timezone      string `json:"timezone"`
-	SkipIfRunning bool   `json:"skip_if_running"`
-	CreatedAt     string `json:"created_at"`
-	LastFiredAt   string `json:"last_fired_at,omitempty"`
+	ID              string `json:"id"`
+	AppID           string `json:"app_id"`
+	Schedule        string `json:"schedule"`
+	Path            string `json:"path"`
+	Enabled         bool   `json:"enabled"`
+	SuspendedReason string `json:"suspended_reason,omitempty"`
+	Timezone        string `json:"timezone"`
+	SkipIfRunning   bool   `json:"skip_if_running"`
+	CreatedAt       string `json:"created_at"`
+	LastFiredAt     string `json:"last_fired_at,omitempty"`
 }
 
 // CreateCronRequest creates a scheduled synthetic POST.
@@ -874,6 +892,21 @@ type SetPasswordRequest struct {
 	CurrentPassword string `json:"current_password,omitempty"`
 }
 
+// ExecutionUsageSummaryResponse is the account-level usage roll-up for
+// disposable executions in one UTC calendar month.
+type ExecutionUsageSummaryResponse struct {
+	Runs         int64 `json:"runs"`
+	WallTimeMS   int64 `json:"wall_time_ms"`
+	CPUTimeMS    int64 `json:"cpu_time_ms"`
+	PeakMemoryMB int64 `json:"peak_memory_mb"`
+	OutputBytes  int64 `json:"output_bytes"`
+	Succeeded    int64 `json:"succeeded"`
+	Failed       int64 `json:"failed"`
+	TimedOut     int64 `json:"timed_out"`
+	OutOfMemory  int64 `json:"out_of_memory"`
+	Cancelled    int64 `json:"cancelled"`
+}
+
 // UsageSummaryResponse is the roll-up for the current month (or any
 // month passed as a query param). Used by the dashboard usage page so
 // the customer sees a single number ("used X of Y GB-h, overage $Z")
@@ -882,11 +915,12 @@ type SetPasswordRequest struct {
 // Overage math: anything above IncludedGBHours is billable at the
 // overage rate in the financial model (€0.01/GB-h). Cents are integer.
 type UsageSummaryResponse struct {
-	Month           string  `json:"month"`             // YYYY-MM
-	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 3_600_000
-	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
-	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
-	OverageCents    int64   `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
+	Month           string                         `json:"month"`             // YYYY-MM
+	UsedGBHours     float64                        `json:"used_gb_hours"`     // Σ mb_seconds / 3_600_000
+	IncludedGBHours int64                          `json:"included_gb_hours"` // from plan limits
+	OverageGBHours  float64                        `json:"overage_gb_hours"`  // max(0, used - included)
+	OverageCents    int64                          `json:"overage_cents"`     // overage * 1.0 (€0.01/GB-h in cents)
+	Executions      *ExecutionUsageSummaryResponse `json:"executions,omitempty"`
 }
 
 // AccountUsageResponse is the account-level usage projection. Optional
@@ -1100,6 +1134,14 @@ type StatusPage struct {
 	// builderd builds (completed/success ÷ (completed/success +
 	// completed/failure)).
 	BuildSuccessPct float64 `json:"build_success_pct"`
+	// Uptime30dPct is the weighted terminal-invocation success rate over
+	// the last 30 calendar days.
+	Uptime30dPct float64 `json:"uptime_30d_pct"`
+	// Uptime30d contains daily buckets, oldest first, for the public
+	// status page sparkline.
+	Uptime30d []StatusUptimeBucket `json:"uptime_30d"`
+	// Incidents contains recent public status incidents, newest first.
+	Incidents []StatusIncident `json:"incidents"`
 	// Degraded is true when at least one page- or warn-severity alert
 	// is currently firing on the local Prometheus. The public status
 	// page renders a "degraded" pill when this is true so prospects
@@ -1118,6 +1160,23 @@ type StatusPage struct {
 	// "degraded: <reason>" so an operator tailing the JSON can tell
 	// at a glance why a snapshot is or isn't trustworthy.
 	Source string `json:"source"`
+}
+
+// StatusUptimeBucket is one daily point in StatusPage.Uptime30d.
+type StatusUptimeBucket struct {
+	Date       time.Time `json:"date"`
+	UptimePct  float64   `json:"uptime_pct"`
+	Successful int64     `json:"successful"`
+	Total      int64     `json:"total"`
+}
+
+// StatusIncident is the public projection of an operator-posted incident.
+type StatusIncident struct {
+	Component  string     `json:"component,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	ResolvedAt *time.Time `json:"resolved_at"`
+	Severity   string     `json:"severity"`
+	Summary    string     `json:"summary"`
 }
 
 // --- Move 2: event-driven surface response shapes ----------------------------

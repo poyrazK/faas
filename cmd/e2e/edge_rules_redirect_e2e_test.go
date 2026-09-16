@@ -32,7 +32,7 @@ func TestEdgeRulesRedirect_E2E(t *testing.T) {
 
 	slug := "redirect-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}

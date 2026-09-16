@@ -82,6 +82,27 @@ func TestOpsMetrics_IndependentRegistries(t *testing.T) {
 	}
 }
 
+func TestOpsMetrics_DomainDoctorCollectorsRegistered(t *testing.T) {
+	m := wire.NewOpsMetrics("apid")
+	m.DomainDoctorCycles().WithLabelValues("success").Inc()
+	m.DomainDoctorBatchSize().Set(128)
+	m.DomainDoctorOldestObservationSeconds().Set(42)
+	m.DomainDoctorSkippedFlagDisabled().Inc()
+	body := render(t, m)
+	for _, want := range []string{
+		`apid_domain_doctor_cycles_total{outcome="success"} 1`,
+		`apid_domain_doctor_cycles_total{outcome="error"} 0`,
+		`apid_domain_doctor_cycles_total{outcome="timeout"} 0`,
+		`apid_domain_doctor_batch_size 128`,
+		`apid_domain_doctor_oldest_observation_seconds 42`,
+		`apid_domain_doctor_skipped_flag_disabled_total 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing line %q in metrics output", want)
+		}
+	}
+}
+
 func TestOpsMetrics_EvictionFired(t *testing.T) {
 	m := wire.NewOpsMetrics("schedd")
 	m.EvictionFired("pro", "ram_pressure").Inc()
@@ -128,6 +149,15 @@ func TestOpsMetrics_ObserveBuild(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing line %q in:\n%s", want, body)
 		}
+	}
+}
+
+func TestOpsMetrics_BuilderSliceOOMKills(t *testing.T) {
+	m := wire.NewOpsMetrics("builderd")
+	m.ObserveBuilderSliceOOMKills(2)
+	body := render(t, m)
+	if !strings.Contains(body, `builderd_builder_slice_oom_kills_total 2`) {
+		t.Fatalf("missing builder slice OOM counter:\n%s", body)
 	}
 }
 
@@ -184,6 +214,7 @@ func TestOpsMetrics_ObserveBuildNilSafe(t *testing.T) {
 	m.ObserveBuildQueueWait(time.Second)
 	m.ObserveBuildCacheOutcome("hit")
 	m.ObserveBuilderWarmRestore("hit")
+	m.ObserveBuilderSliceOOMKills(1)
 }
 
 func TestOpsMetrics_ObserveImagedOCIPull(t *testing.T) {
@@ -1574,9 +1605,9 @@ func TestOpsMetrics_WakeLatencyIncrement(t *testing.T) {
 // pre-instantiated so an unexpected daemon name doesn't trip the
 // "missing series" alert path at boot.
 //
-// Cardinality: 10 daemons × 1 version = 10 series per OpsMetrics
-// instance. Across the 9 daemons that construct their own
-// OpsMetrics = 90 series fleet-wide, all with the same
+// Cardinality: 11 daemons × 1 version = 11 series per OpsMetrics
+// instance. Across the daemons that construct their own
+// OpsMetrics, all with the same
 // {daemon, version} label set. Well below the Prometheus
 // "tens of thousands" guideline.
 func TestRecordDaemonRestart_PreInstantiationCartesian(t *testing.T) {
@@ -1584,7 +1615,7 @@ func TestRecordDaemonRestart_PreInstantiationCartesian(t *testing.T) {
 	body := render(t, m)
 	for _, daemon := range []string{
 		"apid", "gatewayd-public", "gatewayd-internal", "schedd",
-		"vmmd", "imaged", "meterd", "builderd", "gregale", "other",
+		"vmmd", "imaged", "meterd", "builderd", "outboundd", "gregale", "other",
 	} {
 		want := fmt.Sprintf(`vmmd_daemon_restart_count{daemon=%q,version=%q} 0`, daemon, wire.Version)
 		if !strings.Contains(body, want) {
@@ -1623,7 +1654,7 @@ func TestDaemon_BuildInfo_Uptime_Ready(t *testing.T) {
 	body := render(t, m)
 	for _, daemon := range []string{
 		"apid", "gatewayd-public", "gatewayd-internal", "schedd",
-		"vmmd", "imaged", "meterd", "builderd", "gregale", "other",
+		"vmmd", "imaged", "meterd", "builderd", "outboundd", "gregale", "other",
 	} {
 		// Build info: 1 per closed daemon.
 		wantInfo := fmt.Sprintf(`vmmd_daemon_build_info{build_time=%q,daemon=%q,git_sha=%q,version=%q} 1`,
@@ -2418,4 +2449,23 @@ func TestOpsMetrics_AlertPresetSignalsRegistered(t *testing.T) {
 			t.Errorf("missing HELP line %q in /metrics — alert preset signal registration regressed (issue #1233 / ADR-123 PR-B):\n%s", w, body)
 		}
 	}
+}
+
+func TestOpsMetrics_SetServiceReplicaStatus(t *testing.T) {
+	m := wire.NewOpsMetrics("schedd")
+	m.SetServiceReplicaStatus("app-1", 4, 1, 1, 1, 1)
+	body := render(t, m)
+	for _, want := range []string{
+		`schedd_service_replicas{app="app-1",state="desired"} 4`,
+		`schedd_service_replicas{app="app-1",state="ready"} 1`,
+		`schedd_service_replicas{app="app-1",state="starting"} 1`,
+		`schedd_service_replicas{app="app-1",state="draining"} 1`,
+		`schedd_service_replicas{app="app-1",state="unavailable"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in /metrics:\n%s", want, body)
+		}
+	}
+	var nilMetrics *wire.OpsMetrics
+	nilMetrics.SetServiceReplicaStatus("ignored", 1, 1, 0, 0, 0)
 }

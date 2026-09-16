@@ -5,12 +5,14 @@
 import type { AccountDeletionResponse } from '../models/AccountDeletionResponse.js';
 import type { AccountEgressAllowlistExtraResponse } from '../models/AccountEgressAllowlistExtraResponse.js';
 import type { AccountExportResponse } from '../models/AccountExportResponse.js';
+import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsResponse.js';
 import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
 import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
+import type { UpdateAccountBillingInfoRequest } from '../models/UpdateAccountBillingInfoRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -91,6 +93,25 @@ export class AccountService {
     });
   }
   /**
+   * Read the account's current deploy rate window.
+   * Returns the durable account-wide deploy count, plan limit, remaining admissions, and fixed-window reset time.
+   * @returns AccountRateLimitsResponse Current account rate limits.
+   * @throws ApiError
+   */
+  public static getAccountRateLimits(): CancelablePromise<AccountRateLimitsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/rate-limits',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Change billing plan after provider confirmation.
    * Switch the account between `free`, `hobby`, `pro`, and `scale`. The
    * local account moves to a paid tier only after the configured billing
@@ -128,6 +149,47 @@ export class AccountService {
     });
   }
   /**
+   * Update the account's invoice billing identity.
+   * Updates the legal business name, billing address, and tax identifier
+   * used for future provider-issued invoices. Omitted fields are kept;
+   * an explicitly empty string clears a field. The audit event records
+   * only changed field names, never the submitted values.
+   *
+   * @returns AccountResponse Updated account profile.
+   * @throws ApiError
+   */
+  public static updateAccountBillingInfo({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: UpdateAccountBillingInfoRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AccountResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/account/billing',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Account-wide SLO rollup (issue
    * Flat scalar SLO rollup for the authenticated account. The
    * same wire shape as the per-app endpoint without the
@@ -139,7 +201,8 @@ export class AccountService {
    *
    * `window` is the same closed vocabulary as the per-app
    * endpoint: `1h` | `24h` (default) | `7d`. Auth chain:
-   * `usage:read` scope + MFA.
+   * `usage:read` scope + MFA. The SLO rollup is a Hobby+
+   * observability surface; Free accounts receive 402.
    *
    * On Prometheus failure the endpoint returns 200 with
    * zeroed fields and `source: "degraded: <reason>"`. When
@@ -167,6 +230,7 @@ export class AccountService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

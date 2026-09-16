@@ -257,6 +257,12 @@ func decodeComputeNodeEnrollment(r *http.Request) (computeNodePayload, string, *
 	if p.TargetURL == "" {
 		return p, "", api.NewProblem(http.StatusBadRequest, "bad_request", "Missing target_url", "target_url is required (unix:///... or tcp://...)")
 	}
+	if value := strings.TrimSpace(p.ScheddTargetURL); value != "" {
+		if _, _, err := parseGatewayTargetURL(value); err != nil {
+			detail := strings.ReplaceAll(err.Error(), "gateway_target_url", "schedd_target_url")
+			return p, "", api.NewProblem(http.StatusBadRequest, "bad_request", "Invalid schedd_target_url", detail)
+		}
+	}
 	if value := strings.TrimSpace(p.GatewayTargetURL); value != "" {
 		if err := validateGatewayTargetURL(value); err != nil {
 			return p, "", api.NewProblem(http.StatusBadRequest, "bad_request", "Invalid gateway_target_url", err.Error())
@@ -289,6 +295,9 @@ func (s *server) prepareComputeNodeEnrollment(ctx context.Context, p computeNode
 		VCPUBudget:         p.VPCPUs * api.CPUOvercommit,
 		Lifecycle:          lifecycle,
 	}
+	if value := strings.TrimSpace(p.ScheddTargetURL); value != "" {
+		node.ScheddTargetURL = &value
+	}
 	if value := strings.TrimSpace(p.GatewayTargetURL); value != "" {
 		node.GatewayTargetURL = &value
 	}
@@ -310,7 +319,9 @@ func preserveComputeNodeEnrollmentMetadata(node *state.ComputeNode, existing sta
 	node.VCPUBudget = existing.VCPUBudget
 	node.Region = existing.Region
 	node.Zone = existing.Zone
-	node.ScheddTargetURL = existing.ScheddTargetURL
+	if node.ScheddTargetURL == nil {
+		node.ScheddTargetURL = existing.ScheddTargetURL
+	}
 	if node.GatewayTargetURL == nil {
 		node.GatewayTargetURL = existing.GatewayTargetURL
 	}

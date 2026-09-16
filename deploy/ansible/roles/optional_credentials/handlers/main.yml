@@ -1,0 +1,4 @@
+---
+- name: reload systemd for optional credentials
+  ansible.builtin.systemd:
+    daemon_reload: true

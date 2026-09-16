@@ -1,5 +1,7 @@
 // /v1/install/repos/list + /v1/apps/{slug}/install/bind handlers
-// (PR-B; §11 bind picker UX).
+// (PR-B; §11 bind picker UX). The dashboard's new-app flow now uses
+// /dashboard/apps/new for its form adapter; this endpoint remains the
+// session-authenticated primitive for binding an existing app.
 //
 // Slice 8 / PR-A shipped githubd.RealService with the full bind
 // plumbing but no dashboard surface to drive it. /oauth/callback
@@ -38,6 +40,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -247,6 +250,11 @@ func (s *server) bindAppToRepo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "sign in to bind an app"))
+		return
+	}
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, githubBindAction, acct.ID, githubBindCSRFCookie); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid CSRF token", "please reload the page and try again"))
 		return
 	}
 	slug := r.PathValue("slug")

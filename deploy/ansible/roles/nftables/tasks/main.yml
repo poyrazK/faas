@@ -139,6 +139,20 @@
   changed_when: false
   when: fwd_dropin.changed
 
+- name: nftables — load the pinned Cloudflare origin ranges
+  ansible.builtin.set_fact:
+    faas_cloudflare_ipv4_cidrs: "{{ lookup('ansible.builtin.file', role_path ~ '/files/cloudflare-ips-v4.txt').splitlines() }}"
+    faas_cloudflare_ipv6_cidrs: "{{ lookup('ansible.builtin.file', role_path ~ '/files/cloudflare-ips-v6.txt').splitlines() }}"
+  when: faas_cloudflare_origin_only | bool
+
+- name: nftables — require both Cloudflare address families when origin restriction is enabled
+  ansible.builtin.assert:
+    that:
+      - faas_cloudflare_ipv4_cidrs | length > 0
+      - faas_cloudflare_ipv6_cidrs | length > 0
+    fail_msg: Cloudflare-only origin ingress requires non-empty pinned IPv4 and IPv6 ranges.
+  when: faas_cloudflare_origin_only | bool
+
 - name: nftables — render faas ruleset into /etc/nftables.conf (per-host, ADR-055)
   ansible.builtin.template:
     src: policy_nftables.conf.j2

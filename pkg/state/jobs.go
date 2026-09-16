@@ -114,6 +114,8 @@ type JobTask struct {
 	LeaseToken     *string    // migrations/00574
 	LeaseExpiresAt *time.Time // migrations/00574
 	LastLeaseNode  *string    // migrations/00574
+	LogContent     string     // persisted combined stdout/stderr tail
+	LogTruncated   bool       // true when output exceeded the retained tail
 }
 
 // --- Quota error ----------------------------------------------------
@@ -378,6 +380,11 @@ type JobStore interface {
 	// OR when the task is already terminal (the WHERE clause gates
 	// on status IN ('queued','claimed')).
 	JobTaskMarkTerminal(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage string, finishedAt time.Time) error
+	// JobTaskMarkTerminalWithLogs atomically persists the retained combined
+	// stdout/stderr tail while settling a guest-reported terminal task. Keeping
+	// both writes in one transaction prevents cleanup from destroying the only
+	// copy of successful job output before it is durable.
+	JobTaskMarkTerminalWithLogs(ctx context.Context, runID string, taskIndex int, status string, exitCode int, errorClass, errorMessage, logContent string, logTruncated bool, finishedAt time.Time) error
 	// JobTaskRetry reverses a failed/timeout/oom transition back to
 	// queued and stamps next_attempt_at with the per-attempt backoff
 	// (JobBackoffBaseSeconds * 2^(attempt-1), capped at

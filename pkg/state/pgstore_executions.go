@@ -2,8 +2,10 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 )
 
 var _ ExecutionStore = (*PgStore)(nil)
+var _ ExecutionQueueStore = (*PgStore)(nil)
 
 func executionTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
@@ -43,6 +46,40 @@ func executionIntPtr(v pgtype.Int4) *int {
 	}
 	value := int(v.Int32)
 	return &value
+}
+
+// executionNullableTime converts sqlc's nullable aggregate timestamp. The
+// generated query uses interface{} because the project-wide sqlc config does
+// not currently map nullable min(timestamptz) expressions to a concrete
+// pgtype, so keep the adapter tolerant of pgx's concrete scan variants.
+func executionNullableTime(value interface{}) (*time.Time, error) {
+	switch v := value.(type) {
+	case nil:
+		return nil, nil
+	case time.Time:
+		t := v.UTC()
+		return &t, nil
+	case *time.Time:
+		if v == nil {
+			return nil, nil
+		}
+		t := v.UTC()
+		return &t, nil
+	case pgtype.Timestamptz:
+		if !v.Valid {
+			return nil, nil
+		}
+		t := v.Time.UTC()
+		return &t, nil
+	case *pgtype.Timestamptz:
+		if v == nil || !v.Valid {
+			return nil, nil
+		}
+		t := v.Time.UTC()
+		return &t, nil
+	default:
+		return nil, fmt.Errorf("state: unexpected nullable execution timestamp type %T", value)
+	}
 }
 
 func executionFromSQL(row sqlc.Execution) Execution {
@@ -92,6 +129,13 @@ func executionRowsFromSQL(rows []sqlc.Execution) []Execution {
 		out = append(out, executionFromSQL(row))
 	}
 	return out
+}
+
+func recordExecutionUsage(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, executionID pgtype.UUID) error {
+	if err := q.ExecutionUsageRecord(ctx, db, executionID); err != nil {
+		return fmt.Errorf("record execution usage: %w", err)
+	}
+	return nil
 }
 
 func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionParams) (Execution, error) {
@@ -151,6 +195,9 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 	}); err != nil {
 		return Execution{}, mapErr(err)
 	}
+	if _, err := appendExecutionEvent(ctx, tx, params.AccountID, pgUUIDString(row.ID), ExecutionEventStatus, executionStatusPayload(api.ExecutionStatusQueued), params.AdmittedAt); err != nil {
+		return Execution{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Execution{}, fmt.Errorf("create execution: commit: %w", err)
 	}
@@ -169,6 +216,9 @@ func (s *PgStore) ExecutionByID(ctx context.Context, accountID, executionID stri
 
 func (s *PgStore) ListExecutions(ctx context.Context, accountID string, limit, offset int) ([]Execution, error) {
 	limit, offset = normalizeExecutionPage(limit, offset)
+	if limit > math.MaxInt32 || offset > math.MaxInt32 {
+		return nil, fmt.Errorf("%w: pagination values are outside int32 bounds", ErrExecutionInvalid)
+	}
 	rows, err := sqlc.New().ExecutionListForAccount(ctx, s.pool, sqlc.ExecutionListForAccountParams{
 		AccountID: mustPgUUID(accountID), PageLimit: int32(limit), PageOffset: int32(offset),
 	})
@@ -178,7 +228,90 @@ func (s *PgStore) ListExecutions(ctx context.Context, accountID string, limit, o
 	return executionRowsFromSQL(rows), nil
 }
 
+func (s *PgStore) ListExecutionsByStatus(ctx context.Context, accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
+	limit, offset = normalizeExecutionPage(limit, offset)
+	if limit > math.MaxInt32 || offset > math.MaxInt32 {
+		return nil, fmt.Errorf("%w: pagination values are outside int32 bounds", ErrExecutionInvalid)
+	}
+	rows, err := sqlc.New().ExecutionListForAccountStatus(ctx, s.pool, sqlc.ExecutionListForAccountStatusParams{
+		AccountID: mustPgUUID(accountID), Status: string(status), PageLimit: int32(limit), PageOffset: int32(offset),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return executionRowsFromSQL(rows), nil
+}
+
+func (s *PgStore) ExecutionQueueStats(ctx context.Context, at time.Time) (ExecutionQueueStats, error) {
+	if at.IsZero() {
+		return ExecutionQueueStats{}, fmt.Errorf("%w: queue observation time is required", ErrExecutionInvalid)
+	}
+	row, err := sqlc.New().ExecutionQueueStats(ctx, s.pool, executionTime(at))
+	if err != nil {
+		return ExecutionQueueStats{}, mapErr(err)
+	}
+	oldest, err := executionNullableTime(row.OldestCreatedAt)
+	if err != nil {
+		return ExecutionQueueStats{}, err
+	}
+	queued := row.Queued
+	if queued < 0 {
+		queued = 0
+	}
+	return ExecutionQueueStats{Queued: int(queued), OldestCreatedAt: oldest}, nil
+}
+
+func (s *PgStore) ListExecutionQueueAccounts(ctx context.Context, at time.Time, limit int) ([]ExecutionQueueAccount, error) {
+	if at.IsZero() {
+		return nil, fmt.Errorf("%w: queue observation time is required", ErrExecutionInvalid)
+	}
+	if limit <= 0 {
+		limit = 64
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	rows, err := sqlc.New().ExecutionQueueAccounts(ctx, s.pool, sqlc.ExecutionQueueAccountsParams{
+		At: executionTime(at), PageLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	accounts := make([]ExecutionQueueAccount, 0, len(rows))
+	for _, row := range rows {
+		oldest, err := executionNullableTime(row.OldestCreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		if oldest == nil {
+			continue
+		}
+		queued := row.QueuedCount
+		if queued < 0 {
+			queued = 0
+		}
+		accounts = append(accounts, ExecutionQueueAccount{
+			AccountID:       pgUUIDString(row.AccountID),
+			Queued:          int(queued),
+			OldestCreatedAt: *oldest,
+		})
+	}
+	return accounts, nil
+}
+
 func (s *PgStore) ClaimExecution(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
+	return s.claimExecution(ctx, "", owner, claimedAt, leaseDuration)
+}
+
+func (s *PgStore) ClaimExecutionForAccount(ctx context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return ExecutionClaim{}, fmt.Errorf("%w: account id is required", ErrExecutionInvalid)
+	}
+	return s.claimExecution(ctx, accountID, owner, claimedAt, leaseDuration)
+}
+
+func (s *PgStore) claimExecution(ctx context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" || claimedAt.IsZero() || leaseDuration <= 0 {
 		return ExecutionClaim{}, fmt.Errorf("%w: claim owner, time, and positive lease are required", ErrExecutionInvalid)
@@ -192,12 +325,23 @@ func (s *PgStore) ClaimExecution(ctx context.Context, owner string, claimedAt ti
 	token := uuid.New()
 	tokenPG := pgtype.UUID{Bytes: token, Valid: true}
 	q := sqlc.New()
-	row, err := q.ExecutionClaimNext(ctx, tx, sqlc.ExecutionClaimNextParams{
-		LeaseToken:     tokenPG,
-		LeaseOwner:     pgtype.Text{String: owner, Valid: true},
-		LeaseExpiresAt: executionTime(claimedAt.Add(leaseDuration)),
-		ClaimedAt:      executionTime(claimedAt),
-	})
+	var row sqlc.Execution
+	if accountID == "" {
+		row, err = q.ExecutionClaimNext(ctx, tx, sqlc.ExecutionClaimNextParams{
+			LeaseToken:     tokenPG,
+			LeaseOwner:     pgtype.Text{String: owner, Valid: true},
+			LeaseExpiresAt: executionTime(claimedAt.Add(leaseDuration)),
+			ClaimedAt:      executionTime(claimedAt),
+		})
+	} else {
+		row, err = q.ExecutionClaimNextForAccount(ctx, tx, sqlc.ExecutionClaimNextForAccountParams{
+			LeaseToken:     tokenPG,
+			LeaseOwner:     pgtype.Text{String: owner, Valid: true},
+			LeaseExpiresAt: executionTime(claimedAt.Add(leaseDuration)),
+			ClaimedAt:      executionTime(claimedAt),
+			AccountID:      mustPgUUID(accountID),
+		})
+	}
 	if err != nil {
 		return ExecutionClaim{}, mapErr(err)
 	}
@@ -210,6 +354,9 @@ func (s *PgStore) ClaimExecution(ctx context.Context, owner string, claimedAt ti
 	if err := tx.Commit(ctx); err != nil {
 		return ExecutionClaim{}, fmt.Errorf("claim execution: commit: %w", err)
 	}
+	// The event is best-effort after the claim commit. The durable row remains
+	// authoritative if a transient event-log write fails.
+	_, _ = appendExecutionEvent(ctx, s.pool, pgUUIDString(row.AccountID), pgUUIDString(row.ID), ExecutionEventStatus, executionStatusPayload(api.ExecutionStatusRestoring), claimedAt)
 	return ExecutionClaim{
 		Execution:     executionFromSQL(row),
 		SealedPayload: append([]byte(nil), payload.SealedPayload...),
@@ -230,6 +377,9 @@ func (s *PgStore) MarkExecutionRunning(ctx context.Context, executionID, leaseTo
 	if err != nil {
 		return Execution{}, mapErr(err)
 	}
+	// MarkExecutionRunning intentionally remains a single CAS query. Recording
+	// the lifecycle event after the CAS keeps the lease fence unchanged.
+	_, _ = appendExecutionEvent(ctx, s.pool, pgUUIDString(row.AccountID), pgUUIDString(row.ID), ExecutionEventStatus, executionStatusPayload(api.ExecutionStatusRunning), startedAt)
 	return executionFromSQL(row), nil
 }
 
@@ -312,6 +462,25 @@ func (s *PgStore) CompleteExecution(ctx context.Context, params CompleteExecutio
 	if _, err := q.ExecutionPayloadDelete(ctx, tx, row.ID); err != nil {
 		return Execution{}, fmt.Errorf("complete execution: delete payload: %w", err)
 	}
+	if err := recordExecutionUsage(ctx, q, tx, row.ID); err != nil {
+		return Execution{}, fmt.Errorf("complete execution: %w", err)
+	}
+	projected := executionFromSQL(row)
+	if !params.OutputEventsPersisted {
+		var eventErr error
+		forEachExecutionOutputEvent(projected, func(eventType ExecutionEventType, payload json.RawMessage) {
+			if eventErr != nil {
+				return
+			}
+			_, eventErr = appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, eventType, payload, params.FinishedAt)
+		})
+		if eventErr != nil {
+			return Execution{}, fmt.Errorf("complete execution: append output event: %w", eventErr)
+		}
+	}
+	if _, err := appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, ExecutionEventTerminal, executionTerminalPayload(projected), params.FinishedAt); err != nil {
+		return Execution{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Execution{}, fmt.Errorf("complete execution: commit: %w", err)
 	}
@@ -337,6 +506,9 @@ func (s *PgStore) RequestExecutionCancellation(ctx context.Context, accountID, e
 	}
 	if locked.Status == string(api.ExecutionStatusSucceeded) ||
 		api.ExecutionStatus(locked.Status).Terminal() {
+		if err := recordExecutionUsage(ctx, q, tx, locked.ID); err != nil {
+			return Execution{}, fmt.Errorf("cancel execution: %w", err)
+		}
 		if _, err := q.ExecutionPayloadDelete(ctx, tx, locked.ID); err != nil {
 			return Execution{}, fmt.Errorf("cancel execution: clean terminal payload: %w", err)
 		}
@@ -355,6 +527,13 @@ func (s *PgStore) RequestExecutionCancellation(ctx context.Context, accountID, e
 		return Execution{}, mapErr(err)
 	}
 	if api.ExecutionStatus(row.Status).Terminal() {
+		if err := recordExecutionUsage(ctx, q, tx, row.ID); err != nil {
+			return Execution{}, fmt.Errorf("cancel execution: %w", err)
+		}
+		projected := executionFromSQL(row)
+		if _, err := appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, ExecutionEventTerminal, executionTerminalPayload(projected), requestedAt); err != nil {
+			return Execution{}, fmt.Errorf("cancel execution: append event: %w", err)
+		}
 		if _, err := q.ExecutionPayloadDelete(ctx, tx, row.ID); err != nil {
 			return Execution{}, fmt.Errorf("cancel execution: delete payload: %w", err)
 		}
@@ -405,12 +584,37 @@ func (s *PgStore) SweepExecutions(ctx context.Context, at time.Time, limit int) 
 	terminalRows = append(terminalRows, expired...)
 	terminalRows = append(terminalRows, finishedRestores...)
 	terminalRows = append(terminalRows, finishedRuns...)
+	for _, row := range requeued {
+		projected := executionFromSQL(row)
+		if _, err := appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, ExecutionEventStatus, executionStatusPayload(api.ExecutionStatusQueued), at); err != nil {
+			return ExecutionSweepResult{}, fmt.Errorf("sweep executions: append requeue event: %w", err)
+		}
+	}
 	ids := make([]pgtype.UUID, 0, len(terminalRows))
 	for _, row := range terminalRows {
 		ids = append(ids, row.ID)
+		projected := executionFromSQL(row)
+		var eventErr error
+		forEachExecutionOutputEvent(projected, func(eventType ExecutionEventType, payload json.RawMessage) {
+			if eventErr != nil {
+				return
+			}
+			_, eventErr = appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, eventType, payload, at)
+		})
+		if eventErr != nil {
+			return ExecutionSweepResult{}, fmt.Errorf("sweep executions: append output event: %w", eventErr)
+		}
+		if _, err := appendExecutionEvent(ctx, tx, projected.AccountID, projected.ID, ExecutionEventTerminal, executionTerminalPayload(projected), at); err != nil {
+			return ExecutionSweepResult{}, fmt.Errorf("sweep executions: append terminal event: %w", err)
+		}
 	}
 	var deleted int64
 	if len(ids) > 0 {
+		for _, id := range ids {
+			if err := recordExecutionUsage(ctx, q, tx, id); err != nil {
+				return ExecutionSweepResult{}, fmt.Errorf("sweep executions: %w", err)
+			}
+		}
 		deleted, err = q.ExecutionPayloadDeleteMany(ctx, tx, ids)
 		if err != nil {
 			return ExecutionSweepResult{}, fmt.Errorf("sweep executions: delete payloads: %w", err)
@@ -427,5 +631,29 @@ func (s *PgStore) SweepExecutions(ctx context.Context, at time.Time, limit int) 
 		ExpiredQueued: len(expired), RequeuedRestores: len(requeued),
 		FinishedRestores: len(finishedRestores), FinishedRuns: len(finishedRuns),
 		PayloadsDeleted: int(deleted + orphans),
+	}, nil
+}
+
+// ExecutionUsageByAccount returns the UTC-month aggregate from the durable
+// execution usage ledger. Terminal payload deletion does not affect this read.
+func (s *PgStore) ExecutionUsageByAccount(ctx context.Context, accountID string, month time.Time) (ExecutionUsageSummary, error) {
+	if strings.TrimSpace(accountID) == "" || month.IsZero() {
+		return ExecutionUsageSummary{}, ErrExecutionInvalid
+	}
+	month = month.UTC()
+	start := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	row, err := sqlc.New().ExecutionUsageByAccount(ctx, s.pool, sqlc.ExecutionUsageByAccountParams{
+		AccountID: mustPgUUID(accountID), MonthStart: executionTime(start), MonthEnd: executionTime(end),
+	})
+	if err != nil {
+		return ExecutionUsageSummary{}, mapErr(err)
+	}
+	return ExecutionUsageSummary{
+		AccountID: accountID, Month: start, Runs: row.Runs,
+		WallTimeMS: row.WallTimeMs, CPUTimeMS: row.CpuTimeMs,
+		PeakMemoryMB: row.PeakMemoryMb, OutputBytes: row.OutputBytes,
+		Succeeded: row.Succeeded, Failed: row.Failed, TimedOut: row.TimedOut,
+		OutOfMemory: row.OutOfMemory, Cancelled: row.Cancelled,
 	}, nil
 }

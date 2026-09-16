@@ -32,7 +32,7 @@ func TestEdgeRulesRespond_E2E_ServesAndDisablesPreviewMock(t *testing.T) {
 	// mirror that dispatch path while keeping this test independent of GitHub.
 	prodSlug := "respond-prod"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: prodSlug})
+		api.CreateAppRequest{Slug: prodSlug, RequireAuthn: boolPtr(false)})
 	var prod api.AppResponse
 	if err := json.Unmarshal(createRec, &prod); err != nil {
 		t.Fatalf("decode production app: %v body=%s", err, createRec)
@@ -78,13 +78,15 @@ func TestEdgeRulesRespond_E2E_ServesAndDisablesPreviewMock(t *testing.T) {
 	headers, body, status := doReqHeaders(t, h, successHost,
 		http.MethodGet, "/shipping/estimate", nil)
 	if status != http.StatusOK {
-		t.Fatalf("mock response status = %d, want 200; body=%s", status, body)
+		t.Fatalf("mock response status = %d, want 200; rate_limit_scope=%q body=%s",
+			status, headers.Get("x-faas-rate-limit-scope"), body)
 	}
 	if got := headers.Get("Content-Type"); got != "application/json" {
 		t.Errorf("mock Content-Type = %q, want application/json", got)
 	}
-	if got := string(body); got != `{"days":3,"price":4.99}` {
-		t.Errorf("mock body = %q, want fixed JSON", got)
+	var gotBody map[string]any
+	if err := json.Unmarshal(body, &gotBody); err != nil || gotBody["days"] != float64(3) || gotBody["price"] != 4.99 {
+		t.Errorf("mock body = %q, want fixed JSON object", body)
 	}
 
 	_, body, status = doReqHeaders(t, h, errorHost,
@@ -92,8 +94,8 @@ func TestEdgeRulesRespond_E2E_ServesAndDisablesPreviewMock(t *testing.T) {
 	if status != http.StatusServiceUnavailable {
 		t.Fatalf("error mock status = %d, want 503; body=%s", status, body)
 	}
-	if got := string(body); got != `{"error":"not ready"}` {
-		t.Errorf("error mock body = %q, want fixed JSON", got)
+	if err := json.Unmarshal(body, &gotBody); err != nil || gotBody["error"] != "not ready" {
+		t.Errorf("error mock body = %q, want fixed JSON object", body)
 	}
 
 	// Toggle the rule off as the dashboard/CLI would, then reset the matcher
@@ -106,7 +108,5 @@ func TestEdgeRulesRespond_E2E_ServesAndDisablesPreviewMock(t *testing.T) {
 	resetEdgeRuleCache(t, h)
 	_, body, status = doReqHeaders(t, h, successHost,
 		http.MethodGet, "/shipping/estimate", nil)
-	if status != http.StatusNotFound {
-		t.Errorf("disabled mock status = %d, want 404 after backend fall-through; body=%s", status, body)
-	}
+	assertBackendFallthrough(t, status, body)
 }

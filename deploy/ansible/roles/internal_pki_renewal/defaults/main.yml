@@ -1,0 +1,6 @@
+---
+faas_internal_pki_root: /etc/faas/tls
+faas_internal_pki_state_dir: /var/lib/faas/pki-renewal
+faas_internal_pki_textfile: /var/lib/node_exporter/textfile_collector/faas_internal_pki.prom
+faas_internal_pki_metrics_interval: 5m
+faas_internal_pki_gregalectl: /usr/local/bin/gregalectl

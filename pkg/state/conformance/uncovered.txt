@@ -41,6 +41,7 @@ AppendEventWithTrace
 AppendSnapshotStorage
 AppendUploadBytes
 ApplyProjectPlan
+ApplyRegressionAction
 AppsForProject
 AuthDefaultFlippedAt
 AuthenticateKey
@@ -129,7 +130,6 @@ CreateAPIKeyWithExpiryAndProvenance
 CreateAccountWithPersonalOrg
 CreateAlertRule
 CreateAlertRuleIfUnderQuota
-CreateApp
 CreateAppLogDrain
 CreateAppLogDrainIfUnderQuota
 CreateAppWebhook
@@ -155,11 +155,11 @@ CreateOrg
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
 CreateOrgInvitation
-CreateProject
+CreateProjectEnvironmentApproval
+CreateProjectEnvironmentPromotion
 CreateRuntimeConfigOperation
 CreateSession
 CreateSessionWithBinding
-CreateSnapshot
 CreateTenantHostnameIfUnderQuota
 CreateTenantSurfaceIfUnderQuota
 CreateTriggerIfUnderQuota
@@ -183,7 +183,6 @@ DeleteAppErrorRequestsOlderThan
 DeleteAppErrorsByIDs
 DeleteAppLogDrain
 DeleteAppOpenAPIDoc
-DeleteAppPermanently
 DeleteAppRegistryCredential
 DeleteAppSecret
 DeleteAppSecretInScope
@@ -207,7 +206,6 @@ DeleteOIDCExchangedToken
 DeleteOldEvents
 DeleteOldLoginTokens
 DeleteProject
-DeleteSnapshotsByID
 DeleteSnapshotsStaleOlderThan
 DeleteTenantHostname
 DeleteTenantSurface
@@ -220,6 +218,8 @@ DeploymentSidecarRAMs
 DeploymentSnapshotBackoffActive
 DomainByName
 DropTriggerRecordByOperator
+EditPublicStatusEventTitle
+EditPublicStatusUpdateMessage
 EnsureAccountAsyncQuota
 ExpireOrgInvitations
 ExpireUploadSession
@@ -259,6 +259,7 @@ GetOIDCExchangedTokenByHash
 GetOIDCTrustPolicy
 GetOperatorIntent
 GetOrgAPIKey
+GetRegressionObservation
 GetRequestTelemetryByAppAndID
 GetRuntimeConfig
 GetRuntimeConfigOperation
@@ -316,7 +317,6 @@ JobSoftDelete
 JobTaskCancel
 JobTaskClaimBatch
 JobTaskFindStuck
-JobTaskGet
 JobTaskList
 JobTaskMarkClaimed
 JobTaskMarkTerminal
@@ -327,7 +327,6 @@ LatestBuilderHeartbeatStats
 LatestDeployment
 LatestHeartbeatStats
 LatestParkedDeploymentForApp
-LatestSnapshot
 LatestSnapshotBytes
 LatestSnapshotForTier
 LatestSupersededDeployment
@@ -381,7 +380,6 @@ ListCorsPresetsForAccount
 ListCorsPresetsForApp
 ListCronRunsForCron
 ListCronsForAccount
-ListCronsForApp
 ListDataUpstreamProbeHistory
 ListDataUpstreamProbesByHostRegion
 ListDataUpstreamsByApp
@@ -406,7 +404,6 @@ ListEnabledAlertRules
 ListEnabledAppLogDrains
 ListEnabledCrons
 ListEnabledTriggers
-ListEvents
 ListEventsBySidecar
 ListEventsByTraceID
 ListEventsByWakeID
@@ -414,6 +411,7 @@ ListExpiredInvocationsForReaper
 ListExpiredMigrations
 ListExpiredTriggerRecordsForReaper
 ListGdprRequestsForAccount
+ListGitHubInstallationsForAccount
 ListGithubInstallBindingsForAccount
 ListInstancesByNodeID
 ListInstancesByStatesOlderThan
@@ -488,14 +486,11 @@ MarkComputeNodeInactive
 MarkCronFired
 MarkDeploymentCancelled
 MarkDeploymentStageFailed
-MarkDeploymentSuperseded
 MarkDomainVerified
 MarkDunningStep
 MarkFireNowRequestFailed
 MarkFireNowRequestSucceeded
-MarkInstanceMigrating
 MarkMFAEnrolled
-MarkOldSnapshotsStale
 MarkOperatorIntentFailed
 MarkOperatorIntentSucceeded
 MarkRuntimeConfigApplied
@@ -542,6 +537,9 @@ PreviewAppsByParent
 ProjectByID
 ProjectByRepo
 ProjectBySlug
+ProjectEnvironmentApprovalByToken
+ProjectEnvironmentPromotionByID
+ProjectEnvironmentPromotionByIdempotencyKey
 ProvisionedStaticEgressIPExists
 PruneAppLogDrainDeliveryAnalytics
 PruneDataUpstreamProbesOlderThan
@@ -593,9 +591,9 @@ RequestTelemetryCoverage
 RequeueBuild
 ResealAppSecretWithKidAndValueHashInScope
 ResetAppWebhookDeliveryFromDead
+ResolveStaleRegressionObservations
 ResolveStatusIncident
 RestoreAccount
-RestoreApp
 RetireRuntimeSnapshot
 RetryDeploymentFromStage
 RetryQueueDeadLetter
@@ -612,7 +610,6 @@ RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
 SafedeployStampRollout
-ScheduleAppDeletion
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow
@@ -627,8 +624,6 @@ SetComputeNodeRole
 SetDeploymentFailed
 SetDeploymentFailedEx
 SetDeploymentParked
-SetDeploymentRootfs
-SetDeploymentSidecarLayer
 SetDeploymentSourceURL
 SetInstanceFrameworkReadyAt
 SetInstanceMode
@@ -661,6 +656,7 @@ TrafficAnomalyAggregateByNode
 TransferOrgOwnership
 TriggerByID
 TriggerRecordIDByItemIdentifier
+UpdateAccountBillingInfo
 UpdateAccountPlan
 UpdateAccountProviderCustomerID
 UpdateAccountStatus
@@ -679,14 +675,14 @@ UpdateCustomDomainCertStatus
 UpdateDeploymentMinInstances
 UpdateDeploymentTraffic
 UpdateEdgeRule
-UpdateInstanceStateIf
 UpdateInstanceStateToTerminal
-UpdateInstanceStateWithTimestamp
 UpdateMirrorRule
 UpdateOrgMemberRole
 UpdateOrgName
 UpdateOrgPlan
 UpdateOrgStatus
+UpdateProjectEnvironmentPromotion
+UpdateProjectEnvironmentPromotionWorkload
 UpdateSessionBinding
 UpdateSpansSummary
 UpdateTenantSurfaceCert

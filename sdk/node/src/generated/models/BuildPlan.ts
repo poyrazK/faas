@@ -31,6 +31,10 @@ export type BuildPlan = {
    */
   health_path?: string | null;
   /**
+   * Framework configuration file that supplied the resolved build settings, when present.
+   */
+  config_file?: string | null;
+  /**
    * App class from `app.Type` — `app` for plain apps, `function` for function rewrites (spec §4.2).
    */
   class?: 'app' | 'function';

@@ -43,10 +43,13 @@ const (
 	// account_id, plan, admitted_at}.
 	WakeAdmitted = "wake.admitted"
 	// WakeBootStarted — schedd started a boot (snapshot restore
-	// or cold boot). Mirrored by vmmd on CreateFromSnapshot /
-	// Wake. Payload: {wake_id, app_id, instance_id, node_id,
+	// or cold boot). Payload: {wake_id, app_id, instance_id, node_id,
 	// method, requested_at}.
 	WakeBootStarted = "wake.boot_started"
+	// WakeBootObserved — vmmd accepted the corresponding boot RPC. This is a
+	// corroborating observation, not a second scheduler decision, so it has a
+	// distinct kind and cannot inflate customer wake counts.
+	WakeBootObserved = "wake.boot_observed"
 	// WakeRestoreBreakdown — vmmd's detailed snapshot-restore phases.
 	// Payload: {wake_id, app_id, instance_id, chroot_ms,
 	// materialize_mem_ms, materialize_vmstate_ms, resolve_images_ms,
@@ -92,7 +95,7 @@ const (
 	// WakeProxyFirstByte — gatewayd-internal received the first response
 	// byte from the woken instance (httptrace.GotFirstResponseByte
 	// callback). Payload: {wake_id, app_id, request_id,
-	// instance_id, node_id, latency_ms}.
+	// instance_id, node_id, latency_ms, proxy_latency_ms}.
 	WakeProxyFirstByte = "wake.proxy_first_byte"
 	// WakePageServed — gatewayd returned the browser "Waking up" page while
 	// the detached wake was still in progress. The row is joined to the
@@ -344,6 +347,33 @@ type BootStarted struct {
 	QueuedCount        int    // ADR-123 — ledger.Concurrency at admit
 	ConcurrencyAtAdmit int    // ADR-123 — same reading; 0 is cold start
 	AtCapacity         bool   // PR-A — true when post-admit ledger == plan MaxConcurrency
+}
+
+// BootObserved is vmmd's narrow RPC-boundary acknowledgement. It deliberately
+// excludes scheduler decision fields such as trigger and queue depth: schedd's
+// BootStarted row is authoritative for those values.
+type BootObserved struct {
+	EmitAt     time.Time
+	WakeID     string
+	AppID      string
+	InstanceID string
+	NodeID     string
+	Method     string
+	ObservedAt time.Time
+}
+
+func (e BootObserved) Kind() string     { return WakeBootObserved }
+func (e BootObserved) At() time.Time    { return e.EmitAt }
+func (e BootObserved) Subject() *string { return nil }
+func (e BootObserved) Payload() map[string]any {
+	return map[string]any{
+		"wake_id":     e.WakeID,
+		"app_id":      e.AppID,
+		"instance_id": e.InstanceID,
+		"node_id":     e.NodeID,
+		"method":      e.Method,
+		"observed_at": e.ObservedAt.UTC(),
+	}
 }
 
 // RestoreBreakdown — vmmd's detailed snapshot-restore timings. The
@@ -656,6 +686,10 @@ type ProxyFirstByte struct {
 	InstanceID string
 	NodeID     string
 	LatencyMs  int64
+	// ProxyLatencyMs preserves the useful post-wake bridge-hop timing under a
+	// separate name; LatencyMs remains the documented acceptance-to-first-byte
+	// contract.
+	ProxyLatencyMs int64
 }
 
 // PageServed records that a browser received the short-lived wake page before
@@ -687,12 +721,13 @@ func (e ProxyFirstByte) At() time.Time    { return e.EmitAt }
 func (e ProxyFirstByte) Subject() *string { return nil }
 func (e ProxyFirstByte) Payload() map[string]any {
 	return map[string]any{
-		"wake_id":     e.WakeID,
-		"app_id":      e.AppID,
-		"request_id":  e.RequestID,
-		"instance_id": e.InstanceID,
-		"node_id":     e.NodeID,
-		"latency_ms":  e.LatencyMs,
+		"wake_id":          e.WakeID,
+		"app_id":           e.AppID,
+		"request_id":       e.RequestID,
+		"instance_id":      e.InstanceID,
+		"node_id":          e.NodeID,
+		"latency_ms":       e.LatencyMs,
+		"proxy_latency_ms": e.ProxyLatencyMs,
 	}
 }
 

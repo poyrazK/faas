@@ -26,8 +26,8 @@ class CreateAppWebhookRequest:
     X25519 recipient (namespace `APP_WEBHOOK`).
 
         Example:
-            {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh', 'event_filter': ['cron.fired',
-                'app.created'], 'retry_policy': 'default', 'enabled': True}
+            {'target_url': 'https://example.com/hook', 'webhook_secret': 'shh', 'event_filter': ['app.parked', 'app.woken'],
+                'retry_policy': 'default', 'enabled': True}
 
     """
 

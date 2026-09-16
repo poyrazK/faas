@@ -30,7 +30,7 @@ import (
 //	    standing; the dunning email was stale)
 //	3 — vendor failure (Stripe / Paddle SDK error)
 func cmdBillingRetry(args []string) int {
-	fs := flag.NewFlagSet("billing retry", flag.ContinueOnError)
+	fs := newFlagSet("billing retry", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

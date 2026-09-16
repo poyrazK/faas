@@ -10,6 +10,7 @@ package middleware_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -121,6 +122,7 @@ type fakeLookups struct {
 	getErr     error
 	touchCalls []string
 	touchErr   error
+	touchCtx   chan error
 	// revokeCalls + revokeErr back the new middleware SessionLookup
 	// method (IAM-hardening-mega-PR logical change 5, ADR-076).
 	// The binding-mismatch branch calls RevokeSession during the
@@ -145,10 +147,17 @@ func (l *fakeLookups) GetSession(_ context.Context, sid string) (state.Session, 
 	}
 	return l.sess, l.getErr
 }
-func (l *fakeLookups) TouchSessionLastSeen(_ context.Context, sid string) error {
+func (l *fakeLookups) TouchSessionLastSeen(ctx context.Context, sid string) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.touchCalls = append(l.touchCalls, sid)
+	touchCtx := l.touchCtx
+	l.mu.Unlock()
+	if touchCtx != nil {
+		select {
+		case touchCtx <- ctx.Err():
+		default:
+		}
+	}
 	return l.touchErr
 }
 func (l *fakeLookups) RevokeSession(_ context.Context, sid, accountID string) (bool, error) {
@@ -1254,6 +1263,59 @@ func TestRequireLimited_BlocksEleventhAttempt(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Errorf("11th status = %d, want 429", rec.Code)
 	}
+	if got := rec.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Errorf("Content-Type = %q, want application/problem+json", got)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "60" {
+		t.Errorf("Retry-After = %q, want 60", got)
+	}
+	var problem api.Problem
+	if err := json.NewDecoder(rec.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode Problem: %v", err)
+	}
+	if problem.Code != api.CodeAuthRateLimited {
+		t.Errorf("problem code = %q, want %q", problem.Code, api.CodeAuthRateLimited)
+	}
+}
+
+func TestRequireLimited_ValidKeyBypassesExhaustedSharedIP(t *testing.T) {
+	authn := newFakeAuthn()
+	validToken := validBearerKey
+	authn.authKey[string(api.HashAPIKey(validToken))] = authResult{
+		acct: mkActiveAccount("acct-valid"),
+		key:  mkKey("key-valid", "apps:read"),
+	}
+	mw := newMW(t, authn, nil, nil, nil)
+	hits := 0
+	h := mw.RequireLimited(func(w http.ResponseWriter, _ *http.Request, acct state.Account) {
+		hits++
+		if acct.ID != "acct-valid" {
+			t.Errorf("account = %q, want acct-valid", acct.ID)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	const remoteAddr = "203.0.113.42:54321"
+	for i := 0; i < 10; i++ {
+		rec := httptest.NewRecorder()
+		r := mkRequest("GET", "/v1/apps", map[string]string{"Authorization": "Bearer bad"}, nil)
+		r.RemoteAddr = remoteAddr
+		h(rec, r)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("invalid attempt %d = %d, want 401", i+1, rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	r := mkRequest("GET", "/v1/apps", map[string]string{"Authorization": "Bearer " + validToken}, nil)
+	r.RemoteAddr = remoteAddr
+	h(rec, r)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("valid request status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if hits != 1 {
+		t.Fatalf("handler hits = %d, want 1", hits)
+	}
 }
 
 // --- LoadApp -------------------------------------------------------------
@@ -1567,5 +1629,32 @@ func TestLog_SessionTouchFailedStripsControlChars(t *testing.T) {
 	}
 	if !strings.Contains(out, "INJECT") {
 		t.Errorf("sanitised log should still contain the printable payload: %q", out)
+	}
+}
+
+func TestSessionTouch_DetachesFromCancelledRequest(t *testing.T) {
+	authn := newFakeAuthn()
+	authn.acctByID["acct-1"] = mkActiveAccount("acct-1")
+	sessions := &fakeSessions{env: session.Envelope{AccountID: "acct-1", Sid: "sid-1"}}
+	touchCtx := make(chan error, 1)
+	lookups := &fakeLookups{
+		sess:     state.Session{ID: "sid-1", AccountID: "acct-1"},
+		touchCtx: touchCtx,
+	}
+	mw := newMW(t, authn, sessions, lookups, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	r := mkRequest("GET", "/v1/apps", nil, map[string]string{"faas_sid": "valid-cookie"}).WithContext(ctx)
+	mw.RequireSession(func(_ http.ResponseWriter, _ *http.Request, _ state.Account) {})(w, r)
+
+	select {
+	case ctxErr := <-touchCtx:
+		if ctxErr != nil {
+			t.Fatalf("detached session touch context error = %v, want nil", ctxErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detached session touch did not run")
 	}
 }

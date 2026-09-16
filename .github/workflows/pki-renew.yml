@@ -1,0 +1,64 @@
+name: internal-pki-renewal
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: internal-pki-renewal
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  renew:
+    name: Renew expiring internal mTLS leaves
+    if: github.repository == 'poyrazK/faas'
+    environment: production
+    runs-on: [self-hosted, linux, faas-fleet]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Render the live fleet inventory
+        shell: bash
+        env:
+          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          inventory_root="$RUNNER_TEMP/pki-live-inventory"
+          manifest="/opt/faas/current/production-manifest.yaml"
+          test -r "$manifest"
+          /usr/local/bin/gregalectl manifest ansible \
+            --manifest-file "$manifest" \
+            --output-dir "$inventory_root"
+
+          install -m 0600 /dev/null "$RUNNER_TEMP/pki-deploy-key"
+          printf '%s\n' "$COMPUTE_SSH_KEY" > "$RUNNER_TEMP/pki-deploy-key"
+          test -s "$RUNNER_TEMP/pki-deploy-key"
+          install -m 0600 /dev/null "$RUNNER_TEMP/pki-known-hosts"
+          printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$RUNNER_TEMP/pki-known-hosts"
+          test -s "$RUNNER_TEMP/pki-known-hosts"
+          mkdir -p "$inventory_root/inventory/group_vars"
+          cat >> "$inventory_root/inventory/group_vars/all.yml" <<'EOF'
+          ansible_user: root
+          ansible_ssh_private_key_file: __PKI_DEPLOY_KEY__
+          ansible_ssh_common_args: >-
+            -o BatchMode=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile=__PKI_KNOWN_HOSTS__
+          EOF
+          sed -i \
+            -e "s|__PKI_DEPLOY_KEY__|$RUNNER_TEMP/pki-deploy-key|" \
+            -e "s|__PKI_KNOWN_HOSTS__|$RUNNER_TEMP/pki-known-hosts|" \
+            "$inventory_root/inventory/group_vars/all.yml"
+          echo "PKI_INVENTORY=$inventory_root/inventory/hosts.ini" >> "$GITHUB_ENV"
+
+      - name: Run serialized fleet renewal
+        run: ansible-playbook -i "$PKI_INVENTORY" deploy/ansible/pki_renew.yml
+
+      - name: Remove transient SSH material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/pki-live-inventory" "$RUNNER_TEMP/pki-deploy-key" "$RUNNER_TEMP/pki-known-hosts"

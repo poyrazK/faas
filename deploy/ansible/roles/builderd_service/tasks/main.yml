@@ -176,6 +176,17 @@
     - "{{ builderd_build_drive_dir }}"
     - "{{ builderd_build_export_dir }}"
 
+# Before issue #2418, root-owned vmmd created every child below the export
+# root and no daemon reclaimed it. Transfer the pre-upgrade tree once during
+# convergence; current vmmd hands each new tree back after export.
+- name: builderd_service — hand legacy build exports to builderd cleanup
+  ansible.builtin.file:
+    path: "{{ builderd_build_export_dir }}"
+    state: directory
+    owner: faas-builderd
+    group: faas
+    recurse: true
+
 # OCI storage uses the shared read-through cache for source archives and
 # produced layers. builderd is a writer, so the path must exist before
 # ProtectSystem=strict creates the service namespace.

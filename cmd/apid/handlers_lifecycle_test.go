@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestCreateApp_LifecycleRoundTrip(t *testing.T) {
@@ -94,4 +95,27 @@ func TestCreateApp_LifecyclePlanGate(t *testing.T) {
 		t.Fatalf("free service: %d %s", rec.Code, rec.Body)
 	}
 	assertProblem(t, rec, 400, api.CodeValidation)
+}
+
+func TestStateManifestForUpdate_PreservesProjectMetadataAndUpdatesPorts(t *testing.T) {
+	app := state.App{Manifest: state.AppManifest{
+		ProjectSourceSHA256: "source-digest",
+		BuildDockerfile:     "deploy/Dockerfile.production",
+		WorkingDir:          "/workspace/service",
+		Env:                 map[string]string{"DATABASE_URL": "secret"},
+		Ports:               []api.WorkloadPort{{Name: "old", Port: 8080}},
+	}}
+	ports := []api.WorkloadPort{{Name: "http", Port: 3000}, {Name: "admin", Port: 9090}}
+
+	updated, changed := stateManifestForUpdate(app, &api.UpdateAppRequest{Ports: &ports})
+	if !changed || updated == nil {
+		t.Fatal("ports update was not detected")
+	}
+	if len(updated.Ports) != 2 || updated.Ports[0].Name != "http" || updated.Ports[1].Port != 9090 {
+		t.Fatalf("updated ports = %+v", updated.Ports)
+	}
+	if updated.ProjectSourceSHA256 != "source-digest" || updated.BuildDockerfile != "deploy/Dockerfile.production" ||
+		updated.WorkingDir != "/workspace/service" || updated.Env["DATABASE_URL"] != "secret" {
+		t.Fatalf("project metadata was not preserved: %+v", *updated)
+	}
 }

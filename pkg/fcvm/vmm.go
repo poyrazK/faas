@@ -74,6 +74,12 @@ type JailerVMM struct {
 	// listeners here closes the race where a fast guest sends its characterization
 	// or job-exit frame before the corresponding wait RPC starts.
 	guestVsockListeners map[guestVsockListenerKey]*net.UnixListener
+	// guestVsockStreamHandlers receive Firecracker guest-initiated streams on
+	// the per-instance <uds_path>_<port> endpoints. The outer compute VM cannot
+	// bind VMADDR_CID_HOST, so daemon-wide AF_VSOCK listeners are not a valid
+	// transport on the supported nested-virtualization topology.
+	guestVsockStreamHandlers map[uint32]GuestVsockStreamHandler
+	guestVsockObserver       GuestVsockTransportObserver
 	// characterizationReceipts coordinate the receiver started during boot
 	// with Manager.Wake's later WaitCharacterizationReport call. A single
 	// accept loop owns each listener; every waiter observes the cached result.
@@ -121,8 +127,8 @@ type JailerVMM struct {
 	// when multiple VMs bind the same shared base image concurrently.
 	bindSourceModes map[string]bindSourceMode
 	// events is the wake-timeline fan-out (issue #517 / PR-C /
-	// ADR-064). vmmd is the corroborating-observation source for
-	// wake.boot_started (mirror) and the canonical emit site for
+	// ADR-064). vmmd is the source for the corroborating wake.boot_observed
+	// event and the canonical emit site for
 	// wake.readiness_200 (the first 2xx probe). nil opts out
 	// (pre-PR-C test fixtures).
 	events *events.Platform
@@ -232,6 +238,56 @@ type ringWriter struct {
 
 func (w *ringWriter) Write(p []byte) (int, error) {
 	return w.ring.Write(w.stream, p)
+}
+
+// customerConsoleWriter separates the guest serial console from Firecracker's
+// own stdout. Firecracker multiplexes both onto the child stdout pipe, while
+// the customer log API promises only guest application/runtime output. The
+// unfiltered stream is still copied to the root-owned console file by
+// startJailer for operator diagnostics.
+type customerConsoleWriter struct {
+	mu      sync.Mutex
+	ring    *logbuf.Ring
+	pending []byte
+}
+
+func (w *customerConsoleWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pending = append(w.pending, p...)
+	for {
+		newline := bytes.IndexByte(w.pending, '\n')
+		if newline < 0 {
+			break
+		}
+		line := append([]byte(nil), w.pending[:newline+1]...)
+		w.pending = w.pending[newline+1:]
+		if firecrackerControlLine(line) {
+			continue
+		}
+		if _, err := w.ring.Write("stdout", line); err != nil {
+			return len(p), err
+		}
+	}
+	return len(p), nil
+}
+
+func firecrackerControlLine(line []byte) bool {
+	trimmed := strings.TrimSpace(string(line))
+	if !strings.HasPrefix(trimmed, "[") {
+		return false
+	}
+	headerEnd := strings.IndexByte(trimmed, ']')
+	if headerEnd < 0 {
+		return false
+	}
+	header := trimmed[:headerEnd+1]
+	for _, origin := range []string{":fc_api]", ":api_server]", ":vmm]", ":snapshot]"} {
+		if strings.Contains(header, origin) {
+			return true
+		}
+	}
+	return strings.Contains(header, ":main]") && strings.Contains(trimmed[headerEnd+1:], "Firecracker")
 }
 
 // ringFor returns the per-instance ring registered for instance, or nil
@@ -360,6 +416,7 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 		proc:                     make(map[string]*exec.Cmd),
 		clients:                  make(map[string]*http.Client),
 		guestVsockListeners:      make(map[guestVsockListenerKey]*net.UnixListener),
+		guestVsockStreamHandlers: make(map[uint32]GuestVsockStreamHandler),
 		characterizationReceipts: make(map[string]*characterizationReceipt),
 		recs:                     make(map[string]*instanceRecord),
 		rings:                    make(map[string]*logbuf.Ring),
@@ -419,8 +476,8 @@ func (v *JailerVMM) acquireRestoreSlot(ctx context.Context) (func(), error) {
 }
 
 // WithEvents stamps the wake-timeline fan-out (issue #517 / PR-C /
-// ADR-064) on the VMM. vmmd is the corroborating-observation source
-// for wake.boot_started (mirror at the gRPC server) and the
+// ADR-064) on the VMM. vmmd is the source for the corroborating wake.boot_observed event at the
+// gRPC server and the
 // canonical emit site for wake.readiness_200 (the first 2xx probe).
 // Sibling of WithStorage — nil opts out (pre-PR-C fixtures).
 func (v *JailerVMM) WithEvents(p *events.Platform) VMM {
@@ -660,11 +717,16 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err = v.ownChrootRoot(root, l); err != nil {
 		return err
 	}
+	if !l.IsBuilder && cfg.VsockDevice != nil {
+		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
+		}
+	}
 	if jobManifest != nil {
 		if err = v.prepareJobExitListener(l); err != nil {
 			return fmt.Errorf("vmm: prepare job-exit listener: %w", err)
 		}
-	} else if !l.IsBuilder && cfg.VsockDevice != nil {
+	} else if !l.IsBuilder && !l.Networkless && cfg.VsockDevice != nil {
 		if err = v.prepareCharacterizationListener(l); err != nil {
 			return fmt.Errorf("vmm: prepare characterization listener: %w", err)
 		}
@@ -672,16 +734,20 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if err = v.stageMountHelper(root); err != nil {
 		return err
 	}
-	if err = v.bindTunSource(root, l.Instance); err != nil {
-		return err
+	if len(cfg.NetworkInterfaces) > 0 {
+		if err = v.bindTunSource(root, l.Instance); err != nil {
+			return err
+		}
 	}
 	helperReadyAt := time.Now()
 	if err = v.startJailer(ctx, l, "--config-file", VMConfigName); err != nil {
 		return err
 	}
 	startedJailerAt := time.Now()
-	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
-		return err
+	if len(cfg.NetworkInterfaces) > 0 {
+		if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
+			return err
+		}
 	}
 	boundTunAt := time.Now()
 	var coldBootCPU startupCPUProfile
@@ -1098,11 +1164,18 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err = v.ownChrootRoot(root, l); err != nil {
 		return err
 	}
+	if !l.IsBuilder {
+		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
+		}
+	}
 	if err = v.stageMountHelper(root); err != nil {
 		return err
 	}
-	if err = v.bindTunSource(root, l.Instance); err != nil {
-		return err
+	if !spec.Networkless {
+		if err = v.bindTunSource(root, l.Instance); err != nil {
+			return err
+		}
 	}
 	tHelper := time.Now()
 
@@ -1115,8 +1188,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	tStartJailer := time.Now()
-	if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
-		return err
+	if !spec.Networkless {
+		if err = v.bindTunDeviceInJailer(root, l.Instance, l.UID, l.GID); err != nil {
+			return err
+		}
 	}
 	var restoreCPU startupCPUProfile
 	trackRestoreCPU := !l.IsBuilder && l.Plan.Valid()
@@ -1245,6 +1320,130 @@ func (v *JailerVMM) vsockUDSSock(instance string) string {
 type guestVsockListenerKey struct {
 	instance string
 	port     uint32
+}
+
+// Guest-initiated platform channels use Firecracker's per-VM Unix bridge.
+// These ports mirror guest-init and cmd/vmmd. They live here because JailerVMM
+// is the component that owns the instance-specific UDS path and must bind it
+// before Firecracker starts or resumes.
+const (
+	VsockGuestEventHostPort       uint32 = 1027
+	VsockWorkloadIdentityHostPort uint32 = 1030
+)
+
+// GuestVsockStreamHandler handles one guest-initiated stream. The instance is
+// established by the listener that accepted the connection, so it is a
+// stronger credential than a caller-supplied frame field. failureKind must be
+// from the bounded transport set consumed by vmmd metrics.
+type GuestVsockStreamHandler func(instance string, conn net.Conn) (failureKind string, err error)
+
+// GuestVsockTransportObserver receives capability and I/O state changes. An
+// empty failureKind and nil err means the receiver is available. vmmd uses the
+// closed failure kinds to update readiness and bounded Prometheus labels.
+type GuestVsockTransportObserver func(port uint32, failureKind string, err error)
+
+// WithGuestVsockTransportObserver installs the daemon health callback.
+func (v *JailerVMM) WithGuestVsockTransportObserver(observer GuestVsockTransportObserver) *JailerVMM {
+	if v == nil {
+		return v
+	}
+	v.mu.Lock()
+	v.guestVsockObserver = observer
+	v.mu.Unlock()
+	return v
+}
+
+// RegisterGuestVsockStreamHandler registers a required platform receiver.
+// Registration is daemon-scoped; boot and restore prepare one UDS listener per
+// instance before Firecracker can deliver guest traffic.
+func (v *JailerVMM) RegisterGuestVsockStreamHandler(port uint32, handler GuestVsockStreamHandler) error {
+	if v == nil || port == 0 || handler == nil {
+		return fmt.Errorf("invalid VMM, vsock port, or handler")
+	}
+	v.mu.Lock()
+	if v.guestVsockStreamHandlers == nil {
+		v.guestVsockStreamHandlers = make(map[uint32]GuestVsockStreamHandler)
+	}
+	if _, exists := v.guestVsockStreamHandlers[port]; exists {
+		v.mu.Unlock()
+		return fmt.Errorf("guest vsock handler already registered on port %d", port)
+	}
+	v.guestVsockStreamHandlers[port] = handler
+	observer := v.guestVsockObserver
+	v.mu.Unlock()
+	if observer != nil {
+		observer(port, "", nil)
+	}
+	return nil
+}
+
+func (v *JailerVMM) notifyGuestVsockTransport(port uint32, failureKind string, err error) {
+	v.mu.Lock()
+	observer := v.guestVsockObserver
+	v.mu.Unlock()
+	if observer != nil {
+		observer(port, failureKind, err)
+	}
+}
+
+// prepareRegisteredGuestVsockListeners binds every daemon receiver for one
+// instance. A preparation failure aborts boot/restore and marks the daemon
+// unhealthy; serving a VM without its platform channels would make lifecycle
+// and identity behavior silently incomplete.
+func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
+	v.mu.Lock()
+	handlers := make(map[uint32]GuestVsockStreamHandler, len(v.guestVsockStreamHandlers))
+	for port, handler := range v.guestVsockStreamHandlers {
+		handlers[port] = handler
+	}
+	v.mu.Unlock()
+	for port, handler := range handlers {
+		if err := v.prepareGuestVsockListener(l, port); err != nil {
+			v.notifyGuestVsockTransport(port, "prepare", err)
+			return fmt.Errorf("prepare guest vsock receiver port %d: %w", port, err)
+		}
+		ln := v.guestVsockListener(l.Instance, port)
+		if ln == nil {
+			err := fmt.Errorf("prepared listener is missing")
+			v.notifyGuestVsockTransport(port, "prepare", err)
+			return fmt.Errorf("prepare guest vsock receiver port %d: %w", port, err)
+		}
+		v.notifyGuestVsockTransport(port, "", nil)
+		go v.serveGuestVsockStreams(l.Instance, port, ln, handler)
+	}
+	return nil
+}
+
+func (v *JailerVMM) serveGuestVsockStreams(instance string, port uint32, ln *net.UnixListener, handler GuestVsockStreamHandler) {
+	const maxConcurrentStreams = 64
+	sem := make(chan struct{}, maxConcurrentStreams)
+	for {
+		conn, err := ln.AcceptUnix()
+		if err != nil {
+			if !errors.Is(err, net.ErrClosed) {
+				v.notifyGuestVsockTransport(port, "accept", err)
+			}
+			return
+		}
+		select {
+		case sem <- struct{}{}:
+			go func() {
+				defer func() {
+					_ = conn.Close()
+					<-sem
+				}()
+				failureKind, handleErr := handler(instance, conn)
+				if handleErr != nil {
+					v.notifyGuestVsockTransport(port, failureKind, handleErr)
+					return
+				}
+				v.notifyGuestVsockTransport(port, "", nil)
+			}()
+		default:
+			_ = conn.Close()
+			v.notifyGuestVsockTransport(port, "overload", fmt.Errorf("more than %d concurrent streams", maxConcurrentStreams))
+		}
+	}
 }
 
 type characterizationReceipt struct {
@@ -2395,6 +2594,32 @@ func consoleShowsGuestHalted(path string) bool {
 	return consoleContains(path, "System halted")
 }
 
+// watchBuilderGuestHalt independently reaps a Firecracker process after the
+// builder guest has flushed its result and halted. DestroyWithExport has the
+// same check while an RPC is waiting, but keeping the watcher with the process
+// closes the failure mode where teardown is delayed or never reaches that RPC.
+func watchBuilderGuestHalt(consolePath string, done <-chan struct{}, pollEvery time.Duration, kill func()) {
+	if consolePath == "" || done == nil || kill == nil {
+		return
+	}
+	if pollEvery <= 0 {
+		pollEvery = 250 * time.Millisecond
+	}
+	ticker := time.NewTicker(pollEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if consoleShowsGuestHalted(consolePath) {
+				kill()
+				return
+			}
+		}
+	}
+}
+
 // consoleShowsBuilderReady reads the bounded tail of the serial console for
 // the stable guest-init stage emitted after a successful KeepWarm build. The
 // check belongs in vmmd, which owns the console file even when builderd and
@@ -2532,10 +2757,19 @@ func (v *JailerVMM) InstancePID(instance string) (int, bool) {
 // — never blocks the caller). vmmd is the only root component, so the mount
 // is fine; the chroot-local drive1.ext4 is owned by root after provision
 // (pkg/fcvm/vmm.go:stageWritable).
-func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) error {
+func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr error) {
 	if err := os.MkdirAll(exportDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir export: %w", err)
 	}
+	// vmmd is root while builderd and imaged share the export through the
+	// parent directory's owner/group. Always hand ownership back, including
+	// partial/failed exports, so builderd's terminal cleanup can traverse and
+	// unlink vmmd-created children after a daemon restart.
+	defer func() {
+		if err := handoffBuildExportOwnership(exportDir); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("handoff export ownership: %w", err))
+		}
+	}()
 	drive1, err := v.resolveDriveImage(instance)
 	if err != nil {
 		return err
@@ -2578,6 +2812,39 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) error {
 		return copyTree(srcOut, dstOut, v.exportMax())
 	}
 	return nil
+}
+
+func handoffBuildExportOwnership(exportDir string) error {
+	parent, err := os.Stat(filepath.Dir(filepath.Clean(exportDir)))
+	if err != nil {
+		return err
+	}
+	stat, ok := parent.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("export parent %q has unsupported stat metadata", filepath.Dir(exportDir))
+	}
+	return filepath.WalkDir(exportDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := os.Lchown(path, int(stat.Uid), int(stat.Gid)); err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode().Perm()
+		if entry.IsDir() {
+			mode |= 0o750 // owner cleanup + group traversal
+		} else {
+			mode |= 0o640 // builderd read + imaged group read
+		}
+		return os.Chmod(path, mode)
+	})
 }
 
 // layerImageName is the in-chroot basename vmmd provisions for drive1 (see
@@ -3298,8 +3565,9 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	}
 	argv := append(JailerCommand(JailerSpec{
 		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
-		Plan:      l.Plan,
-		IsBuilder: l.IsBuilder,
+		Plan:        l.Plan,
+		Networkless: l.Networkless,
+		IsBuilder:   l.IsBuilder,
 		MemoryMaxBytes: func() int64 {
 			if l.MemoryMaxMiB < 1 {
 				return 0
@@ -3315,6 +3583,7 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	// Jailer/firecracker must remain alive until the explicit Destroy/Kill path
 	// tears it down, otherwise a successful builder boot is killed immediately.
 	cmd := exec.Command(argv[0], argv[1:]...)
+	isolateLifecycleChild(cmd)
 	ring := v.ringFor(l.Instance)
 	consolePath := filepath.Join("/var/log/faas", "vm-"+l.Instance+".console")
 	var consoleFile *os.File
@@ -3327,7 +3596,7 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 		// into the per-instance ring. stderr stays discarded — FC only
 		// writes there on configuration errors and operators inspect those
 		// via systemctl logs, not the per-app tail.
-		stdout = &ringWriter{ring: ring, stream: "stdout"}
+		stdout = &customerConsoleWriter{ring: ring}
 	}
 	if consoleFile != nil {
 		stdout = io.MultiWriter(stdout, consoleFile)
@@ -3349,6 +3618,11 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 	rec := &instanceRecord{cmd: cmd, consolePath: consolePath, isBuilder: l.IsBuilder, done: make(chan struct{})}
 	v.recs[l.Instance] = rec
 	v.mu.Unlock()
+	if rec.isBuilder {
+		go watchBuilderGuestHalt(rec.consolePath, rec.done, 250*time.Millisecond, func() {
+			v.killProcess(l.Instance)
+		})
+	}
 	// Watchdog: cmd.Wait must be called exactly once per process (stdlib
 	// contract). Run it here so DestroyWithExport can later read the captured
 	// exit code without racing the actual process termination.
@@ -3381,6 +3655,25 @@ func (v *JailerVMM) startJailer(_ context.Context, l Lease, extraFCArgs ...strin
 		}
 	}()
 	return nil
+}
+
+// isolateLifecycleChild prevents jailer/firecracker from inheriting vmmd's
+// private systemd notification channel. Firecracker stays alive after the
+// boot RPC and is part of the vmmd cgroup, but it is not allowed to publish
+// READY/STOPPING/WATCHDOG state for the daemon's main process.
+func isolateLifecycleChild(cmd *exec.Cmd) {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, value := range env {
+		key, _, _ := strings.Cut(value, "=")
+		switch key {
+		case "NOTIFY_SOCKET", "WATCHDOG_PID", "WATCHDOG_USEC":
+			continue
+		default:
+			out = append(out, value)
+		}
+	}
+	cmd.Env = out
 }
 
 // provision stages the kernel and rootfs images into the chroot for the jailer
@@ -4136,10 +4429,13 @@ func (v *JailerVMM) emitReadiness200(ctx context.Context, l Lease, healthcheckPa
 	if v.events == nil {
 		return
 	}
-	var wakeID, appID string
+	var wakeID, appID, nodeID string
 	if fields, ok := wire.FromContext(ctx); ok {
 		wakeID = fields.WakeID
 		appID = fields.AppID
+		// The scheduler's canonical wake envelope carries placement identity
+		// through every vmmd route, including restore and recreated instances.
+		nodeID = fields.NodeID
 	}
 	now := time.Now()
 	elapsed := now.Sub(startedAt)
@@ -4148,6 +4444,7 @@ func (v *JailerVMM) emitReadiness200(ctx context.Context, l Lease, healthcheckPa
 		WakeID:          wakeID,
 		AppID:           appID,
 		InstanceID:      l.Instance,
+		NodeID:          nodeID,
 		HealthcheckPath: healthcheckPath,
 		ProbeCount:      probeCount,
 		ElapsedMs:       elapsed.Milliseconds(),

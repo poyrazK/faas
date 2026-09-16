@@ -38,6 +38,7 @@ import (
 // kgv subcommands.
 const (
 	subReleaseKGVRotate = "rotate"
+	subReleaseKGVVerify = "verify"
 	// subReleaseKGVInit is a deliberate alias for `rotate --from-zero`.
 	// The PR-A sketch named this leaf `init`; PR-B folded it into
 	// `rotate --from-zero` (one keyword + flag is the same surface as
@@ -52,12 +53,14 @@ const (
 // a usage pointer so the operator can `help` rather than guess.
 func cmdReleaseKGV(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregalectl release kgv <subcommand> [flags]\n\nSubcommands:\n  rotate    Refresh sbom-baseline.json from the on-disk release SBoM.\n  init      Alias for `rotate --from-zero` (deprecated fold; will be removed in PR-7).\n", "release")
+		PrintUsage(os.Stderr, "usage: gregalectl release kgv <subcommand> [flags]\n\nSubcommands:\n  verify    Compare an incoming release SBoM with the accepted host baseline.\n  rotate    Accept an activated release SBoM as the new host baseline.\n  init      Alias for `rotate --from-zero` (deprecated fold; will be removed in PR-7).\n", "release")
 		return 1
 	}
 	switch args[0] {
 	case subReleaseKGVRotate:
 		return cmdReleaseKGVRotate(args[1:])
+	case subReleaseKGVVerify:
+		return cmdReleaseKGVVerify(args[1:])
 	case subReleaseKGVInit:
 		// Alias path: force --from-zero and emit a deprecation note
 		// to stderr so operators running `kgv init` get the same
@@ -67,10 +70,10 @@ func cmdReleaseKGV(args []string) int {
 		_, _ = fmt.Fprintln(os.Stderr, "note: 'release kgv init' is an alias for 'release kgv rotate --from-zero' (will be removed in PR-7)")
 		return cmdReleaseKGVRotate(append([]string{"--from-zero"}, args[1:]...))
 	case flagHelpShort, flagHelpLong:
-		PrintUsage(os.Stderr, "usage: gregalectl release kgv <subcommand> [flags]\n\nSubcommands:\n  rotate    Refresh sbom-baseline.json from the on-disk release SBoM.\n  init      Alias for `rotate --from-zero` (deprecated fold; will be removed in PR-7).\n", "release")
+		PrintUsage(os.Stderr, "usage: gregalectl release kgv <subcommand> [flags]\n\nSubcommands:\n  verify    Compare an incoming release SBoM with the accepted host baseline.\n  rotate    Accept an activated release SBoM as the new host baseline.\n  init      Alias for `rotate --from-zero` (deprecated fold; will be removed in PR-7).\n", "release")
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl release kgv: unknown subcommand %q (expected: rotate, init)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl release kgv: unknown subcommand %q (expected: verify, rotate, init)\n", args[0])
 		return 2
 	}
 }
@@ -207,19 +210,94 @@ func cmdReleaseKGVRotate(args []string) int {
 			GitSHA:   *gitSHA,
 			Baseline: baseline,
 			FromZero: *fromZero,
-			Path:     releaseinstall.SBOMBaselinePath(releaseinstall.BundleRoot(*releasesRoot, *gitSHA)),
+			Path:     releaseinstall.AcceptedSBOMBaselinePath(*releasesRoot),
 		})
 		return 0
 	}
 	if *fromZero {
 		_, _ = fmt.Fprintf(os.Stdout, "OK git_sha=%s baseline=KGVZero path=%s\n",
-			*gitSHA, releaseinstall.SBOMBaselinePath(releaseinstall.BundleRoot(*releasesRoot, *gitSHA)))
+			*gitSHA, releaseinstall.AcceptedSBOMBaselinePath(*releasesRoot))
 		return 0
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "OK git_sha=%s counts=critical:%d high:%d medium:%d low:%d path=%s\n",
 		*gitSHA,
 		baseline.Counts.CriticalN, baseline.Counts.HighN, baseline.Counts.MediumN, baseline.Counts.LowN,
-		releaseinstall.SBOMBaselinePath(releaseinstall.BundleRoot(*releasesRoot, *gitSHA)))
+		releaseinstall.AcceptedSBOMBaselinePath(*releasesRoot))
+	return 0
+}
+
+// cmdReleaseKGVVerify compares an incoming, already signature-verified release
+// SBoM with the host's previously accepted baseline. It never mutates the
+// baseline, which lets CD call it before activation and rotate only after all
+// readiness gates pass.
+func cmdReleaseKGVVerify(args []string) int {
+	if len(args) > 0 && (args[0] == flagHelpLong || args[0] == flagHelpShort) {
+		PrintUsage(os.Stderr, "usage: gregalectl release kgv verify --git-sha SHA [--releases-root PATH] [--json]", "release")
+		return 0
+	}
+	fs := flag.NewFlagSet("release kgv verify", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	gitSHA := fs.String("git-sha", "", "40-char lowercase hex git SHA (required)")
+	releasesRoot := fs.String("releases-root", "/opt/faas/releases", "releases root directory")
+	jsonOut := fs.Bool("json", false, "emit structured JSON to stdout")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if !releaseinstall.ValidGitSHA(*gitSHA) {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release kgv verify: --git-sha %q is not a 40-char lowercase hex\n", *gitSHA)
+		return 1
+	}
+	m, err := releaseinstall.Read(*releasesRoot, *gitSHA)
+	if err != nil || m.GitSHA != *gitSHA {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release kgv verify: release manifest mismatch: %v\n", err)
+		return 3
+	}
+	sbomPath := releaseinstall.BundleRoot(*releasesRoot, *gitSHA) + "/release.sbom.json"
+	sbomBody, err := os.ReadFile(sbomPath)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release kgv verify: read SBoM at %s: %v\n", sbomPath, err)
+		return 3
+	}
+	counts, err := releaseinstall.ParseSPDXv2_3(sbomBody)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release kgv verify: parse SBoM at %s: %v\n", sbomPath, err)
+		return 3
+	}
+	var sbomDoc struct {
+		DocumentNamespace string `json:"documentNamespace"`
+		Name              string `json:"name"`
+	}
+	if err := json.Unmarshal(sbomBody, &sbomDoc); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release kgv verify: decode SBoM envelope at %s: %v\n", sbomPath, err)
+		return 3
+	}
+	stamped := sbomDoc.DocumentNamespace
+	if stamped == "" {
+		stamped = sbomDoc.Name
+	}
+	if stamped != "" && !sbomDocMatchesGitSHA(stamped, *gitSHA) {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release kgv verify: SBoM documentNamespace=%q does not reference --git-sha=%q; refusing a stale SBoM\n", stamped, *gitSHA)
+		return 3
+	}
+	baseline, err := releaseinstall.ReadBaseline(*releasesRoot, *gitSHA)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release kgv verify: read accepted baseline at %s: %v\n", releaseinstall.AcceptedSBOMBaselinePath(*releasesRoot), err)
+		return 3
+	}
+	if _, err := baseline.Diff(counts); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release kgv verify: %v\n", err)
+		return 3
+	}
+	if *jsonOut {
+		jsonEmit(os.Stdout, struct {
+			GitSHA      string                    `json:"git_sha"`
+			BaselineSHA string                    `json:"baseline_git_sha"`
+			Baseline    releaseinstall.SBOMCounts `json:"baseline_counts"`
+			Incoming    releaseinstall.SBOMCounts `json:"incoming_counts"`
+		}{GitSHA: *gitSHA, BaselineSHA: baseline.GitSHA, Baseline: baseline.Counts, Incoming: counts})
+		return 0
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "OK git_sha=%s baseline_git_sha=%s counts=critical:%d high:%d\n", *gitSHA, baseline.GitSHA, counts.CriticalN, counts.HighN)
 	return 0
 }
 

@@ -63,7 +63,7 @@ func cmdInspect(args []string) int {
 		fmt.Fprintf(os.Stderr, "invalid slug %q (3..40 chars, lowercase alnum + dash, no leading/trailing dash)\n", slug)
 		return 1
 	}
-	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	fs := newFlagSet("inspect", flag.ContinueOnError)
 	upstreams := fs.Bool("upstreams", false, "list data upstreams captured for this app (ADR-098 §9.A)")
 	scope := fs.String("scope", "", "filter upstreams by scope (forwarded as ?scope=<scope>)")
 	// Error-explanations cluster (spec §6.4 amendment 1): --errors

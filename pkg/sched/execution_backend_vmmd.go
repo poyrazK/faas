@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executionpayload"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 )
 
@@ -26,21 +27,130 @@ type VmmdExecutionTransport interface {
 // the resume hook has completed. It must not receive caller source or input.
 type VmmdExecutionRestoreFunc func(context.Context, ExecutionRestoreRequest) (VmmdExecutionTransport, error)
 
-// ExecutionPayloadDecoder authenticates and decrypts the durable payload in
-// host memory. The plaintext must be discarded by the implementation after it
-// returns; no decoder error is exposed to the caller as raw detail.
+// RoutedExecutionVMM is the production scheduler-side capability pair. The
+// restore call creates the VM before payload dispatch; execute and destroy are
+// pinned to the same node and instance returned by that call.
+type RoutedExecutionVMM interface {
+	RestoreExecution(context.Context, string, ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error)
+	ExecuteExecution(context.Context, string, string, executionproto.Request) (executionproto.Result, error)
+	Destroy(context.Context, string, string) error
+}
+
+// NewRoutedVmmdExecutionBackend wires the coordinator to VMMRouter without
+// exposing generated protobuf types. Callers must resolve NodeID and the
+// immutable runtime machine fields before Restore is invoked; source/input
+// remain inside the opaque payload decoder until Execute.
+func NewRoutedVmmdExecutionBackend(router RoutedExecutionVMM, decode ExecutionPayloadDecoder) *VmmdExecutionBackend {
+	return newRoutedVmmdExecutionBackend(router, normalizeExecutionPayloadDecoder(decode))
+}
+
+// NewRoutedVmmdExecutionBackendWithBundle is the bundle-capable constructor
+// used by schedd once the authenticated v2 payload decoder is wired.
+func NewRoutedVmmdExecutionBackendWithBundle(router RoutedExecutionVMM, decode ExecutionPayloadDecoderV2) *VmmdExecutionBackend {
+	return newRoutedVmmdExecutionBackend(router, normalizeExecutionPayloadDecoder(decode))
+}
+
+func newRoutedVmmdExecutionBackend(router RoutedExecutionVMM, decoder executionPayloadDecoder) *VmmdExecutionBackend {
+	return newVmmdExecutionBackend(func(ctx context.Context, request ExecutionRestoreRequest) (VmmdExecutionTransport, error) {
+		if router == nil || request.NodeID == "" {
+			return nil, ErrExecutionCoordinatorNotWired
+		}
+		outcome, err := router.RestoreExecution(ctx, request.NodeID, request)
+		if err != nil {
+			return nil, err
+		}
+		if outcome == nil || outcome.Instance == "" || outcome.Instance != request.ID {
+			return nil, errors.New("sched: vmmd returned an unexpected execution instance")
+		}
+		return &routedVmmdExecutionTransport{router: router, nodeID: request.NodeID, instance: outcome.Instance}, nil
+	}, decoder)
+}
+
+type routedVmmdExecutionTransport struct {
+	router   RoutedExecutionVMM
+	nodeID   string
+	instance string
+}
+
+func (t *routedVmmdExecutionTransport) Execute(ctx context.Context, req executionproto.Request) (executionproto.Result, error) {
+	return t.router.ExecuteExecution(ctx, t.nodeID, t.instance, req)
+}
+
+func (t *routedVmmdExecutionTransport) ExecuteWithOutput(ctx context.Context, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	streaming, ok := t.router.(interface {
+		ExecuteExecutionWithOutput(context.Context, string, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
+	})
+	if !ok {
+		return executionproto.Result{}, api.NewProblem(501, api.CodeNotImplemented,
+			"Execution streaming unavailable", "vmmd router does not support live disposable execution output")
+	}
+	return streaming.ExecuteExecutionWithOutput(ctx, t.nodeID, t.instance, req, receive)
+}
+
+func (t *routedVmmdExecutionTransport) Destroy(ctx context.Context) error {
+	return t.router.Destroy(ctx, t.nodeID, t.instance)
+}
+
+// ExecutionPayloadDecoder is the v1 source/input decoder kept for scheduler
+// integrations that only understand single-file payloads.
 type ExecutionPayloadDecoder func(context.Context, []byte, string) (source string, input json.RawMessage, err error)
+
+// ExecutionPayloadDecoderV2 adds the authenticated ephemeral file bundle
+// without breaking existing scheduler test seams and integrations.
+type ExecutionPayloadDecoderV2 func(context.Context, []byte, string) (executionpayload.DecodedPayload, error)
+
+type executionPayloadDecoder interface {
+	decode(context.Context, []byte, string) (executionpayload.DecodedPayload, error)
+}
+
+type legacyPayloadDecoder ExecutionPayloadDecoder
+
+func (f legacyPayloadDecoder) decode(ctx context.Context, sealed []byte, kid string) (executionpayload.DecodedPayload, error) {
+	source, input, err := f(ctx, sealed, kid)
+	return executionpayload.DecodedPayload{Source: source, Input: input}, err
+}
+
+type bundlePayloadDecoder ExecutionPayloadDecoderV2
+
+func (f bundlePayloadDecoder) decode(ctx context.Context, sealed []byte, kid string) (executionpayload.DecodedPayload, error) {
+	return f(ctx, sealed, kid)
+}
+
+func normalizeExecutionPayloadDecoder(value any) executionPayloadDecoder {
+	switch decoder := value.(type) {
+	case ExecutionPayloadDecoderV2:
+		return bundlePayloadDecoder(decoder)
+	case ExecutionPayloadDecoder:
+		return legacyPayloadDecoder(decoder)
+	case func(context.Context, []byte, string) (executionpayload.DecodedPayload, error):
+		return bundlePayloadDecoder(decoder)
+	case func(context.Context, []byte, string) (string, json.RawMessage, error):
+		return legacyPayloadDecoder(decoder)
+	default:
+		return nil
+	}
+}
 
 // VmmdExecutionBackend bridges the scheduler's opaque durable payload to the
 // vmmd transport. It is deliberately inert until both restore and decode
 // functions are wired by schedd startup.
 type VmmdExecutionBackend struct {
 	restore VmmdExecutionRestoreFunc
-	decode  ExecutionPayloadDecoder
+	decode  executionPayloadDecoder
 }
 
 func NewVmmdExecutionBackend(restore VmmdExecutionRestoreFunc, decode ExecutionPayloadDecoder) *VmmdExecutionBackend {
-	return &VmmdExecutionBackend{restore: restore, decode: decode}
+	return newVmmdExecutionBackend(restore, normalizeExecutionPayloadDecoder(decode))
+}
+
+// NewVmmdExecutionBackendWithBundle is the bundle-capable constructor for
+// callers that have adopted the v2 authenticated payload decoder.
+func NewVmmdExecutionBackendWithBundle(restore VmmdExecutionRestoreFunc, decode ExecutionPayloadDecoderV2) *VmmdExecutionBackend {
+	return newVmmdExecutionBackend(restore, normalizeExecutionPayloadDecoder(decode))
+}
+
+func newVmmdExecutionBackend(restore VmmdExecutionRestoreFunc, decoder executionPayloadDecoder) *VmmdExecutionBackend {
+	return &VmmdExecutionBackend{restore: restore, decode: decoder}
 }
 
 func (b *VmmdExecutionBackend) Restore(ctx context.Context, request ExecutionRestoreRequest) (ExecutionSession, error) {
@@ -60,13 +170,29 @@ func (b *VmmdExecutionBackend) Restore(ctx context.Context, request ExecutionRes
 type vmmdExecutionSession struct {
 	transport VmmdExecutionTransport
 	request   ExecutionRestoreRequest
-	decode    ExecutionPayloadDecoder
+	decode    executionPayloadDecoder
 
 	destroyMu sync.Mutex
 	destroyed bool
 }
 
+type streamingVmmdExecutionTransport interface {
+	VmmdExecutionTransport
+	ExecuteWithOutput(context.Context, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
+}
+
 func (s *vmmdExecutionSession) Execute(ctx context.Context, payload ExecutionPayload) (ExecutionOutcome, error) {
+	return s.execute(ctx, payload, nil)
+}
+
+// ExecuteWithOutput is the optional live-output scheduler seam. If the
+// routed vmmd client does not support the additive stream, it falls back to
+// the existing unary exchange so mixed-version clusters remain usable.
+func (s *vmmdExecutionSession) ExecuteWithOutput(ctx context.Context, payload ExecutionPayload, receive executionproto.OutputReceiver) (ExecutionOutcome, error) {
+	return s.execute(ctx, payload, receive)
+}
+
+func (s *vmmdExecutionSession) execute(ctx context.Context, payload ExecutionPayload, receive executionproto.OutputReceiver) (ExecutionOutcome, error) {
 	if s == nil || s.transport == nil || s.decode == nil {
 		return ExecutionOutcome{}, ErrExecutionCoordinatorNotWired
 	}
@@ -78,7 +204,7 @@ func (s *vmmdExecutionSession) Execute(ctx context.Context, payload ExecutionPay
 	}
 	defer clear(payload.Sealed)
 
-	source, input, err := s.decode(ctx, payload.Sealed, payload.KID)
+	decoded, err := s.decode.decode(ctx, payload.Sealed, payload.KID)
 	if err != nil {
 		// Decoder errors may include key ids, storage paths, or partial
 		// plaintext. The coordinator logs transport errors, so expose only a
@@ -86,11 +212,11 @@ func (s *vmmdExecutionSession) Execute(ctx context.Context, payload ExecutionPay
 		return ExecutionOutcome{}, errors.New("sched: decode execution payload failed")
 	}
 	resolved := api.ResolvedExecutionRequest{
-		Runtime: s.request.Runtime,
-		Source:  source,
-		Input:   append(json.RawMessage(nil), input...),
-		Limits:  s.request.Limits,
-		Network: api.ExecutionNetworkPolicy{Mode: s.request.NetworkMode},
+		Runtime: s.request.Runtime, Source: decoded.Source,
+		Entrypoint: decoded.Entrypoint,
+		Files:      append([]api.ExecutionFile(nil), decoded.Files...),
+		Input:      append(json.RawMessage(nil), decoded.Input...),
+		Limits:     s.request.Limits, Network: api.ExecutionNetworkPolicy{Mode: s.request.NetworkMode},
 	}
 	wireRequest := executionproto.RequestFromResolvedExecution(s.request.ID, resolved)
 	// The durable deadline includes queue and restore time. Never grant a
@@ -108,11 +234,28 @@ func (s *vmmdExecutionSession) Execute(ctx context.Context, payload ExecutionPay
 		return ExecutionOutcome{}, errors.New("sched: execution request failed validation")
 	}
 
-	result, err := s.transport.Execute(ctx, wireRequest)
+	var result executionproto.Result
+	if receive != nil {
+		if streaming, ok := s.transport.(streamingVmmdExecutionTransport); ok {
+			result, err = streaming.ExecuteWithOutput(ctx, wireRequest, receive)
+			if err != nil && executionOutputUnavailable(err) {
+				result, err = s.transport.Execute(ctx, wireRequest)
+			}
+		} else {
+			result, err = s.transport.Execute(ctx, wireRequest)
+		}
+	} else {
+		result, err = s.transport.Execute(ctx, wireRequest)
+	}
 	if err != nil {
 		return ExecutionOutcome{}, fmt.Errorf("sched: guest execution exchange: %w", err)
 	}
 	return outcomeFromProtocolResult(result), nil
+}
+
+func executionOutputUnavailable(err error) bool {
+	problem := api.AsProblem(err)
+	return problem != nil && problem.Code == api.CodeNotImplemented
 }
 
 func (s *vmmdExecutionSession) Destroy(ctx context.Context) error {

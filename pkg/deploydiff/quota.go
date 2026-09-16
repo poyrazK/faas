@@ -18,6 +18,11 @@ import (
 // unit-tested in isolation from [Compute].
 type QuotaConfig struct {
 	Limits api.Limits
+	// AccountAppCount is the number of deployed apps that currently consume
+	// an account slot. AccountAppCountKnown prevents a failed best-effort
+	// lookup from being treated as a real zero.
+	AccountAppCount      int
+	AccountAppCountKnown bool
 	// AccountCronCount is the current per-account cron count
 	// (across every app). The wire surface is GET /v1/crons; the
 	// CLI captures it before running the diff. 0 when unknown.
@@ -55,6 +60,20 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 	limits := cfg.Limits
 	out := []Break{}
 
+	// A preview for a missing slug creates one app slot. Existing-app
+	// previews do not consume another slot, even when the account is already
+	// at its cap. The apply transaction remains the race-safe authority.
+	if baseline.App == nil && cfg.AccountAppCountKnown && cfg.AccountAppCount >= limits.DeployedApps {
+		out = append(out, Break{
+			Code:     api.CodePlanLimitApps,
+			Severity: SeverityError,
+			Reason:   "account is already at its deployed-app cap",
+			Field:    "apps",
+			Observed: AsAny(cfg.AccountAppCount),
+			Limit:    AsAny(limits.DeployedApps),
+		})
+	}
+
 	// RAM cap.
 	if pending.AppConfig.RAMMB != nil && *pending.AppConfig.RAMMB > limits.RAMMB {
 		out = append(out, Break{
@@ -71,6 +90,39 @@ func Quota(p api.Plan, baseline Baseline, pending Pending, cfg QuotaConfig) []Br
 			Code: api.CodeInvalidAppCPU, Severity: SeverityError,
 			Reason: "cpu_millicores must be one of 250, 500, or 1000",
 			Field:  "cpu_millicores", Observed: AsAny(*pending.AppConfig.CPUMillicores),
+		})
+	}
+	if pending.AppConfig.VCPU != nil {
+		ramMB := limits.RAMMB
+		if pending.AppConfig.RAMMB != nil {
+			ramMB = *pending.AppConfig.RAMMB
+		}
+		if prob := api.ValidateAppCPURAMPair(limits, ramMB, *pending.AppConfig.VCPU); prob != nil {
+			out = append(out, Break{
+				Code: prob.Code, Severity: SeverityError, Reason: prob.Detail,
+				Field: "vcpu", Observed: AsAny(*pending.AppConfig.VCPU), Limit: AsAny(limits.VCPU),
+			})
+		}
+	}
+	if pending.TrafficPercent != nil && (*pending.TrafficPercent < 0 || *pending.TrafficPercent > 100) {
+		out = append(out, Break{
+			Code: api.CodeInvalidTrafficPercent, Severity: SeverityError,
+			Reason: "traffic_percent must be between 0 and 100", Field: "deployment.traffic_percent",
+			Observed: AsAny(*pending.TrafficPercent), Limit: AsAny(100),
+		})
+	}
+	if pending.TrafficPercent != nil && pending.Canary != nil {
+		out = append(out, Break{
+			Code: api.CodeValidation, Severity: SeverityError,
+			Reason: "traffic_percent and canary are mutually exclusive rollout policies", Field: "deployment.rollout",
+		})
+	}
+	usesSplit := pending.TrafficPercent != nil && *pending.TrafficPercent != 100
+	usesCanary := pending.Canary != nil && pending.Canary.Preset != "" && pending.Canary.Preset != "none"
+	if (usesSplit || usesCanary) && !p.TrafficSplitAllowed() {
+		out = append(out, Break{
+			Code: api.CodePlanTrafficSplitNotAllowed, Severity: SeverityError,
+			Reason: "traffic splitting is not enabled on this plan", Field: "deployment.rollout",
 		})
 	}
 	// MaxConcurrency cap.

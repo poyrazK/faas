@@ -40,12 +40,12 @@ import (
 )
 
 // singleWorkloadFixture builds a tarball with exactly one
-// convention-detector workload (services/api/Dockerfile).
+// convention-detector workload (services/backend/Dockerfile).
 func singleWorkloadFixture(t *testing.T) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{"faas-guard/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"faas-guard/services/api/index.js", "exports.handler = () => 1;\n"},
+		{"faas-guard/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"faas-guard/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -66,7 +66,7 @@ func singleWorkloadFixture(t *testing.T) []byte {
 func composeFixture(t *testing.T) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{"faas-tier/docker-compose.yml", "services:\n  api:\n    build: { context: . }\n"},
+		{"faas-tier/docker-compose.yml", "services:\n  backend:\n    build: { context: . }\n"},
 		{"faas-tier/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
 		{"faas-tier/index.js", "exports.handler = () => 1;\n"},
 	}
@@ -90,8 +90,8 @@ func composeFixture(t *testing.T) []byte {
 func conventionOnlyFixture(t *testing.T) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{"faas-conv/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"faas-conv/services/api/index.js", "exports.handler = () => 1;\n"},
+		{"faas-conv/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"faas-conv/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)

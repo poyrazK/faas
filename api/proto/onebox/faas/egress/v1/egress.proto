@@ -62,12 +62,12 @@ service EgressTxService {
   // drain this turn (the ring buffer has no observed bytes);
   // the client MUST tolerate empty returns. End-of-stream is
   // driven by ctx cancellation (server side) or by
-  // deadline-exceeded (client side); there is no
-  // "complete" marker because the drain is naturally lossy
-  // (an instance that parks between two drains loses its
-  // last-partial bucket, by design — see egressSink eviction
-  // comment).
+  // deadline-exceeded (client side). Frames carry a stable event_id and stay
+  // in the gateway replay set until AckBytes confirms durable persistence.
   rpc StreamBytes(StreamBytesRequest) returns (stream BytesFrame);
+  // AckBytes removes durably persisted frames from the gateway replay set.
+  // Meterd calls this only after its Postgres idempotency ledger commits.
+  rpc AckBytes(AckBytesRequest) returns (AckBytesResponse);
 }
 
 // StreamBytesRequest is intentionally empty. The server starts
@@ -95,4 +95,8 @@ message BytesFrame {
   uint64 bytes = 3;
   uint64 requests = 4;
   uint64 cold_boots = 5;
+  string event_id = 6;
 }
+
+message AckBytesRequest { repeated string event_ids = 1; }
+message AckBytesResponse { uint32 acknowledged = 1; }

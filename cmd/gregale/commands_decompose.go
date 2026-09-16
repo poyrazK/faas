@@ -6,7 +6,7 @@ package main
 //
 //	gregale scan     — dry-run; renders the plan as a table or --json
 //	gregale deploy   — extends cmdDeployTarball with --yes, --json,
-//	                   --only, --project-slug for the one-key provision
+//	                   --project, --only, --project-slug for the one-key provision
 //	                   flow on top of the existing --tarball/--image/
 //	                   --template paths.
 //
@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -35,6 +34,19 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func validateProjectEnvironmentFlag(environment string) error {
+	if environment == "" {
+		return nil
+	}
+	if !api.ValidProjectEnvironmentSlug(environment) {
+		return fmt.Errorf("must be a lowercase project environment slug; got %q", environment)
+	}
+	if problem := api.ValidateScope(environment); problem != nil {
+		return &api.APIError{Problem: *problem}
+	}
+	return nil
+}
 
 // cmdScan is the dry-run entry point.
 //
@@ -46,12 +58,13 @@ import (
 // PlanResponse bytes verbatim. Never writes; can_apply=false on
 // over-quota surfaces the limit problem from the same response.
 func cmdScan(args []string) int {
-	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
+	fs := newFlagSet("scan", flag.ContinueOnError)
 	tarball := fs.String("tarball", "", "path to source .tar.gz")
 	pathFlag := fs.String("path", "", "path to local repo dir (auto-packed)")
 	repo := fs.String("repo", "", "github owner/name to fetch tarball for")
+	bindingRepo := fs.String("repository", "", "GitHub owner/name to bind to the project (defaults to --repo)")
 	ref := fs.String("ref", "main", "git ref for --repo")
-	only := fs.String("only", "", "comma-separated workload names")
+	only := fs.String("only", "", "comma-separated workloads to apply; retain unselected project workloads")
 	// ADR-124 inverse-allowlist. Mutex with --only (overlap rejected
 	// server-side with code='exclude_only_overlap').
 	exclude := fs.String("exclude", "", "comma-separated workload names to omit (ADR-124)")
@@ -69,16 +82,40 @@ func cmdScan(args []string) int {
 	// with `deploy` so a single flag set can be reused across the
 	// scan + apply pair. The handler ignores it on the scan path.
 	persistExclude := fs.Bool("persist-exclude", false, "record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3)")
+	environment := fs.String("environment", "", "registered project environment to scan")
 	projectSlug := fs.String("project-slug", "", "kebab slug; default = repo dir basename")
-	installID := fs.Int64("install-id", 0, "GitHub install id (with --repo)")
+	installID := fs.Int64("install-id", 0, "optional GitHub installation id; normally resolved from the connected account")
 	prodBranch := fs.String("production-branch", "main", "production branch for the project")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--show-affected] [--explain] [--exclude NAME,…]", "scan")
+		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--repository OWNER/NAME --install-id N] [--production-branch BRANCH] [--show-affected] [--explain] [--exclude NAME,…]", "scan")
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
+	projectSlugExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "project-slug" {
+			projectSlugExplicit = true
+		}
+	})
 
 	// Exactly one of --tarball / --path / --repo. Default --path $PWD
 	// when stdin is a TTY and no flag is set (issue #313 zero-config).
+	if projectSlugExplicit && !api.ValidProjectSlug(*projectSlug) {
+		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
+	}
+	if err := validateProjectEnvironmentFlag(*environment); err != nil {
+		return printErr("Invalid --environment", err)
+	}
+	if *repo != "" {
+		return runConnectedRepoScan(connectedRepoScanOptions{
+			tarball: *tarball, path: *pathFlag, repo: *repo, ref: *ref,
+			projectSlug: *projectSlug, bindingRepo: *bindingRepo,
+			productionBranch: *prodBranch, installID: *installID,
+			only: *only, exclude: *exclude, environment: *environment, showAffected: *showAffected, explain: *explain,
+		})
+	}
 	srcPath, sourceName, cleanup, err := resolveScanSource(*tarball, *pathFlag, *repo, *ref, *installID)
 	if err != nil {
 		return printErr("Could not resolve source", err)
@@ -86,7 +123,13 @@ func cmdScan(args []string) int {
 	defer cleanup()
 
 	if *projectSlug == "" {
-		*projectSlug = defaultProjectSlug(srcPath)
+		*projectSlug = defaultProjectSlug(sourceName)
+	}
+	if !api.ValidProjectSlug(*projectSlug) {
+		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
+	}
+	if *bindingRepo == "" {
+		*bindingRepo = *repo
 	}
 
 	client, err := authedClientWithDeployTimeout(2 * time.Minute)
@@ -114,7 +157,7 @@ func cmdScan(args []string) int {
 		return printErr("Could not open source", err)
 	}
 	defer func() { _ = src.Close() }()
-	plan, err := client.ScanProject(ctx, src, sourceName, *projectSlug, *prodBranch, *installID, onlyList, excludeList, *persistExclude)
+	plan, err := client.ScanProjectWithBindingEnvironment(ctx, src, sourceName, *projectSlug, *bindingRepo, *prodBranch, *installID, onlyList, excludeList, *persistExclude, false, *environment)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
@@ -124,7 +167,69 @@ func cmdScan(args []string) int {
 	return printPlanTextWithExplain(osStdout, plan, excludeList, *showAffected, *explain)
 }
 
-// runProjectDeployPreview is the read-only preview path for
+type connectedRepoScanOptions struct {
+	tarball, path, repo, ref, projectSlug, bindingRepo, productionBranch string
+	only, exclude, environment                                           string
+	installID                                                            int64
+	showAffected, explain                                                bool
+}
+
+func runConnectedRepoScan(opts connectedRepoScanOptions) int {
+	if opts.tarball != "" || opts.path != "" {
+		return printErr("Could not resolve source", errors.New("--tarball, --path, and --repo are mutually exclusive"))
+	}
+	if err := validateRepoSlug(opts.repo); err != nil {
+		return printErr("Could not resolve source", fmt.Errorf("invalid --repo: %w", err))
+	}
+	if err := validateGitHubRef(opts.ref); err != nil {
+		return printErr("Could not resolve source", fmt.Errorf("invalid --ref: %w", err))
+	}
+	if opts.installID < 0 {
+		return printErr("Invalid --install-id", errors.New("must be zero or a positive integer"))
+	}
+	if opts.projectSlug == "" {
+		opts.projectSlug = defaultProjectSlug(filepath.Base(opts.repo) + ".tar.gz")
+	}
+	if !api.ValidProjectSlug(opts.projectSlug) {
+		return printErr("Invalid --project-slug", projectSlugValidationError(opts.projectSlug))
+	}
+	if opts.bindingRepo == "" {
+		opts.bindingRepo = opts.repo
+	}
+	if err := validateRepoSlug(opts.bindingRepo); err != nil {
+		return printErr("Invalid --repository", err)
+	}
+	if err := validateProjectEnvironmentFlag(opts.environment); err != nil {
+		return printErr("Invalid --environment", err)
+	}
+	return executeConnectedRepoScan(opts)
+}
+
+func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
+	onlyList, excludeList := splitCSV(opts.only), splitCSV(opts.exclude)
+	if ok, clash := intersect(onlyList, excludeList); ok {
+		return printErr("Invalid flags", fmt.Errorf("--only and --exclude share workload(s): %s", strings.Join(clash, ", ")))
+	}
+	client, err := authedClientWithDeployTimeout(2 * time.Minute)
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	plan, err := client.ScanProjectSourceRef(context.Background(), api.ProjectSourceRefScanRequest{
+		Repo: opts.repo, Ref: opts.ref, ProjectSlug: opts.projectSlug,
+		RepoFullName: opts.bindingRepo, ProductionBranch: opts.productionBranch,
+		InstallID: opts.installID, Only: onlyList, Exclude: excludeList,
+		Environment: opts.environment,
+	})
+	if err != nil {
+		return printErr("Scan failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(plan))
+	}
+	return printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
+}
+
+// runProjectDeployPreviewWithMode is the read-only preview path for
 // `gregale deploy --dry-run/--diff --project-slug ...` and the
 // corresponding `--only` form. Project apply is planned by ScanProject,
 // not by the single-app deploy-diff engine, so using the same endpoint here
@@ -135,12 +240,15 @@ func cmdScan(args []string) int {
 // managed services, warnings, and the optional affected-set partition. The
 // scan endpoint is read-only even when the apply-only `--persist-exclude` flag
 // was present; this helper deliberately does not have access to that flag so a
-// preview cannot accidentally persist state.
-func runProjectDeployPreview(
+// preview cannot accidentally persist state. Strict previews return a
+// non-zero status when the plan cannot be applied; lenient previews retain the
+// rendered plan and return zero.
+func runProjectDeployPreviewWithMode(
 	ctx context.Context,
 	client *api.Client,
-	tarball, projectSlug, only, exclude string,
-	showAffected, emitJSON bool,
+	tarball, projectSlug, bindingRepo, productionBranch, only, exclude string,
+	installID int64,
+	showAffected, emitJSON, strict, noTriggers bool, environment string,
 ) int {
 	if tarball == "" {
 		return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
@@ -161,22 +269,30 @@ func runProjectDeployPreview(
 	}
 	defer func() { _ = src.Close() }()
 
-	plan, err := client.ScanProject(ctx, src, filepath.Base(tarball), projectSlug,
-		"main", 0, onlyList, excludeList, false)
+	plan, err := client.ScanProjectWithBindingEnvironment(ctx, src, filepath.Base(tarball), projectSlug,
+		bindingRepo, productionBranch, installID, onlyList, excludeList, false, noTriggers, environment)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
 	if emitJSON {
-		return jsonOut(writeJSON(plan))
+		if code := jsonOut(writeJSON(plan)); code != 0 {
+			return code
+		}
+		if strict && !plan.CanApply {
+			return 1
+		}
+		return 0
 	}
-	return printPlanText(osStdout, plan, excludeList, showAffected)
+	printPlanText(osStdout, plan, excludeList, showAffected)
+	if strict && !plan.CanApply {
+		return 1
+	}
+	return 0
 }
 
-// resolveScanSource normalises the three input shapes (--tarball /
-// --path / --repo) into a (path, sourceName, cleanup, err). For
-// --repo the tarball is fetched via the install token and dropped
-// into a tmpfile (cleanup removes it). For --path the local directory
-// is auto-packed via the same autoPackCwd the deploy path uses.
+// resolveScanSource normalises local input (--tarball / --path) into a
+// (path, sourceName, cleanup, err). Repository input is handled before this
+// function by runConnectedRepoScan so installation credentials stay server-side.
 func resolveScanSource(
 	tarball, pathFlag, repo, ref string, installID int64,
 ) (string, string, func(), error) {
@@ -213,24 +329,10 @@ func resolveScanSource(
 			return "", "", func() {}, err
 		}
 		_ = n
-		return path, filepath.Base(path) + ".tar.gz", func() { _ = os.Remove(path) }, nil
+		return path, filepath.Base(filepath.Clean(pathFlag)) + ".tar.gz", func() { _ = os.Remove(path) }, nil
 	}
 	if repo != "" {
-		if err := validateRepoSlug(repo); err != nil {
-			return "", "", func() {}, fmt.Errorf("invalid --repo: %w", err)
-		}
-		if err := validateGitHubRef(ref); err != nil {
-			return "", "", func() {}, fmt.Errorf("invalid --ref: %w", err)
-		}
-		if installID <= 0 {
-			return "", "", func() {}, errors.New("--repo requires --install-id")
-		}
-		path, err := fetchRepoTarball(repo, ref, installID)
-		if err != nil {
-			return "", "", func() {}, err
-		}
-		return path, fmt.Sprintf("%s-%s.tar.gz", strings.ReplaceAll(repo, "/", "-"), ref),
-			func() { _ = os.Remove(path) }, nil
+		return "", "", func() {}, errors.New("--repo must use the connected repository scan endpoint")
 	}
 	// zero-config: stdin is a TTY → pack $PWD (issue #313)
 	if stdoutIsTTY() && stdinIsTTY() {
@@ -248,54 +350,9 @@ func resolveScanSource(
 			return "", "", func() {}, err
 		}
 		_ = n
-		return path, filepath.Base(path) + ".tar.gz", func() { _ = os.Remove(path) }, nil
+		return path, filepath.Base(cwd) + ".tar.gz", func() { _ = os.Remove(path) }, nil
 	}
 	return "", "", func() {}, errors.New("one of --tarball, --path, --repo, or a TTY cwd is required")
-}
-
-// fetchRepoTarball shells out to curl to download the GitHub tarball
-// using the install token from env or keyring. Returns the tmp path.
-// The function lives in the CLI (not pkg/) because the install token
-// lives in the customer's keychain — apid does not see it.
-//
-// Curl+sha256+tar pattern mirrors CI's vacuum binary download
-// (memory note: ci-vacuum-binary-download).
-func fetchRepoTarball(repoFullName, ref string, installID int64) (string, error) {
-	downloadURL, err := githubTarballURL(repoFullName, ref)
-	if err != nil {
-		return "", err
-	}
-	f, err := os.CreateTemp("", "gregale-repo-*.tar.gz")
-	if err != nil {
-		return "", err
-	}
-	_ = f.Close()
-	path := f.Name()
-	token, err := readInstallToken(installID)
-	if err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("read install token: %w", err)
-	}
-	cmd := exec.Command("curl", "-sSL", "--fail-with-body",
-		"-H", "Authorization: Bearer "+token,
-		"-H", "Accept: application/vnd.github+json",
-		"-o", path, downloadURL)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("curl: %w: %s", err, string(out))
-	}
-	return path, nil
-}
-
-// readInstallToken pulls a GitHub install token from env or keyring.
-// Tries GREGALE_INSTALL_TOKEN_<ID> first (env override for CI), then
-// errors cleanly so the caller can surface a "run `gregale connect`
-// first" message.
-func readInstallToken(installID int64) (string, error) {
-	if v := os.Getenv(fmt.Sprintf("GREGALE_INSTALL_TOKEN_%d", installID)); v != "" {
-		return v, nil
-	}
-	return "", fmt.Errorf("no install token for id %d — run `gregale connect` first", installID)
 }
 
 // defaultProjectSlug derives a kebab slug from the source path's
@@ -317,7 +374,35 @@ func defaultProjectSlug(p string) string {
 		}
 	}
 	base = strings.TrimSuffix(base, filepath.Ext(base))
-	return base
+	return sanitizeProjectSlug(base)
+}
+
+func sanitizeProjectSlug(value string) string {
+	value = strings.ToLower(value)
+	var out strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			out.WriteRune(r)
+		case r == '-', r == '_', r == ' ', r == '.':
+			out.WriteByte('-')
+		}
+	}
+	slug := strings.Trim(out.String(), "-")
+	if slug == "" {
+		slug = "project"
+	}
+	if len(slug) > 63 {
+		slug = strings.TrimRight(slug[:63], "-")
+	}
+	if slug == "" {
+		return "project"
+	}
+	return slug
+}
+
+func projectSlugValidationError(slug string) error {
+	return fmt.Errorf("%q must contain 1-63 lowercase letters, digits, or internal hyphens", slug)
 }
 
 // splitCSV returns the trimmed lowercase entries of s. Empty input → nil.
@@ -394,6 +479,9 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 //nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
+	if plan.Environment != "" {
+		fmt.Fprintf(w, "Environment: %s\n", plan.Environment)
+	}
 	fmt.Fprintf(w, "Scan source: %s   tier: %s\n", plan.ScanSource, plan.Tier)
 	fmt.Fprintf(w, "Quota: %d/%d apps   %d/%d crons\n",
 		plan.ObservedApps, plan.LimitApps, plan.ObservedCrons, plan.LimitCrons)
@@ -416,15 +504,11 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	// AND --exclude rescued it (server invariant: gateRescuedByExclude
 	// => canApply=true), surface the rescue BEFORE the can_apply:true
 	// line so the operator sees "your --exclude saved you". The wire
-	// invariant means the early-return below cannot fire on a rescued
-	// plan — CanApply is true whenever GateRescuedByExclude is true.
+	// invariant means CanApply is true whenever GateRescuedByExclude is true.
 	// The CanApplyReasons slice carries the pre-exclude blocker list
 	// (what would have failed without --exclude); we render it as a
 	// bulleted set so a single-problem case and a multi-problem case
-	// look the same. Do NOT remove the !CanApply early-return — that
-	// path is the operator-visible "this plan failed" surface and
-	// planProblem (below) carries the wire code; changing it would
-	// silently break script grep on "can_apply: false".
+	// look the same.
 	if plan.CanApply && plan.GateRescuedByExclude {
 		PrintWarn(w, "Gate rescued by --exclude (pre-exclude gate was blocked):")
 		if len(plan.CanApplyReasons) == 0 {
@@ -437,12 +521,12 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	}
 	if !plan.CanApply {
 		fmt.Fprintln(w, "can_apply: false")
-		if explain {
-			printPlanDetectionTrace(w, plan.Workloads)
+		for _, reason := range plan.CanApplyReasons {
+			fmt.Fprintf(w, "  reason: %s\n", reason)
 		}
-		return 0
+	} else {
+		fmt.Fprintln(w, "can_apply: true")
 	}
-	fmt.Fprintln(w, "can_apply: true")
 	excludeIdx := make(map[string]bool, len(excludeSet))
 	for _, s := range excludeSet {
 		excludeIdx[s] = true
@@ -493,6 +577,9 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		for _, wn := range plan.Warnings {
 			fmt.Fprintln(w, "  - "+wn)
 		}
+	}
+	if explain && len(plan.Workloads) == 0 {
+		printPlanDetectionTrace(w, nil)
 	}
 	return 0
 }
@@ -613,7 +700,7 @@ func printAffectedText(w io.Writer, plan api.PlanResponse, excludedSlugs map[str
 }
 
 // confirmPlan prints the plan and waits for a y/N confirmation. Reads
-// from r (typically os.Stdin) so tests can stub it. Returns true on
+// from r (typically osStdin) so tests can stub it. Returns true on
 // 'y' / 'yes' (case-insensitive); false on EOF, 'n', or any other
 // input — git does the same.
 //
@@ -623,6 +710,12 @@ func printAffectedText(w io.Writer, plan api.PlanResponse, excludedSlugs map[str
 // confirm-prompt terse; the destructive --exclude warning lives
 // inside printPlanText and fires regardless of showAffected.
 func confirmPlan(w io.Writer, r io.Reader, plan api.PlanResponse, excludeSet []string, showAffected bool) bool {
+	// A destructive plan must always show its removal partition before the
+	// operator is asked to approve it. Keep --show-affected opt-in for
+	// ordinary previews, but promote it automatically at the mutation gate.
+	if len(plan.Removed) > 0 {
+		showAffected = true
+	}
 	printPlanText(w, plan, excludeSet, showAffected)
 	//nolint:errcheck // same rationale as printPlanText; a failed Fprintln
 	// at the prompt is no different from the read below failing.

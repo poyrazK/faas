@@ -17,10 +17,12 @@ import (
 
 type migrationHandlerVMM struct {
 	vmmStubBase
-	snapshots int
-	resumes   int
-	destroys  int
-	wakeReq   fcvm.WakeRequest
+	snapshots                        int
+	resumes                          int
+	destroys                         int
+	deletes                          int
+	deletedMemKey, deletedVMStateKey string
+	wakeReq                          fcvm.WakeRequest
 }
 
 // migrationSnapshotOnlyVMM models a partially wired vmmd. Keeping the
@@ -58,6 +60,12 @@ func (f *migrationHandlerVMM) Wake(_ context.Context, req fcvm.WakeRequest) (*fc
 
 func (f *migrationHandlerVMM) Destroy(_ context.Context, _ string) error {
 	f.destroys++
+	return nil
+}
+
+func (f *migrationHandlerVMM) DeleteWarmSnapshot(_ context.Context, memKey, vmstateKey string) error {
+	f.deletes++
+	f.deletedMemKey, f.deletedVMStateKey = memKey, vmstateKey
 	return nil
 }
 
@@ -146,13 +154,23 @@ func TestMigrationHandlers_RestoreAndSourceLifecycle(t *testing.T) {
 	if vmm.destroys != 1 {
 		t.Fatalf("source Destroy calls = %d, want 1", vmm.destroys)
 	}
+	if vmm.deletes != 1 || vmm.deletedMemKey != prepared.GetMemStorageKey() ||
+		vmm.deletedVMStateKey != prepared.GetVmstateStorageKey() {
+		t.Fatalf("snapshot cleanup = calls=%d mem=%q vmstate=%q, want prepared pair",
+			vmm.deletes, vmm.deletedMemKey, vmm.deletedVMStateKey)
+	}
 }
 
 func TestMigrationHandlers_CancelResumesBeforeDroppingLease(t *testing.T) {
 	ctx := context.Background()
 	vmm := &migrationHandlerVMM{}
 	s := New(vmm, wire.NewOpsMetrics("vmmd_test"), "1.10.0", nil)
-	if err := s.migrations.put(&activeMigration{instanceID: "cancel-me", leaseToken: "cancel-token"}); err != nil {
+	if err := s.migrations.put(&activeMigration{
+		instanceID: "cancel-me",
+		leaseToken: "cancel-token",
+		memKey:     "snap/deployment/warm/captures/capture/mem",
+		vmstateKey: "snap/deployment/warm/captures/capture/vmstate",
+	}); err != nil {
 		t.Fatalf("seed lease: %v", err)
 	}
 	if _, err := s.CancelLiveMigration(ctx, &vmmdpb.CancelLiveMigrationRequest{
@@ -162,6 +180,9 @@ func TestMigrationHandlers_CancelResumesBeforeDroppingLease(t *testing.T) {
 	}
 	if vmm.resumes != 1 {
 		t.Fatalf("ResumeVM calls = %d, want 1", vmm.resumes)
+	}
+	if vmm.deletes != 1 {
+		t.Fatalf("snapshot cleanup calls = %d, want 1", vmm.deletes)
 	}
 	if _, err := s.migrations.get("cancel-me", "cancel-token"); err == nil {
 		t.Fatal("cancel lease remains after successful resume")

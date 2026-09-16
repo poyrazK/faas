@@ -24,6 +24,7 @@ func TestWriteBuildManifest_RoundTrip(t *testing.T) {
 		DependencyCache:       true,
 		DependencyCacheImport: true,
 		KeepWarm:              true,
+		Function:              true,
 		TimeoutSec:            600,
 		LogTailBytes:          4096,
 	}
@@ -40,7 +41,7 @@ func TestWriteBuildManifest_RoundTrip(t *testing.T) {
 	}
 	if got.BuildID != m.BuildID || got.Framework != m.Framework || got.TimeoutSec != m.TimeoutSec ||
 		got.DependencyCache != m.DependencyCache || got.DependencyCacheImport != m.DependencyCacheImport ||
-		got.KeepWarm != m.KeepWarm {
+		got.KeepWarm != m.KeepWarm || got.Function != m.Function {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", got, m)
 	}
 }

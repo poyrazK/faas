@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -142,7 +143,7 @@ func TestDetectWorkspaces_PackageJSONObjectForm(t *testing.T) {
   }
 }`)},
 		"apps/web/Dockerfile":    &fstest.MapFile{Data: []byte("FROM scratch")},
-		"apps/api/package.json":  &fstest.MapFile{Data: []byte(`{}`)},
+		"apps/api/package.json":  &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node server.js"}}`)},
 		"packages/lib/README.md": &fstest.MapFile{Data: []byte("# lib\n")},
 	}
 	seeds, _, err := detectWorkspaces(fsys)
@@ -186,6 +187,145 @@ use (
 	}
 }
 
+func TestDetectWorkspaces_CargoMembersAndExcludes(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"Cargo.toml": &fstest.MapFile{Data: []byte(`[workspace]
+members = ["crates/*", "tools/runner"]
+exclude = ["crates/internal"]
+resolver = "2"
+`)},
+		"crates/api/Cargo.toml":      &fstest.MapFile{Data: []byte("[package]\nname = \"api\"\n")},
+		"crates/internal/Cargo.toml": &fstest.MapFile{Data: []byte("[package]\nname = \"internal\"\n")},
+		"crates/readme/README.md":    &fstest.MapFile{Data: []byte("# docs\n")},
+		"tools/runner/Cargo.toml":    &fstest.MapFile{Data: []byte("[package]\nname = \"runner\"\n")},
+	}
+
+	seeds, warnings, err := detectWorkspaces(fsys)
+	if err != nil {
+		t.Fatalf("detectWorkspaces: %v", err)
+	}
+	if got := names(seeds); !equalSet(got, []string{"api", "runner"}) {
+		t.Fatalf("Cargo workspace members = %v, want {api, runner}", got)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+	for _, seed := range seeds {
+		if seed.source != "Cargo.toml: "+seed.rootDir {
+			t.Fatalf("seed source = %q for root %q", seed.source, seed.rootDir)
+		}
+	}
+}
+
+func TestDetectWorkspacesUsesDeclaredPackageNamesForRepeatedBasenames(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"pnpm-workspace.yaml":       &fstest.MapFile{Data: []byte("packages:\n  - frontend/api\n  - backend/api\n")},
+		"frontend/api/package.json": &fstest.MapFile{Data: []byte(`{"name":"frontend-api","scripts":{"start":"node server.js"}}`)},
+		"backend/api/package.json":  &fstest.MapFile{Data: []byte(`{"name":"backend-api","scripts":{"start":"node server.js"}}`)},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{result.Workloads[0].Name, result.Workloads[1].Name}; !equalSet(got, []string{"frontend-api", "backend-api"}) {
+		t.Fatalf("workspace names = %v, want declared package identities", got)
+	}
+	if result.Workloads[0].RootDir == result.Workloads[1].RootDir {
+		t.Fatalf("workspace roots collapsed: %#v", result.Workloads)
+	}
+}
+
+func TestDetectWorkspacesNormalizesScopedPackageName(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"package.json":              &fstest.MapFile{Data: []byte(`{"workspaces":["packages/api"]}`)},
+		"packages/api/package.json": &fstest.MapFile{Data: []byte(`{"name":"@acme/api","scripts":{"start":"node index.js"}}`)},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Workloads) != 1 || result.Workloads[0].Name != "acme-api" {
+		t.Fatalf("scoped package workload = %#v, want acme-api", result.Workloads)
+	}
+}
+
+func TestDetectWorkspacesCurrentNxProjectJSON(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"nx.json":      &fstest.MapFile{Data: []byte(`{"defaultBase":"main"}`)},
+		"package.json": &fstest.MapFile{Data: []byte(`{"private":true}`)},
+		"modules/api/project.json": &fstest.MapFile{Data: []byte(`{
+  "name":"api",
+  "root":"modules/api",
+  "projectType":"application",
+  "targets":{"serve":{"command":"node index.js"}}
+}`)},
+		"modules/api/package.json": &fstest.MapFile{Data: []byte(`{"name":"nx-api","private":true}`)},
+		"modules/api/index.js":     &fstest.MapFile{Data: []byte("console.log('ready')\n")},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Workloads) != 1 {
+		t.Fatalf("Nx workloads = %#v, want one", result.Workloads)
+	}
+	workload := result.Workloads[0]
+	if workload.Name != "api" || workload.RootDir != "modules/api" || !workload.CommandShell ||
+		len(workload.Command) != 1 || workload.Command[0] != "node index.js" || workload.Class != ClassHTTP {
+		t.Fatalf("Nx workload = %#v", workload)
+	}
+	if result.Tier != TierWorkspace || workload.Source == "root-floor" {
+		t.Fatalf("Nx detection fell back to root: tier=%v workload=%#v", result.Tier, workload)
+	}
+}
+
+func TestDetectWorkspacesPackageLevelNxTarget(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"nx.json": &fstest.MapFile{Data: []byte(`{"defaultBase":"main"}`)},
+		"services/jobs/package.json": &fstest.MapFile{Data: []byte(`{
+  "name":"jobs-worker",
+  "nx":{"targets":{"worker":{"options":{"command":"node worker.js"}}}}
+}`)},
+		"services/jobs/worker.js": &fstest.MapFile{Data: []byte("console.log('work')\n")},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Workloads) != 1 || result.Workloads[0].Name != "jobs-worker" || result.Workloads[0].Class != ClassWorker {
+		t.Fatalf("package-level Nx workload = %#v", result.Workloads)
+	}
+}
+
+func TestScan_CargoWorkspaceDoesNotFallBackToRoot(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"Cargo.toml": &fstest.MapFile{Data: []byte(`[workspace]
+members = ["crates/api"]
+resolver = "2"
+`)},
+		"crates/api/Cargo.toml":  &fstest.MapFile{Data: []byte("[package]\nname = \"workspace-api\"\n")},
+		"crates/api/src/main.rs": &fstest.MapFile{Data: []byte("fn main() {}\n")},
+	}
+
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(result.Workloads) != 1 {
+		t.Fatalf("workloads = %#v, want one Cargo member", result.Workloads)
+	}
+	workload := result.Workloads[0]
+	if workload.Name != "workspace-api" || workload.RootDir != "crates/api" || workload.Tier != TierWorkspace {
+		t.Fatalf("workload = %#v, want declared Cargo package workspace-api at crates/api", workload)
+	}
+}
+
 // TestDetectWorkspaces_NxProjectsMap — nx.json with the modern
 // "projects" map form: keys become workload names.
 func TestDetectWorkspaces_NxProjectsMap(t *testing.T) {
@@ -198,7 +338,7 @@ func TestDetectWorkspaces_NxProjectsMap(t *testing.T) {
     "backend": {}
   }
 }`)},
-		"frontend/package.json": &fstest.MapFile{Data: []byte(`{}`)},
+		"frontend/package.json": &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node server.js"}}`)},
 	}
 	seeds, _, err := detectWorkspaces(fsys)
 	if err != nil {
@@ -233,6 +373,44 @@ func TestDetectWorkspaces_PnpmMonorepo_AlreadyCovered(t *testing.T) {
 	}
 	if !equalSet(names, []string{"api", "web"}) {
 		t.Errorf("pnpm members = %v, want {api, web}", names)
+	}
+}
+
+func TestDetectWorkspaces_PnpmRecursivePrefixAndExclusion(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"pnpm-workspace.yaml": &fstest.MapFile{Data: []byte(`packages:
+  - "./modules/**"
+  - "!modules/internal"
+`)},
+		"modules/group/api/package.json": &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node server.js"}}`)},
+		"modules/internal/package.json":  &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node private.js"}}`)},
+		"modules/shared/package.json":    &fstest.MapFile{Data: []byte(`{"main":"index.js"}`)},
+	}
+	seeds, warnings, err := detectWorkspaces(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := names(seeds); !equalSet(got, []string{"api"}) {
+		t.Fatalf("workloads = %v, want only recursive api", got)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "modules/shared") {
+		t.Fatalf("warnings = %v, want shared library explanation", warnings)
+	}
+}
+
+func TestExpandWorkspacePatterns_GlobstarMatchesZeroOrMoreDirectories(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"api/package.json":                &fstest.MapFile{Data: []byte(`{}`)},
+		"groups/backend/api/package.json": &fstest.MapFile{Data: []byte(`{}`)},
+	}
+	members, err := expandWorkspacePatterns(fsys, []string{"**/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalSet(members, []string{"api", "groups/backend/api"}) {
+		t.Fatalf("members = %v", members)
 	}
 }
 

@@ -110,6 +110,9 @@ func TestUnitVmmd_Shape(t *testing.T) {
 	if !hasReadWrite(u, "/srv/fc") {
 		t.Errorf("vmmd: missing ReadWritePaths=/srv/fc (jailer tmpfs)")
 	}
+	if !hasReadWrite(u, "/sys/fs/cgroup/faas.slice") {
+		t.Errorf("vmmd: missing ReadWritePaths=/sys/fs/cgroup/faas.slice (snapshot memory headroom)")
+	}
 	// vmmd is the only root component — no User/Group by design.
 	if u.User != "" {
 		t.Errorf("vmmd: User = %q, want empty (root by design)", u.User)
@@ -151,17 +154,35 @@ func TestUnitApid_Shape(t *testing.T) {
 	if u.Slice != FaasCPSlice {
 		t.Errorf("apid: Slice = %q, want %q", u.Slice, FaasCPSlice)
 	}
+	if !hasEnvironment(u, "FAAS_BILLING_MODE", "live") {
+		t.Error("apid: missing live billing mode default")
+	}
 	if !hasEnvironment(u, "FAAS_HOST_HMAC_KEY_PATH", "%d/faas_host_hmac_key") {
 		t.Error("apid: missing FAAS_HOST_HMAC_KEY_PATH credential-dir environment")
 	}
 	if !hasLoadCredential(u, "faas_host_hmac_key", "/etc/faas/secrets/host.hmac.key") {
 		t.Error("apid: missing required faas_host_hmac_key LoadCredential")
 	}
+	if !hasEnvironment(u, "FAAS_FLEET_AGE_RECIPIENT_PATH", "%d/faas_fleet_age_recipient") {
+		t.Error("apid: fleet age recipient bypasses the systemd credential directory")
+	}
+	if !hasLoadCredential(u, "faas_fleet_age_recipient", "/etc/faas/secrets/fleet.age.pub") {
+		t.Error("apid: missing required faas_fleet_age_recipient LoadCredential")
+	}
+	if !hasEnvironment(u, "FAAS_HOST_AGE_RECIPIENT_PATH", "%d/faas_host_age_recipient") {
+		t.Error("apid: host age recipient bypasses the systemd credential directory")
+	}
+	if !hasLoadCredential(u, "faas_host_age_recipient", "/etc/faas/secrets/host.age.pub") {
+		t.Error("apid: missing required faas_host_age_recipient LoadCredential")
+	}
 	if !hasEnvironment(u, "FAAS_LOG_ARCHIVE_CREDS_PATH", "%d/faas_archive_creds") {
 		t.Error("apid: missing optional log archive credential-dir environment")
 	}
 	if !hasOptionalLoadCredential(u, "faas_archive_creds", "/etc/faas/secrets/storage-box/archive-creds.json") {
 		t.Error("apid: missing optional faas_archive_creds LoadCredential")
+	}
+	if !hasReadWrite(u, "/srv/fc") {
+		t.Error("apid: missing artifact lifecycle access to /srv/fc")
 	}
 }
 
@@ -193,6 +214,12 @@ func TestUnitSchedd_Shape(t *testing.T) {
 	}
 	if !hasOptionalLoadCredential(u, "host.age.previous", "/etc/faas/secrets/host.age.previous") {
 		t.Error("schedd: missing optional host.age.previous LoadCredential")
+	}
+	if !hasEnvironment(u, "FAAS_SIGN_PUB", "%d/faas_sign_pub") {
+		t.Error("schedd: signing public key bypasses the systemd credential directory")
+	}
+	if !hasLoadCredential(u, "faas_sign_pub", "/etc/faas/secrets/sign-pub.pem") {
+		t.Error("schedd: missing signing public key LoadCredential")
 	}
 }
 
@@ -240,6 +267,9 @@ func TestUnitGatewaydInternal_Shape(t *testing.T) {
 	if !hasOptionalLoadCredential(u, "faas_archive_creds", "/etc/faas/secrets/storage-box/archive-creds.json") {
 		t.Error("gatewayd-internal: missing optional faas_archive_creds LoadCredential")
 	}
+	if !hasReadWrite(u, "/var/lib/faas/egress-meter") {
+		t.Error("gatewayd-internal: missing durable egress metering access")
+	}
 }
 
 func TestUnitGatewaydPublic_Shape(t *testing.T) {
@@ -274,6 +304,18 @@ func TestUnitGithubd_Shape(t *testing.T) {
 	if !hasReadWrite(u, "/run/faas") {
 		t.Errorf("githubd: missing ReadWritePaths=/run/faas (githubd.sock home)")
 	}
+	if !hasEnvironment(u, "FAAS_HOST_AGE_PUB", "%d/faas_fleet_age_recipient") {
+		t.Error("githubd: fleet age recipient bypasses the systemd credential directory")
+	}
+	if !hasLoadCredential(u, "faas_fleet_age_recipient", "/etc/faas/secrets/fleet.age.pub") {
+		t.Error("githubd: missing fleet age recipient LoadCredential")
+	}
+	if !hasEnvironment(u, "FAAS_GITHUB_APP_KEY_PATH", "%d/faas_github_app_key_unit") {
+		t.Error("githubd: App private key bypasses the systemd credential directory")
+	}
+	if !hasLoadCredential(u, "faas_github_app_key_unit", "/etc/faas/secrets/githubd/app.pem") {
+		t.Error("githubd: missing App private key LoadCredential")
+	}
 }
 
 func TestUnitImaged_Shape(t *testing.T) {
@@ -306,14 +348,17 @@ func TestUnitMeterd_Shape(t *testing.T) {
 	if u.Slice != FaasCPSlice {
 		t.Errorf("meterd: Slice = %q, want %q", u.Slice, FaasCPSlice)
 	}
+	if !hasEnvironment(u, "FAAS_BILLING_MODE", "live") {
+		t.Error("meterd: missing live billing mode default")
+	}
 	if !hasReadWrite(u, "/var/log/faas") {
 		t.Errorf("meterd: missing ReadWritePaths=/var/log/faas")
 	}
 	if !hasEnvironment(u, "FAAS_PROMETHEUS_URL", "http://127.0.0.1:9095") {
 		t.Error("meterd: missing local Prometheus endpoint for alert evaluation")
 	}
-	if !hasEnvironment(u, "FAAS_HOST_AGE_IDENTITY_PATH", "%d/faas_host_age_identity") {
-		t.Error("meterd: missing host age credential path for webhook secret decryption")
+	if !hasEnvironment(u, "FAAS_HOST_AGE_IDENTITY_PATH", "%d/faas_fleet_age_identity") {
+		t.Error("meterd: missing fleet age credential path for webhook secret decryption")
 	}
 	if !hasLoadCredential(u, "faas_host_age_identity", "/etc/faas/secrets/host.age") {
 		t.Error("meterd: missing current host age identity LoadCredential")
@@ -401,6 +446,23 @@ func TestRegistry_UnitConstructorsNonNil(t *testing.T) {
 	for _, e := range Registry {
 		if e.Unit == nil {
 			t.Errorf("%s: Unit constructor nil", e.Name)
+		}
+	}
+}
+
+// Control-plane secrets live below a root-owned 0700 directory. systemd can
+// read them before dropping privileges and expose per-service copies through
+// %d, but a non-root daemon cannot traverse the source directory itself.
+func TestUnprivilegedUnits_DoNotReadSecretsDirectoryDirectly(t *testing.T) {
+	for _, entry := range UnitEntries() {
+		u := entry.Unit()
+		if u.User == "" || u.User == "root" {
+			continue
+		}
+		for _, env := range u.Environment {
+			if strings.HasPrefix(env.Value, "/etc/faas/secrets/") {
+				t.Errorf("%s: %s points directly at root-only secrets path %q; use LoadCredential and %%d", entry.Name, env.Key, env.Value)
+			}
 		}
 	}
 }

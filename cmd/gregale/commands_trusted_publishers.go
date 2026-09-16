@@ -78,7 +78,7 @@ func cmdTrustedPublishers(args []string) int {
 // the SDK's authedClient() helper surfaces the 401/403 shape for
 // missing or wrong-scope keys.
 func cmdTrustedPublishersAdd(args []string) int {
-	fs := flag.NewFlagSet("trusted-publishers add", flag.ContinueOnError)
+	fs := newFlagSet("trusted-publishers add", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -113,7 +113,7 @@ func cmdTrustedPublishersAdd(args []string) int {
 // warning — removing a row that was already removed (a concurrent
 // operator action) is idempotent at the wire surface.
 func cmdTrustedPublishersRemove(args []string) int {
-	fs := flag.NewFlagSet("trusted-publishers remove", flag.ContinueOnError)
+	fs := newFlagSet("trusted-publishers remove", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -156,11 +156,10 @@ func isTrustedSignerNotFound(err error) bool {
 }
 
 // cmdTrustedPublishersList prints every trusted-publisher on the
-// app. Output is line-oriented (one row per signer). --json (future
-// patch; out of scope here) would emit the raw
-// AppTrustedSignerListResponse JSON for scripting.
+// app. Human output is line-oriented. JSON mode follows the CLI's list
+// contract and emits one signer per NDJSON line; an empty list emits no rows.
 func cmdTrustedPublishersList(args []string) int {
-	fs := flag.NewFlagSet("trusted-publishers list", flag.ContinueOnError)
+	fs := newFlagSet("trusted-publishers list", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -179,6 +178,9 @@ func cmdTrustedPublishersList(args []string) int {
 	out, err := client.ListAppTrustedSigners(ctx, slug)
 	if err != nil {
 		return printErr("GET trusted_signers", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeNDJSON(out.Signers))
 	}
 	if len(out.Signers) == 0 {
 		PrintOK(os.Stdout, "no trusted signers configured for app %q\n", slug)

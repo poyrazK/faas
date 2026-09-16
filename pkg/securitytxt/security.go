@@ -9,10 +9,10 @@ const Content = "Contact: mailto:security@gregale.dev\n" +
 	"Contact: https://github.com/poyrazK/faas/security/advisories/new\n" +
 	"Expires: 2027-12-31T23:59:59z\n" +
 	"Preferred-Languages: en\n" +
-	"Canonical: https://docs.gregale.dev/.well-known/security.txt\n" +
-	"Encryption: https://docs.gregale.dev/security/pgp.asc\n" +
-	"Acknowledgments: https://docs.gregale.dev/security/acknowledgments\n" +
-	"Policy: https://docs.gregale.dev/security\n"
+	"Canonical: https://gregale.dev/docs/.well-known/security.txt\n" +
+	"Encryption: https://gregale.dev/docs/security/pgp.asc\n" +
+	"Acknowledgments: https://gregale.dev/docs/security/acknowledgments\n" +
+	"Policy: https://gregale.dev/docs/security\n"
 
 // Handler returns the anonymous GET/HEAD handler for /.well-known/security.txt.
 // The response is deliberately static so it remains available while the

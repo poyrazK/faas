@@ -23,12 +23,28 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 )
 
 // poolWithSkip opens a pgxpool via pgtest.Open (which skips when
-// PG is unavailable — same shape as the single-node metal tests).
+// PG is unavailable — same shape as the single-node metal tests) and migrates
+// it, which is the part that used to be missing.
+//
+// pgtest.OpenMigrated only clones a pre-built template database when
+// UseTemplateDatabase is set; otherwise it falls back to plain Open and hands
+// back an EMPTY schema. CI's e2e shards set that variable, so these tests
+// passed there while every sibling metal test called dbMigrateUp explicitly.
+// The native gate does not set it, so the first hardware run failed all six of
+// these with:
+//
+//	twonode: upsert node A: ERROR: relation "compute_nodes" does not exist
+//	  (SQLSTATE 42P01)
+//
+// Migrating here rather than relying on the env var keeps the tests
+// self-sufficient: they work with or without the template-database
+// optimisation, which is what made this invisible for so long.
 func poolWithSkip(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	if os.Getenv("FAAS_TWO_NODE_REMOTE") == "1" {
@@ -51,7 +67,16 @@ func poolWithSkip(t *testing.T) *pgxpool.Pool {
 		t.Cleanup(pool.Close)
 		return pool
 	}
-	return pgtest.OpenMigrated(t)
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		return nil
+	}
+	// db.MigrateUp directly, not the dbMigrateUp helper: that lives in
+	// package e2e_test and these two-node files are package e2e.
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("two-node: migrate schema: %v", err)
+	}
+	return pool
 }
 
 // TestTwoNode_HeartbeatGapFlipsLifecycleUnavailable — Task #72
@@ -62,6 +87,7 @@ func poolWithSkip(t *testing.T) *pgxpool.Pool {
 func TestTwoNode_HeartbeatGapFlipsLifecycleUnavailable(t *testing.T) {
 	pool := poolWithSkip(t)
 	h := e2etest.StartTwoNode(t, pool)
+	h.RequireRemote(t)
 	fi := e2etest.NewCmdFaultInjector(t, pool)
 
 	// In native mode each compute-only box owns both vmmd and schedd. Stop

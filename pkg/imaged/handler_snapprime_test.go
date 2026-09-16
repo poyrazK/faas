@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/buildcache"
@@ -389,6 +390,54 @@ func TestHandleSnapshotBoot_RedeliverySafe(t *testing.T) {
 	}
 	if len(bld.calls) != buildCalls {
 		t.Errorf("redelivery caused extra Build call: %d -> %d", buildCalls, len(bld.calls))
+	}
+}
+
+func TestHandleSnapshotBoot_RetriesBusyBuildExportLease(t *testing.T) {
+	store := state.NewMemStore()
+	bld := &fakeBuilder{}
+	h := newHandlerWithBuilder(store, bld)
+	h.oci = fakePuller{digest: "sha256:abc", cfg: oci.ImageConfig{Cmd: []string{"/app/entry.sh"}}}
+	acct, _ := store.CreateAccount(context.Background(), "lease-retry@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "lease-retry", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc",
+	})
+	artifact := filepath.Join(t.TempDir(), "build-id", "build", "out", "image.tar")
+	if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("oci"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentRootfs(context.Background(), dep.ID, artifact, "build", 3); err != nil {
+		t.Fatal(err)
+	}
+	cleaner, err := os.OpenFile(artifact, os.O_RDONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cleaner.Close() }()
+	if err := syscall.Flock(int(cleaner.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.handleSnapshotBoot(context.Background(), snapshotBootPayload{AppID: app.ID, DeploymentID: dep.ID}); err != nil {
+		t.Fatalf("busy handoff should defer without failing: %v", err)
+	}
+	got, _ := store.DeploymentByID(context.Background(), dep.ID)
+	if got.Status != state.DeployPending || len(bld.calls) != 0 {
+		t.Fatalf("busy handoff mutated pipeline: status=%s builds=%d", got.Status, len(bld.calls))
+	}
+	if err := syscall.Flock(int(cleaner.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.handleSnapshotBoot(context.Background(), snapshotBootPayload{AppID: app.ID, DeploymentID: dep.ID}); err != nil {
+		t.Fatalf("retry after lease release: %v", err)
+	}
+	if len(bld.calls) != 1 {
+		t.Fatalf("retry build calls = %d, want 1", len(bld.calls))
 	}
 }
 

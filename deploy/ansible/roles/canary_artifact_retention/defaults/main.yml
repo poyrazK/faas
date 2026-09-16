@@ -1,0 +1,17 @@
+canary_artifact_retention_seconds: 86400
+canary_artifact_active_lease_seconds: 21600
+canary_artifact_pressure_grace_seconds: 7200
+canary_artifact_max_bytes: 5368709120
+
+# Each glob names a direct child that Gregale validation tooling may own. The
+# cleanup helper rejects paths outside this closed set before it writes state or
+# removes anything. Keep diagnostic roots here so an operator can distinguish
+# bounded test data from customer snapshots and release artifacts.
+canary_artifact_patterns:
+  - /opt/faas/canaries/*
+  - /var/tmp/gregale-*
+  - /var/tmp/faas-builder-acceptance-*
+  - /var/tmp/faas-metal-smoke-*
+  - /var/tmp/faas-native-e2e-*
+  - /srv/fc/restore-failure-inputs-*
+  - /srv/fc/cache/codex-stale-*

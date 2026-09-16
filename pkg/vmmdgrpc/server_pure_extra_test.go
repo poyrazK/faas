@@ -1,7 +1,7 @@
 // server_pure_extra_test.go — fill pkg/vmmdgrpc/server.go coverage of
 // the small pure / nil-safe-delegate surface that the bufconn test
 // only partially exercises. Targets WithEvents (chainable), the
-// nil-events noop branch of emitBootStartedMirror, the nil-cache
+// nil-events noop branch of emitBootObserved, the nil-cache
 // branches of ForgetNet/ForgetActivity, exportDirFor's interface
 // assertion (hit + miss), and Heartbeat (pure RPC).
 //
@@ -11,13 +11,19 @@ package vmmdgrpc
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net/netip"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/activity"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -33,32 +39,58 @@ func TestServer_WithEvents_Chainable(t *testing.T) {
 	}
 }
 
-// --- emitBootStartedMirror ---------------------------------------
+// --- emitBootObserved ---------------------------------------
 
-func TestServer_EmitBootStartedMirror_NilEventsNoOp(t *testing.T) {
-	// Default Server.events == nil → the mirror short-circuits.
+func TestServer_EmitBootObserved_NilEventsNoOp(t *testing.T) {
+	// Default Server.events == nil → the observation short-circuits.
 	s := &Server{}
-	s.emitBootStartedMirror(context.Background(), "inst-1", "restore")
+	s.emitBootObserved(context.Background(), "inst-1", "restore")
 	// No assertion needed beyond "no panic".
 }
 
-func TestServer_EmitBootStartedMirror_WithContextFields(t *testing.T) {
-	// When wire.FromContext carries an envelope, the mirror reads
-	// it. Without an events.Platform wired we can't observe the
-	// emit, so this test pins only the context-field read path:
-	// WithEvents(nil) + emit with a context carrying wire fields
-	// must still short-circuit safely.
+func TestServer_EmitBootObserved_WithContextFields(t *testing.T) {
+	store := state.NewMemStore()
+	platform := events.NewPlatform(
+		"vmmd",
+		store,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil,
+		nil,
+	)
 	ctx := context.Background()
-	ctx = wire.WithContext(ctx, wire.CorrelationFields{
-		WakeID:             "wake-1",
-		AppID:              "app-1",
-		Trigger:            "http",
-		QueuedCount:        3,
-		ConcurrencyAtAdmit: 7,
-	})
-	s := &Server{}
-	s.emitBootStartedMirror(ctx, "inst-1", "cold_boot")
-	// No panic, no observers wired. Pass.
+	ctx = wire.WithContext(ctx, wire.CorrelationFields{WakeID: "wake-1", AppID: "app-1"})
+	s := (&Server{}).WithEvents(platform).WithNodeID("node-1")
+	s.emitBootObserved(ctx, "inst-1", "cold_boot")
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		rows, err := store.ListEvents(context.Background(), "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) == 1 {
+			if rows[0].Kind != events.WakeBootObserved || rows[0].Actor != "vmmd" {
+				t.Fatalf("event = (%q, %q), want (%q, vmmd)", rows[0].Kind, rows[0].Actor, events.WakeBootObserved)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(rows[0].Data, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["wake_id"] != "wake-1" || payload["node_id"] != "node-1" || payload["method"] != "cold_boot" || payload["observed_at"] == nil {
+				t.Fatalf("payload = %+v", payload)
+			}
+			for _, schedulerOnly := range []string{"trigger", "trigger_class", "queued_count", "concurrency_at_admit", "at_capacity", "tier"} {
+				if _, ok := payload[schedulerOnly]; ok {
+					t.Errorf("payload contains scheduler-only field %q: %+v", schedulerOnly, payload)
+				}
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("boot observation was not persisted: %+v", rows)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // --- ForgetNet / ForgetActivity (nil-safe) -----------------------

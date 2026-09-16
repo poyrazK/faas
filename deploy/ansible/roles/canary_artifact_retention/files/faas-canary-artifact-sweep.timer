@@ -1,0 +1,12 @@
+[Unit]
+Description=Sweep Gregale validation artifacts hourly
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=1h
+RandomizedDelaySec=5m
+Persistent=true
+Unit=faas-canary-artifact-sweep.service
+
+[Install]
+WantedBy=timers.target

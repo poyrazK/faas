@@ -61,6 +61,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -71,6 +73,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cosign"
+	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -80,15 +83,19 @@ import (
 //
 // Fields are exported for test consumption: H.APIDURL, H.GatewayURL, H.Pool.
 type Harness struct {
-	T                 *testing.T
-	Pool              *pgxpool.Pool
-	TmpDir            string
-	BinDir            string
-	SockDir           string // short-path unix-socket directory (see Start comment)
-	APIDURL           string
-	ScheddSock        string
-	VMMDPath          string
-	VMMDSock          string
+	T          *testing.T
+	Pool       *pgxpool.Pool
+	TmpDir     string
+	BinDir     string
+	SockDir    string // short-path unix-socket directory (see Start comment)
+	APIDURL    string
+	ScheddSock string
+	VMMDPath   string
+	VMMDSock   string
+	// SignKeyPath is the PRIVATE half of the cosign keypair whose public half
+	// schedd verifies with. imaged must sign with this exact key; see
+	// writeScheddSignPub.
+	SignKeyPath       string
 	GatewayURL        string
 	GatewayControlURL string // /metrics + /healthz, loopback only
 	// RecoveryHMACKeyHex is a per-test 64-char hex string (32 bytes
@@ -193,16 +200,24 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 
 	if which&Schedd != 0 {
 		sockPath := filepath.Join(h.SockDir, "schedd.sock")
-		vmmdSock := filepath.Join(h.SockDir, "vmmd.sock")
+		vmmdSock := os.Getenv("FAAS_E2E_VMMD_SOCKET")
+		if vmmdSock == "" {
+			vmmdSock = filepath.Join(h.SockDir, "vmmd.sock")
+		}
+		h.ScheddSock = sockPath
+		h.VMMDSock = vmmdSock
 		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
 		signPubPath := writeScheddSignPub(t, h)
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
 		)
+		// Repoint the seeded node before schedd's initial heartbeat. A
+		// KVM-free test may already have a fake VMMD listening on the
+		// configured socket; even when it does not, keeping the durable
+		// target aligned before boot avoids one probe using /run/faas.
+		setDefaultLocalScheddTarget(t, pool, sockPath, vmmdSock)
 		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
-		h.ScheddSock = sockPath
-		h.VMMDSock = vmmdSock
 		// 30s tolerates schedd's first-boot db.MigrateUp on a fresh
 		// schema — observed 16s on CI's postgres15 service for 12
 		// migrations. The metal path reuses the same socket so this
@@ -215,7 +230,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 		// migration 00090 seeds with the canonical production
 		// socket (/run/faas/schedd.sock). Re-point the row at the
 		// per-test socket so synth dispatch can find schedd.
-		setDefaultLocalScheddTarget(t, pool, sockPath)
+		setDefaultLocalScheddTarget(t, pool, sockPath, h.VMMDSock)
 	}
 
 	if which&VMMD != 0 {
@@ -241,9 +256,7 @@ kernel_path = %q
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
-		env := append(testEnvCommon(dbURL),
-			"FAAS_VMMD_CONFIG="+cfgPath,
-		)
+		env := vmmdEnv(dbURL, cfgPath, h.ScheddSock)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
 		waitUnix(t, sockPath, 10*time.Second)
 	}
@@ -268,14 +281,14 @@ kernel_path = %q
 				t.Fatalf("e2etest: write placeholder guest init: %v", err)
 			}
 		}
-		env := append(testEnvCommon(dbURL),
-			"FAAS_GUEST_INIT="+guestInit,
-			"FAAS_APPS_ROOT="+appsRoot,
-			"FAAS_OCI_INSECURE=1",
-			"DATABASE_URL="+dbURL,
-			"PATH="+os.Getenv("PATH"),
-			"HOME="+os.Getenv("HOME"),
-		)
+		env := imagedEnv(t, dbURL, guestInit, appsRoot, tmp)
+		// imaged must sign with the same keypair schedd verifies against
+		// (FAAS_SIGN_PUB). Without this it falls back to the host's
+		// /etc/faas/secrets/sign.key and every snapshot prime fails with
+		// sig_invalid.
+		if h.SignKeyPath != "" {
+			env = append(env, "FAAS_SIGN_KEY="+h.SignKeyPath)
+		}
 		// Optional builder-base override (Lima / CI without ghcr creds). When
 		// FAAS_TEST_BUILDER_BASE_REF is set, imaged pulls the base from there
 		// instead of the production ghcr.io/poyrazk/builder-base:latest
@@ -317,19 +330,7 @@ kernel_path = %q
 		if vmmdSock == "" {
 			vmmdSock = "/run/faas/vmmd.sock" // matches builderd default
 		}
-		cfg := fmt.Sprintf(
-			`vmmd_socket = %q
-cache_dir = %q
-builder_base = %q
-build_drive_dir = %q
-build_export_dir = %q
-`,
-			vmmdSock,
-			filepath.Join(tmp, "cache"),
-			envBuilderBase(t),
-			filepath.Join(tmp, "drive"),
-			filepath.Join(tmp, "out"),
-		)
+		cfg := builderdConfig(tmp, vmmdSock, envBuilderBase(t))
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write builderd.toml: %v", err)
 		}
@@ -355,6 +356,7 @@ build_export_dir = %q
 		}
 	}
 
+	h.requireDaemonsAlive(t)
 	t.Cleanup(h.stop)
 	return h
 }
@@ -716,7 +718,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		// into the main mux so the dashboard panels stay accurate.
 		// Per-test FAAS_SPOOL_ROOT + FAAS_SCAN_SPOOL_ROOT — see
 		// startAPID in Start for the rationale.
-		spoolRoot := filepath.Join(h.TmpDir, "spool")
+		spoolRoot := spoolRootFor(h.TmpDir)
 		scanRoot := filepath.Join(h.TmpDir, "scan-spool")
 		for _, d := range []string{spoolRoot, scanRoot} {
 			if err := os.MkdirAll(d, 0o755); err != nil {
@@ -733,11 +735,19 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		env = append(env, extraEnv...)
 		h.procs = append(h.procs, startProc(t, bin, "apid", env))
 		h.APIDURL = "http://" + addr
-		waitTCP(t, addr, 10*time.Second)
+		// APID can take longer than the other daemons to initialize on a
+		// cold, concurrently loaded CI runner. Keep waiting for the
+		// listener while still failing promptly on a crashed process.
+		waitTCP(t, addr, 30*time.Second)
 	}
 	if which&Schedd != 0 {
 		sockPath := filepath.Join(h.SockDir, "schedd.sock")
-		vmmdSock := filepath.Join(h.SockDir, "vmmd.sock")
+		vmmdSock := os.Getenv("FAAS_E2E_VMMD_SOCKET")
+		if vmmdSock == "" {
+			vmmdSock = filepath.Join(h.SockDir, "vmmd.sock")
+		}
+		h.ScheddSock = sockPath
+		h.VMMDSock = vmmdSock
 		cfgPath := writeScheddConfig(t, h, tmp, which&(Gatewayd|GatewaySynthStub) != 0)
 		signPubPath := writeScheddSignPub(t, h)
 		env := append(testEnvCommon(dbURL),
@@ -745,9 +755,10 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_SIGN_PUB="+signPubPath,
 		)
 		env = append(env, extraEnv...)
+		// See Start: make the node target correct before schedd performs
+		// its initial heartbeat, including for a pre-bound fake VMMD.
+		setDefaultLocalScheddTarget(t, pool, sockPath, vmmdSock)
 		h.procs = append(h.procs, startProc(t, bin, "schedd", env))
-		h.ScheddSock = sockPath
-		h.VMMDSock = vmmdSock
 		// 30s tolerates schedd's first-boot db.MigrateUp (same
 		// rationale as the Start path above).
 		waitUnix(t, sockPath, 30*time.Second)
@@ -758,7 +769,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		// migration 00090 seeds with the canonical production
 		// socket (/run/faas/schedd.sock). Re-point the row at the
 		// per-test socket so synth dispatch can find schedd.
-		setDefaultLocalScheddTarget(t, pool, sockPath)
+		setDefaultLocalScheddTarget(t, pool, sockPath, h.VMMDSock)
 	}
 	if which&Meterd != 0 {
 		startMeterd(t, h, bin, dbURL, extraEnv)
@@ -766,6 +777,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	if which&Gatewayd != 0 {
 		startGatewayd(t, h, bin, dbURL, extraEnv)
 	}
+	h.requireDaemonsAlive(t)
 	t.Cleanup(h.stop)
 	return h
 }
@@ -786,7 +798,7 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 	// tests in the same package serially unless -parallel is set, but
 	// once any package-level parallelism is introduced, the per-test
 	// temp dirs keep behaviour stable.)
-	spoolRoot := filepath.Join(h.TmpDir, "spool")
+	spoolRoot := spoolRootFor(h.TmpDir)
 	scanRoot := filepath.Join(h.TmpDir, "scan-spool")
 	for _, d := range []string{spoolRoot, scanRoot} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -801,7 +813,9 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 	)
 	h.procs = append(h.procs, startProc(t, bin, "apid", env))
 	h.APIDURL = "http://" + addr
-	waitTCP(t, addr, 10*time.Second)
+	// Match the StartWithEnv path above: APID startup can exceed 10s on
+	// a cold CI runner while migrations and dependency wiring settle.
+	waitTCP(t, addr, 30*time.Second)
 }
 
 // writeScheddConfig renders the per-test schedd.toml and writes it under
@@ -823,7 +837,10 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string) {
 func writeScheddConfig(t *testing.T, h *Harness, tmp string, includeSynth bool) string {
 	t.Helper()
 	sockPath := filepath.Join(h.SockDir, "schedd.sock")
-	vmmdSock := filepath.Join(h.SockDir, "vmmd.sock")
+	vmmdSock := h.VMMDSock
+	if vmmdSock == "" {
+		vmmdSock = filepath.Join(h.SockDir, "vmmd.sock")
+	}
 	gatewaySynth := ""
 	if includeSynth {
 		gatewaySynth = filepath.Join(h.SockDir, "gatewayd-internal.sock")
@@ -881,6 +898,13 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	}
 	addr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
+	// freeTCPAddr releases its probe listener before returning. The kernel can
+	// immediately hand the same ephemeral port back to the next probe, which
+	// makes the public and control servers race to bind one address. Keep
+	// probing until the two configured listeners are distinct.
+	for controlAddr == addr {
+		controlAddr = freeTCPAddr(t)
+	}
 	if h.ScheddSock == "" {
 		h.ScheddSock = filepath.Join(h.SockDir, "schedd.sock")
 	}
@@ -951,8 +975,8 @@ func startGatewaySynthStub(t *testing.T, h *Harness) {
 //     apid boot. The CI runner / dev Mac lacks the `faas-apid` user
 //     that the listener boot probes (config.go:144-149); the lookup
 //     returns an error and the apid never reaches the main HTTP
-//     listener, so e2e `waitTCP(t, addr, 10s)` exhausts and every
-//     test reports "did not accept within 10s". Production deploys
+//     listener, so e2e `waitTCP(t, addr, 30s)` exhausts and every
+//     test reports "did not accept within 30s". Production deploys
 //     have the user (the systemd unit runs as `faas-apid`); the e2e
 //     harness sets this off so the apid skips the new gRPC listener
 //     and the main HTTP path boots cleanly. The reader-path handlers
@@ -1018,6 +1042,7 @@ func testEnvCommon(dbURL string) []string {
 		"FAAS_PADDLE_API_KEY=pdl_test_e2e_placeholder",
 		"FAAS_PADDLE_WEBHOOK_SECRET=whk_test_e2e_placeholder",
 	}
+	env = append(env, forwardedStorageEnv()...)
 	if currentHarness != nil && currentHarness.RecoveryHMACKeyHex != "" {
 		env = append(env, "FAAS_MFA_RECOVERY_HMAC_KEY="+currentHarness.RecoveryHMACKeyHex)
 	}
@@ -1025,6 +1050,78 @@ func testEnvCommon(dbURL string) []string {
 		env = append(env, "FAAS_HOST_HMAC_KEY_PATH="+currentHarness.HostHMACKeyPath)
 	}
 	return env
+}
+
+// vmmdEnv builds the environment for the harness's vmmd.
+//
+// scheddSock is the harness's schedd socket, or "" when this configuration
+// runs no schedd. When present it overrides vmmd's schedd target, which
+// cmd/vmmd otherwise defaults to the PRODUCTION socket
+// (unix:///run/faas/schedd.sock). That path is guaranteed absent here: the
+// native gate stops the production daemons for the duration of the run, and
+// every harness daemon listens on a per-test socket. Leaving the default in
+// place made vmmd's liveness loop fail with
+//
+//	liveness_conn_err: dial unix /run/faas/schedd.sock:
+//	  connect: no such file or directory
+//
+// and tear down builder microVMs that had cold-booted correctly
+// (cold_boot_ms=40, total_ms=107) with exit_code=-1. Downstream that reads as
+// "build exited -1" with a zero-byte build log — a broken build rather than a
+// health probe dialling the wrong address.
+//
+// An empty scheddSock deliberately leaves the variable unset rather than
+// injecting an empty target, which would dial nothing at all.
+func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
+	env := append(testEnvCommon(dbURL),
+		"FAAS_VMMD_CONFIG="+cfgPath,
+	)
+	if scheddSock != "" {
+		env = append(env, "FAAS_VMMD_SCHEDD_TARGET=unix://"+scheddSock)
+	}
+	// Outward NIC for tenant egress NAT. vmmd defaults to "eth0"
+	// (pkg/netns.DefaultHostPolicy.PublicIface) and production overrides it
+	// per host via a systemd drop-in, because the name is provider-specific.
+	// The gate's node has no eth0 — its NIC is ens4 — so without this the
+	// masquerade rule targets a missing interface and every builder microVM
+	// boots fine and then has no egress, dying at guest-init's 5s DNS
+	// preflight with "registry DNS preflight: signal: killed" and a 0-byte
+	// build log. The runner resolves the value from the host and exports it;
+	// unset (ordinary CI, where no VM does egress) keeps vmmd's default.
+	if iface := os.Getenv("FAAS_PUBLIC_IFACE"); iface != "" {
+		env = append(env, "FAAS_PUBLIC_IFACE="+iface)
+	}
+	return env
+}
+
+// forwardedStorageEnv passes the host's artifact-storage configuration
+// through to the daemon subprocesses.
+//
+// startProc hands each daemon an explicit environment rather than
+// os.Environ(), so anything the harness does not name is simply absent. For
+// storage that default is not neutral: with no backend selected pkg/storage
+// falls back to the local backend rooted at /srv/fc. On a CI box that is
+// right — nothing else is there. On a real node backed by an OCI registry it
+// is wrong in a way that only shows up deep in a cold boot, because imaged
+// staged the runtime bases and their Grype scan sidecars into the registry
+// while the harness's vmmd reads an empty /srv/fc/scans and refuses to boot
+// with "scan sidecar missing" (issue #299). Measured on compute node 2,
+// 2026-09-14: the builder base's sidecar was present and CRITICAL-clean in
+// the node's OCI store the whole time.
+//
+// Only variables actually set in the harness process are forwarded, so a CI
+// run — where the runner exports none of them — keeps the local default and
+// behaves exactly as before. The names come from the env contract rather
+// than string literals here: pkg/daemonunitspec is the single registry, and
+// duplicating the names is how they drift.
+func forwardedStorageEnv() []string {
+	var out []string
+	for _, name := range daemonunitspec.ArtifactStorageEnvNames() {
+		if v, ok := os.LookupEnv(name); ok && v != "" {
+			out = append(out, name+"="+v)
+		}
+	}
+	return out
 }
 
 // newRecoveryHMACKeyHex returns a fresh 64-char hex string (32 bytes
@@ -1082,7 +1179,7 @@ func newHostHMACKeyFile(t *testing.T, dir string) string {
 // Cleanup is automatic via h.TmpDir (t.TempDir).
 func writeScheddSignPub(t *testing.T, h *Harness) string {
 	t.Helper()
-	_, pubPEM, err := cosign.GenerateKeyPair()
+	privPEM, pubPEM, err := cosign.GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("e2etest: generate cosign keypair: %v", err)
 	}
@@ -1090,6 +1187,26 @@ func writeScheddSignPub(t *testing.T, h *Harness) string {
 	if err := os.WriteFile(pubPath, pubPEM, 0o444); err != nil {
 		t.Fatalf("e2etest: write sign-pub.pem: %v", err)
 	}
+
+	// Write the PRIVATE half too, and remember it for imagedEnv.
+	//
+	// This used to discard it, so imaged kept signing with the host's
+	// /etc/faas/secrets/sign.key while schedd verified against this freshly
+	// generated public key — a different keypair. Every snapshot prime then
+	// failed with
+	//
+	//	snapshot prime failed: sig_invalid: signature does not match ext4:
+	//	ECDSA P-256 verification failed for layer
+	//
+	// and the deployment went to `failed`, so no build test could ever reach
+	// `live`. Signer and verifier must come from ONE keypair; generating one
+	// and using half of it is what made this look like a signing bug rather
+	// than a wiring bug.
+	privPath := filepath.Join(h.SockDir, "sign.key")
+	if err := os.WriteFile(privPath, privPEM, 0o400); err != nil {
+		t.Fatalf("e2etest: write sign.key: %v", err)
+	}
+	h.SignKeyPath = privPath
 	return pubPath
 }
 
@@ -1190,6 +1307,29 @@ func (h *Harness) Stop() {
 // because no e2e boots the public edge yet.
 var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "meterd", "builderd"}
 
+// StaticHelperBinaries are built alongside the daemons but with CGO_ENABLED=0,
+// because they execute inside a jailer chroot that contains no dynamic loader
+// and no libc.
+//
+// vmmd-jail-helper is the one that matters. JailerVMM copies it into each
+// instance root as /faas-mount-helper and runs it under nsenter to set up the
+// jail's private device tree (resolveMountHelper in pkg/fcvm/mount_helper.go
+// looks for it as a sibling of the running vmmd, falling back to the vmmd
+// binary itself when absent). The harness never built it, so that fallback
+// applied — and the fallback cannot work here: the metal suite runs under
+// -race, which forces cgo, so the vmmd binary is dynamically linked. execve
+// of a dynamic binary with no loader in the chroot fails with ENOENT, which
+// surfaced on hardware as
+//
+//	prepare jail device tree: exit status 127
+//	  (nsenter: failed to execute /faas-mount-helper: No such file or directory)
+//
+// and failed every builder cold boot. Production ships this binary
+// (Makefile DAEMONS, deploy/packer/scripts/compile-daemons.sh,
+// pkg/releaseinstall.Names), so building it here makes the harness match the
+// node rather than depend on a fallback that only works for static builds.
+var StaticHelperBinaries = []string{"vmmd-jail-helper"}
+
 var (
 	sharedBinOnce sync.Once
 	sharedBinDir  string
@@ -1214,6 +1354,17 @@ var (
 // Uses the full module import path (not the ./cmd/<d> form) so the build
 // doesn't depend on the test's CWD — `go test` runs with the package
 // directory as CWD, which breaks the relative-path form.
+// FAAS_E2E_BIN_DIR overrides the temp directory with a caller-owned one and
+// makes the build incremental: a binary already present there is not rebuilt.
+//
+// The link cost is per PROCESS, and the native gate now runs the suite as
+// several phases — separate `go test` invocations — so an unshared directory
+// would pay the full link for all eight binaries once per phase. The Go build
+// cache does not help: it caches compiled packages, never the final link. The
+// gate builds them once into a stage directory and points every phase at it.
+//
+// Unset keeps the previous behaviour exactly (fresh temp dir per process),
+// which is what ordinary CI and local runs want.
 func EnsureSharedBinaries() (string, error) {
 	sharedBinOnce.Do(func() {
 		mod, err := moduleImportPath()
@@ -1221,14 +1372,31 @@ func EnsureSharedBinaries() (string, error) {
 			sharedBinErr = err
 			return
 		}
-		dir, err := os.MkdirTemp("", "faas-e2e-bin-*")
-		if err != nil {
-			sharedBinErr = fmt.Errorf("e2etest: mkdir shared bin dir: %w", err)
-			return
+		dir := strings.TrimSpace(os.Getenv("FAAS_E2E_BIN_DIR"))
+		if dir != "" {
+			if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+				sharedBinErr = fmt.Errorf("e2etest: mkdir FAAS_E2E_BIN_DIR %q: %w", dir, mkErr)
+				return
+			}
+		} else {
+			dir, err = os.MkdirTemp("", "faas-e2e-bin-*")
+			if err != nil {
+				sharedBinErr = fmt.Errorf("e2etest: mkdir shared bin dir: %w", err)
+				return
+			}
 		}
 		for _, d := range DaemonBinaries {
+			// Already built by a previous phase into a shared FAAS_E2E_BIN_DIR.
+			if binaryPresent(filepath.Join(dir, d)) {
+				continue
+			}
 			var out bytes.Buffer
-			cmd := exec.Command("go", "build", "-o", filepath.Join(dir, d), mod+"/cmd/"+d)
+			args := []string{"build"}
+			if daemonBuildTags != "" {
+				args = append(args, "-tags", daemonBuildTags)
+			}
+			args = append(args, "-o", filepath.Join(dir, d), mod+"/cmd/"+d)
+			cmd := exec.Command("go", args...)
 			cmd.Stdout = &out
 			cmd.Stderr = &out
 			if err := cmd.Run(); err != nil {
@@ -1237,17 +1405,50 @@ func EnsureSharedBinaries() (string, error) {
 				return
 			}
 		}
+		for _, h := range StaticHelperBinaries {
+			if binaryPresent(filepath.Join(dir, h)) {
+				continue
+			}
+			var out bytes.Buffer
+			cmd := exec.Command("go", "build",
+				"-o", filepath.Join(dir, h), mod+"/cmd/"+h)
+			// CGO_ENABLED=0 is the entire point — see StaticHelperBinaries.
+			cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+			if err := cmd.Run(); err != nil {
+				_ = os.RemoveAll(dir)
+				sharedBinErr = fmt.Errorf("e2etest: go build %s: %w\n%s", h, err, out.String())
+				return
+			}
+		}
 		sharedBinDir = dir
 	})
 	return sharedBinDir, sharedBinErr
 }
 
+// binaryPresent reports whether path is a non-empty executable regular file.
+// A zero-length or half-written file from an interrupted build must be
+// rebuilt, not reused — exec would fail with a far less obvious error.
+func binaryPresent(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() &&
+		info.Size() > 0 && info.Mode().Perm()&0o111 != 0
+}
+
 // RemoveSharedBinaries deletes the directory EnsureSharedBinaries created.
 // Intended for TestMain after m.Run; safe to call when nothing was built.
+//
+// A caller-supplied FAAS_E2E_BIN_DIR is NOT removed: it is shared by later
+// phases, and the process that happens to finish first does not own it.
 func RemoveSharedBinaries() {
-	if sharedBinDir != "" {
-		_ = os.RemoveAll(sharedBinDir)
+	if sharedBinDir == "" {
+		return
 	}
+	if strings.TrimSpace(os.Getenv("FAAS_E2E_BIN_DIR")) != "" {
+		return
+	}
+	_ = os.RemoveAll(sharedBinDir)
 }
 
 // buildBinaries is the *testing.T-flavoured wrapper the Start variants use:
@@ -1312,7 +1513,8 @@ func (s *safeBuffer) String() string {
 // trips the race detector.
 func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.Command(filepath.Join(bin, name))
+	argv := append(boundingSetPrefix(t, name), filepath.Join(bin, name))
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = &safeBuffer{}
 	cmd.Stderr = cmd.Stdout // share the same buffer (only one consumer: stop)
@@ -1321,6 +1523,63 @@ func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 		t.Fatalf("e2etest: start %s: %v", name, err)
 	}
 	return cmd
+}
+
+// requireDaemonsAlive fails the test immediately if a daemon this harness
+// started has already exited.
+//
+// startProc only reports whether fork/exec succeeded; it deliberately does not
+// Wait (stop() owns the single Wait, and a double Wait trips the race
+// detector). So a daemon that dies milliseconds after exec goes unnoticed, and
+// its captured output only reaches the log at stop time — by which point it is
+// buried under everything the test did in between.
+//
+// imaged is the reason this exists. It has no listening socket, so unlike
+// apid/schedd/vmmd it gets no waitUnix/waitPort gate and nothing checked it at
+// all. On the acceptance node it exited at boot with
+//
+//	imaged: sign key "/etc/faas/secrets/sign.key": ...
+//
+// and because nothing advances a deployment from `building` to `live` without
+// imaged, every build test then burned its full 4-minute deployment deadline.
+// Six subtests did that: roughly 24 minutes of a 30-minute phase spent waiting
+// on a daemon that was never running, reported as a slow build rather than a
+// dead daemon.
+func (h *Harness) requireDaemonsAlive(t *testing.T) {
+	t.Helper()
+	// Daemons that fail their own boot checks do so within a few ms; the
+	// settle keeps this from racing a healthy daemon that has not yet
+	// scheduled. One sleep for the whole set, not one per daemon.
+	time.Sleep(150 * time.Millisecond)
+
+	if name, out, dead := firstDeadDaemon(h.procs); dead {
+		t.Fatalf("e2etest: %s exited during startup; nothing it owns will happen, "+
+			"and the failure would otherwise surface much later as an unrelated "+
+			"timeout.\n%s", name, out)
+	}
+}
+
+// firstDeadDaemon reports the first process that is no longer running, with
+// whatever it managed to write. Split from requireDaemonsAlive so the decision
+// is testable without a *testing.T to fail.
+//
+// Signal(0) rather than Wait: it asks the kernel whether the pid is still
+// deliverable without reaping, so stop()'s Wait stays the only one.
+func firstDeadDaemon(procs []*exec.Cmd) (name, output string, dead bool) {
+	for _, p := range procs {
+		if p == nil || p.Process == nil {
+			continue
+		}
+		if err := p.Process.Signal(syscall.Signal(0)); err == nil {
+			continue
+		}
+		out := ""
+		if buf, ok := p.Stdout.(*safeBuffer); ok {
+			out = buf.String()
+		}
+		return filepath.Base(p.Path), out, true
+	}
+	return "", "", false
 }
 
 // DumpLogs prints the captured stdout/stderr of every running daemon
@@ -1498,16 +1757,42 @@ func waitTCP(t *testing.T, addr string, d time.Duration) {
 // pkg/gateway/pgbackend.go:1286 deletes the resolveSched branch
 // that previously returned b.sched on transient triggers).
 //
+// target_url is repointed for the same reason, and it is the one that was
+// missing. That column is the VMMD endpoint: schedd's heartbeat dials it to
+// prove the node is alive. Left at the seeded /run/faas/vmmd.sock — a path the
+// gate guarantees is absent, because it stops the production daemons — every
+// heartbeat failed with
+//
+//	rpc error: code = Unavailable desc = connection error
+//
+// the heartbeat gate flipped default-local to lifecycle='unavailable',
+// active=false, and schedd then refused every placement with
+//
+//	claim unplaced: choose: capacity_unavailable: placement:
+//	no active compute_node fits 264 MB billable
+//
+// Builds succeeded and the deployment sat in `building` until the test gave
+// up, so it read as a slow build rather than a node marked dead. Capacity was
+// never the issue: the row carries a 47,600 MB ceiling.
+//
 // Idempotent: the UPDATE re-applies on every Start/StartWithEnv
 // call so two schedd boots in the same process (e.g. back-to-back
 // subtests) both converge on the active socket.
-func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath string) {
+func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath, vmmdSockPath string) {
 	t.Helper()
 	target := "unix://" + sockPath
 	if _, err := pool.Exec(context.Background(),
 		`update compute_nodes set schedd_target_url = $1 where name = 'default-local'`,
 		target); err != nil {
 		t.Fatalf("e2etest: set default-local schedd_target_url: %v", err)
+	}
+	if strings.TrimSpace(vmmdSockPath) == "" {
+		return
+	}
+	if _, err := pool.Exec(context.Background(),
+		`update compute_nodes set target_url = $1 where name = 'default-local'`,
+		"unix://"+vmmdSockPath); err != nil {
+		t.Fatalf("e2etest: set default-local target_url: %v", err)
 	}
 }
 
@@ -1678,3 +1963,178 @@ func (h *Harness) HTTPClient() *http.Client {
 
 // silence unused-import when callers drop the io helpers.
 var _ = io.Discard
+
+// functionRunnerEnv stages a placeholder function-runner shim per runtime and
+// returns the FAAS_FUNCTION_RUNNER_* assignments imaged requires at boot.
+//
+// The contract (pkg/daemonunitspec/envcontract.go) marks all six Required with
+// Validate: path-exists, so the value must name a file that is actually there;
+// an empty or dangling path makes imaged exit 2 before doing any work.
+//
+// A placeholder is the right default here: the metal e2e tests deploy OCI
+// images and source tarballs, not function runtimes, so the shim is never
+// executed — it only has to exist. A test that genuinely needs a real shim can
+// export FAAS_FUNCTION_RUNNER_<RUNTIME> itself and that value is used as-is.
+//
+// The layout matches production and cmd/e2e/boot_contract_test.go:
+// <root>/runners/<runtime>/faas-runner, with GO124_ALPINE spelled go124-alpine.
+func functionRunnerEnv(t *testing.T, tmp string) []string {
+	t.Helper()
+	// The names are DERIVED FROM THE CONTRACT, never written here as literals.
+	//
+	// Two constraints force this, and they pull in opposite directions:
+	//
+	//   - TestEnvContract_EveryReadIsDeclared scans every non-_test.go file
+	//     under pkg/ for FAAS_* string literals and calls each one a "read",
+	//     requiring the reading package to appear in that row's Owners. Spelling
+	//     the names here would demand adding "shared" as an owner.
+	//   - Owners is not "who reads this": it is the set of daemons the Required
+	//     rule is ENFORCED for. Adding "shared" made imaged's runner paths
+	//     mandatory for apid, which then refused to boot:
+	//       LoadFrom: apid: missing required environment variables: ...
+	//
+	// Reading the contract satisfies both, and a seventh runtime is picked up
+	// with no edit here. "RUNNER_" carries no FAAS_ prefix, so it is not itself
+	// a scanned literal.
+	var runners []string
+	for _, row := range daemonunitspec.EnvContractForDaemon("imaged") {
+		if !row.Required || row.Validate != daemonunitspec.EnvValidationPathExists {
+			continue
+		}
+		if !strings.Contains(row.Name, "RUNNER_") {
+			continue
+		}
+		runners = append(runners, row.Name)
+	}
+	if len(runners) == 0 {
+		t.Fatal("e2etest: no function-runner rows found in the env contract; imaged will not boot")
+	}
+	sort.Strings(runners)
+
+	out := make([]string, 0, len(runners))
+	for _, name := range runners {
+		// FAAS_FUNCTION_RUNNER_GO124_ALPINE -> runners/go124-alpine/faas-runner,
+		// matching production and cmd/e2e/boot_contract_test.go.
+		suffix := name[strings.Index(name, "RUNNER_")+len("RUNNER_"):]
+		dir := strings.ReplaceAll(strings.ToLower(suffix), "_", "-")
+		path := filepath.Join(tmp, "runners", dir, "faas-runner")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("e2etest: mkdir runner dir for %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("e2etest: write placeholder runner for %s: %v", name, err)
+		}
+		out = append(out, name+"="+path)
+	}
+	return out
+}
+
+// imagedEnv builds imaged's environment. It exists as a named function so the
+// contract test can assert on it directly: when this was inline, a test could
+// only exercise functionRunnerEnv, and deleting the call from the harness left
+// every check green while imaged went back to exiting 2 at boot.
+func imagedEnv(t *testing.T, dbURL, guestInit, appsRoot, tmp string) []string {
+	t.Helper()
+	env := append(testEnvCommon(dbURL),
+		"FAAS_GUEST_INIT="+guestInit,
+		"FAAS_APPS_ROOT="+appsRoot,
+		"FAAS_OCI_INSECURE=1",
+		"DATABASE_URL="+dbURL,
+		"PATH="+os.Getenv("PATH"),
+		"HOME="+os.Getenv("HOME"),
+	)
+	// imaged's env contract marks every FAAS_FUNCTION_RUNNER_* path Required
+	// with Validate: path-exists (pkg/daemonunitspec/envcontract.go). Unset,
+	// imaged exits 2 at boot with "missing required environment variables"
+	// before it handles a single app_changed — so every harness test that
+	// starts imaged failed, deployments sat at status=pending, and wakes
+	// returned 503. First seen on the 2026-09-13 native e2e run; invisible in
+	// CI because only the metal-tagged tests start imaged.
+	return append(env, functionRunnerEnv(t, tmp)...)
+}
+
+// boundingSetPrefix returns an argv prefix that runs a daemon with the same
+// capability bounding set its production systemd unit gives it, or nil when no
+// adjustment is needed.
+//
+// imaged calls capdecl at boot and REFUSES TO START when a capability its
+// declaration denies is still reachable:
+//
+//	capdecl: boot check failed; refusing to start
+//	capdecl: declaration denies caps present in live Bnd set: cap_sys_admin
+//
+// That is the ADR-075 boundary working correctly. faas-imaged.service removes
+// cap_sys_admin from CapabilityBoundingSet, but the native e2e gate runs the
+// suite as root — jailer, netns and KVM require it — so root's bounding set
+// still contains cap_sys_admin and imaged declines. ci.yml already does this
+// for the boot-contract job with the same setpriv invocation.
+//
+// Scoped to imaged deliberately: it is the daemon that enforces this at boot,
+// and vmmd genuinely needs cap_sys_admin for mounts and namespaces, so the
+// suite as a whole cannot drop it. The allowed list is read from the unit spec
+// rather than restated here, so a capability added to the unit is honoured
+// without touching this file.
+func boundingSetPrefix(t *testing.T, name string) []string {
+	t.Helper()
+	if name != "imaged" || runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		return nil
+	}
+	unit, err := daemonunitspec.UnitByName("imaged")
+	if err != nil {
+		t.Fatalf("e2etest: look up imaged unit spec: %v", err)
+	}
+	if len(unit.CapabilityBoundingSet) == 0 {
+		return nil
+	}
+	setpriv, err := exec.LookPath("setpriv")
+	if err != nil {
+		// Failing here beats letting imaged exit with a capdecl error that
+		// reads like a product bug.
+		t.Fatalf("e2etest: setpriv is required to run imaged as root with a "+
+			"restricted bounding set (capdecl refuses cap_sys_admin): %v", err)
+	}
+	set := "-all"
+	for _, c := range unit.CapabilityBoundingSet {
+		set += ",+" + strings.TrimPrefix(strings.ToLower(c), "cap_")
+	}
+	return []string{setpriv, "--bounding-set=" + set, "--"}
+}
+
+// spoolRootFor is the per-test source spool root.
+//
+// apid writes uploaded source tarballs here (FAAS_SPOOL_ROOT) and builderd
+// validates every source path against its OWN configured root before reading
+// it. The two MUST agree, which is why both now derive it from here instead of
+// each joining "spool" themselves.
+func spoolRootFor(tmpDir string) string { return filepath.Join(tmpDir, "spool") }
+
+// builderdConfig renders the per-test builderd.toml.
+//
+// source_spool_dir is the reason this is a function rather than an inline
+// Sprintf: it was missing, so builderd kept the production default
+// /var/spool/faas/builds while apid spooled into the test's temp dir, and
+// builderd's path-traversal guard rejected every upload:
+//
+//	builderd: source boundary violation: path "/tmp/TestBuildMetal.../spool/x.tar.gz"
+//	  is outside spool root "/var/spool/faas/builds"
+//
+// That failed every build-path test on the native gate (2026-09-14) with
+// failure_class=infra, leaving deployments stuck at status=pending and wakes
+// returning 503. The guard was right; the harness was inconsistent.
+func builderdConfig(tmp, vmmdSock, builderBase string) string {
+	return fmt.Sprintf(
+		`vmmd_socket = %q
+cache_dir = %q
+builder_base = %q
+build_drive_dir = %q
+build_export_dir = %q
+source_spool_dir = %q
+`,
+		vmmdSock,
+		filepath.Join(tmp, "cache"),
+		builderBase,
+		filepath.Join(tmp, "drive"),
+		filepath.Join(tmp, "out"),
+		spoolRootFor(tmp),
+	)
+}

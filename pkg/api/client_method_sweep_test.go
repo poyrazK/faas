@@ -278,7 +278,7 @@ func TestSweep_DeleteAlertRule(t *testing.T) {
 func TestSweep_RotateAlertRuleSecret(t *testing.T) {
 	srv, _ := newSweepServer(t, 200, `{"webhook_secret":"newsec"}`)
 	c := NewClient(srv.URL, "fp_test")
-	if _, err := c.RotateAlertRuleSecret(context.Background(), "myapp", "ar_1"); err != nil {
+	if _, err := c.RotateAlertRuleSecret(context.Background(), "myapp", "ar_1", RotateAlertRuleSecretRequest{WebhookSecret: "replacement"}); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 }

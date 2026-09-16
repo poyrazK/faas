@@ -14,7 +14,7 @@ const (
 )
 
 // docsBase is the canonical documentation URL prefix for SDK-side
-// problem constructors. Duplicated from pkg/wire.DocsHost in the
+// problem constructors. Duplicated from pkg/wire.DocsBaseURL in the
 // root module because the SDK is a separate Go module with its own
 // go.mod (sdk/go/) and cannot import the root module's pkg. Keep
 // in lock-step with the root module's pkg/wire/docs.go — the
@@ -23,7 +23,7 @@ const (
 // TestLintTripwire_NoLiteralDocsDomainEverywhere in the root
 // module's cmd/gregale does NOT cover the SDK; verify manually
 // when the host rotates.
-const docsBase = "https://docs.gregale.dev"
+const docsBase = "https://gregale.dev/docs"
 
 // AsProblem walks err's chain and returns the first *Problem. Returns nil
 // if none of the wrapped errors is a *Problem. Used by gRPC handlers in
@@ -562,7 +562,7 @@ func ErrAppConcurrencyReached(l Limits, observed int) *Problem {
 func ErrCapacity(detail string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeCapacity,
 		"Briefly at capacity", detail).
-		WithDocs("https://status.gregale.dev")
+		WithDocs("https://gregale.dev/status")
 }
 
 // ErrSourceTooLarge is returned when an uploaded tarball exceeds the plan cap.

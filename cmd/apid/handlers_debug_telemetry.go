@@ -1068,6 +1068,10 @@ func debugRegressionRowToItem(row sqlc.ListActiveRegressionsByAppRow) api.DebugR
 		AffectedCount:   int(row.AffectedCount),
 		FirstDetectedAt: timeFromPg(row.FirstDetectedAt),
 		LastDetectedAt:  timeFromPg(row.LastDetectedAt),
+		State:           debugRegressionStateValue(row.State),
+		AcknowledgedAt:  timeFromPg(row.AcknowledgedAt),
+		DismissedUntil:  timeFromPg(row.DismissedUntil),
+		ResolvedAt:      timeFromPg(row.ResolvedAt),
 	}
 	// Numeric factor → string. pgtype.Numeric has its own
 	// Float64Value helper; we render via pgx's numeric decoder
@@ -1079,6 +1083,17 @@ func debugRegressionRowToItem(row sqlc.ListActiveRegressionsByAppRow) api.DebugR
 		}
 	}
 	return item
+}
+
+func debugRegressionStateValue(value interface{}) string {
+	switch value := value.(type) {
+	case string:
+		return value
+	case []byte:
+		return string(value)
+	default:
+		return ""
+	}
 }
 
 // formatFloat2 renders a float with up to 2 decimal places —

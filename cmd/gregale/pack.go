@@ -1513,7 +1513,7 @@ func preflightLoopbackBind(srcDir string) string {
 // preflightArchMismatch surfaces the app_arch_mismatch hint when
 // the cwd contains a Mach-O or ARM aarch64 binary.
 func preflightArchMismatch(srcDir string) string {
-	sources := scanSource(srcDir, archMismatchRegex, 1)
+	sources := scanArchitecture(srcDir, 1)
 	if len(sources) == 0 {
 		return ""
 	}

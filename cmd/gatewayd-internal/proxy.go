@@ -17,10 +17,10 @@
 //   - /login, /login/, /login/*, /auth/verify, /auth/verify/*,
 //     /logout, /logout/, /logout/* (magic-link + session auth)
 //   - /status, /status/, /status/* (spec §12 public status page)
-//   - /healthz (loopback infra probe — required for the CD health
-//     check in deploy/controlplane/bootstrap.sh (RETIRED 2026-08-15
-//     by issue #911 / PR-1; v2 path is the CD + doctor) and the
-//     cd-digitalocean.yml post-deploy smoke test)
+//
+// Platform `/healthz` is intentionally not in this path-only proxy. The public
+// edge scopes that probe to the platform Host; app-host health requests must
+// reach the app selected by the normal host router.
 //
 // apid binds loopback-only, so this proxy is the only way external
 // traffic reaches any of those routes — preserving the §11
@@ -234,7 +234,7 @@ func isApidLogsPath(p string) bool {
 //
 // NOTE: this means customer apps cannot expose routes starting with
 // /v1/, /dashboard/, /oauth/, /login/, /signup/, /login/forgot/,
-// /auth/verify/, /auth/reset/, /logout/, /status/, /healthz, or
+// /auth/verify/, /auth/reset/, /logout/, /status/, or
 // /cli-auth. /v1/ in particular is a permanent API reservation;
 // customer-facing docs should call this out (issue #85 follow-up).
 // /cli-auth is the device-code approval page (spec §2.2) — same

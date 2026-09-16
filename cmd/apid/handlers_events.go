@@ -30,7 +30,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// eventsChannels is the set we subscribe to. Slice 6 keeps it flat;
+// eventsChannels is the set we subscribe to. Keeping it flat makes the
+// account-scoped stream easy to audit;
 // Move 3 widens it to include NotifyInvocationDone so the dashboard
 // reacts when a customer runs `faas invoke` from another terminal.
 // Mirrored in cmd/apid/sse_fanin.go::sseChannels for the in-process
@@ -53,6 +54,7 @@ var eventsChannels = []string{
 	db.NotifyQuotaWarning,
 	db.NotifyBillingPastDue,
 	db.NotifyInvocationDone,
+	db.NotifyDebugRegressionChanged,
 	// Wave 0 PR-C / ADR-047: stateless-advisory frame from
 	// cmd/apid/advisory_receiver.go::ForwardStatelessAdvisory.
 	// Payload is the small summary (app_id, instance, n, sample_path);

@@ -48,6 +48,42 @@ func TestCmdDebugCoverage_RendersObservedSignalRates(t *testing.T) {
 	}
 }
 
+func TestCmdDebugRunning_RendersObservedCausesAndSendsLimit(t *testing.T) {
+	var got http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = *r.Clone(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.DebugRunningResponse{
+			AppID: "app-1", Since: "6h", WindowStart: "2026-09-12T00:00:00Z", WindowEnd: "2026-09-12T06:00:00Z",
+			CurrentObservedAt: "2026-09-12T05:59:00Z",
+			Current:           []api.DebugRunningCause{{Code: api.DebugRunningReasonOpenConnection, Summary: "an active SSE connection is keeping the instance warm", InstanceCount: 1, OpenConnections: 1}},
+			Config:            api.DebugRunningConfig{IdleTimeoutSeconds: 60, ConfiguredMinInstances: 0, EffectiveMinInstances: 0},
+			History:           []api.DebugRunningObservation{{ObservedAt: "2026-09-12T05:59:00Z", Causes: []api.DebugRunningCause{{Code: api.DebugRunningReasonOpenConnection}}}},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test")
+
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	oldJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = oldJSON }()
+
+	if code := cmdDebugRunning([]string{"my-app", "--since", "6h", "--limit", "5"}); code != 0 {
+		t.Fatalf("cmdDebugRunning() = %d, want 0", code)
+	}
+	if got.URL.Path != "/v1/apps/my-app/debug/running" || got.URL.Query().Get("since") != "6h" || got.URL.Query().Get("limit") != "5" {
+		t.Fatalf("request = %s?%s, want running with since=6h and limit=5", got.URL.Path, got.URL.RawQuery)
+	}
+	for _, want := range []string{"Why is my-app running?", "open_connection", "active SSE connection", "idle timeout 60s"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("running output missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
 func TestCmdDebugRequestsList_SendsFiltersToServer(t *testing.T) {
 	var got http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +160,7 @@ func TestCmdDebugHelp(t *testing.T) {
 		t.Fatalf("cmdDebug(--help) = %d, want 0", code)
 	}
 	got := readStderr()
-	for _, want := range []string{"usage: gregale debug", "requests list", "requests evidence", "coverage", "regressions", "compare"} {
+	for _, want := range []string{"usage: gregale debug", "requests list", "requests evidence", "coverage", "running", "regressions", "compare"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("help missing %q:\n%s", want, got)
 		}

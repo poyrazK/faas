@@ -88,7 +88,30 @@ func hstsEnabledFromEnv(k string) string {
 	return ""
 }
 
+type internalUpstreamMode uint8
+
 const (
+	internalUpstreamUnix internalUpstreamMode = iota
+	internalUpstreamStatic
+	internalUpstreamDatabase
+)
+
+// selectInternalUpstreamMode makes explicit database discovery authoritative.
+// Old rollout drop-ins may retain FAAS_INTERNAL_TARGET while the unit contract
+// has already switched to database discovery; honoring the stale target would
+// pin all customer traffic to one compute node during a drain.
+func selectInternalUpstreamMode(computeDiscovery, internalTarget string) internalUpstreamMode {
+	if strings.TrimSpace(computeDiscovery) == "database" {
+		return internalUpstreamDatabase
+	}
+	if strings.TrimSpace(internalTarget) != "" {
+		return internalUpstreamStatic
+	}
+	return internalUpstreamUnix
+}
+
+const (
+	internalGatewayHealthHost = "gatewayd-internal.faas"
 	// defaultListenAddr is the loopback bind for the public listener.
 	// Caddy (api.gregale.dev) reverse-proxies here.
 	defaultListenAddr = "127.0.0.1:8080"
@@ -194,7 +217,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// Postgres — required for the readiness ping (no other PG
 	// dependency: certsync leader election is gone in plain-HTTP
 	// mode, the warm-hint mirror is owned by gatewayd-internal).
-	pool, err := db.Open(ctx, "")
+	pool, err := db.OpenWithAppName(ctx, "", "faas-gatewayd-public")
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: open db: %w", err)
 	}
@@ -288,13 +311,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// fallback so an old box can converge without an outage.
 	internalTarget := strings.TrimSpace(os.Getenv("FAAS_INTERNAL_TARGET"))
 	computeDiscovery := strings.TrimSpace(os.Getenv("FAAS_COMPUTE_GATEWAY_DISCOVERY"))
+	upstreamMode := selectInternalUpstreamMode(computeDiscovery, internalTarget)
 	internalURL := &url.URL{Scheme: "http", Host: "gatewayd-internal"}
 	var internalDialer gateway.InternalDialer
-	switch {
-	case computeDiscovery == "database" && internalTarget == "":
+	switch upstreamMode {
+	case internalUpstreamDatabase:
 		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool)
 		internalDialer = cgp
 		log.Info("gatewayd-public: database-backed compute gateway pool enabled")
+		if internalTarget != "" {
+			log.Warn("gatewayd-public: ignoring legacy FAAS_INTERNAL_TARGET because database discovery is enabled",
+				"target", internalTarget)
+		}
 		// Workstream B / issue #1184 / Task #65: subscribe to
 		// compute_node_changed pg_notify so a node drain /
 		// activation / overlay-IP change refreshes the cached
@@ -304,10 +332,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if pool != nil {
 			go cgp.WatchInvalidations(ctx, pool)
 		}
-	case internalTarget == "":
+	case internalUpstreamUnix:
 		internalSocket := envOr("FAAS_INTERNAL_SOCKET", defaultInternalSocket)
 		internalDialer = gateway.NewUnixSocketDialer(internalSocket)
-	default:
+	case internalUpstreamStatic:
 		parsedTarget, parseErr := url.Parse(internalTarget)
 		if parseErr != nil || parsedTarget.Scheme != "tcp" || parsedTarget.Host == "" || parsedTarget.Path != "" {
 			return fmt.Errorf("gatewayd-public: FAAS_INTERNAL_TARGET must be tcp://host:port, got %q", internalTarget)
@@ -320,7 +348,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// the public→internal hop. The unix SynthServer enables native H2C;
 	// the split-box TCP listener uses the ordinary HTTP/1.1 server unless
 	// an operator explicitly enables H2C after both ends are configured.
-	h2cEnabled := envBoolOr("FAAS_INTERNAL_H2C", internalTarget == "" && computeDiscovery != "database")
+	h2cEnabled := envBoolOr("FAAS_INTERNAL_H2C", upstreamMode == internalUpstreamUnix)
 	trustedIngressCIDRs, err := gateway.ParseTrustedIngressCIDRs(os.Getenv("FAAS_TRUSTED_INGRESS_CIDRS"))
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: trusted ingress config: %w", err)
@@ -334,7 +362,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.
-	if computeDiscovery == "database" && internalTarget == "" {
+	if upstreamMode == internalUpstreamDatabase {
 		if transport, ok := proxy.Transport.(*http.Transport); ok {
 			transport.DisableKeepAlives = true
 		}
@@ -446,7 +474,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// routes /v1/traces/ to the handler and falls through to the
 	// proxy for everything else.
 	controlPlaneTarget := envOr("FAAS_CONTROL_PLANE_API_TARGET", "http://127.0.0.1:8081")
-	controlPlaneHandler, err := newControlPlaneProxy(controlPlaneTarget, proxy, log)
+	controlPlaneHandler, err := newControlPlaneProxy(controlPlaneTarget, proxy, log, trustedIngressCIDRs...)
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: control-plane API proxy: %w", err)
 	}
@@ -693,6 +721,9 @@ func checkInternalGateway(ctx context.Context, dialer gateway.InternalDialer, ta
 	if err != nil {
 		return err
 	}
+	// The internal listener also serves app traffic. Pin a private Host so its
+	// health route cannot be confused with an app's configured /healthz path.
+	req.Host = internalGatewayHealthHost
 	req.Header.Set("Connection", "close")
 	if err := req.Write(conn); err != nil {
 		return err
@@ -802,7 +833,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 	// Start the listeners.
 	errc := make(chan error, 2)
 	go func() {
-		l, lerr := net.Listen("tcp", publicSrv.Addr)
+		l, lerr := publicListener(publicSrv.Addr)
 		if lerr != nil {
 			errc <- fmt.Errorf("gatewayd-public: listen %s: %w", publicSrv.Addr, lerr)
 			return
@@ -894,6 +925,71 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		cancel()
 	}
 	return nil
+}
+
+// publicListener consumes the single socket passed by
+// faas-gatewayd-public.socket. systemd keeps the listening socket open across
+// a service restart: the old process drains accepted connections while new
+// connections wait in the kernel backlog for the replacement. Local/dev runs
+// without LISTEN_PID/LISTEN_FDS retain the normal net.Listen path.
+//
+// Issue #607 / ADR-068: this closes the remaining connection-refused window
+// between the existing Caddy edge and gatewayd-public's graceful drain.
+func publicListener(addr string) (net.Listener, error) {
+	pidValue, hasPID := os.LookupEnv("LISTEN_PID")
+	fdsValue, hasFDs := os.LookupEnv("LISTEN_FDS")
+	if !hasPID && !hasFDs {
+		return net.Listen("tcp", addr)
+	}
+	if !hasPID || !hasFDs {
+		return nil, errors.New("gatewayd-public: incomplete systemd socket activation environment")
+	}
+	if pidValue != fmt.Sprint(os.Getpid()) {
+		// systemd's activation contract says a mismatched PID belongs to an
+		// ancestor and must be ignored rather than consuming its descriptor.
+		return net.Listen("tcp", addr)
+	}
+	if fdsValue != "1" {
+		return nil, fmt.Errorf("gatewayd-public: LISTEN_FDS=%s, want exactly 1", fdsValue)
+	}
+	if names := os.Getenv("LISTEN_FDNAMES"); names != "" && names != "public" {
+		return nil, fmt.Errorf("gatewayd-public: LISTEN_FDNAMES=%q, want public", names)
+	}
+
+	file := os.NewFile(uintptr(3), "faas-gatewayd-public.socket")
+	if file == nil {
+		return nil, errors.New("gatewayd-public: systemd listener fd 3 is unavailable")
+	}
+	listener, err := activatedListener(file, addr)
+	_ = file.Close()
+	if err != nil {
+		return nil, err
+	}
+	// Do not leak the activation contract to any helper process spawned after
+	// startup; the descriptor returned by FileListener is close-on-exec.
+	_ = os.Unsetenv("LISTEN_PID")
+	_ = os.Unsetenv("LISTEN_FDS")
+	_ = os.Unsetenv("LISTEN_FDNAMES")
+
+	return listener, nil
+}
+
+func activatedListener(file *os.File, addr string) (net.Listener, error) {
+	listener, err := net.FileListener(file)
+	if err != nil {
+		return nil, fmt.Errorf("gatewayd-public: consume systemd listener: %w", err)
+	}
+	want, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		_ = listener.Close()
+		return nil, fmt.Errorf("gatewayd-public: resolve configured listener: %w", err)
+	}
+	got, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || got.Port != want.Port || !got.IP.Equal(want.IP) {
+		_ = listener.Close()
+		return nil, fmt.Errorf("gatewayd-public: activated listener is %s, want %s", listener.Addr(), want)
+	}
+	return listener, nil
 }
 
 // envOr is the canonical env-override helper (per cmd/gatewayd/main.go).

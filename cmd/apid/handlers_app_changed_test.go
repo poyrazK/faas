@@ -376,14 +376,10 @@ func TestApplyProjectPlan_EmitsAppChangedPerWorkload(t *testing.T) {
 	if _, err := fw.Write(applyProjectOneWorkloadTarGz(t)); err != nil {
 		t.Fatalf("write tarball: %v", err)
 	}
-	// Project slug + name are required form fields alongside source.
-	for k, v := range map[string]string{
-		"slug": "myproj",
-		"name": "My Project",
-	} {
-		if err := mw.WriteField(k, v); err != nil {
-			t.Fatalf("WriteField %s: %v", k, err)
-		}
+	// Project slug is required alongside source. Generic root workloads use
+	// this identity so two projects cannot both create the global slug "app".
+	if err := mw.WriteField("project_slug", "myproj"); err != nil {
+		t.Fatalf("WriteField project_slug: %v", err)
 	}
 	if err := mw.Close(); err != nil {
 		t.Fatalf("multipart close: %v", err)
@@ -433,8 +429,8 @@ func TestApplyProjectPlan_EmitsAppChangedPerWorkload(t *testing.T) {
 	// (e.g. emits before INSERT commits) would still pass the
 	// emit-shape assertions above; this row-existence check is the
 	// belt-and-braces.
-	if _, err := e.store.AppBySlug(context.Background(), "app"); err != nil {
-		t.Errorf("AppBySlug(app) post-apply: %v (inserted app missing)", err)
+	if _, err := e.store.AppBySlug(context.Background(), "myproj"); err != nil {
+		t.Errorf("AppBySlug(myproj) post-apply: %v (inserted app missing)", err)
 	}
 }
 

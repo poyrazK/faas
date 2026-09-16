@@ -196,7 +196,12 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m
 			log.Warn("gateway: resolve compute_node for dial", "node", nodeID, "err", err.Error())
 			return "", false
 		}
-		if !n.Active {
+		// A draining node no longer receives new admissions, but its vmmd
+		// remains the authoritative bridge for instances being migrated. Keep
+		// those existing targets forwardable until the recovery controller
+		// moves the node to maintenance. Other inactive states are never
+		// routable.
+		if !nodeAllowsForwarding(n) {
 			return "", false
 		}
 		return n.TargetURL, true
@@ -211,6 +216,10 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m
 		log,
 	)
 	return &nodeCache{cache: cache, log: log, metrics: m, subscribe: db.SubscribeWithReconnect}
+}
+
+func nodeAllowsForwarding(node state.ComputeNode) bool {
+	return node.Active || node.Lifecycle == state.NodeLifecycleDraining
 }
 
 // Forwarding returns the per-node http.Handler factory. cmd/gatewayd-internal

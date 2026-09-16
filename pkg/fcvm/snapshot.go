@@ -54,6 +54,10 @@ type Snapshot struct {
 	VMStateStorageKey string
 	MemBytes          int64
 	Stale             bool // set true on FC upgrade or a failed restore
+	// Networkless is true only for snapshots captured from the execution
+	// runtime catalog. Ordinary app snapshots must never be selected by the
+	// dedicated execution restore path.
+	Networkless bool
 }
 
 // Usable reports whether snap can be loaded by the given running Firecracker
@@ -164,6 +168,10 @@ type RestoreSpec struct {
 	// ServiceDiscoveryIP refreshes the guest resolver before snapshot load so
 	// a VM restored on another compute node uses that node's bridge address.
 	ServiceDiscoveryIP string
+	// Networkless is the restore counterpart of ColdBootSpec.Networkless. The
+	// snapshot must have been captured from an execution-shaped guest; the
+	// manager never permits an ordinary app wake to select this path.
+	Networkless bool
 	// StorageKey is the prefix-matched key under which the mem blob lives
 	// (e.g. "snap/<deploymentID>/mem"). Restore resolves it via
 	// Storage.Get into a tmp file used as the FC restore source.
@@ -185,9 +193,10 @@ type RestoreSpec struct {
 	// StartupDeadlineS is the per-app readiness budget. 0 means use the
 	// vmmd default, preserving restores from pre-M3 callers.
 	StartupDeadlineS int
-	// SkipReady is set for builder restores. Builder guests do not expose the
-	// application HTTP readiness port; their readiness is the builder-specific
-	// resume handoff instead. App restores keep the normal probe.
+	// SkipReady is set for builder and networkless execution restores. These
+	// guests do not expose the application HTTP readiness port; builders use a
+	// build handoff and executions use the vsock protocol. App restores keep
+	// the normal probe.
 	SkipReady bool
 	// EphemeralWritable is set for warm builder restores. The retained builder
 	// drive is already isolated to one slot, so the VMM may link or bind it

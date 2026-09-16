@@ -14,6 +14,14 @@ export type AppliedBuild = {
   deployment_id?: string;
   build_id?: string;
   /**
+   * Terminal deployment status added by wait-aware CLI responses.
+   */
+  deployment_status?: string;
+  /**
+   * Terminal build status added by wait-aware CLI responses.
+   */
+  build_status?: string;
+  /**
    * Staging or enqueue error message; partial-failure rows carry this in lieu of IDs.
    */
   error?: string;

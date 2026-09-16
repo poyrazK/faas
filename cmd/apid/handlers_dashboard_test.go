@@ -215,8 +215,35 @@ func TestDashboardHandler_AppsList(t *testing.T) {
 	if !strings.Contains(body, "faas deploy --template=hello-node") {
 		t.Errorf("body missing deploy quickstart; got:\n%s", body)
 	}
-	if !strings.Contains(body, "https://docs.gregale.dev/storage") {
+	if !strings.Contains(body, "https://gregale.dev/docs/storage") {
 		t.Errorf("body missing storage docs URL; got:\n%s", body)
+	}
+}
+
+func TestDashboardHandler_AppsListShowsDeployRate(t *testing.T) {
+	srv, cookie, store, _ := newAuthedDashboardServerFull(t)
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for range 4 {
+		if _, err := store.ConsumeAccountDeployRate(t.Context(), acct.ID, 10, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps", nil)
+	r.AddCookie(cookie)
+	srv.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"4 / 10 deploys this hour", `value="4" max="10"`, "6 remaining", "<time datetime="} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
 	}
 }
 
@@ -1217,6 +1244,7 @@ func TestDashboardDeploymentItem_PopulatesRepoFullName(t *testing.T) {
 		Status:    state.DeployLive,
 		Kind:      state.DeploymentKindGitHub,
 		SourceURL: "github://acme-co/payments@0123456789abcdef0123456789abcdef01234567",
+		CommitSHA: "0123456789abcdef0123456789abcdef01234567",
 		PRNumber:  4242,
 	}
 	item := dashboardDeploymentItem(dep)
@@ -1225,6 +1253,21 @@ func TestDashboardDeploymentItem_PopulatesRepoFullName(t *testing.T) {
 	}
 	if item.PRNumber != 4242 {
 		t.Errorf("PRNumber = %d, want 4242", item.PRNumber)
+	}
+	if item.CommitSHA != "0123456789abcdef0123456789abcdef01234567" {
+		t.Errorf("CommitSHA = %q, want canonical source revision", item.CommitSHA)
+	}
+	if item.CommitShort != "0123456" {
+		t.Errorf("CommitShort = %q, want %q", item.CommitShort, "0123456")
+	}
+	if item.GitHubRepoURL != "https://github.com/acme-co/payments" {
+		t.Errorf("GitHubRepoURL = %q", item.GitHubRepoURL)
+	}
+	if item.GitHubCommitURL != "https://github.com/acme-co/payments/commit/0123456789abcdef0123456789abcdef01234567" {
+		t.Errorf("GitHubCommitURL = %q", item.GitHubCommitURL)
+	}
+	if item.GitHubChecksURL != "https://github.com/acme-co/payments/checks" {
+		t.Errorf("GitHubChecksURL = %q", item.GitHubChecksURL)
 	}
 
 	// Image-deploy: empty SourceURL → empty RepoFullName (template
@@ -1239,6 +1282,41 @@ func TestDashboardDeploymentItem_PopulatesRepoFullName(t *testing.T) {
 	imgItem := dashboardDeploymentItem(imgDep)
 	if imgItem.RepoFullName != "" {
 		t.Errorf("image-deploy RepoFullName = %q, want empty", imgItem.RepoFullName)
+	}
+	if imgItem.GitHubRepoURL != "" {
+		t.Errorf("image-deploy unexpectedly has GitHubRepoURL = %q", imgItem.GitHubRepoURL)
+	}
+}
+
+func TestGitHubDeploymentLinks_RecoversSHAFromSourceURL(t *testing.T) {
+	const sourceURL = "github://acme-co/payments/legacy@0123456789abcdef0123456789abcdef01234567"
+	repoURL, commitURL, checksURL, resolvedSHA, commitShort := githubDeploymentLinks(sourceURL, "")
+	if repoURL != "" || commitURL != "" || checksURL != "" || resolvedSHA != "" || commitShort != "" {
+		t.Fatalf("malformed repo unexpectedly produced links: %q %q %q %q %q", repoURL, commitURL, checksURL, resolvedSHA, commitShort)
+	}
+
+	const legacySourceURL = "github://acme-co/payments@0123456789abcdef0123456789abcdef01234567"
+	repoURL, commitURL, checksURL, resolvedSHA, commitShort = githubDeploymentLinks(legacySourceURL, "")
+	if repoURL != "https://github.com/acme-co/payments" {
+		t.Errorf("repoURL = %q", repoURL)
+	}
+	if commitURL != "https://github.com/acme-co/payments/commit/0123456789abcdef0123456789abcdef01234567" {
+		t.Errorf("commitURL = %q", commitURL)
+	}
+	if checksURL != "https://github.com/acme-co/payments/checks" {
+		t.Errorf("checksURL = %q", checksURL)
+	}
+	if resolvedSHA != "0123456789abcdef0123456789abcdef01234567" || commitShort != "0123456" {
+		t.Errorf("resolved SHA = %q, short = %q", resolvedSHA, commitShort)
+	}
+}
+
+func TestGitHubDeploymentLinks_RejectsNonCanonicalSHA(t *testing.T) {
+	repoURL, commitURL, checksURL, resolvedSHA, commitShort := githubDeploymentLinks(
+		"github://acme-co/payments@DEADBEEF", "DEADBEEF",
+	)
+	if repoURL != "" || commitURL != "" || checksURL != "" || resolvedSHA != "" || commitShort != "" {
+		t.Fatalf("non-canonical SHA produced links: %q %q %q %q %q", repoURL, commitURL, checksURL, resolvedSHA, commitShort)
 	}
 }
 

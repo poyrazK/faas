@@ -49,7 +49,7 @@ func TestGregaleCLI_Deploy_NoAuthExitsTwo(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	code := cmdDeployTarball([]string{"--image", "registry.example/foo@sha256:abc", "--name", "no-auth-app"})
+	code := cmdDeployTarball([]string{"--image", "registry.example/foo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--name", "no-auth-app"})
 	if code != 2 {
 		t.Errorf("cmdDeployTarball exit code = %d, want 2 (errAuth contract)", code)
 	}
@@ -77,6 +77,8 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 	var hits [4]string // [POST /v1/apps, POST /v1/apps/{slug}/deployments, GET /v1/deployments/{id}/logs, GET release summary]
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/apps/smoke-app":
+			w.WriteHeader(http.StatusNotFound)
 		case r.Method == "POST" && r.URL.Path == "/v1/apps":
 			hits[0] = r.URL.Path
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a-smoke", Slug: "smoke-app"})
@@ -118,7 +120,7 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdDeployTarball([]string{"--image", "registry.example/foo@sha256:abc", "--name", "smoke-app"}); code != 0 {
+	if code := cmdDeployTarball([]string{"--image", "registry.example/foo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--name", "smoke-app"}); code != 0 {
 		t.Errorf("cmdDeployTarball exit code = %d, want 0", code)
 	}
 	if hits[0] != "/v1/apps" {

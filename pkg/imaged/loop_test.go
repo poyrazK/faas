@@ -13,8 +13,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // gcFixture wires a Loop with a memstore, an injected tick channel, and a
@@ -37,6 +40,13 @@ type gcFixture struct {
 	tickSent func() // tickOnce helper
 	be       storage.StorageBackend
 }
+
+type failingDeleteStorage struct {
+	storage.StorageBackend
+	err error
+}
+
+func (s *failingDeleteStorage) Delete(_ context.Context, _ string) error { return s.err }
 
 func newGCFixture(t *testing.T, lvPct float64) *gcFixture {
 	t.Helper()
@@ -372,11 +382,12 @@ func TestFCSweep_ExpiredStaleSnapshotRemovesArtifacts(t *testing.T) {
 
 	appsRoot := t.TempDir()
 	be, _ := storage.NewLocalStorageBackend(appsRoot)
-	keys := []string{
+	snapshotKeys := []string{
 		state.SnapMemKey(dep.ID),
 		sched.SnapshotVMStateKey(dep.ID),
-		sched.AppLayerKey(app.Slug, dep.ID),
 	}
+	layerKey := sched.AppLayerKey(app.Slug, dep.ID)
+	keys := append(append([]string{}, snapshotKeys...), layerKey)
 	for _, key := range keys {
 		if err := be.Put(context.Background(), key, strings.NewReader("artifact")); err != nil {
 			t.Fatalf("seed %s: %v", key, err)
@@ -395,11 +406,16 @@ func TestFCSweep_ExpiredStaleSnapshotRemovesArtifacts(t *testing.T) {
 	if ok := loop.runFCSweep(context.Background()); !ok {
 		t.Fatal("runFCSweep returned false")
 	}
-	for _, key := range keys {
+	for _, key := range snapshotKeys {
 		if rc, err := be.Get(context.Background(), key); err == nil {
 			_ = rc.Close()
 			t.Errorf("expired artifact %s survived stale retention", key)
 		}
+	}
+	if rc, err := be.Get(context.Background(), layerKey); err != nil {
+		t.Fatalf("live deployment layer was deleted with stale snapshot: %v", err)
+	} else {
+		_ = rc.Close()
 	}
 	rows, err := store.ListSnapshotsStaleOlderThan(context.Background(), api.SnapshotStaleRetention)
 	if err != nil {
@@ -861,6 +877,121 @@ func TestLoopDeleteSnapshotsAndFiles_RetainsLayerUntilLastTier(t *testing.T) {
 	}
 }
 
+func TestLoopDeleteSnapshotsAndFilesRetainsDurableRowUntilRemoteDeleteSucceeds(t *testing.T) {
+	store := state.NewMemStore()
+	_, deploymentID, snapshotID := seedSnapshotWithApp(t, store, 100, 100)
+	local, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteErr := fmt.Errorf("%w: registry refused manifest delete", storage.ErrDeleteUnsupported)
+	handler := &Handler{
+		store: store,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		storage: &failingDeleteStorage{
+			StorageBackend: local,
+			err:            remoteErr,
+		},
+	}
+	loop := NewLoop(LoopConfig{
+		Handler: handler,
+		Store:   store,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:     time.Now,
+		LvUsedPct: func(context.Context) (float64, error) {
+			return 0, nil
+		},
+	})
+	target := deleteTarget{
+		ID:           snapshotID,
+		DeploymentID: deploymentID,
+		AppSlug:      "snap-app",
+		StorageKey:   state.SnapMemKey(deploymentID),
+		Tier:         state.SnapshotTierInit,
+	}
+	if err := loop.deleteSnapshotsAndFiles(context.Background(), []deleteTarget{target}); !errors.Is(err, storage.ErrDeleteUnsupported) {
+		t.Fatalf("delete error = %v, want ErrDeleteUnsupported", err)
+	}
+	backlog, err := store.ListSnapshotsPendingDelete(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backlog) != 1 || backlog[0].ID != snapshotID {
+		t.Fatalf("durable backlog = %+v, want snapshot %s", backlog, snapshotID)
+	}
+
+	// Once the storage path recovers, the ordinary retry loop removes the
+	// remote artifacts and only then deletes the stale database row.
+	handler.storage = local
+	loop.retryRemoteDeleteBacklog(context.Background(), time.Now())
+	backlog, err = store.ListSnapshotsPendingDelete(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backlog) != 0 {
+		t.Fatalf("backlog after recovery = %+v, want empty", backlog)
+	}
+}
+
+func TestLoopDeleteSnapshotsAndFilesAuditsTerminalRemoteQuarantine(t *testing.T) {
+	store := state.NewMemStore()
+	_, _, snapshotID := seedSnapshotWithApp(t, store, 100, 100)
+	rows, err := store.ListSnapshotsForGC(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ListSnapshotsForGC = (%+v, %v), want one row", rows, err)
+	}
+	local, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{
+		store: store,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		storage: &failingDeleteStorage{
+			StorageBackend: local,
+			err:            fmt.Errorf("%w: protected package version", storage.ErrDeleteQuarantined),
+		},
+	}
+	loop := NewLoop(LoopConfig{Handler: handler, Store: store, Log: handler.log, Now: time.Now})
+	if err := loop.deleteSnapshotsAndFiles(context.Background(), []deleteTarget{targetForSnapshot(rows[0])}); err != nil {
+		t.Fatalf("terminal quarantine: %v", err)
+	}
+	backlog, err := store.ListSnapshotsPendingDelete(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backlog) != 0 {
+		t.Fatalf("backlog after audited terminal disposition = %+v, want empty", backlog)
+	}
+	events, err := store.ListEvents(context.Background(), rows[0].AccountID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Kind != "snapshot.remote_delete_quarantined" {
+		t.Fatalf("quarantine audit events = %+v", events)
+	}
+	if !strings.Contains(string(events[0].Data), snapshotID) {
+		t.Fatalf("quarantine audit does not identify snapshot %s: %s", snapshotID, events[0].Data)
+	}
+}
+
+func TestRemoteDeleteRetryPreservesOrdinaryStaleRollbackSnapshot(t *testing.T) {
+	store := state.NewMemStore()
+	_, _, snapshotID := seedSnapshotWithApp(t, store, 100, 100)
+	if err := store.MarkSnapshotStale(context.Background(), snapshotID); err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	loop.retryRemoteDeleteBacklog(context.Background(), time.Now())
+	rows, err := store.ListSnapshotsStaleOlderThan(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != snapshotID || rows[0].DeletePending {
+		t.Fatalf("ordinary stale rollback row changed by remote retry: %+v", rows)
+	}
+}
+
 // TestMemStore_ListDeploymentsForApp_LimitZero is the F-10 parity check.
 // Both backends must return all remaining rows when `limit <= 0` (the
 // convention documented on State.ListDeploymentsForApp). PgStore's prior
@@ -913,11 +1044,7 @@ func nan() float64 {
 	return z / z // 0/0 → NaN, deterministic, no math import
 }
 
-// TestLoop_ConstructionNoReaper is a sanity test confirming imaged no
-// longer carries the PR-A reaper channel/config (PR-B). builderd
-// owns the build-queue durability surface now; imaged reacts to
-// deployment_changed + snapshot_boot signals only.
-func TestLoop_ConstructionNoReaper(t *testing.T) {
+func TestLoop_ConstructionDefaults(t *testing.T) {
 	loop := NewLoop(LoopConfig{
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -928,13 +1055,60 @@ func TestLoop_ConstructionNoReaper(t *testing.T) {
 	if loop.handler != nil {
 		t.Error("NewLoop should leave handler nil until caller wires it")
 	}
-	// The reap channel/config must be gone (no public surface on
-	// LoopConfig, no fields on Loop). Construction with the bare
-	// config returning a usable Loop is the assertion — any future
-	// re-introduction of reapCh / ReapBuildEvery will surface via a
-	// unused-but-still-public interface in code review, and the
-	// reference to Loop.gcCh above is the only knob tests should
-	// ever need to drive the loop.
+}
+
+func TestReconcileStaleDeploymentsCancelsOrphanAndKeepsActiveBuild(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "stale@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 13, 4, 0, 0, 0, time.UTC)
+	makeDeployment := func(slug string, age time.Duration) state.Deployment {
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: slug})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{
+			AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployBuilding,
+			CreatedAt: now.Add(-age),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return deployment
+	}
+	orphan := makeDeployment("stale-orphan", 3*time.Hour)
+	active := makeDeployment("stale-active", 4*time.Hour)
+	if _, err := store.CreateBuild(ctx, active.ID, state.DeploymentKindTarball, 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	ops := wire.NewOpsMetrics("imaged_test")
+	loop := NewLoop(LoopConfig{
+		Handler: &Handler{ops: ops}, Store: store, Now: func() time.Time { return now },
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	loop.reconcileStaleDeployments(ctx)
+	gotOrphan, _ := store.DeploymentByID(ctx, orphan.ID)
+	if gotOrphan.Status != state.DeployCancelled || !strings.Contains(gotOrphan.CancelledByPrincipal, "stale-deployment-reconciler:building") {
+		t.Fatalf("orphan = status %s principal %q", gotOrphan.Status, gotOrphan.CancelledByPrincipal)
+	}
+	gotActive, _ := store.DeploymentByID(ctx, active.ID)
+	if gotActive.Status != state.DeployBuilding {
+		t.Fatalf("active build deployment = %s, want building", gotActive.Status)
+	}
+	recorder := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	metrics := recorder.Body.String()
+	for _, want := range []string{
+		"imaged_test_stale_deployments_reconciled_total 1",
+		"imaged_test_stale_deployment_oldest_age_seconds 14400",
+	} {
+		if !strings.Contains(metrics, want) {
+			t.Errorf("metrics missing %q", want)
+		}
+	}
 }
 
 // countingStore wraps *state.MemStore and tallies the GC-path method

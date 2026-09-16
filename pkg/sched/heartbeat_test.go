@@ -230,6 +230,41 @@ func TestHeartbeat_HealthyNodeStampsTimestamp(t *testing.T) {
 	}
 }
 
+func TestHeartbeat_StaleHealthyNodeIsProbedBeforeDemotion(t *testing.T) {
+	store := state.NewMemStore()
+	oldHeartbeat := time.Now().Add(-10 * time.Minute)
+	node, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+		Name:            "stale-but-healthy",
+		TargetURL:       "tcp://10.0.0.8:50051",
+		Lifecycle:       state.NodeLifecycleActive,
+		Active:          true,
+		LastHeartbeatAt: oldHeartbeat,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	dialer := &heartbeatFakeDialer{}
+	h := NewHeartbeat(store, dialer, nil, nil).WithOwnerNodeID(node.ID)
+	h.Staleness = time.Minute
+
+	if err := h.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if got := len(dialer.dials); got != 1 {
+		t.Fatalf("Dial calls = %d, want 1 for stale healthy node", got)
+	}
+	got, err := store.ComputeNodeByID(context.Background(), node.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID: %v", err)
+	}
+	if got.Lifecycle != state.NodeLifecycleActive || !got.Active {
+		t.Fatalf("node lifecycle=%q active=%v, want active/true", got.Lifecycle, got.Active)
+	}
+	if !got.LastHeartbeatAt.After(oldHeartbeat) {
+		t.Fatalf("last heartbeat = %s, want after %s", got.LastHeartbeatAt, oldHeartbeat)
+	}
+}
+
 func TestHeartbeat_ProbesAreBoundedAndConcurrent(t *testing.T) {
 	store := state.NewMemStore()
 	for i := 0; i < 7; i++ {
@@ -386,6 +421,52 @@ func TestHeartbeat_ProbesUnavailableNodesWithStaleHeartbeat(t *testing.T) {
 	}
 	if recovered.Lifecycle != state.NodeLifecycleRecovering || !recovered.Active {
 		t.Fatalf("node lifecycle=%q active=%v, want recovering/true", recovered.Lifecycle, recovered.Active)
+	}
+}
+
+// TestHeartbeat_OwnerScopedObserverMarksStalePeerUnavailable covers the
+// partition case that an owner-scoped heartbeat cannot observe by itself: the
+// peer schedd is frozen, so no fresh ping is written for its node. A healthy
+// schedd must still remove that stale peer from placement using the durable
+// timestamp, without dialing or reactivating the peer.
+func TestHeartbeat_OwnerScopedObserverMarksStalePeerUnavailable(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	owner, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatalf("ComputeNodeByName owner: %v", err)
+	}
+	now := time.Now().UTC()
+	peer, err := store.CreateComputeNode(ctx, state.ComputeNode{
+		Name:            "partitioned-peer",
+		TargetURL:       "tcp://10.0.0.22:50051",
+		Lifecycle:       state.NodeLifecycleActive,
+		Active:          true,
+		LastHeartbeatAt: now.Add(-10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode peer: %v", err)
+	}
+
+	dialer := &heartbeatFakeDialer{}
+	h := NewHeartbeat(store, dialer, nil, nil).
+		WithOwnerNodeID(owner.ID).
+		WithStalePeerObserver(true)
+	h.Staleness = time.Minute
+	h.now = func() time.Time { return now }
+	if err := h.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	peerAfter, err := store.ComputeNodeByID(ctx, peer.ID)
+	if err != nil {
+		t.Fatalf("ComputeNodeByID peer: %v", err)
+	}
+	if peerAfter.Lifecycle != state.NodeLifecycleUnavailable || peerAfter.Active {
+		t.Fatalf("peer lifecycle=%q active=%v, want unavailable/false", peerAfter.Lifecycle, peerAfter.Active)
+	}
+	if len(dialer.dials) != 1 || dialer.dials[0] != owner.TargetURL {
+		t.Fatalf("dial targets = %v, want only owner %q; stale-peer observer must not probe peers", dialer.dials, owner.TargetURL)
 	}
 }
 

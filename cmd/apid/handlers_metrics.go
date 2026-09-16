@@ -96,13 +96,10 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 	resp.Range = rng
 	resp.Source = src
 
-	// Best-effort enrichment of the three Hobby+-only fields
-	// beyond the PromQL fetch. A failure here degrades the field
-	// to 0 (same posture as the QueueDepth best-effort path at
-	// pkg/appmetrics/appmetrics.go:196-199) and stamps Source
-	// with the existing degraded prefix only when the underlying
-	// PromQL fetch itself failed — these SQL/PromQL misses do
-	// not flip the whole response to degraded.
+	// Best-effort enrichment of Wakes24h is sourced from the durable events
+	// table. The cache-hit and error-budget fields remain absent until their
+	// respective metric contracts are available; emitting zero would make an
+	// unavailable signal look like an observed 0% value.
 
 	// Wakes24h: count of wake.boot_started events in the trailing
 	// 24 hours, sourced from the events table. The (data->>'app_id')
@@ -142,7 +139,9 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 	// exhausted" message.
 	// TODO: wire against apid_request_total{account_id, code}
 	// once the per-plan SLO target lands on Limits.
-	resp.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
+	if resp.AsOf == "" {
+		resp.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	if target != nil {
 		emitOperatorActionView(r, s, acct, target.ID, "metrics")
 	}

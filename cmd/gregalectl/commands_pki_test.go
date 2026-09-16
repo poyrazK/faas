@@ -69,6 +69,60 @@ func TestPKIIdentityRejectsNodeIdentityOnControlPlane(t *testing.T) {
 	}
 }
 
+func TestRenderPKIMetricsExportsBoundedDaemonExpiryAndRenewalState(t *testing.T) {
+	rootDir := seedPKIRootDir(t)
+	statePath := filepath.Join(t.TempDir(), "status.json")
+	if err := os.WriteFile(statePath, []byte(`{"last_success_unix":101,"last_failure_unix":99,"partial":false}`), 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+	now := time.Unix(1234, 0)
+	body, err := renderPKIMetrics(rootDir, "control-plane", "fsn-1", statePath, now)
+	if err != nil {
+		t.Fatalf("renderPKIMetrics: %v", err)
+	}
+	got := string(body)
+	for _, want := range []string{
+		`faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds{host="fsn-1",box_role="control-plane",daemon="apid"}`,
+		`faas_internal_mtls_expiry_metrics_last_success_timestamp_seconds{host="fsn-1",box_role="control-plane"} 1234`,
+		`faas_internal_mtls_renewal_last_success_timestamp_seconds{host="fsn-1",box_role="control-plane"} 101`,
+		`faas_internal_mtls_renewal_last_failure_timestamp_seconds{host="fsn-1",box_role="control-plane"} 99`,
+		`faas_internal_mtls_renewal_partial{host="fsn-1",box_role="control-plane"} 0`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("metrics missing %q\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderPKIMetricsFailsClosedOnMissingActiveLeaf(t *testing.T) {
+	rootDir := seedPKIRootDir(t)
+	role := pki.RolesForBox("compute-only")[0]
+	certPath, _ := pki.LeafPaths(rootDir, role)
+	if err := os.Remove(certPath); err != nil {
+		t.Fatalf("remove active leaf: %v", err)
+	}
+	if _, err := renderPKIMetrics(rootDir, "compute-only", "fsn-2.faas", "", time.Now()); err == nil {
+		t.Fatal("renderPKIMetrics accepted a missing active leaf")
+	}
+}
+
+func TestWritePKIMetricsAtomicReplacesExistingTextfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "collector", "pki.prom")
+	if err := writePKIMetricsAtomic(path, []byte("old\n")); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	if err := writePKIMetricsAtomic(path, []byte("new\n")); err != nil {
+		t.Fatalf("second write: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if string(body) != "new\n" {
+		t.Fatalf("output = %q, want new", body)
+	}
+}
+
 // captureOsStdoutPKI swaps the package-level osStdout for a buffer
 // and returns a restore closure. Local to this file so we can grow
 // the buffer type independently from the sign_keys + host_age

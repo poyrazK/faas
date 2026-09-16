@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type snapshotReplicaKey struct {
@@ -17,6 +19,7 @@ type snapshotReplicaRow struct {
 	region        string
 	state         SnapshotReplicaState
 	createdAt     time.Time
+	leaseToken    string
 	attempts      int
 	lastError     string
 	nextAttemptAt time.Time
@@ -85,11 +88,8 @@ func (m *MemStore) EnqueueSnapshotReplicasForNode(_ context.Context, nodeID stri
 		if exists {
 			if row.state == SnapshotReplicaReady && !row.readyAt.IsZero() && time.Since(row.readyAt) >= snapshotReplicaRevalidateAfter {
 				row.state = SnapshotReplicaPending
-				row.readyAt = time.Time{}
 				row.updatedAt = time.Now()
-				row.createdAt = row.updatedAt
 				m.snapshotReplicas[key] = row
-				created++
 			}
 			continue
 		}
@@ -147,8 +147,16 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 	if chosen == nil {
 		return SnapshotReplicaJob{}, ErrNotFound
 	}
+	revalidation := !chosenRow.readyAt.IsZero()
+	queuedAt := chosenRow.createdAt
+	if revalidation {
+		queuedAt = now
+	}
 	chosenRow.state = SnapshotReplicaSyncing
-	chosenRow.attempts = min(chosenRow.attempts+1, snapshotReplicaAttemptCap)
+	chosenRow.leaseToken = uuid.NewString()
+	if !revalidation {
+		chosenRow.attempts = min(chosenRow.attempts+1, snapshotReplicaAttemptCap)
+	}
 	chosenRow.updatedAt = now
 	chosenRow.nextAttemptAt = time.Time{}
 	chosenRow.lastError = ""
@@ -176,19 +184,47 @@ func (m *MemStore) ClaimSnapshotReplica(_ context.Context, nodeID string) (Snaps
 		NodeID:            nodeID,
 		Region:            nodeRegion(node),
 		Attempts:          chosenRow.attempts,
-		QueuedAt:          chosenRow.createdAt,
+		Revalidation:      revalidation,
+		QueuedAt:          queuedAt,
+		LeaseToken:        chosenRow.leaseToken,
 	}, nil
 }
 
-func (m *MemStore) MarkSnapshotReplicaReady(_ context.Context, snapshotID, nodeID string) error {
+func (m *MemStore) RenewSnapshotReplicaLease(_ context.Context, snapshotID, nodeID, leaseToken string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if leaseToken == "" {
+		return errors.New("state: snapshot replica lease token required")
+	}
 	key := snapshotReplicaKey{snapshotID: snapshotID, nodeID: nodeID}
 	row, ok := m.snapshotReplicas[key]
 	if !ok {
 		return ErrNotFound
 	}
+	if row.state != SnapshotReplicaSyncing || row.leaseToken != leaseToken {
+		return ErrConflict
+	}
+	row.updatedAt = time.Now()
+	m.snapshotReplicas[key] = row
+	return nil
+}
+
+func (m *MemStore) MarkSnapshotReplicaReadyWithLease(_ context.Context, snapshotID, nodeID, leaseToken string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if leaseToken == "" {
+		return errors.New("state: snapshot replica lease token required")
+	}
+	key := snapshotReplicaKey{snapshotID: snapshotID, nodeID: nodeID}
+	row, ok := m.snapshotReplicas[key]
+	if !ok {
+		return ErrNotFound
+	}
+	if row.state != SnapshotReplicaSyncing || row.leaseToken != leaseToken {
+		return ErrConflict
+	}
 	row.state = SnapshotReplicaReady
+	row.leaseToken = ""
 	row.readyAt = time.Now()
 	row.updatedAt = row.readyAt
 	row.lastError = ""
@@ -197,13 +233,19 @@ func (m *MemStore) MarkSnapshotReplicaReady(_ context.Context, snapshotID, nodeI
 	return nil
 }
 
-func (m *MemStore) MarkSnapshotReplicaFailed(_ context.Context, snapshotID, nodeID string, cause error) error {
+func (m *MemStore) MarkSnapshotReplicaFailedWithLease(_ context.Context, snapshotID, nodeID, leaseToken string, cause error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if leaseToken == "" {
+		return errors.New("state: snapshot replica lease token required")
+	}
 	key := snapshotReplicaKey{snapshotID: snapshotID, nodeID: nodeID}
 	row, ok := m.snapshotReplicas[key]
 	if !ok {
 		return ErrNotFound
+	}
+	if row.state != SnapshotReplicaSyncing || row.leaseToken != leaseToken {
+		return ErrConflict
 	}
 	message := "snapshot replica failed"
 	if cause != nil {
@@ -213,6 +255,7 @@ func (m *MemStore) MarkSnapshotReplicaFailed(_ context.Context, snapshotID, node
 		message = message[:2048]
 	}
 	row.state = SnapshotReplicaFailed
+	row.leaseToken = ""
 	row.lastError = message
 	row.readyAt = time.Time{}
 	row.updatedAt = time.Now()
@@ -256,4 +299,6 @@ func snapshotTier(s Snapshot) string {
 func snapshotVMStateKey(s Snapshot) string { return SnapshotVMStateKey(s) }
 
 var _ SnapshotReplicaStore = (*MemStore)(nil)
+var _ SnapshotReplicaLeaseStore = (*MemStore)(nil)
 var _ SnapshotReplicaStore = (*PgStore)(nil)
+var _ SnapshotReplicaLeaseStore = (*PgStore)(nil)

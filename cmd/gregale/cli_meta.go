@@ -122,11 +122,11 @@ func cliHelpGroup(command cliCommand) string {
 		return "Advanced"
 	}
 	switch command.Name {
-	case "account", "billing", "capabilities", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "usage", "version", "completion", "man", "whoami":
+	case "account", "billing", "capabilities", "dashboard", "doctor", "invitations", "invoices", "keys", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "upload-cache", "usage", "version", "completion", "man", "whoami":
 		return "Core"
-	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
+	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "trusted-publishers":
 		return "API"
-	case "crons", "delayed-task", "invocations", "jobs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "crons", "delayed-task", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "traffic", "wake", "wake-timeline":
 		return "Delivery"
@@ -144,6 +144,14 @@ func cliHelpGroup(command cliCommand) string {
 // rather than a hardcoded name list.
 func (c cliCommand) hasSlugFirst() bool {
 	return len(c.Positionals) > 0 && c.Positionals[0] == "<slug>"
+}
+
+func (c cliCommand) subcommandChoice() string {
+	names := make([]string, 0, len(c.Subcommands))
+	for _, sub := range c.Subcommands {
+		names = append(names, sub.Name)
+	}
+	return strings.Join(names, "|")
 }
 
 // completionSubcommandWord and completionSlugWord describe the argument
@@ -280,11 +288,18 @@ var cliCommands = []cliCommand{
 			{Name: "list", Short: "List alert rules", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 			}},
-			{Name: "add", Short: "Add an alert rule"},
+			{Name: "add", Short: "Add an alert rule", Flags: []cliFlag{
+				{Name: "webhook-secret-stdin", Short: "read the webhook secret from stdin"},
+			}},
 			{Name: "info", Short: "Show one alert rule"},
-			{Name: "update", Short: "Update one alert rule"},
+			{Name: "update", Short: "Update one alert rule", Flags: []cliFlag{
+				{Name: "webhook-secret-stdin", Short: "read the replacement webhook secret from stdin"},
+			}},
 			{Name: "rm", Short: "Delete one alert rule"},
-			{Name: "rotate-secret", Short: "Rotate the alert's webhook secret"},
+			{Name: "rotate-secret", Short: "Rotate the alert's webhook secret", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "from-stdin", Short: "read the replacement secret from stdin"},
+			}},
 			// Issue #1233 / ADR-123 — alert preset catalog +
 			// instantiate-from-preset. Two leaves under preset:
 			// list (no flags), enable <name> --app <slug>
@@ -301,7 +316,7 @@ var cliCommands = []cliCommand{
 			{Name: "list", Short: "List audit events"},
 			{Name: "get", Short: "Show one audit event"},
 		},
-		Positionals: []string{"<id>"},
+		Positionals: []string{"[<id>]"},
 	},
 	{
 		Name:    dispatchApps,
@@ -315,7 +330,7 @@ var cliCommands = []cliCommand{
 			{Name: "-q", Short: "Delete one app (positional: <slug>)"},
 			{Name: "--quiet", Short: "Delete one app (positional: <slug>)"},
 		},
-		Flags: []cliFlag{{Name: "q", Short: "delete one app"}, {Name: "quiet", Short: "delete one app"}},
+		Flags: []cliFlag{{Name: "quiet", Short: "delete one app without prompting (short form: -q)"}},
 	},
 	{
 		Name:                        appSlugFallback,
@@ -354,10 +369,6 @@ var cliCommands = []cliCommand{
 			{Name: "cancel", Short: "Cancel the subscription at period end"},
 			{Name: "payment-method", Short: "Show the card on file"},
 			{Name: "status", Short: "Show subscription status"},
-			{Name: "price-catalog", Short: "Inspect the price catalog (admin)"},
-			{Name: "reconcile", Short: "Reconcile an invoice with the provider (admin)"},
-			{Name: "reconcile-paddle-overage", Short: "Reconcile Paddle overage charges (admin)"},
-			{Name: "webhook-test", Short: "Send a signed test webhook (operator)"},
 		},
 	},
 	{
@@ -377,7 +388,13 @@ var cliCommands = []cliCommand{
 		Short:   "Inspect builds (build status|list|provenance|sbom)",
 		Subcommands: []cliSub{
 			{Name: statusLiteral, Short: "Show the current status of one build"},
-			{Name: "list", Short: "List builds and discover build IDs"},
+			{Name: "list", Short: "List builds and discover build IDs", Flags: []cliFlag{
+				{Name: "app", Short: "filter to one app", Value: "SLUG"},
+				{Name: "status", Short: "filter by lifecycle status", Value: "STATUS", ClosedSet: []string{"queued", "running", "succeeded", "failed", "cancelled"}},
+				{Name: "limit", Short: "page size (1..200)", Value: "N"},
+				{Name: "before", Short: "pagination cursor", Value: "CURSOR"},
+				{Name: "all", Short: "walk every page"},
+			}},
 			{Name: "provenance", Short: "Show the build provenance attestation"},
 			{Name: "sbom", Short: "Show the build SBOM"},
 		},
@@ -612,13 +629,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "deploy",
 		DocSlug: "deploy",
-		Short:   "Deploy (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
+		Short:   "Deploy an app or project (--path DIR | --image REF | --tarball PATH | --repo OWNER/NAME --ref REF | --github | --template NAME)",
 		Flags: []cliFlag{
 			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
 			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
 			{Name: "path", Short: "deploy a selected local source directory (relative to the current directory)", Value: "DIR"},
 			{Name: "worktree", Short: "deploy the selected source directory from the working tree, including local changes"},
 			{Name: "repo", Short: "deploy from a GitHub repo", Value: "OWNER/NAME"},
+			{Name: "repository", Short: "GitHub owner/name to bind to a project", Value: "OWNER/NAME"},
+			{Name: "install-id", Short: "GitHub installation id for a project binding", Value: "N"},
+			{Name: "production-branch", Short: "production branch for a project binding", Value: "BRANCH"},
 			// Issue #739 / ADR-092: --ref pairs with --repo to
 			// drive the headless source-ref deploy (CI-friendly,
 			// no install-token env). Required when --repo is set.
@@ -637,7 +657,9 @@ var cliCommands = []cliCommand{
 			{Name: "function", Short: "deploy as a function; skip shape auto-detection"},
 			{Name: "app", Short: "deploy as an app; skip shape auto-detection"},
 			{Name: "yes", Short: "skip the apply confirmation prompt"},
-			{Name: "only", Short: "workloads to apply (comma-separated; project apply path)", Value: "SLUGS"},
+			{Name: "only", Short: "workloads to apply; retain unselected project workloads (comma-separated)", Value: "SLUGS"},
+			{Name: "project", Short: "deploy all detected workloads as one project (slug defaults from --name or source)"},
+			{Name: "environment", Short: "deploy to a registered project environment", Value: "SLUG"},
 			// Issue #977 / ADR-116: deployment annotations surface.
 			// --reason is free text (≤280 chars); --tag is closed-set
 			// (see DeploymentAnnotationTags in cmd_deploy_annotations.go);
@@ -658,7 +680,7 @@ var cliCommands = []cliCommand{
 			// but operators running the CLI directly with a known
 			// PR number need an discoverable way to stamp it.
 			{Name: "reason", Short: "free-text deploy reason (≤280 chars)", Value: "text"},
-			{Name: "tag", Short: "annotation tag", Value: "TAG", ClosedSet: DeploymentAnnotationTags},
+			{Name: "tag", Short: "annotation tag (" + strings.Join(DeploymentAnnotationTags, "|") + ")", Value: "TAG", ClosedSet: DeploymentAnnotationTags},
 			{Name: "deployed-by", Short: "operator label (auto-resolved from git config user.name)", Value: "NAME"},
 			{Name: "pr-number", Short: "GitHub PR number (positive int; 0 = absent). CI paths stamp via the GitHub Action.", Value: "N"},
 			// ADR-124 follow-up #1: --exclude + --show-affected
@@ -689,7 +711,7 @@ var cliCommands = []cliCommand{
 			{Name: "wait", Short: "wait for deployment to become live (default)"},
 			{Name: "no-wait", Short: "return after deployment is queued"},
 			{Name: "create-only", Short: "create or reserve the app without uploading a deployment"},
-			{Name: "timeout", Short: "maximum wait seconds for deploy (default 300)", Value: "SECONDS"},
+			{Name: "timeout", Short: "maximum wait seconds for deploy (default 1200)", Value: "SECONDS"},
 			{Name: "idempotency-key", Short: "stable logical retry key for this deployment", Value: "KEY"},
 			{Name: "secrets-file", Short: "seal KEY=VALUE pairs before the first deployment", Value: "PATH"},
 			{Name: "secret-scan", Short: "scan .env files before packing", Value: "on|off", ClosedSet: []string{"on", "off"}},
@@ -745,6 +767,10 @@ var cliCommands = []cliCommand{
 		Name:    "tenant-surfaces",
 		DocSlug: "tenant-surfaces",
 		Short:   "Manage tenant surfaces (multi-hostname SAN bundle per app)",
+		// The API remains behind FAAS_TENANT_SURFACES_ENABLED in production.
+		// Keep the compatibility entry callable for prepared clusters, but do
+		// not advertise it as a generally available customer feature.
+		Audience: cliAudienceCompatibility,
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List tenant surfaces on an app", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (required)", Value: "slug"},
@@ -859,6 +885,42 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<slug>"},
 	},
 	{
+		Name:    "run",
+		DocSlug: "run",
+		Short:   "Run untrusted code in an isolated disposable microVM",
+		Flags: []cliFlag{
+			{Name: "runtime", Short: "runtime (node22|node24|python312|python313)", Value: "R", ClosedSet: []string{"node22", "node24", "python312", "python313"}},
+			{Name: "source", Short: "inline source code", Value: "CODE"},
+			{Name: "file", Short: "source file (regular file only)", Value: "PATH"},
+			{Name: "input", Short: "JSON input (inline | @file | -)", Value: "J|@file|-"},
+			{Name: "timeout-ms", Short: "execution timeout", Value: "N"},
+			{Name: "memory-mb", Short: "memory limit", Value: "N"},
+			{Name: "cpu-millicores", Short: "CPU limit", Value: "N"},
+			{Name: "ephemeral-disk-mb", Short: "ephemeral scratch size", Value: "N"},
+			{Name: "max-output-bytes", Short: "combined output cap", Value: "N"},
+			{Name: "wait", Short: "wait for terminal result"},
+			{Name: "watch", Short: "stream live output while waiting"},
+			{Name: "poll-interval", Short: "status polling interval with --wait", Value: "D"},
+			{Name: "wait-timeout", Short: "maximum client wait duration", Value: "D"},
+		},
+	},
+	{
+		Name:    "runs",
+		DocSlug: "runs",
+		Short:   "Inspect or cancel isolated disposable runs",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List runs", Flags: []cliFlag{
+				{Name: "limit", Short: "maximum number of runs (1..200)", Value: "N"},
+				{Name: "offset", Short: "number of matching runs to skip", Value: "N"},
+				{Name: "status", Short: "filter by lifecycle status", Value: "STATUS", ClosedSet: []string{"queued", "restoring", "running", "succeeded", "failed", "timed_out", "out_of_memory", "cancelled"}},
+			}},
+			{Name: "get", Short: "Show one run"},
+			{Name: "status", Short: "Show one run (alias for get)"},
+			{Name: "cancel", Short: "Cancel one run"},
+		},
+		Positionals: []string{"<id>"},
+	},
+	{
 		Name:    "invocations",
 		DocSlug: "invocations",
 		Short:   "Per-account invocation ledger (invocations list|get <id>)",
@@ -873,13 +935,14 @@ var cliCommands = []cliCommand{
 		DocSlug: "debug",
 		Short:   "Production debugger (ADR-127)",
 		Subcommands: []cliSub{
-			{Name: "requests", Short: "Per-request telemetry (list/watch filters: deployment, status, cold boot, consumer, latency)"},
+			{Name: "requests", Short: "Per-request telemetry (list/export/watch/get/evidence/replay)"},
 			{Name: "coverage", Short: "Observed debugger signal coverage (coverage <slug> [--since D])"},
-			{Name: "regressions", Short: "Active regression observations (list|watch [--interval D] [--once])"},
+			{Name: "running", Short: "Explain why an app is still running, with request evidence when available (running <slug> [--since D] [--limit N])"},
+			{Name: "regressions", Short: "Regressions (live watch, lifecycle actions, per-app/--all, rollback)"},
 			{Name: "compare", Short: "Per-route deployment-vs-deployment compare"},
-			{Name: "bundle", Short: "Export a redacted incident investigation bundle (bundle <slug> <req_id> [--output PATH])"},
+			{Name: "bundle", Short: "Export a redacted incident bundle with coverage (bundle <slug> <req_id> [--output PATH])"},
 		},
-		Positionals: []string{"<slug>"},
+		Positionals: []string{"[flags]", "<slug>", "[<request-id>]"},
 	},
 	{
 		Name:    "invitations",
@@ -929,10 +992,21 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "logs",
-		DocSlug: "logs",
-		Short:   "Tail app or deployment logs (--follow)",
-		Flags:   []cliFlag{{Name: "follow", Short: "stream logs until interrupted"}},
+		Name:        "logs",
+		DocSlug:     "logs",
+		Short:       "Read app or deployment logs (logs <slug>; logs tail <slug> is the follow alias)",
+		Positionals: []string{"<slug>"},
+		Flags: []cliFlag{
+			{Name: "follow", Short: "stream logs until interrupted"},
+			{Name: "deployment", Short: "deployment id (default: latest)", Value: "ID"},
+			{Name: "grep", Short: "only show lines containing this substring", Value: "SUBSTR"},
+			{Name: "since", Short: "only show lines at or after this RFC3339 timestamp", Value: "RFC3339"},
+			{Name: "level", Short: "only show lines at this level", Value: "LEVEL", ClosedSet: []string{"info", "warn", "error"}},
+			{Name: "explain", Short: "summarize the last failure and common error patterns"},
+			{Name: "archive", Short: "read durable logs for one instance and UTC day"},
+			{Name: "instance", Short: "instance id for --archive", Value: "ID"},
+			{Name: "date", Short: "UTC day for --archive", Value: "YYYY-MM-DD"},
+		},
 	},
 	{
 		Name:    "metrics",
@@ -1014,8 +1088,8 @@ var cliCommands = []cliCommand{
 	{
 		Name:     "postgres",
 		DocSlug:  "postgres",
-		Short:    "Manage managed PostgreSQL databases and app bindings",
-		Audience: cliAudienceCustomer,
+		Short:    "Operator preview: manage PostgreSQL databases and bindings",
+		Audience: cliAudienceOperator,
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
@@ -1046,6 +1120,9 @@ var cliCommands = []cliCommand{
 		Name:    "ps",
 		DocSlug: "ps",
 		Short:   "Show live instances + state for an app",
+		Flags: []cliFlag{
+			{Name: "all", Short: "include the newest 100 retained history rows (parked rows expire after 30d by default)"},
+		},
 	},
 	{
 		Name:    "queue",
@@ -1068,7 +1145,12 @@ var cliCommands = []cliCommand{
 		Short:   "Per-app private container registry credentials (registry list|set|rm --app <slug>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List registry credentials"},
-			{Name: "set", Short: "Set a registry credential"},
+			{Name: "set", Short: "Set a registry credential", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "registry", Short: "registry host", Req: true, Value: "host"},
+				{Name: "user", Short: "registry username", Req: true, Value: "user"},
+				{Name: "password-stdin", Short: "read the registry password/token from stdin"},
+			}},
 			{Name: "rm", Short: "Remove a registry credential"},
 		},
 		Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true}},
@@ -1104,13 +1186,37 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "projects",
+		DocSlug: "projects",
+		Short:   "Inspect and recover repository projects",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List projects in this account"},
+			{Name: "info", Short: "Show a project and its workloads"},
+			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|preview|promote|status)"},
+			{Name: "update", Short: "Update repository or production branch", Flags: []cliFlag{
+				{Name: "repo", Short: "GitHub repository owner/name; empty unbinds", Value: "OWNER/NAME"},
+				{Name: "branch", Short: "production branch", Value: "BRANCH"},
+			}},
+			{Name: "rm", Short: "Preview or delete a project", Flags: []cliFlag{
+				{Name: "dry-run", Short: "preview affected state"},
+				{Name: "yes", Short: "confirm project deletion"},
+			}},
+		},
+		Positionals: []string{"<project-slug>"},
+	},
+	{
 		Name:    "scan",
 		DocSlug: "scan",
 		Short:   "Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)",
 		Flags: []cliFlag{
 			{Name: "tarball", Short: "scan a source tarball", Value: "PATH"},
 			{Name: "path", Short: "scan a local directory", Value: "DIR"},
-			{Name: "repo", Short: "scan a GitHub repo", Value: "OWNER/NAME"},
+			{Name: "repo", Short: "scan a GitHub repo after gregale connect", Value: "OWNER/NAME"},
+			{Name: "repository", Short: "GitHub owner/name to bind to the project (defaults to --repo)", Value: "OWNER/NAME"},
+			{Name: "install-id", Short: "optional GitHub installation id; normally resolved from the connected account", Value: "N"},
+			{Name: "production-branch", Short: "production branch for the project", Value: "BRANCH"},
+			{Name: "project-slug", Short: "kebab slug; default = repo dir basename", Value: "SLUG"},
+			{Name: "environment", Short: "registered project environment to scan", Value: "SLUG"},
 			// ADR-124 follow-up #1: --exclude + --show-affected
 			// ship on scan as well as deploy (the partition is the
 			// preview surface, scan is the operator's first stop).
@@ -1271,6 +1377,10 @@ var cliCommands = []cliCommand{
 					{Name: "percent", Short: "traffic weight in [0, 100]; -1 = unset (server default 100)", Req: true, Value: "N"},
 				},
 			},
+			{
+				Name:  "status",
+				Short: "Show live deployment traffic weights for an app",
+			},
 		},
 	},
 	{
@@ -1325,6 +1435,19 @@ var cliCommands = []cliCommand{
 			}},
 		},
 		Positionals: []string{"<slug>"},
+	},
+	{
+		Name:    dispatchUploadCache,
+		DocSlug: "cli",
+		Short:   "Inspect or clean resumable source-upload recovery state",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List resumable, stale, and orphaned cache entries"},
+			{Name: "cleanup", Short: "Remove stale and excess state safely", Flags: []cliFlag{
+				{Name: "older-than", Short: "maximum recovery-state age", Value: "D"},
+				{Name: "max-entries", Short: "maximum recovery records to retain", Value: "N"},
+				{Name: "dry-run", Short: "show actions without deleting files"},
+			}},
+		},
 	},
 	{
 		Name:    "webhooks",

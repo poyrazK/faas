@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched/recentload"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -35,9 +37,10 @@ type fakeVMM struct {
 	snapshots           int
 	warmSnapshots       int // PR #470-FU-A: counts WarmSnapshot calls (warm-tier capture path)
 	destroys            int
-	pings               int  // PR #114: counts Ping calls (heartbeat path)
-	frameworkReadyCount int  // PR #470-FU-B: counts FrameworkReady calls (DGRAM receipt path)
-	prepares            int  // Tier A5: counts PrepareLiveMigration calls
+	pings               int // PR #114: counts Ping calls (heartbeat path)
+	frameworkReadyCount int // PR #470-FU-B: counts FrameworkReady calls (DGRAM receipt path)
+	prepares            int // Tier A5: counts PrepareLiveMigration calls
+	prepareStorageKey   string
 	adopts              int  // Tier A5: counts AdoptMigratedInstance calls
 	acks                int  // Tier A5: counts AcknowledgeMigration calls
 	cancels             int  // Tier A5: counts CancelLiveMigration calls
@@ -321,6 +324,7 @@ func (f *fakeVMM) PrepareLiveMigration(ctx context.Context, _, instanceID, snaps
 		return LiveMigrationPrepare{}, f.prepareErr
 	}
 	f.prepares++
+	f.prepareStorageKey = snapshotStorageKey
 	vmstateKey := snapshotStorageKey
 	if len(vmstateKey) >= 4 && vmstateKey[len(vmstateKey)-4:] == "/mem" {
 		vmstateKey = vmstateKey[:len(vmstateKey)-4] + "/vmstate"
@@ -1304,6 +1308,94 @@ func TestEngineWake_ColdBootPersistsObservedClass(t *testing.T) {
 	}
 }
 
+func TestEngineWake_RequestModeDoesNotPersistSlowBindAsWorker(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	if _, err := store.SetAppWorkloadClass(context.Background(), app.ID, state.WorkloadClassHTTP, "scan_hint"); err != nil {
+		t.Fatalf("seed SetAppWorkloadClass: %v", err)
+	}
+
+	vmm := &fakeVMM{characterization: api.CharacterizationReport{
+		ObservedClass: string(state.WorkloadClassWorker),
+		ObservedPort:  0,
+		ExitCode:      -1,
+	}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if _, err := e.Wake(context.Background(), app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	got, err := store.AppByID(context.Background(), app.ID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if got.WorkloadClass != state.WorkloadClassHTTP {
+		t.Fatalf("workload class = %q, want retained %q", got.WorkloadClass, state.WorkloadClassHTTP)
+	}
+}
+
+func TestShouldPersistObservedClassKeepsSuccessfulServerIdentity(t *testing.T) {
+	tests := []struct {
+		name          string
+		appType       state.AppType
+		executionMode string
+		observed      state.WorkloadClass
+		want          bool
+	}{
+		{name: "request slow bind stays http", appType: state.AppTypeApp, executionMode: api.ExecutionModeRequest, observed: state.WorkloadClassWorker},
+		{name: "service slow bind stays http", appType: state.AppTypeApp, executionMode: api.ExecutionModeService, observed: state.WorkloadClassJob},
+		{name: "request server refinement persists", appType: state.AppTypeApp, executionMode: api.ExecutionModeRequest, observed: state.WorkloadClassGraphQL, want: true},
+		{name: "declared worker persists", appType: state.AppTypeApp, executionMode: api.ExecutionModeWorker, observed: state.WorkloadClassWorker, want: true},
+		{name: "function cannot become worker", appType: state.AppTypeFunction, executionMode: api.ExecutionModeWorker, observed: state.WorkloadClassWorker},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldPersistObservedClass(tt.appType, tt.executionMode, tt.observed); got != tt.want {
+				t.Fatalf("shouldPersistObservedClass() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEngineWake_FunctionIgnoresWorkerCharacterization(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "function@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: acct.ID, Slug: "managed-function", Type: state.AppTypeFunction,
+		RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+		WorkloadClass: state.WorkloadClassHTTP,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:function", Status: state.DeployLive,
+	}); err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+
+	vmm := &fakeVMM{characterization: api.CharacterizationReport{
+		ObservedClass: string(state.WorkloadClassWorker),
+		ObservedPort:  0,
+		ExitCode:      -1,
+	}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	got, err := store.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("AppByID: %v", err)
+	}
+	if got.WorkloadClass != state.WorkloadClassHTTP {
+		t.Errorf("function class = %q, want %q", got.WorkloadClass, state.WorkloadClassHTTP)
+	}
+}
+
 // TestEngineWake_PropagatesWakeIDToVMM (PR-A, issue #517) asserts the
 // engine lifts wake_id / app_id / deployment_id from its inbound ctx
 // (set by gatewayd-internal via the request middleware) and forwards them on
@@ -1368,6 +1460,38 @@ func TestEngineWake_PropagatesWakeIDToVMM(t *testing.T) {
 	}
 	if got.InstanceID != res.InstanceID {
 		t.Errorf("InstanceID %q != engine's WakeResult.InstanceID %q", got.InstanceID, res.InstanceID)
+	}
+}
+
+// The production gateway uses EnsureWake, whose coordinator detaches the VM
+// lifecycle from the triggering HTTP request. Detachment must retain the wire
+// correlation envelope even after the caller is cancelled.
+func TestEngineEnsureWake_PropagatesRequestIDAcrossDetachedLeader(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+
+	requestCtx, cancel := context.WithCancel(wire.WithContext(context.Background(), wire.CorrelationFields{
+		RequestID:    "req-gateway-coordinated",
+		AppID:        app.ID,
+		DeploymentID: dep.ID,
+	}))
+	defer cancel()
+
+	out, err := e.EnsureWake(requestCtx, app.ID, TriggerGateway)
+	if err != nil {
+		t.Fatalf("EnsureWake: %v", err)
+	}
+	if out.Instance == nil {
+		t.Fatal("EnsureWake returned no instance")
+	}
+	fields, ok := wire.FromContext(vmm.lastColdBootCtx)
+	if !ok {
+		t.Fatal("vmmd-bound context has no correlation fields")
+	}
+	if fields.RequestID != "req-gateway-coordinated" {
+		t.Fatalf("RequestID = %q, want req-gateway-coordinated", fields.RequestID)
 	}
 }
 
@@ -1503,7 +1627,20 @@ func TestEngineWake_EmptyCallerDeploymentID_FallsBackToLiveDeployment(t *testing
 
 func TestEngineWake_RestoreFromSnapshot(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "restore-health@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "restore-health", RAMMB: 512, MaxConcurrency: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployLive,
+		InferredProfile: json.RawMessage(`{"version":"v1","framework":"node","port":3000,"health_path":"/readyz","inferred":true}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// A fresh, version-matched snapshot makes wake a restore.
 	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0", MemBytes: 512 << 20,
@@ -1523,6 +1660,34 @@ func TestEngineWake_RestoreFromSnapshot(t *testing.T) {
 	}
 	if vmm.restores != 1 || vmm.coldBoots != 0 {
 		t.Errorf("restores=%d coldBoots=%d, want 1/0", vmm.restores, vmm.coldBoots)
+	}
+	if got := vmm.lastRestoreSpec.HealthcheckPath; got != "/readyz" {
+		t.Errorf("restore HealthcheckPath = %q, want /readyz", got)
+	}
+}
+
+func TestEngineWake_ColdBootForwardsInferredHealthPath(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, err := store.CreateAccount(ctx, "cold-health@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "cold-health", RAMMB: 256, MaxConcurrency: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployLive,
+		InferredProfile: json.RawMessage(`{"version":"v1","framework":"node","port":3000,"health_path":"/healthz","inferred":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if got := vmm.lastColdBootSpec.HealthcheckPath; got != "/healthz" {
+		t.Errorf("cold boot HealthcheckPath = %q, want /healthz", got)
 	}
 }
 
@@ -2065,6 +2230,9 @@ func TestEnginePrime_ForwardsInferredRuntimePort(t *testing.T) {
 	}
 	if got := vmm.lastColdBootSpec.Port; got != 3000 {
 		t.Fatalf("prime cold-boot Port = %d, want 3000", got)
+	}
+	if got := vmm.lastColdBootSpec.HealthcheckPath; got != "/healthz" {
+		t.Fatalf("prime cold-boot HealthcheckPath = %q, want /healthz", got)
 	}
 }
 
@@ -3221,6 +3389,36 @@ func TestEngineWake_RejectsTransientVerifierIO(t *testing.T) {
 	// the wire via api.WriteProblem).
 	if got := p.HasHeader("Retry-After"); len(got) != 1 || got[0] != "5" {
 		t.Errorf("HasHeader(Retry-After) = %v, want [\"5\"]", got)
+	}
+}
+
+func TestEngineWake_MissingLiveArtifactFailsDeploymentPermanently(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	e.WithVerifier(&staleVerifier{reject: fmt.Errorf("registry manifest lookup: %w", storage.ErrNotFound)})
+
+	_, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err == nil || !errors.Is(err, ErrPermanentWake) {
+		t.Fatalf("Wake error = %v, want ErrPermanentWake", err)
+	}
+	var problem *api.Problem
+	if !errors.As(err, &problem) || problem.Status != 503 || problem.Code != api.CodeDeployFailed {
+		t.Fatalf("Wake problem = %+v, want 503/%s", problem, api.CodeDeployFailed)
+	}
+	failed, getErr := store.DeploymentByID(context.Background(), dep.ID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if failed.Status != state.DeployFailed || failed.TrafficPercent != 0 || failed.ErrorCode != api.CodeDeployFailed {
+		t.Fatalf("missing-artifact deployment = %+v, want failed with zero traffic", failed)
+	}
+	if vmm.coldBoots != 0 || vmm.restores != 0 {
+		t.Fatalf("vmm invoked for missing artifact: cold=%d restore=%d", vmm.coldBoots, vmm.restores)
+	}
+	if got := e.Ledger().ResidentRAM(); got != 0 {
+		t.Fatalf("resident RAM after missing artifact = %d, want 0", got)
 	}
 }
 

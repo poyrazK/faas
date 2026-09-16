@@ -8,8 +8,10 @@ import (
 	"testing"
 )
 
-func TestMultipartDeployPreservesExplicitZeroAndCanary(t *testing.T) {
+func TestMultipartDeployPreservesRolloutAndEnvironment(t *testing.T) {
 	zero := 0
+	rollback := true
+	noRollback := false
 	for _, tc := range []struct {
 		name      string
 		ann       DeployAnnotations
@@ -19,6 +21,9 @@ func TestMultipartDeployPreservesExplicitZeroAndCanary(t *testing.T) {
 		{name: "explicit zero", ann: DeployAnnotations{TrafficPercent: &zero}, wantField: "traffic_percent", wantValue: "0"},
 		{name: "canary", ann: DeployAnnotations{Canary: &CanaryPresetSpec{Preset: "balanced"}}, wantField: "canary", wantValue: `{"preset":"balanced"}`},
 		{name: "scope", ann: DeployAnnotations{Scope: "production"}, wantField: "scope", wantValue: "production"},
+		{name: "environment", ann: DeployAnnotations{Environment: "staging"}, wantField: "environment", wantValue: "staging"},
+		{name: "rollback enabled", ann: DeployAnnotations{RollbackOn5xx: &rollback}, wantField: "rollback_on_5xx", wantValue: "true"},
+		{name: "rollback explicitly disabled", ann: DeployAnnotations{RollbackOn5xx: &noRollback}, wantField: "rollback_on_5xx", wantValue: "false"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var body bytes.Buffer

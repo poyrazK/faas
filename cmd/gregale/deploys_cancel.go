@@ -22,7 +22,7 @@ import (
 const deploysCancelUsage = "usage: gregale deploys cancel <id> [--reason <user|auto_quota|auto_health|system>] [--app <slug>] [--json]"
 
 func cmdDeploysCancel(args []string) int {
-	fs := flag.NewFlagSet("deploys cancel", flag.ContinueOnError)
+	fs := newFlagSet("deploys cancel", flag.ContinueOnError)
 	reason := fs.String("reason", "user", "cancel reason (user|auto_quota|auto_health|system)")
 	appSlug := fs.String("app", "", "app slug (required; used as IDOR-gate path segment)")
 	if err := fs.Parse(args); err != nil {

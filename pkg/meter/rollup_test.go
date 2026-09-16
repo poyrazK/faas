@@ -1,3 +1,4 @@
+// adr: 048
 // Usage_daily rollup tests (ADR-048 §5). Exercises the OVERWRITE
 // (point-in-time) contract under three scenarios:
 //
@@ -143,6 +144,21 @@ func TestRollupLoop_DefaultInterval(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 	<-done
+}
+
+func TestDailyRollupWindows_IncludeCurrentPartialDay(t *testing.T) {
+	now := time.Date(2026, 9, 13, 17, 37, 11, 0, time.FixedZone("test", 3*60*60))
+	windows := dailyRollupWindows(now)
+	if len(windows) != 2 {
+		t.Fatalf("windows = %d, want yesterday and today", len(windows))
+	}
+	today := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	if !windows[0].start.Equal(today.Add(-24*time.Hour)) || !windows[0].end.Equal(today) {
+		t.Fatalf("yesterday window = [%s,%s)", windows[0].start, windows[0].end)
+	}
+	if !windows[1].start.Equal(today) || !windows[1].end.Equal(now.UTC()) {
+		t.Fatalf("current window = [%s,%s), want [%s,%s)", windows[1].start, windows[1].end, today, now.UTC())
+	}
 }
 
 // TestRollupSQL_OverwriteSemantics pins the overwrite contract.

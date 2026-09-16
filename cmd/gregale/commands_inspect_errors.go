@@ -7,8 +7,8 @@
 // remains).
 //
 // Sister to commands_inspect_upstreams.go (issue #952 / ADR-098
-// §9.A). The leaf first resolves the app, then scans the account's
-// deployment list while applying an app-ID predicate before rendering.
+// §9.A). The leaf first resolves the app, then uses its indexed deployment
+// history route before rendering.
 //
 // Wire shape: the apid's DeploymentResponse carries the 4 fields
 // added by commit 6 (pkg/api/dto.go::DeploymentResponse). The
@@ -49,8 +49,8 @@ const inspectErrorsUsage = "usage: gregale inspect <slug> --errors [--json]"
 // failure the renderAPIError path prints the RFC 7807 problem
 // the same way the rest of the package does.
 func cmdInspectErrors(slug string) int {
-	fs := flag.NewFlagSet("inspect-errors", flag.ContinueOnError)
-	fs.SetOutput(osStderr)
+	fs := newFlagSet("inspect-errors", flag.ContinueOnError)
+	setFlagOutput(fs, osStderr)
 	asJSON := fs.Bool("json", false, "machine output (default: human prose)")
 	if err := fs.Parse([]string{}); err != nil {
 		PrintUsage(osStderr, inspectErrorsUsage, "inspect")
@@ -73,7 +73,7 @@ func cmdInspectErrors(slug string) int {
 	// pathological "every deploy failed" loop bounded. Past 50
 	// we tell the customer to use `gregale logs <slug> --explain`
 	// directly.
-	dep, err := findLatestFailedDeployment(client, app.ID, 50)
+	dep, err := findLatestFailedDeployment(client, app.Slug, 50)
 	if err != nil {
 		return printErr("Could not reach the API", err)
 	}
@@ -94,17 +94,14 @@ func cmdInspectErrors(slug string) int {
 	return 0
 }
 
-// findLatestFailedDeployment walks the deployments list for appID
+// findLatestFailedDeployment walks the app-scoped deployment list for slug
 // and returns the first row with status=failed AND error_code
 // non-empty. Returns (nil, nil) when no such row exists within
 // the cap. Errors propagate to the caller.
 //
-// Why we walk the cursor instead of a targeted query: the apid
-// doesn't expose a "latest failed deployment for app" endpoint
-// (no routing-tag need justifies the addition yet). The walk is
-// bounded (maxPages), and the app-ID predicate prevents a failed
-// deployment from another app in the same account from being shown.
-func findLatestFailedDeployment(client *Client, appID string, maxPages int) (*api.DeploymentResponse, error) {
+// The app-scoped endpoint prevents a busy account from pushing the target
+// app's failure beyond the bounded account-wide pagination window.
+func findLatestFailedDeployment(client *Client, slug string, maxPages int) (*api.DeploymentResponse, error) {
 	ctx := context.Background()
 	before := ""
 	pages := 0
@@ -113,13 +110,13 @@ func findLatestFailedDeployment(client *Client, appID string, maxPages int) (*ap
 		if pages > maxPages {
 			return nil, nil
 		}
-		resp, err := client.ListDeployments(ctx, before, 10)
+		resp, err := client.ListAppDeployments(ctx, slug, before, 10)
 		if err != nil {
 			return nil, err
 		}
 		for i := range resp.Items {
 			d := &resp.Items[i]
-			if d.AppID == appID && d.Status == "failed" && d.ErrorCode != "" {
+			if d.Status == "failed" && d.ErrorCode != "" {
 				return d, nil
 			}
 		}

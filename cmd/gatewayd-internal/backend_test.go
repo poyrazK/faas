@@ -349,6 +349,18 @@ func TestHandleInvalidation_DeploymentChangedRefreshesWeights(t *testing.T) {
 	}
 }
 
+func TestHandleInvalidation_DeploymentSmokeChallenge(t *testing.T) {
+	backend := gateway.NewPGBackend(nil, nil, testLogger())
+	expires := time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)
+	handleInvalidation(context.Background(), backend, db.Notification{
+		Channel: db.NotifyDeploymentSmokeChallenge,
+		Payload: `{"app_id":"app-7","deployment_id":"dep-3","token":"opaque","expires_at":"` + expires + `"}`,
+	}, testLogger())
+	if !backend.ValidateDeploymentSmoke("app-7", "dep-3", "opaque") {
+		t.Fatal("gateway did not install deployment smoke challenge")
+	}
+}
+
 func TestHandleInvalidation_CachePurge(t *testing.T) {
 	f := &fakeInvalidator{}
 	log := testLogger()

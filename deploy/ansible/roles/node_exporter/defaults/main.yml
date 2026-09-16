@@ -3,9 +3,9 @@
 # node_exporter_version pins the binary; same precedent as
 # firecracker + prometheus.
 #
-# listen_addr is loopback-only — Prometheus scrapes locally and the
-# input chain never needs to expose host telemetry on a provider-specific
-# bridge or public interface. 9100 is the upstream default.
+# Compute nodes bind their private fleet address so control-plane Prometheus
+# can scrape them. nftables restricts TCP/9100 to the configured control-plane
+# CIDRs. Control-plane and single-box hosts remain loopback-only.
 
 node_exporter_version: "1.8.2"
 # SHA-256 of node_exporter-1.8.2.linux-amd64.tar.gz from the upstream release.

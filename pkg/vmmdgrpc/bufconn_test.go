@@ -16,6 +16,7 @@ import (
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
@@ -33,6 +34,7 @@ import (
 // branch on a "test vs prod" path.
 type fakeVMM struct {
 	wakeFn            func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
+	wakeExecutionFn   func(ctx context.Context, req fcvm.ExecutionWakeRequest) (*fcvm.Instance, error)
 	parkFn            func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
 	destroy           func(ctx context.Context, instance string) error
 	destroyWithExport func(ctx context.Context, instance, exportDir string) (int, error)
@@ -99,6 +101,16 @@ func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instanc
 			VethHost: "vh99",
 			VethPeer: "vp99",
 		},
+		Method: fcvm.WakeColdBoot,
+	}, nil
+}
+
+func (f *fakeVMM) WakeExecution(ctx context.Context, req fcvm.ExecutionWakeRequest) (*fcvm.Instance, error) {
+	if f.wakeExecutionFn != nil {
+		return f.wakeExecutionFn(ctx, req)
+	}
+	return &fcvm.Instance{
+		Lease:  fcvm.Lease{Instance: req.Instance, UID: 21001, Networkless: true},
 		Method: fcvm.WakeColdBoot,
 	}, nil
 }
@@ -371,6 +383,34 @@ func TestCreateColdBoot_RejectsMissingInstance(t *testing.T) {
 	}
 	if code := status.Code(err); code != codes.InvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument", code)
+	}
+}
+
+// adr: 171 — RestoreExecution accepts only the payload-free machine envelope,
+// marks the snapshot networkless, and returns lifecycle identity before any
+// caller source/input can cross the vmmd boundary.
+func TestRestoreExecution_RoundTripsPayloadFreeEnvelope(t *testing.T) {
+	var got fcvm.ExecutionWakeRequest
+	f := &fakeVMM{wakeExecutionFn: func(_ context.Context, req fcvm.ExecutionWakeRequest) (*fcvm.Instance, error) {
+		got = req
+		return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance, UID: 22001, Networkless: true}, Method: fcvm.WakeRestore}, nil
+	}}
+	cli, _ := newServer(t, f)
+	resp, err := cli.RestoreExecution(context.Background(), &vmmdpb.RestoreExecutionRequest{
+		Instance: "exec-restore-1", AccountId: "acct-1", Plan: string(api.PlanPro),
+		Runtime: string(api.ExecutionRuntimeNode22), KernelKey: "kernel/node22",
+		BaseKey: "base/node22", LayerKey: "layer/execution", VcpuCount: 2,
+		MemSizeMib: 256, CpuMillicores: 500,
+		Snapshot: &vmmdpb.SnapshotRef{StorageKey: "snap/exec/mem", VmstateStorageKey: "snap/exec/vmstate", Networkless: true},
+	})
+	if err != nil {
+		t.Fatalf("RestoreExecution: %v", err)
+	}
+	if resp.GetInstance() != "exec-restore-1" || resp.GetLeaseUid() != 22001 || resp.GetMethod() != vmmdpb.WakeMethod_WAKE_RESTORE {
+		t.Fatalf("response = %+v", resp)
+	}
+	if got.Instance != "exec-restore-1" || got.Runtime != string(api.ExecutionRuntimeNode22) || got.Snapshot == nil || !got.Snapshot.Networkless {
+		t.Fatalf("wake request = %+v", got)
 	}
 }
 

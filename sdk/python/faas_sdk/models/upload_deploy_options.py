@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
@@ -28,11 +28,16 @@ class UploadDeployOptions:
     """Informational repository provenance URL; never fetched by apid."""
     commit_sha: str | Unset = UNSET
     """Lowercase hexadecimal Git commit identifier."""
+    environment: str | Unset = UNSET
+    """Registered project environment to resolve at upload commit."""
     reason: str | Unset = UNSET
     tag: str | Unset = UNSET
     deployed_by: str | Unset = UNSET
     pr_number: int | Unset = UNSET
     workflows: list[WorkflowSpec] | Unset = UNSET
+    rollback_on_5xx: bool | None | Unset = UNSET
+    """Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback,
+    while omitted or null keeps the default false."""
 
     def to_dict(self) -> dict[str, Any]:
         runtime = self.runtime
@@ -49,6 +54,8 @@ class UploadDeployOptions:
 
         commit_sha = self.commit_sha
 
+        environment = self.environment
+
         reason = self.reason
 
         tag = self.tag
@@ -63,6 +70,12 @@ class UploadDeployOptions:
             for workflows_item_data in self.workflows:
                 workflows_item = workflows_item_data.to_dict()
                 workflows.append(workflows_item)
+
+        rollback_on_5xx: bool | None | Unset
+        if isinstance(self.rollback_on_5xx, Unset):
+            rollback_on_5xx = UNSET
+        else:
+            rollback_on_5xx = self.rollback_on_5xx
 
         field_dict: dict[str, Any] = {}
 
@@ -81,6 +94,8 @@ class UploadDeployOptions:
             field_dict["source_url"] = source_url
         if commit_sha is not UNSET:
             field_dict["commit_sha"] = commit_sha
+        if environment is not UNSET:
+            field_dict["environment"] = environment
         if reason is not UNSET:
             field_dict["reason"] = reason
         if tag is not UNSET:
@@ -91,6 +106,8 @@ class UploadDeployOptions:
             field_dict["pr_number"] = pr_number
         if workflows is not UNSET:
             field_dict["workflows"] = workflows
+        if rollback_on_5xx is not UNSET:
+            field_dict["rollback_on_5xx"] = rollback_on_5xx
 
         return field_dict
 
@@ -113,6 +130,8 @@ class UploadDeployOptions:
 
         commit_sha = d.pop("commit_sha", UNSET)
 
+        environment = d.pop("environment", UNSET)
+
         reason = d.pop("reason", UNSET)
 
         tag = d.pop("tag", UNSET)
@@ -130,6 +149,15 @@ class UploadDeployOptions:
 
                 workflows.append(workflows_item)
 
+        def _parse_rollback_on_5xx(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
+
         upload_deploy_options = cls(
             runtime=runtime,
             handler=handler,
@@ -138,11 +166,13 @@ class UploadDeployOptions:
             scope=scope,
             source_url=source_url,
             commit_sha=commit_sha,
+            environment=environment,
             reason=reason,
             tag=tag,
             deployed_by=deployed_by,
             pr_number=pr_number,
             workflows=workflows,
+            rollback_on_5xx=rollback_on_5xx,
         )
 
         return upload_deploy_options

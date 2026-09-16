@@ -39,6 +39,7 @@ func (s *Service) reconcile(
 	commitSHA string,
 	branch string,
 	exclude []string,
+	crons []CronSpec,
 ) (Result, error) {
 	var out Result
 
@@ -62,7 +63,7 @@ func (s *Service) reconcile(
 	if err != nil {
 		return out, fmt.Errorf("reconcile: validate workload admission: %w", err)
 	}
-	if err := validateWorkloadAdmission(scan.Workloads, accountApps, project.ID); err != nil {
+	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID); err != nil {
 		return out, err
 	}
 
@@ -97,20 +98,22 @@ func (s *Service) reconcile(
 	// so the quota pre-check inside applyActions reuses the same
 	// slice the diff just consumed — no second round-trip, no
 	// race window between the count and the create Tx.
-	applied, err := s.applyActions(ctx, project, actions, existing, commitSHA)
+	applied, err := s.applyActions(ctx, project, actions, existing, commitSHA, scan, crons)
 	if err != nil {
+		out.Alerts = append(out.Alerts, applied.Alerts...)
 		return out, err
 	}
 	out.Added = applied.Added
 	out.Changed = applied.Changed
 	out.Removed = applied.Removed
 	out.Alerts = append(out.Alerts, applied.Alerts...)
+	out.scanSourceApplied = applied.scanSourceApplied
 
 	// 6. ScanSource upgrade (strictly greater; same-tier is a
 	// no-op per the store). The audit row is emitted ONLY on a
 	// real upgrade via emitScanSourceChanged.
 	desired := DeriveScanSource(scan.Workloads)
-	if tierRank(desired) > tierRank(project.ScanSource) {
+	if !applied.scanSourceApplied && tierRank(desired) > tierRank(project.ScanSource) {
 		prev := project.ScanSource
 		updated, err := s.Store.SetProjectScanSource(ctx, project.ID, desired)
 		if err != nil {

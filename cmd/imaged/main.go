@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -90,7 +91,9 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		openDB: db.Open,
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-imaged")
+		},
 		migrate: func(ctx context.Context, pool *pgxpool.Pool) error {
 			// F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap.
 			return db.MigrateUp(ctx, pool)
@@ -480,11 +483,33 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	smokeURL := strings.TrimSpace(getenv("FAAS_API_HOSTING_SMOKE_URL"))
+	appsDomain := strings.Trim(strings.TrimSpace(getenv("FAAS_APPS_DOMAIN")), ".")
+	if err := validateHostingSmokeConfig(smokeRequired, smokeURL, appsDomain); err != nil {
+		return err
+	}
 	h.WithHostingSmokeRequired(smokeRequired)
 	if smokeURL != "" || smokeRequired {
-		verifier := apihostingreceipt.Verifier{BaseURL: smokeURL, AppsDomain: getenv("FAAS_APPS_DOMAIN"), Timeout: 10 * time.Second, Required: smokeRequired}
+		verifier := apihostingreceipt.Verifier{
+			BaseURL: smokeURL, AppsDomain: appsDomain, Timeout: 10 * time.Second, Required: smokeRequired,
+			Authorize: func(ctx context.Context, deploymentID, token string, expiresAt time.Time) error {
+				dep, err := store.DeploymentByID(ctx, deploymentID)
+				if err != nil {
+					return err
+				}
+				payload, err := json.Marshal(struct {
+					AppID        string    `json:"app_id"`
+					DeploymentID string    `json:"deployment_id"`
+					Token        string    `json:"token"`
+					ExpiresAt    time.Time `json:"expires_at"`
+				}{dep.AppID, deploymentID, token, expiresAt})
+				if err != nil {
+					return err
+				}
+				return notifier.Notify(ctx, db.NotifyDeploymentSmokeChallenge, string(payload))
+			},
+		}
 		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
-			return verifier.Verify(ctx, app.Slug, imaged.HostingHealthPath(app, dep))
+			return verifier.VerifyDeployment(ctx, app.Slug, imaged.HostingHealthPath(app, dep), dep.ID)
 		})
 		if smokeURL == "" {
 			log.Warn("imaged: API hosting readiness smoke required but public origin is unset; deployments will fail closed")
@@ -504,11 +529,11 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// and pulls stay anonymous (matches Free plan + no-cred
 	// Hobby paths).
 	if identityPath := envOr("FAAS_HOST_AGE_IDENTITY_PATH", ""); identityPath != "" {
-		ident, err := secretbox.LoadHostKey(identityPath)
+		identities, err := secretbox.LoadFleetAndHostKeys(filepath.Dir(identityPath))
 		if err != nil {
 			return fmt.Errorf("imaged: load host age identity %q: %w", identityPath, err)
 		}
-		h.WithSecretboxIdentity(ident)
+		h.WithSecretboxIdentities(identities)
 		log.Info("host age identity loaded for registry credential unseal",
 			"path", identityPath)
 	} else {
@@ -565,14 +590,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	basePath := envOr("FAAS_BUILDER_BASE_PATH", "/srv/fc/base/builder-base.ext4")
+	arch := imaged.BuilderArch()
+	basePath := builderBasePathFromEnv(arch)
 	// #96 / ADR-025 axis 2: EnsureBaseExt4 publishes via the StorageBackend
 	// under sched.BaseKeyForArch / sched.BaseDigestKeyForArch, partitioned
-	// by the imaged binary's host arch (issue #197 B3.3). basePath is kept
-	// as a resolution target (LocalStorageBackend joins it under
-	// FAAS_STORAGE_ROOT) for one release — the migration slice flips to
-	// key-only.
-	arch := imaged.BuilderArch()
+	// by the imaged binary's host arch (issue #197 B3.3). basePath is the
+	// canonical local resolution target for Grype and builderd identity checks;
+	// explicit FAAS_BUILDER_BASE_PATH remains a development harness override.
 	baseKey := sched.BaseKeyForArch("builder", arch)
 	digestKey := sched.BaseDigestKeyForArch("builder", arch)
 	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, baseKey, digestKey, basePath, "", "")
@@ -582,6 +606,14 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	assignedBases, err := h.EnsureAssignedBases(ctx, arch, getenv)
 	if err != nil {
 		return err
+	}
+	if prestageOnlyFromEnv(getenv) {
+		log.Info("imaged runtime-base pre-stage complete",
+			"arch", arch,
+			"assigned_runtimes", assignedBases.Runtimes,
+			"assigned_minimal", assignedBases.Minimal,
+		)
+		return nil
 	}
 
 	loop := imaged.NewLoop(imaged.LoopConfig{
@@ -717,6 +749,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	return loop.Run(ctx)
 }
 
+func prestageOnlyFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_IMAGED_PRESTAGE_ONLY")) == "1"
+}
+
 // dbNotifier adapts *pgxpool.Pool to imaged.Notifier by closing over the pool
 // and delegating to db.Notify. Kept private here so pkg/imaged stays free of
 // pgxpool imports.
@@ -740,6 +776,20 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+// builderBasePathFromEnv returns the host-local compatibility path for the
+// canonical builder storage key. Production storage is partitioned by host
+// architecture, so the path must agree with sched.BaseKeyForArch and
+// builderd's default. Keep an explicit override for native/e2e harnesses,
+// but never make a fresh production node silently stage the legacy
+// builder-base.ext4 spelling again.
+func builderBasePathFromEnv(arch string) string {
+	if v := strings.TrimSpace(os.Getenv("FAAS_BUILDER_BASE_PATH")); v != "" {
+		return v
+	}
+	root := envOr("FAAS_STORAGE_ROOT", "/srv/fc")
+	return filepath.Join(root, "base", "runner-builder-"+arch+".ext4")
+}
+
 func parseBoolEnv(name, raw string) (bool, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -750,6 +800,19 @@ func parseBoolEnv(name, raw string) (bool, error) {
 		return false, fmt.Errorf("imaged: %s must be a boolean", name)
 	}
 	return value, nil
+}
+
+func validateHostingSmokeConfig(required bool, baseURL, appsDomain string) error {
+	if !required {
+		return nil
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		return fmt.Errorf("imaged: required public hosting smoke is missing FAAS_API_HOSTING_SMOKE_URL")
+	}
+	if strings.Trim(strings.TrimSpace(appsDomain), ".") == "" {
+		return fmt.Errorf("imaged: required public hosting smoke is missing FAAS_APPS_DOMAIN")
+	}
+	return nil
 }
 
 // builderBaseRefFromEnv resolves the builder image reference. Single-box

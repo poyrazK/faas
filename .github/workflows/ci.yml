@@ -117,7 +117,9 @@ jobs:
   test:
     name: lint + build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # golangci-lint alone has an 8-minute cold-cache budget; leave enough
+    # time for setup, build, and the policy gates that follow it.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -303,12 +305,21 @@ jobs:
             \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
                -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
           sudo apt-get -o Acquire::Retries=3 update -qq
-          sudo apt-get install -y -qq nftables
+          sudo apt-get install -y -qq nftables logrotate rsyslog
       - name: egress check (Go renderer ↔ Jinja2 + nft syntax + bridge-name guard)
         run: make egress-check
 
       - name: systemd hardening gate
         run: make systemd-hardening-check
+
+      - name: production-like rsyslog rotation gate
+        run: sudo scripts/ci/check-rsyslog-rotation.sh
+
+      - name: canary artifact retention gate
+        run: make canary-artifact-retention-test
+
+      - name: GCP public-beta policy gate
+        run: make gcp-public-beta-policy-test
 
       - name: OTLP unit wiring gate
         run: make otlp-unit-check
@@ -447,7 +458,8 @@ jobs:
   # Bumped to 20 min (PR #414 follow-up) so the long pole has two
   # budgets of headroom — wall is still ~5 min in steady state, this
   # is contingency for slow windows on a shared GH runner pool.
-  # Shard 1 (Postgres-heavy A): cmd/apid, migrations, pkg/meter, pkg/db, pkg/alerts
+  # Shard 1 (Postgres-heavy A): cmd/apid, migrations, pkg/meter, pkg/db, pkg/alerts,
+  # pkg/e2etest (its fixture SQL must run against a real migrated schema)
   unit-tests-pg-1:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     runs-on: ubuntu-latest
@@ -513,7 +525,7 @@ jobs:
       - name: unit tests (pg shard 1)
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/migrations' | grep -E '(cmd/apid|pkg/meter|pkg/db|pkg/alerts|pkg/e2etest)')
           go test -race -count=1 -p 4 -timeout=10m -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
 
       - name: sdk-check
@@ -775,7 +787,7 @@ jobs:
           GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
 
@@ -842,10 +854,6 @@ jobs:
         run: make spec-cited-tests-check-test
       - name: migration-version gate checker tests
         run: make migration-version-hygiene-check-test
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false  # managed by the restore/save steps below
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
@@ -865,6 +873,16 @@ jobs:
           restore-keys: |
             go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-checks-${{ runner.os }}-
+      # Restore the module cache before setup-go downloads the requested
+      # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
+      # a cache hit untar over the toolchain's existing files and can hang the
+      # runner with "Cannot open: File exists".
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false  # managed by the restore/save steps below
+      - name: complete E2E shard inventory
+        run: go run ./scripts/ci/e2eshard -check -shards=4
       - name: actionlint
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
         with:
@@ -876,6 +894,12 @@ jobs:
         run: bash scripts/ci/package-go-toolchain_test.sh
       - name: native metal invocation contract
         run: bash scripts/ci/run-native-metal-smoke_test.sh
+      - name: native e2e invocation contract
+        run: bash scripts/ci/run-native-e2e_test.sh
+      - name: native e2e phase partition contract
+        run: bash scripts/ci/native-e2e-phases_test.sh
+      - name: GCP OS Login preflight contract
+        run: bash scripts/ci/gcp-oslogin-preflight_test.sh
       # ---- former job `capabilities-check`: product capability registry ----
       - name: product capability registry and generated matrix
         run: make capabilities-check
@@ -907,7 +931,9 @@ jobs:
           mkdir -p "$HOME/.local/sqlc/bin"
           TAR="$RUNNER_TEMP/${SQLC_TARBALL}"
           echo "→ downloading $SQLC_URL"
-          curl --fail --silent --show-error --location --output "$TAR" "$SQLC_URL"
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-all-errors --retry-delay 2 \
+            --output "$TAR" "$SQLC_URL"
           echo "→ verifying SHA-256"
           echo "${SQLC_SHA256_LINUX_AMD64}  $TAR" | sha256sum --check --strict
           echo "→ extracting"
@@ -1078,7 +1104,37 @@ jobs:
           set -euo pipefail
           pip install --quiet 'ansible-core==2.21.2'
           cd deploy/ansible
-          ansible-galaxy collection install -r requirements.yml
+          COLLECTIONS_PATH="${RUNNER_TEMP}/ansible-collections"
+          export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_PATH}"
+          echo "ANSIBLE_COLLECTIONS_PATH=${COLLECTIONS_PATH}" >> "${GITHUB_ENV}"
+          # ansible-core can retain a malformed Galaxy response cache on a
+          # hosted runner. Do not let that cache turn this repository contract
+          # into an unrelated infrastructure failure.
+          galaxy_ok=0
+          for attempt in 1 2 3; do
+            if ansible-galaxy collection install \
+              --no-cache --timeout 30 \
+              --collections-path "${COLLECTIONS_PATH}" \
+              -r requirements.yml; then
+              galaxy_ok=1
+              break
+            fi
+            if [ "${attempt}" != "3" ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [ "${galaxy_ok}" != "1" ]; then
+            echo "::warning::Ansible Galaxy unavailable; using pinned GitHub collection sources"
+            rm -rf -- "${COLLECTIONS_PATH}/ansible_collections"
+            mkdir -p "${COLLECTIONS_PATH}/ansible_collections/ansible"
+            mkdir -p "${COLLECTIONS_PATH}/ansible_collections/community"
+            git clone --depth 1 --branch 2.2.2 --single-branch \
+              https://github.com/ansible-collections/ansible.posix.git \
+              "${COLLECTIONS_PATH}/ansible_collections/ansible/posix"
+            git clone --depth 1 --branch 5.0.0 --single-branch \
+              https://github.com/ansible-collections/community.postgresql.git \
+              "${COLLECTIONS_PATH}/ansible_collections/community/postgresql"
+          fi
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook
@@ -1091,6 +1147,13 @@ jobs:
           # ADR-143: the post-activation verify playbook is production
           # tooling (`make verify-fleet`) and must stay parseable.
           ansible-playbook --syntax-check verify.yml
+          # Internal mTLS renewal is a scheduled production entrypoint.
+          ansible-playbook --syntax-check pki_renew.yml
+          # Gate-F: the opt-in acceptance playbooks. Neither was parsed by any
+          # job, so a syntax error in them would only surface when an operator
+          # ran one by hand against a real host.
+          ansible-playbook --syntax-check metal-h2c-acceptance.yml
+          ansible-playbook --syntax-check native-acceptance-host.yml
           # Gate-E: render and validate the 1/10/100/1000 compute-node
           # topologies, then run Ansible check-mode against the largest one.
           cd ../..
@@ -1140,20 +1203,22 @@ jobs:
             -m ansible.builtin.template \
             -a "src=$(pwd)/roles/prometheus/templates/prometheus.service.j2 dest=$RUNNER_TEMP/prometheus.service"
           grep -q 'job_name: "gatewayd-internal"' "$RUNNER_TEMP/prometheus.yml"
-          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:9101/v1/internal/metrics/targets' "$RUNNER_TEMP/prometheus.yml"
           grep -q 'job_name: "vmmd"' "$RUNNER_TEMP/prometheus.yml"
-          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/vmmd-targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:9101/v1/internal/metrics/vmmd-targets' "$RUNNER_TEMP/prometheus.yml"
           grep -q 'job_name: "imaged"' "$RUNNER_TEMP/prometheus.yml"
-          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/imaged-targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:9101/v1/internal/metrics/imaged-targets' "$RUNNER_TEMP/prometheus.yml"
           grep -q 'job_name: "builderd"' "$RUNNER_TEMP/prometheus.yml"
-          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/builderd-targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:9101/v1/internal/metrics/builderd-targets' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'job_name: "node-compute"' "$RUNNER_TEMP/prometheus.yml"
+          grep -q 'http://127.0.0.1:9101/v1/internal/metrics/node-targets' "$RUNNER_TEMP/prometheus.yml"
           if grep -q 'job_name: "promtail' "$RUNNER_TEMP/prometheus.yml"; then
             echo 'default Prometheus config scrapes Promtail without an enabled Loki transport' >&2
             exit 1
           fi
           grep -q 'job_name: "promtail"' "$RUNNER_TEMP/prometheus-with-promtail.yml"
           grep -q 'job_name: "promtail-compute"' "$RUNNER_TEMP/prometheus-with-promtail.yml"
-          grep -q 'http://127.0.0.1:8081/v1/internal/metrics/promtail-targets' "$RUNNER_TEMP/prometheus-with-promtail.yml"
+          grep -q 'http://127.0.0.1:9101/v1/internal/metrics/promtail-targets' "$RUNNER_TEMP/prometheus-with-promtail.yml"
           grep -q 'target_limit: 1000' "$RUNNER_TEMP/prometheus.yml"
           grep -q -- '--web.listen-address=127.0.0.1:9095' "$RUNNER_TEMP/prometheus.service"
           if grep -q '{{' "$RUNNER_TEMP/prometheus.service"; then
@@ -1532,6 +1597,39 @@ jobs:
           FAAS_REPLAY_CHECK_VERSIONS: ${{ steps.newmig.outputs.versions }}
         run: go test -race -count=1 -v -run TestNewMigrationsAreReplaySafe ./migrations/...
 
+      - name: migration full-suite impact checker tests
+        run: scripts/ci/migration-full-suite-needed_test.sh
+
+      - name: classify full migration suite impact
+        id: migration-impact
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # Main and explicit manual runs retain unconditional full-history
+          # coverage. Pull requests and merge-queue refs use the exact diff so
+          # deployment/docs/UI-only changes do not replay ~650 migrations in
+          # each of ~250 sequential database tests.
+          if [[ "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            needed=true
+            echo "full migration suite required for ${EVENT_NAME}"
+          elif [[ -z "$BASE_REF" ]]; then
+            needed=true
+            echo "::warning::base ref unavailable; running the full migration suite"
+          else
+            git fetch -q origin "$BASE_REF"
+            base="$(git merge-base HEAD "origin/${BASE_REF}")"
+            changed="$(git diff --name-only "$base" HEAD)"
+            printf 'changed paths considered for full migration suite:\n%s\n' "$changed"
+            if printf '%s\n' "$changed" | scripts/ci/migration-full-suite-needed.sh; then
+              needed=true
+            else
+              needed=false
+            fi
+          fi
+          echo "needed=${needed}" >> "$GITHUB_OUTPUT"
+
       # The per-migration Postgres tests (migrations/*_test.go, ~240 of them)
       # ran nowhere: the pg shards exclude the package with `grep -v
       # /migrations` and the two steps above name single tests with -run.
@@ -1550,6 +1648,7 @@ jobs:
       # each test replays the full migration set, so commit fsync dominates.
       # Durability is irrelevant to a throwaway CI database.
       - name: migrations per-migration tests (full package)
+        if: steps.migration-impact.outputs.needed == 'true'
         env:
           PGOPTIONS: "-c synchronous_commit=off"
         # No -p: this is a single package, so -p (PACKAGE parallelism) does
@@ -1565,6 +1664,9 @@ jobs:
         # performance assertion; sizing it near the mean just converts
         # runner variance into red builds.
         run: go test -count=1 -timeout=35m ./migrations/...
+      - name: report skipped full migration suite
+        if: steps.migration-impact.outputs.needed != 'true'
+        run: echo 'Full per-migration package skipped because the pull-request diff cannot affect it.'
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
@@ -1699,8 +1801,10 @@ jobs:
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
-      - name: e2e tests (shard 1 — 18 tests)
-        run: go test -race -count=1 -timeout=15m -run '^Test(C|D|Docs|Domain|E2E_[A-E])' ./cmd/e2e/...
+      - name: e2e tests (shard 1)
+        run: |
+          E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=1 -shards=4)
+          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
       - name: save Go build + test cache
         # Saved even when a test step failed: the compile cache is
         # content-addressed, so partial warmth is still warmth.
@@ -1784,8 +1888,10 @@ jobs:
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
-      - name: e2e tests (shard 2 — 15 tests)
-        run: go test -race -count=1 -timeout=15m -run '^Test(E2E_[F-P]|Egress|IAM)' ./cmd/e2e/...
+      - name: e2e tests (shard 2)
+        run: |
+          E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=2 -shards=4)
+          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard3:
     name: e2e (shard 3 — 24 tests)
@@ -1859,8 +1965,10 @@ jobs:
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
-      - name: e2e tests (shard 3 — 24 tests)
-        run: go test -race -count=1 -timeout=15m -run '^Test(E2E_Q|Invoice|MTLS|Main|Meter|Paddle|Quota|R|Signed|Status)' ./cmd/e2e/...
+      - name: e2e tests (shard 3)
+        run: |
+          E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=3 -shards=4)
+          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard4:
     name: e2e (shard 4 — 22 tests)
@@ -1934,73 +2042,7 @@ jobs:
           sudo apt-get install -y postgresql-client
       - name: install jinja2 (ADR-055 cross-check)
         run: python3 -m pip install --quiet jinja2
-      - name: e2e tests (shard 4 — 22 tests)
-        run: go test -race -count=1 -timeout=15m -run '^Test(Scan|Sec|Secrets)' ./cmd/e2e/...
-
-  image-build-canary:
-    # ADR-111 image-build canary. PR #929 lands the per-cloud builders
-    # + build scripts; this job exercises the hcloud canary build on
-    # every PR. The canary uses `git_sha=canary-<unix-ts>` so the
-    # snapshot tag is unique-per-run and doesn't collide with
-    # production tags.
-    #
-    # PR visibility: continue-on-error: true so PR authors SEE the
-    # canary status (a red x means the builders broke), but the
-    # job doesn't block the PR. On merge to main, the rule is
-    # required green (enforced via branch protection, NOT this file).
-    #
-    # Required secrets (hcloud steps only): HCLOUD_TOKEN. PRs from forks
-    # don't get repo-scoped secrets, so the canary build only runs on
-    # PRs whose head repo IS poyrazK/faas (i.e. internal contributors).
-    # External PRs gate on `image-validate` (no creds) instead.
-    name: image-build-canary (hcloud)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v7
-      - name: install-packer (pinned)
-        run: scripts/install-packer.sh
-      - name: install hcloud CLI
+      - name: e2e tests (shard 4)
         run: |
-          set -euo pipefail
-          # Asset name + SHA-256 from
-          # https://github.com/hetznercloud/cli/releases/tag/v1.45.0 —
-          # the actual asset is hcloud-linux-amd64.tar.gz (no version
-          # segment embedded in the filename). SHA mirrors the supply-
-          # chain pin pattern used by vacuum / sqlc / protoc / promtool
-          # higher in this file (per codeql-go-clear-text-logging-
-          # obfuscator-barrier lesson; no curl | tar -xz without verify).
-          curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
-            -o /tmp/hcloud.tar.gz \
-            https://github.com/hetznercloud/cli/releases/download/v1.45.0/hcloud-linux-amd64.tar.gz
-          echo "7918b2058eaf2df180caef34e4db1c7bcf5a6004ef6fd136402ebb7acb25d0eb  /tmp/hcloud.tar.gz" \
-            | sha256sum --check --strict
-          tar -xzf /tmp/hcloud.tar.gz -C /tmp hcloud
-          sudo mv /tmp/hcloud /usr/local/bin/
-          hcloud version
-      # Syntactic gate, runs on every PR regardless of secret wiring.
-      # Uses VALIDATE_FLAGS (-syntax-only) which works against any
-      # HCL without cloud creds. Replaces `image-build-hcloud-canary`
-      # as the no-creds gate; the build step below runs only when
-      # HCLOUD_TOKEN is wired (merge to main, internal PRs).
-      - name: validate every builder
-        run: make -C deploy/packer image-validate
-      - name: build canary snapshot
-        if: ${{ env.HCLOUD_TOKEN != '' }}
-        env:
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-        run: make -C deploy/packer image-build-hcloud-canary
-      - name: "smoke: list canary snapshot"
-        if: ${{ env.HCLOUD_TOKEN != '' }}
-        env:
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-        run: |
-          # image-build-hcloud-canary synthesises the tag with
-          # `git_sha=canary-$(date +%s)` (deploy/packer/Makefile).
-          # Match the canary-* prefix on the snapshot name; if the
-          # canary didn't upload, the grep returns empty and we fail.
-          hcloud image list -o columns=name,labels \
-            | grep -F 'gregale-compute-' -F 'canary-' \
-            | (read -r line && [ -n "${line}" ] && echo "canary snapshot present: ${line}") \
-            || (echo "canary snapshot not found" >&2; exit 1)
+          E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=4 -shards=4)
+          go test -race -count=1 -timeout=15m -run "$E2E_RUN" ./cmd/e2e/...

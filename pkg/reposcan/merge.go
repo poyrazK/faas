@@ -17,6 +17,9 @@ import "sort"
 //     (TierCompose, detProcfile) fills the class field of a
 //     compose `web` (TierCompose, detCompose) when compose didn't
 //     set it.
+//   - DependsOn is additive: explicit dependency edges from merged
+//     detectors are unioned rather than allowing a higher-priority
+//     detector to erase them.
 //
 // Determinism: maps are not safe under -race. Sort seeds by the
 // priority key above before iterating so the merge is
@@ -39,16 +42,19 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 
 	// Group seeds by (RootDir, Name) keeping first-arrival order.
 	type bucket struct {
-		name       string
-		rootDir    string
-		tier       Tier   // highest tier seen (=first arrival under the sort)
-		source     string // highest-tier seed's source
-		dockerfile string // highest-tier seed's dockerfile
-		class      Class
-		command    []string
-		schedule   string
-		ports      []int
-		envKeys    []string
+		name         string
+		rootDir      string
+		tier         Tier   // highest tier seen (=first arrival under the sort)
+		source       string // highest-tier seed's source
+		dockerfile   string // highest-tier seed's dockerfile
+		image        string // highest-tier seed's prebuilt image
+		class        Class
+		command      []string
+		commandShell bool
+		dependsOn    []string
+		schedules    []CronSchedule
+		ports        []int
+		envKeys      []string
 		// Whether each per-field slot is filled. We never overwrite
 		// an already-filled field — first non-empty per tier order wins.
 		classSet  bool
@@ -57,6 +63,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		portsSet  bool
 		envSet    bool
 		dfSet     bool
+		imageSet  bool
 		sourceSet bool
 		// det is the detector that won identity — the same first
 		// arrival that wins source/tier, so it is set under the
@@ -100,6 +107,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			b.dockerfile = s.dockerfile
 			b.dfSet = true
 		}
+		if !b.imageSet && s.image != "" {
+			b.image = s.image
+			b.imageSet = true
+		}
 		// Per-field: first non-empty wins (and never overwrites).
 		if !b.classSet && s.class != "" {
 			b.class = s.class
@@ -107,10 +118,23 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		}
 		if !b.cmdSet && len(s.command) > 0 {
 			b.command = append([]string(nil), s.command...)
+			b.commandShell = s.commandShell
 			b.cmdSet = true
 		}
-		if !b.schedSet && s.schedule != "" {
-			b.schedule = s.schedule
+		// Dependency edges are additive across detectors. A Compose seed
+		// may merge with a Procfile/workspace seed for the same workload;
+		// retaining the union avoids silently dropping an explicit edge.
+		for _, dep := range s.dependsOn {
+			if !containsString(b.dependsOn, dep) {
+				b.dependsOn = append(b.dependsOn, dep)
+			}
+		}
+		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
+			if len(s.schedules) > 0 {
+				b.schedules = append([]CronSchedule(nil), s.schedules...)
+			} else {
+				b.schedules = []CronSchedule{{Expression: s.schedule, Enabled: true}}
+			}
 			b.schedSet = true
 		}
 		if !b.portsSet && len(s.ports) > 0 {
@@ -127,20 +151,39 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 	for _, k := range ordered {
 		b := buckets[k]
 		cls := b.class
+		if cls == "" && b.det == detCompose {
+			// Compose has no explicit workload-class field. A published
+			// port is an unambiguous HTTP service signal; without one the
+			// service is a background worker. Run this after all detector
+			// fields merge so an explicit Procfile or platform hint wins.
+			if len(b.ports) > 0 {
+				cls = ClassHTTP
+			} else {
+				cls = ClassWorker
+			}
+		}
 		if cls == "" {
 			cls = ClassUnknown
 		}
+		primarySchedule := ""
+		if len(b.schedules) > 0 {
+			primarySchedule = b.schedules[0].Expression
+		}
 		out = append(out, Workload{
-			Name:       b.name,
-			RootDir:    b.rootDir,
-			Dockerfile: b.dockerfile,
-			Command:    b.command,
-			Class:      cls,
-			Schedule:   b.schedule,
-			Ports:      b.ports,
-			EnvKeys:    b.envKeys,
-			Source:     b.source,
-			Tier:       b.tier,
+			Name:         b.name,
+			RootDir:      b.rootDir,
+			Dockerfile:   b.dockerfile,
+			Image:        b.image,
+			Command:      b.command,
+			CommandShell: b.commandShell,
+			DependsOn:    b.dependsOn,
+			Class:        cls,
+			Schedule:     primarySchedule,
+			Schedules:    append([]CronSchedule(nil), b.schedules...),
+			Ports:        b.ports,
+			EnvKeys:      b.envKeys,
+			Source:       b.source,
+			Tier:         b.tier,
 			DetectedBy: Detection{
 				Detector:   b.det.String(),
 				Priority:   b.det.priority(),

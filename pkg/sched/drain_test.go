@@ -187,6 +187,33 @@ func TestDrain_DispatchesDueRow(t *testing.T) {
 	}
 }
 
+func TestDrain_DoesNotClaimAnotherNodesInvocation(t *testing.T) {
+	t.Parallel()
+	d, store, _, _, ds := newDrainHarness(t, api.PlanHobby, true)
+	apps, err := store.ListAllApps(context.Background())
+	if err != nil || len(apps) != 1 {
+		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
+	}
+	if err := store.SetAppNodeID(context.Background(), apps[0].ID, "node-a"); err != nil {
+		t.Fatalf("SetAppNodeID: %v", err)
+	}
+	d.engine.WithOwnerNodeID("node-b")
+	inv := seedDrainInvocation(t, store, state.InvocationQueue)
+
+	d.Tick(context.Background())
+
+	if got := ds.calls.Load(); got != 0 {
+		t.Fatalf("gateway calls = %d, want 0 for a foreign-owned app", got)
+	}
+	got, err := store.InvocationByID(context.Background(), inv.ID)
+	if err != nil {
+		t.Fatalf("InvocationByID: %v", err)
+	}
+	if got.State != state.InvocationPending {
+		t.Fatalf("invocation state = %q, want pending for the owning scheduler", got.State)
+	}
+}
+
 func TestDrain_DebugReplaySkipsSourceWake(t *testing.T) {
 	t.Parallel()
 	d, store, _, _, ds := newDrainHarness(t, api.PlanHobby, true)

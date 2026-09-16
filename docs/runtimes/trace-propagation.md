@@ -1,11 +1,11 @@
-# Trace propagation — `TRACEPARENT` for your handler
+# Trace propagation — request-scoped W3C context
 
 Gregale stamps every incoming request with a W3C
 [`traceparent`](https://www.w3.org/TR/trace-context/) header and
-forwards it to your function in the `TRACEPARENT` environment
-variable (issue #555 layer 4). You can opt into OpenTelemetry
-auto-instrumentation and the platform's trace will join your
-spans, all the way to the OTLP collector you point at
+forwards the request-scoped context to your function (issue #555
+layer 4). You can opt into OpenTelemetry auto-instrumentation and
+the platform's trace will join your spans, all the way to the OTLP
+collector you point at
 `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 This page is the operator's quick-start; the spec contract is in
@@ -15,17 +15,23 @@ This page is the operator's quick-start; the spec contract is in
 
 - **Header name (HTTP)**: `traceparent` — the standard W3C name.
   The Gregale edge gateway already accepts and forwards it.
-- **Env var (runner)**: `TRACEPARENT` — same value, set on every
-  request to your handler. Format is
+- **Header metadata**: `tracestate` is forwarded when valid and within
+  the 512-byte W3C limit. `baggage` is forwarded per request when it is
+  within Gregale's 2 KiB / 16-member guest-boundary budget.
+- **Env var (runner)**: `TRACEPARENT` — a boot/wake seed for runtimes
+  that initialize tracing before serving requests. It is not updated for
+  each request on a warm instance. Format is
   `00-<trace_id 32 hex>-<span_id 16 hex>-<flags 2 hex>`, e.g.
   `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`.
 - **Lifetime**: the trace_id is minted at the gateway (or carried
   in from the inbound `traceparent`); the span_id identifies the
-  specific `gateway.handler` span. A new trace is minted on every
-  cold boot; warm wake reuses the live span.
-- **Other env vars (no action required)**: `TRACESTATE` and
-  `BAGGAGE` are also stamped when present. They are empty for
-  internal traffic.
+  specific request's `gateway.handler` span. A warm instance receives
+  fresh headers for every request.
+
+For long-lived HTTP servers, use the SDK's HTTP server instrumentation
+to extract `traceparent`, `tracestate`, and `baggage` from each request.
+Do not use `process.env.TRACEPARENT` (or expect `TRACESTATE`/`BAGGAGE`
+environment variables) for per-request correlation.
 
 You do not need to read or write `TRACEPARENT` for the platform's
 own spans to work — the platform's `sched.wake`, `vmmd.create_*`,
@@ -35,9 +41,9 @@ trace_id automatically (issue #555 layer 3, merged).
 ## Auto-instrumentation: Node 22 / 24
 
 Add the OTel SDK and the auto-instrumentation hooks to your app's
-`dependencies`, then opt the handler into env propagation. The
-auto-instrumentation reads `TRACEPARENT` from the process env and
-joins every outbound span to the same trace.
+`dependencies`. The HTTP auto-instrumentation extracts the forwarded
+W3C headers for each request and joins the handler's child spans to the
+platform trace.
 
 ```json
 // package.json
@@ -59,15 +65,6 @@ const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumenta
 const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
 const { Resource } = require('@opentelemetry/resources');
 
-// OTEL_PROPAGATORS picks up TRACEPARENT from the process env and
-// joins every outbound span to the platform's trace. The default
-// "tracecontext,baggage" already does this; we list it explicitly
-// so a misconfiguration that overrides OTEL_PROPAGATORS doesn't
-// silently drop traceparent propagation.
-const propagators = (process.env.OTEL_PROPAGATORS || 'tracecontext,baggage')
-  .split(',')
-  .map((name) => name.trim());
-
 const sdk = new NodeSDK({
   resource: new Resource({ 'service.name': process.env.FAAS_APP_SLUG || 'app' }),
   traceExporter: new OTLPTraceExporter({
@@ -81,13 +78,11 @@ sdk.start();
 process.on('SIGTERM', () => sdk.shutdown());
 ```
 
-> **Why this works:** `NodeSDK` wires an `EnvMapPropagator` (the
-> `OTEL_PROPAGATORS=tracecontext` propagator) that reads `TRACEPARENT`
-> from `process.env` on every span start. The platform stamps
-> `TRACEPARENT` per request, so each child span joins the
-> `gateway.handler` trace_id automatically — no manual extraction
-> needed. If you set `OTEL_PROPAGATORS` yourself, keep `tracecontext`
-> in the list, or the join breaks silently.
+> **Why this works:** the Node HTTP instrumentation extracts the
+> `traceparent`, `tracestate`, and `baggage` headers from each inbound
+> request. Set `OTEL_PROPAGATORS=tracecontext,baggage` if your image
+> overrides the SDK default; do not rely on the process-scoped
+> `TRACEPARENT` seed for warm requests.
 
 ```js
 // handler.js — your existing handler, unchanged. The auto-
@@ -143,10 +138,9 @@ exec opentelemetry-instrument \
   gunicorn app:app
 ```
 
-The `opentelemetry-instrument` wrapper installs an
-`OTELPropagatorsEnv` (an EnvMapPropagator equivalent) that reads
-`TRACEPARENT` from the process env and joins every Flask/FastAPI/
-Django/psycopg span to the platform's trace. We set
+The `opentelemetry-instrument` wrapper enables HTTP instrumentation
+that extracts the forwarded W3C headers from each request and joins
+Flask/FastAPI/Django/psycopg spans to the platform's trace. We set
 `OTEL_PROPAGATORS=tracecontext,baggage` explicitly so a custom
 propagator in the parent image doesn't silently drop the join.
 
@@ -160,10 +154,11 @@ propagator in the parent image doesn't silently drop the join.
 - **No auto-detection.** Set `OTEL_EXPORTER_OTLP_ENDPOINT` in
   `app.json`'s `env` (or rely on the platform's default if the
   operator has set one at the cluster level) to turn on export.
-  Without it, spans are still joined to the platform's
-  `gateway.handler` trace and visible via
-  `GET /v1/traces/{trace_id}` — you just don't get the
-  collector-side view.
+  Without it, the platform's gateway span is still available in
+  the local trace ring, but customer-created child spans are not
+  persisted by `GET /v1/traces/{trace_id}`. Export to the platform
+  OTLP endpoint is required for customer spans to reach the
+  configured collector.
 - **No head-based sampling override.** The platform samples
   100% for the first 100 root spans of every new deployment
   (acceptance #5), then falls back to the head ratio in
@@ -172,15 +167,20 @@ propagator in the parent image doesn't silently drop the join.
   parent's `SampledFlag=true` is what reaches your SDK, so
   every child span you create is recorded.
 
-## Cross-daemon trace query
+## Platform trace query
 
 If you have observer access to the box, `GET /v1/traces/{trace_id}`
-returns the full span tree for any wake within the last 24 hours
-(PR #617 ring buffer, default 100k entries). The shape is the
-[`Trace` schema](../../api/openapi.yaml) — every span carries
+returns the gatewayd-public platform span tree retained by that
+instance's bounded in-memory ring (24 hours or 100k entries, whichever
+comes first). It is not a durable or fleet-wide trace store. The shape
+is the [`Trace` schema](../../api/openapi.yaml) — every platform span carries
 `trace_id`, `span_id`, `parent_span_id`, `name`, `start_time`,
 `end_time`, `status`, and an `attributes` map (`app_id`,
 `deployment_id`, `instance_id`, etc.).
+
+Customer-created spans require OTLP export and are inspected in the
+configured collector. The customer OTLP ingest path summarizes those
+spans into request telemetry rather than adding them to this local ring.
 
 ```bash
 curl -sH "X-Faas-Trace-Auth: $OBSERVER_TOKEN" \

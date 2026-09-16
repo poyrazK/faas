@@ -129,8 +129,8 @@ func TestCmdManifestValidate_JSON(t *testing.T) {
 	if report.Schema != "1.0.0" {
 		t.Errorf("Schema = %q, want 1.0.0", report.Schema)
 	}
-	if len(report.Daemons) != 10 {
-		t.Errorf("Daemons = %d, want 10", len(report.Daemons))
+	if len(report.Daemons) != 11 {
+		t.Errorf("Daemons = %d, want 11", len(report.Daemons))
 	}
 }
 
@@ -212,8 +212,8 @@ func TestTOMLPlacement_HostKeysCatalogSize(t *testing.T) {
 	// rendered map is tombstone-free. Pin that the catalog hasn't
 	// shrunk/grown without a matching schema update.
 	keys := manifest.SortedHostKeys()
-	if len(keys) != 10 {
-		t.Errorf("SortedHostKeys len=%d; want 10 (catalog drift guard)", len(keys))
+	if len(keys) != 11 {
+		t.Errorf("SortedHostKeys len=%d; want 11 (catalog drift guard)", len(keys))
 	}
 }
 

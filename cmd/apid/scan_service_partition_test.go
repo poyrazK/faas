@@ -141,6 +141,33 @@ func TestComputeAffectedPartition_RemovedSkipsScanKeyMatches(t *testing.T) {
 	}
 }
 
+func TestComputeAffectedPartition_DirectoryMoveIsUpdate(t *testing.T) {
+	t.Parallel()
+	apps := []state.App{{
+		ID: "api-id", Slug: "api", WorkloadName: "api", RootDir: "services/api", ProjectID: projectID,
+	}}
+	scan := []reposcan.Workload{{Name: "api", RootDir: "apps/api"}}
+	got := computeAffectedPartition(scan, scan, apps, nil, projectID)
+	if len(got.WillDeploy) != 1 || got.WillDeploy[0].Action != "update" || got.WillDeploy[0].ID != "api-id" ||
+		got.WillDeploy[0].ExistingRootDir != "services/api" || len(got.Removed) != 0 {
+		t.Fatalf("directory move partition = %#v", got)
+	}
+}
+
+func TestComputeAffectedPartition_OnlyDoesNotRemoveUnselectedWorkload(t *testing.T) {
+	t.Parallel()
+	apps := []state.App{
+		{ID: "api-id", Slug: "api", WorkloadName: "api", RootDir: "services/api", ProjectID: projectID},
+		{ID: "worker-id", Slug: "worker", WorkloadName: "worker", RootDir: "services/worker", ProjectID: projectID},
+	}
+	all := []reposcan.Workload{{Name: "api", RootDir: "services/api"}, {Name: "worker", RootDir: "services/worker"}}
+	selected := all[:1]
+	got := computeAffectedPartition(selected, all, apps, nil, projectID)
+	if len(got.Removed) != 0 || len(got.WillDeploy) != 1 || got.WillDeploy[0].Slug != "api" {
+		t.Fatalf("--only partition = %#v", got)
+	}
+}
+
 // TestComputeAffectedPartition_BrandNewProjectSkipsRemoved pins
 // the empty-projectID guard: a brand-new project (not yet
 // inserted, so its ID is unknown) must yield an empty Removed

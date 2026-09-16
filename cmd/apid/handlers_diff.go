@@ -71,6 +71,12 @@ func (s *server) diffApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, api.ErrCapacity("plan limits not loaded"))
 		return
 	}
+	if len(req.Workflows) > 0 {
+		if problem := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 
 	// App load. The diff is a "what if" query (the docstring at
 	// the top of this file promises 200 + would-create-app Change
@@ -145,8 +151,19 @@ func (s *server) diffApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		})
 		accountCrons = nil
 	}
+	accountAppCount, appCountErr := s.store.CountDeployedApps(r.Context(), acct.ID)
+	if appCountErr != nil {
+		d.Breaks = append(d.Breaks, deploydiff.Break{
+			Code:     "account_app_count_unavailable",
+			Severity: deploydiff.SeverityWarn,
+			Reason:   "could not read deployed-app count; app quota gate skipped",
+			Field:    "apps",
+		})
+	}
 	breaks := deploydiff.Quota(acct.Plan, baseline, pending, deploydiff.QuotaConfig{
 		Limits:               limits,
+		AccountAppCount:      accountAppCount,
+		AccountAppCountKnown: appCountErr == nil,
 		AccountCronCount:     len(accountCrons),
 		AccountEdgeRuleCount: 0, // per-account edge-rule count not
 		// currently capped in pkg/api/limits.go; pass 0.
@@ -277,6 +294,7 @@ func diffPendingFromRequest(req *api.DiffRequest) deploydiff.Pending {
 	if req.AppConfig != nil {
 		p.AppConfig = deploydiff.AppConfigPatch{
 			RAMMB:               req.AppConfig.RAMMB,
+			VCPU:                req.AppConfig.VCPU,
 			CPUMillicores:       req.AppConfig.CPUMillicores,
 			IdleTimeoutS:        req.AppConfig.IdleTimeoutS,
 			MaxConcurrency:      req.AppConfig.MaxConcurrency,
@@ -296,6 +314,11 @@ func diffPendingFromRequest(req *api.DiffRequest) deploydiff.Pending {
 	p.Manifest = req.Manifest
 	p.ImageRef = req.ImageRef
 	p.BuildPlan = req.BuildPlan
+	p.TrafficPercent = req.TrafficPercent
+	p.Canary = req.Canary
+	if req.Workflows != nil {
+		p.Workflows = append([]api.WorkflowSpec{}, req.Workflows...)
+	}
 	// SAFE-RELEASES production-leveling Stream E: thread the
 	// pending deployment's scope so the engine can emit a
 	// `scope_mismatch` SeverityWarn break when the pending

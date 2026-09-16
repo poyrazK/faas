@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"filippo.io/age"
@@ -26,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -43,6 +45,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := role.Require("s3-gatewayd", role.FromConfig("", "FAAS_S3_GATEWAY_ROLE"), role.RoleSingleBox, role.RoleControlPlane); err != nil {
 		return err
 	}
+	ops := wire.NewOpsMetrics("s3_gateway")
+	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "s3-gatewayd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
+	if traceErr != nil {
+		return fmt.Errorf("s3-gatewayd: init tracing: %w", traceErr)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := traceShutdown(shutdownCtx); err != nil {
+			log.Warn("s3-gatewayd: trace shutdown failed", "err", err)
+		}
+	}()
+	wire.BootStamps(ctx, "s3-gatewayd", ops)
+	wire.RegisterDefaultOps(ops)
 	registry, err := objectstorage.Load(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("s3-gatewayd: load object storage: %w", err)
@@ -54,7 +70,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	pool, err := db.OpenWithAppName(ctx, "", "s3-gatewayd")
+	pool, err := db.OpenWithAppName(ctx, "", "faas-s3-gatewayd")
 	if err != nil {
 		return fmt.Errorf("s3-gatewayd: open db: %w", err)
 	}
@@ -64,7 +80,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if !ok {
 		return errors.New("s3-gatewayd: state store lacks object-storage request metrics")
 	}
-	ops := wire.NewOpsMetrics("s3_gateway")
 	usageJobs, err := usageExportJobs(registry, requestMetrics, os.Getenv)
 	if err != nil {
 		return err
@@ -148,7 +163,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}()
 
 	dataServer := &http.Server{
-		Handler:           handler,
+		Handler:           trace.HTTPHandler("s3-gatewayd", wire.HTTPMetricsHandler(ops, "s3_request", handler)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       api.ObjectTransferTimeout,
 		WriteTimeout:      api.ObjectTransferTimeout,
@@ -164,7 +179,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	})
 	defer readyProbe.Drain("s3-gatewayd", log)
 	wire.ControlReadyMuxLite(controlMux, readyProbe.ReadyFunc(), readyProbe.ReasonFunc())
-	controlServer := &http.Server{Handler: controlMux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+	controlServer := &http.Server{Handler: trace.HTTPHandler("s3-gatewayd.control", controlMux), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 
 	log.Info("s3-gatewayd: listening", "data_addr", dataListener.Addr().String(), "control_addr", controlListener.Addr().String(), "endpoint", registry.PublicEndpoint, "region", registry.PublicRegion)
 	errorsCh := make(chan error, 2)
@@ -192,20 +207,12 @@ func loadIdentities(getenv func(string) string) ([]*age.X25519Identity, error) {
 	if currentPath == "" {
 		return nil, errors.New("s3-gatewayd: FAAS_HOST_AGE_IDENTITY_PATH is required")
 	}
-	current, err := secretbox.LoadHostKey(currentPath)
-	if err != nil {
-		return nil, fmt.Errorf("s3-gatewayd: load host age identity: %w", err)
+	identities, err := secretbox.LoadFleetAndHostKeys(filepath.Dir(currentPath))
+	if errors.Is(err, secretbox.ErrHostKeyNotFound) {
+		return secretbox.LoadHostKeys(filepath.Dir(currentPath))
 	}
-	identities := []*age.X25519Identity{current}
-	if previousPath := getenv("FAAS_HOST_AGE_PREVIOUS_IDENTITY_PATH"); previousPath != "" {
-		previous, err := secretbox.LoadHostKey(previousPath)
-		if err != nil {
-			if errors.Is(err, secretbox.ErrHostKeyNotFound) {
-				return identities, nil
-			}
-			return nil, fmt.Errorf("s3-gatewayd: load previous host age identity: %w", err)
-		}
-		identities = append(identities, previous)
+	if err != nil {
+		return nil, fmt.Errorf("s3-gatewayd: load fleet and host age identities: %w", err)
 	}
 	return identities, nil
 }

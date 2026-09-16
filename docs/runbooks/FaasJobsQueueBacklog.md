@@ -93,7 +93,7 @@ because a plan's intended concurrency cap is full.
 ## Related
 
 - `FaasBuildQueueBacklog.md` — same shape for the builder slot
-  pool; different cap (1 guaranteed + 1 opportunistic).
+  pool; different cap (one builder per compute node).
 - `FaasColdBootRatioHigh.md` — jobs are always cold-boot-only
   per ADR-005; a high cold-boot ratio alongside a queue backlog
   is expected, not a separate incident.

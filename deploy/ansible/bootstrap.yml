@@ -33,8 +33,15 @@
 # manifest and daemon configuration remain hostname-only.
 - name: Discover provider-neutral private transport addresses
   hosts: control_plane:compute_nodes
-  gather_facts: true
+  gather_facts: false
   become: false
+  pre_tasks:
+    - name: End managed-host bootstrap discovery on the release-only fast path
+      ansible.builtin.meta: end_host
+      when: faas_join_bootstrap_contract_current | default(false) | bool
+
+    - name: Gather facts for hosts requiring bootstrap convergence
+      ansible.builtin.setup:
   tasks:
     - name: Require a usable private transport address
       ansible.builtin.assert:
@@ -53,13 +60,21 @@
 
 - name: Bootstrap a Gate-B control-plane node (fsn-1)
   hosts: control_plane
-  gather_facts: true
+  gather_facts: false
   become: true
   serial: 1
   max_fail_percentage: 0
 
   vars_files:
     - group_vars/control_plane/off_host_backup.yml
+
+  pre_tasks:
+    - name: End managed control-plane bootstrap on the release-only fast path
+      ansible.builtin.meta: end_host
+      when: faas_join_bootstrap_contract_current | default(false) | bool
+
+    - name: Gather facts for control-plane bootstrap convergence
+      ansible.builtin.setup:
 
   roles:
     # Shared preconditions (every box):
@@ -83,11 +98,15 @@
     - role: nftables
     - role: overlay
     - role: node_exporter
+    - role: gcp_ops_agent
+    - role: internal_pki_renewal
+    - role: canary_artifact_retention
     - role: alertmanager
     - role: prometheus
     - role: grafana
     # Control-plane-only:
     - role: postgres
+    - role: postgres_capacity
     - role: postgres_backup
       when: not (faas_image_seed | default(false) | bool)
     - role: control_plane_service
@@ -96,6 +115,7 @@
       when: faas_object_storage_gateway_managed | default(false) | bool
     - role: githubd_service
     - role: log_archive
+    - role: optional_credentials
     # Topology cleanup is safe during image seeding and must also remove
     # legacy one-box services left on an existing control-plane host.
     - role: role_convergence
@@ -105,10 +125,18 @@
 
 - name: Bootstrap a Gate-B compute-only node (fsn-2)
   hosts: compute_nodes
-  gather_facts: true
+  gather_facts: false
   become: true
   serial: 1
   max_fail_percentage: 0
+
+  pre_tasks:
+    - name: End managed compute bootstrap on the release-only fast path
+      ansible.builtin.meta: end_host
+      when: faas_join_bootstrap_contract_current | default(false) | bool
+
+    - name: Gather facts for compute bootstrap convergence
+      ansible.builtin.setup:
 
   roles:
     # Cheap fail-closed admission checks must run before storage discovery or
@@ -134,6 +162,9 @@
     - role: nftables
     - role: overlay
     - role: node_exporter
+    - role: gcp_ops_agent
+    - role: internal_pki_renewal
+    - role: canary_artifact_retention
     # Compute-only:
     - role: vmmd_service
     # M9: every compute node owns a node-local schedd for heartbeat and
@@ -145,6 +176,7 @@
     - role: builderd_service
     - role: compute_only_service
     - role: log_archive
+    - role: optional_credentials
     - role: role_convergence
     - role: fleet_verify
       # node_join imports this bootstrap before it installs the requested

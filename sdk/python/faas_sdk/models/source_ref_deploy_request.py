@@ -42,6 +42,10 @@ class SourceRefDeployRequest:
     """
     format_: SourceRefDeployRequestFormat | Unset = "tarball"
     """Forward-compat field. PR-A only supports `tarball`."""
+    environment: str | Unset = UNSET
+    """Registered project environment to target for this source-ref deployment."""
+    no_triggers: bool | Unset = False
+    """Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed."""
     reason: str | Unset = UNSET
     """Free-form operator note (≤280 chars). Example: 'Emergency rollback after payment provider incident'."""
     tag: SourceRefDeployRequestTag | Unset = UNSET
@@ -57,6 +61,9 @@ class SourceRefDeployRequest:
     stages a dark live revision."""
     canary: CanaryPresetSpec | None | Unset = UNSET
     """Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent."""
+    rollback_on_5xx: bool | None | Unset = UNSET
+    """Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
+    defaulting to false."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +76,10 @@ class SourceRefDeployRequest:
         format_: str | Unset = UNSET
         if not isinstance(self.format_, Unset):
             format_ = self.format_
+
+        environment = self.environment
+
+        no_triggers = self.no_triggers
 
         reason = self.reason
 
@@ -94,6 +105,12 @@ class SourceRefDeployRequest:
         else:
             canary = self.canary
 
+        rollback_on_5xx: bool | None | Unset
+        if isinstance(self.rollback_on_5xx, Unset):
+            rollback_on_5xx = UNSET
+        else:
+            rollback_on_5xx = self.rollback_on_5xx
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -104,6 +121,10 @@ class SourceRefDeployRequest:
         )
         if format_ is not UNSET:
             field_dict["format"] = format_
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if no_triggers is not UNSET:
+            field_dict["no_triggers"] = no_triggers
         if reason is not UNSET:
             field_dict["reason"] = reason
         if tag is not UNSET:
@@ -116,6 +137,8 @@ class SourceRefDeployRequest:
             field_dict["traffic_percent"] = traffic_percent
         if canary is not UNSET:
             field_dict["canary"] = canary
+        if rollback_on_5xx is not UNSET:
+            field_dict["rollback_on_5xx"] = rollback_on_5xx
 
         return field_dict
 
@@ -134,6 +157,10 @@ class SourceRefDeployRequest:
             format_ = UNSET
         else:
             format_ = check_source_ref_deploy_request_format(_format_)
+
+        environment = d.pop("environment", UNSET)
+
+        no_triggers = d.pop("no_triggers", UNSET)
 
         reason = d.pop("reason", UNSET)
 
@@ -174,16 +201,28 @@ class SourceRefDeployRequest:
 
         canary = _parse_canary(d.pop("canary", UNSET))
 
+        def _parse_rollback_on_5xx(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
+
         source_ref_deploy_request = cls(
             repo=repo,
             ref=ref,
             format_=format_,
+            environment=environment,
+            no_triggers=no_triggers,
             reason=reason,
             tag=tag,
             deployed_by=deployed_by,
             pr_number=pr_number,
             traffic_percent=traffic_percent,
             canary=canary,
+            rollback_on_5xx=rollback_on_5xx,
         )
 
         source_ref_deploy_request.additional_properties = d

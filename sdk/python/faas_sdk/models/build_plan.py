@@ -40,6 +40,8 @@ class BuildPlan:
     supplied."""
     health_path: None | str | Unset = UNSET
     """Effective readiness path selected by the source profile or deployment override."""
+    config_file: None | str | Unset = UNSET
+    """Framework configuration file that supplied the resolved build settings, when present."""
     class_: BuildPlanClassType1 | BuildPlanClassType2Type1 | BuildPlanClassType3Type1 | None | Unset = UNSET
     """App class from `app.Type` — `app` for plain apps, `function` for function rewrites (spec §4.2)."""
     handler: None | str | Unset = UNSET
@@ -80,6 +82,12 @@ class BuildPlan:
             health_path = UNSET
         else:
             health_path = self.health_path
+
+        config_file: None | str | Unset
+        if isinstance(self.config_file, Unset):
+            config_file = UNSET
+        else:
+            config_file = self.config_file
 
         class_: None | str | Unset
         if isinstance(self.class_, Unset):
@@ -122,6 +130,8 @@ class BuildPlan:
             field_dict["port"] = port
         if health_path is not UNSET:
             field_dict["health_path"] = health_path
+        if config_file is not UNSET:
+            field_dict["config_file"] = config_file
         if class_ is not UNSET:
             field_dict["class"] = class_
         if handler is not UNSET:
@@ -180,6 +190,15 @@ class BuildPlan:
             return cast(None | str | Unset, data)
 
         health_path = _parse_health_path(d.pop("health_path", UNSET))
+
+        def _parse_config_file(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        config_file = _parse_config_file(d.pop("config_file", UNSET))
 
         def _parse_class_(
             data: object,
@@ -241,6 +260,7 @@ class BuildPlan:
             entrypoint=entrypoint,
             port=port,
             health_path=health_path,
+            config_file=config_file,
             class_=class_,
             handler=handler,
             source_sha256=source_sha256,

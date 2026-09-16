@@ -93,15 +93,7 @@ func (c *Client) CreateCustomer(ctx context.Context, acct state.Account) (string
 	if c.api == nil {
 		return "", fmt.Errorf("stripex: cannot CreateCustomer without apiKey")
 	}
-	cus, err := c.api.Customers.New(&stripe.CustomerParams{
-		Email: stripe.String(acct.Email),
-		Params: stripe.Params{
-			Metadata: map[string]string{
-				"faas_account_id": acct.ID,
-				"faas_plan":       string(acct.Plan),
-			},
-		},
-	})
+	cus, err := c.api.Customers.New(stripeCustomerParams(acct))
 	if err != nil {
 		return "", fmt.Errorf("stripex: Customers.New account %s: %w", acct.ID, err)
 	}
@@ -109,6 +101,82 @@ func (c *Client) CreateCustomer(ctx context.Context, acct state.Account) (string
 		return "", err
 	}
 	return cus.ID, nil
+}
+
+// SyncCustomerBillingInfo applies the current legal identity to an existing
+// Stripe customer. The operation is safe to repeat: name/address are set to
+// the same values and the single EU VAT identity is replaced only when its
+// value changes. Empty values clear local provider metadata where Stripe
+// supports clearing; tax IDs are deleted explicitly before adding the new
+// value.
+func (c *Client) SyncCustomerBillingInfo(ctx context.Context, acct state.Account) error {
+	if c.api == nil {
+		return fmt.Errorf("stripex: cannot SyncCustomerBillingInfo without apiKey")
+	}
+	if acct.ProviderCustomerID == "" {
+		return fmt.Errorf("stripex: account %s has no provider customer", acct.ID)
+	}
+	updateParams := stripeCustomerParams(acct)
+	// Stripe manages tax IDs through the customer tax_ids sub-resource;
+	// tax_id_data is accepted on customer creation but not on update.
+	updateParams.TaxIDData = nil
+	if _, err := c.api.Customers.Update(acct.ProviderCustomerID, updateParams); err != nil {
+		return fmt.Errorf("stripex: Customers.Update account %s: %w", acct.ID, err)
+	}
+	// The account model deliberately stores one tax identifier without a
+	// country-specific type. EU VAT is the supported first slice; the PDF and
+	// tax-network follow-ups can add a typed field without changing this API.
+	iter := c.api.TaxIDs.List(&stripe.TaxIDListParams{Customer: stripe.String(acct.ProviderCustomerID)})
+	matchedTaxID := false
+	for iter.Next() {
+		tax := iter.TaxID()
+		if tax == nil {
+			continue
+		}
+		if acct.TaxID != "" && tax.Value == acct.TaxID && string(tax.Type) == "eu_vat" {
+			matchedTaxID = true
+			continue
+		}
+		if _, err := c.api.TaxIDs.Del(tax.ID, &stripe.TaxIDParams{Customer: stripe.String(acct.ProviderCustomerID)}); err != nil {
+			return fmt.Errorf("stripex: remove stale tax id account %s: %w", acct.ID, err)
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return fmt.Errorf("stripex: list tax ids account %s: %w", acct.ID, err)
+	}
+	if acct.TaxID != "" && !matchedTaxID {
+		if _, err := c.api.TaxIDs.New(&stripe.TaxIDParams{
+			Customer: stripe.String(acct.ProviderCustomerID),
+			Type:     stripe.String("eu_vat"),
+			Value:    stripe.String(acct.TaxID),
+		}); err != nil {
+			return fmt.Errorf("stripex: add tax id account %s: %w", acct.ID, err)
+		}
+	}
+	return nil
+}
+
+func stripeCustomerParams(acct state.Account) *stripe.CustomerParams {
+	params := &stripe.CustomerParams{
+		Email: stripe.String(acct.Email),
+		Name:  stripe.String(acct.BusinessName),
+		Params: stripe.Params{
+			Metadata: map[string]string{
+				"faas_account_id": acct.ID,
+				"faas_plan":       string(acct.Plan),
+			},
+		},
+	}
+	if acct.BillingAddress != "" {
+		params.Address = &stripe.AddressParams{Line1: stripe.String(acct.BillingAddress)}
+	}
+	if acct.TaxID != "" {
+		params.TaxIDData = []*stripe.CustomerTaxIDDataParams{{
+			Type:  stripe.String("eu_vat"),
+			Value: stripe.String(acct.TaxID),
+		}}
+	}
+	return params
 }
 
 // planMonthlyMillicents moved to pkg/billing/plans.go (PlanMonthlyMillicents).

@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -108,16 +109,17 @@ func (f *fakeRunner) ran(substr string) bool {
 
 // fakeVMM records calls and can be told to fail Boot/Restore/Snapshot.
 type fakeVMM struct {
-	mu           sync.Mutex
-	bootErr      error
-	restoreErr   error
-	snapErr      error
-	killErr      error
-	killed       []string
-	restored     []string
-	restoreSpecs []RestoreSpec
-	snapshotted  []string
-	bootCount    int
+	mu            sync.Mutex
+	bootErr       error
+	restoreErr    error
+	snapErr       error
+	killErr       error
+	killed        []string
+	restored      []string
+	restoreSpecs  []RestoreSpec
+	snapshotted   []string
+	bootCount     int
+	coldBootSpecs []ColdBootSpec
 	// resumeHookErr is returned from TriggerResumeHook when non-nil; the
 	// default (nil) matches production-success semantics. V6 tests that need
 	// the dial-failure path flip this.
@@ -299,6 +301,9 @@ func (v *fakeVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec) 
 	if err := spec.Validate(); err != nil {
 		return err
 	}
+	v.mu.Lock()
+	v.coldBootSpecs = append(v.coldBootSpecs, spec)
+	v.mu.Unlock()
 	// Mirror production: thread the per-deployment override
 	// readiness probe path through Boot. The fakeVMM's Boot
 	// discards the parameter (the test doesn't go through
@@ -357,7 +362,16 @@ func (v *fakeVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) error 
 // customer HTTP listener, so Manager must not send them through waitReady.
 func TestWakeBuilderRestoreSkipsAppReadiness(t *testing.T) {
 	vmm := &fakeVMM{}
-	mgr := NewManager(&fakeRunner{}, vmm, Paths{Kernel: "/k"}, testFCVersion, nil, nil)
+	livenessStarts := 0
+	mgr := NewManager(&fakeRunner{}, vmm, Paths{Kernel: "/k"}, testFCVersion, nil, nil).
+		WithLivenessProbes(NewLivenessRegistry(), LivenessProbeConfig{PeriodSeconds: 1, ConsecutiveFailures: 1}).
+		WithLivenessProbeStarter(func(context.Context, string, int, string, LivenessProbeConfig) context.CancelFunc {
+			livenessStarts++
+			return func() {}
+		}).
+		WithFrameworkReadyReader(func(context.Context, string) (frameworkready.Status, error) {
+			return frameworkready.Status{}, errors.New("builder must not start framework-ready polling")
+		})
 	_, err := mgr.Wake(context.Background(), WakeRequest{
 		Instance:   "builder-restore",
 		BaseKey:    "/base.ext4",
@@ -367,6 +381,7 @@ func TestWakeBuilderRestoreSkipsAppReadiness(t *testing.T) {
 		Plan:       api.PlanHobby,
 		ExportDir:  "/var/lib/faas/build-out/builder-restore",
 		Snapshot:   usableSnapshot(),
+		Runtime:    "node22",
 	})
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
@@ -379,6 +394,15 @@ func TestWakeBuilderRestoreSkipsAppReadiness(t *testing.T) {
 	}
 	if !vmm.restoreSpecs[0].SkipReady {
 		t.Fatal("builder restore SkipReady = false, want true")
+	}
+	if livenessStarts != 0 {
+		t.Fatalf("builder liveness starts = %d, want 0", livenessStarts)
+	}
+	mgr.mu.Lock()
+	frameworkRuns := len(mgr.frameworkReadyRuns)
+	mgr.mu.Unlock()
+	if frameworkRuns != 0 {
+		t.Fatalf("builder framework-ready loops = %d, want 0", frameworkRuns)
 	}
 }
 

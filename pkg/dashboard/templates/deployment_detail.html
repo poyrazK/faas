@@ -115,6 +115,12 @@
       margin: 1rem 0;
       background: #eff6ff;
     }
+    .github-source {
+      border-left: 3px solid #6e40c9;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+      background: #f5f3ff;
+    }
     .hosting-receipt dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0.5rem 0 0; }
     .hosting-receipt dt { color: #6b7280; }
     .hosting-receipt dd { margin: 0; }
@@ -189,6 +195,19 @@
         · Created: <code>{{.Data.Deployment.CreatedAt}}</code>
       </p>
 
+      {{if .Data.Deployment.GitHubCommitURL}}
+      <section class="github-source" data-cluster="github-source">
+        <h2>GitHub source</h2>
+        <p>
+          <a href="{{.Data.Deployment.GitHubRepoURL}}" target="_blank" rel="noopener"><code>{{.Data.Deployment.RepoFullName}}</code></a>
+          · commit <a href="{{.Data.Deployment.GitHubCommitURL}}" target="_blank" rel="noopener"><code>{{.Data.Deployment.CommitShort}}</code></a>
+          · <a href="{{.Data.Deployment.GitHubChecksURL}}" target="_blank" rel="noopener">View GitHub checks →</a>
+        </p>
+        <p class="muted">Gregale mirrors this deployment’s lifecycle to the GitHub Check Run for the commit.</p>
+        <p><a href="/dashboard/apps/{{.Data.App.Slug}}/logs?deployment={{.Data.Deployment.ID}}">View deployment logs →</a></p>
+      </section>
+      {{end}}
+
 {{ if .Data.Deployment.ErrorCode }}
       <section class="error-explanation" data-cluster="error-explanations">
         <h3 class="title">✗ {{ .Data.Deployment.ErrorCode }}</h3>
@@ -217,7 +236,7 @@
 {{ end }}</pre>
           </details>
         {{ end }}
-        <a class="docs" href="https://docs.gregale.dev/errors/{{ .Data.Deployment.ErrorCode }}" target="_blank" rel="noopener">docs →</a>
+        <a class="docs" href="https://gregale.dev/docs/errors/{{ .Data.Deployment.ErrorCode }}" target="_blank" rel="noopener">docs →</a>
       </section>
       {{ end }}
 {{/* Issue #606 / SAFE-RELEASES-E.1: structured deployer

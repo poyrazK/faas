@@ -79,6 +79,35 @@ func TestExtractTarGz_AbsoluteSpool_NestedFilePasses(t *testing.T) {
 	}
 }
 
+func TestExtractTarGz_LeadingDotWrapperIsCanonicalised(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FAAS_SCAN_SPOOL_ROOT", dir)
+	raw := buildTestTarGz(t,
+		[]tar.Header{
+			{Name: "./project/compose.yaml"},
+			{Name: "./project/services/api/Dockerfile"},
+		},
+		map[string][]byte{
+			"./project/compose.yaml":            []byte("services: {}\n"),
+			"./project/services/api/Dockerfile": []byte("FROM scratch\n"),
+		})
+	srcPath := filepath.Join(dir, "leading-dot.tar.gz")
+	if err := os.WriteFile(srcPath, raw, 0o644); err != nil {
+		t.Fatalf("write tar: %v", err)
+	}
+
+	scanDir, prob := extractTarGzToDir(srcPath, extractTestSafeLim)
+	if prob != nil {
+		t.Fatalf("extract: code=%s detail=%s", prob.Code, prob.Detail)
+	}
+	defer func() { _ = os.RemoveAll(scanDir) }()
+	for _, name := range []string{"compose.yaml", "services/api/Dockerfile"} {
+		if _, err := os.Stat(filepath.Join(scanDir, filepath.FromSlash(name))); err != nil {
+			t.Fatalf("canonical file %q missing: %v", name, err)
+		}
+	}
+}
+
 // TestExtractTarGz_RejectsEscapeAndAbsolute — pins both traversal
 // vectors that the upstream escapesArchiveRoot guard handles, so a
 // future refactor that drops that guard is caught here too.

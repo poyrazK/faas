@@ -37,7 +37,9 @@ type fakeCronClient struct {
 	createErrAt      int                     // 0 = no error; N = error on the Nth CreateCron call
 	createErr        error                   // error returned when createErrAt > 0
 	createdCalls     []api.CreateCronRequest // every CreateCron invocation in order
-	listErr          error                   // 0 = no error from ListCrons
+	updatedCalls     []api.UpdateCronRequest
+	deletedIDs       []string
+	listErr          error // 0 = no error from ListCrons
 	whoami           api.AccountResponse
 	whoamiErr        error
 }
@@ -53,6 +55,16 @@ func (f *fakeCronClient) CreateCron(_ context.Context, _ string, req api.CreateC
 		return api.CronResponse{}, f.createErr
 	}
 	return api.CronResponse{ID: "fake", Schedule: req.Schedule, Path: req.Path, Enabled: derefBool(req.Enabled)}, nil
+}
+
+func (f *fakeCronClient) UpdateCron(_ context.Context, id string, req api.UpdateCronRequest) (api.CronResponse, error) {
+	f.updatedCalls = append(f.updatedCalls, req)
+	return api.CronResponse{ID: id}, nil
+}
+
+func (f *fakeCronClient) DeleteCron(_ context.Context, id string) error {
+	f.deletedIDs = append(f.deletedIDs, id)
+	return nil
 }
 
 func (f *fakeCronClient) Whoami(_ context.Context) (api.AccountResponse, error) {
@@ -86,7 +98,6 @@ func writeGitkeep(t *testing.T, dir string) {
 }
 
 func TestDeployManifestTriggers_NoManifestIsNoop(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	fc := &fakeCronClient{whoami: api.AccountResponse{Plan: "pro"}}
 	if err := deployManifestTriggers(context.Background(), fc, "my-api", dir); err != nil {
@@ -98,7 +109,6 @@ func TestDeployManifestTriggers_NoManifestIsNoop(t *testing.T) {
 }
 
 func TestDeployManifestTriggers_ManifestForOtherAppIsNoop(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	writeGitkeep(t, dir)
 	writeManifest(t, dir, `triggers:
@@ -117,7 +127,6 @@ func TestDeployManifestTriggers_ManifestForOtherAppIsNoop(t *testing.T) {
 }
 
 func TestDeployManifestTriggers_HappyPath(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	writeGitkeep(t, dir)
 	writeManifest(t, dir, `triggers:
@@ -177,7 +186,6 @@ func TestDeployManifestTriggers_HappyPath(t *testing.T) {
 }
 
 func TestDeployManifestTriggers_PreCountTrip(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	writeGitkeep(t, dir)
 	// 3 matching triggers.
@@ -186,28 +194,173 @@ func TestDeployManifestTriggers_PreCountTrip(t *testing.T) {
   - {kind: cron, app: my-api, schedule: "0 4 * * *", path: /b}
   - {kind: cron, app: my-api, schedule: "0 5 * * *", path: /c}
 `)
-	// Hobby limit = 5, existing 4 → headroom 1 < wanted 3 → trip.
+	// Existing stale rows are removed before the three desired rows are
+	// created, so replacement remains valid when the final set fits the cap.
 	fc := &fakeCronClient{
 		preExistingCrons: make([]api.CronResponse, 4),
 		whoami:           api.AccountResponse{Plan: "hobby"},
 	}
 	err := deployManifestTriggers(context.Background(), fc, "my-api", dir)
-	if err == nil {
-		t.Fatalf("err = nil, want pre-count trip error")
+	if err != nil {
+		t.Fatalf("replacement within final-state cap failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "cron quota exceeded") {
-		t.Errorf("err = %q, want pre-count trip copy", err)
+	if len(fc.createdCalls) != 3 || len(fc.deletedIDs) != 4 {
+		t.Fatalf("replacement calls = %d creates, %d deletes; want 3 and 4", len(fc.createdCalls), len(fc.deletedIDs))
 	}
-	if !strings.Contains(err.Error(), "plan allows 5") {
-		t.Errorf("err = %q, want plan-limit number", err)
+}
+
+func TestDeployManifestTriggers_ExistingManifestTriggerIsNoopAtQuota(t *testing.T) {
+	dir := t.TempDir()
+	writeGitkeep(t, dir)
+	writeManifest(t, dir, `triggers:
+  - {kind: cron, app: my-api, schedule: "0 3 * * *", path: /a}
+`)
+	// Hobby is capped at five per app. An unchanged manifest row must not
+	// consume headroom or issue a duplicate INSERT when the app is already
+	// exactly at that cap.
+	existing := make([]api.CronResponse, 5)
+	existing[0] = api.CronResponse{ID: "cron-existing", Schedule: "0 3 * * *", Path: "/a"}
+	fc := &fakeCronClient{preExistingCrons: existing, whoami: api.AccountResponse{Plan: "hobby"}}
+	if err := deployManifestTriggers(context.Background(), fc, "my-api", dir); err != nil {
+		t.Fatalf("err = %v, want unchanged manifest row to be a no-op", err)
 	}
 	if len(fc.createdCalls) != 0 {
-		t.Errorf("CreateCron calls = %d, want 0 (pre-count trip must not call CreateCron)", len(fc.createdCalls))
+		t.Fatalf("CreateCron calls = %d, want 0 for unchanged row at quota", len(fc.createdCalls))
+	}
+}
+
+func TestDeployManifestTriggers_ReconcilesMutableCronOptions(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, `triggers:
+  - kind: cron
+    app: my-api
+    schedule: "0 3 * * *"
+    path: /a
+    enabled: false
+    timezone: Europe/Istanbul
+    skip_if_running: true
+`)
+	fc := &fakeCronClient{
+		preExistingCrons: []api.CronResponse{{
+			ID: "cron-existing", AppID: "app-id", Schedule: "0 3 * * *", Path: "/a",
+			Enabled: true, Timezone: "UTC", SkipIfRunning: false,
+		}},
+		whoami: api.AccountResponse{Plan: "hobby"},
+	}
+	if err := deployManifestTriggers(context.Background(), fc, "my-api", dir); err != nil {
+		t.Fatal(err)
+	}
+	if len(fc.createdCalls) != 0 || len(fc.deletedIDs) != 0 || len(fc.updatedCalls) != 1 {
+		t.Fatalf("calls = %d create, %d update, %d delete", len(fc.createdCalls), len(fc.updatedCalls), len(fc.deletedIDs))
+	}
+	got := fc.updatedCalls[0]
+	if got.Enabled == nil || *got.Enabled || got.Timezone == nil || *got.Timezone != "Europe/Istanbul" ||
+		got.SkipIfRunning == nil || !*got.SkipIfRunning {
+		t.Fatalf("update did not carry desired cron options: %+v", got)
+	}
+}
+
+func TestDeployManifestTriggers_ReplacesAndRemovesCronSet(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, `triggers:
+  - {kind: cron, app: my-api, schedule: "0 4 * * *", path: /keep}
+  - {kind: cron, app: my-api, schedule: "0 5 * * *", path: /new}
+`)
+	fc := &fakeCronClient{
+		preExistingCrons: []api.CronResponse{
+			{ID: "old", AppID: "app-id", Schedule: "0 3 * * *", Path: "/old", Enabled: true, Timezone: "UTC"},
+			{ID: "keep", AppID: "app-id", Schedule: "0 4 * * *", Path: "/keep", Enabled: true, Timezone: "UTC"},
+		},
+		whoami: api.AccountResponse{Plan: "hobby"},
+	}
+	if err := deployManifestTriggers(context.Background(), fc, "my-api", dir); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(fc.deletedIDs, ",") != "old" || len(fc.createdCalls) != 1 || fc.createdCalls[0].Path != "/new" {
+		t.Fatalf("reconcile calls: deleted=%v created=%+v", fc.deletedIDs, fc.createdCalls)
+	}
+}
+
+func TestDeployManifestTriggers_ExplicitEmptyClearsTarget(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, "triggers: []\n")
+	fc := &fakeCronClient{
+		preExistingCrons: []api.CronResponse{{ID: "old", AppID: "app-id", Schedule: "0 3 * * *", Path: "/old", Enabled: true, Timezone: "UTC"}},
+		whoami:           api.AccountResponse{Plan: "hobby"},
+	}
+	if err := deployManifestTriggers(context.Background(), fc, "my-api", dir); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(fc.deletedIDs, ",") != "old" || len(fc.createdCalls) != 0 {
+		t.Fatalf("clear calls: deleted=%v created=%+v", fc.deletedIDs, fc.createdCalls)
+	}
+}
+
+func TestDeployManifestTriggers_RollbackRestoresReplacement(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, `triggers:
+  - {kind: cron, app: my-api, schedule: "0 4 * * *", path: /new}
+`)
+	fc := &fakeCronClient{
+		preExistingCrons: []api.CronResponse{{ID: "old", AppID: "app-id", Schedule: "0 3 * * *", Path: "/old", Enabled: true, Timezone: "UTC"}},
+		whoami:           api.AccountResponse{Plan: "hobby"},
+	}
+	txn, err := deployManifestTriggersWithRollback(context.Background(), fc, "my-api", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := txn.rollback(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(fc.deletedIDs, ","); got != "old,fake" {
+		t.Fatalf("delete sequence = %q, want old,fake", got)
+	}
+	if len(fc.createdCalls) != 2 || fc.createdCalls[0].Path != "/new" || fc.createdCalls[1].Path != "/old" {
+		t.Fatalf("create/restore sequence = %+v", fc.createdCalls)
+	}
+}
+
+func TestDeployManifestTriggers_UnknownPlanFallsThroughToServer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		whoami    api.AccountResponse
+		whoamiErr error
+	}{
+		{name: "transport error", whoamiErr: errors.New("account unavailable")},
+		{name: "unknown plan", whoami: api.AccountResponse{Plan: "future-tier"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeManifest(t, dir, `triggers:
+  - {kind: cron, app: my-api, schedule: "0 3 * * *", path: /a}
+`)
+			fc := &fakeCronClient{whoami: tc.whoami, whoamiErr: tc.whoamiErr}
+			if err := deployManifestTriggers(context.Background(), fc, "my-api", dir); err != nil {
+				t.Fatalf("unknown plan should defer to CreateCron: %v", err)
+			}
+			if len(fc.createdCalls) != 1 {
+				t.Fatalf("CreateCron calls = %d, want 1", len(fc.createdCalls))
+			}
+		})
+	}
+}
+
+func TestDeployManifestTriggers_KnownZeroLimitStopsBeforeCreate(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, `triggers:
+  - {kind: cron, app: my-api, schedule: "0 3 * * *", path: /a}
+`)
+	fc := &fakeCronClient{whoami: api.AccountResponse{Plan: "free"}}
+	err := deployManifestTriggers(context.Background(), fc, "my-api", dir)
+	if err == nil || !strings.Contains(err.Error(), "plan allows 0") {
+		t.Fatalf("known zero-limit error = %v", err)
+	}
+	if len(fc.createdCalls) != 0 {
+		t.Fatalf("CreateCron calls = %d, want 0", len(fc.createdCalls))
 	}
 }
 
 func TestDeployManifestTriggers_FailFastAtEntry4(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	writeGitkeep(t, dir)
 	writeManifest(t, dir, `triggers:
@@ -235,7 +388,7 @@ func TestDeployManifestTriggers_FailFastAtEntry4(t *testing.T) {
 		"0 6 * * *",
 		"/d",
 		"synthetic: 402 cron_quota_exceeded",
-		"3 triggers created, 2 not attempted",
+		"after 3 trigger change(s)",
 	}
 	for _, s := range wantSubstrs {
 		if !strings.Contains(err.Error(), s) {
@@ -249,7 +402,6 @@ func TestDeployManifestTriggers_FailFastAtEntry4(t *testing.T) {
 }
 
 func TestDeployManifestTriggers_BadScheduleSurfacesValidateError(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	writeGitkeep(t, dir)
 	writeManifest(t, dir, `triggers:
@@ -270,7 +422,6 @@ func TestDeployManifestTriggers_BadScheduleSurfacesValidateError(t *testing.T) {
 }
 
 func TestDeployManifestTriggers_WorkflowDefinitionsDoNotAffectTriggers(t *testing.T) {
-	t.Parallel()
 	dir := t.TempDir()
 	writeGitkeep(t, dir)
 	writeManifest(t, dir, `workflows:
@@ -289,5 +440,52 @@ func TestDeployManifestTriggers_WorkflowDefinitionsDoNotAffectTriggers(t *testin
 	}
 	if len(fc.createdCalls) != 0 {
 		t.Fatalf("CreateCron calls = %d, want 0 for workflow-only manifest", len(fc.createdCalls))
+	}
+}
+
+type rollbackFakeCronClient struct {
+	fakeCronClient
+	deletedIDs []string
+}
+
+func (f *rollbackFakeCronClient) CreateCron(_ context.Context, _ string, req api.CreateCronRequest) (api.CronResponse, error) {
+	idx := len(f.createdCalls) + 1
+	f.createdCalls = append(f.createdCalls, req)
+	if f.createErrAt > 0 && idx == f.createErrAt {
+		return api.CronResponse{}, f.createErr
+	}
+	return api.CronResponse{ID: "cron-" + string(rune('0'+idx)), Schedule: req.Schedule, Path: req.Path}, nil
+}
+
+func (f *rollbackFakeCronClient) DeleteCron(_ context.Context, id string) error {
+	f.deletedIDs = append(f.deletedIDs, id)
+	return nil
+}
+
+func TestDeployManifestTriggers_RollsBackPartialFanout(t *testing.T) {
+	dir := t.TempDir()
+	writeGitkeep(t, dir)
+	writeManifest(t, dir, `triggers:
+  - {kind: cron, app: my-api, schedule: "0 3 * * *", path: /a}
+  - {kind: cron, app: my-api, schedule: "0 4 * * *", path: /b}
+  - {kind: cron, app: my-api, schedule: "0 5 * * *", path: /c}
+`)
+	fc := &rollbackFakeCronClient{
+		fakeCronClient: fakeCronClient{
+			whoami:      api.AccountResponse{Plan: "pro"},
+			createErrAt: 3,
+			createErr:   errors.New("synthetic create failure"),
+		},
+	}
+
+	txn, err := deployManifestTriggersWithRollback(context.Background(), fc, "my-api", dir)
+	if err == nil {
+		t.Fatal("err = nil, want fan-out failure")
+	}
+	if len(txn.steps) != 0 {
+		t.Fatalf("failed staging retained %d rollback steps", len(txn.steps))
+	}
+	if got, want := strings.Join(fc.deletedIDs, ","), "cron-2,cron-1"; got != want {
+		t.Fatalf("deleted IDs = %q, want reverse-order compensation %q", got, want)
 	}
 }

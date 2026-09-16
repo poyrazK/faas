@@ -51,8 +51,8 @@ export class WebhooksService {
    * the body, is sealed with secretbox.SealBytes under the
    * APP_WEBHOOK namespace, and is NEVER returned in plaintext
    * — the response shape carries the masked constant. event_filter
-   * is an optional allowlist; empty subscribes to every event in
-   * the closed vocabulary.
+   * is an optional allowlist; empty subscribes to every currently
+   * supported producer-backed event.
    *
    * @returns AppWebhookResponse Webhook created.
    * @throws ApiError

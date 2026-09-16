@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -191,6 +192,42 @@ func TestRunDoctorChecks_EnvVarSkipsDocumentationExamples(t *testing.T) {
 		}
 	}
 	t.Fatal("env-required check missing")
+}
+
+func TestRunDoctorChecks_IgnoresNonRuntimeFixtureEvidence(t *testing.T) {
+	dir := t.TempDir()
+	valid := "require('http').createServer((req, res) => res.end('ok')).listen(process.env.PORT || 8080, '0.0.0.0')\n"
+	if err := os.WriteFile(filepath.Join(dir, "server.js"), []byte(valid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fixture := "// app.listen(8080, '127.0.0.1')\nconst expectedArchitecture = 'linux/aarch64'\nconst token = process.env.TEST_DATABASE_URL\n"
+	if err := os.WriteFile(filepath.Join(dir, "server.test.js"), []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep := runDoctorChecks(dir)
+	for _, check := range rep.Checks {
+		if (check.Name == "loopback-bind" || check.Name == "arch" || check.Name == "env-required") && check.Status != "ok" {
+			t.Fatalf("%s = %+v, valid workload must not inherit fixture findings", check.Name, check)
+		}
+	}
+}
+
+func TestExecutableHeaderMismatchUsesBinaryFormat(t *testing.T) {
+	elfAMD64 := make([]byte, 64)
+	copy(elfAMD64, "\x7fELF")
+	elfAMD64[5] = 1
+	binary.LittleEndian.PutUint16(elfAMD64[18:20], 62)
+	elfARM64 := append([]byte(nil), elfAMD64...)
+	binary.LittleEndian.PutUint16(elfARM64[18:20], 183)
+	if executableHeaderMismatch([]byte("linux/aarch64 is only documentation")) {
+		t.Fatal("plain-text architecture mention classified as executable")
+	}
+	if executableHeaderMismatch(elfAMD64) {
+		t.Fatal("linux/amd64 ELF classified as incompatible")
+	}
+	if !executableHeaderMismatch(elfARM64) || !executableHeaderMismatch([]byte{0xfe, 0xed, 0xfa, 0xcf}) {
+		t.Fatal("incompatible executable header was accepted")
+	}
 }
 
 // TestRunDoctorChecks_StatelessOnlyDir pins the stateless-only

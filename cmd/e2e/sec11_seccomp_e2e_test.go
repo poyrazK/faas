@@ -94,10 +94,19 @@ func TestSec11_SeccompFilterEnforced_CrossProcess(t *testing.T) {
 	if _, err := os.Stat("/dev/kvm"); err != nil {
 		t.Skipf("/dev/kvm not available: %v", err)
 	}
+	// NOTE: this used to pre-flight /run/faas/vmmd.sock and skip when it was
+	// absent. That guard was stale: it ran BEFORE e2etest.Start, which starts
+	// this test's own vmmd on a private socket under the harness SockDir, and
+	// the dial below already prefers h.VMMDSock. So it gated on the PRODUCTION
+	// daemon, which this test never uses.
+	//
+	// The cost was a silent skip of a §11 ship-blocking fence on exactly the
+	// hosts that matter: the native acceptance runner stops the production
+	// daemons before running the suite (they own host-global vmmd, jailer,
+	// cgroups and netns state), so /run/faas/vmmd.sock is guaranteed absent
+	// there and this test could never run. Observed 2026-09-12 on the first
+	// real e2e-native run.
 	vmmdSock := "/run/faas/vmmd.sock"
-	if _, err := os.Stat(vmmdSock); err != nil {
-		t.Skipf("vmmd socket not at %s: %v (harness must have started vmmd)", vmmdSock, err)
-	}
 
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -111,11 +120,18 @@ func TestSec11_SeccompFilterEnforced_CrossProcess(t *testing.T) {
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
 	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	_ = registry.AddImage("onebox-faas/builder-base", builderImg)
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
 	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", helloBody)
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", registry.Host()+"/onebox-faas/builder-base:latest")
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/onebox-faas/deploy-base:latest")
+	// Digest-pinned, not ":latest": imaged refuses a tag with
+	//
+	//	FAAS_BUILDER_BASE_REF %q must be a digest-pinned reference
+	//
+	// and EXITS at boot. AddImage already returns the pinned ref; this used
+	// to discard it and hand-build a tag, so imaged died on every one of
+	// these tests and the failure surfaced later as a deploy timeout.
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	h := e2etest.Start(t, pool, e2etest.DeployWake)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)

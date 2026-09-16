@@ -367,7 +367,7 @@ func TestFullRootfsSidecarRootRejectsMarkerSymlink(t *testing.T) {
 	}
 }
 
-func TestResolveSidecarCommandPath(t *testing.T) {
+func TestResolveWorkloadCommandPath(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "usr", "bin", "node")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -376,14 +376,24 @@ func TestResolveSidecarCommandPath(t *testing.T) {
 	if err := os.WriteFile(path, []byte("binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := resolveSidecarCommandPath(root, "node", []string{"PATH=/usr/bin:/bin"}); got != "/usr/bin/node" {
+	if got := resolveWorkloadCommandPath(root, "node", []string{"PATH=/usr/bin:/bin"}); got != "/usr/bin/node" {
 		t.Errorf("resolved command = %q, want /usr/bin/node", got)
 	}
-	if got := resolveSidecarCommandPath(root, "/bin/sh", nil); got != "/bin/sh" {
+	if got := resolveWorkloadCommandPath(root, "/bin/sh", nil); got != "/bin/sh" {
 		t.Errorf("absolute command = %q, want /bin/sh", got)
 	}
-	if got := resolveSidecarCommandPath(root, "missing", []string{"PATH=/usr/bin:/bin"}); got != "/usr/bin/missing" {
+	if got := resolveWorkloadCommandPath(root, "missing", []string{"PATH=/usr/bin:/bin"}); got != "/usr/bin/missing" {
 		t.Errorf("missing command = %q, want first image path", got)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "usr", "local", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entrypoint := filepath.Join(root, "usr", "local", "bin", "docker-entrypoint.sh")
+	if err := os.WriteFile(entrypoint, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveWorkloadCommandPath(root, "docker-entrypoint.sh", []string{"PATH=/usr/local/bin:/usr/bin"}); got != "/usr/local/bin/docker-entrypoint.sh" {
+		t.Fatalf("OCI image PATH resolution = %q, want /usr/local/bin/docker-entrypoint.sh", got)
 	}
 }
 

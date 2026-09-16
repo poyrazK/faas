@@ -47,6 +47,7 @@ RESTORE_TEST_ROOT="${RESTORE_TEST_ROOT:-/var/lib/pgsql/restore-test}"
 RESTORE_PG_PORT="${RESTORE_PG_PORT:-5433}"
 
 LIVE_PG_PORT="${LIVE_PG_PORT:-5432}"
+LIVE_PG_SOCKET="${LIVE_PG_SOCKET:-/var/run/postgresql}"
 LIVE_PG_BIN="${LIVE_PG_BIN:-$(pg_config --bindir 2>/dev/null || echo /usr/lib/postgresql/15/bin)}"
 
 # Off-host wiring — the stable rclone alias is configured by the
@@ -67,6 +68,44 @@ heading() { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
 ok()      { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 warn()    { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
 fail()    { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+
+# PostgreSQL refuses recovery when selected postmaster settings are lower than
+# the primary values stored in the backup's control data. Keep the allowlist
+# explicit and require integer values before appending anything to the isolated
+# cluster's config.
+append_recovery_sensitive_settings() {
+  local config="$1"
+  shift
+  [[ $(( $# % 2 )) -eq 0 ]] || { warn "recovery settings require name/value pairs"; return 1; }
+  while [[ $# -gt 0 ]]; do
+    local name="$1" value="$2"
+    shift 2
+    case "$name" in
+      max_connections|max_prepared_transactions|max_locks_per_transaction|max_wal_senders|max_worker_processes) ;;
+      *) warn "unsupported recovery-sensitive setting: $name"; return 1 ;;
+    esac
+    [[ "$value" =~ ^[0-9]+$ ]] || { warn "invalid value for $name: $value"; return 1; }
+    printf '%s = %s\n' "$name" "$value" >> "$config"
+  done
+}
+
+cleanup_restore() {
+  local status=$?
+  if [[ -n "${RESTORE_PGDATA:-}" && -f "${RESTORE_PGDATA}/postmaster.pid" ]]; then
+    runuser -u postgres -- "${LIVE_PG_BIN}/pg_ctl" -D "$RESTORE_PGDATA" -m fast stop >/dev/null 2>&1 || true
+  fi
+  [[ -z "${RESTORE_STAGE:-}" ]] || rm -rf -- "$RESTORE_STAGE"
+  [[ -z "${RESTORE_PGDATA:-}" ]] || rm -rf -- "$RESTORE_PGDATA"
+  return "$status"
+}
+
+# The smoke test sources the helpers without running a root-only restore.
+if [[ "${PG_RESTORE_VERIFY_LIBRARY_ONLY:-0}" == "1" ]]; then
+  if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    exit 0
+  fi
+  return 0
+fi
 
 VERIFY_START=$(date +%s)
 VERIFY_START_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -100,6 +139,7 @@ ok "picked newest remote basebackup: $TGT_REMOTE_DIR"
 
 RESTORE_STAGE="${RESTORE_TEST_ROOT}/stage-${VERIFY_START}"
 RESTORE_PGDATA="${RESTORE_TEST_ROOT}/data"
+trap cleanup_restore EXIT
 rm -rf "$RESTORE_STAGE" "$RESTORE_PGDATA"
 install -d -o postgres -g postgres -m 0700 "$RESTORE_STAGE" "$RESTORE_PGDATA"
 
@@ -139,13 +179,28 @@ recovery_target_action = 'promote'
 unix_socket_directories = '/tmp'
 EOF
 
+# Read the values from the live primary rather than assuming package defaults.
+# These are the recovery-sensitive integer settings PostgreSQL requires to be
+# at least as large on a recovery server as on the server that produced WAL.
+PRIMARY_RECOVERY_SETTINGS=$(runuser -u postgres -- "${LIVE_PG_BIN}/psql" \
+  -h "$LIVE_PG_SOCKET" -p "$LIVE_PG_PORT" -d postgres -X -A -t -F '|' \
+  -v ON_ERROR_STOP=1 -c "SELECT current_setting('max_connections'), current_setting('max_prepared_transactions'), current_setting('max_locks_per_transaction'), current_setting('max_wal_senders'), current_setting('max_worker_processes')") \
+  || fail "could not read recovery-sensitive settings from the live primary"
+IFS='|' read -r PRIMARY_MAX_CONNECTIONS PRIMARY_MAX_PREPARED PRIMARY_MAX_LOCKS PRIMARY_MAX_WAL_SENDERS PRIMARY_MAX_WORKERS <<< "$PRIMARY_RECOVERY_SETTINGS"
+append_recovery_sensitive_settings "$RESTORE_PGDATA/postgresql.conf" \
+  max_connections "$PRIMARY_MAX_CONNECTIONS" \
+  max_prepared_transactions "$PRIMARY_MAX_PREPARED" \
+  max_locks_per_transaction "$PRIMARY_MAX_LOCKS" \
+  max_wal_senders "$PRIMARY_MAX_WAL_SENDERS" \
+  max_worker_processes "$PRIMARY_MAX_WORKERS" \
+  || fail "live primary returned invalid recovery-sensitive settings"
+
 # --- 4. Replay WAL on the throwaway instance --------------------------
 
 heading "4/5 start PG on :${RESTORE_PG_PORT}, replay WAL"
 chown postgres:postgres "$RESTORE_PGDATA/postgresql.conf"
 RESTORE_PG_LOG="$RESTORE_PGDATA/restore-verify.log"
 runuser -u postgres -- "${LIVE_PG_BIN}/pg_ctl" -D "$RESTORE_PGDATA" -l "$RESTORE_PG_LOG" -o "-p ${RESTORE_PG_PORT}" -W start
-trap 'runuser -u postgres -- ${LIVE_PG_BIN}/pg_ctl -D "$RESTORE_PGDATA" -m fast stop || true' EXIT
 
 # Wait for promotion (pg_is_in_recovery() returns 'f').
 PROMOTED=0
@@ -169,7 +224,7 @@ declare -a TABLES=(accounts apps instances)
 ALL_PASS=1
 for tbl in "${TABLES[@]}"; do
   # Live cluster is on $LIVE_PG_PORT over the unix socket.
-  LIVE=$(runuser -u postgres -- "${LIVE_PG_BIN}/psql" -h /var/run/postgresql -p "$LIVE_PG_PORT" -d faas -tAc "SELECT count(*) FROM ${tbl}" 2>/dev/null || echo "0")
+  LIVE=$(runuser -u postgres -- "${LIVE_PG_BIN}/psql" -h "$LIVE_PG_SOCKET" -p "$LIVE_PG_PORT" -d faas -tAc "SELECT count(*) FROM ${tbl}" 2>/dev/null || echo "0")
   REST=$(runuser -u postgres -- "${LIVE_PG_BIN}/psql" -h /tmp -p "$RESTORE_PG_PORT" -d faas -tAc "SELECT count(*) FROM ${tbl}" 2>/dev/null || echo "0")
   if [[ "$LIVE" -gt 0 ]]; then
     RATIO=$(awk -v a="$REST" -v b="$LIVE" 'BEGIN { if (b > 0) printf "%.4f", a / b; else print "0" }')
@@ -185,10 +240,9 @@ for tbl in "${TABLES[@]}"; do
   fi
 done
 
-# Stop the throwaway instance so subsequent runs can re-initdb.
-runuser -u postgres -- "${LIVE_PG_BIN}/pg_ctl" -D "$RESTORE_PGDATA" -m fast stop || true
+# Stop and remove the throwaway instance so subsequent runs can re-initdb.
+cleanup_restore
 trap - EXIT
-rm -rf "$RESTORE_STAGE" "$RESTORE_PGDATA"
 
 VERIFY_END=$(date +%s)
 TOTAL=$(( VERIFY_END - VERIFY_START ))

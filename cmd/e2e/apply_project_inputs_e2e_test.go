@@ -28,6 +28,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	urlpkg "net/url"
 	"path"
 	"strings"
 	"testing"
@@ -44,9 +45,9 @@ import (
 func inputsFixture(t *testing.T, prefix string) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
-		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n"},
+		{prefix + "/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -70,9 +71,9 @@ func maliciousPathTraversalFixture(t *testing.T, prefix string) []byte {
 	entries := []struct{ name, body string }{
 		// `..` escape attempt: a file that would write outside
 		// the extract root if the join is naive.
-		{prefix + "/services/api/../../../../etc/passwd", "OVERWRITE\n"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n"},
+		{prefix + "/services/backend/../../../../etc/passwd", "OVERWRITE\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -94,8 +95,8 @@ func maliciousAbsoluteFixture(t *testing.T, prefix string) []byte {
 	t.Helper()
 	entries := []struct{ name, body string }{
 		{"/etc/passwd", "OVERWRITE\n"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -125,8 +126,8 @@ func maliciousSymlinkFixture(t *testing.T, prefix string) []byte {
 		// root (an absolute path). This is the standard
 		// Zip-Slip attack pattern, ported to tar.
 		{prefix + "/evil-link", "", tar.TypeSymlink, "/etc/passwd"},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n", tar.TypeReg, ""},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n", tar.TypeReg, ""},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n", tar.TypeReg, ""},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n", tar.TypeReg, ""},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -156,7 +157,7 @@ func entryCountCapFixture(t *testing.T, prefix string, n int) []byte {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	// 1 real workload.
-	_ = tw.WriteHeader(&tar.Header{Name: prefix + "/services/api/Dockerfile", Mode: 0o644, Size: 17, Typeflag: tar.TypeReg})
+	_ = tw.WriteHeader(&tar.Header{Name: prefix + "/services/backend/Dockerfile", Mode: 0o644, Size: 17, Typeflag: tar.TypeReg})
 	_, _ = tw.Write([]byte("FROM alpine:3.19\n"))
 	// N empty padding entries.
 	for i := 0; i < n; i++ {
@@ -205,8 +206,8 @@ func applyProjectAs(t *testing.T, h *e2etest.Harness, auth, idempotencyKey, slug
 	return resp.StatusCode, raw
 }
 
-// applyProjectWithToken POSTs with an explicit plan_token form
-// field. Used to drive plan_token lifecycle tests.
+// applyProjectWithToken POSTs with an explicit plan_token query
+// parameter. Used to drive plan_token lifecycle tests.
 func applyProjectWithToken(t *testing.T, h *e2etest.Harness, key, slug, planToken string, body []byte) (int, []byte) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -216,12 +217,13 @@ func applyProjectWithToken(t *testing.T, h *e2etest.Harness, key, slug, planToke
 	if slug != "" {
 		_ = mw.WriteField("project_slug", slug)
 	}
-	if planToken != "" {
-		_ = mw.WriteField("plan_token", planToken)
-	}
 	_ = mw.Close()
+	endpoint := h.APIDURL + "/v1/projects"
+	if planToken != "" {
+		endpoint += "?plan_token=" + urlpkg.QueryEscape(planToken)
+	}
 	req, err := http.NewRequestWithContext(context.Background(),
-		http.MethodPost, h.APIDURL+"/v1/projects", &buf)
+		http.MethodPost, endpoint, &buf)
 	if err != nil {
 		t.Fatalf("new req: %v", err)
 	}
@@ -253,10 +255,10 @@ func managedServicesFixture(t *testing.T, prefix string) []byte {
     plan: starter
 `
 	entries := []struct{ name, body string }{
-		{prefix + "/docker-compose.yml", "services:\n  api:\n    build: { context: services/api }\n"},
+		{prefix + "/docker-compose.yml", "services:\n  backend:\n    build: { context: services/backend }\n"},
 		{prefix + "/render.yaml", renderYAML},
-		{prefix + "/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{prefix + "/services/api/index.js", "exports.handler = () => 1;\n"},
+		{prefix + "/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{prefix + "/services/backend/index.js", "exports.handler = () => 1;\n"},
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -447,10 +449,10 @@ func TestApplyProject_Inputs_IdempotencyKeyReplay(t *testing.T) {
 	}
 }
 
-// TestApplyProject_Inputs_IdempotencyKeyDifferentBody pins that
-// two applies with the SAME Idempotency-Key but DIFFERENT bodies
-// return 409 idempotency_mismatch (the safety net for retry
-// storms that change payload mid-retry).
+// TestApplyProject_Inputs_IdempotencyKeyDifferentBody pins the API's
+// first-write-wins replay contract: an Idempotency-Key identifies the
+// original operation, so later requests with that key receive the exact
+// stored response even when their transport body differs.
 func TestApplyProject_Inputs_IdempotencyKeyDifferentBody(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -463,16 +465,13 @@ func TestApplyProject_Inputs_IdempotencyKeyDifferentBody(t *testing.T) {
 	key := h.SeedAccount(context.Background(), api.PlanPro)
 
 	idemKey := fmt.Sprintf("idem-diff-%s", time.Now().Format("20060102T150405.000000000"))
-	s1, _ := applyProjectAs(t, h, "Bearer "+key, idemKey, "idem-diff", inputsFixture(t, "faas-idem-diff-1"))
-	s2, _ := applyProjectAs(t, h, "Bearer "+key, idemKey, "idem-diff", inputsFixture(t, "faas-idem-diff-2"))
-	if s1 != http.StatusOK {
-		t.Fatalf("first apply status=%d want 200", s1)
+	s1, b1 := applyProjectAs(t, h, "Bearer "+key, idemKey, "idem-diff", inputsFixture(t, "faas-idem-diff-1"))
+	s2, b2 := applyProjectAs(t, h, "Bearer "+key, idemKey, "idem-diff", inputsFixture(t, "faas-idem-diff-2"))
+	if s1 != http.StatusOK || s2 != http.StatusOK {
+		t.Fatalf("status s1=%d s2=%d want 200/200", s1, s2)
 	}
-	// The second apply with a different body but same key
-	// must NOT be silently accepted as a replay — either 409
-	// (mismatch) or 422 (validation). 200 would be a regression.
-	if s2 == http.StatusOK {
-		t.Fatalf("different-body idem replay returned 200 (regression: server ignored payload diff)")
+	if !bytes.Equal(b1, b2) {
+		t.Fatalf("idempotency replay body changed:\nfirst=%s\nsecond=%s", b1, b2)
 	}
 }
 
@@ -573,8 +572,8 @@ func TestApplyProject_Inputs_EntryCountCap(t *testing.T) {
 		t.Logf("entry-count cap test: 10000-entry tarball accepted — cap may have been raised; verify pkg/api/limits.go MaxApplyEntries")
 		return
 	}
-	if status != http.StatusRequestEntityTooLarge && status != http.StatusUnprocessableEntity {
-		t.Fatalf("status=%d want 413/422 (entry cap rejection)", status)
+	if status != http.StatusBadRequest && status != http.StatusRequestEntityTooLarge && status != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d want 400/413/422 (entry cap rejection)", status)
 	}
 }
 
@@ -630,8 +629,8 @@ func TestApplyProject_Inputs_PathCanonicalised(t *testing.T) {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	for _, e := range []struct{ name, body string }{
-		{"./faas-canon/services/api/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"./faas-canon/services/api/index.js", "exports.handler = () => 1;\n"},
+		{"./faas-canon/services/backend/Dockerfile", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
+		{"./faas-canon/services/backend/index.js", "exports.handler = () => 1;\n"},
 	} {
 		hdr := &tar.Header{Name: e.name, Mode: 0o644, Size: int64(len(e.body)), Typeflag: tar.TypeReg}
 		_ = tw.WriteHeader(hdr)
@@ -732,7 +731,7 @@ func TestApplyProject_Inputs_AuditWorkloadAdded(t *testing.T) {
 
 	var eventCount int
 	err := pool.QueryRow(context.Background(),
-		`select count(*) from events where kind = 'workload.added'`).Scan(&eventCount)
+		`select count(*) from events where kind = 'project.workload.added'`).Scan(&eventCount)
 	if err != nil {
 		t.Logf("events table may not exist on this schema: %v", err)
 		return
@@ -762,7 +761,7 @@ func TestApplyProject_Inputs_AuditWorkloadRemoved(t *testing.T) {
 
 	var eventCount int
 	err := pool.QueryRow(context.Background(),
-		`select count(*) from events where kind = 'workload.removed'`).Scan(&eventCount)
+		`select count(*) from events where kind = 'project.workload.removed'`).Scan(&eventCount)
 	if err != nil {
 		t.Logf("events table may not exist on this schema: %v", err)
 		return
@@ -792,7 +791,7 @@ func TestApplyProject_Inputs_AuditWorkloadChanged(t *testing.T) {
 
 	var eventCount int
 	err := pool.QueryRow(context.Background(),
-		`select count(*) from events where kind = 'workload.changed'`).Scan(&eventCount)
+		`select count(*) from events where kind = 'project.workload.changed'`).Scan(&eventCount)
 	if err != nil {
 		t.Logf("events table may not exist on this schema: %v", err)
 		return

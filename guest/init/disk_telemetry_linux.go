@@ -89,15 +89,6 @@ func emitDiskTelemetry(ctx context.Context, usedBytes, capacityBytes int64) erro
 	if len(body) > diskTelemetryMaxBody {
 		return fmt.Errorf("disk telemetry body too large: %d", len(body))
 	}
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = unix.Close(fd) }()
-	tv := unix.Timeval{Sec: 1}
-	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_SNDTIMEO, &tv); err != nil {
-		return err
-	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -106,6 +97,5 @@ func emitDiskTelemetry(ctx context.Context, usedBytes, capacityBytes int64) erro
 	frame := make([]byte, 1+len(body))
 	frame[0] = diskTelemetryType
 	copy(frame[1:], body)
-	_, err = unix.SendmsgN(fd, frame, nil, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: VsockFrameworkReadyPort}, 0)
-	return err
+	return sendGuestEventFrame(frame, diskTelemetrySendTimeout)
 }

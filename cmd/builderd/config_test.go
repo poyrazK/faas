@@ -42,6 +42,14 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.BuildExportDir != "/srv/fc/builder/out" {
 		t.Errorf("BuildExportDir = %q, want split-box staging default", cfg.BuildExportDir)
 	}
+	if cfg.BuildExportMaxBytes != builderdpkg.DefaultBuildExportMaxBytes ||
+		cfg.BuildExportMaxAge != builderdpkg.DefaultBuildExportMaxAge ||
+		cfg.BuildExportOrphanMinAge != builderdpkg.DefaultBuildExportOrphanMinAge ||
+		cfg.BuildExportSweepInterval != builderdpkg.DefaultBuildExportSweepInterval {
+		t.Errorf("build export retention defaults = (%d, %v, %v, %v)",
+			cfg.BuildExportMaxBytes, cfg.BuildExportMaxAge,
+			cfg.BuildExportOrphanMinAge, cfg.BuildExportSweepInterval)
+	}
 	if cfg.SourceMaxAge != 24*time.Hour || cfg.SourceGCSweepInterval != 24*time.Hour {
 		t.Errorf("source retention defaults = (%v, %v), want (24h, 24h)", cfg.SourceMaxAge, cfg.SourceGCSweepInterval)
 	}
@@ -135,6 +143,10 @@ tls_ca_path = "/etc/faas/tls/ca.pem"
 cache_dir = "/var/cache/faas/builds-test"
 source_spool_dir = "/srv/faas/spool-test"
 build_log_max_bytes = 4096
+build_export_max_bytes = 1048576
+build_export_max_age = "12h"
+build_export_orphan_min_age = "30m"
+build_export_sweep_interval = "1m"
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -154,6 +166,10 @@ build_log_max_bytes = 4096
 	}
 	if cfg.SourceSpoolDir != "/srv/faas/spool-test" || cfg.BuildLogMaxBytes != 4096 {
 		t.Errorf("spool/log overrides not respected: root=%q max=%d", cfg.SourceSpoolDir, cfg.BuildLogMaxBytes)
+	}
+	if cfg.BuildExportMaxBytes != 1<<20 || cfg.BuildExportMaxAge != 12*time.Hour ||
+		cfg.BuildExportOrphanMinAge != 30*time.Minute || cfg.BuildExportSweepInterval != time.Minute {
+		t.Errorf("build export retention overrides not respected: %+v", cfg)
 	}
 }
 

@@ -373,8 +373,6 @@ func runAppWithRAM(m api.AppManifest, secrets, apiEnv map[string]string, sup *Su
 // reserved variable in its image or deployment env.
 func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]string, sup *Supervisor, ramMB int, workloadEnv map[string]string, cpuMillicoresOpt ...int) error {
 	argv := m.Entrypoint
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = m.EffectiveWorkingDir()
 	env := BuildEnvWithSecrets(os.Environ(), m, secrets, apiEnv)
 	// Issue #460 / ADR-053 (PR-C): stamp PORT=<m.EffectivePort()>
 	// onto the exec'd env so the runner shim can bind the
@@ -391,12 +389,21 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	env = StampOverridePortEnv(env, m.EffectivePort())
 	env = StampWorkloadIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
-	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env. The
-	// W3C trace context was shipped from the host via the vsock
-	// resume hook; the supervisor reads it via GetResumeTraceparent
-	// at Start() time. Empty = no OTel configured, the env is
-	// unchanged.
+	// Issue #555 PR-4: stamp TRACEPARENT onto the runner env as the
+	// boot/wake trace seed. The W3C trace context was shipped from the
+	// host via the vsock resume hook; the supervisor reads it via
+	// GetResumeTraceparent at Start() time. Request-scoped propagation
+	// for warm handlers uses the traceparent HTTP header at the guest
+	// boundary. Empty = no OTel configured, the env is unchanged.
 	env = StampTraceparentEnv(env, GetResumeTraceparent())
+	// exec.Command resolves a bare argv[0] immediately using guest-init's
+	// own PATH. Direct OCI images expect Docker semantics: resolution uses
+	// the image's PATH. Resolve against the mounted image after pivot_root,
+	// before constructing the command, so entries such as
+	// "docker-entrypoint.sh" find /usr/local/bin from the image contract.
+	argv0 := resolveWorkloadCommandPath("/", argv[0], env)
+	cmd := exec.Command(argv0, argv[1:]...)
+	cmd.Dir = m.EffectiveWorkingDir()
 	cmd.Env = env
 	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr
 	// into the supervisor's ring buffer so the characterize probe can
@@ -1339,6 +1346,7 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 	}
 
 	config := map[string]any{}
+	generatedFunctionStart := false
 	if existed && len(strings.TrimSpace(string(original))) > 0 {
 		if err := json.Unmarshal(original, &config); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -1353,6 +1361,45 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 		return nil, fmt.Errorf("parse %s deploy.base: %w", path, err)
 	}
 	base["image"] = m.RuntimeBaseRef
+	if packageName, version := railpackRuntimePackage(m.Runtime); packageName != "" {
+		packages, objectErr := nestedObject(config, "packages")
+		if objectErr != nil {
+			return nil, fmt.Errorf("parse %s packages: %w", path, objectErr)
+		}
+		packages[packageName] = version
+	}
+	if m.Function && functionSourceNeedsCopyOnlyPlan(m) {
+		// Railpack's language providers intentionally require a package/dependency
+		// manifest, while Gregale functions also support a single handler file.
+		// Give that source shape an explicit plan: start from the pinned runtime
+		// base and copy the source into /app. imaged replaces the placeholder
+		// start command with the function runner contract.
+		if _, configured := config["provider"]; !configured {
+			config["provider"] = "shell"
+			startPath := filepath.Join(m.Workdir, "start.sh")
+			if _, statErr := os.Lstat(startPath); errors.Is(statErr, os.ErrNotExist) {
+				if writeErr := os.WriteFile(startPath, []byte("#!/bin/sh\nexec /bin/true\n"), 0o755); writeErr != nil {
+					return nil, fmt.Errorf("write function build start script: %w", writeErr)
+				}
+				generatedFunctionStart = true
+			} else if statErr != nil {
+				return nil, fmt.Errorf("stat function build start script: %w", statErr)
+			}
+			steps, objectErr := nestedObject(config, "steps")
+			if objectErr != nil {
+				return nil, fmt.Errorf("parse %s steps: %w", path, objectErr)
+			}
+			build, objectErr := nestedObject(steps, "build")
+			if objectErr != nil {
+				return nil, fmt.Errorf("parse %s steps.build: %w", path, objectErr)
+			}
+			build["inputs"] = []any{
+				map[string]any{"image": m.RuntimeBaseRef},
+				map[string]any{"local": true, "include": []any{"."}},
+			}
+			deploy["startCommand"] = "/bin/true"
+		}
+	}
 	// Alpine runner bases and base-minimal cannot execute Railpack's default
 	// apt install phase. Preserve an explicit customer list, but make the
 	// platform default empty for musl runtimes and minimal scratch bases.
@@ -1377,14 +1424,63 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 	}
 
 	return func() error {
+		var restoreErr error
+		if generatedFunctionStart {
+			restoreErr = os.Remove(filepath.Join(m.Workdir, "start.sh"))
+			if errors.Is(restoreErr, os.ErrNotExist) {
+				restoreErr = nil
+			}
+		}
 		if existed {
 			if err := os.WriteFile(path, original, originalMode); err != nil {
-				return err
+				return errors.Join(restoreErr, err)
 			}
-			return os.Chmod(path, originalMode)
+			return errors.Join(restoreErr, os.Chmod(path, originalMode))
 		}
-		return os.Remove(path)
+		return errors.Join(restoreErr, os.Remove(path))
 	}, nil
+}
+
+// functionSourceNeedsCopyOnlyPlan reports whether Railpack 0.38 lacks the
+// marker it needs to select the runtime provider. Function runtime selection
+// is already explicit in the API, so these markerless source shapes need only
+// be copied over the corresponding pinned runtime base.
+func functionSourceNeedsCopyOnlyPlan(m api.BuildManifest) bool {
+	var markers []string
+	switch m.Framework {
+	case api.FrameworkRailpackNode:
+		markers = []string{"package.json"}
+	case api.FrameworkRailpackPython:
+		markers = []string{
+			"main.py", "app.py", "start.py", "bot.py", "hello.py", "server.py",
+			"requirements.txt", "pyproject.toml", "Pipfile",
+		}
+	default:
+		return false
+	}
+	for _, marker := range markers {
+		if info, err := os.Stat(filepath.Join(m.Workdir, marker)); err == nil && !info.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+func railpackRuntimePackage(runtime string) (string, string) {
+	switch runtime {
+	case "node22":
+		return "node", "22"
+	case "node24":
+		return "node", "24"
+	case "python312":
+		return "python", "3.12"
+	case "python313":
+		return "python", "3.13"
+	case "go124", "go124-alpine":
+		return "go", "1.24"
+	default:
+		return "", ""
+	}
 }
 
 func nestedObject(parent map[string]any, key string) (map[string]any, error) {
@@ -1442,13 +1538,16 @@ func buildArgv(m api.BuildManifest) []string {
 	contextDir := manifestBuildContext(m)
 	switch m.Framework {
 	case api.FrameworkDockerfile:
-		return []string{
+		argv := []string{
 			"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
 			"--frontend", "dockerfile.v0",
 			"--local", "context=" + contextDir,
 			"--local", "dockerfile=" + m.Workdir,
-			"--output", "type=oci,dest=" + m.OutDir + "/image.tar",
 		}
+		if m.DockerfilePath != "" {
+			argv = append(argv, "--opt", "filename="+m.DockerfilePath)
+		}
+		return append(argv, "--output", "type=oci,dest="+m.OutDir+"/image.tar")
 	}
 	// Railpack plans local COPY paths relative to the directory passed to
 	// prepare. A repository-wide context would copy a different package.json

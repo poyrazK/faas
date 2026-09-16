@@ -254,11 +254,11 @@ func TestValidateTarballShape_FileCountBoundary(t *testing.T) {
 		t.Fatal("10001 entries should be rejected, got nil problem")
 	}
 
-	// Zero entries: must accept (an empty tarball is valid).
+	// Zero entries carry no deployable source and must be rejected.
 	empty := buildTestTarGz(t, nil, nil)
 	path = writeTarToSpool(t, dir, empty)
-	if prob := validateTarballShape(path); prob != nil {
-		t.Fatalf("empty tarball should pass, got %v", prob)
+	if prob := validateTarballShape(path); prob == nil || !strings.Contains(prob.Detail, "empty") {
+		t.Fatalf("empty tarball problem = %#v, want empty-source rejection", prob)
 	}
 }
 

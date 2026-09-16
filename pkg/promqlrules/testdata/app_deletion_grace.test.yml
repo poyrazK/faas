@@ -1,0 +1,43 @@
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: "missing tombstone deadline pages after quarantine window"
+    interval: 1m
+    input_series:
+      - series: apid_app_grace_missing_deadlines
+        values: '1x31'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasAppDeletionDeadlineMissing
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: apid
+              family: app_deletion_grace
+              public_status: internal
+            exp_annotations:
+              summary: "Deleted app tombstones are missing purge deadlines"
+              description: "Apid quarantined at least one deleted app because its deletion deadline is missing. The row and its artifacts will remain until the deadline invariant is repaired."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"
+
+  - name: "expired retained artifacts warn after retry window"
+    interval: 1m
+    input_series:
+      - series: apid_app_grace_expired_artifact_bytes
+        values: '4096x61'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: FaasAppDeletionArtifactsRetained
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: app_deletion_grace
+              public_status: internal
+            exp_annotations:
+              summary: "Expired app artifacts remain on persistent storage"
+              description: "Known artifact bytes remain after their app deletion grace expired. Apid retains the database references and retries cleanup rather than orphaning the objects."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"

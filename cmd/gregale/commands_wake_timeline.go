@@ -64,7 +64,7 @@ func cmdWakeTimeline(args []string) int {
 	// (commands_delayed_task.go:118) + cmdAppSecurity
 	// (commands_app_security.go:42).
 	flags, pos := splitArgsForFlags(args)
-	fs := flag.NewFlagSet("wake-timeline", flag.ContinueOnError)
+	fs := newFlagSet("wake-timeline", flag.ContinueOnError)
 	since := fs.String("since", "", "RFC3339 timestamp; rows with `at >= since` returned (cursor when paging)")
 	limit := fs.Int("limit", wakeTimelineDefaultLimit, "page size (1..1000)")
 	all := fs.Bool("all", false, "walk every page via next_cursor / since (ignores --limit for the call count)")

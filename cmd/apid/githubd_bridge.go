@@ -3,7 +3,7 @@
 //
 // Direction: githubd → apid only. githubd dials /run/faas/apid-githubd.sock
 // after the dispatcher fans out the touched apps and stages each app's
-// RootDir subtree into githubd's build-sources dir as a per-app .tar.gz.
+// full repository into githubd's build-sources dir as a per-app .tar.gz.
 // The apid handler creates the deployment row (Kind=DeploymentKindGitHub),
 // the build row, and emits the build_queued pg_notify that builderd
 // LISTENs on (cmd/builderd/main.go:151).
@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -45,6 +46,8 @@ import (
 // canonical seam — same pattern as advisory_receiver.go).
 type githubdBridgeStore interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
+	AccountByID(ctx context.Context, id string) (state.Account, error)
+	ConsumeAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error)
 	LatestDeployment(ctx context.Context, appID string) (state.Deployment, error)
 	CreateDeployment(ctx context.Context, d state.Deployment) (state.Deployment, error)
 	UpdateDeploymentStatus(ctx context.Context, id string, status state.DeploymentStatus, logPath string) error
@@ -126,7 +129,7 @@ const notifyAppField = "app"
 
 // EnqueueBuild creates the deployment + build rows for one (app,
 // commit_sha) and emits the build_queued pg_notify. githubd stages
-// the per-app tarball on its own workdir and the path on disk is
+// the full-repository tarball on its own workdir and the path on disk is
 // passed in source_path — builderd reads it directly (pkg/builderd/
 // builderd.go:321 No URL fetch path).
 //
@@ -257,6 +260,19 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 			"EnqueueBuild: source_path size=%d != declared source_bytes=%d",
 			st.Size(), req.SourceBytes)
 	}
+	acct, err := g.store.AccountByID(ctx, req.AccountId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
+	}
+	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, acct.Plan.DeploysPerHour(), timeNow().UTC())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "EnqueueBuild: deploy admission: %v", err)
+	}
+	if !rate.Allowed {
+		return nil, status.Errorf(codes.ResourceExhausted,
+			"EnqueueBuild: account deploy rate limit %d reached; resets at %s",
+			rate.Limit, rate.WindowResetsAt.UTC().Format(time.RFC3339))
+	}
 
 	// The shared apidsource.Enqueue helper handles CreateDeployment +
 	// build.log spool + UpdateDeploymentStatus(building) + CreateBuild +
@@ -325,6 +341,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		Kind:            kind,
 		SourcePath:      req.SourcePath,
 		SourceBytes:     req.SourceBytes,
+		SourceRoot:      app.RootDir,
 		SourceURL:       req.SourceUrl,
 		CommitSHA:       req.CommitSha,
 		FunctionRuntime: functionRuntimeForApp(app),

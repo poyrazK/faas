@@ -92,8 +92,11 @@ func (i RuntimeSnapshotIdentity) equal(other RuntimeSnapshotIdentity) bool {
 // A ready entry must prove that it was captured before any tenant payload or
 // mutable identity entered the VM.
 type RuntimeSnapshot struct {
-	Identity       RuntimeSnapshotIdentity
-	StorageKey     string
+	Identity   RuntimeSnapshotIdentity
+	StorageKey string
+	// SnapshotDigest is the SHA-256 of the length-delimited memory and
+	// vmstate object pair (see RuntimeSnapshotDigest). A single digest binds
+	// both restore inputs, so either object can fail closed independently.
 	SnapshotDigest string
 	MemBytes       int64
 	VMStateBytes   int64
@@ -300,6 +303,10 @@ func (c *RuntimeSnapshotCatalog) Resolve(ctx context.Context, request RuntimeSna
 	if err := c.verifier.VerifyRuntimeSnapshot(ctx, entry); err != nil {
 		if errors.Is(err, ErrRuntimeSnapshotCorrupt) {
 			plan.FallbackReason = RuntimeSnapshotFallbackCorrupt
+			return plan, nil
+		}
+		if errors.Is(err, ErrRuntimeSnapshotUnwired) {
+			plan.FallbackReason = RuntimeSnapshotFallbackUnwired
 			return plan, nil
 		}
 		return RuntimeSnapshotPlan{}, fmt.Errorf("sched: verify runtime snapshot: %w", err)

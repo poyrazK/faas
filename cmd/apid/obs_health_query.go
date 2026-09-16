@@ -22,8 +22,9 @@
 //     existing promqlClient.
 //
 // nil-safe: if s.promqlClient is nil (single-node dev / no
-// Prometheus sidecar) the PromQL-derived fields return zero and
-// the SQL-derived fields still execute against the local DB.
+// Prometheus sidecar) the PromQL-derived fields retain their stable
+// numeric fallback, while the status helpers report unavailable so the
+// caller cannot mistake that fallback for observed telemetry.
 package main
 
 import (
@@ -49,55 +50,58 @@ const obsHealthQueryWindow = 5 * time.Minute
 // operator sees it as "missing" at.
 const obsHealthStuckRunningThreshold = 5 * time.Minute
 
-// auditLogWrite5m queries the apid Prometheus for the delta of
+// auditLogWrite5mStatus queries the apid Prometheus for the delta of
 // audit_log_write_total over the trailing 5m window. Returns 0
 // when s.promqlClient is nil OR when the query fails — the
 // endpoint surfaces this as "no data" rather than a 500 so a
 // Prometheus outage doesn't page the on-call about an unrelated
 // apid bug.
-func (s *server) auditLogWrite5m(ctx context.Context) int64 {
+func (s *server) auditLogWrite5mStatus(ctx context.Context) (int64, bool) {
 	if s.promqlClient == nil {
-		return 0
+		return 0, false
 	}
 	v, err := s.promqlClient.QueryScalar(ctx,
-		`sum(increase(audit_log_write_total[5m]))`)
+		`sum(increase(audit_log_write_total[5m])) or vector(0)`)
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return int64(v)
+	return int64(v), true
 }
 
-// auditLogWriteFailures5m mirrors auditLogWrite5m for the failure
+// auditLogWriteFailures5mStatus mirrors auditLogWrite5mStatus for the failure
 // counter. Returned as a separate field so the dashboard can
 // render a failed/total ratio without a per-field subtraction.
-func (s *server) auditLogWriteFailures5m(ctx context.Context) int64 {
+func (s *server) auditLogWriteFailures5mStatus(ctx context.Context) (int64, bool) {
 	if s.promqlClient == nil {
-		return 0
+		return 0, false
 	}
 	v, err := s.promqlClient.QueryScalar(ctx,
-		`sum(increase(audit_log_write_failures_total[5m]))`)
+		`sum(increase(audit_log_write_failures_total[5m])) or vector(0)`)
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return int64(v)
+	return int64(v), true
 }
 
-// auditLogCoverageRatio5m reads the trace_id coverage ratio
+// auditLogCoverageRatio5mStatus reads the trace_id coverage ratio
 // directly from Prometheus (the gauge is set by the C5 schedd
 // 60s tick). Returns 1.0 (vacuous truth) when the gauge has
 // never been set — a fresh apid that hasn't seen any
 // audit_log writes yet reports "100% covered" rather than
 // "0% covered", which is the right default for an empty window.
-func (s *server) auditLogCoverageRatio5m(ctx context.Context) float64 {
+func (s *server) auditLogCoverageRatio5mStatus(ctx context.Context) (float64, bool) {
 	if s.promqlClient == nil {
-		return 1.0
+		return 1.0, false
 	}
 	v, err := s.promqlClient.QueryScalar(ctx,
-		`sum(audit_log_coverage_ratio_5m)`)
-	if err != nil || v <= 0 {
-		return 1.0
+		`sum(audit_log_coverage_ratio_5m) or vector(1)`)
+	if err != nil {
+		return 1.0, false
 	}
-	return v
+	if v <= 0 {
+		return 1.0, true
+	}
+	return v, true
 }
 
 // operatorIntentOutcomeMissing returns the per-kind count of
@@ -127,15 +131,20 @@ func (s *server) traceIDCompletenessRatio(ctx context.Context) (map[string]float
 // active firing rule. Returns 0 on nil-promql or query error
 // — same "no data" posture as auditLogWrite5m.
 func (s *server) alertsFiring(ctx context.Context) int64 {
+	v, _ := s.alertsFiringStatus(ctx)
+	return v
+}
+
+func (s *server) alertsFiringStatus(ctx context.Context) (int64, bool) {
 	if s.promqlClient == nil {
-		return 0
+		return 0, false
 	}
 	v, err := s.promqlClient.QueryScalar(ctx,
-		`count(ALERTS{alertstate="firing"})`)
+		`count(ALERTS{alertstate="firing"}) or vector(0)`)
 	if err != nil {
-		return 0
+		return 0, false
 	}
-	return int64(v)
+	return int64(v), true
 }
 
 // seedHealthKindCounts returns the closed-set seed map for

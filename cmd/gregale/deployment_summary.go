@@ -13,7 +13,7 @@ import (
 // and avoids an extra account-wide app lookup in the CLI.
 func cmdDeploymentSummary(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	fs := flag.NewFlagSet("deployment summary", flag.ContinueOnError)
+	fs := newFlagSet("deployment summary", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	if err := fs.Parse(flags); err != nil {
 		return 1

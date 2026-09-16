@@ -40,6 +40,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/tls"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
@@ -94,6 +95,29 @@ type countReader interface {
 // already-constructed gRPC server directly, so this is an in-process read;
 // the only network operation remains the persistent capacity stream.
 type telemetryReader func(context.Context) (*vmmdpb.StatsResponse, error)
+
+// capacityTelemetryGuard turns a live-manager/empty-Stats mismatch into one
+// edge-triggered operational signal. Without this guard the capacity stream
+// remains healthy while silently publishing an empty instance batch.
+func capacityTelemetryGuard(counts countReader, nodeID string, read telemetryReader, ops *wire.OpsMetrics, log *slog.Logger) telemetryReader {
+	var empty atomic.Bool
+	return func(ctx context.Context) (*vmmdpb.StatsResponse, error) {
+		stats, err := read(ctx)
+		if err != nil {
+			return stats, err
+		}
+		missing := counts != nil && counts.LiveCount() > 0 && (stats == nil || len(stats.GetInstances()) == 0)
+		if missing && empty.CompareAndSwap(false, true) {
+			ops.InstanceStatsPartialError(nodeID)
+			if log != nil {
+				log.Error("vmmd: live instances missing from capacity telemetry", "node_id", nodeID, "live_count", counts.LiveCount())
+			}
+		} else if !missing && empty.CompareAndSwap(true, false) && log != nil {
+			log.Info("vmmd: capacity instance telemetry recovered", "node_id", nodeID)
+		}
+		return stats, nil
+	}
+}
 
 // runCapacityPublish is the outer reconnect loop. It is
 // invoked as a goroutine from main.go and exits when ctx

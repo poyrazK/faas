@@ -4,10 +4,33 @@ import (
 	"net"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/manifest"
 )
+
+func TestGeneratedUnitsContainOnlySupportedRestartDirectives(t *testing.T) {
+	for _, entry := range UnitEntries() {
+		t.Run(entry.Name, func(t *testing.T) {
+			rendered := entry.Unit().Render()
+			if strings.Contains(string(rendered), "RestartCountExport=") {
+				t.Fatal("unit contains unsupported RestartCountExport directive")
+			}
+		})
+	}
+}
+
+func TestScheddHasOnlyConntrackCapability(t *testing.T) {
+	u := UnitSchedd()
+	want := []string{"CAP_NET_ADMIN"}
+	if !reflect.DeepEqual(u.CapabilityBoundingSet, want) {
+		t.Fatalf("schedd CapabilityBoundingSet = %v, want %v", u.CapabilityBoundingSet, want)
+	}
+	if !reflect.DeepEqual(u.AmbientCapabilities, want) {
+		t.Fatalf("schedd AmbientCapabilities = %v, want %v", u.AmbientCapabilities, want)
+	}
+}
 
 func TestRegistryEntriesHaveBootProbes(t *testing.T) {
 	for _, entry := range Registry {
@@ -39,7 +62,7 @@ func TestRegistryEntriesHaveBootProbes(t *testing.T) {
 
 func TestActivationOrder(t *testing.T) {
 	got := ActivationOrder()
-	want := []string{"vmmd", "realtimed", "apid", "schedd", "gatewayd-internal", "gatewayd-public", "meterd", "githubd", "imaged", "builderd"}
+	want := []string{"vmmd", "realtimed", "apid", "schedd", "gatewayd-internal", "gatewayd-public", "meterd", "githubd", "outboundd", "imaged", "builderd"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ActivationOrder() = %v, want %v", got, want)
 	}
@@ -138,8 +161,8 @@ func TestRegistryIsSubsetOfHostKeys(t *testing.T) {
 // gatewayd_public; rest are identity.
 func TestRegistryDaemonSet_LockstepWithHostKeys(t *testing.T) {
 	const (
-		wantRegistrySize = 10
-		wantHostKeysSize = 10
+		wantRegistrySize = 11
+		wantHostKeysSize = 11
 	)
 	if got := len(Registry); got != wantRegistrySize {
 		t.Errorf("Registry len = %d, want %d (adding a daemon requires updating manifest.HostKeys too)",

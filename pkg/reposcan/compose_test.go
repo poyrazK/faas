@@ -39,7 +39,8 @@ services:
     image: redis:7
 `
 	fsys := fstest.MapFS{
-		"compose.yaml": &fstest.MapFile{Data: []byte(body)},
+		"compose.yaml":                &fstest.MapFile{Data: []byte(body)},
+		"services/api/Dockerfile.api": &fstest.MapFile{Data: []byte("FROM scratch\n")},
 	}
 	seeds, managed, warnings, err := detectCompose(fsys)
 	if err != nil {
@@ -65,6 +66,9 @@ services:
 			if len(s.command) != 4 || s.command[0] != "bundle" {
 				t.Errorf("api command = %v, want [bundle exec rails s]", s.command)
 			}
+			if s.commandShell {
+				t.Error("api sequence command marked as shell form")
+			}
 			if len(s.ports) != 1 || s.ports[0] != 8080 {
 				t.Errorf("api ports = %v, want [8080]", s.ports)
 			}
@@ -77,6 +81,9 @@ services:
 			}
 			if !equalSet(s.envKeys, []string{"REDIS_URL", "LOG_LEVEL"}) {
 				t.Errorf("worker envKeys = %v", s.envKeys)
+			}
+			if !s.commandShell {
+				t.Error("worker string command lost shell-form semantics")
 			}
 		case "web":
 			if s.rootDir != "apps/web" {
@@ -139,6 +146,39 @@ func TestDetectCompose_SkipsPrebuiltWithoutBuild(t *testing.T) {
 	}
 }
 
+func TestDetectCompose_ExtractsDependsOn(t *testing.T) {
+	t.Parallel()
+	body := `services:
+  api:
+    build: ./api
+    depends_on:
+      db:
+        condition: service_healthy
+      cache: {}
+  worker:
+    build: ./worker
+    depends_on: [db, api, db]
+  db:
+    build: ./db
+`
+	seeds, _, _, err := detectCompose(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(body)},
+	})
+	if err != nil {
+		t.Fatalf("detectCompose: %v", err)
+	}
+	got := make(map[string][]string, len(seeds))
+	for _, seed := range seeds {
+		got[seed.name] = seed.dependsOn
+	}
+	if !equalSet(got["api"], []string{"cache", "db"}) {
+		t.Fatalf("api depends_on = %v", got["api"])
+	}
+	if !equalSet(got["worker"], []string{"api", "db"}) {
+		t.Fatalf("worker depends_on = %v", got["worker"])
+	}
+}
+
 // TestDetectCompose_PrefersComposeYAML confirms the file-pick order:
 // compose.yaml > compose.yml > docker-compose.yml > docker-compose.yaml.
 func TestDetectCompose_PrefersComposeYAML(t *testing.T) {
@@ -180,23 +220,19 @@ func TestDetectCompose_AbsentFile(t *testing.T) {
 	}
 }
 
-// TestDetectCompose_InvalidYAMLSoftFails — bad YAML emits a warning
-// instead of an error so a partially-broken compose file does not
-// invalidate the whole scan.
-func TestDetectCompose_InvalidYAMLSoftFails(t *testing.T) {
+// TestDetectCompose_InvalidYAMLFailsClosed — an authoritative manifest must
+// never be replaced by a root-floor workload.
+func TestDetectCompose_InvalidYAMLFailsClosed(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
 		"compose.yaml": &fstest.MapFile{Data: []byte("services:\n  api: {build: .")},
 	}
 	seeds, _, warnings, err := detectCompose(fsys)
-	if err != nil {
-		t.Fatalf("detectCompose: %v", err)
-	}
 	if len(seeds) != 0 {
 		t.Errorf("seeds = %v, want empty (broken compose)", names(seeds))
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "parse compose.yaml") {
-		t.Errorf("warnings = %v, want [parse compose.yaml …]", warnings)
+	if len(warnings) != 0 || err == nil || !strings.Contains(err.Error(), "parse compose.yaml") {
+		t.Errorf("warnings=%v err=%v, want a compose parse error", warnings, err)
 	}
 }
 
@@ -207,7 +243,8 @@ func TestDetectCompose_InvalidYAMLSoftFails(t *testing.T) {
 func TestDetectCompose_BuildContextDotPrefixStripped(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"compose.yaml": &fstest.MapFile{Data: []byte("services:\n  api:\n    build: {context: ./api, dockerfile: Dockerfile}\n")},
+		"compose.yaml":   &fstest.MapFile{Data: []byte("services:\n  api:\n    build: {context: ./api, dockerfile: Dockerfile}\n")},
+		"api/Dockerfile": &fstest.MapFile{Data: []byte("FROM scratch\n")},
 	}
 	seeds, _, _, err := detectCompose(fsys)
 	if err != nil {
@@ -215,6 +252,221 @@ func TestDetectCompose_BuildContextDotPrefixStripped(t *testing.T) {
 	}
 	if len(seeds) != 1 || seeds[0].rootDir != "api" {
 		t.Errorf("rootDir = %q, want api", seeds[0].rootDir)
+	}
+}
+
+func TestDetectCompose_InterpolationFromDotEnv(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		".env": &fstest.MapFile{Data: []byte("API_CONTEXT=./services/api\nAPI_PORT=9090\nMODE=production\n")},
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  api:
+    build: ${API_CONTEXT:-./fallback}
+    command: ["node", "server.js", "${MODE:+--production}", "$$HOME"]
+    ports: ["${API_PORT:-8080}:8080"]
+`)},
+	}
+	seeds, _, _, err := detectCompose(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seeds) != 1 {
+		t.Fatalf("seeds = %v, want one", names(seeds))
+	}
+	got := seeds[0]
+	if got.rootDir != "services/api" || len(got.ports) != 1 || got.ports[0] != 9090 {
+		t.Fatalf("resolved root/ports = %q/%v, want services/api/[9090]", got.rootDir, got.ports)
+	}
+	if strings.Join(got.command, "|") != "node|server.js|--production|$HOME" || got.commandShell {
+		t.Fatalf("resolved command = %v shell=%v", got.command, got.commandShell)
+	}
+}
+
+func TestInterpolateComposeString_Operators(t *testing.T) {
+	t.Parallel()
+	values := map[string]string{"SET": "value", "EMPTY": ""}
+	tests := map[string]string{
+		"${UNSET:-fallback}":  "fallback",
+		"${EMPTY:-fallback}":  "fallback",
+		"${UNSET-fallback}":   "fallback",
+		"${EMPTY-fallback}":   "",
+		"${SET:+alternate}":   "alternate",
+		"${EMPTY:+alternate}": "",
+		"${SET+alternate}":    "alternate",
+		"${EMPTY+alternate}":  "alternate",
+		"$$SET":               "$SET",
+	}
+	for input, want := range tests {
+		input, want := input, want
+		t.Run(input, func(t *testing.T) {
+			got, err := interpolateComposeString(input, values, "compose.yaml", "api", "command")
+			if err != nil || got != want {
+				t.Fatalf("interpolate = %q, %v; want %q", got, err, want)
+			}
+		})
+	}
+	for _, input := range []string{"${UNSET:?do not expose this}", "${UNSET?do not expose this}"} {
+		_, err := interpolateComposeString(input, values, "compose.yaml", "api", "build")
+		if err == nil || !strings.Contains(err.Error(), "api") || !strings.Contains(err.Error(), "build") ||
+			!strings.Contains(err.Error(), "UNSET") || strings.Contains(err.Error(), "do not expose this") {
+			t.Fatalf("required-variable error = %v", err)
+		}
+	}
+}
+
+func TestDetectCompose_ProfiledServicesSkipped(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  api:
+    build: ./api
+  debug-console:
+    profiles: [debug, tools]
+    build: ./debug
+`)},
+	}
+	seeds, _, warnings, err := detectCompose(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := names(seeds); !equalSet(got, []string{"api"}) {
+		t.Fatalf("seeds = %v, want api", got)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "debug-console") || !strings.Contains(warnings[0], "debug,tools") {
+		t.Fatalf("warnings = %v, want profile skip explanation", warnings)
+	}
+}
+
+func TestDetectCompose_AutomaticOverrides(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		base, override string
+	}{
+		{base: "compose.yaml", override: "compose.override.yaml"},
+		{base: "docker-compose.yml", override: "docker-compose.override.yml"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.base, func(t *testing.T) {
+			fsys := fstest.MapFS{
+				test.base: &fstest.MapFile{Data: []byte(`services:
+  api:
+    build:
+      context: ./services/api
+    command: ["node", "server.js"]
+    ports: ["8080:8080"]
+    environment:
+      BASE: one
+`)},
+				test.override: &fstest.MapFile{Data: []byte(`services:
+  api:
+    build:
+      dockerfile: Dockerfile.prod
+    command: ["node", "server.js", "--production"]
+    ports: ["9090:9090"]
+    environment:
+      EXTRA: two
+  worker:
+    build: ./services/worker
+    command: ["node", "worker.js"]
+`)},
+				"services/api/Dockerfile.prod": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+			}
+			seeds, _, _, err := detectCompose(fsys)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := names(seeds); !equalSet(got, []string{"api", "worker"}) {
+				t.Fatalf("seeds = %v", got)
+			}
+			for _, seed := range seeds {
+				if !strings.Contains(seed.source, test.base+" + "+test.override) {
+					t.Fatalf("source = %q, want both files", seed.source)
+				}
+				if seed.name == "api" {
+					if seed.rootDir != "services/api" || seed.dockerfile != "Dockerfile.prod" {
+						t.Fatalf("api build = %q/%q", seed.rootDir, seed.dockerfile)
+					}
+					if strings.Join(seed.command, " ") != "node server.js --production" || len(seed.ports) != 2 || seed.ports[0] != 8080 || seed.ports[1] != 9090 ||
+						!equalSet(seed.envKeys, []string{"BASE", "EXTRA"}) {
+						t.Fatalf("api merged fields = command %v ports %v env %v", seed.command, seed.ports, seed.envKeys)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDetectCompose_AutomaticOverrideNullResetsConsumedFields(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  api:
+    build: ./api
+    command: ["node", "server.js"]
+    ports: ["8080:8080"]
+    environment: ["MODE=production"]
+`)},
+		"compose.override.yaml": &fstest.MapFile{Data: []byte(`services:
+  api:
+    command: null
+    ports: null
+    environment: null
+`)},
+	}
+	seeds, _, _, err := detectCompose(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seeds) != 1 || len(seeds[0].command) != 0 || len(seeds[0].ports) != 0 || len(seeds[0].envKeys) != 0 {
+		t.Fatalf("override reset seed = %#v", seeds)
+	}
+}
+
+func TestDetectCompose_UnsupportedMergeDirectiveFailsClosed(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"compose.yaml":          &fstest.MapFile{Data: []byte("services:\n  api:\n    build: .\n")},
+		"compose.override.yaml": &fstest.MapFile{Data: []byte("services:\n  api:\n    ports: !reset []\n")},
+	}
+	_, _, _, err := detectCompose(fsys)
+	if err == nil || !strings.Contains(err.Error(), "!reset") {
+		t.Fatalf("error = %v, want unsupported !reset", err)
+	}
+}
+
+func TestDetectCompose_RootBuildContextRemainsPresent(t *testing.T) {
+	t.Parallel()
+	for _, build := range []string{".", "{context: .}"} {
+		t.Run(build, func(t *testing.T) {
+			fsys := fstest.MapFS{
+				"compose.yaml": &fstest.MapFile{Data: []byte("services:\n  api:\n    build: " + build + "\n")},
+			}
+			seeds, _, _, err := detectCompose(fsys)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(seeds) != 1 || seeds[0].rootDir != "." {
+				t.Fatalf("root build seed = %#v, want one workload rooted at .", seeds)
+			}
+		})
+	}
+}
+
+func TestDetectCompose_InvalidOrEmptySelectedBuildFailsClosed(t *testing.T) {
+	t.Parallel()
+	for name, build := range map[string]string{
+		"empty interpolation":  "${MISSING}",
+		"directory Dockerfile": "{context: ./api, dockerfile: .}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fsys := fstest.MapFS{
+				"compose.yaml": &fstest.MapFile{Data: []byte("services:\n  api:\n    build: " + build + "\n")},
+			}
+			if _, _, _, err := detectCompose(fsys); err == nil {
+				t.Fatal("invalid selected build was accepted")
+			}
+		})
 	}
 }
 

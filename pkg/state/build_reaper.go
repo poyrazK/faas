@@ -17,6 +17,14 @@ type StuckBuildSweepStore interface {
 	SweepStuckRunningBuildsWithIDs(ctx context.Context, threshold time.Time) ([]string, error)
 }
 
+// BuildClaimRecoveryStore is the optional claim-fenced recovery capability
+// used by builderd when a worker must return a claim to the queue. The
+// started_at fence prevents a stale worker from requeueing a newer claim for
+// the same build after a timeout, reaper pass, or transient read failure.
+type BuildClaimRecoveryStore interface {
+	RequeueBuildIfClaim(ctx context.Context, claim Build) error
+}
+
 // BuildVMCleanupClaim is one durable builder-VM teardown obligation claimed
 // by a builderd worker. The token prevents a late result from an expired
 // claim from completing a newer worker's attempt.

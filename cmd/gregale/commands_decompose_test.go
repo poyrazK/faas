@@ -1,5 +1,7 @@
 package main
 
+// adr: 050
+
 // commands_decompose_test.go — Phase 3 CLI tests for the
 // repo decomposition surface (ADR-050). Covers the §4 acceptance
 // gate (`gregale deploy` on the fixture repo creates 3 apps + 1
@@ -17,9 +19,13 @@ package main
 //     doubling as the server.
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -44,25 +50,147 @@ type decomposeSink struct {
 
 	// capture lets tests assert the multipart body shape, including
 	// the parsed Content-Type and the field set the SDK Client writes.
-	capturedMultipart []byte
-	scanCalls         int
-	applyCalls        int
+	capturedMultipart      []byte
+	capturedScanMultipart  []byte
+	capturedApplyMultipart []byte
+	scanContentType        string
+	applyContentType       string
+	projectSlug            string
+	scanCalls              int
+	sourceRefScanCalls     int
+	sourceRefScanRequest   api.ProjectSourceRefScanRequest
+	applyCalls             int
 }
 
 func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/v1/projects/scan/source-ref" && r.Method == http.MethodPost:
+		s.sourceRefScanCalls++
+		_ = json.NewDecoder(r.Body).Decode(&s.sourceRefScanRequest)
+		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.URL.Path == "/v1/projects/scan" && r.Method == http.MethodPost:
 		s.scanCalls++
 		body, _ := io.ReadAll(r.Body)
 		s.capturedMultipart = body
+		s.capturedScanMultipart = append([]byte(nil), body...)
+		s.scanContentType = r.Header.Get("Content-Type")
+		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.URL.Path == "/v1/projects" && r.Method == http.MethodPost:
 		s.applyCalls++
 		body, _ := io.ReadAll(r.Body)
 		s.capturedMultipart = body
+		s.capturedApplyMultipart = append([]byte(nil), body...)
+		s.applyContentType = r.Header.Get("Content-Type")
+		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
 		writeJSONTestStatus(w, s.applyStatus, s.applyBody)
+	case strings.HasPrefix(r.URL.Path, "/v1/deployments/") && r.Method == http.MethodGet:
+		// Project deploys now honor the normal wait contract. Return a
+		// terminal fixture for each golden deployment so these planner tests
+		// exercise that path without a real scheduler.
+		writeJSONTestStatus(w, http.StatusOK, api.DeploymentResponse{
+			ID: strings.TrimPrefix(r.URL.Path, "/v1/deployments/"), Status: statusLive,
+		})
 	default:
 		http.Error(w, "decomposeSink: not found: "+r.URL.Path, http.StatusNotFound)
+	}
+}
+
+func TestCmdScanRepoUsesConnectedAccountEndpoint(t *testing.T) {
+	sink := &decomposeSink{scanStatus: http.StatusOK, scanBody: goldenPlan}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "GREGALE_INSTALL_TOKEN_") {
+			t.Setenv(name, "")
+		}
+	}
+	if code := cmdScan([]string{
+		"--repo", "onebox-faas/hello", "--ref", "main",
+		"--project-slug", "fixture", "--only", "api,worker",
+	}); code != 0 {
+		t.Fatalf("cmdScan exit = %d, want 0", code)
+	}
+	if sink.sourceRefScanCalls != 1 || sink.scanCalls != 0 {
+		t.Fatalf("source-ref calls = %d, multipart scan calls = %d; want 1, 0", sink.sourceRefScanCalls, sink.scanCalls)
+	}
+	got := sink.sourceRefScanRequest
+	if got.Repo != "onebox-faas/hello" || got.Ref != "main" || got.ProjectSlug != "fixture" || got.InstallID != 0 {
+		t.Fatalf("source-ref request = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Only, []string{"api", "worker"}) {
+		t.Fatalf("only = %#v, want [api worker]", got.Only)
+	}
+}
+
+// multipartField extracts one text field from a captured request. The sink
+// keeps the raw body for the existing byte-presence assertions, while this
+// helper lets CLI tests verify that derived project metadata reached both
+// ScanProject and ApplyProjectPlan.
+func multipartField(body []byte, contentType, name string) string {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		return ""
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	for {
+		part, nextErr := reader.NextPart()
+		if nextErr == io.EOF {
+			return ""
+		}
+		if nextErr != nil {
+			return ""
+		}
+		value, readErr := io.ReadAll(part)
+		_ = part.Close()
+		if readErr == nil && part.FormName() == name {
+			return string(value)
+		}
+	}
+}
+
+func multipartFile(body []byte, contentType, name string) []byte {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		return nil
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	for {
+		part, nextErr := reader.NextPart()
+		if nextErr != nil {
+			return nil
+		}
+		value, readErr := io.ReadAll(part)
+		_ = part.Close()
+		if readErr == nil && part.FormName() == name {
+			return value
+		}
+	}
+}
+
+func tarGzNames(t *testing.T, raw []byte) []string {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("open uploaded project archive: %v", err)
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	var names []string
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return names
+		}
+		if err != nil {
+			t.Fatalf("read uploaded project archive: %v", err)
+		}
+		if hdr.FileInfo().Mode().IsRegular() {
+			names = append(names, hdr.Name)
+		}
 	}
 }
 
@@ -81,9 +209,9 @@ var goldenPlan = api.PlanResponse{
 	CanApply:      true,
 	PlanToken:     "tok-stable",
 	Workloads: []api.PlanWorkload{
-		{Name: "api", RootDir: "/api", Class: "http"},
-		{Name: "nightly", RootDir: "/nightly", Class: "worker", Schedule: "0 3 * * *"},
-		{Name: "worker", RootDir: "/worker", Class: "worker"},
+		{Name: "api", RootDir: "/api", Class: "http", Action: "create"},
+		{Name: "nightly", RootDir: "/nightly", Class: "worker", Schedule: "0 3 * * *", Action: "create"},
+		{Name: "worker", RootDir: "/worker", Class: "worker", Action: "create"},
 	},
 	Managed: []api.PlanManaged{
 		{Name: "postgres", Kind: "postgres", EnvHint: "postgresql://...", Image: "postgres:16"},
@@ -99,20 +227,24 @@ var goldenApply = api.ApplyResponse{
 		{Slug: "nightly", ID: "a-2"},
 		{Slug: "worker", ID: "a-3"},
 	},
+	Builds: []api.AppliedBuild{
+		{Slug: "api", AppID: "a-1", DeploymentID: "dep-1", BuildID: "build-1"},
+		{Slug: "nightly", AppID: "a-2", DeploymentID: "dep-2", BuildID: "build-2"},
+		{Slug: "worker", AppID: "a-3", DeploymentID: "dep-3", BuildID: "build-3"},
+	},
 }
 
-// writeTarball writes a fake .tar.gz that the CLI's openCustomerFile
-// path accepts. The contents do not matter — the test server only
-// cares that the file is openable; the Phase 3 plan integrates with
-// the real extractor on the server side.
+// writeTarball writes a small valid .tar.gz. The project-deploy tests use a
+// sink that does not inspect source contents, but the CLI now validates and
+// extracts explicit archives before handing them to the API.
 func writeTarball(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "fixture.tar.gz")
-	if err := os.WriteFile(path, []byte("fake-tar-bytes"), 0o600); err != nil {
-		t.Fatalf("write tarball: %v", err)
+	path := writeDeploySourceArchive(t, map[string]string{"fixture/README.md": "fixture"})
+	fixturePath := filepath.Join(filepath.Dir(path), "fixture.tar.gz")
+	if err := os.Rename(path, fixturePath); err != nil {
+		t.Fatalf("rename tarball fixture: %v", err)
 	}
-	return path
+	return fixturePath
 }
 
 // TestCmdScan_JSONStable is the §4 acceptance gate. Two scans of
@@ -396,9 +528,8 @@ func TestCmdDeployTarball_RejectsOnlyWithRepo(t *testing.T) {
 //  3. Returns 0 on a happy path
 //  4. Prints the "Created project" line on the text path
 //
-// The --yes flag is irrelevant here because the test harness is
-// non-TTY — stdin reads EOF and confirmPlan returns false. The
-// end-to-end "y" path is covered in test_ephemeral.sh (CI) and the
+// --yes is required here because the test harness is non-TTY. The
+// interactive "y" path is covered in test_ephemeral.sh (CI) and the
 // manual CLI smoke test; gating it on a real TTY here would couple
 // the test to a unix-only CI runner.
 func TestCmdDeployTarball_YesFlagSkeleton(t *testing.T) {
@@ -417,9 +548,7 @@ func TestCmdDeployTarball_YesFlagSkeleton(t *testing.T) {
 	stdout, restore := captureStdout(t)
 	defer restore()
 
-	// --yes is the documented no-confirm flag. The harness is non-TTY
-	// so the prompt is skipped regardless; we still pass --yes so the
-	// future contributor reading the test sees the flag in situ.
+	// --yes is the documented explicit approval for non-interactive use.
 	code := cmdDeployTarball([]string{
 		"--tarball", tarball,
 		"--project-slug", "fixture",
@@ -437,6 +566,253 @@ func TestCmdDeployTarball_YesFlagSkeleton(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Created project") {
 		t.Errorf("expected success line, got %q", stdout.String())
+	}
+}
+
+func writeNestedProjectFixture(t *testing.T, root string) {
+	t.Helper()
+	for name, body := range map[string]string{
+		"pnpm-workspace.yaml":          "packages:\n  - services/*\n  - packages/*\n",
+		"pnpm-lock.yaml":               "lockfileVersion: '9.0'\n",
+		"services/api/package.json":    `{"name":"api","scripts":{"start":"node server.js"},"dependencies":{"@acme/shared":"workspace:*"}}`,
+		"services/api/server.js":       "require('@acme/shared')\n",
+		"packages/shared/package.json": `{"name":"@acme/shared","version":"1.0.0"}`,
+		"packages/shared/index.js":     "module.exports = {}\n",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertUploadedProjectWorkspace(t *testing.T, sink *decomposeSink) {
+	t.Helper()
+	names := tarGzNames(t, multipartFile(sink.capturedScanMultipart, sink.scanContentType, "source"))
+	for _, suffix := range []string{
+		"pnpm-workspace.yaml", "pnpm-lock.yaml", "services/api/package.json",
+		"packages/shared/package.json",
+	} {
+		found := false
+		for _, name := range names {
+			if strings.HasSuffix(name, suffix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("uploaded project archive missing %q: %v", suffix, names)
+		}
+	}
+}
+
+func TestCmdDeployProjectPathAllowsNestedOnlyWorkloads(t *testing.T) {
+	root := t.TempDir()
+	writeNestedProjectFixture(t, root)
+
+	sink := &decomposeSink{
+		scanStatus: http.StatusOK, scanBody: goldenPlan,
+		applyStatus: http.StatusOK, applyBody: goldenApply,
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Chdir(t.TempDir())
+
+	if code := cmdDeployTarball([]string{
+		"--path", root, "--project", "--project-slug", "fixture",
+		"--yes", "--no-doctor", "--no-triggers",
+	}); code != 0 {
+		t.Fatalf("nested-only project path exit = %d, want 0", code)
+	}
+	if sink.scanCalls != 1 || sink.applyCalls != 1 {
+		t.Fatalf("planner calls = scan:%d apply:%d, want 1/1", sink.scanCalls, sink.applyCalls)
+	}
+	assertUploadedProjectWorkspace(t, sink)
+}
+
+func TestCmdDeployProjectGitArchiveAllowsNestedOnlyWorkloads(t *testing.T) {
+	root := initTestRepo(t)
+	writeNestedProjectFixture(t, root)
+	mustGit(t, root, "add", ".")
+	mustGit(t, root, "commit", "-q", "-m", "workspace")
+	mustGit(t, root, "remote", "add", "origin", "git@github.com:acme/workspace.git")
+
+	sink := &decomposeSink{
+		scanStatus: http.StatusOK, scanBody: goldenPlan,
+		applyStatus: http.StatusOK, applyBody: goldenApply,
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	t.Chdir(t.TempDir())
+
+	if code := cmdDeployTarball([]string{
+		"--path", root, "--project", "--project-slug", "fixture",
+		"--yes", "--no-doctor", "--no-triggers",
+	}); code != 0 {
+		t.Fatalf("nested-only committed project exit = %d, want 0", code)
+	}
+	if sink.scanCalls != 1 || sink.applyCalls != 1 {
+		t.Fatalf("planner calls = scan:%d apply:%d, want 1/1", sink.scanCalls, sink.applyCalls)
+	}
+	assertUploadedProjectWorkspace(t, sink)
+}
+
+// TestCmdDeployTarball_NonTTYRequiresExplicitApproval pins the destructive
+// project-deploy boundary. A captured/piped invocation must render the full
+// plan (including removals) and stop before ApplyProjectPlan unless --yes is
+// present. JSON is non-interactive by contract, so it follows the same
+// fail-closed rule even when a terminal would otherwise be available.
+func TestCmdDeployTarball_NonTTYRequiresExplicitApproval(t *testing.T) {
+	plan := goldenPlan
+	plan.Removed = []string{"old-service"}
+
+	for _, tc := range []struct {
+		name string
+		json bool
+	}{
+		{name: "text", json: false},
+		{name: "json", json: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &decomposeSink{
+				scanStatus:  http.StatusOK,
+				scanBody:    plan,
+				applyStatus: http.StatusOK,
+				applyBody:   goldenApply,
+			}
+			srv := httptest.NewServer(sink)
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			// Force the exact non-TTY shape regardless of the test runner.
+			restoreTTY := withTTYForTest(false)
+			defer restoreTTY()
+			prevJSON := jsonOutput
+			jsonOutput = tc.json
+			defer func() { jsonOutput = prevJSON }()
+			prevStdin := osStdin
+			osStdin = strings.NewReader("")
+			defer func() { osStdin = prevStdin }()
+
+			stdout, restoreStdout := captureStdout(t)
+			defer restoreStdout()
+			stderr, restoreStderr := captureStderr(t)
+			defer restoreStderr()
+
+			code := cmdDeployTarball([]string{
+				"--tarball", writeTarball(t),
+				"--project-slug", "fixture",
+			})
+			if code != 1 {
+				t.Fatalf("non-TTY project deploy exit = %d, want 1", code)
+			}
+			if sink.scanCalls != 1 {
+				t.Fatalf("scan calls = %d, want 1", sink.scanCalls)
+			}
+			if sink.applyCalls != 0 {
+				t.Fatalf("non-TTY project deploy issued apply call: %d", sink.applyCalls)
+			}
+			if !strings.Contains(stdout.String(), "old-service") {
+				t.Errorf("plan output omitted removal: %q", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "requires --yes") {
+				t.Errorf("missing explicit-approval error: %q", stderr.String())
+			}
+			if tc.json {
+				var got api.PlanResponse
+				if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &got); err != nil {
+					t.Fatalf("JSON plan output is not valid JSON: %v\n%s", err, stdout.String())
+				}
+				if len(got.Removed) != 1 || got.Removed[0] != "old-service" {
+					t.Errorf("JSON plan removed = %#v, want [old-service]", got.Removed)
+				}
+			}
+		})
+	}
+}
+
+// TestCmdDeployTarball_ProjectFlagDefaultsSlug makes the discoverable
+// --project spelling equivalent to --project-slug for a tarball while
+// keeping the existing single-app path unchanged when the flag is absent.
+func TestCmdDeployTarball_ProjectFlagDefaultsSlug(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   goldenApply,
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+	_, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t),
+		"--project",
+		"--yes",
+	}); code != 0 {
+		t.Fatalf("cmdDeployTarball --project exit = %d, want 0", code)
+	}
+	if sink.scanCalls != 1 || sink.applyCalls != 1 {
+		t.Fatalf("project calls: scan=%d apply=%d, want one each", sink.scanCalls, sink.applyCalls)
+	}
+	if sink.projectSlug != "fixture" {
+		t.Errorf("derived project slug = %q, want %q", sink.projectSlug, "fixture")
+	}
+}
+
+// TestCmdDeployTarball_ProjectScopeFlagsRouteToPlanner pins the implicit
+// project mode for each scope-only control. These flags must never fall
+// through to a single-app deployment where they would be silently ignored.
+func TestCmdDeployTarball_ProjectScopeFlagsRouteToPlanner(t *testing.T) {
+	cases := []struct {
+		name string
+		flag string
+		arg  string
+	}{
+		{name: "exclude", flag: "--exclude", arg: "worker"},
+		{name: "show affected", flag: "--show-affected"},
+		{name: "persist exclude", flag: "--persist-exclude"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &decomposeSink{
+				scanStatus:  http.StatusOK,
+				scanBody:    goldenPlan,
+				applyStatus: http.StatusOK,
+				applyBody:   goldenApply,
+			}
+			srv := httptest.NewServer(sink)
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			_, restore := captureStdout(t)
+			defer restore()
+			args := []string{"--tarball", writeTarball(t), "--yes", tc.flag}
+			if tc.arg != "" {
+				args = append(args, tc.arg)
+			}
+			if code := cmdDeployTarball(args); code != 0 {
+				t.Fatalf("implicit project %s exit = %d", tc.name, code)
+			}
+			if sink.scanCalls != 1 || sink.applyCalls != 1 {
+				t.Fatalf("implicit project %s calls: scan=%d apply=%d, want one each", tc.name, sink.scanCalls, sink.applyCalls)
+			}
+			if sink.projectSlug != "fixture" {
+				t.Fatalf("implicit project %s slug = %q, want fixture", tc.name, sink.projectSlug)
+			}
+		})
 	}
 }
 
@@ -486,6 +862,39 @@ func TestCmdDeployTarball_JSONFlag(t *testing.T) {
 	}
 	if len(out.Apps) != 3 {
 		t.Errorf("apps: got %d, want 3", len(out.Apps))
+	}
+}
+
+func TestCmdDeployTarball_ProjectNoTriggersReachesScanAndApply(t *testing.T) {
+	sink := &decomposeSink{
+		scanStatus:  http.StatusOK,
+		scanBody:    goldenPlan,
+		applyStatus: http.StatusOK,
+		applyBody:   goldenApply,
+	}
+	srv := httptest.NewServer(sink)
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_no_triggers")
+
+	if code := cmdDeployTarball([]string{
+		"--tarball", writeTarball(t),
+		"--project-slug", "fixture",
+		"--no-triggers",
+		"--no-wait",
+		"--yes",
+	}); code != 0 {
+		t.Fatalf("project --no-triggers exit=%d", code)
+	}
+	if sink.scanCalls != 1 || sink.applyCalls != 1 {
+		t.Fatalf("scan/apply calls=%d/%d want 1/1", sink.scanCalls, sink.applyCalls)
+	}
+	for phase, body := range map[string][]byte{
+		"scan": sink.capturedScanMultipart, "apply": sink.capturedApplyMultipart,
+	} {
+		if !bytes.Contains(body, []byte("name=\"no_triggers\"\r\n\r\ntrue")) {
+			t.Errorf("%s multipart omitted no_triggers=true", phase)
+		}
 	}
 }
 
@@ -567,6 +976,82 @@ func TestCmdDeployTarball_ProjectDryRunHumanRendersPlan(t *testing.T) {
 	}
 	if sink.applyCalls != 0 {
 		t.Fatalf("project dry-run issued apply call: %d", sink.applyCalls)
+	}
+}
+
+func TestCmdDeployTarball_ProjectPreviewStrictGate(t *testing.T) {
+	overQuota := goldenPlan
+	overQuota.CanApply = false
+	overQuota.CanApplyReasons = []string{"apps over plan limit", "cron configuration is unsupported"}
+	overQuota.ObservedApps = 7
+	overQuota.LimitApps = 5
+
+	cases := []struct {
+		name      string
+		flags     []string
+		wantCode  int
+		wantJSON  bool
+		wantUsage string
+	}{
+		{
+			name:     "dry-run strict json",
+			flags:    []string{"--dry-run", "--strict", "--json"},
+			wantCode: 1,
+			wantJSON: true,
+		},
+		{
+			name:     "diff strict json",
+			flags:    []string{"--diff", "--strict", "--json"},
+			wantCode: 1,
+			wantJSON: true,
+		},
+		{
+			name:     "dry-run lenient json",
+			flags:    []string{"--dry-run", "--lenient", "--json"},
+			wantCode: 0,
+			wantJSON: true,
+		},
+		{
+			name:      "dry-run strict text",
+			flags:     []string{"--dry-run", "--strict"},
+			wantCode:  1,
+			wantUsage: "can_apply: false",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetJSONOut(t)
+			sink := &decomposeSink{scanStatus: http.StatusOK, scanBody: overQuota}
+			srv := httptest.NewServer(sink)
+			t.Cleanup(srv.Close)
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			stdout, restore := captureStdout(t)
+			defer restore()
+			args := append([]string{"--tarball", writeTarball(t), "--project-slug", "fixture"}, tc.flags...)
+			if code := cmdDeployTarball(args); code != tc.wantCode {
+				t.Fatalf("project preview exit = %d, want %d; output=%s", code, tc.wantCode, stdout.String())
+			}
+			if sink.applyCalls != 0 {
+				t.Fatalf("project preview issued apply call: %d", sink.applyCalls)
+			}
+			out := stdout.String()
+			if tc.wantJSON {
+				var got api.PlanResponse
+				if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &got); err != nil {
+					t.Fatalf("project preview output is not JSON: %v\n%s", err, out)
+				}
+				if got.CanApply {
+					t.Fatal("project preview reported can_apply=true for blocked plan")
+				}
+				if !reflect.DeepEqual(got.CanApplyReasons, overQuota.CanApplyReasons) {
+					t.Errorf("can_apply_reasons = %#v, want %#v", got.CanApplyReasons, overQuota.CanApplyReasons)
+				}
+			} else if !strings.Contains(out, tc.wantUsage) {
+				t.Errorf("project preview output missing %q: %s", tc.wantUsage, out)
+			}
+		})
 	}
 }
 
@@ -657,12 +1142,56 @@ func TestDefaultProjectSlug(t *testing.T) {
 		{"", ""},
 		{"/tmp/fixture.tar.gz", "fixture"},
 		{"/tmp/my-repo", "my-repo"},
+		{"/tmp/My_Service.tar.gz", "my-service"},
 		{"./fixture", "fixture"},
 	}
 	for _, c := range cases {
 		if got := defaultProjectSlug(c.in); got != c.want {
 			t.Errorf("defaultProjectSlug(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestResolveScanPathKeepsStableProjectIdentity(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "My_Service")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"start":"node index.js"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var slugs []string
+	for range 2 {
+		archivePath, sourceName, cleanup, err := resolveScanSource("", root, "", "main", 0)
+		if err != nil {
+			t.Fatalf("resolveScanSource: %v", err)
+		}
+		if archivePath == "" {
+			cleanup()
+			t.Fatal("resolveScanSource returned an empty archive path")
+		}
+		slugs = append(slugs, defaultProjectSlug(sourceName))
+		cleanup()
+	}
+	if slugs[0] != "my-service" || slugs[1] != slugs[0] {
+		t.Fatalf("derived project slugs = %v, want stable my-service", slugs)
+	}
+}
+
+func TestCmdScanRejectsExplicitInvalidProjectSlugsBeforeSourceOrNetwork(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_project_slug_guard")
+
+	for _, slug := range []string{"", "Bad_Slug", "-bad", "bad-", strings.Repeat("a", 64)} {
+		if code := cmdScan([]string{"--tarball", "missing.tar.gz", "--project-slug", slug}); code == 0 {
+			t.Errorf("explicit project slug %q was accepted", slug)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("invalid project slugs made %d API requests, want zero", requests)
 	}
 }
 
@@ -703,15 +1232,15 @@ func TestSplitCSVEdgeCases(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestCmdDeployTarball_DoctorStrict_FailsFast pins the failure path:
-// a cwd with a top-level data/ directory trips the stateless-only
-// check → exit 1 + doctor report on stderr + zero HTTP calls.
+// an archive with a top-level data/ directory trips the stateless-only
+// check → exit 1 + doctor report on stderr + zero HTTP calls, even though
+// the caller's cwd is clean.
 // The test swaps osStderr for a buffer so we can grep the rendered
 // prose; the sink's HTTP counter is the "no upload" assertion.
 func TestCmdDeployTarball_DoctorStrict_FailsFast(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "data"), 0o755); err != nil {
-		t.Fatalf("mkdir data: %v", err)
-	}
+	// Keep the caller directory clean: the error must come from the archive,
+	// not from an accidental cwd scan.
 	prev := jsonOutput
 	jsonOutput = false
 	defer func() { jsonOutput = prev }()
@@ -732,13 +1261,15 @@ func TestCmdDeployTarball_DoctorStrict_FailsFast(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	// t.Chdir into the fixture so os.Getwd() in the wire-in path
-	// picks up the data/ subdir. Chdir auto-restores on test exit.
+	// Chdir keeps the caller source unrelated to the archive. Chdir
+	// auto-restores on test exit.
 	t.Chdir(dir)
 
 	if code := cmdDeployTarball([]string{
 		"--doctor-strict",
-		"--tarball", writeTarball(t), // never reached, but the flag parser still validates
+		"--tarball", writeDeploySourceArchive(t, map[string]string{
+			"fixture/data/marker.txt": "archive-only",
+		}),
 		"--project-slug", "fixture",
 		"--only", "api,worker,nightly",
 		"--yes",
@@ -877,9 +1408,6 @@ func TestCmdDeployTarball_DoctorStrict_WarnsOnlyContinues(t *testing.T) {
 // on, so a regression to "human prose" would break parse-ability.
 func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "data"), 0o755); err != nil {
-		t.Fatalf("mkdir data: %v", err)
-	}
 	prev := jsonOutput
 	jsonOutput = true
 	defer func() { jsonOutput = prev }()
@@ -904,7 +1432,9 @@ func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 
 	if code := cmdDeployTarball([]string{
 		"--doctor-strict",
-		"--tarball", writeTarball(t),
+		"--tarball", writeDeploySourceArchive(t, map[string]string{
+			"fixture/data/marker.txt": "archive-only",
+		}),
 		"--project-slug", "fixture",
 		"--only", "api,worker,nightly",
 		"--yes",

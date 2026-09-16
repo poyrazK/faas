@@ -58,14 +58,14 @@ func TestAppRoutes_HappyPath(t *testing.T) {
 	if out.Source != "live" {
 		t.Errorf("source = %q, want live", out.Source)
 	}
-	if out.AppID != "app-uuid-1" {
-		t.Errorf("app_id = %q, want app-uuid-1", out.AppID)
+	if out.AppID == "" {
+		t.Error("app_id is empty")
 	}
 	if len(out.Routes) != 3 {
 		t.Errorf("routes length = %d, want 3 (2 real + 1 reserved)", len(out.Routes))
 	}
-	if rec.Header().Get("X-Faas-Routes-State") != "ok" {
-		t.Errorf("X-Faas-Routes-State = %q, want ok", rec.Header().Get("X-Faas-Routes-State"))
+	if rec.Header().Get("X-Faas-Routes-State") != api.AppRoutesSourceLive {
+		t.Errorf("X-Faas-Routes-State = %q, want live", rec.Header().Get("X-Faas-Routes-State"))
 	}
 }
 

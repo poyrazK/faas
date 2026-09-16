@@ -4,10 +4,12 @@
 /* eslint-disable */
 import type { AppManifest } from './AppManifest.js';
 import type { BuildPlan } from './BuildPlan.js';
+import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 import type { CreateCronRequest } from './CreateCronRequest.js';
 import type { CreateEdgeRuleRequest } from './CreateEdgeRuleRequest.js';
 import type { DiffAppConfigPatch } from './DiffAppConfigPatch.js';
 import type { DiffEnvRow } from './DiffEnvRow.js';
+import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
  * JSON body for POST /v1/apps/{slug}/diff (PR-1). Slim
  * purpose-built DTO — every field maps 1:1 to a
@@ -45,5 +47,17 @@ export type DiffRequest = {
    * Resolved source/workload intent for a deploy preview. Supplying this makes fresh app creation explicit even when resource values use server defaults.
    */
   build_plan?: BuildPlan;
+  /**
+   * Proposed initial deployment traffic weight. Mutually exclusive with canary.
+   */
+  traffic_percent?: number | null;
+  /**
+   * Proposed canary rollout policy. Mutually exclusive with traffic_percent.
+   */
+  canary?: (CanaryPresetSpec | null);
+  /**
+   * Workflow declarations that the deployment would persist.
+   */
+  workflows?: Array<WorkflowSpec>;
 };
 

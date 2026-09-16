@@ -172,6 +172,32 @@ func (s *fakeStore) ListAllBundles(_ context.Context) ([]BundleRow, error) {
 	return out, nil
 }
 
+func (s *fakeStore) DeleteAbandonedBundle(_ context.Context, gitSHA string, before time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row, ok := s.rows[gitSHA]
+	if !ok || row.AppliedAt != nil || !row.CreatedAt.Before(before) {
+		return false, nil
+	}
+	for _, node := range s.cnRows {
+		if node.ReleaseID == gitSHA {
+			return false, nil
+		}
+	}
+	hasNewerApplied := false
+	for _, candidate := range s.rows {
+		if candidate.AppliedAt != nil && candidate.CreatedAt.After(row.CreatedAt) {
+			hasNewerApplied = true
+			break
+		}
+	}
+	if !hasNewerApplied {
+		return false, nil
+	}
+	delete(s.rows, gitSHA)
+	return true, nil
+}
+
 // UpsertComputeNode implements Store (PR-6). Mirrors the pgStore
 // behaviour: input validation via validGitSHA/validManifestHash,
 // idempotent INSERT...ON CONFLICT keyed by name, returns the row id.
@@ -290,6 +316,35 @@ func (s *fakeStore) StampHostCertificate(_ context.Context, name, pem, fingerpri
 	return nil
 }
 
+func (s *fakeStore) CompareAndSwapHostCertificate(_ context.Context, name, expectedFingerprint, pem, fingerprint string) error {
+	if name == "" || expectedFingerprint == "" || pem == "" || fingerprint == "" {
+		return errors.New("releaseinstall: certificate CAS requires all fields")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row, ok := s.cnRows[name]
+	if !ok {
+		return ErrComputeNodeNotFound
+	}
+	current := ""
+	if row.CertFingerprint != nil {
+		current = *row.CertFingerprint
+	}
+	if current != expectedFingerprint && current != fingerprint {
+		return ErrCertificateFingerprintConflict
+	}
+	row.HostCertificate = &pem
+	if current != fingerprint {
+		generation := 1
+		if row.Generation != nil {
+			generation = *row.Generation + 1
+		}
+		row.Generation = &generation
+	}
+	row.CertFingerprint = &fingerprint
+	return nil
+}
+
 // BumpComputeNodeGeneration implements Store (PR-4 / Commit 6).
 func (s *fakeStore) BumpComputeNodeGeneration(_ context.Context, name string) (int, error) {
 	if name == "" {
@@ -313,7 +368,7 @@ func (s *fakeStore) BumpComputeNodeGeneration(_ context.Context, name string) (i
 func sampleBundle(sha string) Bundle {
 	// EncodeDaemonHashes requires every daemon in the catalog; the
 	// sample bundle is canonical-complete.
-	hashes := make(map[string]string, 10)
+	hashes := make(map[string]string, 11)
 	patterns := []string{
 		"1111111111111111111111111111111111111111111111111111111111111111",
 		"2222222222222222222222222222222222222222222222222222222222222222",
@@ -325,13 +380,14 @@ func sampleBundle(sha string) Bundle {
 		"8888888888888888888888888888888888888888888888888888888888888888",
 		"9999999999999999999999999999999999999999999999999999999999999999",
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}
 	// We don't import manifest.SortedHostKeys here directly to keep
 	// the test self-contained — but to stay honest with the contract
-	// we list all 10. Order doesn't matter to a map.
+	// we list all 11. Order doesn't matter to a map.
 	keys := []string{
 		"apid", "builderd", "gatewayd_internal", "gatewayd_public",
-		"githubd", "imaged", "meterd", "realtimed", "schedd", "vmmd",
+		"githubd", "imaged", "meterd", "outboundd", "realtimed", "schedd", "vmmd",
 	}
 	for i, k := range keys {
 		hashes[k] = "sha256:" + patterns[i]
@@ -704,6 +760,43 @@ func TestFakeStore_ListAllBundles_OrdersByCreatedDesc(t *testing.T) {
 	}
 }
 
+func TestFakeStore_DeleteAbandonedBundle_GuardsLifecycleAndReferences(t *testing.T) {
+	const (
+		abandoned = "0000000000000000000000000000000000000001"
+		applied   = "0000000000000000000000000000000000000002"
+	)
+	s := newFakeStore()
+	if _, err := s.Insert(context.Background(), sampleBundle(abandoned)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, err := s.Insert(context.Background(), sampleBundle(applied)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MarkApplied(context.Background(), applied); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertComputeNode(context.Background(), "old-node", abandoned, "sha256:"+strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := s.DeleteAbandonedBundle(context.Background(), abandoned, time.Now().Add(time.Hour)); err != nil || deleted {
+		t.Fatalf("referenced bundle delete = (%t, %v), want protected", deleted, err)
+	}
+	delete(s.cnRows, "old-node")
+	if deleted, err := s.DeleteAbandonedBundle(context.Background(), abandoned, time.Now().Add(-time.Hour)); err != nil || deleted {
+		t.Fatalf("fresh bundle delete = (%t, %v), want protected", deleted, err)
+	}
+	if deleted, err := s.DeleteAbandonedBundle(context.Background(), abandoned, time.Now().Add(time.Hour)); err != nil || !deleted {
+		t.Fatalf("abandoned bundle delete = (%t, %v), want deleted", deleted, err)
+	}
+	if deleted, err := s.DeleteAbandonedBundle(context.Background(), abandoned, time.Now().Add(time.Hour)); err != nil || deleted {
+		t.Fatalf("repeated delete = (%t, %v), want idempotent false", deleted, err)
+	}
+	if _, err := s.GetByGitSHA(context.Background(), applied); err != nil {
+		t.Fatalf("newer applied bundle was removed: %v", err)
+	}
+}
+
 // PR-2 (issue #911 / ADR-110) tests: SetComputeNodeRole. The
 // renderer calls this after the file-write phase so the manifest
 // host.role value lands on compute_nodes.role. The contract:
@@ -868,6 +961,35 @@ func TestFakeStore_StampHostCertificate_NotFound(t *testing.T) {
 	err := s.StampHostCertificate(context.Background(), "ghost", "PEM", "fp")
 	if !errors.Is(err, ErrComputeNodeNotFound) {
 		t.Errorf("err = %v, want ErrComputeNodeNotFound", err)
+	}
+}
+
+func TestFakeStore_CompareAndSwapHostCertificate(t *testing.T) {
+	s := newFakeStore()
+	sha := strings.Repeat("c", 40)
+	mh := "sha256:" + strings.Repeat("c", 64)
+	if _, err := s.UpsertComputeNode(context.Background(), "node-1", sha, mh); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StampHostCertificate(context.Background(), "node-1", "PEM-A", "fp-A"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompareAndSwapHostCertificate(context.Background(), "node-1", "wrong", "PEM-B", "fp-B"); !errors.Is(err, ErrCertificateFingerprintConflict) {
+		t.Fatalf("wrong expected fingerprint: %v", err)
+	}
+	if err := s.CompareAndSwapHostCertificate(context.Background(), "node-1", "fp-A", "PEM-B", "fp-B"); err != nil {
+		t.Fatalf("CAS rotate: %v", err)
+	}
+	row, _ := s.GetComputeNode(context.Background(), "node-1")
+	if row.CertFingerprint == nil || *row.CertFingerprint != "fp-B" || row.Generation == nil || *row.Generation != 1 {
+		t.Fatalf("rotated row = %+v", row)
+	}
+	if err := s.CompareAndSwapHostCertificate(context.Background(), "node-1", "fp-A", "PEM-B", "fp-B"); err != nil {
+		t.Fatalf("idempotent CAS replay: %v", err)
+	}
+	row, _ = s.GetComputeNode(context.Background(), "node-1")
+	if row.Generation == nil || *row.Generation != 1 {
+		t.Fatalf("idempotent replay generation = %v, want 1", row.Generation)
 	}
 }
 

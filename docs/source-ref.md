@@ -16,9 +16,9 @@ control plane resolves everything from the account's existing
   install row for the account. This is the only step that needs
   a browser — see `gregale connect --help`.
 
-No `GREGALE_INSTALL_TOKEN_*` env vars are required. That env var
-is for the `gregale scan --repo` local-fs decomposition path;
-the source-ref deploy runs server-side.
+No `GREGALE_INSTALL_TOKEN_*` env vars are required. Both
+`gregale deploy --repo` and `gregale scan --repo` resolve the durable
+installation and fetch source through the control plane.
 
 ## Worked example: pin to a SHA in CI
 
@@ -30,10 +30,12 @@ gregale deploy --repo onebox-faas/hello --ref $(git rev-parse HEAD)
 
 This is the canonical CI shape: a runner reads `HEAD` from the
 local checkout and posts a one-shot deploy to the control
-plane. The control plane resolves the durable install row,
+plane. The CLI first creates the named app when it does not exist, or
+reuses the same-account app when it does. The control plane then resolves the durable install row,
 mints an installation token, fetches the codeload archive for
 the SHA, spools it, validates the tarball shape, enqueues a
-build, and returns the build/deployment ids.
+build, applies the `gregale.yaml` triggers and workflow definitions
+from that immutable archive, and returns the build/deployment ids.
 
 Output:
 
@@ -84,6 +86,20 @@ The CLI scopes that logical key to the source-ref transport before sending it
 to apid, so a replay folds to the original build row without colliding with a
 different deploy transport.
 
+The source-ref path reads `gregale.yaml` (or `gregale.yml`) from the fetched
+archive, not from the runner's current directory. Cron and event-trigger
+declarations are validated, quota-checked, deduplicated, and applied before
+the build is accepted; `workflows:` is stored on the deployment. Pass
+`--no-triggers` when a release should deploy code and workflows without
+reconciling trigger declarations.
+
+Repository deploys accept deployment annotations, rollout controls,
+`--no-triggers`, wait controls, and an idempotency key. App-shape and local
+source controls such as `--app`, `--function`, `--runtime`, `--handler`,
+`--dockerfile`, `--vcpu`, `--profile`, authentication/protocol overrides, and
+doctor flags are rejected with `--repo`; configure those on the app or use a
+local/tarball deploy whose source can be inspected before mutation.
+
 ## What it is NOT
 
 - **Not a webhook bind.** For push-event auto-deploy use
@@ -98,7 +114,7 @@ different deploy transport.
 ## Wire contract
 
 - `POST /v1/apps/{slug}/deployments/source-ref`
-- Body: `{"repo": "OWNER/NAME", "ref": "<branch|tag|sha>", "format": "tarball"}`
+- Body: `{"repo": "OWNER/NAME", "ref": "<branch|tag|sha>", "format": "tarball", "no_triggers": false}`
 - Auth chain: `authLimited → requireMFA → requireScope(ScopesDeployWriteSurface) → idempotent → handler`
 - SDK binding: `pkg/api.Client.DeployFromSourceRef` (Go) /
   `DeploymentsService.createDeploymentFromSourceRef` (Node).

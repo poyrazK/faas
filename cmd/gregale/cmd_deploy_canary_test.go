@@ -91,7 +91,10 @@ func TestParseCanaryStages_BadShapes(t *testing.T) {
 // TestBuildCanarySpec_Empty — empty preset returns nil so the
 // server applies the fast-default zero-value (no canary).
 func TestBuildCanarySpec_Empty(t *testing.T) {
-	got := buildCanarySpec("", "")
+	got, err := buildCanarySpec("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got != nil {
 		t.Errorf("buildCanarySpec(\"\", \"\") = %+v, want nil", got)
 	}
@@ -101,7 +104,10 @@ func TestBuildCanarySpec_Empty(t *testing.T) {
 // just carry the name; Stages stays nil so the catalog lookup on
 // the server side resolves the ladder.
 func TestBuildCanarySpec_CatalogPreset(t *testing.T) {
-	got := buildCanarySpec("balanced", "")
+	got, err := buildCanarySpec("balanced", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got == nil {
 		t.Fatal("got nil; want *CanaryPresetSpec")
 	}
@@ -116,7 +122,10 @@ func TestBuildCanarySpec_CatalogPreset(t *testing.T) {
 // TestBuildCanarySpec_CustomHappyPath — preset=custom + a valid
 // stages string → a fully populated spec ready for the wire.
 func TestBuildCanarySpec_CustomHappyPath(t *testing.T) {
-	got := buildCanarySpec("custom", "1@30s,10@2m,100@0s")
+	got, err := buildCanarySpec("custom", "1@30s,10@2m,100@0s")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got == nil {
 		t.Fatal("got nil; want *CanaryPresetSpec")
 	}
@@ -128,5 +137,28 @@ func TestBuildCanarySpec_CustomHappyPath(t *testing.T) {
 	}
 	if got.Stages[0].Percent != 1 || got.Stages[0].Duration != "30s" {
 		t.Errorf("Stages[0] = %+v, want {1, 30s}", got.Stages[0])
+	}
+}
+
+// adr: 122
+func TestBuildCanarySpecRejectsEveryInvalidLadderClass(t *testing.T) {
+	cases := []struct {
+		name, preset, stages string
+	}{
+		{"unknown preset", "mystery", ""},
+		{"stages without preset", "", "100@0s"},
+		{"stages on catalog preset", "balanced", "100@0s"},
+		{"custom without stages", "custom", ""},
+		{"invalid duration", "custom", "1@never,100@0s"},
+		{"non increasing", "custom", "10@30s,5@30s,100@0s"},
+		{"invalid terminal", "custom", "1@30s,50@0s"},
+		{"nonzero terminal duration", "custom", "1@30s,100@30s"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := buildCanarySpec(tc.preset, tc.stages); err == nil {
+				t.Fatalf("buildCanarySpec(%q, %q) accepted", tc.preset, tc.stages)
+			}
+		})
 	}
 }

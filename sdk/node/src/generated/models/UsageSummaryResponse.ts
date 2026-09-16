@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DailyUsagePoint } from './DailyUsagePoint.js';
+import type { ExecutionUsageSummaryResponse } from './ExecutionUsageSummaryResponse.js';
 /**
  * Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage dimensions, and a trailing 30-day daily trend (issue #308). The GB-hours fields drive the overage math; the other dimensions are informational.
  */
@@ -51,6 +52,10 @@ export type UsageSummaryResponse = {
    * Per-month sum of WAKE_RESTORE→WAKE_COLD_BOOT transitions across every app on the account (informational; not billed). ADR-048.
    */
   cold_boots?: number;
+  /**
+   * Terminal disposable execution usage for this UTC calendar month. Omitted when the backing store does not expose the execution usage read seam.
+   */
+  executions?: ExecutionUsageSummaryResponse;
   /**
    * Trailing 30 UTC calendar days, oldest first, grouped across the account. Empty when no daily rollup rows exist. issue #308.
    */

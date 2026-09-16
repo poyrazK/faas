@@ -1,6 +1,6 @@
 [Unit]
 Description=onebox-faas realtimed — managed realtime connection owner
-Documentation=https://docs.gregale.dev/ops/realtime
+Documentation=https://gregale.dev/docs/ops/realtime
 After=faas-cp.slice faas-vmmd.service
 Wants=faas-cp.slice faas-vmmd.service
 
@@ -11,11 +11,11 @@ Group=faas
 ExecStart=/opt/faas/current/bin/realtimed
 Restart=on-failure
 RestartSec=2s
-RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
 Slice=faas-cp.slice
 MemoryMax=512M
 Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
 EnvironmentFile=-/etc/faas/secrets/realtimed/realtimed.env
+EnvironmentFile=-/etc/faas/otel.env
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

@@ -34,6 +34,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	urlpkg "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,16 +51,16 @@ import (
 // applyProjectFixture builds the §4 multi-tier tarball (same as
 // scan_project_e2e_test.go's fixture). The compose's services use
 // `build: { context: . }` so the compose detector emits
-// (RootDir=".", Name="api") and (RootDir=".", Name="worker"). The
+// (RootDir=".", Name="backend") and (RootDir=".", Name="worker"). The
 // Dockerfile + index.js for each service live at the repo root with
 // `.api` / `.worker` suffixes so they DON'T trigger the convention
 // detector under services/{api,worker}/. Putting both there would
-// produce (RootDir="services/api", Name="api") with the same slug
+// produce (RootDir="services/backend", Name="backend") with the same slug
 // as the compose workload, tripping apps_slug_key on insert.
 func applyProjectFixture(t *testing.T) []byte {
 	t.Helper()
 	const composeYML = `services:
-  api:
+  backend:
     build:
       context: .
     ports:
@@ -74,8 +75,8 @@ func applyProjectFixture(t *testing.T) []byte {
 		name, body string
 	}{
 		{"faas-apply/docker-compose.yml", composeYML},
-		{"faas-apply/Dockerfile.api", "FROM alpine:3.19\nEXPOSE 8080\nCMD [\"./api\"]\n"},
-		{"faas-apply/index.api.js", "exports.handler = () => 1;\n"},
+		{"faas-apply/Dockerfile.backend", "FROM alpine:3.19\nEXPOSE 8080\nCMD [\"./api\"]\n"},
+		{"faas-apply/index.backend.js", "exports.handler = () => 1;\n"},
 		{"faas-apply/Dockerfile.worker", "FROM alpine:3.19\nEXPOSE 8081\nCMD [\"./worker\"]\n"},
 		{"faas-apply/index.worker.js", "exports.handler = () => 2;\n"},
 	}
@@ -112,6 +113,14 @@ func applyProjectFixture(t *testing.T) []byte {
 // URL (`/v1/projects` not `/v1/projects/scan`) and the response
 // shape (ApplyResponse embeds PlanResponse plus project_id + apps).
 func applyProjectMultipart(t *testing.T, h *e2etest.Harness, key, slug, planToken string, body []byte) api.ApplyResponse {
+	return applyProjectMultipartWithOnly(t, h, key, slug, planToken, "", body)
+}
+
+func applyProjectMultipartWithOnly(t *testing.T, h *e2etest.Harness, key, slug, planToken, only string, body []byte) api.ApplyResponse {
+	return applyProjectMultipartWithOptions(t, h, key, slug, planToken, only, false, body)
+}
+
+func applyProjectMultipartWithOptions(t *testing.T, h *e2etest.Harness, key, slug, planToken, only string, noTriggers bool, body []byte) api.ApplyResponse {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -127,15 +136,23 @@ func applyProjectMultipart(t *testing.T, h *e2etest.Harness, key, slug, planToke
 			t.Fatalf("write project_slug: %v", err)
 		}
 	}
-	if planToken != "" {
-		if err := mw.WriteField("plan_token", planToken); err != nil {
-			t.Fatalf("write plan_token: %v", err)
+	if only != "" {
+		if err := mw.WriteField("only", only); err != nil {
+			t.Fatalf("write only: %v", err)
+		}
+	}
+	if noTriggers {
+		if err := mw.WriteField("no_triggers", "true"); err != nil {
+			t.Fatalf("write no_triggers: %v", err)
 		}
 	}
 	if err := mw.Close(); err != nil {
 		t.Fatalf("multipart close: %v", err)
 	}
 	url := h.APIDURL + "/v1/projects"
+	if planToken != "" {
+		url += "?plan_token=" + urlpkg.QueryEscape(planToken)
+	}
 	req, err := http.NewRequestWithContext(context.Background(),
 		http.MethodPost, url, &buf)
 	if err != nil {
@@ -186,7 +203,7 @@ func TestApplyProject_MultiWorkloadHappyPath(t *testing.T) {
 		t.Fatalf("ApplyResponse.ProjectID is empty")
 	}
 	// Six workloads in the fixture: api (compose), worker (compose),
-	// faas-apply (fly.toml if present), services/api, services/worker,
+	// faas-apply (fly.toml if present), services/backend, services/worker,
 	// cron (Procfile). The fixture above intentionally omits fly.toml
 	// and render.yaml, AND keeps the per-service Dockerfiles at the
 	// repo root (.api/.worker) so the convention detector does NOT

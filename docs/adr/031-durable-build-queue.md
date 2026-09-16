@@ -126,7 +126,7 @@
     Go inside builderd — extracting it to its own daemon adds
     deployment cost (a new `faas-buildqueued.service`, a new
     `/metrics` scrape target, a new gRPC auth ticket) for zero
-    isolation benefit. The 1 + 1 opportunistic builder slot is
+    isolation benefit. The single local builder slot is
     enforced inside `ProcessOne` / `processClaimedBuild`; the
     worker needs to share the same process for that enforcement to
     be in-tx.
@@ -159,12 +159,11 @@
     for hard crashes where no shutdown path can run.
 
 - **Out-of-scope follow-ups (deferred to PR-C or later):**
-  - **Multi-builderd horizontal scale.** `SKIP LOCKED` makes
-    concurrent pollers safe at the SQL layer, but the
-    `1 + 1 opportunistic` slot budget is per-process. Two
-    `faas-builderd` processes on the reference node would exceed the budget.
-    Not a single-node concern; revisit if the cluster grows past
-    one control plane.
+  - **Multiple builderd processes on one host.** `SKIP LOCKED` makes
+    concurrent pollers safe at the SQL layer, but the single slot budget is
+    per process. Two `faas-builderd` processes on one node would exceed the
+    5 GiB parent budget. Horizontal capacity comes from distinct eligible
+    compute nodes.
   - **Promotion to pg_cron.** If the reference node ever grows pg_cron, the
     in-process worker can be deleted and the `SELECT` promoted to a
     `cron.schedule` call. The CAS SQL is the same in both places.

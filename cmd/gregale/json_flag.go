@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"io"
 	"os"
 	"strings"
@@ -40,6 +41,62 @@ import (
 //   - cmdApp --concurrency fast path     — explicitly rejects --json
 //     (commands2.go)
 var jsonOutput bool
+
+// newFlagSet gives every leaf parser the same machine-readable failure path.
+// flag.FlagSet writes parse errors before returning them, so callers cannot
+// reliably translate those errors after Parse. This writer emits the first
+// diagnostic as one Problem object and discards FlagSet's follow-on usage
+// fragments; human mode retains the standard flag package output.
+func newFlagSet(name string, handling flag.ErrorHandling) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, handling)
+	setFlagOutput(fs, os.Stderr)
+	return fs
+}
+
+// rejectUnexpectedFlagArgs closes the standard flag package's permissive
+// trailing-token behavior for flag-only leaves. Call it immediately after a
+// successful Parse and before authentication or any API request.
+func rejectUnexpectedFlagArgs(fs *flag.FlagSet) bool {
+	if fs.NArg() == 0 {
+		return false
+	}
+	topic := fs.Name()
+	if fields := strings.Fields(topic); len(fields) > 0 {
+		topic = fields[0]
+	}
+	printUsage(osStderr, "usage: gregale "+fs.Name()+" [flags]; unexpected positional argument(s): "+strings.Join(fs.Args(), " "), topic)
+	return true
+}
+
+func setFlagOutput(fs *flag.FlagSet, human io.Writer) {
+	if jsonOutput && !jsonUsageHelp {
+		fs.SetOutput(&jsonFlagErrorWriter{name: fs.Name(), dst: human})
+		return
+	}
+	fs.SetOutput(human)
+}
+
+type jsonFlagErrorWriter struct {
+	name  string
+	dst   io.Writer
+	wrote bool
+}
+
+func (w *jsonFlagErrorWriter) Write(p []byte) (int, error) {
+	if w.wrote || strings.TrimSpace(string(p)) == "" {
+		return len(p), nil
+	}
+	w.wrote = true
+	err := writeJSONProblemTo(w.dst, api.Problem{
+		Type:    docsSiteURL + "/errors/invalid-request",
+		Title:   "Invalid command flags",
+		Status:  400,
+		Code:    api.CodeValidation,
+		Detail:  strings.TrimSpace(string(p)),
+		DocsURL: cliDocsURL,
+	})
+	return len(p), err
+}
 
 // applyJSONFlag consumes a leading --json (or -j / --json=BOOL) from
 // args and sets jsonOutput. Honors FAAS_JSON first, then the persistent
@@ -132,11 +189,15 @@ func writeNDJSON[T any](items []T) error {
 // against the error stream. The single line shape matches the
 // RFC 7807 body the server already emits — we don't re-shape it.
 func writeJSONProblem(p api.Problem) error {
+	return writeJSONProblemTo(os.Stderr, p)
+}
+
+func writeJSONProblemTo(w io.Writer, p api.Problem) error {
 	b, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
-	_, err = os.Stderr.Write(append(b, '\n'))
+	_, err = w.Write(append(b, '\n'))
 	return err
 }
 

@@ -2,9 +2,31 @@ package reposcan
 
 import (
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
+
+func TestScan_MalformedComposeVariantsCannotFallBackToRoot(t *testing.T) {
+	t.Parallel()
+	for _, filename := range composeFileNames {
+		filename := filename
+		t.Run(filename, func(t *testing.T) {
+			t.Parallel()
+			fsys := fstest.MapFS{
+				filename:       &fstest.MapFile{Data: []byte("services:\n  api:\n    build: [\n")},
+				"package.json": &fstest.MapFile{Data: []byte(`{"scripts":{"start":"node index.js"}}`)},
+			}
+			result, err := Scan(fsys)
+			if err == nil || !strings.Contains(err.Error(), filename) {
+				t.Fatalf("Scan err=%v, want parse failure naming %s", err, filename)
+			}
+			if len(result.Workloads) != 0 {
+				t.Fatalf("fallback workloads = %#v, want none", result.Workloads)
+			}
+		})
+	}
+}
 
 // TestScan_ComposeK8sFixture is the §4 Phase 2 acceptance gate
 // fixture. Per docs/repo_decomposition_implementation.md §4.260:
@@ -69,8 +91,8 @@ func TestScan_ComposeK8sFixture(t *testing.T) {
 	for _, w := range r.Workloads {
 		switch w.Name {
 		case "api":
-			if w.Class != ClassUnknown {
-				t.Errorf("api Class = %q, want unknown (compose alone doesn't declare class)", w.Class)
+			if w.Class != ClassHTTP {
+				t.Errorf("api Class = %q, want http (compose publishes a port)", w.Class)
 			}
 			if len(w.Ports) != 1 || w.Ports[0] != 8080 {
 				t.Errorf("api Ports = %v, want [8080]", w.Ports)
@@ -93,8 +115,8 @@ func TestScan_ComposeK8sFixture(t *testing.T) {
 				t.Errorf("nightly Source = %q, want k8s/...: nightly", w.Source)
 			}
 		case "worker":
-			if w.Class != ClassUnknown {
-				t.Errorf("worker Class = %q, want unknown (compose alone)", w.Class)
+			if w.Class != ClassWorker {
+				t.Errorf("worker Class = %q, want worker (compose publishes no port)", w.Class)
 			}
 			if len(w.Command) != 1 || w.Command[0] != "bundle exec sidekiq" {
 				t.Errorf("worker Command = %v, want [bundle exec sidekiq]", w.Command)
@@ -257,6 +279,45 @@ func TestScan_SortedByNameCaseInsensitive(t *testing.T) {
 	_ = 0 // placeholder; reserved
 }
 
+func TestHashWorkloadSourceScopesContentAndBuildMetadata(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"services/api/server.js": &fstest.MapFile{Data: []byte("v1")},
+		"README.md":              &fstest.MapFile{Data: []byte("outside-v1")},
+	}
+	workload := Workload{RootDir: "services/api", Dockerfile: "Dockerfile", Command: []string{"node", "server.js"}}
+	base, err := hashWorkloadSource(fsys, workload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys["README.md"] = &fstest.MapFile{Data: []byte("outside-v2")}
+	outside, err := hashWorkloadSource(fsys, workload)
+	if err != nil || outside != base {
+		t.Fatalf("outside-root edit changed digest: %q -> %q, %v", base, outside, err)
+	}
+	fsys["services/api/server.js"] = &fstest.MapFile{Data: []byte("v2")}
+	inside, err := hashWorkloadSource(fsys, workload)
+	if err != nil || inside == base {
+		t.Fatalf("inside-root edit did not change digest: %q -> %q, %v", base, inside, err)
+	}
+	workload.Dockerfile = "Dockerfile.production"
+	metadata, err := hashWorkloadSource(fsys, workload)
+	if err != nil || metadata == inside {
+		t.Fatalf("Dockerfile selection did not change digest: %q -> %q, %v", inside, metadata, err)
+	}
+
+	root := Workload{Name: "app"}
+	rootBefore, err := hashWorkloadSource(fsys, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys["README.md"] = &fstest.MapFile{Data: []byte("outside-v3")}
+	rootAfter, err := hashWorkloadSource(fsys, root)
+	if err != nil || rootAfter == rootBefore {
+		t.Fatalf("root workload omitted repository edit: %q -> %q, %v", rootBefore, rootAfter, err)
+	}
+}
+
 // composeK8sFixture is the canonical §4 fixture. Centralized so
 // the reproduce test and the gate test share the same input.
 func composeK8sFixture(t *testing.T) fstest.MapFS {
@@ -288,7 +349,9 @@ func composeK8sFixture(t *testing.T) fstest.MapFS {
   cache:
     image: redis:7-alpine
 `)},
-		"k8s": &fstest.MapFile{Mode: 0o755 | fs.ModeDir},
+		"api/Dockerfile.api":  &fstest.MapFile{Data: []byte("FROM scratch\n")},
+		"worker/package.json": &fstest.MapFile{Data: []byte(`{"scripts":{"start":"bundle exec sidekiq"}}`)},
+		"k8s":                 &fstest.MapFile{Mode: 0o755 | fs.ModeDir},
 		"k8s/nightly.cronjob.yaml": &fstest.MapFile{Data: []byte(`apiVersion: batch/v1
 kind: CronJob
 metadata:

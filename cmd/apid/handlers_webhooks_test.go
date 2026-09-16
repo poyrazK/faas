@@ -32,7 +32,7 @@ func webhookReq() api.CreateAppWebhookRequest {
 	return api.CreateAppWebhookRequest{
 		TargetURL:     "https://example.com/hook",
 		WebhookSecret: "shh-test",
-		EventFilter:   []string{"cron.fired"},
+		EventFilter:   []string{"app.parked"},
 		RetryPolicy:   "default",
 	}
 }
@@ -78,8 +78,8 @@ func TestCreateAppWebhook_HappyPath(t *testing.T) {
 	if out.RetryPolicy != "default" {
 		t.Errorf("retry_policy: got %q, want %q", out.RetryPolicy, "default")
 	}
-	if len(out.EventFilter) != 1 || out.EventFilter[0] != "cron.fired" {
-		t.Errorf("event_filter: got %v, want [cron.fired]", out.EventFilter)
+	if len(out.EventFilter) != 1 || out.EventFilter[0] != "app.parked" {
+		t.Errorf("event_filter: got %v, want [app.parked]", out.EventFilter)
 	}
 	row, err := e.store.AppWebhookByID(context.Background(), out.ID)
 	if err != nil {
@@ -158,6 +158,21 @@ func TestCreateAppWebhook_EventOutOfVocabulary(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "app_webhook_invalid") {
 		t.Errorf("body missing app_webhook_invalid code: %s", rec.Body)
+	}
+}
+
+func TestCreateAppWebhook_EventWithoutProducerIsUnavailable(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	mustSeedApp(t, e, "wh-no-producer")
+	req := webhookReq()
+	req.EventFilter = []string{"app.deployed"}
+	rec := e.do(t, http.MethodPost, "/v1/apps/wh-no-producer/webhooks", req, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "app_webhook_invalid") ||
+		!strings.Contains(rec.Body.String(), "app.parked, app.woken, usage_statement.finalized") {
+		t.Fatalf("body does not expose the producer-backed vocabulary: %s", rec.Body.String())
 	}
 }
 

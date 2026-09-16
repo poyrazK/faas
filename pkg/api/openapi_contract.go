@@ -36,6 +36,24 @@ type GitHubInstallStatus struct {
 	} `json:"sync_result,omitempty"`
 }
 
+// GitHubDeploymentPolicy is the customer-owned project-level policy applied
+// by githubd to source staging and PR-preview leases.
+type GitHubDeploymentPolicy struct {
+	ProjectID       string   `json:"project_id"`
+	RootDir         string   `json:"root_dir"`
+	IgnoredPaths    []string `json:"ignored_paths"`
+	PreviewEnabled  bool     `json:"preview_enabled"`
+	PreviewTTLHours int      `json:"preview_ttl_hours"`
+}
+
+// GitHubDeploymentPolicyPatch is the partial update shape for the policy.
+type GitHubDeploymentPolicyPatch struct {
+	RootDir         *string   `json:"root_dir,omitempty"`
+	IgnoredPaths    *[]string `json:"ignored_paths,omitempty"`
+	PreviewEnabled  *bool     `json:"preview_enabled,omitempty"`
+	PreviewTTLHours *int      `json:"preview_ttl_hours,omitempty"`
+}
+
 // OpenAPIContractDiffResponse is the read-only production contract check.
 // It is intentionally separate from DiffResponse: deploydiff describes
 // application configuration changes, while this response describes the

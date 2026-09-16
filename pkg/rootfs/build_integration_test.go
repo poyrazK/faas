@@ -69,9 +69,11 @@ func TestBuildRealMkfs(t *testing.T) {
 	if fi.Size() == 0 {
 		t.Error("ext4 image is empty")
 	}
-	// M2 acceptance: a hello app layer is small.
-	if res.SizeMB > 50 {
-		t.Errorf("hello app layer = %d MB, want < 50 MB (M2 acceptance)", res.SizeMB)
+	// The filesystem's logical size is the advertised plan capacity. ext4
+	// and storage backends preserve the unused zero space as sparse holes.
+	wantSize := api.MustLimitsFor(api.PlanFree).EphemeralDiskMaxMB()
+	if res.SizeMB != wantSize {
+		t.Errorf("hello app layer = %d MB, want Free capacity %d MB", res.SizeMB, wantSize)
 	}
 	t.Logf("built %s: %d MB (content %d bytes)", out, res.SizeMB, res.ContentBytes)
 }

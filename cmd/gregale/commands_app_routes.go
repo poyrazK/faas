@@ -86,10 +86,11 @@ func renderAppsRoutesText(w io.Writer, slug string, resp api.AppRoutesResponse) 
 			_, _ = fmt.Fprintf(w, "  %s\n", r)
 		}
 	}
-	if resp.Source == "unavailable" {
-		_, _ = fmt.Fprintln(w, "source: unavailable (cap_hit unknown — gatewayd-internal dial failed)")
+	if resp.Source == api.AppRoutesSourceUnavailable {
+		_, _ = fmt.Fprintf(w, "source: unavailable (collectors: %d/%d; cap_hit unknown)\n", resp.CollectorsHealthy, resp.CollectorsExpected)
 	} else {
 		_, _ = fmt.Fprintf(w, "source: %s\n", resp.Source)
+		_, _ = fmt.Fprintf(w, "collectors: %d/%d\n", resp.CollectorsHealthy, resp.CollectorsExpected)
 		_, _ = fmt.Fprintf(w, "cap_hit: %t\n", resp.CapHit)
 		if resp.CapHit {
 			_, _ = fmt.Fprintln(w, "  (the app has hit the 50-route cap; additional routes are collapsing into __route_other__)")

@@ -49,8 +49,11 @@ const dispatchSignup = "signup"
 // is server-rendered (no password ever crosses the wire in the CLI),
 // the latter is a CI-shape mirror of the interactive flow.
 func cmdSignup(args []string) int {
-	fs := flag.NewFlagSet("signup", flag.ContinueOnError)
+	fs := newFlagSet("signup", flag.ContinueOnError)
 	fs.Usage = func() {
+		if jsonOutput && !jsonUsageHelp {
+			return
+		}
 		PrintUsage(os.Stderr, "usage: gregale signup [--email-only EMAIL | --password-stdin]", "auth")
 	}
 	emailOnly := fs.String("email-only", "", "send a one-time signup link to this email (no password prompt)")

@@ -82,6 +82,11 @@ func (m *MemStore) ListWorkflowRuns(_ context.Context, appID string, opts ListWo
 	if opts.Offset < 0 || opts.Limit < 0 {
 		return nil, 0, ErrWorkflowInvalidPagination
 	}
+	if opts.Status != "" {
+		if err := validateWorkflowRunStatus(opts.Status); err != nil {
+			return nil, 0, err
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

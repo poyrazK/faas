@@ -1,5 +1,7 @@
 package main
 
+// adr: 045
+
 // Tests for the three account-scoped list endpoints (issue #393):
 //
 //   GET /v1/instances        → listInstancesForAccount
@@ -398,6 +400,13 @@ func TestGetAppsMetrics_InvalidRange(t *testing.T) {
 	assertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 }
 
+func TestGetAppsMetrics_FreePlanReturns402(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	createApp(t, e, "free-app")
+	rec := e.do(t, http.MethodGet, "/v1/apps/metrics?range=5m", nil, nil)
+	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
+}
+
 // TestGetAppsMetrics_HappyPath_WithProm wires a fake Prometheus that
 // returns per-app vector data, then asserts the rollup is keyed by
 // app_slug and each row carries the per-app `request_count`.
@@ -411,9 +420,9 @@ func TestGetAppsMetrics_HappyPath_WithProm(t *testing.T) {
 	// Scalar response: fleet wake p95.
 	responder := func(query string) string {
 		switch {
-		case strings.Contains(query, "sum by (app)(increase(gateway_requests_total"):
+		case strings.Contains(query, "sum by (app)(increase(gateway_request_duration_seconds_count"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"42"]},{"metric":{"app":"%s"},"value":[1,"17"]}]}}`, appFoo.ID, appBar.ID)
-		case strings.Contains(query, "sum by (app)(rate(gateway_requests_total{code"):
+		case strings.Contains(query, "sum by (app)(rate(gateway_request_duration_seconds_count{class"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"1.4"]},{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, appFoo.ID, appBar.ID)
 		case strings.Contains(query, "sum by (app)(rate(gateway_cold_boot_total"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"5"]},{"metric":{"app":"%s"},"value":[1,"3"]}]}}`, appFoo.ID, appBar.ID)
@@ -455,14 +464,15 @@ func TestGetAppsMetrics_HappyPath_WithProm(t *testing.T) {
 		// for foo-app, 16.15/17 for bar-app) lands above the last
 		// finite bucket (0.5) so the walk returns prevNonEmptyUpper
 		// = 0.5 (the +Inf bucket is skipped per PromQL semantics).
-		if row.LatencyP50MS <= 0 {
-			t.Errorf("app %s latency_p50_ms=%.4f, want >0", slug, row.LatencyP50MS)
+		wantP50 := map[string]float64{"foo-app": 126.66666666666667, "bar-app": 85}[slug]
+		if math.Abs(row.LatencyP50MS-wantP50) > 1e-9 {
+			t.Errorf("app %s latency_p50_ms=%.6f, want %.6f", slug, row.LatencyP50MS, wantP50)
 		}
-		if math.Abs(row.LatencyP95MS-0.5) > 1e-9 {
-			t.Errorf("app %s latency_p95_ms=%.6f, want 0.5 (cap at last finite bucket)", slug, row.LatencyP95MS)
+		if math.Abs(row.LatencyP95MS-500) > 1e-9 {
+			t.Errorf("app %s latency_p95_ms=%.6f, want 500 (cap at last finite bucket)", slug, row.LatencyP95MS)
 		}
-		if math.Abs(row.LatencyP99MS-0.5) > 1e-9 {
-			t.Errorf("app %s latency_p99_ms=%.6f, want 0.5 (same fixture)", slug, row.LatencyP99MS)
+		if math.Abs(row.LatencyP99MS-500) > 1e-9 {
+			t.Errorf("app %s latency_p99_ms=%.6f, want 500 (same fixture)", slug, row.LatencyP99MS)
 		}
 	}
 }
@@ -478,9 +488,9 @@ func TestGetAppsMetrics_ZeroTrafficDoesNotDegrade(t *testing.T) {
 
 	responder := func(query string) string {
 		switch {
-		case strings.Contains(query, "sum by (app)(increase(gateway_requests_total"):
+		case strings.Contains(query, "sum by (app)(increase(gateway_request_duration_seconds_count"):
 			return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"12"]},{"metric":{"app":"%s"},"value":[1,"0"]}]}}`, active.ID, idle.ID)
-		case strings.Contains(query, "gateway_requests_total{code") || strings.Contains(query, "gateway_cold_boot_total"):
+		case strings.Contains(query, "gateway_request_duration_seconds_count{class") || strings.Contains(query, "gateway_cold_boot_total"):
 			if !strings.Contains(query, "and on (app)") || !strings.Contains(query, "> 0") {
 				return fmt.Sprintf(`{"data":{"resultType":"vector","result":[{"metric":{"app":"%s"},"value":[1,"NaN"]}]}}`, idle.ID)
 			}

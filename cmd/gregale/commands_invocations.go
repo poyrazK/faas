@@ -68,7 +68,7 @@ func cmdInvocations(args []string) int {
 // as cmdAuditEventsList but the server emits invocation rows, not
 // audit-event rows, so the renderer shape is different.
 func cmdInvocationsList(args []string) int {
-	fs := flag.NewFlagSet("invocations list", flag.ContinueOnError)
+	fs := newFlagSet("invocations list", flag.ContinueOnError)
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
 	limit := fs.Int("limit", 50, "max rows (1..100; server caps at 100)")
 	if err := fs.Parse(args); err != nil {
@@ -118,7 +118,7 @@ func cmdInvocationsList(args []string) int {
 // {"original": ..., "replay": ...} envelope so scripts have a stable
 // shape regardless of --replay presence.
 func cmdInvocationsGet(args []string) int {
-	fs := flag.NewFlagSet("invocations get", flag.ContinueOnError)
+	fs := newFlagSet("invocations get", flag.ContinueOnError)
 	replay := fs.Bool("replay", false, "re-issue a failed invocation (returns the new async invocation)")
 	if err := fs.Parse(args); err != nil {
 		return 1

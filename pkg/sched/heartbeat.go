@@ -104,6 +104,13 @@ type Heartbeat struct {
 	// non-empty = single-node ping (the schedd only watches its
 	// own vmmd). Set via WithOwnerNodeID after NewHeartbeat.
 	ownerNodeID string
+	// observeStalePeers enables the control-plane observer used by
+	// multi-node schedds. An owner-scoped heartbeat cannot run when its
+	// schedd is frozen, so peer schedds also inspect the durable heartbeat
+	// timestamp and CAS stale active/recovering rows to unavailable. The
+	// observer never dials peers; their owner remains responsible for
+	// transport probes and recovery reactivation.
+	observeStalePeers bool
 	// nodeRegistry is the notification-backed active-node snapshot. Nil keeps
 	// the store enumeration path for compatibility with older fixtures.
 	nodeRegistry *NodeRegistry
@@ -154,6 +161,19 @@ func (h *Heartbeat) WithOwnerNodeID(nodeID string) *Heartbeat {
 		return h
 	}
 	h.ownerNodeID = nodeID
+	return h
+}
+
+// WithStalePeerObserver enables the control-plane stale-heartbeat observer.
+// Each per-node schedd should enable this in a multi-node deployment so a
+// frozen schedd cannot hide its node from the rest of the fleet. The CAS is
+// safe when several peers observe the same row concurrently; only one writer
+// can land the active/recovering → unavailable transition.
+func (h *Heartbeat) WithStalePeerObserver(enabled bool) *Heartbeat {
+	if h == nil {
+		return h
+	}
+	h.observeStalePeers = enabled
 	return h
 }
 
@@ -237,18 +257,21 @@ func NewHeartbeat(store state.Store, dialer HeartbeatDialer, tlsCfg *tls.Config,
 // select is Loop.Run, same as the watchdog/retention tickers). One
 // Ping error must not abort the sweep — we log + flip and move on.
 //
-// Tick honours the staleness gate (issue #98 / ADR-028): a row
-// whose last_heartbeat_at has aged past h.Staleness is flipped
-// inactive even if Ping just succeeded (defence-in-depth — Ping
-// racing with a half-shut vmmd might return OK once after the box
-// was already dead). Re-activation happens on the next successful
-// ping post-recovery, same as PR #114's pre-#98 behaviour.
+// Tick honours the staleness gate (issue #98 / ADR-028), but the
+// current probe is authoritative. A stale database timestamp can
+// also mean the scheduler loop was delayed during startup or a long
+// maintenance sweep. A node that answers Ping is kept available and
+// gets a fresh timestamp; a stale node is demoted only when its
+// current probe also fails.
 func (h *Heartbeat) Tick(ctx context.Context) error {
 	staleness := h.Staleness
 	if staleness <= 0 {
 		staleness = DefaultHeartbeatStaleness
 	}
 	now := h.now()
+	if h.observeStalePeers {
+		h.observeStalePeerNodes(ctx, now, staleness)
+	}
 	var nodes []state.ComputeNode
 	if h.nodeRegistry != nil {
 		nodes = h.nodeRegistry.Snapshot()
@@ -342,6 +365,61 @@ func (h *Heartbeat) Tick(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// observeStalePeerNodes is the control-plane half of liveness detection. A
+// node-local schedd is the only process that can actively probe its vmmd, but
+// that schedd may itself be partitioned or stopped. Peer schedds therefore
+// watch the durable timestamp and remove a peer whose heartbeat has aged past
+// the same staleness budget. This path is intentionally timestamp-only: it
+// does not dial a peer and it never reactivates rows. The owning schedd's
+// probe remains the sole authority for transport recovery.
+func (h *Heartbeat) observeStalePeerNodes(ctx context.Context, tickNow time.Time, staleness time.Duration) {
+	nodes, err := h.store.NodeList(ctx, "")
+	if err != nil {
+		h.log.Warn("heartbeat: list nodes for stale-peer observer failed", "err", err)
+		return
+	}
+	for _, n := range nodes {
+		if n.ID == h.ownerNodeID || n.LastHeartbeatAt.IsZero() ||
+			tickNow.Sub(n.LastHeartbeatAt) <= staleness {
+			continue
+		}
+		// Preserve operator intent. A peer in a drain/maintenance/terminal
+		// lifecycle is not a liveness candidate for this observer.
+		if n.Lifecycle != state.NodeLifecycleActive && n.Lifecycle != state.NodeLifecycleRecovering {
+			continue
+		}
+
+		marked := false
+		for _, expected := range []state.NodeLifecycle{
+			state.NodeLifecycleActive,
+			state.NodeLifecycleRecovering,
+		} {
+			if err := h.store.NodeSetLifecycle(ctx, n.ID, expected, state.NodeLifecycleUnavailable); err != nil {
+				if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
+					continue
+				}
+				h.log.Warn("heartbeat: stale-peer lifecycle CAS failed",
+					"node_id", n.ID, "expected", expected,
+					"next", state.NodeLifecycleUnavailable, "err", err)
+				continue
+			}
+			marked = true
+			break
+		}
+		if !marked {
+			continue
+		}
+		h.log.Warn("heartbeat: peer heartbeat stale; marking unavailable",
+			"node_id", n.ID, "node_name", n.Name,
+			"last_seen", n.LastHeartbeatAt.Format(time.RFC3339),
+			"staleness", staleness.String())
+		h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
+		if h.nodeRegistry != nil {
+			h.nodeRegistry.Remove(n.ID)
+		}
+	}
+}
+
 // probeNode performs one bounded probe and applies its result. It is called by
 // the bounded worker pool in Tick; each node is processed exactly once.
 func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow time.Time, staleness time.Duration) {
@@ -416,41 +494,24 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 		return false
 	}
 
-	// Staleness gate (issue #98): even if Ping below succeeds,
-	// a node whose last_heartbeat_at is older than the
-	// threshold is stale and gets flipped unavailable. The
-	// CAS-or union {active, recovering, draining} → unavailable
-	// covers all three lifecycle sources (clean node, post-
-	// recovery node, operator-drained node). Unavailable rows
-	// are exempt: their old timestamp is expected, and the probe
-	// below is the only path that can discover recovery.
+	// A stale timestamp alone is not proof that the compute node is
+	// unavailable. The scheduler loop can be delayed by startup work
+	// or another bounded sweep, while vmmd remains healthy. Probe
+	// first so a reachable node is refreshed instead of triggering a
+	// false failure, rebalancing its apps back onto itself, and
+	// rejecting customer wakes during the recovery cycle.
 	wasUnavailable := n.Lifecycle == state.NodeLifecycleUnavailable
-	// Legacy row whose lifecycle enum hasn't been read yet
-	// (pre-fix-#1 pgstore deploys, MemStore seeds with no enum
-	// yet) falls through to the staleness gate + CAS-or loop
-	// below; the union includes "" as a valid expected state.
-	if !wasUnavailable && !n.LastHeartbeatAt.IsZero() && tickNow.Sub(n.LastHeartbeatAt) > staleness {
-		h.log.Info("heartbeat: node stale, marking unavailable",
-			"node_id", n.ID, "node_name", n.Name,
-			"last_seen", n.LastHeartbeatAt.Format(time.RFC3339),
-			"prior_lifecycle", string(n.Lifecycle),
-			"staleness", staleness.String())
-		if markUnavailableIfEligible() && !wasUnavailable {
-			h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
-		}
-		if h.nodeRegistry != nil {
-			h.nodeRegistry.Remove(n.ID)
-		}
-		return
-	}
 	if _, err := h.heartbeatPing(ctx, n); err != nil {
 		// A dead node gets flipped unavailable so placement
 		// skips it on the next Wake. We don't fail the
 		// sweep — one bad node must not block the others.
 		// Same expected-state fan-out as the staleness gate.
+		stale := !n.LastHeartbeatAt.IsZero() && tickNow.Sub(n.LastHeartbeatAt) > staleness
 		h.log.Warn("heartbeat: ping failed; marking unavailable",
 			"node_id", n.ID, "node_name", n.Name,
-			"prior_lifecycle", string(n.Lifecycle), "err", err)
+			"prior_lifecycle", string(n.Lifecycle),
+			"last_seen", n.LastHeartbeatAt.Format(time.RFC3339),
+			"stale", stale, "staleness", staleness.String(), "err", err)
 		if markUnavailableIfEligible() && !wasUnavailable {
 			h.emitNodeFailed(ctx, n, n.LastHeartbeatAt)
 		}

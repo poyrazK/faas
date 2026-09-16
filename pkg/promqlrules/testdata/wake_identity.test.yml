@@ -1,0 +1,35 @@
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "schedd missing wake identity reaches the shared lifecycle alert"
+    input_series:
+      - series: 'schedd_wake_identity_invalid_total{phase="queue_accepted",field="app_id"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasWakeEventIdentityMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: observability
+              family: wake_timeline
+              public_status: internal
+              phase: queue_accepted
+              field: app_id
+            exp_annotations:
+              summary: "Wake queue_accepted event is missing app_id"
+              description: "A wake lifecycle producer attempted to persist an event without required authoritative identity. The row was rejected to prevent silently incomplete customer timelines."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWakeLatencyHigh.md"
+
+  - interval: 30s
+    name: "unrelated counters do not trigger the wake identity alert"
+    input_series:
+      - series: 'apid_wake_identity_invalid_total{phase="queue_accepted",field="app_id"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasWakeEventIdentityMissing

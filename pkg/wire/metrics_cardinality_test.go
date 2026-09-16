@@ -335,7 +335,7 @@ func TestRequestTotalOverflowsToSharedOther(t *testing.T) {
 // HTTP-path accessor (issue #303, ADR-038) — the route label is
 // read from r.Pattern with the reserved "unmatched" fallback, and
 // the code label is derived from the response status via
-// wire.CodeFromStatus (2xx/3xx → "ok", 4xx/5xx → "err"). Owning
+// wire.CodeFromStatus (2xx/3xx/4xx → "ok", 5xx → "err"). Owning
 // the extraction inside the accessor means callers cannot
 // accidentally pass a raw URL path or the wrong status code.
 func TestRequestTotalForExtractsRouteAndCode(t *testing.T) {
@@ -357,23 +357,22 @@ func TestRequestTotalForExtractsRouteAndCode(t *testing.T) {
 	if !strings.Contains(body, fmt.Sprintf(`apid_request_total{account_id=%q,code="err",route="GET /v1/rt"} 1`, id)) {
 		t.Errorf("matched + 500: missing expected series in:\n%s", body)
 	}
-	// Unmatched route, 404. route collapses to "unmatched"; code is
-	// "err" since 404 >= 400.
+	// Unmatched route, 404. route collapses to "unmatched"; code remains
+	// "ok" because the platform error-rate series reserves "err" for 5xx.
 	unmatched := httptest.NewRequest(http.MethodGet, "/wp-login.php", nil)
 	unmatched.Pattern = ""
 	m.RequestTotalFor(unmatched, http.StatusNotFound, id).Inc()
 	body = render(t, m)
-	unmatchedWant := fmt.Sprintf(`apid_request_total{account_id=%q,code="err",route="unmatched"} 1`, id)
+	unmatchedWant := fmt.Sprintf(`apid_request_total{account_id=%q,code="ok",route="unmatched"} 1`, id)
 	if !strings.Contains(body, unmatchedWant) {
 		t.Errorf("unmatched + 404: missing expected series in:\n%s", body)
 	}
 }
 
 // TestCodeFromStatus pins the closed code label set {ok, err}.
-// 2xx/3xx → "ok"; 4xx/5xx → "err". 1xx is treated as "err" (a 1xx
-// status is a protocol-level intermediate response — if it's the
-// final status, something is wrong). The branch is the same shape
-// observeErrFromStatus uses in cmd/apid/server.go for apid_ops_total.
+// 2xx/3xx/4xx → "ok"; 5xx → "err". Client and entitlement errors
+// remain visible in apid_request_failures_total but cannot trigger the
+// platform/server error-rate anomaly.
 func TestCodeFromStatus(t *testing.T) {
 	for _, tc := range []struct {
 		status int
@@ -382,11 +381,11 @@ func TestCodeFromStatus(t *testing.T) {
 		{http.StatusOK, "ok"},
 		{http.StatusNoContent, "ok"},
 		{http.StatusMovedPermanently, "ok"},
-		{http.StatusBadRequest, "err"},
-		{http.StatusUnauthorized, "err"},
-		{http.StatusNotFound, "err"},
+		{http.StatusBadRequest, "ok"},
+		{http.StatusUnauthorized, "ok"},
+		{http.StatusNotFound, "ok"},
 		{http.StatusInternalServerError, "err"},
-		{0, "err"}, // Connection failure / status never written.
+		{0, "ok"}, // No completed 5xx response was observed.
 	} {
 		if got := wire.CodeFromStatus(tc.status); got != tc.want {
 			t.Errorf("CodeFromStatus(%d) = %q, want %q", tc.status, got, tc.want)

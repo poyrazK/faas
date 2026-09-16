@@ -119,6 +119,10 @@ type Lease struct {
 	// CPUMillicores is the app-selected sustained CPU quota. Zero keeps the
 	// plan-derived legacy quota for internal callers and builder paths.
 	CPUMillicores int
+	// Networkless marks the dedicated disposable-execution lifecycle. Such a
+	// lease still owns a unique slot, uid, cgroup, and vsock identity, but it
+	// deliberately has no tenant netns/veth/tap resources to tear down.
+	Networkless bool
 }
 
 // Allocator hands out unique Leases and recycles slots on release. Safe for

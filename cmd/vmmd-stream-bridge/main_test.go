@@ -20,6 +20,45 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+func TestNewGuestRequest_PreservesInboundBodyFraming(t *testing.T) {
+	cases := []struct {
+		name       string
+		length     int64
+		wantNoBody bool
+	}{
+		{name: "ended-h2-stream-is-known-empty", length: 0, wantNoBody: true},
+		{name: "fixed-length-body", length: 5},
+		{name: "streaming-body", length: -1},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inbound := httptest.NewRequest(http.MethodPost, "http://bridge.invalid/upload", nil)
+			// HTTP/2 server requests keep a non-nil requestBody even when
+			// END_STREAM arrived in the initial headers. Model that shape
+			// with a pipe that would block if the transport tried to probe it.
+			bodyReader, bodyWriter := io.Pipe()
+			t.Cleanup(func() {
+				_ = bodyReader.Close()
+				_ = bodyWriter.Close()
+			})
+			inbound.Body = bodyReader
+			inbound.ContentLength = tc.length
+
+			req, err := newGuestRequest(context.Background(), inbound.Method, "http://guest.invalid/upload", inbound)
+			if err != nil {
+				t.Fatalf("newGuestRequest: %v", err)
+			}
+			if got := req.Body == http.NoBody; got != tc.wantNoBody {
+				t.Errorf("Body == http.NoBody is %t, want %t", got, tc.wantNoBody)
+			}
+			if req.ContentLength != tc.length {
+				t.Errorf("ContentLength = %d, want %d", req.ContentLength, tc.length)
+			}
+		})
+	}
+}
+
 func TestParseDeadline_DurationString(t *testing.T) {
 	before := time.Now()
 	got, err := parseDeadline("24h")

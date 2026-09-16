@@ -1,7 +1,6 @@
 // Production loader for PGNodeVerifier (ADR-056).
 //
-// The loader is intentionally tiny: a single SQL `select name, id::text
-// from compute_nodes where active = true` against an existing
+// The loader is intentionally tiny: a single SQL query against an existing
 // *pgxpool.Pool. Splitting the loader from the verifier keeps
 // pgverifier.go Postgres-agnostic — the verifier is DB-shape-free and
 // the loader is the only file that imports pgx.
@@ -30,15 +29,17 @@ func NewPGNodeLoader(pool *pgxpool.Pool) NodeLoader {
 	return pgNodeLoader{pool: pool}
 }
 
-// LoadNodes returns (name, id, cert_fingerprint) tuples for every
-// active compute_nodes row. The CN lookup key is `name` (the
+// LoadNodes returns (name, id, cert_fingerprint) tuples for every compute node
+// that may still participate in an internal mTLS exchange. The CN lookup key is `name` (the
 // operator-assigned friendly label, e.g. "vmmd" or "schedd"), per
 // ADR-056 §Locked decisions — leaf-CN binds to compute_nodes.name,
 // not compute_nodes.id.
 //
-// `active = true` mirrors the gateway's PGBackend.targets filter
-// (cmd/gatewayd-internal/pgbackend.go); inactive rows are not eligible for
-// handshake binding.
+// Draining nodes cannot receive new placements, but they remain authenticated
+// while their live instances are handed to peers. Removing their CN at the
+// start of a drain makes the destination reject the source's migration RPC.
+// Maintenance, unavailable, and retired nodes are excluded because they have
+// no live handoff work left.
 //
 // PR-3 widening: cert_fingerprint (added in migration 00271 by
 // PR-3a) is loaded alongside name+id. Empty values (NULL
@@ -52,7 +53,7 @@ func (l pgNodeLoader) LoadNodes(ctx context.Context) ([]NodeRow, error) {
 	const q = `
 		select name, id::text, cert_fingerprint
 		  from compute_nodes
-		 where active = true
+		 where lifecycle in ('active', 'recovering', 'draining', 'force_draining')
 	`
 	rows, err := l.pool.Query(ctx, q)
 	if err != nil {

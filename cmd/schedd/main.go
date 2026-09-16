@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/heartbeatretention"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -67,7 +68,12 @@ func loadHostAgeIdentities(path string) ([]*age.X25519Identity, error) {
 	if path == "" {
 		path = secretbox.DefaultHostKeyPath
 	}
-	return secretbox.LoadHostKeys(filepath.Dir(path))
+	dir := filepath.Dir(path)
+	identities, err := secretbox.LoadFleetAndHostKeys(dir)
+	if errors.Is(err, secretbox.ErrHostKeyNotFound) {
+		return secretbox.LoadHostKeys(dir)
+	}
+	return identities, err
 }
 
 // scheddServerVerifier permits the registered compute-node identities and the
@@ -194,18 +200,27 @@ type runDeps struct {
 	// inject func() error { return nil } to bypass the live
 	// /proc/self/status check.
 	capCheck func() error
+	// executionArtifacts resolves platform-owned runtime release metadata.
+	// It is consulted only when FAAS_EXECUTION_DISPATCH=1.
+	executionArtifacts func(context.Context, api.ExecutionRuntime, api.ExecutionSnapshotShape) (sched.ExecutionRuntimeArtifacts, error)
+	// executionPayloadDecoder is the authenticated host-side payload decoder.
+	// Production must inject it before enabling execution; nil is fail-closed.
+	executionPayloadDecoder any
 }
 
 func defaultDeps() runDeps {
 	return runDeps{
 		configPath: envOr("FAAS_SCHEDD_CONFIG", "/etc/faas/schedd.toml"),
-		openDB:     db.Open,
-		migrate:    db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
-		detectFC:   fcvm.DetectFirecrackerVersion,
+		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+			return db.OpenWithAppName(ctx, dsn, "faas-schedd")
+		},
+		migrate:  db.MigrateUp, // F2 / ADR-124: acquires pg_advisory_lock; safe for fleet bootstrap
+		detectFC: fcvm.DetectFirecrackerVersion,
 		dialVMM: func(ctx context.Context, target string, tlsCfg *tls.Config) (sched.VMM, error) {
 			return sched.DialVMMContext(ctx, target, tlsCfg)
 		},
-		listen: wire.ListenAs,
+		listen:             wire.ListenAs,
+		executionArtifacts: executionRuntimeArtifactsFromEnv,
 		// Production wires db.Subscribe. Tests inject a fake channel
 		// so the subscriber's Park path is exercised end-to-end
 		// without standing up Postgres.
@@ -289,9 +304,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// DEPLOY-1 / ADR-075 capdecl gate. schedd's capsDecl is
-	// the empty declaration (no Allow, no Deny) — schedd is
-	// unprivileged. The capCheck seam (review finding M2)
+	// DEPLOY-1 / ADR-075 capdecl gate. schedd permits only CAP_NET_ADMIN for
+	// read-only conntrack enumeration. The capCheck seam (review finding M2)
 	// lets tests stub the live /proc/self/status check.
 	capCheck := deps.capCheck
 	if capCheck == nil {
@@ -305,8 +319,38 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	// Gate-B box-role gate. M9 runs one schedd per compute node as well
-	// as the control-plane schedd. The role is set
+	executionEnabled := executionDispatchEnabled(os.Getenv("FAAS_EXECUTION_DISPATCH"))
+	executionDispatchConcurrency := sched.DefaultExecutionDispatchConcurrency
+	if executionEnabled {
+		executionDispatchConcurrency, err = executionDispatchConcurrencyFromEnv(os.Getenv(executionDispatchConcurrencyEnv))
+		if err != nil {
+			return err
+		}
+	}
+	var executionHostAgeIdentities []*age.X25519Identity
+	if executionEnabled {
+		if deps.executionArtifacts == nil {
+			return errors.New("schedd: execution dispatch enabled but runtime artifacts or authenticated payload decoder is not wired")
+		}
+		if deps.executionPayloadDecoder == nil {
+			hostAgePath := cfg.HostAgeIdentityPath
+			if hostAgePath == "" {
+				hostAgePath = secretbox.DefaultHostKeyPath
+			}
+			var identityErr error
+			executionHostAgeIdentities, identityErr = loadHostAgeIdentities(hostAgePath)
+			if identityErr != nil {
+				return fmt.Errorf("schedd: authenticated payload decoder unavailable: load host age identities: %w", identityErr)
+			}
+			deps.executionPayloadDecoder = sched.NewAgeExecutionBundlePayloadDecoder(executionHostAgeIdentities)
+			if deps.executionPayloadDecoder == nil {
+				return errors.New("schedd: authenticated payload decoder unavailable: no host age identities")
+			}
+		}
+		log.Info("schedd: execution dispatch requested; validating disposable-VM dependencies")
+	}
+	// Gate-B box-role gate. schedd is a control-plane daemon — it
+	// refuses to start under RoleComputeOnly. The role is set
 	// from TOML or FAAS_SCHEDD_ROLE at deploy time; default is
 	// RoleSingleBox so single-box dev boots unmoved.
 	if err := role.Require("schedd", cfg.Role, role.RoleSingleBox, role.RoleControlPlane, role.RoleComputeOnly); err != nil {
@@ -517,6 +561,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops := wire.NewOpsMetrics("schedd")
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
+	heartbeatRetentionMetrics := heartbeatretention.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	heartbeatRetention := heartbeatretention.New(store, log, heartbeatRetentionMetrics)
+	go heartbeatRetention.Run(ctx)
 	workflowMetrics := wire.NewWorkflowMetrics(ops.Registry())
 	prewarmMetrics := wire.NewPrewarmMetrics(ops.Registry())
 	// Dashboard gauges (spec §12): schedd owns the snapshots table and the
@@ -664,6 +711,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ErrUnknownNodeKey, which is the safer default (silent
 	// unsigned-accept is the failure mode slice-3 closes).
 	keys := sched.NewNodeKeyRegistry(pgNodeKeyLoader{pool: pool}, log)
+	wireNodeKeyMetrics(ops.Registry(), keys)
 	engine.WithNodeKeyRegistry(keys)
 	if n, err := keys.Refresh(ctx); err != nil {
 		log.Warn("schedd: initial node key registry refresh failed; first notify will populate",
@@ -1262,6 +1310,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// interval through runDeps.heartbeatInterval.
 	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log).
 		WithOwnerNodeID(ownerNodeID).
+		WithStalePeerObserver(ownerNodeID != "").
 		WithNodeRegistry(nodeRegistry).
 		WithEvents(eventsPlatform)
 	hb.Interval = cfg.HeartbeatInterval
@@ -1335,7 +1384,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hostAgePath == "" {
 		hostAgePath = secretbox.DefaultHostKeyPath
 	}
-	hostAgeIdentities, hostAgeErr := loadHostAgeIdentities(hostAgePath)
+	hostAgeIdentities := executionHostAgeIdentities
+	var hostAgeErr error
+	if hostAgeIdentities == nil {
+		hostAgeIdentities, hostAgeErr = loadHostAgeIdentities(hostAgePath)
+	}
 	if hostAgeErr != nil {
 		log.Warn("trigger credentials: host age identities unavailable", "path", hostAgePath, "err", hostAgeErr)
 	}
@@ -1353,9 +1406,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).
-		// PR #74: §17 retention sweep — DELETEs STOPPED/FAILED rows older
-		// than cfg.RetentionDuration (defaults to api.DefaultInstanceRetention
-		// when zero). Ticker fires at api.DefaultRetentionInterval (1h).
+		// §17 / issue #2415 retention sweep — DELETEs STOPPED/FAILED rows
+		// from terminal_at and obsolete PARKED history from parked_at after
+		// cfg.RetentionDuration (default api.DefaultInstanceRetention).
 		WithRetention(sched.NewRetention(store, log).WithRetention(time.Duration(cfg.RetentionDuration))).
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
@@ -1731,6 +1784,43 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		log.Warn("trigger batch dispatch dial skipped: synthTarget empty (gatewayd-internal not wired in this schedd)")
 	}
+
+	// Execution dispatch is an exact opt-in because it claims durable tenant
+	// payloads and starts disposable VMs. The resolver supplies node, plan,
+	// resource, artifact, and snapshot identity; the backend then pins every
+	// restore/execute/destroy RPC to that node. Snapshot verification remains
+	// fail-closed until a storage-backed verifier is supplied, so an indexed
+	// entry without verification becomes a same-identity cold boot.
+	var executionCoordinator *sched.ExecutionCoordinator
+	if executionEnabled {
+		executionNodeID := ownerNodeID
+		if executionNodeID == "" && len(nodes) == 1 {
+			executionNodeID = nodes[0].ID
+		}
+		if strings.TrimSpace(executionNodeID) == "" {
+			return errors.New("schedd: execution dispatch enabled but no compute node is available")
+		}
+		catalogVerifier := sched.NewStorageRuntimeSnapshotVerifier(storageBackend)
+		catalog := sched.NewRuntimeSnapshotCatalog(sched.NewStateRuntimeSnapshotIndex(store), catalogVerifier)
+		resolver := sched.NewExecutionClaimResolver(
+			store,
+			catalog,
+			sched.ExecutionRuntimeArtifactsFunc(deps.executionArtifacts),
+			executionNodeID,
+		)
+		decoder, ok := deps.executionPayloadDecoder.(sched.ExecutionPayloadDecoderV2)
+		if !ok || decoder == nil {
+			return errors.New("schedd: execution payload decoder is not bundle-capable")
+		}
+		backend := sched.NewRoutedVmmdExecutionBackendWithBundle(vmmRouter, decoder)
+		executionCoordinator = sched.NewExecutionCoordinator(store, backend, sched.ExecutionCoordinatorConfig{
+			Enabled:       true,
+			Owner:         executionNodeID,
+			MaxConcurrent: executionDispatchConcurrency,
+			Metrics:       ops,
+		}, log).WithClaimResolver(resolver)
+		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "storage-digest-pair")
+	}
 	loopErr := make(chan error, 1)
 	go func() { loopErr <- loop.Run(ctx) }()
 	// Durable deploy handoffs recover the snapshot_prime edge when a LISTEN
@@ -1744,6 +1834,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Warn("schedd: durable notification replay exited", "err", err)
 		}
 	}()
+	if executionCoordinator != nil {
+		go func() {
+			if err := executionCoordinator.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("schedd: execution coordinator exited", "err", err)
+			}
+		}()
+	}
 
 	// Issue #757 / ADR-0NN (commit #16): trigger dispatch
 	// wakeups. Subscribe to the trigger_ready + trigger_changed

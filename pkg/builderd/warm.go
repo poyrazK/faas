@@ -21,7 +21,10 @@ const (
 	WarmPaused  WarmState = "warm_paused"
 )
 
-// WarmRestoreResult is emitted when a build asks to start a builder.
+// WarmRestoreResult describes the outcome recorded when a build starts a
+// guaranteed-slot builder. A hit means the VM transport accepted the
+// snapshot restore; a transport failure that falls back to a cold boot is a
+// miss.
 type WarmRestoreResult string
 
 const (
@@ -68,6 +71,17 @@ func (s WarmSnapshot) valid() bool {
 	return s.StorageKey != "" &&
 		(s.VMStateStorageKey != "" || s.VMStatePath != "") &&
 		s.FCVersion != ""
+}
+
+// hasCleanupTarget reports whether a snapshot carries anything that the VM
+// driver may need to release. A snapshot can be incomplete and therefore
+// unusable for restore while still retaining a local builder drive or a
+// legacy vmstate path.
+func (s WarmSnapshot) hasCleanupTarget() bool {
+	return s.StorageKey != "" ||
+		s.VMStateStorageKey != "" ||
+		s.VMStatePath != "" ||
+		s.LayerPath != ""
 }
 
 // WarmLifecycle serializes transitions for the guaranteed warm builder slot.

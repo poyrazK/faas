@@ -9,18 +9,16 @@
  * Companion to BuildProvenanceResponse (post-mortem export,
  * ADR-038) and the /sbom route (post-mortem blob, ADR-038
  * Phase 3). The status field mirrors builds.status — a
- * 4-state enum `queued|running|succeeded|failed` per the
- * `builds_status_check` CHECK constraint. 'cancelled' is
- * intentionally absent (ADR-089 §1).
+ * 5-state enum `queued|running|succeeded|failed|cancelled`.
  *
  * failure_class is the low-cardinality enum
  * `oom|timeout|user_error|infra` per the
  * `builds_failure_class_check` CHECK; present only when
  * status='failed'.
  *
- * duration_seconds is server-computed (FinishedAt − StartedAt)
- * only when BOTH timestamps are populated; absent otherwise
- * (so a queued/running build stays minimal). CI scripts can
+ * duration_seconds is server-computed from started_at to the terminal
+ * finished_at or cancelled_at timestamp; absent when the build never
+ * started. CI scripts can
  * rely on its presence as "the build reached a terminal state
  * and elapsed N wall-clock seconds." error_message is
  * intentionally NOT in this response — it lives on
@@ -33,14 +31,17 @@ export type BuildResponse = {
   deployment_id: string;
   kind: 'railpack' | 'dockerfile' | 'tarball' | 'github';
   source_bytes: number;
-  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   failure_class?: 'oom' | 'timeout' | 'user_error' | 'infra';
-  log_path?: string;
   enqueued_at: string;
   started_at?: string;
   finished_at?: string;
   /**
-   * Server-computed FinishedAt − StartedAt in whole seconds. Absent until the build reaches a terminal state.
+   * Terminal cancellation timestamp. A queued cancellation can have cancelled_at without started_at or duration_seconds.
+   */
+  cancelled_at?: string;
+  /**
+   * Server-computed terminal timestamp (finished_at or cancelled_at) minus started_at in whole seconds. Absent when the build never started.
    */
   duration_seconds?: number;
   /**

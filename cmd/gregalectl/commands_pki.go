@@ -49,6 +49,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,10 +61,16 @@ import (
 const dispatchPKI = "pki"
 
 const (
-	subPKIInit   = "init"
-	subPKIStatus = "status"
-	subPKIRotate = "rotate"
-	subPKIList   = "list"
+	subPKIInit           = "init"
+	subPKIStatus         = "status"
+	subPKIRotate         = "rotate"
+	subPKIList           = "list"
+	subPKIIssueBundle    = "issue-bundle"
+	subPKIInstallBundle  = "install-bundle"
+	subPKIExportBundle   = "export-bundle"
+	subPKIFingerprint    = "fingerprint"
+	subPKIRecoverInstall = "recover-install"
+	subPKIMetrics        = "metrics"
 )
 
 // cmdPKI is the parent dispatcher. With zero args it prints usage;
@@ -70,7 +79,7 @@ const (
 func cmdPKI(args []string) int {
 	parent, _ := lookupCliCommand("pki")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregalectl pki <init|status|list|rotate> [flags]", "pki")
+		PrintUsage(os.Stderr, "usage: gregalectl pki <init|status|list|rotate|export-bundle|issue-bundle|install-bundle|recover-install|fingerprint|metrics> [flags]", "pki")
 		return 1
 	}
 	switch args[0] {
@@ -82,9 +91,21 @@ func cmdPKI(args []string) int {
 		return cmdPKIList(args[1:])
 	case subPKIRotate:
 		return cmdPKIRotate(args[1:])
+	case subPKIIssueBundle:
+		return cmdPKIIssueBundle(args[1:])
+	case subPKIInstallBundle:
+		return cmdPKIInstallBundle(args[1:])
+	case subPKIRecoverInstall:
+		return cmdPKIRecoverInstall(args[1:])
+	case subPKIExportBundle:
+		return cmdPKIExportBundle(args[1:])
+	case subPKIFingerprint:
+		return cmdPKIFingerprint(args[1:])
+	case subPKIMetrics:
+		return cmdPKIMetrics(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregalectl pki: unknown subcommand %q (known: init, status, list, rotate)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl pki: unknown subcommand %q (known: init, status, list, rotate, export-bundle, issue-bundle, install-bundle, recover-install, fingerprint, metrics)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}
@@ -192,18 +213,304 @@ func cmdPKIStatus(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregalectl pki status [flags]", "pki")
 		return 1
 	}
+	if pki.HasPendingInstall(f.rootDir) {
+		fmt.Fprintln(os.Stderr, "gregalectl pki status: interrupted certificate install requires recovery")
+		return 1
+	}
 	reportCAStatus(os.Stdout, f.rootDir)
 	reportLeafStatusAll(os.Stdout, f.rootDir, f.boxRole)
+	identity, err := pkiIdentity(f)
+	if err != nil {
+		return printErr("pki status: identity", err)
+	}
+	if f.boxRole == "compute-only" && identity.nodeCN == "" {
+		identity.nodeCN = inferComputeNodeCN(f.rootDir)
+	}
+	if err := pki.ValidateTrustBundleForNode(f.rootDir, f.boxRole, identity.transportSAN, identity.nodeCN); err != nil {
+		fmt.Fprintf(os.Stderr, "gregalectl pki status: invalid or partial trust bundle: %v\n", err)
+		return 1
+	}
 	// Cheap "any expiring within threshold" gate so operators can use
 	// this in CI / cron to surface the rotate countdown. Exit 1 here is
 	// non-fatal for the human reader but useful as a Nagios-style
 	// alarm signal.
-	if anyExpiringSoon(f.rootDir, pki.ReissueThreshold) {
+	if anyExpiringSoonForBox(f.rootDir, f.boxRole, pki.ReissueThreshold) {
 		fmt.Fprintf(os.Stderr, "gregalectl pki status: at least one leaf expires within %s — run `gregalectl pki init` or `gregalectl pki rotate`\n",
 			pki.ReissueThreshold)
 		return 1
 	}
 	return 0
+}
+
+func cmdPKIIssueBundle(args []string) int {
+	fs, f := newPKIFlags("pki issue-bundle", false)
+	issuerRoot := fs.String("issuer-root", pki.DefaultRootDir, "operator PKI root containing the CA private key")
+	activeRoot := fs.String("active-root", "", "exported active trust bundle used to preserve safe leaves")
+	outputDir := fs.String("output-dir", "", "destination for the trust-only host bundle")
+	changedFile := fs.String("changed-file", "", "optional JSON output listing renewed leaf roles")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 || *outputDir == "" || f.boxRole == "" {
+		PrintUsage(os.Stderr, "usage: gregalectl pki issue-bundle --issuer-root DIR --output-dir DIR --box-role ROLE [--cn NODE] [--transport-san SAN]", "pki")
+		return 1
+	}
+	identity, err := pkiIdentity(f)
+	if err != nil {
+		return printErr("pki issue-bundle: identity", err)
+	}
+	var changed []pki.Role
+	if *activeRoot == "" {
+		if err := pki.IssueTrustBundle(*issuerRoot, *outputDir, f.boxRole, identity.nodeCN, identity.transportSAN); err != nil {
+			return printErr("pki issue-bundle", err)
+		}
+		changed = pki.RolesForBox(f.boxRole)
+	} else {
+		changed, err = pki.RenewTrustBundle(*issuerRoot, *activeRoot, *outputDir, f.boxRole, identity.nodeCN, identity.transportSAN)
+		if err != nil {
+			return printErr("pki issue-bundle", err)
+		}
+	}
+	if *changedFile != "" {
+		body, marshalErr := json.Marshal(struct {
+			Changed []pkiChangedLeaf `json:"changed"`
+		}{Changed: changedLeafShapes(changed)})
+		if marshalErr != nil {
+			return printErr("pki issue-bundle: marshal changed leaves", marshalErr)
+		}
+		body = append(body, '\n')
+		if writeErr := writePKIMetricsAtomic(*changedFile, body); writeErr != nil {
+			return printErr("pki issue-bundle: write changed leaves", writeErr)
+		}
+	}
+	PrintOK(os.Stdout, "Issued trust-only %s bundle at %s (%d leaves renewed)", f.boxRole, *outputDir, len(changed))
+	return 0
+}
+
+type pkiChangedLeaf struct {
+	Directory string `json:"directory"`
+	Filename  string `json:"filename"`
+}
+
+func changedLeafShapes(roles []pki.Role) []pkiChangedLeaf {
+	out := make([]pkiChangedLeaf, 0, len(roles))
+	for _, role := range roles {
+		out = append(out, pkiChangedLeaf{Directory: role.Directory, Filename: role.Filename})
+	}
+	return out
+}
+
+func cmdPKIExportBundle(args []string) int {
+	fs, f := newPKIFlags("pki export-bundle", false)
+	sourceRoot := fs.String("source-root", pki.DefaultRootDir, "active trust root to export")
+	outputDir := fs.String("output-dir", "", "fresh trust-only export destination")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 || *outputDir == "" || f.boxRole == "" {
+		PrintUsage(os.Stderr, "usage: gregalectl pki export-bundle --source-root DIR --output-dir DIR --box-role ROLE [--cn NODE] [--transport-san SAN]", "pki")
+		return 1
+	}
+	identity, err := pkiIdentity(f)
+	if err != nil {
+		return printErr("pki export-bundle: identity", err)
+	}
+	if err := pki.ExportTrustBundle(*sourceRoot, *outputDir, f.boxRole, identity.nodeCN, identity.transportSAN); err != nil {
+		return printErr("pki export-bundle", err)
+	}
+	PrintOK(os.Stdout, "Exported trust-only %s bundle to %s", f.boxRole, *outputDir)
+	return 0
+}
+
+func cmdPKIFingerprint(args []string) int {
+	fs := flag.NewFlagSet("pki fingerprint", flag.ContinueOnError)
+	cert := fs.String("cert", "", "certificate path")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 || *cert == "" {
+		PrintUsage(os.Stderr, "usage: gregalectl pki fingerprint --cert FILE", "pki")
+		return 1
+	}
+	fingerprint, err := pki.LoadCertificateFingerprint(*cert)
+	if err != nil {
+		return printErr("pki fingerprint", err)
+	}
+	if _, err := fmt.Fprintln(os.Stdout, fingerprint); err != nil {
+		return printErr("pki fingerprint", err)
+	}
+	return 0
+}
+
+func cmdPKIInstallBundle(args []string) int {
+	fs, f := newPKIFlags("pki install-bundle", false)
+	bundleDir := fs.String("bundle-dir", "", "validated trust-only host bundle to install")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 || *bundleDir == "" || f.boxRole == "" {
+		PrintUsage(os.Stderr, "usage: gregalectl pki install-bundle --bundle-dir DIR --root-dir DIR --box-role ROLE [--cn NODE] [--transport-san SAN]", "pki")
+		return 1
+	}
+	identity, err := pkiIdentity(f)
+	if err != nil {
+		return printErr("pki install-bundle: identity", err)
+	}
+	if err := pki.InstallTrustBundle(*bundleDir, f.rootDir, f.boxRole, identity.nodeCN, identity.transportSAN); err != nil {
+		return printErr("pki install-bundle", err)
+	}
+	PrintOK(os.Stdout, "Installed %s PKI bundle from %s", f.boxRole, *bundleDir)
+	return 0
+}
+
+func cmdPKIRecoverInstall(args []string) int {
+	fs := flag.NewFlagSet("pki recover-install", flag.ContinueOnError)
+	rootDir := fs.String("root-dir", pki.DefaultRootDir, "active PKI root")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 {
+		PrintUsage(os.Stderr, "usage: gregalectl pki recover-install [--root-dir DIR]", "pki")
+		return 1
+	}
+	if err := pki.RecoverPendingInstall(*rootDir); err != nil {
+		return printErr("pki recover-install", err)
+	}
+	PrintOK(os.Stdout, "Recovered any pending PKI install at %s", *rootDir)
+	return 0
+}
+
+type pkiRenewalState struct {
+	LastSuccessUnix int64 `json:"last_success_unix"`
+	LastFailureUnix int64 `json:"last_failure_unix"`
+	Partial         bool  `json:"partial"`
+}
+
+func cmdPKIMetrics(args []string) int {
+	fs := flag.NewFlagSet("pki metrics", flag.ContinueOnError)
+	rootDir := fs.String("root-dir", pki.DefaultRootDir, "active PKI root")
+	boxRole := fs.String("box-role", "", "host role: control-plane or compute-only")
+	host := fs.String("host", "", "bounded host label")
+	output := fs.String("output", "", "node_exporter textfile destination (stdout when empty)")
+	renewalState := fs.String("renewal-state", "/var/lib/faas/pki-renewal/status.json", "renewal workflow state file")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 || *boxRole == "" || *host == "" {
+		PrintUsage(os.Stderr, "usage: gregalectl pki metrics --box-role ROLE --host HOST [--root-dir DIR] [--output FILE] [--renewal-state FILE]", "pki")
+		return 1
+	}
+	body, err := renderPKIMetrics(*rootDir, *boxRole, *host, *renewalState, time.Now())
+	if err != nil {
+		return printErr("pki metrics", err)
+	}
+	if *output == "" {
+		_, err = os.Stdout.Write(body)
+	} else {
+		err = writePKIMetricsAtomic(*output, body)
+	}
+	if err != nil {
+		return printErr("pki metrics: write", err)
+	}
+	return 0
+}
+
+func renderPKIMetrics(rootDir, boxRole, host, statePath string, now time.Time) ([]byte, error) {
+	roles := pki.RolesForBox(boxRole)
+	if len(roles) == 0 {
+		return nil, fmt.Errorf("unknown box role %q", boxRole)
+	}
+	earliest := make(map[string]int64)
+	for _, role := range roles {
+		certPath, _ := pki.LeafPaths(rootDir, role)
+		data, err := os.ReadFile(certPath)
+		if err != nil {
+			return nil, fmt.Errorf("read %s/%s certificate: %w", role.Directory, role.Filename, err)
+		}
+		block, _ := pem.Decode(data)
+		if block == nil {
+			return nil, fmt.Errorf("decode %s/%s certificate: no PEM block", role.Directory, role.Filename)
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s/%s certificate: %w", role.Directory, role.Filename, err)
+		}
+		expires := cert.NotAfter.Unix()
+		if current, ok := earliest[role.Directory]; !ok || expires < current {
+			earliest[role.Directory] = expires
+		}
+	}
+
+	state := pkiRenewalState{}
+	if statePath != "" {
+		data, err := os.ReadFile(statePath)
+		switch {
+		case err == nil:
+			if err := json.Unmarshal(data, &state); err != nil {
+				return nil, fmt.Errorf("parse renewal state %q: %w", statePath, err)
+			}
+		case errors.Is(err, os.ErrNotExist):
+		default:
+			return nil, fmt.Errorf("read renewal state %q: %w", statePath, err)
+		}
+	}
+	daemons := make([]string, 0, len(earliest))
+	for daemon := range earliest {
+		daemons = append(daemons, daemon)
+	}
+	sort.Strings(daemons)
+	labels := fmt.Sprintf("host=%s,box_role=%s", strconv.Quote(host), strconv.Quote(boxRole))
+	var body strings.Builder
+	body.WriteString("# HELP faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds Earliest NotAfter among active internal mTLS leaves for a host daemon.\n")
+	body.WriteString("# TYPE faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds gauge\n")
+	for _, daemon := range daemons {
+		fmt.Fprintf(&body, "faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds{%s,daemon=%s} %d\n", labels, strconv.Quote(daemon), earliest[daemon])
+	}
+	body.WriteString("# HELP faas_internal_mtls_expiry_metrics_last_success_timestamp_seconds Last successful read of every active internal mTLS leaf.\n")
+	body.WriteString("# TYPE faas_internal_mtls_expiry_metrics_last_success_timestamp_seconds gauge\n")
+	fmt.Fprintf(&body, "faas_internal_mtls_expiry_metrics_last_success_timestamp_seconds{%s} %d\n", labels, now.Unix())
+	body.WriteString("# HELP faas_internal_mtls_renewal_last_success_timestamp_seconds Last successful scheduled internal mTLS renewal check.\n")
+	body.WriteString("# TYPE faas_internal_mtls_renewal_last_success_timestamp_seconds gauge\n")
+	fmt.Fprintf(&body, "faas_internal_mtls_renewal_last_success_timestamp_seconds{%s} %d\n", labels, state.LastSuccessUnix)
+	body.WriteString("# HELP faas_internal_mtls_renewal_last_failure_timestamp_seconds Last failed scheduled internal mTLS renewal attempt.\n")
+	body.WriteString("# TYPE faas_internal_mtls_renewal_last_failure_timestamp_seconds gauge\n")
+	fmt.Fprintf(&body, "faas_internal_mtls_renewal_last_failure_timestamp_seconds{%s} %d\n", labels, state.LastFailureUnix)
+	body.WriteString("# HELP faas_internal_mtls_renewal_partial Whether the last scheduled internal mTLS renewal left a host in a partial state.\n")
+	body.WriteString("# TYPE faas_internal_mtls_renewal_partial gauge\n")
+	partial := 0
+	if state.Partial {
+		partial = 1
+	}
+	fmt.Fprintf(&body, "faas_internal_mtls_renewal_partial{%s} %d\n", labels, partial)
+	return []byte(body.String()), nil
+}
+
+func writePKIMetricsAtomic(path string, body []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".pki-metrics-")
+	if err != nil {
+		return err
+	}
+	tmp := file.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	if _, err := file.Write(body); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Chmod(0o644); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // cmdPKIRotate re-issues every leaf unconditionally. Equivalent to
@@ -485,11 +792,9 @@ func formatSANs(dnsNames []string, ips []net.IP) string {
 	return strings.Join(parts, ",")
 }
 
-// anyExpiringSoon returns true if any leaf on disk has NotAfter <
-// now+threshold. Used by `status` to surface the rotate countdown.
-func anyExpiringSoon(rootDir string, threshold time.Duration) bool {
+func anyExpiringSoonForBox(rootDir, boxRole string, threshold time.Duration) bool {
 	now := time.Now()
-	for _, role := range pki.Roles() {
+	for _, role := range pki.RolesForBox(boxRole) {
 		certPath, _ := pki.LeafPaths(rootDir, role)
 		data, err := os.ReadFile(certPath)
 		if err != nil {
@@ -508,6 +813,28 @@ func anyExpiringSoon(rootDir string, threshold time.Duration) bool {
 		}
 	}
 	return false
+}
+
+func inferComputeNodeCN(rootDir string) string {
+	for _, role := range pki.RolesForBox("compute-only") {
+		if !pki.RoleUsesNodeIdentity(role) {
+			continue
+		}
+		certPath, _ := pki.LeafPaths(rootDir, role)
+		body, err := os.ReadFile(certPath)
+		if err != nil {
+			continue
+		}
+		block, _ := pem.Decode(body)
+		if block == nil {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err == nil && cert.Subject.CommonName != "" {
+			return cert.Subject.CommonName
+		}
+	}
+	return ""
 }
 
 // isErrLeafNotExpiringSoon matches the sentinel without using errors.Is

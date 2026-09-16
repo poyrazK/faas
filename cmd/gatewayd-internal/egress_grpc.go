@@ -158,6 +158,11 @@ func newEgressGRPCListener(target string, tlsCfg *tls.Config, srv *egressgrpc.Se
 	if !isUnixSocketPath(target) {
 		opts = append(opts, wire.ServerCredsOrEmpty(tlsCfg)...)
 	}
+	// Keep the internal egress receiver on the same OTel server
+	// contract as the other production gRPC listeners. Without this
+	// handler, the vmmd/gateway egress client span would terminate at
+	// the listener and the trace would lose the receiver-side span.
+	opts = append(opts, wire.TraceServerOptions()...)
 	gs := grpc.NewServer(opts...)
 	egresspb.RegisterEgressTxServiceServer(gs, srv)
 	return &egressGRPCListener{

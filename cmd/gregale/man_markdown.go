@@ -1,7 +1,8 @@
 // man_markdown.go — `gregale man --markdown`.
 //
-// Renders the whole command manifest (cli_meta.go) as one Markdown
-// document. The public web app vendors the committed output verbatim
+// Renders the supplied command manifest as one Markdown document. The public
+// caller supplies customerCliCommands so advanced commands are not advertised.
+// The public web app vendors the committed output verbatim
 // (faas-web content/docs/cli-reference.md), so the binary stays the
 // single source of truth for the reference the way it already is for
 // man pages and shell completion. TestMarkdownReferenceFresh keeps
@@ -50,10 +51,13 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 
 func mdSynopsis(c cliCommand) string {
 	parts := []string{"gregale", c.Name}
-	if len(c.Subcommands) > 0 {
+	if len(c.Subcommands) > 0 && !c.SubcommandsAfterPositionals {
 		parts = append(parts, "[<subcommand>]")
 	}
 	parts = append(parts, c.Positionals...)
+	if len(c.Subcommands) > 0 && c.SubcommandsAfterPositionals {
+		parts = append(parts, "[<subcommand>]")
+	}
 	for _, f := range c.Flags {
 		parts = append(parts, mdFlagSyntax(f))
 	}

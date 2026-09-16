@@ -10,6 +10,7 @@ package imaged
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -29,6 +31,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+)
+
+const (
+	staleDeploymentSweepEvery = 5 * time.Minute
+	staleDeploymentThreshold  = 2 * time.Hour
+	staleDeploymentBatchSize  = 64
 )
 
 // Loop is the imaged M8 daemon loop. cmd/imaged constructs it after wiring
@@ -45,6 +53,10 @@ type Loop struct {
 	appsRoot    string
 	storageRoot string
 	gcMu        sync.Mutex
+
+	remoteDeleteBacklogCount     prometheus.Gauge
+	remoteDeleteBacklogOldestAge prometheus.Gauge
+	remoteDeleteFailures         prometheus.Counter
 
 	// Injected channels so tests never block on time.Sleep. Defaults are
 	// built in NewLoop and can be overridden by WithGCChannel/WithFCSweepCh.
@@ -80,7 +92,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 	if cfg.GCEvery == 0 {
 		cfg.GCEvery = 24 * time.Hour
 	}
-	return &Loop{
+	loop := &Loop{
 		handler:     cfg.Handler,
 		store:       cfg.Store,
 		pool:        cfg.Pool,
@@ -92,6 +104,26 @@ func NewLoop(cfg LoopConfig) *Loop {
 		storageRoot: cfg.StorageRoot,
 		gcEvery:     cfg.GCEvery,
 	}
+	if cfg.Handler != nil && cfg.Handler.ops != nil {
+		loop.remoteDeleteBacklogCount = prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "imaged_snapshot_remote_delete_backlog_count",
+			Help: "Number of stale snapshot rows retained because remote artifact deletion has not completed.",
+		})
+		loop.remoteDeleteBacklogOldestAge = prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "imaged_snapshot_remote_delete_backlog_oldest_age_seconds",
+			Help: "Age in seconds of the oldest stale snapshot awaiting verified remote deletion.",
+		})
+		loop.remoteDeleteFailures = prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "imaged_snapshot_remote_delete_failures_total",
+			Help: "Remote snapshot artifact deletion failures; the snapshot row remains as a retryable durable tombstone.",
+		})
+		cfg.Handler.ops.Registry().MustRegister(
+			loop.remoteDeleteBacklogCount,
+			loop.remoteDeleteBacklogOldestAge,
+			loop.remoteDeleteFailures,
+		)
+	}
+	return loop
 }
 
 // WithGCChannel swaps the GC tick channel. Used by tests to drive a
@@ -132,6 +164,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	// imaged conversion in this process, and deployment status deduplicates it.
 	buildTicker := time.NewTicker(2 * time.Second)
 	defer buildTicker.Stop()
+	staleDeploymentTicker := time.NewTicker(staleDeploymentSweepEvery)
+	defer staleDeploymentTicker.Stop()
 
 	if l.gcCh == nil {
 		t := time.NewTicker(l.gcEvery)
@@ -180,6 +214,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 
 	l.recoverBuildHandoffs(ctx)
+	l.reconcileStaleDeployments(ctx)
 	// A daemon that restarts more often than gcEvery would otherwise never
 	// reclaim anything because every restart resets the ticker. Run one sweep
 	// after recovery so cleanup makes progress on frequently updated nodes.
@@ -204,6 +239,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-buildTicker.C:
 			l.recoverBuildHandoffs(ctx)
+		case <-staleDeploymentTicker.C:
+			l.reconcileStaleDeployments(ctx)
 		case <-l.gcCh:
 			l.runGCTick(ctx, l.now())
 		case <-l.fcCh:
@@ -215,6 +252,89 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// reconcileStaleDeployments terminates old pipeline rows that have no active
+// build behind them. The candidate query is bounded and the final
+// CancelDeploymentTx transition is CAS-guarded, so a row that becomes live or
+// terminal after selection is preserved. Builder-backed rows remain owned by
+// builderd's stuck-build reaper and are skipped here.
+func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
+	if l == nil || l.store == nil {
+		return
+	}
+	now := l.now().UTC()
+	cutoff := now.Add(-staleDeploymentThreshold)
+	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		Statuses: []state.DeploymentStatus{
+			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
+		},
+		IncludeDeleted: true,
+		CreatedBefore:  cutoff,
+		OldestFirst:    true,
+		Limit:          staleDeploymentBatchSize,
+	})
+	if err != nil {
+		l.log.Warn("imaged: list stale deployments", "err", err)
+		return
+	}
+	for _, deployment := range rows {
+		build, buildErr := l.store.BuildByDeployment(ctx, deployment.ID)
+		if buildErr == nil && (build.Status == state.BuildQueued || build.Status == state.BuildRunning) {
+			continue
+		}
+		if buildErr != nil && !errors.Is(buildErr, state.ErrNotFound) {
+			l.log.Warn("imaged: inspect stale deployment build", "deployment", deployment.ID, "err", buildErr)
+			continue
+		}
+		started := time.Now()
+		age := now.Sub(deployment.CreatedAt).Round(time.Second)
+		principal := fmt.Sprintf("system:stale-deployment-reconciler:%s:%ds", deployment.Status, int64(age.Seconds()))
+		_, _, cancelErr := l.store.CancelDeploymentTx(ctx, deployment.ID, principal, state.CancelReasonSystem)
+		if l.handler != nil && l.handler.ops != nil {
+			l.handler.ops.Observe("stale_deployment_reconcile", time.Since(started), cancelErr)
+		}
+		if cancelErr != nil {
+			if errors.Is(cancelErr, state.ErrInvalidStateTransition) || errors.Is(cancelErr, state.ErrCancelLiveForbidden) {
+				continue
+			}
+			l.log.Warn("imaged: reconcile stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "err", cancelErr)
+			continue
+		}
+		if l.handler != nil && l.handler.ops != nil {
+			l.handler.ops.IncrementStaleDeploymentsReconciled()
+		}
+		l.log.Info("imaged: reconciled stale deployment", "deployment", deployment.ID, "prior_status", deployment.Status, "age", age, "actor", principal)
+	}
+	l.observeStaleDeploymentBacklog(ctx, cutoff, now)
+}
+
+// observeStaleDeploymentBacklog refreshes the alert gauge after mutations, so
+// repaired rows do not leave a false positive until the next five-minute
+// sweep. The query is oldest-first and limit-one: its single row is the true
+// fleet maximum even when a sweep had more candidates than its mutation cap.
+func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now time.Time) {
+	if l.handler == nil || l.handler.ops == nil {
+		return
+	}
+	rows, err := l.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		Statuses: []state.DeploymentStatus{
+			state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting,
+		},
+		IncludeDeleted: true,
+		CreatedBefore:  cutoff,
+		OldestFirst:    true,
+		Limit:          1,
+	})
+	if err != nil {
+		l.log.Warn("imaged: observe stale deployment backlog", "err", err)
+		return
+	}
+	if len(rows) == 0 {
+		l.handler.ops.SetStaleDeploymentOldestAge(0)
+		return
+	}
+	l.handler.ops.SetStaleDeploymentOldestAge(now.Sub(rows[0].CreatedAt))
 }
 
 // HandleNotification exposes the handler to the durable replay worker while
@@ -242,6 +362,12 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 	l.log.Info("imaged: gc tick",
 		"now", now.Format(time.RFC3339),
 		"lv_fc_pct", pctForLog, "lv_fc_pct_known", pctKnown, "pressure", pressure)
+
+	// Retry durable stale rows before selecting new rollback-window work.
+	// A remote registry failure leaves these rows in Postgres instead of
+	// falsely reporting cleanup success, so every normal GC tick makes
+	// progress as soon as the remote deletion path recovers.
+	l.retryRemoteDeleteBacklog(ctx, now)
 
 	rows, err := l.store.ListSnapshotsForGC(ctx)
 	if err != nil {
@@ -285,6 +411,41 @@ func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
 			return
 		}
 	}
+}
+
+func (l *Loop) retryRemoteDeleteBacklog(ctx context.Context, now time.Time) {
+	rows, err := l.store.ListSnapshotsPendingDelete(ctx)
+	if err != nil {
+		l.log.Warn("imaged: list remote delete backlog", "err", err)
+		return
+	}
+	l.observeRemoteDeleteBacklog(rows, now)
+	if len(rows) == 0 {
+		return
+	}
+	if err := l.deleteSnapshotsAndFiles(ctx, snapshotTargets(rows)); err != nil {
+		l.log.Warn("imaged: retry remote delete backlog", "count", len(rows), "err", err)
+	}
+	remaining, err := l.store.ListSnapshotsPendingDelete(ctx)
+	if err != nil {
+		l.log.Warn("imaged: refresh remote delete backlog", "err", err)
+		return
+	}
+	l.observeRemoteDeleteBacklog(remaining, now)
+}
+
+func (l *Loop) observeRemoteDeleteBacklog(rows []state.SnapshotForGC, now time.Time) {
+	if l.remoteDeleteBacklogCount == nil || l.remoteDeleteBacklogOldestAge == nil {
+		return
+	}
+	l.remoteDeleteBacklogCount.Set(float64(len(rows)))
+	oldestAge := time.Duration(0)
+	for _, row := range rows {
+		if age := now.Sub(row.CreatedAt); age > oldestAge {
+			oldestAge = age
+		}
+	}
+	l.remoteDeleteBacklogOldestAge.Set(math.Max(0, oldestAge.Seconds()))
 }
 
 const localSnapshotOrphanGrace = time.Hour
@@ -461,8 +622,9 @@ func (l *Loop) runAppProtocolSweep(ctx context.Context) {
 // DeleteSnapshotsByID) and the deployment id (for the storage key
 // under sched.SnapshotMemKey / sched.SnapshotVMStateKey). Marks the rows
 // stale first so schedd's per-row freshness check refuses them in the
-// brief mark→delete window, bulk-deletes the rows, then drops the
-// on-disk artifacts via the Storage backend. F-05 fixes the prior
+// brief mark→delete window, deletes the storage artifacts, then removes only
+// the rows whose remote deletes succeeded. A failed remote delete therefore
+// leaves a durable stale-row tombstone for retry on the next GC tick. F-05 fixes the prior
 // snapshot-id/deployment-id namespace mismatch that prevented any
 // filesystem cleanup from running.
 //
@@ -493,9 +655,6 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 	if _, err := l.store.MarkOldSnapshotsStale(ctx, ids); err != nil {
 		return err
 	}
-	if _, err := l.store.DeleteSnapshotsByID(ctx, ids); err != nil {
-		return err
-	}
 	be, err := l.handler.storageFor()
 	if err != nil {
 		return fmt.Errorf("imaged: gc storageFor: %w", err)
@@ -507,6 +666,8 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 			l.log.Warn("imaged: gc legacy storage root", "root", l.storageRoot, "err", err)
 		}
 	}
+	succeeded := make([]deleteTarget, 0, len(ts))
+	var deleteErrors []error
 	for _, t := range ts {
 		// snap blobs: pick the keys by tier. The storage backend
 		// swallows missing keys so a transient race with restore
@@ -523,22 +684,65 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 			}
 		}
 		vmstateKey := state.SnapshotVMStateKey(snap)
-		if err := be.Delete(ctx, memKey); err != nil {
-			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "tier", t.Tier, "err", err)
+		memErr := be.Delete(ctx, memKey)
+		vmstateErr := be.Delete(ctx, vmstateKey)
+		memQuarantined := errors.Is(memErr, storage.ErrDeleteQuarantined)
+		vmstateQuarantined := errors.Is(vmstateErr, storage.ErrDeleteQuarantined)
+		if memErr != nil && !memQuarantined {
+			l.log.Warn("imaged: gc remove snap mem", "deployment", t.DeploymentID, "tier", t.Tier, "err", memErr)
+			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", memKey, memErr))
 		}
-		if err := be.Delete(ctx, vmstateKey); err != nil {
-			l.log.Warn("imaged: gc remove snap vmstate", "deployment", t.DeploymentID, "tier", t.Tier, "err", err)
+		if vmstateErr != nil && !vmstateQuarantined {
+			l.log.Warn("imaged: gc remove snap vmstate", "deployment", t.DeploymentID, "tier", t.Tier, "err", vmstateErr)
+			deleteErrors = append(deleteErrors, fmt.Errorf("delete %s: %w", vmstateKey, vmstateErr))
 		}
 		if legacyLocal != nil {
 			l.deleteLegacyLocalSnapshot(ctx, legacyLocal, t.DeploymentID, memKey, vmstateKey)
+		}
+		deletable := (memErr == nil || memQuarantined) && (vmstateErr == nil || vmstateQuarantined)
+		terminalDisposition := memQuarantined || vmstateQuarantined
+		if terminalDisposition && deletable {
+			payload, marshalErr := json.Marshal(map[string]any{
+				"snapshot_id": t.ID, "deployment_id": t.DeploymentID, "app_id": t.AppID,
+				"tier": t.Tier, "disposition": "remote_quarantine_manual_retention",
+				"mem_quarantined": memQuarantined, "vmstate_quarantined": vmstateQuarantined,
+			})
+			var accountID *string
+			if t.AccountID != "" {
+				accountID = &t.AccountID
+			}
+			if marshalErr != nil {
+				deleteErrors = append(deleteErrors, marshalErr)
+				continue
+			}
+			if auditErr := l.store.AppendEvent(ctx, "imaged", "snapshot.remote_delete_quarantined", accountID, payload); auditErr != nil {
+				deleteErrors = append(deleteErrors, fmt.Errorf("audit terminal snapshot deletion disposition: %w", auditErr))
+				continue
+			}
+			l.log.Warn("imaged: remote snapshot retained in audited quarantine",
+				"snapshot", t.ID, "deployment", t.DeploymentID, "tier", t.Tier)
+		}
+		if deletable {
+			succeeded = append(succeeded, t)
+		} else if l.remoteDeleteFailures != nil {
+			l.remoteDeleteFailures.Inc()
+		}
+	}
+	if len(succeeded) > 0 {
+		succeededIDs := make([]string, len(succeeded))
+		for i, target := range succeeded {
+			succeededIDs[i] = target.ID
+		}
+		if _, err := l.store.DeleteSnapshotsByID(ctx, succeededIDs); err != nil {
+			return errors.Join(append(deleteErrors, err)...)
 		}
 	}
 	// A deployment may have one init and one warm row. Only discard its
 	// shared app layer after both rows are gone; otherwise the surviving tier
 	// would point at a drive1 that no longer exists and every restore would
 	// degrade into a cold boot.
-	seenDeployments := make(map[string]deleteTarget, len(ts))
-	for _, t := range ts {
+	seenDeployments := make(map[string]deleteTarget, len(succeeded))
+	for _, t := range succeeded {
 		seenDeployments[t.DeploymentID] = t
 	}
 	for deploymentID, t := range seenDeployments {
@@ -558,6 +762,16 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 				"snapshot", t.ID, "deployment", deploymentID)
 			continue
 		}
+		// A stale Firecracker snapshot may be incompatible with the current
+		// runtime, but the live deployment's ext4 layer is still the source
+		// for a cold boot. Deleting it makes an otherwise recoverable live
+		// deployment permanently unwakeable. Superseded and terminal
+		// generations remain eligible for normal rollback-window cleanup.
+		if t.DeploymentStatus == state.DeployLive {
+			l.log.Info("imaged: gc retained live deployment layer after snapshot eviction",
+				"deployment", deploymentID, "layer", sched.AppLayerKey(t.AppSlug, deploymentID))
+			continue
+		}
 		if err := be.Delete(ctx, sched.AppLayerKey(t.AppSlug, deploymentID)); err != nil {
 			l.log.Warn("imaged: gc remove ext4", "deployment", deploymentID, "err", err)
 		}
@@ -571,7 +785,7 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		l.log.Warn("imaged: gc backend cannot list; rely on remote driver to reclaim space",
 			"backend", fmt.Sprintf("%T", be))
 	}
-	return nil
+	return errors.Join(deleteErrors...)
 }
 
 // deleteLegacyLocalSnapshot removes snapshot files left in FAAS_STORAGE_ROOT

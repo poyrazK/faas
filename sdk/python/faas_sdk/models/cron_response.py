@@ -7,6 +7,7 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.cron_response_suspended_reason import CronResponseSuspendedReason, check_cron_response_suspended_reason
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="CronResponse")
@@ -26,6 +27,8 @@ class CronResponse:
     skip_if_running: bool
     """When true, consume a scheduled occurrence while a prior cron invocation is pending or dispatching."""
     created_at: datetime.datetime
+    suspended_reason: CronResponseSuspendedReason | Unset = UNSET
+    """Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment."""
     last_fired_at: datetime.datetime | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -45,6 +48,10 @@ class CronResponse:
         skip_if_running = self.skip_if_running
 
         created_at = self.created_at.isoformat()
+
+        suspended_reason: str | Unset = UNSET
+        if not isinstance(self.suspended_reason, Unset):
+            suspended_reason = self.suspended_reason
 
         last_fired_at: None | str | Unset
         if isinstance(self.last_fired_at, Unset):
@@ -68,6 +75,8 @@ class CronResponse:
                 "created_at": created_at,
             }
         )
+        if suspended_reason is not UNSET:
+            field_dict["suspended_reason"] = suspended_reason
         if last_fired_at is not UNSET:
             field_dict["last_fired_at"] = last_fired_at
 
@@ -91,6 +100,13 @@ class CronResponse:
         skip_if_running = d.pop("skip_if_running")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _suspended_reason = d.pop("suspended_reason", UNSET)
+        suspended_reason: CronResponseSuspendedReason | Unset
+        if isinstance(_suspended_reason, Unset):
+            suspended_reason = UNSET
+        else:
+            suspended_reason = check_cron_response_suspended_reason(_suspended_reason)
 
         def _parse_last_fired_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
@@ -118,6 +134,7 @@ class CronResponse:
             timezone=timezone,
             skip_if_running=skip_if_running,
             created_at=created_at,
+            suspended_reason=suspended_reason,
             last_fired_at=last_fired_at,
         )
 

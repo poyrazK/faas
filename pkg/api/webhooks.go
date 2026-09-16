@@ -37,17 +37,15 @@ const AppWebhookSecretMasked = "***"
 // before persisting.
 var AllowedAppWebhookRetryPolicies = []string{"default", "aggressive", "none"}
 
-// AllowedAppWebhookEvents is the closed set for the events a webhook
-// can subscribe to. It mirrors the SQL CHECK and the CLI vocabulary.
+// AllowedAppWebhookEvents is the closed set for events a customer may select
+// on a new or updated subscription. Keep this list limited to events with a
+// production call to pkg/webhook.Emit; accepting a future event before its
+// source-of-truth producer exists creates a subscription that can never fire.
 //
-// Each entry is the event name persisted in the delivery ledger, so the
-// dispatcher can route without a second lookup. Producers may add the row
-// directly or use pkg/webhook.Emit after their source mutation commits.
+// The delivery ledger intentionally retains its wider historical enum so old
+// rows remain readable during upgrades.
 var AllowedAppWebhookEvents = []string{
-	"cron.fired", "cron.fired.manually",
-	"app.created", "app.deleted", "app.deployed", "app.scaled", "app.parked", "app.woken",
-	"build.succeeded", "build.failed",
-	"deployment.failed", "rollout.aborted", "error.new", "job.finished", "preview.created", "budget.threshold",
+	"app.parked", "app.woken",
 	"usage_statement.finalized",
 }
 

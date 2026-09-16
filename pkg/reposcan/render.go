@@ -1,28 +1,35 @@
 package reposcan
 
 import (
+	"fmt"
 	"io/fs"
 	"sort"
 
 	"gopkg.in/yaml.v3"
 )
 
-// renderDoc decodes render.yaml. We read services[].type (web/
-// worker) and cronJobs[].schedule + cronJobs[].name.
-//
-// Render's pserviced-style env/datastore services are not a thing;
-// a render.yaml with no `databases:` block and no pserviced is
-// honest. Skipped silently.
+// renderDoc decodes the current Render Blueprint shape: services includes
+// web, worker, private, cron, and key-value entries; databases is top-level.
+// CronJobs remains as a compatibility input for older blueprints.
 type renderDoc struct {
-	Services []renderService `yaml:"services"`
-	CronJobs []renderCron    `yaml:"cronJobs"`
+	Services  []renderService  `yaml:"services"`
+	CronJobs  []renderCron     `yaml:"cronJobs"`
+	Databases []renderDatabase `yaml:"databases"`
 }
 type renderService struct {
-	Name    string         `yaml:"name"`
-	Type    string         `yaml:"type"` // "web" | "worker" | "pserviced"
-	Image   string         `yaml:"image"`
-	Command any            `yaml:"command"`
-	EnvVars map[string]any `yaml:"envVars"`
+	Name         string         `yaml:"name"`
+	Type         string         `yaml:"type"`
+	Image        any            `yaml:"image"`
+	Command      any            `yaml:"command"` // legacy fixture compatibility
+	StartCommand any            `yaml:"startCommand"`
+	Schedule     string         `yaml:"schedule"`
+	EnvVars      []renderEnvVar `yaml:"envVars"`
+}
+type renderEnvVar struct {
+	Key string `yaml:"key"`
+}
+type renderDatabase struct {
+	Name string `yaml:"name"`
 }
 type renderCron struct {
 	Name     string `yaml:"name"`
@@ -38,30 +45,52 @@ func detectRender(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	}
 	var d renderDoc
 	if err := yaml.Unmarshal(body, &d); err != nil {
-		// Warn-and-skip: malformed render.yaml is recoverable.
-		return nil, nil, []string{"reposcan: parse " + src + ": " + err.Error()}, nil //nolint:nilerr
+		return nil, nil, nil, fmt.Errorf("reposcan: parse %s: %w", src, err)
 	}
-	var seeds []workloadSeed
+	var (
+		seeds    []workloadSeed
+		managed  []Managed
+		warnings []string
+	)
 	for _, s := range d.Services {
-		if s.Type == "pserviced" {
-			continue // private infra, not provisioned
-		}
-		cls := ClassUnknown
+		var cls Class
 		switch s.Type {
 		case keyWeb:
 			cls = ClassHTTP
 		case keyWorker:
 			cls = ClassWorker
+		case "cron":
+			cls = ClassJob
+		case "pserv", "pserviced":
+			cls = ClassServer
+		case "keyvalue", "redis":
+			if s.Name != "" {
+				managed = append(managed, Managed{Name: s.Name, Kind: "redis", EnvHint: hintRedisURL, Source: src + ": " + s.Name})
+			}
+			continue
+		default:
+			if s.Name != "" {
+				warnings = append(warnings, "reposcan: "+src+": unsupported Render service type "+s.Type+" for "+s.Name+" — skipping")
+			}
+			continue
 		}
 		if s.Name == "" {
 			continue
 		}
+		command := s.StartCommand
+		if command == nil {
+			command = s.Command
+		}
+		commandParts, commandShell := commandSpec(command)
 		seeds = append(seeds, workloadSeed{
-			name:    s.Name,
-			class:   cls,
-			command: commandSlice(s.Command),
-			envKeys: envKeys(s.EnvVars),
-			source:  src + ": " + s.Name,
+			name:         s.Name,
+			class:        cls,
+			command:      commandParts,
+			commandShell: commandShell,
+			envKeys:      renderEnvKeys(s.EnvVars),
+			image:        renderImageRef(s.Image),
+			schedule:     s.Schedule,
+			source:       src + ": " + s.Name,
 		})
 	}
 	for _, c := range d.CronJobs {
@@ -75,6 +104,35 @@ func detectRender(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			source:   src + ": " + c.Name,
 		})
 	}
+	for _, database := range d.Databases {
+		if database.Name != "" {
+			managed = append(managed, Managed{Name: database.Name, Kind: "postgres", EnvHint: hintDatabaseURL, Source: src + ": " + database.Name})
+		}
+	}
 	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })
-	return seeds, nil, nil, nil
+	sort.SliceStable(managed, func(i, j int) bool { return managed[i].Name < managed[j].Name })
+	return seeds, managed, warnings, nil
+}
+
+func renderImageRef(value any) string {
+	switch image := value.(type) {
+	case string:
+		return image
+	case map[string]any:
+		if url, ok := image["url"].(string); ok {
+			return url
+		}
+	}
+	return ""
+}
+
+func renderEnvKeys(entries []renderEnvVar) []string {
+	keys := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Key != "" {
+			keys = append(keys, entry.Key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }

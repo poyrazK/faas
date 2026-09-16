@@ -51,6 +51,8 @@ type DeployReceipt struct {
 	CommitSHA      string                `json:"commit_sha,omitempty"`
 	Dirty          bool                  `json:"dirty,omitempty"`
 	SourceSHA256   string                `json:"source_sha256,omitempty"`
+	TimedOut       bool                  `json:"timed_out,omitempty"`
+	ResumeCommand  string                `json:"resume_command,omitempty"`
 	ReleaseSummary *DeployReleaseSummary `json:"release_summary,omitempty"`
 }
 

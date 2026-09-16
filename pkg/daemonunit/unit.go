@@ -27,10 +27,10 @@ type KV struct {
 	Value string
 }
 
-// LoadCred encodes LoadCredential= (or LoadCredential= with the `:-(`
-// optional-flag for missing-toleration on rotation overlap; see
-// pkg/secretbox). When Optional is true, the rendered directive is
-// `LoadCredential=<name>:-<path>`; otherwise `LoadCredential=<name>:<path>`.
+// LoadCred encodes a systemd credential source. Optional credentials are
+// deployment metadata: Unit.Render omits them from the base unit and the
+// provisioner installs a normal name:path directive in a drop-in only while
+// the source exists. systemd has no name:-path optional-source syntax.
 type LoadCred struct {
 	Name     string
 	Path     string
@@ -83,17 +83,16 @@ type Unit struct {
 	StartLimitBurst       string
 
 	// [Service]
-	Type               string // "simple" for every faas daemon today
-	User               string
-	Group              string
-	ExecStart          string
-	ExecStartPre       []string // ordered (vmmd has 2; nobody else has any)
-	ExecStartPost      []string // ordered post-start fixups (vmmd runtime dir)
-	Restart            string
-	RestartSec         string
-	RestartCountExport string // systemd 254+; e.g. "SYSTEMD_RESTARTS_ON_FAILURE"
-	TimeoutStartSec    string // bounded allowance for Type=notify startup work
-	Slice              string
+	Type            string // "simple" for every faas daemon today
+	User            string
+	Group           string
+	ExecStart       string
+	ExecStartPre    []string // ordered (vmmd has 2; nobody else has any)
+	ExecStartPost   []string // ordered post-start fixups (vmmd runtime dir)
+	Restart         string
+	RestartSec      string
+	TimeoutStartSec string // bounded allowance for Type=notify startup work
+	Slice           string
 	// MemoryHigh is the soft limit: systemd applies reclaim pressure and
 	// throttles the cgroup past this point instead of killing it. Set it
 	// below MemoryMax so a slow leak degrades the daemon rather than
@@ -145,7 +144,7 @@ func BoolPtr(b bool) *bool { return &b }
 // Render emits the unit file as bytes. Section ordering: [Unit] first,
 // then [Service], then [Install] — matching every shipped faas unit.
 // Inside [Service], field ordering is fixed (Type → User → Group →
-// ExecStartPre → ExecStart → Restart → RestartSec → RestartCountExport →
+// ExecStartPre → ExecStart → Restart → RestartSec →
 // TimeoutStartSec → Slice → MemoryHigh → MemoryMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
@@ -195,7 +194,6 @@ func (u Unit) Render() []byte {
 	}
 	writeStringKV(&buf, "Restart", u.Restart)
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
-	writeStringKV(&buf, "RestartCountExport", u.RestartCountExport)
 	writeStringKV(&buf, "TimeoutStartSec", u.TimeoutStartSec)
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
@@ -232,13 +230,12 @@ func (u Unit) Render() []byte {
 		buf.WriteByte('\n')
 	}
 	for _, cred := range u.LoadCredential {
+		if cred.Optional {
+			continue
+		}
 		buf.WriteString("LoadCredential=")
 		buf.WriteString(cred.Name)
-		if cred.Optional {
-			buf.WriteString(":-")
-		} else {
-			buf.WriteByte(':')
-		}
+		buf.WriteByte(':')
 		buf.WriteString(cred.Path)
 		buf.WriteByte('\n')
 	}
@@ -493,8 +490,6 @@ func apply(u *Unit, section, key, val string) error {
 		u.Restart = val
 	case "[Service]/RestartSec":
 		u.RestartSec = val
-	case "[Service]/RestartCountExport":
-		u.RestartCountExport = val
 	case "[Service]/TimeoutStartSec":
 		u.TimeoutStartSec = val
 	case "[Service]/Slice":
@@ -593,23 +588,17 @@ func splitOrEmpty(s string) []string {
 	return strings.Fields(s)
 }
 
-// parseLoadCred parses the value side of a LoadCredential= directive:
-// `<name>:<path>` or `<name>:-<path>`. Returns an error on missing colon.
+// parseLoadCred parses the value side of a LoadCredential= directive.
 func parseLoadCred(s string) (LoadCred, error) {
-	// Optional-flag form is `name:-path`; the colon-IN-path character
-	// is rare on our credential paths (all are /etc/faas/secrets/*
-	// today), so a single split on the first `:` is correct.
 	i := strings.IndexByte(s, ':')
 	if i < 0 {
 		return LoadCred{}, fmt.Errorf("missing ':' in LoadCredential value")
 	}
 	name, rest := s[:i], s[i+1:]
-	optional := false
 	if strings.HasPrefix(rest, "-") {
-		optional = true
-		rest = rest[1:]
+		return LoadCred{}, fmt.Errorf("unsupported optional credential source %q", rest)
 	}
-	return LoadCred{Name: name, Path: rest, Optional: optional}, nil
+	return LoadCred{Name: name, Path: rest}, nil
 }
 
 // parseYes normalises a "yes" / "no" / "true" / "false" / "on" / "off"
@@ -676,7 +665,6 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "ExecStartPost", fmt.Sprintf("%v", a.ExecStartPost), fmt.Sprintf("%v", b.ExecStartPost))
 	add("[Service]", "Restart", a.Restart, b.Restart)
 	add("[Service]", "RestartSec", a.RestartSec, b.RestartSec)
-	add("[Service]", "RestartCountExport", a.RestartCountExport, b.RestartCountExport)
 	add("[Service]", "TimeoutStartSec", a.TimeoutStartSec, b.TimeoutStartSec)
 	add("[Service]", "Slice", a.Slice, b.Slice)
 	add("[Service]", "MemoryHigh", a.MemoryHigh, b.MemoryHigh)
@@ -767,13 +755,10 @@ func envFmt(b []KV) string {
 func loadFmt(b []LoadCred) string {
 	parts := make([]string, 0, len(b))
 	for _, c := range b {
-		opt := ""
 		if c.Optional {
-			opt = ":-"
-		} else {
-			opt = ":"
+			continue
 		}
-		parts = append(parts, c.Name+opt+c.Path)
+		parts = append(parts, c.Name+":"+c.Path)
 	}
 	slices.Sort(parts)
 	return strings.Join(parts, ",")

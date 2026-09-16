@@ -5,4 +5,5 @@
 # keep the origin configurable through gatewayd_apps_domain while preserving
 # the same URL shape in the smoke verifier.
 Environment=FAAS_API_HOSTING_SMOKE_URL=https://{{ gatewayd_apps_domain | default('gregale.dev') }}
+Environment=FAAS_APPS_DOMAIN={{ gatewayd_apps_domain | default('gregale.dev') }}
 Environment=FAAS_API_HOSTING_SMOKE_REQUIRED=1

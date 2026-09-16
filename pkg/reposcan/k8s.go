@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"fmt"
 	"io/fs"
 	"path"
 	"sort"
@@ -11,9 +12,8 @@ import (
 
 // k8sManifest is the minimal subset of a k8s YAML resource we read.
 // apiVersion + kind + metadata.name are the routing decisions;
-// spec.schedule is for CronJob only; spec.template.spec.containers
-// carries command/env/ports for Deployment (the stateless workload
-// we actually provision).
+// spec.schedule/suspend and spec.jobTemplate carry CronJob desired state;
+// spec.template.spec.containers carries Deployment execution metadata.
 type k8sManifest struct {
 	APIVersion string `yaml:"apiVersion"`
 	Kind       string `yaml:"kind"`
@@ -22,7 +22,17 @@ type k8sManifest struct {
 	} `yaml:"metadata"`
 	Spec struct {
 		// CronJob-only
-		Schedule string `yaml:"schedule"`
+		Schedule    string `yaml:"schedule"`
+		Suspend     *bool  `yaml:"suspend"`
+		JobTemplate struct {
+			Spec struct {
+				Template struct {
+					Spec struct {
+						Containers []k8sContainer `yaml:"containers"`
+					} `yaml:"spec"`
+				} `yaml:"template"`
+			} `yaml:"spec"`
+		} `yaml:"jobTemplate"`
 		// Deployment / StatefulSet
 		Template struct {
 			Spec struct {
@@ -57,8 +67,9 @@ var k8sRootDirs = []string{nameK8s, nameKubernetes, nameDeploy, nameManifests}
 var k8sManifestExts = []string{".yaml", ".yml"}
 
 // detectK8s walks each present k8s subdirectory and decodes every
-// YAML file inside. Each multi-document YAML is split at
-// `---`. StatefulSet is refused (ADR-046 — the stateless contract
+// YAML file inside. Multi-document YAML stream markers (including
+// comments and trailing whitespace) delimit independent documents.
+// StatefulSet is refused (ADR-046 — the stateless contract
 // covers K8s, not just compose). Deployment → http class hint
 // (only stateless pods run on the platform). CronJob → job + the
 // declared schedule.
@@ -94,23 +105,37 @@ func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 				return err
 			}
 			docs := splitYAMLDocs(body)
-			for _, doc := range docs {
+			for docIndex, doc := range docs {
 				if len(strings.TrimSpace(doc)) == 0 {
 					continue
 				}
 				var m k8sManifest
 				if err := yaml.Unmarshal([]byte(doc), &m); err != nil {
-					warnings = append(warnings, "reposcan: parse "+p+": "+
-						err.Error())
-					continue
+					return fmt.Errorf("reposcan: parse %s document %d: %w", p, docIndex+1, err)
 				}
 				switch m.Kind {
 				case "Deployment":
+					if len(m.Spec.Template.Spec.Containers) == 0 ||
+						strings.TrimSpace(m.Spec.Template.Spec.Containers[0].Image) == "" {
+						return fmt.Errorf("reposcan: %s Deployment %q requires a first container image", p, m.Metadata.Name)
+					}
 					// Stateless → http. The first container's
 					// command/args/env/ports/apply. (We don't
 					// model initContainers / sidecars here.)
-					seeds = append(seeds, k8sDeploymentSeed(p, m))
+					seed := k8sDeploymentSeed(p, m)
+					if hint, ok := denylistKind(seed.image); ok {
+						managed = append(managed, Managed{
+							Name: m.Metadata.Name, Kind: imageBase(seed.image),
+							EnvHint: hint, Source: seed.source, Image: seed.image,
+						})
+						continue
+					}
+					seeds = append(seeds, seed)
 				case "CronJob":
+					containers := m.Spec.JobTemplate.Spec.Template.Spec.Containers
+					if len(containers) == 0 || strings.TrimSpace(containers[0].Image) == "" {
+						return fmt.Errorf("reposcan: %s CronJob %q requires a first container image", p, m.Metadata.Name)
+					}
 					seeds = append(seeds, k8sCronJobSeed(p, m))
 				case "StatefulSet":
 					warnings = append(warnings, "reposcan: "+p+
@@ -144,23 +169,34 @@ func containsExt(list []string, ext string) bool {
 
 func splitYAMLDocs(body []byte) []string {
 	s := strings.ReplaceAll(string(body), "\r\n", "\n")
-	// Strip a single leading "---" document marker if present.
-	s = strings.TrimPrefix(s, "---\n")
-	// Naive split on lines that are EXACTLY "---" (not indented
-	// list items inside a YAML mapping which also start with "-").
+	// YAML document markers must start at column zero. The marker may
+	// carry trailing whitespace or a comment (for example, `--- # worker`).
+	// Explicit `...` end markers also terminate the current document.
 	var out []string
 	var cur strings.Builder
 	for _, line := range strings.Split(s, "\n") {
-		if line == "---" {
-			out = append(out, cur.String())
+		if isYAMLDocMarker(line, "---") || isYAMLDocMarker(line, "...") {
+			if cur.Len() > 0 || len(out) > 0 {
+				out = append(out, cur.String())
+			}
 			cur.Reset()
 			continue
 		}
 		cur.WriteString(line)
 		cur.WriteByte('\n')
 	}
-	out = append(out, cur.String())
+	if cur.Len() > 0 || len(out) == 0 {
+		out = append(out, cur.String())
+	}
 	return out
+}
+
+func isYAMLDocMarker(line, marker string) bool {
+	if !strings.HasPrefix(line, marker) {
+		return false
+	}
+	rest := strings.TrimSpace(line[len(marker):])
+	return rest == "" || strings.HasPrefix(rest, "#")
 }
 
 func k8sDeploymentSeed(src string, m k8sManifest) workloadSeed {
@@ -170,32 +206,41 @@ func k8sDeploymentSeed(src string, m k8sManifest) workloadSeed {
 		class:  ClassHTTP,
 	}
 	if len(m.Spec.Template.Spec.Containers) > 0 {
-		c := m.Spec.Template.Spec.Containers[0]
-		if len(c.Command) > 0 {
-			s.command = append(s.command, c.Command...)
-		}
-		if len(c.Args) > 0 {
-			s.command = append(s.command, c.Args...)
-		}
-		for _, e := range c.Env {
-			s.envKeys = append(s.envKeys, e.Name)
-		}
-		for _, p := range c.Ports {
-			if p.ContainerPort != 0 {
-				s.ports = append(s.ports, p.ContainerPort)
-			}
-		}
-		sort.Ints(s.ports)
-		sort.Strings(s.envKeys)
+		applyK8sContainer(&s, m.Spec.Template.Spec.Containers[0])
 	}
 	return s
 }
 
 func k8sCronJobSeed(src string, m k8sManifest) workloadSeed {
-	return workloadSeed{
-		name:     m.Metadata.Name,
-		source:   src + ": " + m.Metadata.Name,
-		class:    ClassJob,
-		schedule: m.Spec.Schedule,
+	enabled := m.Spec.Suspend == nil || !*m.Spec.Suspend
+	s := workloadSeed{
+		name:      m.Metadata.Name,
+		source:    src + ": " + m.Metadata.Name,
+		class:     ClassJob,
+		schedule:  m.Spec.Schedule,
+		schedules: []CronSchedule{{Expression: m.Spec.Schedule, Enabled: enabled}},
 	}
+	containers := m.Spec.JobTemplate.Spec.Template.Spec.Containers
+	if len(containers) > 0 {
+		applyK8sContainer(&s, containers[0])
+	}
+	return s
+}
+
+func applyK8sContainer(s *workloadSeed, c k8sContainer) {
+	s.image = strings.TrimSpace(c.Image)
+	s.command = append(s.command, c.Command...)
+	s.command = append(s.command, c.Args...)
+	for _, e := range c.Env {
+		if e.Name != "" {
+			s.envKeys = append(s.envKeys, e.Name)
+		}
+	}
+	for _, p := range c.Ports {
+		if p.ContainerPort != 0 {
+			s.ports = append(s.ports, p.ContainerPort)
+		}
+	}
+	sort.Ints(s.ports)
+	sort.Strings(s.envKeys)
 }

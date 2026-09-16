@@ -37,6 +37,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/onebox-faas/faas/pkg/auditutil"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -304,7 +305,8 @@ func (a *Auditor) emit(ctx context.Context, actor, kind string, accountID *strin
 	}
 	if err != nil {
 		a.log.Warn("audit: append event",
-			"actor", actor, "kind", kind, "subject", subject, "err", err)
+			"actor", logsanitize.HashShort(actor), "kind", metricKind,
+			"subject", logsanitize.HashShort(subjectStr), "error_class", errorClassFromErr(err))
 		if a.ops != nil {
 			a.ops.AuditWriteFailures(subjectStr).Inc()
 			a.ops.AuditLogWriteFailuresTotal(endpoint, metricKind, errorClassFromErr(err)).Inc()

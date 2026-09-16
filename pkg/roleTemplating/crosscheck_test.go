@@ -299,6 +299,7 @@ func daemonunitspecRegistry() []string {
 		"schedd",
 		"meterd",
 		"githubd",
+		"outboundd",
 		"gatewayd-public",
 		"imaged",
 		"gatewayd-internal",

@@ -1,11 +1,11 @@
-// Wire-level constants for the documentation host and platform
+// Wire-level constants for documentation URLs and the platform
 // contact host embedded in customer-facing URLs (RFC 7807
 // Problem.DocsURL on the apid REST surface,
 // errdetails.ErrorInfo.Metadata["docs_url"] on the gRPC envelope,
 // the CLI's synthesized docs row when Problem.DocsURL is empty, and
 // the outbound User-Agent header on OCI registry traffic).
 //
-// These hosts are part of the customer-visible contract — they
+// These values are part of the customer-visible contract — they
 // travel into error responses and into every manifest a customer's
 // app produces — so the rename discipline matches pkg/wire/wake.go:
 // every site reads the constant, no site inlines the literal. The
@@ -27,24 +27,15 @@ const (
 	//
 	// Do not introduce new uses. Documentation lives at
 	// DocsBaseURL (https://gregale.dev/docs). Anything that still
-	// composes against DocsHost is repaired at the emission
-	// boundary by api.NormalizeDocsURL, which WithDocs() applies —
-	// so a stale link degrades to the docs index rather than a
-	// dead host. The constant is retained only so that normalizer
-	// can recognise and rewrite the legacy form.
-	//
-	// Remaining composers (all normalized on the way out, tracked
-	// for a follow-up sweep):
-	//   - pkg/vmmdgrpc/{proto.go, server.go, migration_handlers.go}
-	//     (~30 sites, internal daemon-to-daemon /vmmd#* anchors)
-	//   - cmd/gregalectl/{main.go, output.go} (operator CLI)
+	// composes against DocsHost. The constant is retained only so
+	// cmd/gregale can recognize and rewrite links returned by older
+	// servers.
 	DocsHost = "docs.gregale.dev"
 
 	// DocsBaseURL is where the documentation actually lives. The
 	// site is a SPA that answers HTTP 200 on every path and
-	// renders its 404 client-side, so only the slugs in
-	// api.NormalizeDocsURL's allowlist resolve to real content —
-	// a link checker cannot tell the difference.
+	// renders its 404 client-side, so docs/customer-pages.json is
+	// the source-of-truth route catalog used by docs-links-check.
 	DocsBaseURL = "https://" + PlatformHost + "/docs"
 
 	// DashboardBillingURL is where a customer resolves a past-due

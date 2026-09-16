@@ -30,6 +30,7 @@ import (
 
 // Compile-time assertion that *Client satisfies billing.Provider.
 var _ billing.Provider = (*Client)(nil)
+var _ billing.CustomerBillingInfoProvider = (*Client)(nil)
 
 // PushDedupe is the dedupe table that lets meterd's hourly loop push the
 // same (account, hour) twice without double-billing. Both MemStore and

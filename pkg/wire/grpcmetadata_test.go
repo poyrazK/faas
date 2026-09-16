@@ -40,6 +40,7 @@ func TestCorrelationRoundTrip(t *testing.T) {
 	// lifted fields and forwards to vmmd.
 	lifted.WakeID = "wake-minted"
 	lifted.AppID = "app-1"
+	lifted.NodeID = "node-1"
 	lifted.TriggerClass = "monitor"
 	clientCtx := wire.WithCorrelationOutgoing(context.Background(), lifted)
 
@@ -55,6 +56,7 @@ func TestCorrelationRoundTrip(t *testing.T) {
 		RequestID:    "req-from-gatewayd-internal",
 		WakeID:       "wake-minted",
 		AppID:        "app-1",
+		NodeID:       "node-1",
 		TriggerClass: "monitor",
 	}
 	if got != want {
@@ -91,6 +93,7 @@ func TestWithCorrelationOutgoing_SkipsEmptyFields(t *testing.T) {
 		"x-faas-app-id",
 		"x-faas-deployment-id",
 		"x-faas-instance-id",
+		"x-faas-node-id",
 		"x-faas-invocation-id",
 		"x-faas-trace-id",
 		"x-faas-span-id",
@@ -206,8 +209,8 @@ func TestCorrelationRoundTrip_SanitizesAtLift(t *testing.T) {
 
 // ADR-123 — wake-boot telemetry envelope (trigger + queued +
 // concurrency-at-admit). Schedd propagates these on the schedd → vmmd
-// gRPC wire so the vmmd-side mirror BootStarted row (issue #517 PR-C)
-// carries the same context as the canonical schedd emit.
+// gRPC wire for correlated logs and restore diagnostics. BootObserved remains
+// a narrow observation event; BootStarted owns the scheduler decision values.
 
 func TestWithCorrelationOutgoing_ADR123_WakeBootEnvelope(t *testing.T) {
 	ctx := wire.WithCorrelationOutgoing(context.Background(), wire.CorrelationFields{

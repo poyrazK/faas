@@ -81,6 +81,10 @@ fi
 printf '%-10s %-8s %-7s %s\n' STATUS PACKAGE TEST DETAIL
 printf '%-10s %-8s %-7s %s\n' ------ ------- ---- ------
 found=0
+candidates="$tmp_root/candidates.tsv"
+results="$tmp_root/results.tsv"
+: >"$candidates"
+: >"$results"
 while IFS= read -r path; do
   [[ -n "$path" ]] || continue
   package_dir="$(dirname "$path")"
@@ -105,23 +109,63 @@ while IFS= read -r path; do
     [[ -n "$test_name" ]] || continue
     baseline_file="$baseline/$path"
     if [[ ! -f "$baseline_file" ]] || ! grep -Eq "^func[[:space:]]+${test_name}[(]" "$baseline_file"; then
-      printf '%-10s %-8s %-7s %s\n' missing "$package" "$test_name" "not present on base"
+      printf '%s\t%s\t%s\t%s\n' missing "$package" "$test_name" "not present on base" >>"$results"
       continue
     fi
-    output_file="$tmp_root/output"
-    set +e
-    (cd "$baseline" && go test "$package" -run "^${test_name}$" -count=1) >"$output_file" 2>&1
-    status=$?
-    set -e
-    if (( status != 0 )); then
-      printf '%-10s %-8s %-7s %s\n' expected-failure "$package" "$test_name" "base exits $status"
-    elif grep -q 'no tests to run' "$output_file"; then
-      printf '%-10s %-8s %-7s %s\n' missing "$package" "$test_name" "not present on base"
-    else
-      printf '%-10s %-8s %-7s %s\n' unexpected-pass "$package" "$test_name" "base passed"
-    fi
+    printf '%s\t%s\n' "$package" "$test_name" >>"$candidates"
   done <<< "$tests"
 done <<< "$changed_files"
+
+# Starting one `go test` process for every changed test made this advisory
+# report take longer than the rest of the lint job on large PRs. Run all
+# changed tests in a package together and use Go's JSON events to retain the
+# per-test classification. This pays package compilation and setup once.
+if [[ -s "$candidates" ]]; then
+  package_index=0
+  while IFS= read -r package; do
+    [[ -n "$package" ]] || continue
+    package_index=$((package_index + 1))
+    output_file="$tmp_root/output-$package_index.json"
+    tests_file="$tmp_root/tests-$package_index"
+    awk -F '\t' -v package="$package" '$1 == package { print $2 }' "$candidates" | awk '!seen[$0]++' >"$tests_file"
+    test_regex="^($(paste -sd '|' "$tests_file"))$"
+    set +e
+    (cd "$baseline" && go test "$package" -run "$test_regex" -count=1 -json) >"$output_file" 2>&1
+    package_status=$?
+    set -e
+
+    while IFS= read -r test_name; do
+      [[ -n "$test_name" ]] || continue
+      # `go test -json` may prefix structured events with ordinary compiler
+      # diagnostics when the base package does not build. The report is
+      # advisory, so malformed lines must classify the package result rather
+      # than aborting this CI step under `set -o pipefail`.
+      action="$(jq -r --arg test "$test_name" \
+        'select(.Test == $test and (.Action == "pass" or .Action == "fail")) | .Action' \
+        "$output_file" 2>/dev/null | tail -n 1 || true)"
+      case "$action" in
+        fail)
+          printf '%s\t%s\t%s\t%s\n' expected-failure "$package" "$test_name" "base test failed" >>"$results"
+          ;;
+        pass)
+          printf '%s\t%s\t%s\t%s\n' unexpected-pass "$package" "$test_name" "base passed" >>"$results"
+          ;;
+        *)
+          if (( package_status != 0 )); then
+            printf '%s\t%s\t%s\t%s\n' expected-failure "$package" "$test_name" "base exits $package_status before test result" >>"$results"
+          else
+            printf '%s\t%s\t%s\t%s\n' missing "$package" "$test_name" "not present on base" >>"$results"
+          fi
+          ;;
+      esac
+    done <"$tests_file"
+  done < <(cut -f1 "$candidates" | awk '!seen[$0]++')
+fi
+
+while IFS=$'\t' read -r status package test_name detail; do
+  [[ -n "$status" ]] || continue
+  printf '%-10s %-8s %-7s %s\n' "$status" "$package" "$test_name" "$detail"
+done <"$results"
 
 if (( found == 0 )); then
   echo "regression-pin-check: changed test files had no changed Test* hunks"

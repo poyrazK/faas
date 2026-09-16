@@ -48,9 +48,12 @@ const triggerKindsUsage = "cron|kafka|nats|redis_streams|sqs_compat|queue"
 const triggerBrokerKindsUsage = "kafka|nats|redis_streams|sqs_compat|queue"
 
 func triggerFlagSet(name, usage string) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(osStderr)
+	fs := newFlagSet(name, flag.ContinueOnError)
+	setFlagOutput(fs, osStderr)
 	fs.Usage = func() {
+		if jsonOutput && !jsonUsageHelp {
+			return
+		}
 		PrintUsage(osStderr, usage, "triggers")
 		fs.PrintDefaults()
 	}

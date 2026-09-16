@@ -302,6 +302,9 @@ func cmdOpenapiRemove(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	if len(pos) != 1 {
 		PrintUsage(osStderr, "usage: gregale openapi rm <slug>", "openapi")
 		return 1
@@ -324,8 +327,8 @@ func cmdOpenapiRemove(args []string) int {
 }
 
 func newOpenapiFlagSet(name string) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(osStderr)
+	fs := newFlagSet(name, flag.ContinueOnError)
+	setFlagOutput(fs, osStderr)
 	return fs
 }
 

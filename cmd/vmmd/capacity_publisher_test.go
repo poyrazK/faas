@@ -33,6 +33,7 @@ import (
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -97,6 +98,49 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 	if row.GetInstanceId() != "vm-1" || row.GetInflightRequests() != 3 || row.GetOpenConns() != 5 || row.GetRequestCountTotal() == nil || row.GetRequestCountTotal().GetValue() != 123 || row.GetCpuPct().GetValue() != 12.5 || row.GetDiskUsedBytes().GetValue() != 80 || row.GetDiskCapacityBytes().GetValue() != 100 {
 		t.Fatalf("telemetry row = %+v, want vm-1 cpu=12.5 inflight=3 open_conns=5", row)
 	}
+}
+
+func TestCapacityTelemetryGuardSignalsEmptyLiveBatchOnceAndRecovers(t *testing.T) {
+	counts := &fakeCountReader{live: 1}
+	ops := wire.NewOpsMetrics("vmmd")
+	response := &vmmdpb.StatsResponse{}
+	guarded := capacityTelemetryGuard(counts, "node-a", func(context.Context) (*vmmdpb.StatsResponse, error) {
+		return response, nil
+	}, ops, silentLogger())
+
+	for range 2 {
+		if _, err := guarded(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCounter := func(want float64) {
+		t.Helper()
+		families, err := ops.Registry().Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, family := range families {
+			if family.GetName() != "vmmd_instance_stats_partial_errors_total" {
+				continue
+			}
+			for _, metric := range family.GetMetric() {
+				if len(metric.GetLabel()) == 1 && metric.GetLabel()[0].GetValue() == "node-a" {
+					if got := metric.GetCounter().GetValue(); got != want {
+						t.Fatalf("empty telemetry counter = %v, want %v", got, want)
+					}
+					return
+				}
+			}
+		}
+		t.Fatal("empty telemetry counter not found")
+	}
+	assertCounter(1)
+
+	response = &vmmdpb.StatsResponse{Instances: []*vmmdpb.InstanceStats{{Instance: "11111111-1111-4111-8111-111111111111"}}}
+	_, _ = guarded(context.Background()) // clears the edge trigger
+	response = &vmmdpb.StatsResponse{}
+	_, _ = guarded(context.Background())
+	assertCounter(2)
 }
 
 // TestBuildCapacityReport_ResidentBytesSummed asserts the

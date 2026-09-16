@@ -1,0 +1,11 @@
+description: Project or backup-bucket IAM and audit-policy mutations.
+filter: >-
+  log_id("cloudaudit.googleapis.com/activity") AND
+  protoPayload.methodName:"SetIamPolicy" AND
+  (resource.type="project" OR
+   (resource.type="gcs_bucket" AND
+    resource.labels.bucket_name="gregale-pg-backups-5ae37259"))
+metricDescriptor:
+  metricKind: DELTA
+  valueType: INT64
+  unit: "1"

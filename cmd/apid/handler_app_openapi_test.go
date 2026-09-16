@@ -215,8 +215,55 @@ func TestGetAppOpenAPI_Auto_NoImports(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("X-OpenAPI-Doc-Source"); got != openapidiff.SourceEmptyImportRules {
-		t.Errorf("X-OpenAPI-Doc-Source=%q, want %q", got, openapidiff.SourceEmptyImportRules)
+	if got := rec.Header().Get("X-OpenAPI-Doc-Source"); got != openapidiff.SourceDegradedRoutes {
+		t.Errorf("X-OpenAPI-Doc-Source=%q, want %q", got, openapidiff.SourceDegradedRoutes)
+	}
+	if !strings.Contains(rec.Body.String(), `"x-faas-observed-routes":{"available":false`) {
+		t.Errorf("auto document does not preserve unavailable observed-route source: %s", rec.Body.String())
+	}
+	var doc struct {
+		OpenAPI string         `json:"openapi"`
+		Info    map[string]any `json:"info"`
+		Paths   map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode generated document: %v", err)
+	}
+	if doc.OpenAPI != "3.1.0" || doc.Info["title"] == "" || doc.Info["version"] == "" || doc.Paths == nil {
+		t.Fatalf("invalid empty generated document: %#v", doc)
+	}
+}
+
+func TestGetAppOpenAPI_Auto_NoImportsHealthyCollectors(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	seedApp(t, e, "auto-empty-healthy")
+	nodes := seedRouteCollectors(t, e.store, 2)
+	prom, _ := prometheusVectorServer(t, routeHealth(nodes, "1", "1"), nil)
+	e.s.WithStatusCache(prom.URL, "")
+
+	rec := e.do(t, http.MethodGet, "/v1/apps/auto-empty-healthy/openapi?source=auto", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var doc struct {
+		OpenAPI  string         `json:"openapi"`
+		Info     map[string]any `json:"info"`
+		Paths    map[string]any `json:"paths"`
+		Observed struct {
+			Source             string `json:"source"`
+			Available          bool   `json:"available"`
+			CollectorsExpected int    `json:"collectors_expected"`
+			CollectorsHealthy  int    `json:"collectors_healthy"`
+		} `json:"x-faas-observed-routes"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode generated document: %v", err)
+	}
+	if doc.OpenAPI != "3.1.0" || doc.Info["title"] == "" || doc.Info["version"] == "" || len(doc.Paths) != 0 {
+		t.Fatalf("invalid healthy empty generated document: %#v", doc)
+	}
+	if doc.Observed.Source != api.AppRoutesSourceLive || !doc.Observed.Available || doc.Observed.CollectorsExpected != 2 || doc.Observed.CollectorsHealthy != 2 {
+		t.Fatalf("observed route provenance = %+v", doc.Observed)
 	}
 }
 
@@ -367,6 +414,34 @@ func TestGetAppOpenAPI_Auto_CacheHit_PreRenderedBody(t *testing.T) {
 	ann2 := rec2.Header().Get("X-OpenAPI-Doc-Annotations-Count")
 	if ann1 != ann2 {
 		t.Errorf("annotations count mismatch: miss=%q vs hit=%q", ann1, ann2)
+	}
+}
+
+func TestGetAppOpenAPI_Auto_InvalidCacheEntryRecomputed(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	app := seedApp(t, e, "auto-invalid-cache")
+	cache := openapidiff.NewSpecCache()
+	e.s.WithSpecCache(cache)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/apps/auto-invalid-cache/openapi?source=auto", nil)
+	rec := httptest.NewRecorder()
+	_, _, _, docSHA, routesSHA, rulesSHA, _, ok := e.s.loadAutoGenInputs(rec, req, app)
+	if !ok {
+		t.Fatalf("load auto-generation inputs failed: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	cache.Put(app.ID, docSHA, routesSHA, rulesSHA,
+		[]byte(`{"openapi":"","info":{"title":"broken","version":"1"},"paths":{}}`),
+		openapidiff.SourceAuto, 0, time.Now())
+
+	got := e.do(t, http.MethodGet, "/v1/apps/auto-invalid-cache/openapi?source=auto", nil, nil)
+	if got.Code != http.StatusOK {
+		t.Fatalf("status %d, want recomputed 200; body=%s", got.Code, got.Body.String())
+	}
+	if got.Header().Get("X-Faas-Cache") != "miss" {
+		t.Fatalf("X-Faas-Cache = %q, want miss after invalidation", got.Header().Get("X-Faas-Cache"))
+	}
+	if err := validateRenderedOpenAPISpec(got.Body.Bytes()); err != nil {
+		t.Fatalf("recomputed document invalid: %v; body=%s", err, got.Body.String())
 	}
 }
 func TestGetAppOpenAPI_Auto_CacheInvalidationViaNotify(t *testing.T) {

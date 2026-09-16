@@ -13,7 +13,7 @@ func cmdCache(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale cache purge <slug> [--path GLOB]", "cache")
 		return 1
 	}
-	fs := flag.NewFlagSet("cache purge", flag.ContinueOnError)
+	fs := newFlagSet("cache purge", flag.ContinueOnError)
 	pathGlob := fs.String("path", "", "optional normalized request path glob")
 	// Accept both the documented positional-first form and the
 	// conventional flags-first spelling. The standard flag package

@@ -78,3 +78,19 @@ func TestMemStoreCronOptionsAndActiveCount(t *testing.T) {
 		t.Fatalf("CountActiveCronInvocations(other) = %d, %v; want 0", got, err)
 	}
 }
+
+func TestMemStoreCreateCronRetryIsIdempotentAtQuota(t *testing.T) {
+	m, ctx, _, app, _ := memCoverageFixture(t)
+	limits := api.Limits{CronLimitPerApp: 1, CronLimitPerAccount: 1}
+	first, err := m.CreateCronIfUnderQuotaWithOptions(ctx, app.ID, "0 3 * * *", "/tick", true, limits, CronOptions{Timezone: "UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := m.CreateCronIfUnderQuotaWithOptions(ctx, app.ID, "0 3 * * *", "/tick", true, limits, CronOptions{Timezone: "UTC"})
+	if err != nil {
+		t.Fatalf("identical retry at quota: %v", err)
+	}
+	if retry.ID != first.ID {
+		t.Fatalf("retry ID = %q, want existing %q", retry.ID, first.ID)
+	}
+}

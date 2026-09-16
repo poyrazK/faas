@@ -1,0 +1,164 @@
+# Native end-to-end CI
+
+`e2e-native.yml` is the hardware gate for the platform itself. It runs the
+**metal-tagged tests** of `./cmd/e2e` on `faas-acceptance-1` in
+`europe-west3-c`, against real `/dev/kvm` and Firecracker.
+
+The run set is derived from source — every top-level test declared in a
+`//go:build metal` file — so a new metal test is picked up with no edit, and the
+gate cannot be narrowed to a hand-picked test without failing
+`scripts/ci/run-native-e2e_test.sh`, which executes the same derivation.
+
+It deliberately does **not** run the ~300 non-metal e2e tests. The first real run
+(2026-09-12) did, and they starved the tests that need hardware: on a 4-vCPU node
+under `-race`, apid could not bind inside the harness's 10 s budget and all seven
+required tests failed with `did not accept within 10s`. CI already runs the
+non-metal e2e tests sharded across four dedicated runners, so repeating them here
+costs the signal this gate exists for and adds none.
+
+It is the companion to [`builder-native-ci.md`](builder-native-ci.md).
+`builder-native.yml` proves the builder image and the `pkg/fcvm` package work
+on metal; this workflow proves the product does — customer source upload →
+`apid` → `builderd` → builder microVM → OCI image → `imaged` → snapshot →
+park → gateway wake → invoke, plus the §11 jail fences (`memory.max`, seccomp).
+
+It runs nightly at 04:43 UTC and can be dispatched manually from `main`. The
+04:43 slot sits after `builder-native.yml`'s 03:17 nightly; both share the
+`e2e-native-faas-acceptance-1` concurrency group and the
+`/var/lock/faas-builder-acceptance.lock` host lock, so an overrun waits instead
+of colliding.
+
+Compute node 2 is the HDD correctness host. The runner exports
+`FAAS_TEST_REFERENCE_SSD=0`: wake latency is logged as a diagnostic and is
+never enforced here nor counted toward the reference-SSD p95 cohort.
+
+## One-time cloud prerequisite
+
+**Done on 2026-09-12.** The `gregale-builder-native` provider condition matches
+`job_workflow_ref` by exact equality, one clause per admitted workflow, so a new
+workflow file is rejected until it is named. It now reads:
+
+```
+assertion.repository == 'poyrazK/faas' && assertion.ref == 'refs/heads/main' &&
+  (assertion.job_workflow_ref == 'poyrazK/faas/.github/workflows/builder-native.yml@refs/heads/main' ||
+   assertion.job_workflow_ref == 'poyrazK/faas/.github/workflows/e2e-native.yml@refs/heads/main')
+```
+
+**Any future workflow that needs the acceptance node must be added to that
+disjunction**, or it fails at the auth step. The node is never contacted, so a
+rejected run is inert rather than disruptive. Read the live condition before
+changing it — `update-oidc` replaces it wholesale, and dropping the
+`builder-native.yml` clause would silently disable that gate too:
+
+```sh
+gcloud iam workload-identity-pools providers describe gregale-builder-native \
+  --project=project-5ae37259-04cf-4070-bef --location=global \
+  --workload-identity-pool=github-actions \
+  --format='value(attributeCondition)'
+```
+
+No other IAM change was needed: the service account bindings, the instance-level
+`roles/compute.osAdminLogin`, and the `gregaleBuilderNodeLifecycle` lifecycle
+role already cover this workflow.
+
+## Host prerequisites
+
+Provision them with the dedicated playbook — everything below except the
+builder base is owned by `roles/native_acceptance_host`:
+
+```sh
+ansible-playbook -i inventory/native-acceptance.ini native-acceptance-host.yml
+```
+
+Do not place them by hand. They were hand-placed once, and a reprovision on
+2026-09-12 silently dropped the marker and the build toolchain, which disabled
+both native gates until someone went looking.
+
+The runner refuses to touch a host that is missing any of these, and names the
+repair in the failure. Nothing is provisioned implicitly.
+
+| Requirement | Why |
+| --- | --- |
+| `/etc/faas/builder-acceptance-host` | Designates the node for disruptive tests. Removing it disables this gate before it changes any service state. |
+| No active Firecracker process, clean `make leakcheck` | The suite boots its own microVMs and asserts zero leaks afterwards. |
+| `/srv/fc/base/vmlinux-6.1.134` (or `FAAS_TEST_KERNEL`) | Guest kernel for every cold boot. |
+| `/srv/fc/base/builder-base.ext4` (or `FAAS_BUILDER_BASE_PATH`) | drive0 for the builder microVM. `faas-imaged` stages it on startup via `EnsureBaseExt4`. |
+| `br-tenants` up, `net.ipv4.ip_forward=1` | Per-instance veth host side enslaves to the tenant bridge. |
+| A reachable Postgres cluster | See below. |
+
+### Postgres is a hard requirement, deliberately
+
+`cmd/e2e` is database-backed, and `pgtest.Open` calls `t.Skip` — not `t.Fatal` —
+when `DATABASE_URL` is unreachable. A node without Postgres would therefore
+produce a **green run of nearly zero tests**. The runner refuses that outcome:
+it probes the cluster with `pg_isready`, then proves the role can `CREATE
+SCHEMA` and install `citext` into `public` (both of which `pgtest` needs per
+test), and dies with the provisioning commands if either fails. It also refuses
+to run at all when `FAAS_SKIP_PG_TESTS` is set.
+
+The DSN is host-owned, not passed down from CI — a DSN on the `gcloud compute
+ssh` command line would be visible in the node's process list. It lives in
+`/etc/faas/e2e-acceptance.env`, and the runner checks that file is root-owned
+`0600` before sourcing it.
+
+`roles/native_acceptance_host` installs a **local, dedicated** cluster for this,
+bound to the unix socket only, with an ident map from `root` (the runner's uid)
+to the `faas` database role, so no password exists on the host. It then proves
+the exact DSN can create a schema and install `citext` before writing the env
+file.
+
+**Do not point the gate at the control-plane cluster.** On 2026-09-12 that
+cluster hit `max_connections` with 88 of 96 backends idle, and `cmd/e2e` opens a
+schema per test. A test cluster should also not share a failure domain with
+production rows.
+
+## What the run does on the node
+
+The remote command runs as a transient systemd unit, so losing the GitHub SSH
+connection cannot kill cleanup halfway through with production daemons still
+stopped. `scripts/ci/run-native-e2e.sh` then:
+
+1. takes `/var/lock/faas-builder-acceptance.lock`, pre-flights every fixture
+   above, and runs a leak check before touching anything;
+2. builds the exact commit's `guest/init` and points `FAAS_GUEST_INIT` at it;
+3. stops the local Gregale daemons that are actually active — `apid`, `schedd`,
+   `vmmd`, `builderd`, `imaged`, both gateways, `realtimed`, `outboundd` —
+   recording each one. `vmmd`, jailer, cgroups, netns and the tenant IP leases
+   are host-global; a production daemon left running would fight the test VMs
+   and make the closing leak check meaningless. Postgres is never stopped;
+4. derives the metal-tagged test set, refuses an empty set, checks every
+   required test is in it, then runs `make PKGS=./cmd/e2e/...` with that set as
+   the `-run` filter;
+5. restarts every service it stopped, removes staging, and runs a final leak
+   check — on every exit path, including a failed or interrupted run.
+
+## What makes the green check mean something
+
+Two mechanisms, because the tally alone is not enough:
+
+- **Zero executed is a failure.** The log reports passed/skipped/failed and
+  lists every skip with the fixture it wanted. A run that executes nothing
+  fails instead of looking dormant — the failure mode of the old self-hosted
+  `metal` job, which wanted a runner label no runner carried and was cancelled
+  or failed 100 dispatches in a row.
+- **A required-test contract.** `TestDeployWakeMetal`,
+  `TestSourceDeployWakeMetal`, `TestBuildMetal`, `TestWakeTimelineMetal`,
+  `TestDeployHealthcheckMetal`, `TestCatalogRuntimeParityMetal`,
+  `TestSec11_MemoryMaxFenceEnforced_CrossProcess` and
+  `TestSec11_SeccompFilterEnforced_CrossProcess` must actually execute. If any
+  of them *skips*, the gate fails and names it. A tally cannot distinguish "the
+  suite grew" from "the build path stopped running"; this can.
+
+The `-run` filter is generated from the build tag, never hand-written, and
+`scripts/ci/run-native-e2e_test.sh` — wired into the `checks` job in `ci.yml`, so
+it runs on every PR — re-derives it and fails if the set is empty, if it drops
+below 15 tests, if the derivation stops keying on `//go:build metal`, if the
+required-test list shrinks, if a required test name stops existing in
+`cmd/e2e`, if the Postgres hard-fail is removed, or if the wrapper stops
+restoring services.
+
+## Disabling it
+
+Remove `/etc/faas/builder-acceptance-host` from the instance to stop execution
+immediately while preserving the identity configuration. Reverting the
+workload-identity provider condition revokes GitHub authentication before SSH.

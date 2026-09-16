@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apislogs"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
@@ -1827,10 +1828,6 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 // this helper owns target selection, notifications, and audit records so the
 // two entry points cannot drift.
 func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest) (state.Deployment, *api.Problem) {
-	current, err := s.store.LatestDeployment(ctx, app.ID)
-	if err != nil {
-		return state.Deployment{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no deployments")
-	}
 	alertRuleID := uuid.Nil
 	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
 		if parsed, parseErr := uuid.Parse(*req.AlertRuleID); parseErr == nil {
@@ -1838,6 +1835,7 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 		}
 	}
 	var target state.Deployment
+	var err error
 	mode := "latest_superseded"
 	if req.TargetDeploymentID != nil && *req.TargetDeploymentID != "" {
 		mode = "explicit"
@@ -1865,6 +1863,10 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 			return state.Deployment{}, api.ErrNoRollbackTarget()
 		}
 	}
+	current, err := s.store.LiveDeployment(ctx, app.ID)
+	if err != nil {
+		return state.Deployment{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no deployments")
+	}
 	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
 		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
 		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
@@ -1886,7 +1888,7 @@ func (s *server) rollbackAppCore(ctx context.Context, acct state.Account, app st
 			app.ID, target.ID, current.ID, target.ID))
 	_ = s.notif.Notify(ctx, db.NotifyDeploymentChanged,
 		fmt.Sprintf(`{"kind":"superseded","status":"superseded","app_id":"%s","deployment_id":"%s","to":"%s"}`,
-			app.ID, current.ID, current.ID))
+			app.ID, current.ID, target.ID))
 	s.log.Info("app rolled back", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID, "mode", mode)
 	s.audit.Emit(ctx, "app.rolled_back", &acct.ID, map[string]any{
 		"app_id": app.ID, "from": current.ID, "to": target.ID, "mode": mode,
@@ -1922,16 +1924,40 @@ func (s *server) parkApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return
 	}
 	st := state.AppEvictedCold
-	if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &st}); err != nil {
+	claimed, err := transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not park app"))
 		return
 	}
+	if !claimed {
+		current, readErr := s.store.AppByID(r.Context(), app.ID)
+		if readErr != nil || current.Status != state.AppEvictedCold {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"App lifecycle transition in progress", "retry after the current park or wake operation completes"))
+			return
+		}
+	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
 		fmt.Sprintf(`{"kind":"parked","slug":"%s","app_id":"%s"}`, app.Slug, app.ID))
+	if err := waitForAppInstancesDrained(r.Context(), s.store, app.ID, appParkDrainTimeout, appParkDrainPoll); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			api.WriteProblem(w, api.ErrCapacity("app instances did not drain before the park deadline").WithHeader("Retry-After", "1"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not verify app instance drain"))
+		return
+	}
 	if err := webhook.Emit(r.Context(), s.store, app.ID, state.AppWebhookEventAppParked, map[string]any{
 		"app_id": app.ID, "slug": app.Slug, "status": st, "occurred_at": time.Now().UTC(),
 	}); err != nil {
 		s.log.WarnContext(r.Context(), "enqueue app.parked webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+	}
+	if app.Status != state.AppEvictedCold {
+		s.audit.Emit(r.Context(), "app.parked", &acct.ID, map[string]any{
+			"app_id": app.ID,
+			"slug":   app.Slug,
+			"status": st,
+		})
 	}
 	s.log.Info("app parked", "app", app.ID, "account", acct.ID)
 	w.WriteHeader(http.StatusNoContent)
@@ -1943,9 +1969,35 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !ok {
 		return
 	}
+	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"App has no live deployment", "deploy the app before requesting a wake"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not resolve the app's live deployment"))
+		return
+	}
+	if app.Status == state.AppEvictedCold {
+		if err := waitForAppInstancesDrained(r.Context(), s.store, app.ID, 0, 0); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+					"App is still draining", "wait for the preceding park operation to finish before requesting a wake"))
+				return
+			}
+			api.WriteProblem(w, api.ErrCapacity("could not verify app instance drain"))
+			return
+		}
+	}
 	st := state.AppActive
-	if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &st}); err != nil {
+	claimed, err := transitionAppStatus(r.Context(), s.store, app.ID, app.Status, st)
+	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not wake app"))
+		return
+	}
+	if !claimed {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"App lifecycle transition in progress", "retry after the current park or wake operation completes"))
 		return
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
@@ -1954,6 +2006,13 @@ func (s *server) wakeApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		"app_id": app.ID, "slug": app.Slug, "status": st, "occurred_at": time.Now().UTC(),
 	}); err != nil {
 		s.log.WarnContext(r.Context(), "enqueue app.woken webhook", slog.String("app", app.ID), slog.String("err", err.Error()))
+	}
+	if app.Status != state.AppActive {
+		s.audit.Emit(r.Context(), "app.woken", &acct.ID, map[string]any{
+			"app_id": app.ID,
+			"slug":   app.Slug,
+			"status": st,
+		})
 	}
 	s.log.Info("app woken", "app", app.ID, "account", acct.ID)
 	w.WriteHeader(http.StatusNoContent)
@@ -1973,9 +2032,14 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 			"App is not active", "only an active app can be restarted"))
 		return
 	}
-	parked := state.AppEvictedCold
-	if _, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{Status: &parked}); err != nil {
+	claimed, err := claimAppRestart(r.Context(), s.store, app.ID)
+	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not restart app"))
+		return
+	}
+	if !claimed {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Restart already in progress", "wait for the accepted restart to finish before retrying"))
 		return
 	}
 	wakeUUID, err := uuid.NewV7()
@@ -1992,8 +2056,30 @@ func (s *server) restartApp(w http.ResponseWriter, r *http.Request, acct state.A
 		// preserve the accepted response and log the transient failure.
 		s.log.Warn("app restart: notify schedd failed", "app", app.ID, "err", err)
 	}
+	s.audit.Emit(r.Context(), "app.restart_requested", &acct.ID, map[string]any{
+		"app_id":  app.ID,
+		"slug":    app.Slug,
+		"wake_id": wakeID,
+	})
 	s.log.Info("app restart requested", "app", app.ID, "account", acct.ID, "wake_id", wakeID)
 	writeJSON(w, http.StatusAccepted, api.AppRestartResponse{WakeID: wakeID})
+}
+
+type appStatusCompareAndSetter interface {
+	CompareAndSetAppStatus(context.Context, string, state.AppStatus, state.AppStatus) (bool, error)
+}
+
+func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool, error) {
+	if atomicStore, ok := store.(appStatusCompareAndSetter); ok {
+		return atomicStore.CompareAndSetAppStatus(ctx, appID, state.AppActive, state.AppEvictedCold)
+	}
+	// Compatibility for focused handler test doubles. Production PgStore and
+	// the integration MemStore always take the atomic branch above.
+	parked := state.AppEvictedCold
+	if _, err := store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &parked}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // renameApp swaps an app's slug atomically (issue #63). Body is
@@ -2023,6 +2109,11 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid slug",
 			"slug must be 3-40 chars, lowercase letters, digits, and hyphens"))
+		return
+	}
+	if api.IsReservedAppSlug(req.NewSlug) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Reserved slug", fmt.Sprintf("app slug %q is reserved for a Gregale service", req.NewSlug)))
 		return
 	}
 	if req.NewSlug == oldSlug {
@@ -2073,14 +2164,39 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	instances, err := s.store.ListInstancesForApp(r.Context(), app.ID)
+	limit := app.MaxConcurrency
+	if limit <= 0 {
+		if planLimits, found := api.LimitsFor(acct.Plan); found {
+			limit = planLimits.MaxConcurrency
+		}
+	}
+	if limit <= 0 {
+		limit = 1
+	}
+	var instances []state.Instance
+	var err error
+	if r.URL.Query().Get("history") == "true" {
+		// History is explicit and still bounded for old, frequently-woken apps.
+		instances, err = s.store.ListLatestInstancesForApp(r.Context(), app.ID, api.DefaultInstanceHistoryLimit)
+	} else if activeStore, ok := s.store.(interface {
+		ListActiveInstancesForApp(context.Context, string, int) ([]state.Instance, error)
+	}); ok {
+		instances, err = activeStore.ListActiveInstancesForApp(r.Context(), app.ID, limit)
+	} else {
+		instances, err = s.store.ListLatestInstancesForApp(r.Context(), app.ID, limit)
+		instances = slices.DeleteFunc(instances, func(instance state.Instance) bool {
+			return !state.State(instance.State).CountsForRAM()
+		})
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list instances"))
 		return
 	}
 	out := make([]api.InstanceResponse, 0, len(instances))
 	for _, ins := range instances {
-		out = append(out, instanceResponse(ins, app.EffectiveMinInstances()))
+		response := instanceResponse(ins, app.EffectiveMinInstances())
+		response.Resident = state.State(ins.State).CountsForRAM()
+		out = append(out, response)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -2135,8 +2251,21 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		}
 	}
 	token := randomToken(16)
-	d, err := s.store.CreateCustomDomain(r.Context(), domain, app.ID, token)
+	perApp, perAccount, _ := api.CustomDomainLimitsFor(acct.Plan)
+	type quotaCreator interface {
+		CreateCustomDomainIfUnderQuota(context.Context, string, string, string, int, int) (state.CustomDomain, error)
+	}
+	creator, ok := s.store.(quotaCreator)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("domain quota enforcement unavailable"))
+		return
+	}
+	d, err := creator.CreateCustomDomainIfUnderQuota(r.Context(), domain, app.ID, token, perApp, perAccount)
 	if err != nil {
+		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
+			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
+			return
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 			"Domain taken", err.Error()))
 		return
@@ -2157,6 +2286,31 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		"domain": d.Domain,
 	})
 	writeJSON(w, http.StatusAccepted, domainResponse(d))
+}
+
+func (s *server) retryDomainVerification(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	domain := strings.ToLower(strings.TrimSpace(r.PathValue("domain")))
+	d, err := s.store.DomainByName(r.Context(), domain)
+	if err != nil {
+		s.notFound(w, "no such domain")
+		return
+	}
+	app, err := s.store.AppByID(r.Context(), d.AppID)
+	if err != nil || app.AccountID != acct.ID {
+		s.notFound(w, "no such domain")
+		return
+	}
+	type retrier interface {
+		RetryCustomDomainVerification(context.Context, string) error
+	}
+	if x, ok := s.store.(retrier); !ok {
+		api.WriteProblem(w, api.ErrCapacity("domain retry unavailable"))
+		return
+	} else if err := x.RetryCustomDomainVerification(r.Context(), domain); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain cannot be retried", err.Error()))
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // wildcardTenantSurfaceOverlap checks the non-deleted tenant-surface hostname
@@ -2338,6 +2492,12 @@ func (s *server) domainResponseWithCert(ctx context.Context, d state.CustomDomai
 		return resp, nil
 	}
 	dialDomain, _ := state.WildcardProbeHost(d.Domain)
+	if points := checkPointsToGregale(ctx, dialDomain); points.Status == probeFail {
+		err := fmt.Errorf("%w: %w", errCertFailure, errCertRoutingMismatch)
+		resp.CertStatus = classifyCertError(err)
+		resp.CertLastError = errCertRoutingMismatch.Error()
+		return resp, err
+	}
 	cert, err := dialCert(ctx, dialDomain)
 	if err != nil {
 		resp.CertStatus = classifyCertError(err)
@@ -2363,6 +2523,12 @@ func classifyCertError(err error) string {
 	case errors.Is(err, errCDNCert):
 		return "dial_failed:cdn_cert"
 	case errors.Is(err, errCertFailure):
+		if errors.Is(err, errCertAddressBlocked) {
+			return "dial_failed:address_blocked"
+		}
+		if errors.Is(err, errCertRoutingMismatch) {
+			return "dial_failed:routing_mismatch"
+		}
 		return "dial_failed:" + dialFailureReason(err)
 	case errors.Is(err, context.DeadlineExceeded):
 		return "dial_failed:dial_timeout"
@@ -2519,11 +2685,19 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	if !obs.PointsToGregale {
 		ptsStatus = probeFail
 		report.Healthy = false
+		expected := strings.TrimSuffix(strings.TrimSpace(appsDomainFunc()), ".")
 		if ptsObs != "" {
 			ptsDetail = "CNAME does not point at Gregale (observed: " + ptsObs + ")"
-			ptsRem = "Set CNAME " + d.Domain + " → " + ptsObs
 		} else {
-			ptsDetail = "no CNAME at apex; using A/AAAA record instead"
+			ptsDetail = "no Gregale CNAME target was observed"
+		}
+		// The observed target is evidence of the misconfiguration, never a
+		// remediation target. Using it here previously produced self-CNAME
+		// instructions when the customer's record pointed back to itself.
+		if expected != "" && !strings.EqualFold(expected, d.Domain) {
+			ptsRem = "Set CNAME " + d.Domain + " → " + expected
+		} else {
+			ptsRem = "Ask Gregale support for the configured application CNAME target"
 		}
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
@@ -3110,7 +3284,7 @@ func (s *server) listKeys(w http.ResponseWriter, r *http.Request, acct state.Acc
 			CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339),
 			Status:    k.Status,
 		}
-		if !k.LastUsedAt.IsZero() {
+		if k.LastUsedAt != nil {
 			resp.LastUsedAt = k.LastUsedAt.UTC().Format(time.RFC3339)
 		}
 		if k.ExpiresAt != nil {
@@ -4553,6 +4727,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 			bp.Entrypoint = profile.StartCommand
 			bp.Port = profile.Port
 			bp.HealthPath = profile.HealthPath
+			bp.ConfigFile = profile.ConfigFile
 		}
 		if !profileLoaded && d.SourcePath != "" {
 			// Pre-profile deployments may still have a spool available. Keep
@@ -4571,6 +4746,9 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 			bp.Port = d.OverridePort
 		}
 		resp.BuildPlan = bp
+	}
+	if len(d.Workflows) > 0 && string(d.Workflows) != "null" {
+		_ = json.Unmarshal(d.Workflows, &resp.Workflows)
 	}
 	return resp
 }
@@ -4645,10 +4823,9 @@ func (s *server) buildProvenanceResponse(p state.BuildProvenance) api.BuildProve
 // rely on the omitempty tags on BuildResponse so the JSON stays
 // minimal.
 //
-// duration_seconds is server-computed: only set when BOTH
-// StartedAt and FinishedAt are non-zero — a CI script can always
-// rely on its presence meaning "the build reached a terminal
-// state and elapsed N wall-clock seconds."
+// duration_seconds is server-computed from StartedAt to either FinishedAt or
+// CancelledAt. A cancelled queued build exposes cancelled_at but omits the
+// duration because it never started.
 func (s *server) buildResponse(b state.Build) api.BuildResponse {
 	out := api.BuildResponse{
 		ID:           b.ID,
@@ -4660,17 +4837,19 @@ func (s *server) buildResponse(b state.Build) api.BuildResponse {
 	if b.FailureClass != "" {
 		out.FailureClass = string(b.FailureClass)
 	}
-	if b.LogPath != "" {
-		out.LogPath = b.LogPath
-	}
 	if !b.StartedAt.IsZero() {
 		out.StartedAt = b.StartedAt.UTC().Format(time.RFC3339)
 	}
 	if !b.FinishedAt.IsZero() {
 		out.FinishedAt = b.FinishedAt.UTC().Format(time.RFC3339)
 	}
-	if !b.StartedAt.IsZero() && !b.FinishedAt.IsZero() {
-		out.DurationSeconds = int(b.FinishedAt.Sub(b.StartedAt).Seconds())
+	terminalAt := b.FinishedAt
+	if b.CancelledAt != nil {
+		terminalAt = *b.CancelledAt
+		out.CancelledAt = b.CancelledAt.UTC().Format(time.RFC3339)
+	}
+	if !b.StartedAt.IsZero() && !terminalAt.IsZero() {
+		out.DurationSeconds = int(terminalAt.Sub(b.StartedAt).Seconds())
 	}
 	if b.CacheStatus != "" {
 		out.CacheStatus = b.CacheStatus
@@ -4746,14 +4925,15 @@ func cronResponse(c state.Cron) api.CronResponse {
 		c.Timezone = defaultCronTimezone
 	}
 	resp := api.CronResponse{
-		ID:            c.ID,
-		AppID:         c.AppID,
-		Schedule:      c.Schedule,
-		Path:          c.Path,
-		Enabled:       c.Enabled,
-		Timezone:      c.Timezone,
-		SkipIfRunning: c.SkipIfRunning,
-		CreatedAt:     c.CreatedAt.UTC().Format(time.RFC3339),
+		ID:              c.ID,
+		AppID:           c.AppID,
+		Schedule:        c.Schedule,
+		Path:            c.Path,
+		Enabled:         c.Enabled,
+		SuspendedReason: c.SuspendedReason,
+		Timezone:        c.Timezone,
+		SkipIfRunning:   c.SkipIfRunning,
+		CreatedAt:       c.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
@@ -4943,12 +5123,12 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 	if statusFilter != "" {
 		switch statusFilter {
 		case api.BuildStatusQueued, api.BuildStatusRunning,
-			api.BuildStatusSucceeded, api.BuildStatusFailed:
+			api.BuildStatusSucceeded, api.BuildStatusFailed, api.BuildStatusCancelled:
 			// ok
 		default:
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Bad status filter",
-				"expected one of queued|running|succeeded|failed"))
+				"expected one of queued|running|succeeded|failed|cancelled"))
 			return
 		}
 	}
@@ -5080,6 +5260,25 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	}
 	egressMode, egressFrom, includedEgress, egressOverage, egressPrice := egressUsagePolicyView(s.billingProvider, acct.Plan, eligibleEgressBytes)
 	overageCents = combinedOverageCents(s.billingProvider, acct.Plan, eligibleEgressBytes, overageCents)
+	var executionUsage *api.ExecutionUsageSummaryResponse
+	if usageStore, ok := s.store.(state.ExecutionUsageStore); ok {
+		usage, err := usageStore.ExecutionUsageByAccount(ctx, acct.ID, month)
+		if err != nil {
+			return api.UsageSummaryResponse{}, err
+		}
+		executionUsage = &api.ExecutionUsageSummaryResponse{
+			Runs:         usage.Runs,
+			WallTimeMS:   usage.WallTimeMS,
+			CPUTimeMS:    usage.CPUTimeMS,
+			PeakMemoryMB: usage.PeakMemoryMB,
+			OutputBytes:  usage.OutputBytes,
+			Succeeded:    usage.Succeeded,
+			Failed:       usage.Failed,
+			TimedOut:     usage.TimedOut,
+			OutOfMemory:  usage.OutOfMemory,
+			Cancelled:    usage.Cancelled,
+		}
+	}
 	return api.UsageSummaryResponse{
 		Month:                 monthStr,
 		UsedGBHours:           usedGB,
@@ -5093,6 +5292,7 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 		IncludedEgressGB:      includedEgress,
 		EgressOverageGB:       egressOverage,
 		EgressMillicentsPerGB: egressPrice,
+		Executions:            executionUsage,
 		// ADR-048: ingress Σ + cold-boot Σ across every
 		// app on this account for the month. Both
 		// informational, not billed.
@@ -5392,7 +5592,7 @@ func parseInvoiceListParams(r *http.Request) (month *time.Time, before time.Time
 			return nil, time.Time{}, 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Bad limit", "expected 1..100").
 				WithLimit(int64(limitMax), observed).
-				WithDocs("https://" + wire.DocsHost + "/billing#invoices")
+				WithDocs(wire.DocsBaseURL + "/billing#invoices")
 		}
 		limit = n
 	}
@@ -5438,7 +5638,7 @@ func parseCronRunsLimit(r *http.Request) (int, *api.Problem) {
 			return 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Bad limit", "expected 1..100").
 				WithLimit(int64(limitMax), observed).
-				WithDocs("https://" + wire.DocsHost + "/crons#runs")
+				WithDocs(wire.DocsBaseURL + "/crons#runs")
 		}
 		limit = n
 	}
@@ -5494,13 +5694,10 @@ func keyPrefixFromHash(hash []byte) string {
 	return api.APIKeyPrefix + hex.EncodeToString(hash)[:12]
 }
 
-// validCron returns true if s is a 5-field cron expression. The actual
-// scheduler (spec §4.3) reuses robfig/cron's parser in pkg/sched — this is a
-// quick shape check so apid rejects obviously bad input at the API boundary
-// instead of letting it through to schedd.
+// validCron uses the exact parser schedd uses, keeping direct and project
+// cron admission on the same five-field grammar.
 func validCron(s string) bool {
-	fields := strings.Fields(s)
-	return len(fields) == 5
+	return cronexpr.Validate(s) == nil
 }
 
 // streamDeploymentLogs serves the build log for a deployment as a

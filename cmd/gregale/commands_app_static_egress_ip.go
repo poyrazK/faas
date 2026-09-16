@@ -84,8 +84,11 @@ func cmdAppStaticEgressIP(slug string, args []string) int {
 // `gregale --json app demo static-egress-ip show` can drive
 // dashboards.
 func cmdAppStaticEgressIPShow(slug string, args []string) int {
-	fs := flag.NewFlagSet("app static-egress-ip show", flag.ContinueOnError)
+	fs := newFlagSet("app static-egress-ip show", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	client, err := authedClient()
@@ -119,7 +122,7 @@ func cmdAppStaticEgressIPShow(slug string, args []string) int {
 // A pre-check on the CLI would duplicate the gate and risk
 // drift — the server is the single source of truth.
 func cmdAppStaticEgressIPSet(slug string, args []string) int {
-	fs := flag.NewFlagSet("app static-egress-ip set", flag.ContinueOnError)
+	fs := newFlagSet("app static-egress-ip set", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -152,8 +155,11 @@ func cmdAppStaticEgressIPSet(slug string, args []string) int {
 // deleting an app that has no pin returns a no-op (200 with
 // IP=nil) rather than 404, so a repeated `clear` is safe.
 func cmdAppStaticEgressIPClear(slug string, args []string) int {
-	fs := flag.NewFlagSet("app static-egress-ip clear", flag.ContinueOnError)
+	fs := newFlagSet("app static-egress-ip clear", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	client, err := authedClient()

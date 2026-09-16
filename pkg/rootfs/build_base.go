@@ -371,8 +371,11 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 			}
 		}
 	}
+	runnerDigest := ""
 	if in.FunctionRunnerPath != "" {
-		if err := InjectFunctionRunner(staging, in.FunctionRunnerPath); err != nil {
+		var err error
+		runnerDigest, err = injectFunctionRunner(staging, in.FunctionRunnerPath)
+		if err != nil {
 			return BuildResult{}, err
 		}
 	}
@@ -402,10 +405,14 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	if err != nil {
 		return BuildResult{}, err
 	}
-	sizeMB, err := CheckCapForStaging(limits, stats)
-	if err != nil {
+	if _, err := CheckCapForStaging(limits, stats); err != nil {
 		return BuildResult{}, err
 	}
+	// Full-rootfs workloads use the image itself as their writable root.
+	// Give them the same total logical capacity promised by
+	// ephemeral_disk_max_mb and bake it into the deployment artifact so
+	// restore never needs to grow the filesystem in the wake path.
+	sizeMB := limits.EphemeralDiskMaxMB()
 	// M-3 commit 9 / ADR-141 §Decision 5: per-plan ceiling on
 	// the unpacked full-rootfs staging tree size. Hobby 256 MB /
 	// Pro 1 GB / Scale 4 GB; unknown plan → no extra cap (the
@@ -434,7 +441,12 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		return BuildResult{}, err
 	}
 
-	res := BuildResult{SizeMB: sizeMB, ContentBytes: stats.ContentBytes, SBOMKey: sbomKey}
+	res := BuildResult{
+		SizeMB:       sizeMB,
+		ContentBytes: stats.ContentBytes,
+		SBOMKey:      sbomKey,
+		RunnerDigest: runnerDigest,
+	}
 	if in.OutImage != "" {
 		res.ImagePath = in.OutImage
 	} else {

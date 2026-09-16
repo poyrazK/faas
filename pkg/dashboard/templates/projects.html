@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1050px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+    .flash { border: 1px solid #7c9; background: #e8f7ef; color: #164; padding: 0.75rem; border-radius: 5px; }
+    .muted { color: #777; }
+    .danger { border-color: #c66; }
+    label { display: block; margin: 0.7rem 0; }
+    input { display: block; min-width: 22rem; padding: 0.4rem; margin-top: 0.2rem; }
+    button { padding: 0.45rem 0.8rem; cursor: pointer; }
+    .danger button { color: #a11; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Gregale</strong>
+    <nav><a href="/dashboard/">Overview</a><a href="/dashboard/apps">Apps</a><a href="/dashboard/projects">Projects</a><a href="/dashboard/usage">Usage</a><a href="/dashboard/account">Account</a></nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>{{.Title}}</h1>
+    {{if .Data.Flash}}<p class="flash">{{.Data.Flash}}</p>{{end}}
+
+    {{if .Data.Project}}
+      {{$project := .Data.Project}}
+      <p><a href="/dashboard/projects">← All projects</a> · <a href="/dashboard/projects/{{$project.Slug}}/preview">Preview a new apply</a></p>
+      <section class="card">
+        <dl>
+          <dt>ID</dt><dd><code>{{$project.ID}}</code></dd>
+          <dt>Scan source</dt><dd>{{$project.ScanSource}}</dd>
+          <dt>Repository</dt><dd>{{if $project.RepoFullName}}<code>{{$project.RepoFullName}}</code>{{else}}unbound{{end}}</dd>
+          <dt>Production branch</dt><dd>{{if $project.ProductionBranch}}<code>{{$project.ProductionBranch}}</code>{{else}}—{{end}}</dd>
+          <dt>Last reconciliation</dt><dd>{{if $project.LastReconciliationStatus}}{{$project.LastReconciliationStatus}}{{else}}—{{end}}</dd>
+          <dt>Last build</dt><dd>{{if $project.LastBuildStatus}}{{$project.LastBuildStatus}}{{else}}—{{end}}</dd>
+        </dl>
+      </section>
+
+      <h2>Workloads</h2>
+      {{if $project.Workloads}}
+        <table><thead><tr><th>App</th><th>Workload</th><th>Lifecycle</th><th>Deployment</th><th>Build</th></tr></thead><tbody>
+        {{range $project.Workloads}}<tr><td><a href="/dashboard/apps/{{.Slug}}"><code>{{.Slug}}</code></a></td><td>{{.WorkloadName}}</td><td>{{.Status}}</td><td>{{if .DeploymentStatus}}{{.DeploymentStatus}}{{else}}—{{end}}</td><td>{{if .BuildStatus}}{{.BuildStatus}}{{else}}—{{end}}</td></tr>{{end}}
+        </tbody></table>
+      {{else}}<p class="muted">No active workloads are attached.</p>{{end}}
+      <p><strong>Persisted exclusions:</strong> {{if $project.Exclusions}}{{range $project.Exclusions}}<code>{{.}}</code> {{end}}{{else}}none{{end}}</p>
+
+      <section class="card">
+        <h2>Source settings</h2>
+        <form method="POST" action="/dashboard/projects/{{$project.Slug}}/update">
+          <input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}">
+          <label>Repository owner/name <input name="repo_full_name" value="{{$project.RepoFullName}}" placeholder="owner/repository"></label>
+          <label>Production branch <input name="production_branch" value="{{$project.ProductionBranch}}" required></label>
+          <button type="submit">Update project</button>
+        </form>
+      </section>
+
+      <section class="card danger">
+        <h2>Delete project</h2>
+        {{$preview := .Data.DeletePreview}}
+        <p>This detaches {{len $preview.Workloads}} workload(s). The apps remain live with {{$preview.DomainCount}} domain(s), {{$preview.EnvCount}} environment value(s), and {{$preview.CronCount}} cron(s).</p>
+        <form method="POST" action="/dashboard/projects/{{$project.Slug}}/delete">
+          <input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}">
+          <label>Type <code>{{$project.Slug}}</code> to confirm <input name="confirm_slug" required autocomplete="off"></label>
+          <button type="submit">Delete project</button>
+        </form>
+      </section>
+    {{else}}
+      {{if .Data.Projects}}
+        <table><thead><tr><th>Project</th><th>Repository</th><th>Branch</th><th>Scan source</th><th>Workloads</th></tr></thead><tbody>
+        {{range .Data.Projects}}<tr><td><a href="/dashboard/projects/{{.Slug}}"><code>{{.Slug}}</code></a></td><td>{{if .RepoFullName}}<code>{{.RepoFullName}}</code>{{else}}unbound{{end}}</td><td>{{if .ProductionBranch}}{{.ProductionBranch}}{{else}}—{{end}}</td><td>{{.ScanSource}}</td><td>{{.WorkloadCount}}</td></tr>{{end}}
+        </tbody></table>
+      {{else}}
+        <section class="card"><h2>No projects yet</h2><p>Deploy a multi-workload repository with <code>gregale deploy --project</code> to create one.</p></section>
+      {{end}}
+    {{end}}
+  </main>
+  <footer>Gregale · project recovery</footer>
+</body>
+</html>

@@ -315,13 +315,7 @@ func TestSBOM_ReadBaseline_Missing(t *testing.T) {
 func TestSBOM_ReadBaseline_Malformed(t *testing.T) {
 	root := t.TempDir()
 	gitSHA := "0123456789abcdef0123456789abcdef01234567"
-	// Write a directory that has the baseline path as a regular
-	// file containing non-JSON bytes.
-	dir := releaseinstall.BundleRoot(root, gitSHA)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(releaseinstall.SBOMBaselinePath(dir), []byte("not json"), 0o644); err != nil {
+	if err := os.WriteFile(releaseinstall.AcceptedSBOMBaselinePath(root), []byte("not json"), 0o644); err != nil {
 		t.Fatalf("write garbage: %v", err)
 	}
 	_, err := releaseinstall.ReadBaseline(root, gitSHA)
@@ -330,5 +324,21 @@ func TestSBOM_ReadBaseline_Malformed(t *testing.T) {
 	}
 	if errors.Is(err, releaseinstall.ErrNilBaseline) {
 		t.Fatalf("malformed baseline: should not be ErrNilBaseline, got %v", err)
+	}
+}
+
+func TestSBOM_AcceptedBaselineSurvivesReleasePruning(t *testing.T) {
+	root := t.TempDir()
+	gitSHA := "0123456789abcdef0123456789abcdef01234567"
+	want := releaseinstall.SBOMBaseline{GitSHA: gitSHA, Counts: releaseinstall.SBOMCounts{HighN: 2}}
+	if err := releaseinstall.WriteBaseline(root, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(releaseinstall.BundleRoot(root, gitSHA)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := releaseinstall.ReadBaseline(root, gitSHA)
+	if err != nil || got.Counts != want.Counts {
+		t.Fatalf("accepted baseline after prune = %+v, %v", got, err)
 	}
 }

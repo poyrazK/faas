@@ -87,6 +87,29 @@ func TestEnforceConsumerAuth_OptionalAnonymousPasses(t *testing.T) {
 	}
 }
 
+func TestEnforceConsumerAuth_OptionalApplicationAuthorizationPasses(t *testing.T) {
+	store, _ := consumerAuthFixture()
+	h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
+	for _, header := range []string{"Basic dXNlcjpwYXNz", "Token application-token", "Bearer application-token"} {
+		rr := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "https://app.example.test/resource", nil)
+		r.Header.Set("Authorization", header)
+		rec := &statusRecorder{ResponseWriter: rr, status: http.StatusOK, request: r}
+		if !h.enforceConsumerAuth(rr, r, rec, App{ID: "app-1", AccountID: "acct-1", ConsumerAuthMode: api.ConsumerAuthModeOptional}) {
+			t.Fatalf("optional application authorization %q was rejected: status=%d body=%s", header, rr.Code, rr.Body.String())
+		}
+	}
+}
+
+func TestEnforceConsumerAuth_RequiredApplicationAuthorizationFails(t *testing.T) {
+	store, _ := consumerAuthFixture()
+	h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
+	rr, _, ok := runConsumerAuthGate(t, h, App{ID: "app-1", AccountID: "acct-1", ConsumerAuthMode: api.ConsumerAuthModeRequired}, http.MethodGet, "application-token")
+	if ok || rr.Code != http.StatusUnauthorized || problemCode(t, rr) != api.CodeConsumerKeyInvalid {
+		t.Fatalf("required application authorization: ok=%v status=%d code=%s, want false/401/%s", ok, rr.Code, problemCode(t, rr), api.CodeConsumerKeyInvalid)
+	}
+}
+
 func TestEnforceConsumerAuth_EmptyModePreservesLegacyAuthorization(t *testing.T) {
 	h := NewHandlerWith(nil, nil, nil)
 	// Legacy/fake App rows leave ConsumerAuthMode empty while the same
@@ -139,7 +162,7 @@ func TestEnforceConsumerAuth_RejectsInvalidAndInactiveCredentials(t *testing.T) 
 		mutate func(*fakeConsumerAuthStore)
 		want   string
 	}{
-		{name: "invalid format", want: api.CodeConsumerKeyInvalid},
+		{name: "invalid Gregale key format", want: api.CodeConsumerKeyInvalid},
 		{name: "revoked", mutate: func(s *fakeConsumerAuthStore) { now := time.Now(); s.key.RevokedAt = &now }, want: api.CodeConsumerKeyInactive},
 		{name: "expired", mutate: func(s *fakeConsumerAuthStore) { now := time.Now().Add(-time.Minute); s.key.ExpiresAt = &now }, want: api.CodeConsumerKeyInactive},
 		{name: "consumer revoked", mutate: func(s *fakeConsumerAuthStore) { now := time.Now(); s.consumer.RevokedAt = &now }, want: api.CodeConsumerKeyInactive},
@@ -151,8 +174,8 @@ func TestEnforceConsumerAuth_RejectsInvalidAndInactiveCredentials(t *testing.T) 
 				tc.mutate(store)
 			}
 			h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
-			if tc.name == "invalid format" {
-				token = "not-a-consumer-key"
+			if tc.name == "invalid Gregale key format" {
+				token = api.ConsumerKeyPrefix + "deadbeef_short"
 			}
 			rr, _, ok := runConsumerAuthGate(t, h, App{ID: "app-1", AccountID: "acct-1", ConsumerAuthMode: api.ConsumerAuthModeOptional}, http.MethodGet, token)
 			if ok || rr.Code != http.StatusUnauthorized || problemCode(t, rr) != tc.want {

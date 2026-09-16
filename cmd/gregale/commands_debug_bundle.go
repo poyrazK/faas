@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const debugIncidentBundleSchema = "gregale.debug.bundle/v1"
+const debugIncidentBundleSchema = "gregale.debug.bundle/v2"
 
 // debugIncidentBundle is deliberately composed only from debugger-safe API
 // DTOs. It is suitable for attaching to a support ticket: request bodies,
@@ -22,8 +22,11 @@ type debugIncidentBundle struct {
 	AppSlug       string                           `json:"app_slug"`
 	Request       api.DebugTelemetryRequestItem    `json:"request"`
 	Evidence      api.DebugRequestEvidenceResponse `json:"evidence"`
+	Coverage      api.DebugCoverageResponse        `json:"coverage"`
 	Regressions   []api.DebugRegressionItem        `json:"regressions,omitempty"`
 	Compare       *api.DebugCompareResponse        `json:"compare,omitempty"`
+	Sources       []string                         `json:"sources"`
+	Limitations   []string                         `json:"limitations"`
 	Redaction     debugIncidentBundleRedaction     `json:"redaction"`
 }
 
@@ -36,7 +39,7 @@ type debugIncidentBundleRedaction struct {
 // retained request. The optional deployment pair adds a per-route comparison;
 // without it the bundle still contains request evidence and regressions.
 func cmdDebugBundle(args []string) int {
-	fs := flag.NewFlagSet("debug bundle", flag.ContinueOnError)
+	fs := newFlagSet("debug bundle", flag.ContinueOnError)
 	since := fs.String("since", "", "regression/compare lookback window (e.g. 1h, 24h, 3d)")
 	route := fs.String("route", "", "route filter for an optional deployment comparison")
 	source := fs.String("source", "", "source deployment id for an optional comparison")
@@ -72,16 +75,23 @@ func cmdDebugBundle(args []string) int {
 	if err != nil {
 		return printErr("Could not list debugger regressions", err)
 	}
+	coverage, err := client.GetAppDebugCoverage(ctx, slug, *since)
+	if err != nil {
+		return printErr("Could not get debugger coverage", err)
+	}
 	bundle := debugIncidentBundle{
 		SchemaVersion: debugIncidentBundleSchema,
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 		AppSlug:       slug,
 		Request:       evidence.Request,
 		Evidence:      evidence,
+		Coverage:      coverage,
 		Regressions:   regressions.Regressions,
+		Sources:       []string{"request_telemetry", "wake_timeline", "guest_execution", "otel_spans", "regression_observations", "signal_coverage"},
+		Limitations:   []string{"request_body_and_headers_are_unavailable", "raw_logs_and_span_attributes_are_excluded", "coverage_is_observed_persistence_coverage_not_capture_rate"},
 		Redaction: debugIncidentBundleRedaction{
 			Profile:  "debugger-safe",
-			Excluded: []string{"request_body", "credentials", "raw_span_attributes", "raw_sql"},
+			Excluded: []string{"request_body", "request_headers", "credentials", "raw_logs", "raw_span_attributes", "raw_sql"},
 		},
 	}
 	if *source != "" {

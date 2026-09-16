@@ -75,7 +75,8 @@ type fakeBackend struct {
 	// 30 MiB CL would still trip, but the buffer would already
 	// have been allocated). Atomic so it can be read without the
 	// mu lock held by an asserting test goroutine.
-	pickCalls atomic.Int32
+	pickCalls            atomic.Int32
+	lastAdmitCorrelation wire.CorrelationFields
 }
 
 type declaredRouteMatcherStub struct {
@@ -188,7 +189,7 @@ func (b *fakeBackend) HealthyCount(_ string) int {
 	return 0
 }
 
-func (b *fakeBackend) Admit(_ context.Context, _, _, _, _ string, maxConcurrency int) (string, WakeMethod, bool, error) {
+func (b *fakeBackend) Admit(ctx context.Context, _, _, _, _ string, maxConcurrency int) (string, WakeMethod, bool, error) {
 	// Issue #168 fan-out invariant: the HealthyCount + addTarget pair
 	// must be serialized. The fakeBackend takes b.mu for the whole
 	// call so concurrent Admit callers cannot collectively exceed
@@ -196,6 +197,7 @@ func (b *fakeBackend) Admit(_ context.Context, _, _, _, _ string, maxConcurrency
 	// under tgtMu (see pkg/gateway/pgbackend.go).
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.lastAdmitCorrelation, _ = wire.FromContext(ctx)
 	if len(b.targets) >= maxConcurrency {
 		// Already at the cap — the production semantics here are
 		// "schedule atomically refused", surfaced as atCapacity.
@@ -549,7 +551,7 @@ func TestAppsSuffixFilter(t *testing.T) {
 // response and an inbound header overrides it (lets clients thread their own
 // trace id).
 func TestRequestIDRoundTrip(t *testing.T) {
-	h, _, _ := newTestHandler(t)
+	h, backend, _ := newTestHandler(t)
 
 	// 1) No inbound header → response carries a generated 32-char hex.
 	req := httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
@@ -559,14 +561,27 @@ func TestRequestIDRoundTrip(t *testing.T) {
 	if len(got) != 32 {
 		t.Errorf("generated rid len = %d, want 32 hex chars (got %q)", len(got), got)
 	}
+	backend.mu.Lock()
+	admittedID := backend.lastAdmitCorrelation.RequestID
+	backend.mu.Unlock()
+	if admittedID != got {
+		t.Errorf("admission request id = %q, response id = %q", admittedID, got)
+	}
 
 	// 2) Inbound header → response echoes it.
+	h, backend, _ = newTestHandler(t)
 	req = httptest.NewRequest("GET", "http://jane-api.apps.dom/", nil)
 	req.Header.Set("x-faas-request-id", "my-trace-id")
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if got := rec.Header().Get("x-faas-request-id"); got != "my-trace-id" {
 		t.Errorf("inbound rid not echoed: got %q", got)
+	}
+	backend.mu.Lock()
+	admittedID = backend.lastAdmitCorrelation.RequestID
+	backend.mu.Unlock()
+	if admittedID != "my-trace-id" {
+		t.Errorf("caller request id changed before admission: %q", admittedID)
 	}
 }
 
@@ -915,6 +930,37 @@ func TestHandlerStampsTrustedClientIPHeader(t *testing.T) {
 	}
 }
 
+func TestHandlerGivesDirectHTTPAStableInvocationID(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Header.Get(api.InvocationIDHeader)))
+	}))
+	t.Cleanup(upstream.Close)
+
+	b := &fakeBackend{
+		app:      App{ID: "app-invocation-id", Plan: api.PlanFree},
+		host:     "invocation-id.apps.dom",
+		upstream: upstream.Listener.Addr().String(),
+	}
+	b.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "i-invocation-id"})
+	h := NewHandlerWith(b, NewMetrics(), nil)
+
+	req := httptest.NewRequest(http.MethodGet, "http://invocation-id.apps.dom/", nil)
+	req.Header.Set(api.RequestIDHeader, "public-request-123")
+	req.Header.Set(api.InvocationIDHeader, "attacker-invocation")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get(api.RequestIDHeader); got != "public-request-123" {
+		t.Fatalf("response request id = %q", got)
+	}
+	if got := rec.Body.String(); got != "public-request-123" {
+		t.Fatalf("runtime invocation id = %q, want public request id", got)
+	}
+}
+
 // TestFanOutAdmitsUpToCapThenReuses (issue #168) — max_concurrency is a
 // ceiling, not a request-per-instance target. A burst to a cold app
 // performs one wake and all followers reuse that target. Reactive scale-up
@@ -972,6 +1018,20 @@ func TestWriteWakeError_QueueFull(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
 		t.Errorf("Content-Type = %q, want problem+json", ct)
+	}
+}
+
+func TestWriteWakeInProgressIsRetryableAsyncResponse(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeWakeInProgress(rec, "req-123")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") != "1" || rec.Header().Get(api.RequestIDHeader) != "req-123" {
+		t.Fatalf("headers = %v", rec.Header())
+	}
+	if !strings.Contains(rec.Body.String(), api.CodeWakeInProgress) {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }
 
@@ -3911,7 +3971,7 @@ func TestApplyAppsMaintenanceMode_FiresBeforeEdgeRuleMaintenance(t *testing.T) {
 // pkg/gateway/synth.go:223-225.
 func TestStampRequestBudget_LogsEndpointSanitized(t *testing.T) {
 	var logBuf bytes.Buffer
-	log := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	log := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	h := &Handler{
 		metrics: NewMetrics(),

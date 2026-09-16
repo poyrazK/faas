@@ -42,8 +42,9 @@
 //   - missing or mismatched CSRF cookie   → 403 csrf_rejected + audit
 //   - missing GitHub App installation      → redirect to GitHub install flow
 //   - githubd.ExchangeOAuthCode errs      → 502 problem
-//   - success                             → 302 to
-//     /dashboard/account?github=connected&install=<id>&default_branch=<branch>
+//   - success                             → 302 to the saved dashboard return
+//     target (or /dashboard/account) with github=connected, install=<id>,
+//     and default_branch=<branch>
 package main
 
 import (
@@ -60,6 +61,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/middleware"
 )
 
 const (
@@ -312,7 +314,9 @@ func (s *server) renderOAuthCodeCallback(w http.ResponseWriter, r *http.Request)
 		q.Set("default_branch", defaultBranch)
 	}
 	q.Set("connected_at", strconv.FormatInt(time.Now().Unix(), 10))
-	http.Redirect(w, r, "/dashboard/account?"+q.Encode(), http.StatusFound)
+	returnTo := githubConnectReturnTo(r)
+	clearGitHubConnectReturn(w, r)
+	http.Redirect(w, r, githubConnectedRedirect(returnTo, q), http.StatusFound)
 }
 
 // redirectToGitHubAppInstall starts a fresh state-protected installation
@@ -341,7 +345,8 @@ func (s *server) redirectToGitHubAppInstall(w http.ResponseWriter, r *http.Reque
 // dashboard "Connect GitHub" button click handler. It mints a
 // narrow CSRF state cookie scoped to /oauth/code-callback and
 // 302s the browser to GitHub's installation URL when the account has not
-// installed the App yet, or to the user authorization URL when it has.
+// installed the App yet, or to the user authorization URL when it has. A
+// validated local dashboard return target is carried across both callbacks.
 //
 // POST-only (not GET) so an opportunistic <img src=…> cannot
 // mint a state cookie and trip a CSRF path. Same posture as
@@ -362,6 +367,11 @@ func (s *server) startConnectGitHub(w http.ResponseWriter, r *http.Request) {
 			"Unauthorized", "sign in to connect GitHub"))
 		return
 	}
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, githubConnectAction, acct.ID, githubConnectCSRFCookie); err != nil {
+		http.Redirect(w, r, "/dashboard/account?github=connect-forbidden", http.StatusSeeOther)
+		return
+	}
+	setGitHubConnectReturn(w, r, r.FormValue("return_to"))
 
 	clientID := os.Getenv("FAAS_GITHUB_APP_CLIENT_ID")
 	if clientID == "" {

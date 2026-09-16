@@ -17,7 +17,7 @@ func TestReadBuildEnvironmentFromHost(t *testing.T) {
 	if base == "" {
 		t.Skip("FAAS_TEST_BUILDER_BASE is not set")
 	}
-	environment, err := readBuildEnvironment(base, runtime.GOOS+"/"+runtime.GOARCH)
+	environment, err := readBuildEnvironment(base, "", runtime.GOOS+"/"+runtime.GOARCH)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestReadBuildEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := readBuildEnvironment(base, "linux/amd64")
+	got, err := readBuildEnvironment(base, "", "linux/amd64")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestReadBuildEnvironmentRejectsUntrustedSidecar(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			base := filepath.Join(t.TempDir(), "runner-builder-amd64.ext4")
 			tc.setup(t, base)
-			if _, err := readBuildEnvironment(base, "linux/amd64"); err == nil {
+			if _, err := readBuildEnvironment(base, "", "linux/amd64"); err == nil {
 				t.Fatal("unsafe builder identity was accepted")
 			}
 		})

@@ -2,12 +2,37 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestFindLatestFailedDeploymentUsesAppScopedHistory(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{{
+			ID: "failed-1", AppID: "app-1", Status: "failed", ErrorCode: api.CodeDeployFailed,
+		}}})
+	}))
+	defer srv.Close()
+
+	dep, err := findLatestFailedDeployment(NewClient(srv.URL, "fp_test"), "target-app", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dep == nil || dep.ID != "failed-1" {
+		t.Fatalf("deployment = %#v", dep)
+	}
+	if gotPath != "/v1/apps/target-app/deployments" {
+		t.Fatalf("path = %q, want app-scoped history", gotPath)
+	}
+}
 
 // resetRenderCaches clears both the NO_COLOR and stdout-is-tty caches
 // so the renderer doesn't pick up a stale value from a prior test in

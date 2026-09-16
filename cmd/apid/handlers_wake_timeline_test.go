@@ -31,6 +31,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+func TestListWakeTimeline_FreePlanReturns402BeforeLookup(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	rec := e.do(t, http.MethodGet, "/v1/apps/unknown/wakes/unknown/timeline", nil, nil)
+	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
+}
+
 func TestListWakeTimeline_HappyPath(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	app := seedAppForTimeline(t, e, "tl-app-1")

@@ -17,6 +17,10 @@ gatewayd_apps_domain: gregale.dev
 # gateways from the database. Draining any single compute box therefore
 # cannot make the API entrypoint unhealthy.
 faas_compute_gateway_discovery: database
+# Public application/API traffic reaches this origin through Cloudflare. The
+# nftables role admits TCP/80+443 only from the pinned Cloudflare ranges;
+# loopback remains the local health path and SSH remains provider/IAP-scoped.
+faas_cloudflare_origin_only: true
 
 # Ansible connection vars. `ansible_host` is the cross-box addressing
 # target (Layer-3 mesh endpoint: Tailscale/Wireguard IP, internal LAN,

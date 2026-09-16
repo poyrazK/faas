@@ -41,7 +41,7 @@ func TestEdgeRulesIP_E2E(t *testing.T) {
 
 	slug := "ip-test-app"
 	createRec := doReqBytes(t, h, key, http.MethodPost, "/v1/apps",
-		api.CreateAppRequest{Slug: slug})
+		api.CreateAppRequest{Slug: slug, RequireAuthn: boolPtr(false)})
 	if len(createRec) == 0 {
 		t.Fatalf("create app: empty response")
 	}
@@ -75,11 +75,9 @@ func TestEdgeRulesIP_E2E(t *testing.T) {
 	// Happy path: X-Forwarded-For 10.0.0.1 matches the allow-list
 	// → rule fires "match" outcome, no short-circuit, fall through
 	// to Backend.Pick → 404 (no routable target).
-	_, _, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil,
+	_, body, status := doReqHeaders(t, h, synthHost, http.MethodGet, "/", nil,
 		map[string]string{"X-Forwarded-For": "10.0.0.1"})
-	if status != http.StatusNotFound {
-		t.Errorf("kind=ip allow-match: status=%d, want 404 (Backend.Pick miss after IP pass)", status)
-	}
+	assertBackendFallthrough(t, status, body)
 
 	// Negative path: X-Forwarded-For 192.0.2.1 hits the Deny list
 	// → 403 short-circuit (handler.go:2311).

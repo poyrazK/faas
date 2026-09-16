@@ -61,6 +61,7 @@ When you receive a page:
 | `snapshot_fleet` | page | [`FaasSnapshotFleetHigh.md`](FaasSnapshotFleetHigh.md) | None — fleet-wide storage pressure is always actionable. |
 | `lv_fc` | warn | [`FaasLvFcUsageHigh.md`](FaasLvFcUsageHigh.md) | Snapshot retention prune lag; check `imaged_prune_lag_seconds`. |
 | `build_queue` | page | [`FaasBuildQueueBacklog.md`](FaasBuildQueueBacklog.md) | Builder slot gate tripping on a single customer's burst; rule out by checking the per-account queued count. |
+| `build_export` | warn | [`FaasBuildExportRetention.md`](../runbooks/FaasBuildExportRetention.md) | A short imaged restart can leave active handoffs above the byte cap; they should drain within one sweep after imaged recovers. |
 | `wake_latency` | page | [`FaasWakeLatencyHigh.md`](FaasWakeLatencyHigh.md) | Single instance wedged (liveness probe will catch it). |
 | `cold_boot` | page | [`FaasColdBootFallbackHigh.md`](FaasColdBootFallbackHigh.md) | FC version upgrade mid-rollout (transient); check `fc_version` label. |
 | `cold_boot_ratio` | warn | [`FaasColdBootRatioHigh.md`](FaasColdBootRatioHigh.md) | High churn customer (CI/CD); check per-account breakdown. |
@@ -102,6 +103,7 @@ When you receive a page:
 | `prometheus_health` | page | [`FaasPrometheusAlertingPathDegraded.md`](../runbooks/FaasPrometheusAlertingPathDegraded.md) | A short Prometheus restart can leave self-scrape series absent; verify service readiness and the active rule groups. |
 | `alertmanager_health` | page/warn | [`FaasAlertmanagerDeliveryDegraded.md`](../runbooks/FaasAlertmanagerDeliveryDegraded.md) | Receiver provider outages or a deliberate notification disablement can fail delivery while alert evaluation remains healthy. |
 | `managed_postgres` | page/warn | [`FaasManagedPostgresDegraded.md`](../runbooks/FaasManagedPostgresDegraded.md) | A planned staging canary drain can defer provisioning; confirm the rollout gate and deletion recovery before escalating. |
+| `snapshot_remote_delete` | warn | [`FaasSnapshotRemoteDeleteBacklog.md`](../runbooks/FaasSnapshotRemoteDeleteBacklog.md) | A transient registry or GitHub Packages API failure is safe while the durable backlog stays bounded; verify retries are making progress. |
 
 ## Cross-cutting triage commands
 

@@ -156,6 +156,15 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 	data.Since = echoDebugSince(sinceRaw, since)
 	data.WindowStart = windowStart.Format(time.RFC3339Nano)
 	data.WindowEnd = windowEnd.Format(time.RFC3339Nano)
+	running, runningErr := s.readDebugRunning(ctx, app, windowStart, windowEnd, 20, limits.IdleTimeoutS)
+	if runningErr != nil {
+		log.Warn("dashboard renderAppDebug: running explanation", "account_id", acct.ID, "app_id", app.ID, "err", runningErr)
+		data.RunningError = "Running-state observations are temporarily unavailable. Please try again shortly."
+	} else {
+		running.Since = data.Since
+		running.RetentionClamped = data.WindowClamped
+		data.Running = dashboardDebugRunningView(running, app.Slug)
+	}
 
 	coverage, coverageErr := s.store.RequestTelemetryCoverage(ctx, sqlc.RequestTelemetryCoverageParams{
 		AppID:        stringToPgUUID(app.ID),
@@ -431,6 +440,108 @@ func dashboardDebugCoverageSignalView(rows, requests, total int64) dashboard.Deb
 	return dashboard.DebugCoverageSignalView{Rows: rows, Requests: requests, RatePct: rate}
 }
 
+func dashboardDebugRunningView(response api.DebugRunningResponse, slug string) *dashboard.DebugRunningView {
+	view := &dashboard.DebugRunningView{
+		Since:             response.Since,
+		WindowStart:       response.WindowStart,
+		WindowEnd:         response.WindowEnd,
+		RetentionClamped:  response.RetentionClamped,
+		CurrentObservedAt: response.CurrentObservedAt,
+		Config: dashboard.DebugRunningConfigView{
+			ConfiguredMinInstances: response.Config.ConfiguredMinInstances,
+			EffectiveMinInstances:  response.Config.EffectiveMinInstances,
+			PrewarmMinInstances:    response.Config.PrewarmMinInstances,
+			IdleTimeoutSeconds:     response.Config.IdleTimeoutSeconds,
+		},
+		HistoryTruncated: response.HistoryTruncated,
+		HasObservation:   len(response.History) > 0,
+		CLICommand:       fmt.Sprintf("gregale debug running --since %s %s", response.Since, slug),
+		Current:          dashboardDebugRunningCauseViews(response.Current, slug, response.Since),
+		History:          make([]dashboard.DebugRunningObservationView, 0, len(response.History)),
+	}
+	for _, observation := range response.History {
+		view.History = append(view.History, dashboard.DebugRunningObservationView{
+			ObservedAt:             observation.ObservedAt,
+			RunningInstances:       observation.RunningInstances,
+			ConfiguredMinInstances: observation.ConfiguredMinInstances,
+			EffectiveMinInstances:  observation.EffectiveMinInstances,
+			PrewarmMinInstances:    observation.PrewarmMinInstances,
+			IdleTimeoutSeconds:     observation.IdleTimeoutSeconds,
+			Degraded:               observation.Degraded,
+			Causes:                 dashboardDebugRunningCauseViews(observation.Causes, slug, response.Since),
+		})
+	}
+	return view
+}
+
+func dashboardDebugRunningCauseViews(causes []api.DebugRunningCause, slug, since string) []dashboard.DebugRunningCauseView {
+	views := make([]dashboard.DebugRunningCauseView, 0, len(causes))
+	for _, cause := range causes {
+		view := dashboard.DebugRunningCauseView{
+			Code:            cause.Code,
+			Label:           dashboardDebugRunningCauseLabel(cause.Code),
+			Summary:         cause.Summary,
+			InstanceCount:   cause.InstanceCount,
+			OpenConnections: cause.OpenConnections,
+			TailTasks:       cause.TailTasks,
+			Mode:            cause.Mode,
+			WorkloadClass:   cause.WorkloadClass,
+			LastActivityAt:  cause.LastActivityAt,
+			IdleDeadline:    cause.IdleDeadline,
+		}
+		if cause.Request != nil {
+			request := cause.Request
+			values := url.Values{}
+			values.Set("request_id", request.TelemetryID)
+			if since != "" {
+				values.Set("since", since)
+			}
+			view.Request = &dashboard.DebugRunningRequestView{
+				TelemetryID:  request.TelemetryID,
+				DeploymentID: request.DeploymentID,
+				Route:        request.Route,
+				Method:       request.Method,
+				TraceID:      valueOrEmpty(request.TraceID),
+				ReceivedAt:   request.ReceivedAt,
+				Count:        request.Count,
+				WakeID:       request.WakeID,
+				InstanceID:   request.InstanceID,
+				MatchDeltaMS: request.MatchDeltaMS,
+				RequestURL:   "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode() + "#request-detail",
+			}
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+func dashboardDebugRunningCauseLabel(code string) string {
+	switch code {
+	case api.DebugRunningReasonRequestActivity:
+		return "Request activity"
+	case api.DebugRunningReasonOpenConnection:
+		return "Open connection"
+	case api.DebugRunningReasonTailTasks:
+		return "Background tasks"
+	case api.DebugRunningReasonMinInstances:
+		return "Configured minimum"
+	case api.DebugRunningReasonPrewarmFloor:
+		return "Prewarm floor"
+	case api.DebugRunningReasonScaleInCooldown:
+		return "Scale-in cooldown"
+	case api.DebugRunningReasonWorkloadMode:
+		return "Workload mode"
+	case api.DebugRunningReasonStartupGrace:
+		return "Startup grace"
+	case api.DebugRunningReasonUnknownActivity:
+		return "Activity signal unavailable"
+	case api.DebugRunningReasonNoBlockerObserved:
+		return "No blocker observed"
+	default:
+		return "Observed cause"
+	}
+}
+
 func dashboardDebugRequestView(item api.DebugTelemetryRequestItem, slug, since, route, cursor string, filters debugTelemetryFilters) dashboard.DebugRequestView {
 	values := debugTelemetryFilterValues(since, route, cursor, filters)
 	values.Set("request_id", item.ID)
@@ -516,6 +627,7 @@ func dashboardDebugRegressionView(item api.DebugRegressionItem, slug, since stri
 	return dashboard.DebugRegressionView{
 		DeploymentID:    item.DeploymentID,
 		Route:           item.Route,
+		State:           item.State,
 		P95MS:           item.P95MS,
 		P95BaseMS:       item.P95BaseMS,
 		AffectedCount:   item.AffectedCount,
@@ -759,7 +871,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 	}
 	var apiRegression *api.DebugRegressionItem
 	if matching != nil {
-		apiRegression = &api.DebugRegressionItem{DeploymentID: matching.DeploymentID, Route: matching.Route, P95MS: matching.P95MS, P95BaseMS: matching.P95BaseMS, AffectedCount: matching.AffectedCount, Factor: matching.Factor, FirstDetectedAt: matching.FirstDetectedAt, LastDetectedAt: matching.LastDetectedAt}
+		apiRegression = &api.DebugRegressionItem{DeploymentID: matching.DeploymentID, Route: matching.Route, P95MS: matching.P95MS, P95BaseMS: matching.P95BaseMS, AffectedCount: matching.AffectedCount, Factor: matching.Factor, FirstDetectedAt: matching.FirstDetectedAt, LastDetectedAt: matching.LastDetectedAt, State: matching.State}
 	}
 	explanation := buildDebugEvidenceExplanation(item, apiRegression, spans)
 	if regressionErr != nil {

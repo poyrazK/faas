@@ -24,7 +24,7 @@ import (
 )
 
 func cmdBillingPaymentMethod(args []string) int {
-	fs := flag.NewFlagSet("billing payment-method", flag.ContinueOnError)
+	fs := newFlagSet("billing payment-method", flag.ContinueOnError)
 	printOnly := fs.Bool("print", false, "print card-on-file summary to stdout; do not open browser")
 	noOpen := fs.Bool("no-open", false, "alias of --print")
 	if err := fs.Parse(args); err != nil {

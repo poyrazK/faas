@@ -13,7 +13,8 @@ ExecStart=/usr/local/bin/node_exporter \
   --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|run)($|/) \
   --collector.netclass.ignored-devices=^(veth|docker) \
   --collector.diskstats.ignored-devices=^(loop|dm-) \
-  --collector.systemd
+  --collector.systemd \
+  --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
 Restart=on-failure
 RestartSec=5
 

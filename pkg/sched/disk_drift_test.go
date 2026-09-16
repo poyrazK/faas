@@ -1,9 +1,7 @@
+// adr: 063
 // PR scale-out readiness #3 — disk-drift sweep tests. The sweep is
 // read-only and never writes; these tests drive Tick directly against
-// a hermetic t.TempDir() wired through sched.SetSnapDirForTesting.
-// Tests are sequential within the file because SetSnapDirForTesting
-// mutates a package-level var (per the testing_paths.go contract);
-// do not t.Parallel() this file.
+// a hermetic t.TempDir() wired through DiskDrift.WithSnapDir.
 
 package sched
 
@@ -26,7 +24,7 @@ import (
 )
 
 // driftFixture sets up a hermetic Tick environment: a t.TempDir()
-// wired through SetSnapDirForTesting, a MemStore with one or more
+// wired through DiskDrift.WithSnapDir, a MemStore with one or more
 // snapshots, and an OpsMetrics receiver returning a counter we can
 // read back. The returned counter is what the assertions inspect.
 type driftFixture struct {
@@ -34,37 +32,23 @@ type driftFixture struct {
 	ops   *wire.OpsMetrics
 	dd    *DiskDrift
 	root  string
-	// cleanup restores the package-level SnapDir() to the production
-	// default so subsequent tests in other files (e.g.
-	// TestEngineVmstateHelpers) observe the canonical /srv/fc/snap
-	// root instead of an empty string. SetSnapDirForTesting is
-	// sequential within a single test (testing_paths.go contract);
-	// t.TempDir() handles the cleanup-order guarantee independently.
+	// root is kept on the fixture for file creation; the sweep itself receives
+	// it through DiskDrift.WithSnapDir so parallel scheduler tests are isolated.
 	cleanup func()
 }
 
 func newDriftFixture(t *testing.T) *driftFixture {
 	t.Helper()
 	root := t.TempDir()
-	SetSnapDirForTesting(root)
 	store := state.NewMemStore()
 	ops := wire.NewOpsMetrics("schedd")
-	dd := NewDiskDrift(store, nil).WithMetrics(ops)
+	dd := NewDiskDrift(store, nil).WithMetrics(ops).WithSnapDir(root)
 	return &driftFixture{
-		store: store,
-		ops:   ops,
-		dd:    dd,
-		root:  root,
-		cleanup: func() {
-			// Restore the production default (mirrors paths.go's
-			// `var snapDir = "/srv/fc/snap"`). An empty string here
-			// would leave SnapDir() returning "" for any test
-			// running after ours in the same package — which
-			// breaks TestEngineVmstateHelpers/host/standard_dep
-			// (vmstateHostPathFor prepends SnapDir() unconditionally
-			// and would build "/d-1/vmstate" without the snap root).
-			SetSnapDirForTesting("/srv/fc/snap")
-		},
+		store:   store,
+		ops:     ops,
+		dd:      dd,
+		root:    root,
+		cleanup: func() {},
 	}
 }
 
@@ -417,7 +401,7 @@ func TestDiskDrift_NilMetricsNoPanic(t *testing.T) {
 	defer f.cleanup()
 
 	// Replace the dd with one that has nil metrics.
-	dd := NewDiskDrift(f.store, nil) // no WithMetrics call
+	dd := NewDiskDrift(f.store, nil).WithSnapDir(f.root) // no WithMetrics call
 
 	f.seedSnapshot(t, "dep-1", 100, 200)
 	f.writeFile(t, "dep-1", "mem", make([]byte, 100))
@@ -684,6 +668,36 @@ type fakeStorageLister struct {
 	err  error
 }
 
+type indexedStorageLister struct {
+	fakeStorageLister
+	reconciledDeploymentIDs []string
+}
+
+func (f *indexedStorageLister) ReconcileSnapshotRepositoryIndex(_ context.Context, deploymentIDs []string) error {
+	f.reconciledDeploymentIDs = append([]string(nil), deploymentIDs...)
+	return nil
+}
+
+type recoveringSnapshotLister struct {
+	globalCalls int
+	keys        []string
+}
+
+func (f *recoveringSnapshotLister) Put(context.Context, string, io.Reader) error { return nil }
+func (f *recoveringSnapshotLister) Get(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+func (f *recoveringSnapshotLister) Delete(context.Context, string) error { return nil }
+func (f *recoveringSnapshotLister) List(_ context.Context, prefix string) ([]string, error) {
+	if prefix == "snap/" {
+		f.globalCalls++
+		if f.globalCalls == 1 {
+			return nil, storage.ErrIncompleteEnumeration
+		}
+	}
+	return f.keys, nil
+}
+
 func (f *fakeStorageLister) Put(_ context.Context, _ string, _ io.Reader) error {
 	return nil
 }
@@ -722,6 +736,27 @@ func TestDiskDrift_StorageBackend_PresenceMatch(t *testing.T) {
 	}
 	if drift != 0 {
 		t.Errorf("drift = %d, want 0 (all keys present)", drift)
+	}
+}
+
+func TestDiskDrift_StorageBackendSeedsIncompleteSnapshotIndex(t *testing.T) {
+	store := state.NewMemStore()
+	lister := &recoveringSnapshotLister{keys: []string{
+		"snap/d-1/mem",
+		"snap/d-1/vmstate",
+	}}
+	dd := NewDiskDrift(store, nil).WithStorage(lister)
+	ctx := context.Background()
+	seedDriftRow(ctx, t, store, "d-1")
+	drift, err := dd.Tick(ctx)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if drift != 0 {
+		t.Fatalf("drift = %d, want 0 after durable index bootstrap", drift)
+	}
+	if lister.globalCalls != 2 {
+		t.Fatalf("global List calls = %d, want initial incomplete read plus retry", lister.globalCalls)
 	}
 }
 
@@ -769,7 +804,7 @@ func TestDiskDrift_StorageBackend_OrphanDepIncrements(t *testing.T) {
 // degradation path: a backend.List error falls back to the on-disk
 // os.ReadDir path so a transient registry outage doesn't silence
 // the drift detector entirely. The fixture also leaves /srv/fc/snap
-// empty (snapDir is package-default), so the fallback returns 0
+// empty (the injected snapshot root is absent), so the fallback returns 0
 // drift (no orphan + no expected).
 func TestDiskDrift_StorageBackend_ListErrorFallsBackToDisk(t *testing.T) {
 	store := state.NewMemStore()
@@ -836,7 +871,7 @@ func TestDiskDriftSnapshotCaptureDirectory(t *testing.T) {
 					t.Fatal(err)
 				}
 				f.root = filepath.Join(root, "snap")
-				SetSnapDirForTesting(f.root)
+				f.dd.WithSnapDir(f.root)
 				f.dd.WithStorage(be)
 			}
 			f.seedSnapshot(t, "generation-dep", 10, 20)
@@ -847,7 +882,7 @@ func TestDiskDriftSnapshotCaptureDirectory(t *testing.T) {
 			if err := f.store.MarkSnapshotStale(context.Background(), old.ID); err != nil {
 				t.Fatal(err)
 			}
-			key := state.SnapshotCaptureMemKey("generation-dep", "init", "first")
+			key := state.SnapshotCaptureMemKey("generation-dep", state.SnapshotTierInit, "660e8400-e29b-41d4-a716-446655440001")
 			old.ID = ""
 			old.StorageKey = key
 			if _, err := f.store.CreateSnapshot(context.Background(), old); err != nil {
@@ -860,5 +895,81 @@ func TestDiskDriftSnapshotCaptureDirectory(t *testing.T) {
 				t.Fatalf("capture drift=%d err=%v", drift, err)
 			}
 		})
+	}
+}
+
+func TestDiskDriftCaptureRepositoryIndexUsesCanonicalDeploymentID(t *testing.T) {
+	const (
+		deploymentID = "550e8400-e29b-41d4-a716-446655440000"
+		captureID    = "660e8400-e29b-41d4-a716-446655440001"
+	)
+	ctx := context.Background()
+	store := state.NewMemStore()
+	seedDriftRow(ctx, t, store, deploymentID)
+	old, err := store.LatestSnapshot(ctx, deploymentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkSnapshotStale(ctx, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	old.ID = ""
+	old.StorageKey = state.SnapshotCaptureMemKey(deploymentID, state.SnapshotTierWarm, captureID)
+	old.Tier = state.SnapshotTierWarm
+	if _, err := store.CreateSnapshot(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	lister := &indexedStorageLister{fakeStorageLister: fakeStorageLister{keys: []string{
+		old.StorageKey,
+		state.SnapshotVMStateKey(old),
+	}}}
+	drift, err := NewDiskDrift(store, nil).WithStorage(lister).Tick(ctx)
+	if err != nil || drift != 0 {
+		t.Fatalf("capture drift=%d err=%v", drift, err)
+	}
+	if len(lister.reconciledDeploymentIDs) != 1 || lister.reconciledDeploymentIDs[0] != deploymentID {
+		t.Fatalf("repository index IDs = %v, want [%s]", lister.reconciledDeploymentIDs, deploymentID)
+	}
+}
+
+func TestDiskDriftCaptureAnomaliesRemainVisible(t *testing.T) {
+	const captureID = "660e8400-e29b-41d4-a716-446655440001"
+	t.Run("orphan capture", func(t *testing.T) {
+		f := newDriftFixture(t)
+		directory := "orphan/captures/" + captureID
+		f.writeFile(t, directory, "mem", []byte("mem"))
+		f.writeFile(t, directory, "vmstate", []byte("state"))
+		drift, err := f.dd.Tick(context.Background())
+		if err != nil || drift != 1 {
+			t.Fatalf("orphan capture drift=%d err=%v, want 1", drift, err)
+		}
+	})
+	t.Run("malformed capture ID", func(t *testing.T) {
+		f := newDriftFixture(t)
+		f.writeFile(t, "deployment/captures/not-a-uuid", "mem", []byte("mem"))
+		drift, err := f.dd.Tick(context.Background())
+		if err != nil || drift != 1 {
+			t.Fatalf("malformed capture drift=%d err=%v, want 1", drift, err)
+		}
+	})
+}
+
+func TestParseSnapKeySupportsAllPublishedLayouts(t *testing.T) {
+	const captureID = "660e8400-e29b-41d4-a716-446655440001"
+	for _, tc := range []struct {
+		key, objectID, part string
+		valid               bool
+	}{
+		{"snap/dep/mem", "dep", "mem", true},
+		{"snap/dep/warm/vmstate", "dep/warm", "vmstate", true},
+		{"snap/dep/captures/" + captureID + "/mem", "dep/captures/" + captureID, "mem", true},
+		{"snap/dep/warm/captures/" + captureID + "/vmstate", "dep/warm/captures/" + captureID, "vmstate", true},
+		{"snap/dep/captures/not-a-uuid/mem", "", "", false},
+		{"snap/dep/captures/" + captureID + "/other", "", "", false},
+	} {
+		objectID, part, valid := parseSnapKey(tc.key)
+		if objectID != tc.objectID || part != tc.part || valid != tc.valid {
+			t.Errorf("parseSnapKey(%q) = (%q, %q, %t), want (%q, %q, %t)", tc.key, objectID, part, valid, tc.objectID, tc.part, tc.valid)
+		}
 	}
 }

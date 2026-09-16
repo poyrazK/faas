@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1060,10 +1061,11 @@ func TestV1AuthLogin_TimingPadEqualisesTwoFailurePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Bound: 200ms per request. Take the minimum of three samples for
-	// each path because shared CI runners can preempt one Argon2id
-	// invocation without changing the authentication work.
-	bound := 200 * time.Millisecond
+	const (
+		samples    = 5
+		upperBound = 500 * time.Millisecond
+		maxRatio   = 2.0
+	)
 	runOnce := func(path, body string) time.Duration {
 		start := time.Now()
 		rec := v1AuthJSONRequest(t, h, path, body)
@@ -1072,19 +1074,29 @@ func TestV1AuthLogin_TimingPadEqualisesTwoFailurePaths(t *testing.T) {
 		}
 		return time.Since(start)
 	}
-	minOf := func(path, body string) time.Duration {
-		fastest := time.Duration(1 << 62)
-		for i := 0; i < 3; i++ {
-			if d := runOnce(path, body); d < fastest {
-				fastest = d
-			}
-		}
-		return fastest
+	median := func(values []time.Duration) time.Duration {
+		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+		return values[len(values)/2]
 	}
-	t1 := minOf("/v1/auth/login", `{"email":"ghost@example.com","password":"correct-horse-battery-staple"}`)
-	t2 := minOf("/v1/auth/login", `{"email":"timing@example.com","password":"wrong-password-1234567890"}`)
-	if t1 > bound || t2 > bound {
-		t.Errorf("unbound=%v wrong=%v — both must be <= %v (Argon2id pad regression)", t1, t2, bound)
+	unboundSamples := make([]time.Duration, 0, samples)
+	wrongSamples := make([]time.Duration, 0, samples)
+	for i := 0; i < samples; i++ {
+		// Interleave the paths so CPU frequency and neighbouring runner load
+		// affect both distributions rather than one whole cohort.
+		unboundSamples = append(unboundSamples, runOnce("/v1/auth/login", `{"email":"ghost@example.com","password":"correct-horse-battery-staple"}`))
+		wrongSamples = append(wrongSamples, runOnce("/v1/auth/login", `{"email":"timing@example.com","password":"wrong-password-1234567890"}`))
+	}
+	unbound := median(unboundSamples)
+	wrong := median(wrongSamples)
+	fastest, slowest := unbound, wrong
+	if wrong < unbound {
+		fastest, slowest = wrong, unbound
+	}
+	if fastest == 0 || float64(slowest)/float64(fastest) > maxRatio {
+		t.Errorf("unbound median=%v wrong median=%v — failure paths differ by more than %.1fx", unbound, wrong, maxRatio)
+	}
+	if unbound > upperBound || wrong > upperBound {
+		t.Errorf("unbound median=%v wrong median=%v — both must be <= %v (Argon2id cost regression)", unbound, wrong, upperBound)
 	}
 }
 

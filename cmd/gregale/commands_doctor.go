@@ -39,6 +39,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -162,8 +163,8 @@ func cmdDoctor(args []string) int {
 }
 
 func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) int {
-	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	fs.SetOutput(osStderr)
+	fs := newFlagSet("doctor", flag.ContinueOnError)
+	setFlagOutput(fs, osStderr)
 	strict := fs.Bool("strict", false, "exit 1 on warn (default: exit 0 on warn)")
 	jsonOut := fs.Bool("json", false, "machine output (default: human prose)")
 	imageFlags := registerDoctorImageFlags(fs)
@@ -284,20 +285,12 @@ func doctorCheckLoopbackBind(path string) doctorCheck {
 	}
 }
 
-// archMismatchRegex matches `Mach-O` (macOS native binaries) and
-// `ARM aarch64` lines from `file(1)` output. The customer runs
-// `gregale doctor` from their dev box; if they `tar -czf` a
-// built binary without setting GOOS=linux GOARCH=amd64, the
-// resulting tarball's binary will be Mach-O and the build VM's
-// ENOEXEC fires app_arch_mismatch post-deploy. We catch it here.
-var archMismatchRegex = regexp.MustCompile(`Mach-O|ARM aarch64|aarch64`)
-
-// doctorCheckArch walks the source tree for binary files. The
-// regex match is on file content, not extension, so a renamed
-// binary still trips. We only flag files that look like binaries
-// (first 8KB has > 1 non-printable byte per 32 bytes).
+// doctorCheckArch inspects executable headers rather than matching prose.
+// Gregale's current function microVM ABI is Linux/amd64: ELF x86-64 is valid;
+// Mach-O, PE, and ELF for another e_machine are local build artifacts that
+// cannot execute in the guest.
 func doctorCheckArch(path string) doctorCheck {
-	sources := scanSource(path, archMismatchRegex, 5)
+	sources := scanArchitecture(path, 5)
 	if len(sources) == 0 {
 		return doctorCheck{Name: "arch", Status: "ok"}
 	}
@@ -430,6 +423,7 @@ func doctorCheckStartupTimeout() doctorCheck {
 // per file, which adds 30 LoC for marginal value).
 func scanSource(root string, re *regexp.Regexp, maxHits int) []string {
 	out := []string{}
+	patterns := loadGregaleignore(root)
 	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 		// filepath.Walk delivers (path, nil, err) when it can't even
 		// stat the entry (permission-denied, broken symlink, mid-walk
@@ -440,9 +434,7 @@ func scanSource(root string, re *regexp.Regexp, maxHits int) []string {
 			return nil
 		}
 		if err != nil || info.IsDir() {
-			// Skip vendor/, .git/, node_modules/ — they're noise.
-			base := info.Name()
-			if info.IsDir() && (base == "vendor" || base == ".git" || base == "node_modules" || base == ".gregale") {
+			if info.IsDir() && doctorPathExcluded(root, p, info, patterns) {
 				return filepath.SkipDir
 			}
 			// (err != nil with info != nil is rare — it means the
@@ -450,6 +442,9 @@ func scanSource(root string, re *regexp.Regexp, maxHits int) []string {
 			// matches the original behaviour: a per-entry error
 			// doesn't abort the scan, the walk continues past the
 			// unreadable node.)
+			return nil
+		}
+		if doctorPathExcluded(root, p, info, patterns) {
 			return nil
 		}
 		if len(out) >= maxHits {
@@ -465,9 +460,12 @@ func scanSource(root string, re *regexp.Regexp, maxHits int) []string {
 		}
 		defer func() { _ = f.Close() }() //nolint:errcheck // read-only scan; close is best-effort
 		scanner := bufio.NewScanner(f)
+		lineNumber := 0
 		for scanner.Scan() {
-			if re.MatchString(scanner.Text()) {
-				out = append(out, p+":1")
+			lineNumber++
+			line := scanner.Text()
+			if !envRefCommentOnlyLine(line) && re.MatchString(line) {
+				out = append(out, fmt.Sprintf("%s:%d", p, lineNumber))
 				break
 			}
 		}
@@ -498,6 +496,7 @@ func scanOptionalEnvRefs(root string, re *regexp.Regexp) []string {
 
 func scanEnvRefsMatching(root string, re *regexp.Regexp, accept func(string, []int) bool) []string {
 	seen := map[string]bool{}
+	patterns := loadGregaleignore(root)
 	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 		// Mirror scanSource's nil-info guard: filepath.Walk delivers
 		// (path, nil, err) for unreadable nodes (permission-denied,
@@ -507,10 +506,12 @@ func scanEnvRefsMatching(root string, re *regexp.Regexp, accept func(string, []i
 			return nil
 		}
 		if err != nil || info.IsDir() {
-			base := info.Name()
-			if info.IsDir() && (base == "vendor" || base == ".git" || base == "node_modules" || base == ".gregale") {
+			if info.IsDir() && doctorPathExcluded(root, p, info, patterns) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if doctorPathExcluded(root, p, info, patterns) {
 			return nil
 		}
 		if envRefDocumentationFile(p) {
@@ -546,6 +547,95 @@ func scanEnvRefsMatching(root string, re *regexp.Regexp, accept func(string, []i
 	}
 	sort.Strings(out)
 	return out
+}
+
+var doctorNoiseDirs = map[string]bool{
+	"test": true, "tests": true, "fixture": true, "fixtures": true,
+	"testdata": true, "docs": true, "documentation": true, "generated": true,
+	"__generated__": true, ".github": true,
+}
+
+// doctorPathExcluded applies the archive's real exclusions plus source-only
+// paths that do not describe production behavior. The explicit path argument
+// remains the workload-root mechanism for monorepos.
+func doctorPathExcluded(root, path string, info os.FileInfo, patterns []gregaleignorePattern) bool {
+	if info == nil || path == root {
+		return false
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return true
+	}
+	rel = filepath.ToSlash(rel)
+	if shouldExclude(rel, info.IsDir(), patterns) {
+		return true
+	}
+	base := strings.ToLower(info.Name())
+	if info.IsDir() {
+		return doctorNoiseDirs[base]
+	}
+	if envRefDocumentationFile(path) || strings.HasSuffix(base, ".map") || strings.Contains(base, ".generated.") {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(base))
+	stem := strings.TrimSuffix(base, ext)
+	return strings.HasSuffix(stem, "_test") || strings.HasSuffix(stem, ".test") || strings.HasSuffix(stem, ".spec")
+}
+
+func scanArchitecture(root string, maxHits int) []string {
+	patterns := loadGregaleignore(root)
+	out := make([]string, 0, maxHits)
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if info == nil {
+			return nil //nolint:nilerr // unreadable entries are skipped by this best-effort advisory scan.
+		}
+		if info.IsDir() {
+			if doctorPathExcluded(root, path, info, patterns) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if err != nil || doctorPathExcluded(root, path, info, patterns) || !info.Mode().IsRegular() {
+			return nil //nolint:nilerr // unreadable files are skipped by this best-effort advisory scan.
+		}
+		if len(out) >= maxHits {
+			return filepath.SkipAll
+		}
+		f, openErr := os.Open(path) //nolint:forbidigo // read-only header inspection of a walked customer path.
+		if openErr != nil {
+			return nil //nolint:nilerr // unreadable files are skipped by this best-effort advisory scan.
+		}
+		var header [64]byte
+		n, _ := io.ReadFull(f, header[:])
+		_ = f.Close()
+		if executableHeaderMismatch(header[:n]) {
+			out = append(out, path+":1")
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out
+}
+
+func executableHeaderMismatch(header []byte) bool {
+	if len(header) >= 20 && string(header[:4]) == "\x7fELF" {
+		var order binary.ByteOrder = binary.LittleEndian
+		if header[5] == 2 {
+			order = binary.BigEndian
+		} else if header[5] != 1 {
+			return true
+		}
+		return order.Uint16(header[18:20]) != 62 // ELF EM_X86_64
+	}
+	if len(header) < 4 {
+		return false
+	}
+	magic := binary.BigEndian.Uint32(header[:4])
+	switch magic {
+	case 0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe, 0xbebafeca:
+		return true // Mach-O thin/fat
+	}
+	return len(header) >= 2 && header[0] == 'M' && header[1] == 'Z' // PE/COFF
 }
 
 // envRefHasFallback recognizes the suffix after the captured key in the

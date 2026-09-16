@@ -1,7 +1,11 @@
 package api
 
+// adr: 050
+
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,6 +39,26 @@ func TestClient_Do_UsesContextIdempotencyKey(t *testing.T) {
 	ctx := ContextWithIdempotencyKey(context.Background(), want)
 	if _, err := c.CreateApp(ctx, CreateAppRequest{Slug: "demo"}); err != nil {
 		t.Fatalf("CreateApp: %v", err)
+	}
+	if got != want {
+		t.Fatalf("Idempotency-Key = %q, want %q", got, want)
+	}
+}
+
+func TestApplyProjectPlan_UsesContextIdempotencyKey(t *testing.T) {
+	const want = "project-apply-retry"
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Idempotency-Key")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ApplyResponse{ProjectID: "project-1"})
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "token")
+	ctx := ContextWithIdempotencyKey(context.Background(), want)
+	if _, err := c.ApplyProjectPlan(ctx, "plan-token", bytes.NewBufferString("source"), "source.tar.gz", "project", "main", 0, nil, nil, false, false); err != nil {
+		t.Fatalf("ApplyProjectPlan: %v", err)
 	}
 	if got != want {
 		t.Fatalf("Idempotency-Key = %q, want %q", got, want)

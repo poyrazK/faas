@@ -1,0 +1,8 @@
+[Unit]
+Description=Rotate bounded Gregale host logs
+Documentation=https://github.com/poyrazK/faas/issues/2459
+ConditionPathExists=/etc/logrotate.d/rsyslog
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --wait-for-state-lock --state /var/lib/logrotate/status /etc/logrotate.d/rsyslog

@@ -130,8 +130,14 @@ func (s *Server) Logs(req *vmmdpb.LogsRequest, stream vmmdpb.Vmmd_LogsServer) er
 		// strictly newer than the caller's bound: the caller asked
 		// "give me everything since T" and the ring has nothing that
 		// old. Surface an explicit gap frame labelled with the bound.
+		// A timestamp comparison alone cannot distinguish eviction
+		// from a freshly-created ring whose first line simply arrived
+		// after the requested bound. Sequence 1 is proof that nothing
+		// has been evicted; only synthesize a gap after the retained
+		// watermark has advanced beyond it.
+		lowest := ring.LowestRetainedSeq()
 		headAt := ring.HeadWrittenAt()
-		if !headAt.IsZero() && headAt.After(sinceTime) {
+		if lowest > 1 && !headAt.IsZero() && headAt.After(sinceTime) {
 			if err := stream.Send(gapResponse(headAt, "since_below_retained")); err != nil {
 				sendErr = err
 				return err

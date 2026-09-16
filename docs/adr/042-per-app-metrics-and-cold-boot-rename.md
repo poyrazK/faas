@@ -80,6 +80,19 @@ Per-app pre-instantiation of the closed `class` set (via the new
 via `sync.Map`) keeps the dashboard panel present from the first
 request, not the first observation.
 
+The customer metrics API uses the histogram's `_count` series for both its
+request denominator and its 4xx/5xx numerator. These counters are written by
+the same `Handler.observe` call as durable request telemetry, and the closed
+class series are pre-instantiated. A full-code `gateway_requests_total` series
+is created only after a particular status first occurs; if a new 504 series is
+created between scrapes, Prometheus cannot reconstruct that first increment.
+The full-code counter remains available for operator drill-down, while the
+closed-class population provides accurate customer totals and error rates.
+
+`AppMetricsResponse.as_of` reports the latest Prometheus scrape timestamp when
+that timestamp is available. Consumers can therefore account for the normal
+scrape delay when comparing this projection with the durable analytics ledger.
+
 ### 3. `gateway_cold_wake_total` → `gateway_cold_boot_total` rename (criterion #3)
 
 The metric has zero external consumers:

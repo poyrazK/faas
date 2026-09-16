@@ -42,6 +42,13 @@ func TestPg_CoverageAccountsAndKeys(t *testing.T) {
 	if acct.Plan != api.PlanScale || acct.Status != state.AccountPastDue {
 		t.Fatalf("updated account = %+v", acct)
 	}
+	org, err := s.OrgByPersonalAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if org.Plan != api.PlanScale || org.Status != state.OrgStatus(state.AccountPastDue) {
+		t.Fatalf("personal org entitlement drifted: %+v", org)
+	}
 	// CreateAPIKey + APIKeyByHash + AuthenticateKey + AccountByKeyHash.
 	// Scopes must satisfy the DB vocab CHECK
 	// (api_keys_scopes_vocab_chk): subset of the six allowed values,
@@ -210,6 +217,14 @@ func TestPg_CoverageBuildsAndProvenance(t *testing.T) {
 	got, err := s.BuildProvenanceByBuildID(ctx, claimed.ID)
 	if err != nil || got.SBOMStorageKey != "sboms/pg-1" {
 		t.Fatalf("provenance sbom = %+v, %v", got, err)
+	}
+	const runnerDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := s.UpdateBuildProvenanceRunnerDigest(ctx, claimed.ID, runnerDigest); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.BuildProvenanceByBuildID(ctx, claimed.ID)
+	if err != nil || got.RunnerDigest != runnerDigest {
+		t.Fatalf("provenance runner digest = %+v, %v", got, err)
 	}
 	if _, err := s.BuildProvenanceByBuildID(ctx, uuid.NewString()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("provenance missing = %v", err)

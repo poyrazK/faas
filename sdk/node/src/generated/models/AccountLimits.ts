@@ -16,13 +16,17 @@ export type AccountLimits = {
   max_concurrency: number;
   deployed_apps: number;
   /**
+   * Account-wide deployment admissions per fixed one-hour window.
+   */
+  deploys_per_hour: number;
+  /**
    * Maximum live `gregale dev` environments for this plan.
    */
   developer_apps: number;
   included_gb_hours: number;
   app_layer_max_mb: number;
   /**
-   * Maximum writable ephemeral app-disk capacity per app, in MB. This is the same physical drive1 cap historically named app_layer_max_mb.
+   * Total logical capacity of the writable ephemeral app filesystem per app, in MB, including application content and filesystem metadata. Free scratch space is this value minus deployed content and overhead. This is the same physical drive1 cap historically named app_layer_max_mb.
    */
   ephemeral_disk_max_mb: number;
   /**

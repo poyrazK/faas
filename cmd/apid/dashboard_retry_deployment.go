@@ -163,6 +163,9 @@ func (s *server) dashboardRetryDeployment(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
 
 	newDep, err := s.enqueueRetry(ctx, app, dep, state.StageName(fromStage))
 	if err != nil {

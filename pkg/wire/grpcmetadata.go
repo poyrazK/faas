@@ -45,15 +45,16 @@ const (
 	mdKeyAppID        = "x-faas-app-id"
 	mdKeyDeploymentID = "x-faas-deployment-id"
 	mdKeyInstanceID   = "x-faas-instance-id"
+	mdKeyNodeID       = "x-faas-node-id"
 	mdKeyInvocationID = "x-faas-invocation-id"
 	mdKeyTraceID      = "x-faas-trace-id"
 	mdKeySpanID       = "x-faas-span-id"
 	// ADR-123 — wake-boot telemetry fields (closed trigger enum +
-	// ledger.Concurrency snapshot). Threaded from schedd to vmmd via
-	// the gRPC metadata envelope so the vmmd-side BootStarted mirror
-	// (pkg/vmmdgrpc/server.go:emitBootStartedMirror) carries the same
-	// context as the canonical schedd emit. Empty values are skipped
-	// — a producer that doesn't know ADR-123 sends no keys at all.
+	// ledger.Concurrency snapshot). Threaded through the gRPC metadata
+	// envelope for correlated logs and restore diagnostics. The vmmd-side
+	// BootObserved event intentionally excludes these scheduler-owned values.
+	// Empty values are skipped — a producer that doesn't know ADR-123 sends
+	// no keys at all.
 	mdKeyWakeBootTrigger  = "x-faas-wake-boot-trigger"
 	mdKeyWakeTriggerClass = "x-faas-wake-trigger-class"
 	mdKeyWakeBootQueued   = "x-faas-wake-boot-queued"
@@ -93,6 +94,9 @@ func WithCorrelationOutgoing(ctx context.Context, fields CorrelationFields) cont
 	}
 	if fields.InstanceID != "" {
 		pairs = append(pairs, mdKeyInstanceID, fields.InstanceID)
+	}
+	if fields.NodeID != "" {
+		pairs = append(pairs, mdKeyNodeID, fields.NodeID)
 	}
 	if fields.InvocationID != "" {
 		pairs = append(pairs, mdKeyInvocationID, fields.InvocationID)
@@ -176,6 +180,10 @@ func CorrelationFromIncoming(ctx context.Context) (CorrelationFields, bool) {
 	}
 	if v := md.Get(mdKeyInstanceID); len(v) > 0 && v[0] != "" {
 		out.InstanceID = v[0]
+		any = true
+	}
+	if v := md.Get(mdKeyNodeID); len(v) > 0 && v[0] != "" {
+		out.NodeID = v[0]
 		any = true
 	}
 	if v := md.Get(mdKeyInvocationID); len(v) > 0 && v[0] != "" {

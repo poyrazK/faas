@@ -43,6 +43,12 @@ class AccountResponse:
     plan_change_status: str | Unset = UNSET
     requested_plan: AccountResponseRequestedPlan | Unset = UNSET
     effective_at: datetime.datetime | Unset = UNSET
+    business_name: str | Unset = UNSET
+    """Legal business name used on future invoices."""
+    billing_address: str | Unset = UNSET
+    """Free-form billing address used on future invoices."""
+    tax_id: str | Unset = UNSET
+    """Customer tax/VAT identifier used on future invoices."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,6 +90,12 @@ class AccountResponse:
         if not isinstance(self.effective_at, Unset):
             effective_at = self.effective_at.isoformat()
 
+        business_name = self.business_name
+
+        billing_address = self.billing_address
+
+        tax_id = self.tax_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -109,6 +121,12 @@ class AccountResponse:
             field_dict["requested_plan"] = requested_plan
         if effective_at is not UNSET:
             field_dict["effective_at"] = effective_at
+        if business_name is not UNSET:
+            field_dict["business_name"] = business_name
+        if billing_address is not UNSET:
+            field_dict["billing_address"] = billing_address
+        if tax_id is not UNSET:
+            field_dict["tax_id"] = tax_id
 
         return field_dict
 
@@ -167,6 +185,12 @@ class AccountResponse:
         else:
             effective_at = datetime.datetime.fromisoformat(_effective_at)
 
+        business_name = d.pop("business_name", UNSET)
+
+        billing_address = d.pop("billing_address", UNSET)
+
+        tax_id = d.pop("tax_id", UNSET)
+
         account_response = cls(
             id=id,
             email=email,
@@ -182,6 +206,9 @@ class AccountResponse:
             plan_change_status=plan_change_status,
             requested_plan=requested_plan,
             effective_at=effective_at,
+            business_name=business_name,
+            billing_address=billing_address,
+            tax_id=tax_id,
         )
 
         account_response.additional_properties = d

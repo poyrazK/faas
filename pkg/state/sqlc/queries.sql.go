@@ -384,7 +384,8 @@ const appendUsage = `-- name: AppendUsage :exec
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 on conflict (instance_id, minute) do update
-   set cpu_usec        = usage_minutes.cpu_usec        + EXCLUDED.cpu_usec,
+   set mb_seconds      = case when usage_minutes.mb_seconds = 0 and EXCLUDED.mb_seconds > 0 then EXCLUDED.mb_seconds else usage_minutes.mb_seconds end,
+       cpu_usec        = usage_minutes.cpu_usec        + EXCLUDED.cpu_usec,
        tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
        net_tx_bytes    = usage_minutes.net_tx_bytes    + EXCLUDED.net_tx_bytes,
        net_rx_bytes    = usage_minutes.net_rx_bytes    + EXCLUDED.net_rx_bytes,
@@ -441,6 +442,93 @@ func (q *Queries) AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParam
 		arg.TailSeconds,
 	)
 	return err
+}
+
+const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
+insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
+select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
+  from instances i
+  join apps a on a.id = i.app_id
+ where i.id = $1
+on conflict (instance_id, minute) do update
+   set requests        = usage_minutes.requests        + EXCLUDED.requests,
+       tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
+       cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count
+`
+
+type ApplyGatewayUsageEventParams struct {
+	ID      pgtype.UUID
+	Column2 pgtype.Timestamptz
+	Column3 int32
+	Column4 int64
+	Column5 int32
+}
+
+func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error) {
+	result, err := db.Exec(ctx, applyGatewayUsageEvent,
+		arg.ID,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const applyRegressionAction = `-- name: ApplyRegressionAction :one
+UPDATE debug_regression_observations
+SET state = $4,
+    last_detected_at = CASE WHEN $4 = 'active' THEN now() ELSE last_detected_at END,
+    acknowledged_at = CASE WHEN $4 = 'acknowledged' THEN now() ELSE NULL END,
+    dismissed_until = CASE WHEN $4 = 'dismissed' THEN $5::timestamptz ELSE NULL END,
+    resolved_at = CASE WHEN $4 = 'resolved' THEN now() ELSE NULL END
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND route = $3
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at
+`
+
+type ApplyRegressionActionParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Route        string
+	State        string
+	Column5      pgtype.Timestamptz
+}
+
+// Change only the debugger workflow state for one app-scoped observation.
+// The handler maps reopen to active before calling this query.
+func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error) {
+	row := db.QueryRow(ctx, applyRegressionAction,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.Route,
+		arg.State,
+		arg.Column5,
+	)
+	var i DebugRegressionObservation
+	err := row.Scan(
+		&i.AppID,
+		&i.DeploymentID,
+		&i.Route,
+		&i.P95Ms,
+		&i.P95BaseMs,
+		&i.AffectedCount,
+		&i.RegressionFactor,
+		&i.FirstDetectedAt,
+		&i.LastDetectedAt,
+		&i.State,
+		&i.AcknowledgedAt,
+		&i.DismissedUntil,
+		&i.ResolvedAt,
+	)
+	return i, err
 }
 
 const buildByDeployment = `-- name: BuildByDeployment :one
@@ -918,7 +1006,7 @@ func (q *Queries) CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParam
 const createCron = `-- name: CreateCron :one
 insert into crons (id, app_id, schedule, path, enabled, timezone, skip_if_running)
 values (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
-returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
+returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at
 `
 
 type CreateCronParams struct {
@@ -931,15 +1019,16 @@ type CreateCronParams struct {
 }
 
 type CreateCronRow struct {
-	ID            pgtype.UUID
-	AppID         pgtype.UUID
-	Schedule      string
-	Path          string
-	Enabled       bool
-	Timezone      string
-	SkipIfRunning bool
-	LastFiredAt   pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
+	ID              pgtype.UUID
+	AppID           pgtype.UUID
+	Schedule        string
+	Path            string
+	Enabled         bool
+	SuspendedReason string
+	Timezone        string
+	SkipIfRunning   bool
+	LastFiredAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
 }
 
 func (q *Queries) CreateCron(ctx context.Context, db DBTX, arg CreateCronParams) (CreateCronRow, error) {
@@ -958,6 +1047,7 @@ func (q *Queries) CreateCron(ctx context.Context, db DBTX, arg CreateCronParams)
 		&i.Schedule,
 		&i.Path,
 		&i.Enabled,
+		&i.SuspendedReason,
 		&i.Timezone,
 		&i.SkipIfRunning,
 		&i.LastFiredAt,
@@ -1416,20 +1506,21 @@ func (q *Queries) CreateUploadSession(ctx context.Context, db DBTX, arg CreateUp
 }
 
 const cronByID = `-- name: CronByID :one
-select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
+select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at
 from crons where id = $1
 `
 
 type CronByIDRow struct {
-	ID            pgtype.UUID
-	AppID         pgtype.UUID
-	Schedule      string
-	Path          string
-	Enabled       bool
-	Timezone      string
-	SkipIfRunning bool
-	LastFiredAt   pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
+	ID              pgtype.UUID
+	AppID           pgtype.UUID
+	Schedule        string
+	Path            string
+	Enabled         bool
+	SuspendedReason string
+	Timezone        string
+	SkipIfRunning   bool
+	LastFiredAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
 }
 
 func (q *Queries) CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronByIDRow, error) {
@@ -1441,6 +1532,7 @@ func (q *Queries) CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronBy
 		&i.Schedule,
 		&i.Path,
 		&i.Enabled,
+		&i.SuspendedReason,
 		&i.Timezone,
 		&i.SkipIfRunning,
 		&i.LastFiredAt,
@@ -1530,7 +1622,11 @@ func (q *Queries) DeleteAPIKeyReturning(ctx context.Context, db DBTX, arg Delete
 }
 
 const deleteApp = `-- name: DeleteApp :exec
-update apps set status = 'deleted' where id = $1
+update apps
+set status = 'deleted',
+    deleted_at = coalesce(deleted_at, now()),
+    delete_grace_until = coalesce(delete_grace_until, now() + interval '7 days')
+where id = $1
 `
 
 func (q *Queries) DeleteApp(ctx context.Context, db DBTX, id pgtype.UUID) error {
@@ -1813,6 +1909,85 @@ func (q *Queries) ExecutionClaimNext(ctx context.Context, db DBTX, arg Execution
 		arg.LeaseOwner,
 		arg.LeaseExpiresAt,
 		arg.ClaimedAt,
+	)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const executionClaimNextForAccount = `-- name: ExecutionClaimNextForAccount :one
+WITH candidate AS (
+  SELECT id, deadline_at
+  FROM executions
+  WHERE executions.account_id = $5
+    AND executions.status = 'queued'
+    AND executions.cancel_requested_at IS NULL
+    AND executions.created_at <= $4::timestamptz
+    AND executions.deadline_at > $4::timestamptz
+  ORDER BY executions.created_at, executions.id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+)
+UPDATE executions AS execution
+SET status = 'restoring',
+    lease_token = $1,
+    lease_owner = $2,
+    lease_expires_at = LEAST($3::timestamptz, candidate.deadline_at),
+    updated_at = $4
+FROM candidate
+WHERE execution.id = candidate.id
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at
+`
+
+type ExecutionClaimNextForAccountParams struct {
+	LeaseToken     pgtype.UUID
+	LeaseOwner     pgtype.Text
+	LeaseExpiresAt pgtype.Timestamptz
+	ClaimedAt      pgtype.Timestamptz
+	AccountID      pgtype.UUID
+}
+
+func (q *Queries) ExecutionClaimNextForAccount(ctx context.Context, db DBTX, arg ExecutionClaimNextForAccountParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionClaimNextForAccount,
+		arg.LeaseToken,
+		arg.LeaseOwner,
+		arg.LeaseExpiresAt,
+		arg.ClaimedAt,
+		arg.AccountID,
 	)
 	var i Execution
 	err := row.Scan(
@@ -2318,6 +2493,80 @@ func (q *Queries) ExecutionListForAccount(ctx context.Context, db DBTX, arg Exec
 	return items, nil
 }
 
+const executionListForAccountStatus = `-- name: ExecutionListForAccountStatus :many
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at FROM executions
+WHERE account_id = $1
+  AND status = $2
+ORDER BY created_at DESC, id DESC
+LIMIT $4::int OFFSET $3::int
+`
+
+type ExecutionListForAccountStatusParams struct {
+	AccountID  pgtype.UUID
+	Status     string
+	PageOffset int32
+	PageLimit  int32
+}
+
+func (q *Queries) ExecutionListForAccountStatus(ctx context.Context, db DBTX, arg ExecutionListForAccountStatusParams) ([]Execution, error) {
+	rows, err := db.Query(ctx, executionListForAccountStatus,
+		arg.AccountID,
+		arg.Status,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Execution{}
+	for rows.Next() {
+		var i Execution
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Runtime,
+			&i.Status,
+			&i.NetworkMode,
+			&i.TimeoutMs,
+			&i.MemoryMb,
+			&i.CpuMillicores,
+			&i.EphemeralDiskMb,
+			&i.MaxOutputBytes,
+			&i.PidsMax,
+			&i.SourceBytes,
+			&i.InputBytes,
+			&i.DeadlineAt,
+			&i.LeaseToken,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.CancelRequestedAt,
+			&i.Result,
+			&i.ResultBytes,
+			&i.Stdout,
+			&i.Stderr,
+			&i.OutputTruncated,
+			&i.ExitCode,
+			&i.FailureCode,
+			&i.FailureMessage,
+			&i.WallTimeMs,
+			&i.CpuTimeMs,
+			&i.PeakMemoryMb,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const executionLockAccount = `-- name: ExecutionLockAccount :one
 SELECT id, plan FROM accounts WHERE id = $1 FOR UPDATE
 `
@@ -2694,6 +2943,70 @@ func (q *Queries) ExecutionPayloadInsert(ctx context.Context, db DBTX, arg Execu
 	return err
 }
 
+const executionQueueAccounts = `-- name: ExecutionQueueAccounts :many
+SELECT executions.account_id, count(*)::bigint AS queued_count, min(executions.created_at) AS oldest_created_at
+FROM executions
+WHERE executions.status = 'queued'
+  AND executions.cancel_requested_at IS NULL
+  AND executions.created_at <= $1::timestamptz
+  AND executions.deadline_at > $1::timestamptz
+GROUP BY executions.account_id
+ORDER BY executions.account_id
+LIMIT $2::int
+`
+
+type ExecutionQueueAccountsParams struct {
+	At        pgtype.Timestamptz
+	PageLimit int32
+}
+
+type ExecutionQueueAccountsRow struct {
+	AccountID       pgtype.UUID
+	QueuedCount     int64
+	OldestCreatedAt interface{}
+}
+
+func (q *Queries) ExecutionQueueAccounts(ctx context.Context, db DBTX, arg ExecutionQueueAccountsParams) ([]ExecutionQueueAccountsRow, error) {
+	rows, err := db.Query(ctx, executionQueueAccounts, arg.At, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExecutionQueueAccountsRow{}
+	for rows.Next() {
+		var i ExecutionQueueAccountsRow
+		if err := rows.Scan(&i.AccountID, &i.QueuedCount, &i.OldestCreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const executionQueueStats = `-- name: ExecutionQueueStats :one
+SELECT count(*)::bigint AS queued, min(created_at) AS oldest_created_at
+FROM executions
+WHERE status = 'queued'
+  AND cancel_requested_at IS NULL
+  AND created_at <= $1::timestamptz
+  AND deadline_at > $1::timestamptz
+`
+
+type ExecutionQueueStatsRow struct {
+	Queued          int64
+	OldestCreatedAt interface{}
+}
+
+func (q *Queries) ExecutionQueueStats(ctx context.Context, db DBTX, at pgtype.Timestamptz) (ExecutionQueueStatsRow, error) {
+	row := db.QueryRow(ctx, executionQueueStats, at)
+	var i ExecutionQueueStatsRow
+	err := row.Scan(&i.Queued, &i.OldestCreatedAt)
+	return i, err
+}
+
 const executionRenewLease = `-- name: ExecutionRenewLease :execrows
 UPDATE executions
 SET lease_expires_at = LEAST($1::timestamptz, deadline_at),
@@ -2860,6 +3173,84 @@ func (q *Queries) ExecutionRequeueExpiredRestores(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const executionUsageByAccount = `-- name: ExecutionUsageByAccount :one
+SELECT
+    count(*)::bigint AS runs,
+    COALESCE(sum(wall_time_ms), 0)::bigint AS wall_time_ms,
+    COALESCE(sum(cpu_time_ms), 0)::bigint AS cpu_time_ms,
+    COALESCE(max(peak_memory_mb), 0)::bigint AS peak_memory_mb,
+    COALESCE(sum(output_bytes), 0)::bigint AS output_bytes,
+    count(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded,
+    count(*) FILTER (WHERE status = 'failed')::bigint AS failed,
+    count(*) FILTER (WHERE status = 'timed_out')::bigint AS timed_out,
+    count(*) FILTER (WHERE status = 'out_of_memory')::bigint AS out_of_memory,
+    count(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled
+FROM execution_usage_ledger
+WHERE account_id = $1
+  AND finished_at >= $2::timestamptz
+  AND finished_at < $3::timestamptz
+`
+
+type ExecutionUsageByAccountParams struct {
+	AccountID  pgtype.UUID
+	MonthStart pgtype.Timestamptz
+	MonthEnd   pgtype.Timestamptz
+}
+
+type ExecutionUsageByAccountRow struct {
+	Runs         int64
+	WallTimeMs   int64
+	CpuTimeMs    int64
+	PeakMemoryMb int64
+	OutputBytes  int64
+	Succeeded    int64
+	Failed       int64
+	TimedOut     int64
+	OutOfMemory  int64
+	Cancelled    int64
+}
+
+func (q *Queries) ExecutionUsageByAccount(ctx context.Context, db DBTX, arg ExecutionUsageByAccountParams) (ExecutionUsageByAccountRow, error) {
+	row := db.QueryRow(ctx, executionUsageByAccount, arg.AccountID, arg.MonthStart, arg.MonthEnd)
+	var i ExecutionUsageByAccountRow
+	err := row.Scan(
+		&i.Runs,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.OutputBytes,
+		&i.Succeeded,
+		&i.Failed,
+		&i.TimedOut,
+		&i.OutOfMemory,
+		&i.Cancelled,
+	)
+	return i, err
+}
+
+const executionUsageRecord = `-- name: ExecutionUsageRecord :exec
+INSERT INTO execution_usage_ledger (
+    execution_id, account_id, runtime, status, wall_time_ms, cpu_time_ms,
+    peak_memory_mb, output_bytes, started_at, finished_at, created_at
+)
+SELECT id, account_id, runtime, status, wall_time_ms, cpu_time_ms,
+       peak_memory_mb,
+       (result_bytes + octet_length(stdout) + octet_length(stderr))::bigint,
+       started_at, finished_at, created_at
+FROM executions
+WHERE id = $1
+  AND status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+ON CONFLICT (execution_id) DO NOTHING
+`
+
+// The execution ID is the idempotency key. Recording from the terminal
+// execution row keeps usage and the lifecycle projection in lockstep and
+// makes retries/recovery harmless.
+func (q *Queries) ExecutionUsageRecord(ctx context.Context, db DBTX, executionID pgtype.UUID) error {
+	_, err := db.Exec(ctx, executionUsageRecord, executionID)
+	return err
 }
 
 const expireOrgInvitations = `-- name: ExpireOrgInvitations :execrows
@@ -3132,6 +3523,46 @@ func (q *Queries) GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTr
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AuditLogin,
+	)
+	return i, err
+}
+
+const getRegressionObservation = `-- name: GetRegressionObservation :one
+SELECT app_id, deployment_id, route,
+       p95_ms, p95_base_ms, affected_count,
+       regression_factor, first_detected_at, last_detected_at,
+       state, acknowledged_at, dismissed_until, resolved_at
+FROM debug_regression_observations
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND route = $3
+`
+
+type GetRegressionObservationParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Route        string
+}
+
+// Read the row after a detector upsert so the notification reflects a
+// preserved acknowledgement/dismissal rather than assuming active state.
+func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error) {
+	row := db.QueryRow(ctx, getRegressionObservation, arg.AppID, arg.DeploymentID, arg.Route)
+	var i DebugRegressionObservation
+	err := row.Scan(
+		&i.AppID,
+		&i.DeploymentID,
+		&i.Route,
+		&i.P95Ms,
+		&i.P95BaseMs,
+		&i.AffectedCount,
+		&i.RegressionFactor,
+		&i.FirstDetectedAt,
+		&i.LastDetectedAt,
+		&i.State,
+		&i.AcknowledgedAt,
+		&i.DismissedUntil,
+		&i.ResolvedAt,
 	)
 	return i, err
 }
@@ -3881,7 +4312,7 @@ func (q *Queries) InstanceByID(ctx context.Context, db DBTX, id pgtype.UUID) (In
 }
 
 const instanceListByNodeForRecovery = `-- name: InstanceListByNodeForRecovery :many
-SELECT id, state, app_id, deployment_id
+SELECT id, state, app_id, deployment_id, kind
 FROM instances
 WHERE node_id = $1
   AND state IN ('running', 'cold_booting', 'waking', 'snapshotting', 'migrating')
@@ -3893,6 +4324,7 @@ type InstanceListByNodeForRecoveryRow struct {
 	State        string
 	AppID        pgtype.UUID
 	DeploymentID pgtype.UUID
+	Kind         string
 }
 
 // Live instances on a specific node — input to the arbiter's
@@ -3917,6 +4349,7 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 			&i.State,
 			&i.AppID,
 			&i.DeploymentID,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -4092,10 +4525,19 @@ func (q *Queries) ListAPIKeys(ctx context.Context, db DBTX, accountID pgtype.UUI
 const listActiveRegressionsByApp = `-- name: ListActiveRegressionsByApp :many
 SELECT deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
-       regression_factor, first_detected_at, last_detected_at
+       regression_factor, first_detected_at, last_detected_at,
+       CASE
+           WHEN state = 'dismissed'
+                AND dismissed_until IS NOT NULL
+                AND dismissed_until <= now() THEN 'active'
+           ELSE state
+       END AS state,
+       acknowledged_at, dismissed_until, resolved_at
 FROM debug_regression_observations
 WHERE app_id = $1
   AND last_detected_at > now() - $2::interval
+  AND state <> 'resolved'
+  AND (state <> 'dismissed' OR dismissed_until IS NULL OR dismissed_until <= now())
 ORDER BY regression_factor DESC, last_detected_at DESC
 `
 
@@ -4113,6 +4555,10 @@ type ListActiveRegressionsByAppRow struct {
 	RegressionFactor pgtype.Numeric
 	FirstDetectedAt  pgtype.Timestamptz
 	LastDetectedAt   pgtype.Timestamptz
+	State            interface{}
+	AcknowledgedAt   pgtype.Timestamptz
+	DismissedUntil   pgtype.Timestamptz
+	ResolvedAt       pgtype.Timestamptz
 }
 
 // Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
@@ -4139,6 +4585,10 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 			&i.RegressionFactor,
 			&i.FirstDetectedAt,
 			&i.LastDetectedAt,
+			&i.State,
+			&i.AcknowledgedAt,
+			&i.DismissedUntil,
+			&i.ResolvedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -4594,20 +5044,21 @@ func (q *Queries) ListComputeNodeHeartbeats(ctx context.Context, db DBTX, arg Li
 }
 
 const listCronsForApp = `-- name: ListCronsForApp :many
-select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
+select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at
 from crons where app_id = $1 order by created_at desc
 `
 
 type ListCronsForAppRow struct {
-	ID            pgtype.UUID
-	AppID         pgtype.UUID
-	Schedule      string
-	Path          string
-	Enabled       bool
-	Timezone      string
-	SkipIfRunning bool
-	LastFiredAt   pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
+	ID              pgtype.UUID
+	AppID           pgtype.UUID
+	Schedule        string
+	Path            string
+	Enabled         bool
+	SuspendedReason string
+	Timezone        string
+	SkipIfRunning   bool
+	LastFiredAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
 }
 
 func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListCronsForAppRow, error) {
@@ -4625,6 +5076,7 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 			&i.Schedule,
 			&i.Path,
 			&i.Enabled,
+			&i.SuspendedReason,
 			&i.Timezone,
 			&i.SkipIfRunning,
 			&i.LastFiredAt,
@@ -5019,20 +5471,21 @@ func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.U
 }
 
 const listEnabledCrons = `-- name: ListEnabledCrons :many
-select id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
-from crons where enabled = true
+select id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at
+from crons where enabled = true and suspended_reason = ''
 `
 
 type ListEnabledCronsRow struct {
-	ID            pgtype.UUID
-	AppID         pgtype.UUID
-	Schedule      string
-	Path          string
-	Enabled       bool
-	Timezone      string
-	SkipIfRunning bool
-	LastFiredAt   pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
+	ID              pgtype.UUID
+	AppID           pgtype.UUID
+	Schedule        string
+	Path            string
+	Enabled         bool
+	SuspendedReason string
+	Timezone        string
+	SkipIfRunning   bool
+	LastFiredAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
 }
 
 func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledCronsRow, error) {
@@ -5050,6 +5503,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 			&i.Schedule,
 			&i.Path,
 			&i.Enabled,
+			&i.SuspendedReason,
 			&i.Timezone,
 			&i.SkipIfRunning,
 			&i.LastFiredAt,
@@ -6633,7 +7087,8 @@ SELECT
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
     last_recovery_outcome
 FROM compute_nodes
-WHERE lifecycle IN ('unavailable', 'recovering')
+WHERE lifecycle = 'recovering'
+   OR (lifecycle = 'unavailable' AND coalesce(last_heartbeat_at, created_at) >= now() - interval '24 hours')
 ORDER BY name
 `
 
@@ -6675,8 +7130,9 @@ type NodeListRecoverableRow struct {
 //	'recovering'   → first post-failure ping succeeded; sweep to
 //	                 confirm zero stranded instances.
 //
-// Caller is the recovery arbiter; one tick enumerates both classes
-// and applies the same decision matrix.
+// Unavailable rows age out of active polling after 24 hours. They remain in
+// inventory for audit; a returning vmmd re-registers through the heartbeat
+// path and becomes active again.
 func (q *Queries) NodeListRecoverable(ctx context.Context, db DBTX) ([]NodeListRecoverableRow, error) {
 	rows, err := db.Query(ctx, nodeListRecoverable)
 	if err != nil {
@@ -9381,6 +9837,35 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 	return i, err
 }
 
+const registerGatewayUsageEvent = `-- name: RegisterGatewayUsageEvent :one
+with inserted as (
+  insert into meter_gateway_usage_events (node_id, event_id, instance_id, minute)
+  values ($1, $2, $3, $4)
+  on conflict (node_id, event_id) do nothing
+  returning 1
+)
+select exists(select 1 from inserted) as inserted
+`
+
+type RegisterGatewayUsageEventParams struct {
+	NodeID     pgtype.UUID
+	EventID    pgtype.UUID
+	InstanceID pgtype.UUID
+	Minute     pgtype.Timestamptz
+}
+
+func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error) {
+	row := db.QueryRow(ctx, registerGatewayUsageEvent,
+		arg.NodeID,
+		arg.EventID,
+		arg.InstanceID,
+		arg.Minute,
+	)
+	var inserted bool
+	err := row.Scan(&inserted)
+	return inserted, err
+}
+
 const requestTelemetryAnalyticsByDimension = `-- name: RequestTelemetryAnalyticsByDimension :many
 WITH filtered AS (
     SELECT
@@ -10281,6 +10766,55 @@ func (q *Queries) RequestTelemetryCoverage(ctx context.Context, db DBTX, arg Req
 	return i, err
 }
 
+const resolveStaleRegressionObservations = `-- name: ResolveStaleRegressionObservations :many
+UPDATE debug_regression_observations
+SET state = 'resolved',
+    resolved_at = COALESCE(resolved_at, now())
+WHERE last_detected_at <= now() - $1::interval
+  AND state <> 'resolved'
+RETURNING app_id, deployment_id, route,
+          p95_ms, p95_base_ms, affected_count,
+          regression_factor, first_detected_at, last_detected_at,
+          state, acknowledged_at, dismissed_until, resolved_at
+`
+
+// A detector pass that no longer sees a regression resolves the previous
+// observation. Returning rows lets apid publish one account-scoped event per
+// lifecycle transition without a second read.
+func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]DebugRegressionObservation, error) {
+	rows, err := db.Query(ctx, resolveStaleRegressionObservations, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DebugRegressionObservation{}
+	for rows.Next() {
+		var i DebugRegressionObservation
+		if err := rows.Scan(
+			&i.AppID,
+			&i.DeploymentID,
+			&i.Route,
+			&i.P95Ms,
+			&i.P95BaseMs,
+			&i.AffectedCount,
+			&i.RegressionFactor,
+			&i.FirstDetectedAt,
+			&i.LastDetectedAt,
+			&i.State,
+			&i.AcknowledgedAt,
+			&i.DismissedUntil,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeAllSessions = `-- name: RevokeAllSessions :many
 update sessions set revoked_at = now()
 where account_id = $1 and id <> $2 and revoked_at is null
@@ -10496,7 +11030,11 @@ func (q *Queries) SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifes
 
 const setDeploymentFailed = `-- name: SetDeploymentFailed :one
 update deployments
-   set status = 'failed', error = $2, error_code = $3
+   set status = 'failed', error = $2, error_code = $3,
+       traffic_percent = 0, rollout_state = 'aborted',
+       rollout_completed_at = null,
+       rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+       rollout_aborted_reason = coalesce(nullif($2, ''), 'deployment failed')
  where id = $1
 returning id, app_id, coalesce(build_id::text, ''), image_digest, kind,
           coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -11183,7 +11721,7 @@ update crons set
   path = coalesce($3, path),
   enabled = coalesce($4, enabled)
 where id = $1
-returning id, app_id, schedule, path, enabled, timezone, skip_if_running, last_fired_at, created_at
+returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at
 `
 
 type UpdateCronParams struct {
@@ -11194,15 +11732,16 @@ type UpdateCronParams struct {
 }
 
 type UpdateCronRow struct {
-	ID            pgtype.UUID
-	AppID         pgtype.UUID
-	Schedule      string
-	Path          string
-	Enabled       bool
-	Timezone      string
-	SkipIfRunning bool
-	LastFiredAt   pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
+	ID              pgtype.UUID
+	AppID           pgtype.UUID
+	Schedule        string
+	Path            string
+	Enabled         bool
+	SuspendedReason string
+	Timezone        string
+	SkipIfRunning   bool
+	LastFiredAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
 }
 
 func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams) (UpdateCronRow, error) {
@@ -11219,6 +11758,7 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 		&i.Schedule,
 		&i.Path,
 		&i.Enabled,
+		&i.SuspendedReason,
 		&i.Timezone,
 		&i.SkipIfRunning,
 		&i.LastFiredAt,
@@ -11228,7 +11768,15 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 }
 
 const updateDeploymentStatus = `-- name: UpdateDeploymentStatus :exec
-update deployments set status = $2, error = $3 where id = $1
+update deployments
+set status = $2,
+    error = $3,
+    traffic_percent = case when $2 = 'failed' then 0 else traffic_percent end,
+    rollout_state = case when $2 = 'failed' then 'aborted' else rollout_state end,
+    rollout_completed_at = case when $2 = 'failed' then null else rollout_completed_at end,
+    rollout_aborted_at = case when $2 = 'failed' then coalesce(rollout_aborted_at, now()) else rollout_aborted_at end,
+    rollout_aborted_reason = case when $2 = 'failed' then coalesce(nullif($3, ''), 'deployment failed') else rollout_aborted_reason end
+where id = $1
 `
 
 type UpdateDeploymentStatusParams struct {
@@ -11537,18 +12085,37 @@ const upsertRegressionObservation = `-- name: UpsertRegressionObservation :exec
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, last_detected_at
+    regression_factor, state, last_detected_at
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, now()
+    $7, 'active', now()
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
-    last_detected_at  = EXCLUDED.last_detected_at
+    last_detected_at  = EXCLUDED.last_detected_at,
+    state             = CASE
+        WHEN debug_regression_observations.state = 'acknowledged' THEN 'acknowledged'
+        WHEN debug_regression_observations.state = 'dismissed'
+             AND debug_regression_observations.dismissed_until IS NOT NULL
+             AND debug_regression_observations.dismissed_until > now() THEN 'dismissed'
+        ELSE 'active'
+    END,
+    acknowledged_at   = CASE
+        WHEN debug_regression_observations.state = 'acknowledged' THEN debug_regression_observations.acknowledged_at
+        ELSE NULL
+    END,
+    dismissed_until   = CASE
+        WHEN debug_regression_observations.state = 'dismissed'
+             AND debug_regression_observations.dismissed_until IS NOT NULL
+             AND debug_regression_observations.dismissed_until > now()
+            THEN debug_regression_observations.dismissed_until
+        ELSE NULL
+    END,
+    resolved_at       = NULL
 `
 
 type UpsertRegressionObservationParams struct {

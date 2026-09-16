@@ -21,6 +21,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -196,11 +199,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: load vmmd TLS: %w", err)
 	}
+	builderBasePath, err := resolveBuilderBasePath(cfg.BuilderBase, sourceStorage)
+	if err != nil {
+		return err
+	}
+	// Resolve the sidecar through the same backend as the base; deriving it
+	// from builderBasePath is wrong whenever that path came from the OCI
+	// read-through cache. Empty keeps the sibling derivation.
+	builderBaseDigestPath, err := resolveBuilderBaseDigestPath(ctx, sourceStorage)
+	if err != nil {
+		return err
+	}
 	builderdProbe := buildReadinessProbeForDirs(ctx, pool, []string{cfg.BuildDriveDir, cfg.BuildExportDir}, vmmTarget, tlsReadinessDialer(vmmTLS))
+	baseSig, baseStop := builderBaseReadySignal(ctx, builderBasePath, builderBaseDigestPath, runtime.GOOS+"/"+runtime.GOARCH, 5*time.Second)
+	builderdProbe.RegisterSignal(baseSig, baseStop)
 
-	driver, err := deps.newDriver(ctx, vmmTarget, vmmTLS, cfg.BuilderBase, cfg.BuildDriveDir, cfg.BuildExportDir)
+	driver, err := deps.newDriver(ctx, vmmTarget, vmmTLS, builderBasePath, cfg.BuildDriveDir, cfg.BuildExportDir)
 	if err != nil {
 		return fmt.Errorf("builderd: vmmd driver: %w", err)
+	}
+	if d, ok := driver.(*builderdpkg.VMMDriver); ok {
+		d.WithBuilderBaseDigest(builderBaseDigestPath)
 	}
 	if c, ok := driver.(*builderdpkg.VMMDriver); ok {
 		defer func() { _ = c.Close() }()
@@ -294,6 +313,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	log.Info("builderd ready",
 		"vmmd_target", vmmTarget,
+		"builder_base_path", builderBasePath,
 		"cache_dir", cfg.CacheDir,
 		"poll_interval", cfg.PollInterval)
 
@@ -355,6 +375,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		gcInterval = 24 * time.Hour
 	}
 	go builderdpkg.CacheGCSweepLoop(runCtx, cache, gcInterval, cfg.CacheMaxBytes, cfg.CacheMaxAge, log)
+
+	// Completed VM exports are a separate tree from the content-addressed
+	// cache. Sweep immediately at startup and then periodically, consulting the
+	// durable rootfs_path handoff before taking an exclusive artifact lease.
+	go builderdpkg.BuildExportSweepLoop(runCtx, store, ops, builderdpkg.BuildExportGCConfig{
+		Root: cfg.BuildExportDir, MaxBytes: cfg.BuildExportMaxBytes,
+		MaxAge: cfg.BuildExportMaxAge, OrphanMinAge: cfg.BuildExportOrphanMinAge,
+	}, cfg.BuildExportSweepInterval, log)
 
 	// Warm builder snapshots own both vmmd storage objects and a retained
 	// local BuildKit drive. Expire them on the configured idle window even when
@@ -457,6 +485,119 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}
 	}
+}
+
+// resolveBuilderBasePath selects the local file used only for builder-toolchain
+// identity checks. vmmd still receives the canonical storage key and resolves
+// the actual drive through the shared StorageBackend. On split-box nodes the
+// OCI backend's cache exposes a node-local path once imaged pre-staging has
+// completed; using that path avoids rebuilding the cache identity from a
+// legacy compatibility filename. A missing cache deliberately falls back to
+// the canonical path so readiness remains false with an actionable error.
+func resolveBuilderBasePath(configured string, sourceStorage storage.StorageBackend) (string, error) {
+	configured = strings.TrimSpace(configured)
+	if configured == "" {
+		configured = filepath.Join(envOr("FAAS_STORAGE_ROOT", "/srv/fc"), "base", "runner-builder-"+runtime.GOARCH+".ext4")
+	}
+	if sourceStorage == nil {
+		return configured, nil
+	}
+	key := sched.BaseKey("builder")
+	if resolver, ok := sourceStorage.(storage.LocalPathResolver); ok {
+		path, local, err := resolver.LocalPath(key)
+		if err != nil {
+			return "", fmt.Errorf("builderd: resolve builder base %q: %w", key, err)
+		}
+		if local && strings.TrimSpace(path) != "" {
+			return path, nil
+		}
+	}
+	// A split-box service must never use the pre-ADR legacy spelling. If the
+	// cache is cold, the canonical path gives readiness a stable target while
+	// imaged pre-stage (or a later cache fill) makes it available.
+	if filepath.Base(configured) == "builder-base.ext4" {
+		return filepath.Join(envOr("FAAS_STORAGE_ROOT", "/srv/fc"), "base", "runner-builder-"+runtime.GOARCH+".ext4"), nil
+	}
+	return configured, nil
+}
+
+// resolveBuilderBaseDigestPath resolves the base's digest sidecar through the
+// SAME backend that produced the base path, rather than appending ".digest" to
+// it.
+//
+// Appending only works when the base is a plain file in the storage root. When
+// resolveBuilderBasePath returns a read-through cache path the base lives at a
+// content-addressed location (/var/lib/faas/cache/<aa>/<hash>) with no sibling
+// sidecar, so the derived path can never exist and every build fails with
+// "stat builder base digest sidecar: no such file or directory". The sidecar is
+// its own storage key, so ask storage for it the same way.
+//
+// Returns "" when the sidecar is not locally resolvable, which tells
+// pkg/builderd to keep the sibling derivation — correct for the local backend
+// and the right fallback for a cold cache, where readiness stays false with an
+// actionable error until imaged pre-stage fills it.
+func resolveBuilderBaseDigestPath(ctx context.Context, sourceStorage storage.StorageBackend) (string, error) {
+	if sourceStorage == nil {
+		return "", nil
+	}
+	resolver, ok := sourceStorage.(storage.LocalPathResolver)
+	if !ok {
+		return "", nil
+	}
+	key := sched.BaseDigestKey("builder")
+	path, local, err := resolver.LocalPath(key)
+	if err != nil {
+		return "", fmt.Errorf("builderd: resolve builder base digest sidecar %q: %w", key, err)
+	}
+	if local && strings.TrimSpace(path) != "" {
+		return path, nil
+	}
+
+	// Not in the read-through cache yet. Returning "" here sends the caller
+	// back to the sibling derivation (builderBase + ".digest"), and under an
+	// OCI backend the base is a content-addressed blob whose sibling can never
+	// exist — so every build fails with
+	//
+	//   stat builder base digest sidecar:
+	//   /var/lib/faas/cache/<aa>/<hash>.digest: no such file or directory
+	//
+	// That is issue #2577 returning by a different route: #2578 stopped
+	// DERIVING the path but still gave up when the sidecar had not been pulled.
+	// A node that has never staged this base (a fresh acceptance host) is
+	// exactly that case, while the node the fix was written on happened to
+	// have it cached.
+	//
+	// Pull it. The sidecar is a few hundred bytes, the cache is read-through,
+	// and this runs once at builderd startup.
+	cache, relKey, routeErr := storage.CacheBackendForKey(sourceStorage, key)
+	if routeErr != nil {
+		return "", fmt.Errorf("builderd: route builder base digest sidecar %q: %w", key, routeErr)
+	}
+	if cache == nil {
+		return "", nil
+	}
+	rc, refreshErr := cache.Refresh(ctx, relKey)
+	if refreshErr != nil {
+		// Deliberately swallowed. imaged pre-stage may still be in flight, and
+		// builderd refusing to boot over a not-yet-published sidecar would turn
+		// a transient into an outage. The caller falls back to the sibling
+		// derivation, readBuildEnvironment then fails on the missing file, and
+		// readiness stays false with an actionable error — which is the
+		// behaviour a cold node should have.
+		return "", nil //nolint:nilerr // intentional: a cold sidecar is a readiness state, not a boot failure
+	}
+	if closeErr := rc.Close(); closeErr != nil {
+		return "", fmt.Errorf("builderd: close refreshed digest sidecar %q: %w", key, closeErr)
+	}
+
+	path, local, err = resolver.LocalPath(key)
+	if err != nil {
+		return "", fmt.Errorf("builderd: re-resolve builder base digest sidecar %q: %w", key, err)
+	}
+	if local && strings.TrimSpace(path) != "" {
+		return path, nil
+	}
+	return "", nil
 }
 
 // cancelBuild is the bounded ADR-124 build-cancel worker. The deployment row

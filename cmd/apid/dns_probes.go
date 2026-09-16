@@ -427,9 +427,7 @@ func errorsAs(err error, target any) bool {
 // parallel (the cert check is the 5th probe and is handled
 // separately by the caller because it has its own dialCert
 // budget + error classification). Used only by the doctor
-// handler's synchronous re-probe path; the poller calls
-// the probes sequentially because it's batched 50/pass and
-// the dns lookups are cheap on a warm resolver.
+// handler's synchronous re-probe path and by each bounded poller worker.
 //
 // 5 s budget per probe (matches probeTimeout). If a probe
 // returns within the budget, its result is recorded; if

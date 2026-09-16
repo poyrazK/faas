@@ -30,7 +30,7 @@ Two adjacent proposals exist that this ADR must distinguish from:
   `builderd` pipeline already runs an image to completion inside a
   jailer-scoped FC microVM with a 10-min hard cap. The shape matches;
   the slot accounting does not — builder slots are deliberately
-  scarce (1 guaranteed + 1 opportunistic per §13) because builds
+  scarce (one per compute node per §13) because builds
   must never outrank tenant wakes.
 
 Jobs sit between these two: the VM lifecycle is closer to a builder

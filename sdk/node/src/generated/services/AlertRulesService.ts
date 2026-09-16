@@ -7,6 +7,7 @@ import type { AlertPresetResponse } from '../models/AlertPresetResponse.js';
 import type { AlertRuleResponse } from '../models/AlertRuleResponse.js';
 import type { CreateAlertRuleRequest } from '../models/CreateAlertRuleRequest.js';
 import type { EnableAlertPresetRequest } from '../models/EnableAlertPresetRequest.js';
+import type { RotateAlertRuleSecretRequest } from '../models/RotateAlertRuleSecretRequest.js';
 import type { RotateAlertRuleSecretResponse } from '../models/RotateAlertRuleSecretResponse.js';
 import type { TestAlertPresetResponse } from '../models/TestAlertPresetResponse.js';
 import type { UpdateAlertRuleRequest } from '../models/UpdateAlertRuleRequest.js';
@@ -220,11 +221,10 @@ export class AlertRulesService {
     });
   }
   /**
-   * Mint a new webhook HMAC secret.
-   * Server-mints a 32-byte secret, base64-encodes it, and
-   * overwrites the row's sealed ciphertext in place. The
-   * plaintext is NEVER returned in the response — the body
-   * carries the masked constant + rotated_at only.
+   * Install a new webhook HMAC secret.
+   * Seals the caller-supplied replacement and overwrites the row in place.
+   * Cutover is immediate with no old-key overlap; install the replacement
+   * in the receiver before calling. The plaintext is never returned.
    *
    * @returns RotateAlertRuleSecretResponse Rotation succeeded.
    * @throws ApiError
@@ -232,6 +232,7 @@ export class AlertRulesService {
   public static rotateAlertRuleSecret({
     slug,
     id,
+    requestBody,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -241,6 +242,7 @@ export class AlertRulesService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    requestBody: RotateAlertRuleSecretRequest,
   }): CancelablePromise<RotateAlertRuleSecretResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -249,6 +251,8 @@ export class AlertRulesService {
         'slug': slug,
         'id': id,
       },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         401: `code: unauthorized`,
         402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,

@@ -38,11 +38,11 @@ jobs:
 	for _, s := range seeds {
 		byName[s.name] = s
 	}
-	if s := byName["api"]; s.class != ClassHTTP || len(s.command) != 4 || s.ports[0] != 8080 {
+	if s := byName["api"]; s.class != ClassHTTP || len(s.command) != 4 || s.ports[0] != 8080 || s.commandShell {
 		t.Errorf("api seed wrong: cls=%s, command=%v, ports=%v", s.class, s.command, s.ports)
 	}
-	if s := byName["indexer"]; s.class != ClassWorker {
-		t.Errorf("indexer class = %q, want worker", s.class)
+	if s := byName["indexer"]; s.class != ClassWorker || !s.commandShell {
+		t.Errorf("indexer class/shell = %q/%v, want worker/true", s.class, s.commandShell)
 	}
 	for _, n := range []string{"hourly", "nightly"} {
 		s, ok := byName[n]

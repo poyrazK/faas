@@ -123,7 +123,7 @@ func cmdOpenapi(args []string) int {
 //     a downstream tool reach for this shape; the human-readable
 //     default is the per-row prose used in PR reviews.
 func cmdOpenapiDiff(args []string) int {
-	fs := flag.NewFlagSet("openapi diff", flag.ContinueOnError)
+	fs := newFlagSet("openapi diff", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

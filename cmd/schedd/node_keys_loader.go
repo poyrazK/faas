@@ -54,6 +54,18 @@ type pgNodeKeyLoader struct {
 	pool *pgxpool.Pool
 }
 
+const loadNodeKeysSQL = `
+	select k.compute_node_id::text,
+	       k.key_id,
+	       k.public_key_pem
+	  from compute_node_keys k
+	  join compute_nodes n on n.id = k.compute_node_id
+	 where n.active
+	   and k.revoked_at is null
+	   and (k.key_state = 'current'
+	        or (k.key_state = 'overlap' and k.valid_until > now()))
+`
+
 // LoadNodeKeys reads every row from compute_node_keys. The query
 // is the canonical column set (key_id, public_key_pem); schedd
 // parses the PEM through the same parsePublicKeyPEM path the
@@ -61,11 +73,7 @@ type pgNodeKeyLoader struct {
 // Warn log (the registry keeps the last-known-good map; the
 // offending row is skipped).
 func (l pgNodeKeyLoader) LoadNodeKeys(ctx context.Context) ([]sched.NodeKeyRow, error) {
-	const q = `
-		select key_id, public_key_pem
-		  from compute_node_keys
-	`
-	rows, err := l.pool.Query(ctx, q)
+	rows, err := l.pool.Query(ctx, loadNodeKeysSQL)
 	if err != nil {
 		return nil, fmt.Errorf("schedd: query compute_node_keys: %w", err)
 	}
@@ -73,7 +81,7 @@ func (l pgNodeKeyLoader) LoadNodeKeys(ctx context.Context) ([]sched.NodeKeyRow, 
 	var out []sched.NodeKeyRow
 	for rows.Next() {
 		var r sched.NodeKeyRow
-		if err := rows.Scan(&r.KeyID, &r.PublicKeyPEM); err != nil {
+		if err := rows.Scan(&r.ComputeNodeID, &r.KeyID, &r.PublicKeyPEM); err != nil {
 			return nil, fmt.Errorf("schedd: scan compute_node_keys row: %w", err)
 		}
 		out = append(out, r)

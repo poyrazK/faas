@@ -100,7 +100,7 @@ func cmdGithubSync(args []string) int {
 }
 
 func cmdGithubBind(args []string) int {
-	fs := flag.NewFlagSet("github bind", flag.ContinueOnError)
+	fs := newFlagSet("github bind", flag.ContinueOnError)
 	installationID := fs.Int64("installation-id", 0, "GitHub App installation id (optional; resolved from the account when omitted)")
 	repo := fs.String("repo", "", "GitHub repository OWNER/NAME (required)")
 	branch := fs.String("branch", "", "production branch (defaults to the installation default)")
@@ -146,7 +146,7 @@ func cmdGithubBind(args []string) int {
 }
 
 func cmdGithubDisconnect(args []string) int {
-	fs := flag.NewFlagSet("github disconnect", flag.ContinueOnError)
+	fs := newFlagSet("github disconnect", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "confirm removing the repository binding")
 	if err := fs.Parse(args); err != nil {
 		return 1

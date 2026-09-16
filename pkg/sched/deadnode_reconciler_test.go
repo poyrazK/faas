@@ -1,3 +1,4 @@
+// adr: 137
 // deadnode_reconciler_test.go — engine-level tests for the
 // stale-RUNNING billing-leak self-healer.
 //
@@ -20,8 +21,10 @@
 //
 // Cases:
 //
-//   - Dead node (active=false) → RUNNING row transitions to
+//   - Stale active node → RUNNING row transitions to
 //     FAILED, metric outcome="failed" bumped.
+//   - Recovery-managed app rows remain RUNNING.
+//   - App-less job-task rows remain eligible during drain.
 //   - Active node with fresh heartbeat → no change.
 //   - Peer-race winner (row already not RUNNING) → metric
 //     outcome="conflict", no mutation.
@@ -105,7 +108,7 @@ func TestReconcileDeadNodeInstances_DeadNodeRowFailed(t *testing.T) {
 	ops := wire.NewOpsMetrics("schedd")
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	e.WithOpsMetrics(ops)
-	nodeID := seedComputeNodeForReconcile(t, store, false) // active=false
+	nodeID := seedStaleComputeNodeForReconcile(t, store)
 	appID, insID := seedRunningInstance(t, store, nodeID)
 
 	reconciled, err := e.ReconcileDeadNodeInstances(context.Background())
@@ -246,8 +249,8 @@ func TestReconcileDeadNodeInstances_TickCapHonoured(t *testing.T) {
 	// method reconciles both, and a future change to lower the cap
 	// would require adding a setter (see TestReconcileDeadNodeInstances_PerTickCapRespected
 	// below for the synthetic cap path).
-	nodeA := seedComputeNodeForReconcile(t, store, false)
-	nodeB := seedComputeNodeForReconcile(t, store, false)
+	nodeA := seedStaleComputeNodeForReconcile(t, store)
+	nodeB := seedStaleComputeNodeForReconcile(t, store)
 	_, _ = seedRunningInstance(t, store, nodeA)
 	_, _ = seedRunningInstance(t, store, nodeB)
 
@@ -292,6 +295,97 @@ func TestReconcileDeadNodeInstances_OrphanNodeRowFailed(t *testing.T) {
 	}
 }
 
+func TestReconcileDeadNodeInstances_RecoveryManagedAppRowsUntouched(t *testing.T) {
+	for _, lifecycle := range []state.NodeLifecycle{
+		state.NodeLifecycleDraining,
+		state.NodeLifecycleForceDraining,
+		state.NodeLifecycleUnavailable,
+		state.NodeLifecycleRecovering,
+	} {
+		lifecycle := lifecycle
+		t.Run(string(lifecycle), func(t *testing.T) {
+			store := state.NewMemStore()
+			node, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+				Name: "managed-" + uuid.NewString(), Lifecycle: lifecycle,
+				LastHeartbeatAt: time.Now().UTC().Add(-10 * time.Minute),
+				MemMB:           8192, MaxConcurrency: 16,
+			})
+			if err != nil {
+				t.Fatalf("CreateComputeNode: %v", err)
+			}
+			appID, insID := seedRunningInstance(t, store, node.ID)
+			threshold := time.Now().UTC().Add(-2 * time.Minute)
+			rows, err := store.ListRunningInstancesOnDeadNodes(context.Background(), threshold, 50)
+			if err != nil {
+				t.Fatalf("ListRunningInstancesOnDeadNodes: %v", err)
+			}
+			if len(rows) != 0 {
+				t.Fatalf("recovery-managed app row returned by billing reconciler: %+v", rows)
+			}
+			if err := store.FailRunningInstanceOnDeadNode(context.Background(), insID, node.ID, threshold); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("FailRunningInstanceOnDeadNode err=%v, want ErrConflict", err)
+			}
+			appRows, err := store.ListInstancesForApp(context.Background(), appID)
+			if err != nil || len(appRows) != 1 || appRows[0].State != string(state.StateRunning) {
+				t.Fatalf("app row changed during %s recovery: rows=%+v err=%v", lifecycle, appRows, err)
+			}
+		})
+	}
+}
+
+func TestReconcileDeadNodeInstances_JobTaskEligibleDuringDrain(t *testing.T) {
+	store := state.NewMemStore()
+	node, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+		Name: "job-drain-" + uuid.NewString(), Lifecycle: state.NodeLifecycleDraining,
+		MemMB: 8192, MaxConcurrency: 16,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	_, job, run := seedJobRun(t, store, nil, nil)
+	ins, err := store.CreateJobInstance(context.Background(), uuid.NewString(), job.ID, run.ID, 0,
+		string(state.StateRunning), 256, node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateJobInstance: %v", err)
+	}
+	threshold := time.Now().UTC().Add(-2 * time.Minute)
+	rows, err := store.ListRunningInstancesOnDeadNodes(context.Background(), threshold, 50)
+	if err != nil {
+		t.Fatalf("ListRunningInstancesOnDeadNodes: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != ins.ID {
+		t.Fatalf("job-task billing row=%+v, want %s", rows, ins.ID)
+	}
+	if err := store.FailRunningInstanceOnDeadNode(context.Background(), ins.ID, node.ID, threshold); err != nil {
+		t.Fatalf("FailRunningInstanceOnDeadNode(job task): %v", err)
+	}
+	got, err := store.InstanceByID(context.Background(), ins.ID)
+	if err != nil || got.State != string(state.StateFailed) {
+		t.Fatalf("job-task row=%+v err=%v, want failed", got, err)
+	}
+}
+
+func TestFailRunningInstanceOnDeadNode_HeartbeatRaceReturnsConflict(t *testing.T) {
+	store := state.NewMemStore()
+	nodeID := seedStaleComputeNodeForReconcile(t, store)
+	appID, insID := seedRunningInstance(t, store, nodeID)
+	threshold := time.Now().UTC().Add(-2 * time.Minute)
+	rows, err := store.ListRunningInstancesOnDeadNodes(context.Background(), threshold, 50)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("pre-race list rows=%+v err=%v", rows, err)
+	}
+	if err := store.HeartbeatComputeNode(context.Background(), nodeID); err != nil {
+		t.Fatalf("HeartbeatComputeNode: %v", err)
+	}
+	if err := store.FailRunningInstanceOnDeadNode(context.Background(), insID, nodeID, threshold); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("post-heartbeat fail err=%v, want ErrConflict", err)
+	}
+	appRows, err := store.ListInstancesForApp(context.Background(), appID)
+	if err != nil || len(appRows) != 1 || appRows[0].State != string(state.StateRunning) {
+		t.Fatalf("recovered-node app row changed: rows=%+v err=%v", appRows, err)
+	}
+}
+
 // TestReconcileDeadNodeInstances_ListQueryArgGuards pins the
 // input contract on ListRunningInstancesOnDeadNodes: limit must
 // be > 0 (matches pgstore impl).
@@ -311,10 +405,10 @@ func TestReconcileDeadNodeInstances_ListQueryArgGuards(t *testing.T) {
 // fail" — see F2 in the PR-A review findings.
 func TestReconcileDeadNodeInstances_FailArgGuards(t *testing.T) {
 	store := state.NewMemStore()
-	if err := store.FailRunningInstanceOnDeadNode(context.Background(), "", "node-1"); err == nil {
+	if err := store.FailRunningInstanceOnDeadNode(context.Background(), "", "node-1", time.Now()); err == nil {
 		t.Fatalf("empty instanceID must error")
 	}
-	if err := store.FailRunningInstanceOnDeadNode(context.Background(), "ins-1", ""); err == nil {
+	if err := store.FailRunningInstanceOnDeadNode(context.Background(), "ins-1", "", time.Now()); err == nil {
 		t.Fatalf("empty nodeID must error")
 	}
 	// Missing row → ErrConflict (NOT ErrNotFound). This matches
@@ -324,7 +418,7 @@ func TestReconcileDeadNodeInstances_FailArgGuards(t *testing.T) {
 	// or "peer parked first" — all three must surface the same
 	// outcome="conflict" so the reconciler's metric stays
 	// distinguishable from a real error.
-	err := store.FailRunningInstanceOnDeadNode(context.Background(), "missing", "n")
+	err := store.FailRunningInstanceOnDeadNode(context.Background(), "missing", "n", time.Now())
 	if err == nil {
 		t.Fatalf("unknown instance must error")
 	}

@@ -42,7 +42,7 @@ import (
 // targets; the rotation hint now reads "rotating %s in scope=%q"
 // so the customer knows which (scope, key) pair they're rotating.
 func secretsRotate(args []string) int {
-	fs := flag.NewFlagSet("secrets rotate", flag.ContinueOnError)
+	fs := newFlagSet("secrets rotate", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	fromStdin := fs.Bool("from-stdin", false, "read KEY=VALUE from stdin (one pair)")
 	scope := fs.String(secretsCmdScopeFlag, "", "env scope to rotate (omit for default)")

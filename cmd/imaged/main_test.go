@@ -116,6 +116,57 @@ func TestParseBoolEnvRejectsInvalidValue(t *testing.T) {
 	}
 }
 
+func TestValidateHostingSmokeConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		required   bool
+		baseURL    string
+		appsDomain string
+		wantErr    string
+	}{
+		{name: "optional unset"},
+		{name: "required complete", required: true, baseURL: "https://gregale.dev", appsDomain: "gregale.dev"},
+		{name: "required missing origin", required: true, appsDomain: "gregale.dev", wantErr: "FAAS_API_HOSTING_SMOKE_URL"},
+		{name: "required missing tenant domain", required: true, baseURL: "https://gregale.dev", wantErr: "FAAS_APPS_DOMAIN"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateHostingSmokeConfig(tt.required, tt.baseURL, tt.appsDomain)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateHostingSmokeConfig() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateHostingSmokeConfig() = %v, want error containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPrestageOnlyFromEnv(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want bool
+	}{
+		{raw: "1", want: true},
+		{raw: " 1 ", want: true},
+		{raw: "", want: false},
+		{raw: "true", want: false},
+	} {
+		got := prestageOnlyFromEnv(func(key string) string {
+			if key == "FAAS_IMAGED_PRESTAGE_ONLY" {
+				return tc.raw
+			}
+			return ""
+		})
+		if got != tc.want {
+			t.Errorf("prestageOnlyFromEnv(%q) = %t, want %t", tc.raw, got, tc.want)
+		}
+	}
+}
+
 // TestOverrideGate_DigestPinned covers the success path: a digest-pinned
 // reference passes the gate. Mirrors the parsing logic in run() so a
 // future refactor of the gate is caught here.
@@ -181,6 +232,25 @@ func TestBuilderBaseRef_SingleBoxKeepsDevelopmentDefault(t *testing.T) {
 	}
 	if got != "ghcr.io/poyrazk/builder-base:latest" {
 		t.Fatalf("builderBaseRefFromEnv() = %q, want development builder default", got)
+	}
+}
+
+func TestBuilderBasePath_DefaultIsCanonicalPerArchitecture(t *testing.T) {
+	t.Setenv("FAAS_STORAGE_ROOT", "/var/lib/faas/fc")
+	t.Setenv("FAAS_BUILDER_BASE_PATH", "")
+	if got := builderBasePathFromEnv("amd64"); got != "/var/lib/faas/fc/base/runner-builder-amd64.ext4" {
+		t.Fatalf("builderBasePathFromEnv(amd64) = %q, want canonical path", got)
+	}
+	if got := builderBasePathFromEnv("arm64"); got != "/var/lib/faas/fc/base/runner-builder-arm64.ext4" {
+		t.Fatalf("builderBasePathFromEnv(arm64) = %q, want canonical path", got)
+	}
+}
+
+func TestBuilderBasePath_PreservesExplicitHarnessOverride(t *testing.T) {
+	t.Setenv("FAAS_STORAGE_ROOT", "/var/lib/faas/fc")
+	t.Setenv("FAAS_BUILDER_BASE_PATH", "/tmp/native/runner-builder.ext4")
+	if got := builderBasePathFromEnv("amd64"); got != "/tmp/native/runner-builder.ext4" {
+		t.Fatalf("builderBasePathFromEnv override = %q, want explicit path", got)
 	}
 }
 

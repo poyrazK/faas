@@ -48,7 +48,6 @@ package main
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -134,29 +133,22 @@ func (s *server) listAuditEvents(w http.ResponseWriter, r *http.Request, acct st
 		limit = n
 	}
 
-	// Over-read to honor the since + kind_prefix filters at the
-	// application layer. The composite index (subject, at desc) makes
-	// the SQL query return the 200 newest rows for the account in
-	// O(200) regardless of the table size; the in-Go filter walks
-	// that window and stops as soon as the limit is filled.
-	rows, err := s.store.ListEvents(r.Context(), acct.ID, listAuditEventsOverRead)
+	filter := state.CustomerEventFilter{
+		AccountID: acct.ID, IncludeAnonymous: includeAnonymous,
+		KindPrefix: prefix, AppID: appIDFilter, Since: since, Limit: limit,
+	}
+	var rows []state.Event
+	var err error
+	if lister, ok := s.store.(state.CustomerEventLister); ok {
+		rows, err = lister.ListCustomerEvents(r.Context(), filter)
+	} else {
+		// Narrow legacy adapters retain a safe subject-only fallback. They do
+		// not expose anonymous rows because they cannot prove ownership.
+		rows, err = s.store.ListEvents(r.Context(), acct.ID, listAuditEventsOverRead)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list audit events"))
 		return
-	}
-	// include_anonymous (Wave 0 PR-C / ADR-047): when set, also pull
-	// subject=NULL rows. PgStore.ListEvents with subject="" returns
-	// subject=NULL rows (the SQL is "WHERE subject IS NULL" not
-	// "WHERE subject = $1") so we can re-use the existing method —
-	// no new store API. Merged in-Go below to keep the dedup window
-	// bounded by listAuditEventsOverRead on the wire side.
-	var anonRows []state.Event
-	if includeAnonymous {
-		anonRows, err = s.store.ListEvents(r.Context(), "", listAuditEventsOverRead)
-		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not list anonymous audit events"))
-			return
-		}
 	}
 	// Cap the backing array at listAuditEventsLimitMax (the same bound
 	// the request handler applies to ?limit=…) regardless of the
@@ -165,17 +157,8 @@ func (s *server) listAuditEvents(w http.ResponseWriter, r *http.Request, acct st
 	// limit)` form was flagged by codeql go/allocation-rule because
 	// `limit` is a parsed query-string value the analysis can't bound.
 	// Limit the audit-events list response to listAuditEventsLimitMax rows.
-	merged := make([]state.Event, 0, len(rows)+len(anonRows))
-	merged = append(merged, rows...)
-	merged = append(merged, anonRows...)
-	// Sort merged newest-first so include_anonymous doesn't put the
-	// anonymous tail ahead of the account-scoped head. sort.Slice is
-	// fine here — both halves are bounded by listAuditEventsOverRead.
-	sort.Slice(merged, func(i, j int) bool {
-		return merged[i].At.After(merged[j].At)
-	})
 	out := make([]api.AuditEventResponse, 0, listAuditEventsLimitMax)
-	for _, e := range merged {
+	for _, e := range rows {
 		if !since.IsZero() && e.At.Before(since) {
 			continue
 		}

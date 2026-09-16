@@ -13,8 +13,9 @@ is the chain-bearing `httpx.Client` for streaming and SSE.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -25,6 +26,11 @@ from ._transport import (
 )
 from .client import AuthenticatedClient
 from .client import Client as _GenClient
+
+if TYPE_CHECKING:
+    from .executions import ExecutionEvent, ExecutionID
+    from .models.execution_response import ExecutionResponse
+    from .types import Unset
 
 
 @dataclass
@@ -113,8 +119,115 @@ class FaaSClient:
         for `stream()` and SSE (see `faas_sdk.iter_sse`)."""
         return self._gen.get_httpx_client()
 
+    @property
+    def async_httpx_client(self) -> httpx.AsyncClient:
+        """The chain-bearing underlying `httpx.AsyncClient`.
+
+        Use this for async streaming helpers such as
+        :func:`faas_sdk.awatch_execution`.
+        """
+        return self._gen.get_async_httpx_client()
+
+    def watch_execution(
+        self,
+        execution_id: ExecutionID,
+        *,
+        after: int = 0,
+        limit: int = 100,
+        retry_initial: float = 0.1,
+        retry_max: float = 2.0,
+    ) -> Iterator[ExecutionEvent]:
+        """Watch a disposable execution until its terminal event."""
+        from .executions import watch_execution
+
+        return watch_execution(
+            self,
+            execution_id,
+            after=after,
+            limit=limit,
+            retry_initial=retry_initial,
+            retry_max=retry_max,
+        )
+
+    def awatch_execution(
+        self,
+        execution_id: ExecutionID,
+        *,
+        after: int = 0,
+        limit: int = 100,
+        retry_initial: float = 0.1,
+        retry_max: float = 2.0,
+    ) -> AsyncIterator[ExecutionEvent]:
+        """Async counterpart to :meth:`watch_execution`."""
+        from .executions import awatch_execution
+
+        return awatch_execution(
+            self,
+            execution_id,
+            after=after,
+            limit=limit,
+            retry_initial=retry_initial,
+            retry_max=retry_max,
+        )
+
+    def run_execution(
+        self,
+        body: Any,
+        *,
+        on_event: Callable[[ExecutionEvent], Any] | None = None,
+        idempotency_key: str | Unset | None = None,
+        after: int = 0,
+        limit: int = 100,
+        retry_initial: float = 0.1,
+        retry_max: float = 2.0,
+    ) -> ExecutionResponse:
+        """Create, stream, and return one disposable execution receipt."""
+        from .executions import run_execution
+        from .types import UNSET
+
+        return run_execution(
+            self,
+            body,
+            on_event=on_event,
+            idempotency_key=UNSET if idempotency_key is None else idempotency_key,
+            after=after,
+            limit=limit,
+            retry_initial=retry_initial,
+            retry_max=retry_max,
+        )
+
+    async def arun_execution(
+        self,
+        body: Any,
+        *,
+        on_event: Callable[[ExecutionEvent], Any] | None = None,
+        idempotency_key: str | Unset | None = None,
+        after: int = 0,
+        limit: int = 100,
+        retry_initial: float = 0.1,
+        retry_max: float = 2.0,
+    ) -> ExecutionResponse:
+        """Async counterpart to :meth:`run_execution`."""
+        from .executions import arun_execution
+        from .types import UNSET
+
+        return await arun_execution(
+            self,
+            body,
+            on_event=on_event,
+            idempotency_key=UNSET if idempotency_key is None else idempotency_key,
+            after=after,
+            limit=limit,
+            retry_initial=retry_initial,
+            retry_max=retry_max,
+        )
+
     def close(self) -> None:
         self._gen.get_httpx_client().close()
+
+    async def aclose(self) -> None:
+        """Close the async transport chain, if it has been opened."""
+        await self._gen.get_async_httpx_client().aclose()
 
     def __enter__(self) -> FaaSClient:
         self._gen.__enter__()
@@ -122,6 +235,13 @@ class FaaSClient:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self._gen.__exit__(exc_type, exc, tb)
+
+    async def __aenter__(self) -> FaaSClient:
+        await self._gen.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self._gen.__aexit__(exc_type, exc, tb)
 
 
 __all__ = [

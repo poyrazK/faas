@@ -1,3 +1,4 @@
+// spec: §17
 // retention_test.go (PR #74, spec §17 follow-up). The retention
 // sweep lives in pkg/sched and runs as a 4th ticker in Loop.Run; this
 // file pins its behaviour at the unit level.
@@ -33,8 +34,9 @@ func retentionMemStore(t *testing.T, s state.Store) *state.MemStore {
 }
 
 // TestRetentionSweepsTerminalRows pins the happy-path sweep: rows in
-// {STOPPED, FAILED} older than the retention window get DELETED;
-// younger rows + every non-terminal row are left alone.
+// {STOPPED, FAILED} older than the retention window and PARKED rows whose
+// parked_at is old get DELETED; younger rows and resident/in-flight states
+// are left alone.
 func TestRetentionSweepsTerminalRows(t *testing.T) {
 	store := state.NewMemStore()
 	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
@@ -60,6 +62,8 @@ func TestRetentionSweepsTerminalRows(t *testing.T) {
 		// confirm the sweep NEVER touches them by mistake.
 		if st == string(state.StateStopped) || st == string(state.StateFailed) {
 			ms.SetTerminalAtForTest(oldRow.ID, time.Now().Add(-40*24*time.Hour))
+		} else if st == string(state.StateParked) {
+			ms.SetParkedAtForTest(oldRow.ID, time.Now().Add(-40*24*time.Hour))
 		} else {
 			ms.BackdateForTest(oldRow.ID, time.Now().Add(-40*24*time.Hour))
 		}
@@ -82,12 +86,12 @@ func TestRetentionSweepsTerminalRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SweepOnce: %v", err)
 	}
-	if deleted != 2 {
-		t.Errorf("deleted = %d, want 2 (one old STOPPED + one old FAILED)", deleted)
+	if deleted != 3 {
+		t.Errorf("deleted = %d, want 3 (old STOPPED + FAILED + PARKED)", deleted)
 	}
 
-	// Old terminal rows must be gone.
-	for _, st := range []string{string(state.StateStopped), string(state.StateFailed)} {
+	// Old terminal and parked-history rows must be gone.
+	for _, st := range []string{string(state.StateStopped), string(state.StateFailed), string(state.StateParked)} {
 		if _, err := store.InstanceByID(context.Background(), ids["old-"+st]); !errors.Is(err, state.ErrNotFound) {
 			t.Errorf("old %s row still present: %v", st, err)
 		}
@@ -96,7 +100,6 @@ func TestRetentionSweepsTerminalRows(t *testing.T) {
 	for _, key := range []string{
 		"young-" + string(state.StateStopped),
 		"young-" + string(state.StateFailed),
-		"old-" + string(state.StateParked),
 		"old-" + string(state.StateRunning),
 		"old-" + string(state.StateColdBooting),
 		"young-" + string(state.StateParked),
@@ -106,6 +109,119 @@ func TestRetentionSweepsTerminalRows(t *testing.T) {
 		if _, err := store.InstanceByID(context.Background(), ids[key]); err != nil {
 			t.Errorf("%s row went missing: %v", key, err)
 		}
+	}
+}
+
+// TestRetentionReclaimsRepeatedParkCyclesWithoutDeletingRestoreState models
+// the production leak from #2415: every wake/park cycle leaves a new PARKED
+// row, while the deployment's current snapshot is the reusable artifact.
+// Old lifecycle history is reclaimed, but a recent parked row and every
+// resident/in-flight state survive even when they carry an old parked_at from
+// an earlier transition.
+func TestRetentionReclaimsRepeatedParkCyclesWithoutDeletingRestoreState(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	ms := retentionMemStore(t, store)
+	now := time.Date(2026, 9, 13, 18, 0, 0, 0, time.UTC)
+
+	snap, err := store.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: dep.ID,
+		FCVersion:    "1.10.0",
+		MemBytes:     512 << 20,
+		DiskBytes:    64 << 20,
+		StorageKey:   state.SnapMemKey(dep.ID),
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	// Supersession does not make the current/previous deployment snapshot
+	// unusable, but its old parked instance rows must still age out.
+	if err := store.MarkDeploymentSuperseded(ctx, dep.ID); err != nil {
+		t.Fatalf("MarkDeploymentSuperseded: %v", err)
+	}
+
+	var obsolete []string
+	for cycle := 0; cycle < 8; cycle++ {
+		ins, createErr := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
+		if createErr != nil {
+			t.Fatalf("CreateInstance(cycle %d): %v", cycle, createErr)
+		}
+		if parkErr := store.UpdateInstanceStateIf(ctx, ins.ID, string(state.StateRunning), string(state.StateParked)); parkErr != nil {
+			t.Fatalf("park cycle %d: %v", cycle, parkErr)
+		}
+		ms.SetParkedAtForTest(ins.ID, now.Add(-time.Duration(40+cycle)*24*time.Hour))
+		obsolete = append(obsolete, ins.ID)
+	}
+
+	recent, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateInstanceStateIf(ctx, recent.ID, string(state.StateRunning), string(state.StateParked)); err != nil {
+		t.Fatal(err)
+	}
+	ms.SetParkedAtForTest(recent.ID, now.Add(-time.Hour))
+
+	// WAKING is a recovery-owned state. It deliberately retains the old
+	// parked_at from the prior cycle; state, rather than age alone, protects it.
+	waking, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateParked), 512, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms.SetParkedAtForTest(waking.ID, now.Add(-60*24*time.Hour))
+	if err := store.UpdateInstanceStateIf(ctx, waking.ID, string(state.StateParked), string(state.StateWaking)); err != nil {
+		t.Fatal(err)
+	}
+
+	// MIGRATING has an independent lease/recovery owner and must survive too.
+	migrating, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms.SetParkedAtForTest(migrating.ID, now.Add(-60*24*time.Hour))
+	if err := store.MarkInstanceMigrating(ctx, migrating.ID, state.DefaultLocalNodeName, "lease-retention-test"); err != nil {
+		t.Fatal(err)
+	}
+	// A partially reconciled rollback may expose PARKED before its lease
+	// metadata is cleared. Preserve that row until the migration owner lands.
+	leasedParked, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 512, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkInstanceMigrating(ctx, leasedParked.ID, state.DefaultLocalNodeName, "lease-still-owned"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateInstanceStateWithTimestamp(ctx, leasedParked.ID, string(state.StateParked), now.Add(-60*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	r := NewRetention(store, slog.Default()).
+		WithRetention(30 * 24 * time.Hour).
+		WithClock(func() time.Time { return now })
+	deleted, err := r.SweepOnce(ctx)
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if deleted != len(obsolete) {
+		t.Fatalf("deleted = %d, want %d obsolete park cycles", deleted, len(obsolete))
+	}
+	for _, id := range obsolete {
+		if _, err := store.InstanceByID(ctx, id); !errors.Is(err, state.ErrNotFound) {
+			t.Errorf("obsolete parked instance %s survived: %v", id, err)
+		}
+	}
+	for _, id := range []string{recent.ID, waking.ID, migrating.ID, leasedParked.ID} {
+		if _, err := store.InstanceByID(ctx, id); err != nil {
+			t.Errorf("current/recovery instance %s was deleted: %v", id, err)
+		}
+	}
+	latest, err := store.LatestSnapshot(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("LatestSnapshot after parked-row retention: %v", err)
+	}
+	if latest.ID != snap.ID || latest.StorageKey != snap.StorageKey {
+		t.Fatalf("restore snapshot changed: got %+v, want id=%s key=%s", latest, snap.ID, snap.StorageKey)
 	}
 }
 

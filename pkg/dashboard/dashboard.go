@@ -76,6 +76,11 @@ type AccountView struct {
 	AppCount                   int
 	EmailVerified              bool
 	EmailVerificationGraceEnds string
+	DeployRateUsed             int
+	DeployRateLimit            int
+	DeployRateRemaining        int
+	DeployRateResetsAt         string
+	DeployRateResetsLabel      string
 }
 
 // DPAView is the page-specific payload for the dashboard DPA route
@@ -94,6 +99,17 @@ type IndexData struct {
 	DeveloperAppCount  int
 	DeveloperAppsLimit int
 	Plan               string
+}
+
+// ProjectsData backs the durable project lifecycle list and detail pages.
+// The public API DTOs are reused so the dashboard presents the same recovery
+// facts as `gregale projects info`.
+type ProjectsData struct {
+	Projects      []api.ProjectSummaryResponse
+	Project       *api.ProjectResponse
+	DeletePreview *api.ProjectDeletePreviewResponse
+	CSRFToken     string
+	Flash         string
 }
 
 // AppListItem is one row on /dashboard/apps.
@@ -219,6 +235,14 @@ type DeploymentItem struct {
 	// app slug, not the repo owner/name) so a clickable `#4242`
 	// chip actually lands on GitHub.
 	RepoFullName string
+	// GitHub source links are populated only for deployments with a
+	// validated GitHub repository and canonical commit SHA. Empty values
+	// preserve the existing rendering for non-GitHub and legacy rows.
+	CommitSHA       string
+	CommitShort     string
+	GitHubRepoURL   string
+	GitHubCommitURL string
+	GitHubChecksURL string
 	// ScanSummary is the per-deploy grype scan chip rendered
 	// in the deploy list (issue #464 / ADR-055). Nil when no
 	// scan has run yet (the deploy is mid-pipeline or predates
@@ -1696,6 +1720,81 @@ type DebugPageData struct {
 	ReplayPollActive    bool
 	ReplayPollExhausted bool
 	Coverage            *DebugCoverageView
+	Running             *DebugRunningView
+	RunningError        string
+}
+
+// DebugRunningView is the dashboard projection of the bounded scheduler
+// explanation returned by GET /v1/apps/{slug}/debug/running. It intentionally
+// keeps the evidence shape intact: the page reports observed causes and
+// freshness, without inferring savings or inventing a more specific owner.
+type DebugRunningView struct {
+	Since             string
+	WindowStart       string
+	WindowEnd         string
+	RetentionClamped  bool
+	Current           []DebugRunningCauseView
+	CurrentObservedAt string
+	Config            DebugRunningConfigView
+	History           []DebugRunningObservationView
+	HistoryTruncated  bool
+	HasObservation    bool
+	CLICommand        string
+}
+
+// DebugRunningConfigView is the configuration context shown next to the
+// observed causes. Values are retained even when no blocker was observed.
+type DebugRunningConfigView struct {
+	ConfiguredMinInstances int
+	EffectiveMinInstances  int
+	PrewarmMinInstances    int
+	IdleTimeoutSeconds     int
+}
+
+// DebugRunningObservationView is one bounded scheduler observation in the
+// dashboard history table.
+type DebugRunningObservationView struct {
+	ObservedAt             string
+	RunningInstances       int
+	ConfiguredMinInstances int
+	EffectiveMinInstances  int
+	PrewarmMinInstances    int
+	IdleTimeoutSeconds     int
+	Degraded               bool
+	Causes                 []DebugRunningCauseView
+}
+
+// DebugRunningCauseView is a human-readable projection of one observed
+// running-state cause. The code remains visible for CLI/API correlation.
+type DebugRunningCauseView struct {
+	Code            string
+	Label           string
+	Summary         string
+	InstanceCount   int
+	OpenConnections int64
+	TailTasks       int
+	Mode            string
+	WorkloadClass   string
+	LastActivityAt  string
+	IdleDeadline    string
+	Request         *DebugRunningRequestView
+}
+
+// DebugRunningRequestView is the dashboard-safe projection of the nearest
+// retained request telemetry representative attached to a request-activity
+// cause. RequestURL points back into the request evidence panel.
+type DebugRunningRequestView struct {
+	TelemetryID  string
+	DeploymentID string
+	Route        string
+	Method       string
+	TraceID      string
+	ReceivedAt   string
+	Count        int
+	WakeID       string
+	InstanceID   string
+	MatchDeltaMS int64
+	RequestURL   string
 }
 
 // DebugCoverageView is the template-safe projection of observed debugger
@@ -1785,6 +1884,7 @@ type DebugReplayView struct {
 type DebugRegressionView struct {
 	DeploymentID    string
 	Route           string
+	State           string
 	P95MS           int
 	P95BaseMS       int
 	AffectedCount   int
@@ -2226,9 +2326,9 @@ type AccountData struct {
 	RestoreConfirmToken string
 	// ConnectGithubConfirmToken (issue #961 / Mega-B PR-3) backs the
 	// dashboard's "Connect GitHub" button. The form posts to
-	// /dashboard/install/connect with this token + the matching
-	// faas_csrf sidecar cookie. Same envelope shape as the delete /
-	// restore tokens above — sealed by (action, account_id).
+	// /dashboard/install/connect with this token + the matching named
+	// faas_csrf_github_connect sidecar cookie. Same envelope shape as
+	// the delete / restore tokens above — sealed by (action, account_id).
 	ConnectGithubConfirmToken string
 	// PlanConfirmToken backs the account-page plan form. Its sidecar uses
 	// a dedicated cookie name because the account page renders several

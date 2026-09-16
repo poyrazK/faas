@@ -184,6 +184,10 @@ func (s *server) listSecretsForAccount(w http.ResponseWriter, r *http.Request, a
 // message as the per-app endpoint because both share the
 // "degraded: <reason>" Source contract.
 func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !acct.Plan.PerAppMetricsAllowed() {
+		api.WriteProblem(w, api.ErrPlanPerAppMetricsNotAllowed(acct.Plan))
+		return
+	}
 	rng := r.URL.Query().Get("range")
 	if rng == "" {
 		rng = appmetrics.DefaultRange
@@ -214,7 +218,7 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 
 	// 1. request_count per app.
 	countByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`sum by (app)(increase(gateway_requests_total[%s]))`, rng))
+		fmt.Sprintf(`sum by (app)(increase(gateway_request_duration_seconds_count[%s]))`, rng))
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "request_count")
 		return
@@ -225,7 +229,7 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 	// Prometheus' 0/0 = NaN result; the response map's missing-key value
 	// correctly represents an idle app as 0%.
 	errRateByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`(sum by (app)(rate(gateway_requests_total{code=~"[45].."}[%s])) / sum by (app)(rate(gateway_requests_total[%s])) * 100) and on (app) (sum by (app)(rate(gateway_requests_total[%s])) > 0)`, rng, rng, rng))
+		fmt.Sprintf(`(sum by (app)(rate(gateway_request_duration_seconds_count{class=~"[45]xx"}[%s])) / sum by (app)(rate(gateway_request_duration_seconds_count[%s])) * 100) and on (app) (sum by (app)(rate(gateway_request_duration_seconds_count[%s])) > 0)`, rng, rng, rng))
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "error_rate")
 		return
@@ -234,7 +238,7 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 	// 3. cold_start per app. Apply the same zero-traffic guard as the
 	// error-rate ratio so dormant apps cannot degrade the whole rollup.
 	coldByApp, err := s.promqlClient.QueryMap(r.Context(),
-		fmt.Sprintf(`(sum by (app)(rate(gateway_cold_boot_total[%s])) / sum by (app)(rate(gateway_requests_total[%s])) * 100) and on (app) (sum by (app)(rate(gateway_requests_total[%s])) > 0)`, rng, rng, rng))
+		fmt.Sprintf(`(sum by (app)(rate(gateway_cold_boot_total[%s])) / sum by (app)(rate(gateway_request_duration_seconds_count[%s])) * 100) and on (app) (sum by (app)(rate(gateway_request_duration_seconds_count[%s])) > 0)`, rng, rng, rng))
 	if err != nil {
 		writeMetricsDegraded(w, s, resp, err, "cold_start")
 		return
@@ -271,9 +275,9 @@ func (s *server) getAppsMetrics(w http.ResponseWriter, r *http.Request, acct sta
 			RequestCount: int64(appmetrics.SafeRoundNonNeg(countByApp[app.ID])),
 			ErrorRatePct: appmetrics.SafePercent(errRateByApp[app.ID]),
 			ColdStartPct: appmetrics.SafePercent(coldByApp[app.ID]),
-			LatencyP50MS: appmetrics.SafeFloat(histogramQuantile(0.50, appBuckets)),
-			LatencyP95MS: appmetrics.SafeFloat(histogramQuantile(0.95, appBuckets)),
-			LatencyP99MS: appmetrics.SafeFloat(histogramQuantile(0.99, appBuckets)),
+			LatencyP50MS: appmetrics.SafeFloat(histogramQuantile(0.50, appBuckets) * 1000),
+			LatencyP95MS: appmetrics.SafeFloat(histogramQuantile(0.95, appBuckets) * 1000),
+			LatencyP99MS: appmetrics.SafeFloat(histogramQuantile(0.99, appBuckets) * 1000),
 			WakeP95MS:    appmetrics.SafeFloat(wakeV),
 		}
 		resp.Apps[app.Slug] = single

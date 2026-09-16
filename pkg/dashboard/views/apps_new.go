@@ -42,21 +42,24 @@ type AppsNewRepoView struct {
 //
 // PreFilledRepo echoes the ?repo=<owner>/<name> query param when
 // present (the CLI's `gregale connect repo <owner>/<name>` deep-links
-// here). ConnectGithubConfirmToken + BindAppConfirmToken are the
-// CSRF envelopes the two forms need; both are stamped at GET time so
-// the form submits carry a fresh sealed token.
+// here). ConnectGithubConfirmToken and CreateAppConfirmToken are the
+// CSRF envelopes stamped at GET time for the two browser actions.
 type AppsNewView struct {
 	NeedsGithubConnect        bool
+	NeedsGithubInstall        bool
 	ConnectGithubConfirmToken string
 	PreFilledRepo             string
 	PreFilledInstallID        string
 	PreFilledBranch           string
+	PreFilledSlug             string
+	ReturnTo                  string
+	FormError                 string
 	GitHubDegraded            bool
 	GitHubDegradedMessage     string
 	Templates                 []AppsNewTemplateView
 	Repos                     []AppsNewRepoView
 	Installations             []AppsNewInstallView
-	BindAppConfirmToken       string
+	CreateAppConfirmToken     string
 }
 
 // AppsNewInstallView is one row in the wizard's installation <select>.

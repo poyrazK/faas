@@ -24,9 +24,14 @@ class PlanWorkload:
 
     name: str
     root_dir: str
+    """Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages
+    remain available outside this directory."""
     command: list[str]
     ports: list[int]
     dockerfile: str | Unset = UNSET
+    depends_on: list[str] | Unset = UNSET
+    """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
+    GREGALE_SERVICE_<NAME>_URL for workload dependencies."""
     class_: PlanWorkloadClass | Unset = UNSET
     schedule: str | Unset = UNSET
     """cron expression when declared (CronJob, render, serverless)"""
@@ -61,6 +66,10 @@ class PlanWorkload:
         ports = self.ports
 
         dockerfile = self.dockerfile
+
+        depends_on: list[str] | Unset = UNSET
+        if not isinstance(self.depends_on, Unset):
+            depends_on = self.depends_on
 
         class_: str | Unset = UNSET
         if not isinstance(self.class_, Unset):
@@ -100,6 +109,8 @@ class PlanWorkload:
         )
         if dockerfile is not UNSET:
             field_dict["dockerfile"] = dockerfile
+        if depends_on is not UNSET:
+            field_dict["depends_on"] = depends_on
         if class_ is not UNSET:
             field_dict["class"] = class_
         if schedule is not UNSET:
@@ -133,6 +144,8 @@ class PlanWorkload:
         ports = cast(list[int], d.pop("ports"))
 
         dockerfile = d.pop("dockerfile", UNSET)
+
+        depends_on = cast(list[str], d.pop("depends_on", UNSET))
 
         _class_ = d.pop("class", UNSET)
         class_: PlanWorkloadClass | Unset
@@ -176,6 +189,7 @@ class PlanWorkload:
             command=command,
             ports=ports,
             dockerfile=dockerfile,
+            depends_on=depends_on,
             class_=class_,
             schedule=schedule,
             env_keys=env_keys,

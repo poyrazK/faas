@@ -36,6 +36,37 @@ type notifyCall struct {
 	channel, payload string
 }
 
+func TestEmitBuildLogPersistsWhenNodeLocalSpoolIsUnavailable(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "logs@example.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "durable-build-logs", RAMMB: 256,
+		IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindTarball,
+		LogPath: filepath.Join(t.TempDir(), "control-plane-only", "build.log"),
+	})
+	build, err := store.CreateBuild(context.Background(), dep.ID, state.DeploymentKindTarball, 1, dep.LogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A different root models builderd running on a compute node where the
+	// control-plane absolute log path is unavailable and rejected by the
+	// source boundary check.
+	b := New(store, &fakeNotifier{}, nil, NewCache(t.TempDir()), NewDetector(), nil,
+		Config{SourceSpoolDir: t.TempDir()}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.emitBuildLog(context.Background(), build.ID, "railpack: dependency install failed\n")
+
+	rows, _, err := store.ListDeploymentLogs(context.Background(), dep.ID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Stream != "build" || !strings.Contains(rows[0].Line, "dependency install failed") {
+		t.Fatalf("durable build logs = %#v", rows)
+	}
+}
+
 func (f *fakeNotifier) Notify(_ context.Context, channel, payload string) error {
 	f.calls = append(f.calls, notifyCall{channel, payload})
 	return nil
@@ -419,6 +450,61 @@ func TestProcessOne_OOMExitClassified(t *testing.T) {
 	}
 }
 
+func TestProcessOne_ParentBuilderSliceOOMIsAttributed(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+	buildID, depID, _ := seedDeployment(t, store, src)
+	fvm := &fakeVM{
+		handle:   BuildHandle{Instance: "build-oom", BuildID: buildID, TimeoutSec: 30},
+		spawnErr: &builderSliceOOMError{Delta: 2},
+	}
+	ops := wire.NewOpsMetrics("builderd")
+	eventsPlatform := events.NewPlatform("builderd", store, slog.New(slog.NewTextHandler(io.Discard, nil)), wire.NewOpsMetrics("builderd-event-test"), nil)
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).
+		WithOpsMetrics(ops).
+		WithEvents(eventsPlatform)
+
+	if _, err := b.ProcessOne(context.Background(), buildID); err == nil {
+		t.Fatal("expected parent builder slice OOM error")
+	}
+	build, err := store.BuildByID(context.Background(), buildID)
+	if err != nil || build.Status != state.BuildFailed || build.FailureClass != state.FailureOOM {
+		t.Fatalf("build after parent OOM = %#v, err=%v", build, err)
+	}
+	dep, err := store.DeploymentByID(context.Background(), depID)
+	if err != nil || dep.Status != state.DeployFailed || dep.ErrorCode != api.CodeBuildOOM {
+		t.Fatalf("deployment after parent OOM = %#v, err=%v", dep, err)
+	}
+	if body := scrapeMetrics(t, ops); !strings.Contains(body, `builderd_builder_slice_oom_kills_total 2`) {
+		t.Fatalf("parent OOM counter missing:\n%s", body)
+	}
+	rows, err := store.ListEvents(context.Background(), "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range rows {
+		if row.Kind == "wake.build_failed" && strings.Contains(string(row.Data), depID) && strings.Contains(string(row.Data), "oom") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("wake.build_failed OOM event missing: %#v", rows)
+	}
+}
+
+func TestBoundedGuestBuildLogTailKeepsNewestDiagnostic(t *testing.T) {
+	raw := strings.Repeat("x", 4*1024) + "\nrailpack: script start.sh not found\n"
+	got := boundedGuestBuildLogTail(raw)
+	if len(got) > 3*1024 {
+		t.Fatalf("bounded tail = %d bytes, want <= 3072", len(got))
+	}
+	if !strings.Contains(got, "railpack: script start.sh not found") {
+		t.Fatalf("bounded tail lost newest diagnostic: %q", got)
+	}
+}
+
 // TestProcessOne_FrameworkDetectFailsFlipsDeployment covers the user_error
 // path in markFailed — every failure class has to propagate to the owning
 // deployment so the dashboard reflects reality, not just the build row.
@@ -486,7 +572,7 @@ func TestProcessOne_MarkerlessFunctionUsesRuntimeFramework(t *testing.T) {
 	if _, err := b.ProcessOne(context.Background(), build.ID); err != nil {
 		t.Fatalf("ProcessOne: %v", err)
 	}
-	if fvm.lastRequest.Framework != FrameworkPython || fvm.lastRequest.Runtime != "python313" {
+	if fvm.lastRequest.Framework != FrameworkPython || fvm.lastRequest.Runtime != "python313" || !fvm.lastRequest.Function {
 		t.Fatalf("VM request = %+v, want python framework with python313 runtime", fvm.lastRequest)
 	}
 }
@@ -1452,6 +1538,84 @@ type failingRecordStore struct {
 
 func (f *failingRecordStore) RecordRecentBuildClaim(_ context.Context, _, _ string) error {
 	return errors.New("simulated record failure")
+}
+
+// failingBuildLookupStore makes the claim-status read unavailable while
+// delegating all other store operations to MemStore. It covers the recovery
+// path used when builderd cannot verify that a claimed build is still owned.
+type failingBuildLookupStore struct {
+	*state.MemStore
+	lookupErr error
+}
+
+func (f *failingBuildLookupStore) BuildByID(_ context.Context, _ string) (state.Build, error) {
+	return state.Build{}, f.lookupErr
+}
+
+func TestStopIfBuildCancelled_RequeuesWhenStatusLookupFails(t *testing.T) {
+	base := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+	buildID, _, _ := seedDeployment(t, base, src)
+	claim, err := base.ClaimQueuedBuild(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("ClaimQueuedBuild: %v", err)
+	}
+
+	store := &failingBuildLookupStore{
+		MemStore:  base,
+		lookupErr: errors.New("simulated status lookup failure"),
+	}
+	b := New(store, &fakeNotifier{}, nil, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if !b.stopIfBuildCancelled(context.Background(), claim) {
+		t.Fatal("stopIfBuildCancelled returned false after status lookup failure")
+	}
+
+	got, err := base.BuildByID(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("BuildByID after recovery: %v", err)
+	}
+	if got.Status != state.BuildQueued {
+		t.Errorf("build status = %s, want queued after status lookup failure", got.Status)
+	}
+	if !got.StartedAt.IsZero() {
+		t.Errorf("started_at = %s, want zero after requeue", got.StartedAt)
+	}
+}
+
+func TestRequeueClaim_DoesNotResetNewerClaim(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+	buildID, _, _ := seedDeployment(t, store, src)
+	first, err := store.ClaimQueuedBuild(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("first ClaimQueuedBuild: %v", err)
+	}
+	if err := store.RequeueBuild(context.Background(), buildID); err != nil {
+		t.Fatalf("seed requeue: %v", err)
+	}
+	second, err := store.ClaimQueuedBuild(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("second ClaimQueuedBuild: %v", err)
+	}
+
+	b := New(store, &fakeNotifier{}, nil, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := b.requeueClaim(context.Background(), first); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("stale requeue: got %v, want state.ErrNotFound", err)
+	}
+
+	got, err := store.BuildByID(context.Background(), buildID)
+	if err != nil {
+		t.Fatalf("BuildByID after stale requeue: %v", err)
+	}
+	if got.Status != state.BuildRunning {
+		t.Errorf("build status = %s, want running for newer claim", got.Status)
+	}
+	if !got.StartedAt.Equal(second.StartedAt) {
+		t.Errorf("started_at = %s, want newer claim %s", got.StartedAt, second.StartedAt)
+	}
 }
 
 // TestProcessNext_RecordRecentBuildClaim_FailureDoesNotFailBuild pins

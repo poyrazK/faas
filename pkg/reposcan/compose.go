@@ -1,7 +1,9 @@
 package reposcan
 
 import (
+	"fmt"
 	"io/fs"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,37 +28,56 @@ import (
 // A typed struct forces unmarshal errors; `any` lets the helper
 // buildFromAny() below disambiguate all three.
 type composeCandidate struct {
-	Name        string `yaml:"-"`
-	Build       any    `yaml:"build"`
-	Command     any    `yaml:"command"` // string OR []string
-	Ports       []any  `yaml:"ports"`   // "8080:80", 8080, {"target": 8080, …}
-	EnvFile     any    `yaml:"env_file"`
-	Environment any    `yaml:"environment"`
-	Image       string `yaml:"image"`
+	Name        string   `yaml:"-"`
+	Build       any      `yaml:"build"`
+	Command     any      `yaml:"command"`    // string OR []string
+	DependsOn   any      `yaml:"depends_on"` // []string OR map[string]any
+	Ports       []any    `yaml:"ports"`      // "8080:80", 8080, {"target": 8080, …}
+	EnvFile     any      `yaml:"env_file"`
+	Environment any      `yaml:"environment"`
+	Image       string   `yaml:"image"`
+	Profiles    []string `yaml:"profiles"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
 // of the three compose build: shapes.
-func buildFromAny(v any) (string, string, bool) {
+func buildFromAny(v any) (string, string, bool, error) {
 	switch x := v.(type) {
 	case nil:
-		return "", "", false
+		return "", "", false, nil
 	case string:
-		s := strings.TrimPrefix(strings.TrimSpace(x), "./")
+		s := strings.TrimSpace(x)
 		if s == "" {
-			return "", "", false
+			return "", "", false, nil
 		}
-		return s, "", true
+		return normalizeComposeRelativePath(s), "", true, nil
 	case map[string]any:
 		ctx, _ := x["context"].(string)
-		df, _ := x["dockerfile"].(string)
-		ctx = strings.TrimPrefix(strings.TrimSpace(ctx), "./")
-		if ctx == "" && df == "" {
-			return "", "", false
+		rawDockerfile, _ := x["dockerfile"].(string)
+		ctx = normalizeComposeRelativePath(ctx)
+		df := normalizeComposeRelativePath(rawDockerfile)
+		if strings.TrimSpace(rawDockerfile) != "" && df == "" {
+			return "", "", false, fmt.Errorf("dockerfile path must name a file")
 		}
-		return ctx, df, true
+		if ctx == "" && df == "" {
+			return "", "", false, nil
+		}
+		return ctx, df, true, nil
 	}
-	return "", "", false
+	return "", "", false, fmt.Errorf("unsupported build declaration")
+}
+
+func normalizeComposeRelativePath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.TrimSpace(strings.TrimPrefix(value, "./"))
+	clean := path.Clean(value)
+	if clean == "." {
+		return "."
+	}
+	return clean
 }
 
 type composeDoc struct {
@@ -93,20 +114,19 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		// not present in this tarball — quiet skip
 		return nil, nil, nil, nil
 	}
-	// Support the "compose:" key form (a "compose.version" file is
-	// rare in production; the rare-with-services form is documented
-	// at https://docs.docker.com/compose/compose-file/16-merging/).
+	resolved, sources, err := resolveComposeFiles(fsys, body, src)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	src = strings.Join(sources, " + ")
 	var c composeDoc
-	if err := yaml.Unmarshal(body, &c); err != nil {
-		// Warn-and-skip: malformed compose is recoverable —
-		// the operator sees the parse error in warnings, the
-		// rest of the scan continues.
-		return nil, nil, []string{"reposcan: parse " + src + ": " + err.Error()}, nil //nolint:nilerr
+	if err := yaml.Unmarshal(resolved, &c); err != nil {
+		return nil, nil, nil, fmt.Errorf("reposcan: parse %s: %w", src, err)
 	}
 	if len(c.Services) == 0 {
 		// Try the wrapped form.
 		var r composeRoot
-		if err := yaml.Unmarshal(body, &r); err != nil || len(r.Compose.Services) == 0 {
+		if err := yaml.Unmarshal(resolved, &r); err != nil || len(r.Compose.Services) == 0 {
 			// Same warn-and-skip semantics; the wrapped form
 			// also failed to find any services — quiet skip.
 			return nil, nil, nil, nil //nolint:nilerr
@@ -128,9 +148,40 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		managed  []Managed
 		warnings []string
 	)
+	composeEnv, envErr := readComposeEnv(fsys)
+	if envErr != nil {
+		return nil, nil, nil, envErr
+	}
 	for _, name := range svcNames {
 		s := c.Services[name]
-		ctx, df, hasBuild := buildFromAny(s.Build)
+		if len(s.Profiles) > 0 {
+			warnings = append(warnings, fmt.Sprintf("reposcan: %s: %s skipped because profiles %s are not active", src, name, strings.Join(s.Profiles, ",")))
+			continue
+		}
+		if err := interpolateComposeCandidate(&s, composeEnv, src, name); err != nil {
+			return nil, nil, nil, err
+		}
+		ctx, df, hasBuild, buildErr := buildFromAny(s.Build)
+		if buildErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s has invalid build configuration: %w", src, name, buildErr)
+		}
+		if s.Build != nil && !hasBuild {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s build configuration resolved empty", src, name)
+		}
+		command, commandShell := commandSpec(s.Command)
+		if hasBuild {
+			if (ctx != "" && !fs.ValidPath(ctx)) || strings.HasPrefix(ctx, "../") ||
+				(df != "" && (!fs.ValidPath(df) || strings.HasPrefix(df, "../"))) {
+				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s has invalid build context or Dockerfile path", src, name)
+			}
+			if df != "" {
+				dockerfilePath := path.Join(ctx, df)
+				info, statErr := fs.Stat(fsys, dockerfilePath)
+				if statErr != nil || info.IsDir() {
+					return nil, nil, nil, fmt.Errorf("reposcan: %s: %s Dockerfile %q does not exist in build context", src, name, df)
+				}
+			}
+		}
 		if !hasBuild && s.Image == "" {
 			warnings = append(warnings, "reposcan: "+src+": "+name+
 				" has no build: or image: — skipping")
@@ -155,37 +206,85 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			}
 			continue
 		}
-		// build: path — emit a workloadSeed. Class is intentionally
-		// empty here so Phase 4 characterization (or another tier's
-		// hint) can fill it without being blocked by an explicit
-		// ClassUnknown. The merge rule defaults to ClassUnknown at
-		// the boundary.
+		// build: path — emit a workloadSeed. Class stays empty so an
+		// explicit hint from another detector can fill it. If no hint
+		// exists, mergeByKey infers HTTP from a published port and worker
+		// otherwise.
 		seeds = append(seeds, workloadSeed{
-			name:       name,
-			rootDir:    ctx,
-			dockerfile: df,
-			command:    commandSlice(s.Command),
-			ports:      parsePorts(s.Ports),
-			envKeys:    envKeys(s.Environment),
-			source:     src + ": " + name,
+			name:         name,
+			rootDir:      ctx,
+			dockerfile:   df,
+			command:      command,
+			commandShell: commandShell,
+			dependsOn:    dependencyNames(s.DependsOn),
+			ports:        parsePorts(s.Ports),
+			envKeys:      envKeys(s.Environment),
+			source:       src + ": " + name,
 		})
 	}
 	return seeds, managed, warnings, nil
 }
 
+// dependencyNames normalizes Compose's short and long depends_on forms.
+// Conditions (service_started/service_healthy/service_completed_successfully)
+// are deliberately not carried into the project graph: Gregale's separate
+// app VMs cannot share Compose's container lifecycle, so readiness is handled
+// by the internal service proxy and the caller can still use the generated
+// service URL. Names are sorted and deduplicated for stable plans.
+func dependencyNames(v any) []string {
+	var names []string
+	switch x := v.(type) {
+	case []any:
+		for _, item := range x {
+			if name, ok := item.(string); ok && strings.TrimSpace(name) != "" {
+				names = append(names, strings.TrimSpace(name))
+			}
+		}
+	case []string:
+		for _, name := range x {
+			if strings.TrimSpace(name) != "" {
+				names = append(names, strings.TrimSpace(name))
+			}
+		}
+	case map[string]any:
+		for name := range x {
+			if strings.TrimSpace(name) != "" {
+				names = append(names, strings.TrimSpace(name))
+			}
+		}
+	case map[any]any:
+		for name := range x {
+			if s, ok := name.(string); ok && strings.TrimSpace(s) != "" {
+				names = append(names, strings.TrimSpace(s))
+			}
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	out := names[:0]
+	for _, name := range names {
+		if len(out) == 0 || out[len(out)-1] != name {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // commandSlice normalizes the compose `command:` form which can
 // be a string ("bundle exec rails s") or a sequence
 // ([bundle, exec, rails, s]). Empty / unset yields nil.
-func commandSlice(v any) []string {
+func commandSpec(v any) ([]string, bool) {
 	switch x := v.(type) {
 	case nil:
-		return nil
+		return nil, false
 	case string:
 		s := strings.TrimSpace(x)
 		if s == "" {
-			return nil
+			return nil, false
 		}
-		return []string{s}
+		return []string{s}, true
 	case []any:
 		out := make([]string, 0, len(x))
 		for _, e := range x {
@@ -194,16 +293,21 @@ func commandSlice(v any) []string {
 			}
 		}
 		if len(out) == 0 {
-			return nil
+			return nil, false
 		}
-		return out
+		return out, false
 	case []string:
 		if len(x) == 0 {
-			return nil
+			return nil, false
 		}
-		return x
+		return x, false
 	}
-	return nil
+	return nil, false
+}
+
+func commandSlice(v any) []string {
+	command, _ := commandSpec(v)
+	return command
 }
 
 // envKeys pulls only the KEY from a compose `environment:` field.

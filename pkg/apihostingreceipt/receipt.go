@@ -35,14 +35,15 @@ type Artifact struct {
 }
 
 type SmokeResult struct {
-	Status     string    `json:"status"`
-	Path       string    `json:"path,omitempty"`
-	StatusCode int       `json:"status_code,omitempty"`
-	LatencyMS  int64     `json:"latency_ms,omitempty"`
-	VerifiedAt time.Time `json:"verified_at,omitempty"`
-	RequestID  string    `json:"request_id,omitempty"`
-	ErrorCode  string    `json:"error_code,omitempty"`
-	Error      string    `json:"error,omitempty"`
+	Status       string    `json:"status"`
+	Path         string    `json:"path,omitempty"`
+	DeploymentID string    `json:"deployment_id,omitempty"`
+	StatusCode   int       `json:"status_code,omitempty"`
+	LatencyMS    int64     `json:"latency_ms,omitempty"`
+	VerifiedAt   time.Time `json:"verified_at,omitempty"`
+	RequestID    string    `json:"request_id,omitempty"`
+	ErrorCode    string    `json:"error_code,omitempty"`
+	Error        string    `json:"error,omitempty"`
 }
 
 type Receipt struct {

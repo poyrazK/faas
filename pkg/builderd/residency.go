@@ -1,8 +1,9 @@
 // Package builderd — Residency probe implementations (spec §4.5, §13).
 //
 // slot.go defines the protocol: a probe reports Σ tenant residency in MB so
-// DecideSlot can grant the opportunistic 2nd builder slot when tenants are
-// quiet. The probe must be cheap (Decision runs every build, no I/O budget),
+// DecideSlot can describe tenant headroom. Local builder concurrency is
+// currently capped at one by the parent cgroup budget. The probe must be cheap
+// (Decision runs every build, no I/O budget),
 // non-blocking (DecideSlot blocks the build pipeline), and monotonically
 // useful (builds never outrank tenant wakes).
 //
@@ -54,9 +55,8 @@ var residentPollInterval = 2 * time.Second
 const residentHTTPTimeout = 750 * time.Millisecond
 
 // residentStaleAfter is the maximum age of a successful residency scrape
-// that may grant the opportunistic builder slot. A stale low-residency value
-// is unsafe: after schedd disappears, it can make builderd compete with
-// tenant wakes using capacity it can no longer observe.
+// accepted by the capacity-aware decision helper. Stale headroom data is
+// unsafe even though the current allocator admits only one local builder.
 // Declared as a package var so tests can exercise the fence without waiting
 // through the production interval.
 var residentStaleAfter = 30 * time.Second
@@ -70,8 +70,8 @@ type fixedResidentProbe struct {
 }
 
 // FixedResident returns a ResidencyProbe that always reports mb MB. Pass
-// 0 to mimic "no tenants resident" (grants the opportunistic slot); pass
-// math.MaxInt/2 to mimic "always-deny-opportunistic" (the unconfigured-URL
+// 0 to mimic "no tenants resident"; pass math.MaxInt/2 to mimic
+// "no spare headroom" (the unconfigured-URL
 // fallback below uses this).
 func FixedResident(mb int) ResidencyProbe {
 	return &fixedResidentProbe{mb: mb}
@@ -112,10 +112,8 @@ type metricsResidentProbe struct {
 //
 // An empty url means "no schedd metrics wired" (config not filled in yet,
 // or this daemon is being run without schedd). In that case we return a
-// probe that always denies the opportunistic slot — matching the nil-probe
-// posture in slot.go. The operator's safe default is: "guaranteed slot only
-// until you point ScheddMetricsURL at schedd", not "grant both slots and
-// risk outranking tenant wakes during a partially-deployed boot".
+// probe that reports no spare headroom — matching the nil-probe posture in
+// slot.go. The current allocator remains limited to its one guaranteed slot.
 //
 // A non-empty url that points at the wrong endpoint (e.g. schedd's bare
 // /metrics which doesn't expose fcvm_*) takes the same posture until the
@@ -148,8 +146,8 @@ func newMetricsResident(ctx context.Context, url string, startLoop bool) *metric
 		client: &http.Client{Timeout: residentHTTPTimeout},
 	}
 	// Prime before returning so the first DecideSlot has a real value.
-	// Failure leaves healthy=false; DecideSlot will then deny the
-	// opportunistic slot until schedd becomes reachable.
+	// Failure leaves healthy=false; DecideSlot reports no spare headroom until
+	// schedd becomes reachable.
 	_ = p.scrape(ctx)
 	if startLoop {
 		// Read the package var here, on the caller's goroutine, so a test
@@ -170,8 +168,8 @@ func (p *metricsResidentProbe) ResidentMB() int {
 
 // loop runs until ctx is done, polling every residentPollInterval. Errors
 // are swallowed: the cached mb stays put for a bounded period, which avoids
-// stripping the 2nd slot for a brief schedd hiccup without trusting an
-// indefinitely stale low-residency value.
+// reacting to a brief schedd hiccup without trusting indefinitely stale
+// low-residency data.
 //
 // The poll interval is read by the CALLER, in newMetricsResident, and
 // passed in. Reading residentPollInterval here instead looked equivalent

@@ -42,19 +42,18 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitImaged() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:           "onebox-faas imaged — image/snapshot orchestrator (spec §4.6, ADR-003, ADR-005)",
-		Documentation:         "https://docs.gregale.dev/ops/imaged",
+		Documentation:         "https://gregale.dev/docs/ops/imaged",
 		After:                 []string{"network.target", "faas-cp.slice", "faas-vmmd.service"},
 		Wants:                 []string{"faas-cp.slice", "faas-vmmd.service"},
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "notify",
-		User:               "faas-imaged",
-		Group:              "faas",
-		ExecStart:          `/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml`,
-		Restart:            "on-failure",
-		RestartSec:         "2s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		Type:       "notify",
+		User:       "faas-imaged",
+		Group:      "faas",
+		ExecStart:  `/opt/faas/current/bin/imaged --config /etc/faas/imaged.toml`,
+		Restart:    "on-failure",
+		RestartSec: "2s",
 		// imaged reconciles every runtime base assigned to the node before
 		// sd_notify(READY=1). A new generation can require OCI downloads,
 		// extraction, content validation and vulnerability scans. The
@@ -100,7 +99,7 @@ func UnitImaged() daemonunit.Unit {
 			{Key: "FAAS_BASE_STAGING_ROOT", Value: "/dev/shm/faas-base-staging"},
 			{Key: "FAAS_BASE_EXTRACT_ROOT", Value: "/srv/fc/base-staging"},
 			{Key: "FAAS_BASE_TMP_ROOT", Value: "/srv/fc/base"},
-			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
+			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
 
 			// Per-runtime function runner binaries (spec §4.9). imaged
 			// stages the runner into the app layer at
@@ -136,6 +135,7 @@ func UnitImaged() daemonunit.Unit {
 			{Key: "FAAS_FUNCTION_RUNNER_GO124_ALPINE", Value: "/opt/faas/current/bin/runners/go124-alpine/faas-runner"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 		},
 

@@ -80,7 +80,7 @@ func cmdRolloutsRecover(args []string) int {
 		PrintUsage(osStdout, rolloutsRecoverUsage, "rollouts")
 		return 0
 	}
-	fs := flag.NewFlagSet("rollouts recover", flag.ContinueOnError)
+	fs := newFlagSet("rollouts recover", flag.ContinueOnError)
 	action := fs.String("action", "", "recover action (advance|promote|abort)")
 	reason := fs.String("reason", "", "operator-supplied reason (logged to deployment_audit)")
 	// The public usage is `recover <slug> --action ...`, while the
@@ -97,7 +97,15 @@ func cmdRolloutsRecover(args []string) int {
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if slug == "" && fs.NArg() > 0 {
+	if slug != "" {
+		if rejectUnexpectedFlagArgs(fs) {
+			return 1
+		}
+	} else {
+		if fs.NArg() != 1 {
+			PrintUsage(os.Stderr, rolloutsRecoverUsage, "rollouts")
+			return 1
+		}
 		slug = fs.Arg(0)
 	}
 	if slug == "" {

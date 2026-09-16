@@ -12,10 +12,43 @@ import (
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 )
 
+func TestSLOEndpoints_FreePlanReturn402(t *testing.T) {
+	e := setup(t, api.PlanFree)
+	createApp(t, e, "free-slo")
+	for _, path := range []string{"/v1/apps/free-slo/slo", "/v1/account/slo"} {
+		rec := e.do(t, http.MethodGet, path, nil, nil)
+		assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
+	}
+}
+
+func TestFetchAccountSLO_UsesHistogramPopulation(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "slo-population")
+	installPromFixture(t, &e, func(query string) string {
+		if strings.Contains(query, "gateway_requests_total") {
+			t.Fatalf("account SLO used a different request population: %q", query)
+		}
+		if !strings.Contains(query, appID) {
+			t.Errorf("query lacks owned app ID: %q", query)
+		}
+		return `{"data":{"resultType":"vector","result":[{"value":[0,"1"]}]}}`
+	})
+	_, source := e.s.fetchAccountSLO(context.Background(), e.acct, "24h")
+	if source != appmetrics.SourcePrometheus {
+		t.Fatalf("source = %q", source)
+	}
+}
+
 func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	e.s.store = nil
+	appID := mustSeedApp(t, e, "slo-owned")
 	installPromFixture(t, &e, func(query string) string {
+		if !strings.Contains(query, appID) {
+			t.Errorf("account SLO query lacks owned app ID: %q", query)
+		}
+		if strings.Contains(query, "gateway_wake_queue_wait_seconds") {
+			t.Errorf("account SLO queried unlabeled fleet wake metric: %q", query)
+		}
 		if strings.Contains(query, "gateway_rate_limited_total") {
 			if !strings.Contains(query, "or vector(0)") {
 				t.Errorf("throttling query lacks zero fallback: %q", query)
@@ -42,7 +75,7 @@ func TestFetchAccountSLO_NoThrottlesPreservesMetrics(t *testing.T) {
 
 func TestFetchAccountSLO_ThrottleFailurePreservesCollectedMetrics(t *testing.T) {
 	e := setup(t, api.PlanPro)
-	e.s.store = nil
+	mustSeedApp(t, e, "slo-throttle")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Query().Get("query"), "gateway_rate_limited_total") {
 			w.WriteHeader(http.StatusInternalServerError)

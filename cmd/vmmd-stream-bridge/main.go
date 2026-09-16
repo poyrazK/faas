@@ -461,7 +461,7 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 	}
 
 	outboundURL := "http://" + net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)) + url
-	outboundReq, err := http.NewRequestWithContext(ctx, method, outboundURL, r.Body)
+	outboundReq, err := newGuestRequest(ctx, method, outboundURL, r)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("build outbound request: %v", err), http.StatusBadGateway)
 		return
@@ -496,6 +496,25 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// newGuestRequest carries the inbound H2 stream's framing to the guest leg.
+// The H2 server uses a non-nil requestBody even when END_STREAM arrived with
+// the request headers. Reusing that reader for a bodyless GET makes the H1
+// transport treat it as unknown and probe it for up to 200 ms. http.NoBody
+// keeps the known-zero case non-blocking; positive and unknown lengths retain
+// their original framing.
+func newGuestRequest(ctx context.Context, method, target string, inbound *http.Request) (*http.Request, error) {
+	body := io.Reader(inbound.Body)
+	if inbound.ContentLength == 0 {
+		body = http.NoBody
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, body)
+	if err != nil {
+		return nil, err
+	}
+	req.ContentLength = inbound.ContentLength
+	return req, nil
 }
 
 func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Context, guestIP string, guestPort uint16, method, url, host string, extraHeaders []headerEntry) {

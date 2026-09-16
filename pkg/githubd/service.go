@@ -429,6 +429,10 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve project: %w", err)
 	}
+	policy, err := s.githubDeployPolicy(ctx, project)
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("githubd: resolve GitHub deployment policy: %w", err)
+	}
 
 	// 3a. Takeover guard: the bind row's InstallID must match
 	// the install row's InstallationID. If they diverge, the
@@ -538,6 +542,9 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	if err != nil {
 		return result, fmt.Errorf("githubd: list project apps for build fan-out: %w", err)
 	}
+	for i := range touched {
+		touched[i] = applyGitHubRootPolicy(touched[i], policy)
+	}
 
 	// Path-filter optimization (review #1): when the reconcile
 	// step produced zero apps (empty touched set, e.g. a default-
@@ -553,6 +560,9 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	filterMode := filterModePaths
 	if len(touched) > 0 {
 		changedFiles, filterMode = s.lookupChangedFiles(ctx, ev, install.InstallationID)
+		if filterMode == filterModePaths {
+			changedFiles = filterIgnoredGitHubPaths(changedFiles, policy)
+		}
 	} else {
 		s.Log.Debug("githubd: no touched apps; skipping compare-api call",
 			"repo", ev.Repository.FullName, "sha", ev.After)
@@ -574,7 +584,18 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// single increment here covers the "no touched apps"
 	// path which short-circuited lookupChangedFiles.
 	s.ObserveFilterMode(filterMode)
-	toEnqueue, skipped := s.filterByPath(touched, changedFiles, filterMode)
+	var toEnqueue []state.App
+	var skipped []string
+	if filterMode == filterModePaths && len(changedFiles) == 0 && len(touched) > 0 && len(policy.IgnoredPaths) > 0 {
+		// Every changed path was explicitly ignored. Unlike the legacy
+		// "no path matched" fallback, this is an intentional no-op.
+		toEnqueue = nil
+		for _, app := range touched {
+			skipped = append(skipped, app.ID)
+		}
+	} else {
+		toEnqueue, skipped = s.filterByPath(touched, changedFiles, filterMode)
+	}
 	deliveryID := webhookDeliveryID(ctx)
 
 	// Legacy embeddings expose one repository-wide check. Production uses the
@@ -851,6 +872,41 @@ func (s *Service) filterByPath(touched []state.App, changedFiles []string, filte
 	return matched, skipped
 }
 
+func (s *Service) githubDeployPolicy(ctx context.Context, project state.Project) (state.GitHubDeployPolicy, error) {
+	policy := state.DefaultGitHubDeployPolicy(project.ID, project.AccountID)
+	if project.ID == "" || s.Reconcile == nil || s.Reconcile.Store == nil {
+		return policy, nil
+	}
+	store, ok := s.Reconcile.Store.(state.GitHubDeployPolicyStore)
+	if !ok {
+		return policy, nil
+	}
+	return store.GetGitHubDeployPolicy(ctx, project.ID, project.AccountID)
+}
+
+func applyGitHubRootPolicy(app state.App, policy state.GitHubDeployPolicy) state.App {
+	// Explicit workload roots discovered by reposcan always win. The policy
+	// supplies the project root only for a root workload, which keeps existing
+	// multi-workload repositories deterministic.
+	if app.RootDir == "" && policy.RootDir != "" {
+		app.RootDir = policy.RootDir
+	}
+	return app
+}
+
+func filterIgnoredGitHubPaths(changedFiles []string, policy state.GitHubDeployPolicy) []string {
+	if len(changedFiles) == 0 || len(policy.IgnoredPaths) == 0 {
+		return changedFiles
+	}
+	filtered := make([]string, 0, len(changedFiles))
+	for _, changed := range changedFiles {
+		if !policy.IgnorePath(changed) {
+			filtered = append(filtered, changed)
+		}
+	}
+	return filtered
+}
+
 // pathIntersectsDir reports whether any changed file lives under
 // the directory `dir`. `dir` must be repo-relative (no leading
 // slash); `""` would be a repo-root workload and is filtered
@@ -928,7 +984,8 @@ func IsSkipDeploy(err error) bool {
 // Mirrors the customer-facing docstring on
 // state.App.PreviewExpiresAt — the teardown janitor (PR-C)
 // reaps after this deadline. The 7-day default matches ADR-094
-// §3.4; per-account overrides arrive in a follow-up ADR.
+// §3.4; project policy may shorten or extend it within the
+// customer-facing safety bounds.
 const previewDefaultTTL = 7 * 24 * time.Hour
 
 // previewHostnameForSlug derives the customer-facing preview URL
@@ -1259,6 +1316,15 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		// nonsensical — refuse silently so GitHub doesn't retry.
 		return reconcile.Result{}, ErrNoBinding
 	}
+	previewProject := state.Project{ID: parentApp.ProjectID, AccountID: parentApp.AccountID, RepoFullName: ev.Repository.FullName}
+	policy, err := s.githubDeployPolicy(ctx, previewProject)
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("githubd: resolve PR preview policy: %w", err)
+	}
+	if !policy.PreviewEnabled && ev.Action != PullRequestActionClosed {
+		result := reconcile.Result{WasIgnored: true}
+		return result, ErrIgnored
+	}
 
 	// 5. Derive the preview slug + provision the preview apps row.
 	//    Idempotent on (account_id, slug) — a 2nd synchronize
@@ -1291,7 +1357,11 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		previewState = state.PreviewPrStateClosed
 	}
 
-	expiresAt := time.Now().Add(previewDefaultTTL)
+	previewTTL := time.Duration(policy.PreviewTTLHours) * time.Hour
+	if previewTTL <= 0 {
+		previewTTL = previewDefaultTTL
+	}
+	expiresAt := time.Now().Add(previewTTL)
 	previewApp := state.App{
 		// ID is left blank — pgstore.CreateAppIfUnderQuota mints a
 		// UUIDv7 when App.ID is empty. The preview app is a fresh
@@ -1314,6 +1384,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		PreviewPrState:   previewState,
 		PreviewExpiresAt: &expiresAt,
 	}
+	previewApp = applyGitHubRootPolicy(previewApp, policy)
 	// ADR-094 D4: previews are apps and consume the account's real plan quota.
 	// Resolve the account server-side instead of using a synthetic high ceiling
 	// that lets webhook traffic bypass the customer-facing quota boundary.

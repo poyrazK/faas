@@ -354,18 +354,27 @@ func TestAssertLoopbackBind(t *testing.T) {
 }
 
 func TestInstallComputeMetricsRoute(t *testing.T) {
-	control := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusTeapot)
-	})
+	metrics := gateway.NewMetrics()
+	control := gateway.ControlMux(metrics, nil, nil)
 
 	t.Run("compute role exposes private metrics route", func(t *testing.T) {
 		mux := http.NewServeMux()
-		mux.Handle("/", http.NotFoundHandler())
+		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}))
 		installComputeMetricsRoute(mux, role.RoleComputeOnly, control)
 		r := httptest.NewRecorder()
-		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://compute/metrics", nil))
-		if r.Code != http.StatusTeapot {
-			t.Fatalf("metrics status = %d, want %d", r.Code, http.StatusTeapot)
+		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://compute"+computeMetricsPath, nil))
+		if r.Code != http.StatusOK {
+			t.Fatalf("metrics status = %d, want %d: %s", r.Code, http.StatusOK, r.Body.String())
+		}
+		if !strings.Contains(r.Body.String(), "gateway_") {
+			t.Fatalf("private metrics response did not contain gateway metrics: %s", r.Body.String())
+		}
+		r = httptest.NewRecorder()
+		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://app.example/metrics", nil))
+		if r.Code != http.StatusCreated {
+			t.Fatalf("customer /metrics status = %d, want %d", r.Code, http.StatusCreated)
 		}
 	})
 
@@ -374,7 +383,7 @@ func TestInstallComputeMetricsRoute(t *testing.T) {
 		mux.Handle("/", http.NotFoundHandler())
 		installComputeMetricsRoute(mux, role.RoleSingleBox, control)
 		r := httptest.NewRecorder()
-		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://single/metrics", nil))
+		mux.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "http://single"+computeMetricsPath, nil))
 		if r.Code != http.StatusNotFound {
 			t.Fatalf("single-box metrics status = %d, want %d", r.Code, http.StatusNotFound)
 		}

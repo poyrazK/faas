@@ -26,6 +26,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
@@ -101,14 +102,55 @@ func TestAppMetrics_Fetch_HappyPath(t *testing.T) {
 	}
 }
 
+func TestAppMetrics_FetchUsesClosedClassPopulation(t *testing.T) {
+	var queries []string
+	stub := &stubPromQL{fn: func(query string) (float64, error) {
+		queries = append(queries, query)
+		return 1, nil
+	}}
+	_, src := appmetrics.Fetch(context.Background(), stub, slog.Default(), "app-1", "5m")
+	if src != appmetrics.SourcePrometheus {
+		t.Fatalf("source = %q", src)
+	}
+	joined := strings.Join(queries, "\n")
+	if strings.Contains(joined, "gateway_requests_total") {
+		t.Fatalf("customer population uses cold full-code series:\n%s", joined)
+	}
+	if !strings.Contains(joined, `gateway_request_duration_seconds_count{app="app-1",class=~"[45]xx"}`) {
+		t.Fatalf("error numerator does not use pre-instantiated status classes:\n%s", joined)
+	}
+}
+
+func TestAppMetrics_FetchReportsNewestScrapeTime(t *testing.T) {
+	const scrapeEpoch = int64(1_700_000_000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		value := "1"
+		if strings.Contains(r.URL.Query().Get("query"), "timestamp(") {
+			value = "1700000000"
+		}
+		_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[{"value":[1700000015,%q]}]}}`, value)
+	}))
+	defer srv.Close()
+
+	client := pkgpromql.NewClient(srv.URL, srv.Client())
+	resp, src := appmetrics.Fetch(context.Background(), client, slog.Default(), "app-1", "5m")
+	if src != appmetrics.SourcePrometheus {
+		t.Fatalf("source = %q", src)
+	}
+	want := time.Unix(scrapeEpoch, 0).UTC().Format(time.RFC3339Nano)
+	if resp.AsOf != want {
+		t.Fatalf("as_of = %q, want latest scrape %q", resp.AsOf, want)
+	}
+}
+
 // TestAppMetrics_Fetch_DegradedFallback: one query errors and the
 // whole response is zeroed + Source is the "degraded:" form.
 func TestAppMetrics_Fetch_DegradedFallback(t *testing.T) {
 	log, _ := captureLog(t)
 	stub := &stubPromQL{fn: func(q string) (float64, error) {
 		// Match the error-rate query by its unique label-set
-		// (code=~"[45].."). No other query contains this regex.
-		if strings.Contains(q, "[45]..") {
+		// (class=~"[45]xx"). No other query contains this regex.
+		if strings.Contains(q, "[45]xx") {
 			return 0, errors.New("prometheus 503: down for maintenance")
 		}
 		return 7, nil
@@ -191,7 +233,7 @@ func TestAppMetrics_Fetch_EmptyHistogramUsesPromQLFallback(t *testing.T) {
 func TestAppMetrics_Fetch_NaNGuard_Percent(t *testing.T) {
 	log, _ := captureLog(t)
 	stub := &stubPromQL{fn: func(q string) (float64, error) {
-		if strings.Contains(q, "[45]..") {
+		if strings.Contains(q, "[45]xx") {
 			return math.NaN(), nil
 		}
 		return 0, nil
@@ -312,8 +354,8 @@ func TestAppMetrics_Fetch_QueryFailure(t *testing.T) {
 		label        string
 		failingQuery string
 	}{
-		{"request_count", "gateway_requests_total"},
-		{"error_rate", "[45].."},
+		{"request_count", "gateway_request_duration_seconds_count"},
+		{"error_rate", "[45]xx"},
 		{"cold_start", "gateway_cold_boot_total"},
 		{"wake_p95", "gateway_wake_latency_seconds"},
 		{"p50", "rate(gateway_request_duration_seconds_bucket"},

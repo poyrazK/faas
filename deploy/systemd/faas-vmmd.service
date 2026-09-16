@@ -1,8 +1,8 @@
 [Unit]
 Description=onebox-faas vmmd — microVM supervisor (the only root component, spec §4.4)
-Documentation=https://docs.gregale.dev/ops/vmmd
-After=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice faas-tenant-hobby.slice faas-tenant-pro.slice faas-tenant-scale.slice
-Wants=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice faas-tenant-hobby.slice faas-tenant-pro.slice faas-tenant-scale.slice
+Documentation=https://gregale.dev/docs/ops/vmmd
+After=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice faas-tenant-hobby.slice faas-tenant-pro.slice faas-tenant-scale.slice nftables.service br-tenants-up.service
+Wants=faas-tenant.slice faas-cp.slice faas-cp-build.slice faas-tenant-free.slice faas-tenant-hobby.slice faas-tenant-pro.slice faas-tenant-scale.slice nftables.service br-tenants-up.service
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 
@@ -16,7 +16,6 @@ ExecStartPost=/usr/bin/chown root:faas /run/faas
 ExecStartPost=/usr/bin/chmod 0775 /run/faas
 Restart=on-failure
 RestartSec=15s
-RestartCountExport=SYSTEMD_RESTARTS_ON_FAILURE
 Slice=faas-cp.slice
 MemoryMax=6G
 Delegate=yes
@@ -29,7 +28,6 @@ EnvironmentFile=-/etc/faas/otel.env
 Environment=TMPDIR=/srv/fc/base
 Environment=FAAS_HOST_AGE_RECIPIENT_PATH=/etc/faas/secrets/host.age.pub
 Environment=FAAS_LOG_ARCHIVE_CREDS_PATH=%d/faas_archive_creds
-LoadCredential=faas_archive_creds:-/etc/faas/secrets/storage-box/archive-creds.json
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -42,7 +40,7 @@ RestrictSUIDSGID=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_VSOCK
 ProtectHostname=yes
 ProtectClock=yes
-ReadWritePaths=/etc/faas/secrets /run/faas /run/netns /srv/fc /var/log/faas /var/lib/faas/cache
+ReadWritePaths=/etc/faas/secrets /run/faas /run/netns /srv/fc /var/log/faas /var/lib/faas/cache /sys/fs/cgroup/faas.slice
 
 [Install]
 WantedBy=multi-user.target

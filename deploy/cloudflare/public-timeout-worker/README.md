@@ -26,13 +26,20 @@ and removes the marker before returning the response to the customer.
      --config deploy/cloudflare/public-timeout-worker/wrangler.toml
    ```
 
-4. Attach the Worker to the customer-facing routes (`api.gregale.dev/*`,
-   `*.gregale.dev/*`, and any enabled `*.apps.gregale.dev/*` route).
+4. Attach the Worker to the customer-facing routes (`gregale.dev/*`,
+   `api.gregale.dev/*`, `*.gregale.dev/*`, and any enabled
+   `*.apps.gregale.dev/*` route). On the apex frontend route the Worker keeps
+   the Pages origin and adds the browser security policy to every HTML
+   response, including SPA fallbacks. API and application routes retain the
+   configured origin override and timeout normalization.
 5. Verify both HTTP/1.1 and HTTP/2 against a budget-limited endpoint. The
    response must remain HTTP 504 with `Content-Type: application/problem+json`,
    `code=request_budget_exceeded`, `X-Faas-Request-Id`, and
    `Cache-Control: no-store`. A synthetic origin 504 without the marker must
    pass through untouched.
+6. Run `deploy/scripts/frontend-security-headers-smoke.sh`. It checks the
+   landing page, dashboard, and a deep SPA route and rejects wildcard CORS on
+   those HTML documents.
 
 The Worker uses `cf.resolveOverride`, which changes DNS resolution without
 changing the customer `Host` header used for app routing. Keep the origin

@@ -112,7 +112,7 @@ func TestPgReconcile_FullCycle(t *testing.T) {
 	// 3-workload scan with no existing apps → 3 creates.
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", RootDir: "", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 			{Name: "web", RootDir: "", Source: "compose.yaml: web", Tier: reposcan.TierCompose},
 			{Name: "worker", RootDir: "", Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
 		},
@@ -135,10 +135,15 @@ func TestPgReconcile_FullCycle(t *testing.T) {
 
 func TestPgReconcile_Quota_BlocksCreateSet(t *testing.T) {
 	store, svc, pool, ctx := pgReconcileStore(t)
-	_, proj := seedAccountProject(t, store, state.ProjectScanSourceCompose)
+	acct, proj := seedAccountProject(t, store, state.ProjectScanSourceCompose)
+	// Use the one-app Free cap so this remains deterministic even if the
+	// paid-plan quota table changes independently of this regression test.
+	if err := store.UpdateAccountPlan(ctx, acct.ID, api.PlanFree); err != nil {
+		t.Fatalf("UpdateAccountPlan: %v", err)
+	}
 
-	// Hobby plan cap = 5. Seed 4 existing apps, then attempt 3
-	// creates → projected 7 > 5 → quota_blocked alert.
+	// Free plan cap = 1. Seed 4 existing apps, then attempt 3
+	// creates → projected 7 > 1 → quota_blocked alert.
 	for _, n := range []string{"app-a", "app-b", "app-c", "app-d"} {
 		app := state.App{
 			AccountID:     proj.AccountID,
@@ -163,8 +168,8 @@ func TestPgReconcile_Quota_BlocksCreateSet(t *testing.T) {
 		Tier: reposcan.TierCompose,
 	}
 	out, err := svc.Reconcile(ctx, proj, scan, "sha-pg-2", "main", nil)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
+	if err == nil {
+		t.Fatal("expected quota error")
 	}
 	if len(out.Added) != 0 {
 		t.Errorf("expected 0 adds on quota, got %d", len(out.Added))
@@ -185,7 +190,7 @@ func TestPgReconcile_ScanSourceUpgrade(t *testing.T) {
 	// allowed; the alert flow is silent until downgrade.
 	scan := reposcan.Result{
 		Workloads: []reposcan.Workload{
-			{Name: "api", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+			{Name: "backend", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
 		},
 		Tier: reposcan.TierCompose,
 	}
@@ -199,5 +204,142 @@ func TestPgReconcile_ScanSourceUpgrade(t *testing.T) {
 	}
 	if updated.ScanSource != state.ProjectScanSourceCompose {
 		t.Errorf("expected ScanSource=compose, got %q", updated.ScanSource)
+	}
+}
+
+func TestPgReconcile_PersistsWorkloadClassAndStartCommand(t *testing.T) {
+	store, svc, _, ctx := pgReconcileStore(t)
+	_, proj := seedAccountProject(t, store, state.ProjectScanSourceProcfile)
+
+	scan := reposcan.Result{
+		Workloads: []reposcan.Workload{
+			{Name: "backend", Class: reposcan.ClassHTTP, Command: []string{"uvicorn", "app:app"}, Source: "procfile: api", Tier: reposcan.TierCompose},
+			{Name: "worker", Class: reposcan.ClassWorker, Command: []string{"node", "worker.js"}, Source: "procfile: worker", Tier: reposcan.TierCompose},
+			{Name: "job", Class: reposcan.ClassJob, Command: []string{"python", "job.py"}, Source: "procfile: job", Tier: reposcan.TierCompose},
+		},
+		Tier: reposcan.TierCompose,
+	}
+	if _, err := svc.Reconcile(ctx, proj, scan, "sha-fields-pg-1", "main", nil); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+
+	apps, err := store.AppsForProject(ctx, proj.AccountID, proj.ID)
+	if err != nil {
+		t.Fatalf("AppsForProject after create: %v", err)
+	}
+	want := map[string]struct {
+		class state.WorkloadClass
+		cmd   string
+	}{
+		"backend": {class: state.WorkloadClassHTTP, cmd: "uvicorn app:app"},
+		"worker":  {class: state.WorkloadClassWorker, cmd: "node worker.js"},
+		"job":     {class: state.WorkloadClassJob, cmd: "python job.py"},
+	}
+	if len(apps) != len(want) {
+		t.Fatalf("AppsForProject returned %d apps, want %d", len(apps), len(want))
+	}
+	for _, app := range apps {
+		expected, ok := want[app.WorkloadName]
+		if !ok {
+			t.Fatalf("unexpected workload %q", app.WorkloadName)
+		}
+		if app.WorkloadClass != expected.class || app.StartCommand != expected.cmd {
+			t.Errorf("%s fields = class %q command %q, want %q/%q", app.WorkloadName, app.WorkloadClass, app.StartCommand, expected.class, expected.cmd)
+		}
+	}
+
+	// A changed scanner classification must update the existing row rather
+	// than silently retaining the initial HTTP/worker hint.
+	scan.Workloads[1].Class = reposcan.ClassJob
+	scan.Workloads[1].Command = []string{"python", "worker-job.py"}
+	if _, err := svc.Reconcile(ctx, proj, scan, "sha-fields-pg-2", "main", nil); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	updated, err := store.AppBySlug(ctx, "worker")
+	if err != nil {
+		t.Fatalf("AppBySlug(worker): %v", err)
+	}
+	if updated.WorkloadClass != state.WorkloadClassJob || updated.StartCommand != "python worker-job.py" {
+		t.Fatalf("updated worker fields = class %q command %q, want job/python worker-job.py", updated.WorkloadClass, updated.StartCommand)
+	}
+}
+
+func TestPgReconcile_RemoveAndReaddRestoresIdentity(t *testing.T) {
+	store, svc, _, ctx := pgReconcileStore(t)
+	_, project := seedAccountProject(t, store, state.ProjectScanSourceCompose)
+	initial := reposcan.Result{Tier: reposcan.TierCompose, Workloads: []reposcan.Workload{
+		{Name: "backend", RootDir: "services/api", Source: "compose.yaml: api", Tier: reposcan.TierCompose},
+		{Name: "worker", RootDir: "services/worker", Class: reposcan.ClassWorker, Command: []string{"node", "worker.js"}, Source: "compose.yaml: worker", Tier: reposcan.TierCompose},
+	}}
+	first, err := svc.Reconcile(ctx, project, initial, "sha-restore-1", "main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var original state.App
+	for _, app := range first.Added {
+		if app.WorkloadName == "worker" {
+			original = app
+		}
+	}
+	if original.ID == "" {
+		t.Fatalf("initial result = %#v", first)
+	}
+	manifest := original.Manifest
+	manifest.WorkingDir = "/workspace"
+	manifest.Env = map[string]string{"CUSTOM": "kept"}
+	if _, err := store.UpdateApp(ctx, original.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+
+	withoutWorker := reposcan.Result{Tier: reposcan.TierCompose, Workloads: initial.Workloads[:1]}
+	removed, err := svc.Reconcile(ctx, project, withoutWorker, "sha-restore-2", "main", nil)
+	if err != nil || len(removed.Removed) != 1 || removed.Removed[0] != original.ID {
+		t.Fatalf("remove result = %#v, %v", removed, err)
+	}
+
+	readded := initial
+	readded.Workloads[1].RootDir = "apps/worker"
+	readded.Workloads[1].Class = reposcan.ClassJob
+	readded.Workloads[1].Command = []string{"node", "new-worker.js"}
+	restoredResult, err := svc.Reconcile(ctx, project, readded, "sha-restore-3", "main", nil)
+	if err != nil || len(restoredResult.Added) != 1 {
+		t.Fatalf("restore result = %#v, %v", restoredResult, err)
+	}
+	restored := restoredResult.Added[0]
+	if restored.ID != original.ID || restored.RootDir != "apps/worker" || restored.WorkloadClass != state.WorkloadClassJob ||
+		restored.StartCommand != "node new-worker.js" || restored.Manifest.WorkingDir != "/workspace" || restored.Manifest.Env["CUSTOM"] != "kept" {
+		t.Fatalf("restored app = %#v", restored)
+	}
+}
+
+func TestPgReconcile_DirectoryMoveUpdatesInPlace(t *testing.T) {
+	store, svc, _, ctx := pgReconcileStore(t)
+	_, project := seedAccountProject(t, store, state.ProjectScanSourceCompose)
+	initial := reposcan.Result{Tier: reposcan.TierCompose, Workloads: []reposcan.Workload{{
+		Name: "backend", RootDir: "services/api", Command: []string{"node", "server.js"},
+		Source: "compose.yaml: api", Tier: reposcan.TierCompose,
+	}}}
+	first, err := svc.Reconcile(ctx, project, initial, "sha-move-1", "main", nil)
+	if err != nil || len(first.Added) != 1 {
+		t.Fatalf("initial reconcile = %#v, %v", first, err)
+	}
+	original := first.Added[0]
+	manifest := original.Manifest
+	manifest.WorkingDir = "/workspace"
+	manifest.Env = map[string]string{"CUSTOM": "kept"}
+	if _, err := store.UpdateApp(ctx, original.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+
+	moved := initial
+	moved.Workloads = append([]reposcan.Workload(nil), initial.Workloads...)
+	moved.Workloads[0].RootDir = "apps/api"
+	result, err := svc.Reconcile(ctx, project, moved, "sha-move-2", "main", nil)
+	if err != nil || len(result.Changed) != 1 || len(result.Added) != 0 || len(result.Removed) != 0 {
+		t.Fatalf("move reconcile = %#v, %v", result, err)
+	}
+	updated := result.Changed[0]
+	if updated.ID != original.ID || updated.RootDir != "apps/api" || updated.Manifest.WorkingDir != "/workspace" || updated.Manifest.Env["CUSTOM"] != "kept" {
+		t.Fatalf("moved app = %#v", updated)
 	}
 }

@@ -78,7 +78,7 @@ Expected outcome: fsn-3.faas back to 'active' with zero live
 instances, every previously-running app migrated to another live compute
 node without customer-visible 5xx.
 
-## Drill 3 — pg_notify fan-out recovery (fixture-only)
+## Drill 3 — pg_notify fan-out + peer stale-heartbeat recovery
 
 Step 1: Kill a schedd's pg_notify subscriber.
 
@@ -91,10 +91,11 @@ systemctl kill -s SIGSTOP schedd-fsn-a.service
 Step 2: Observe the recovery path.
 
 ```bash
-# Within DefaultHeartbeatStaleness (90s) the dead-node reconciler
-# picks up the missing heartbeat, flips fsn-a to 'unavailable',
-# migrates its live instances to fsn-b. The pg_notify consumer
-# backlog is replayed when SIGCONT resumes schedd-fsn-a.
+# Within DefaultHeartbeatStaleness (90s), the healthy peer's
+# stale-heartbeat observer flips fsn-a to 'unavailable' even though
+# schedd-fsn-a is frozen and cannot run its owner-scoped probe. The
+# recovery arbiter migrates live instances to fsn-b. The pg_notify
+# consumer backlog is replayed when SIGCONT resumes schedd-fsn-a.
 systemctl kill -s SIGCONT schedd-fsn-a.service
 ```
 

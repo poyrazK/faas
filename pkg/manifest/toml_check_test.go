@@ -219,7 +219,7 @@ func TestCoverageTOMLPlacement_AllDaemonsHaveDescriptor(t *testing.T) {
 	// invariant that the renderer (PR-2) and the doctor (PR-4)
 	// also depend on.
 	knownFromManifest := []string{
-		"vmmd", "schedd", "apid", "meterd", "githubd",
+		"vmmd", "schedd", "apid", "meterd", "githubd", "outboundd",
 		"gatewayd_public", "gatewayd_internal",
 		"imaged", "builderd", "realtimed",
 	}

@@ -19,10 +19,13 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // file body, now preserved here:
 //
 //   - apid is the SOLE consumer of faas_session_key, faas_host_age_identity,
-//     and faas_host_hmac_key LoadCredentials (every other control-plane
-//     daemon reads sealed.env but does NOT read these credentials; the
-//     session key, host X25519 private half, and value-hash HMAC key never
-//     enter their environments).
+//     faas_fleet_age_identity, and faas_host_hmac_key LoadCredentials (every
+//     other control-plane daemon reads sealed.env but does NOT read these
+//     credentials; the session key, X25519 private halves, and value-hash
+//     HMAC key never enter their environments). The public recipient files
+//     are credentials too because /etc/faas/secrets is intentionally
+//     root-only; their contents are public, but an unprivileged daemon cannot
+//     traverse that directory directly.
 //   - The rotation-overlap LoadCredential (`:-` flag) on
 //     `faas_host_age_identity_previous` is a no-op pre-rotation but
 //     essential during the 30-day window after `gregale host-age rotate
@@ -34,6 +37,8 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //   - FAAS_STATUSPAGE_PATH points cmd/apid at the statuspage HTML under
 //     /etc/faas; without this the alert-driven "degraded" pill never
 //     renders.
+//   - FAAS_DPA_PATH points the public account/DPA endpoints at the reviewed
+//     artifact installed by the control-plane role.
 //   - ReadWritePaths includes /var/lib/faas (audit HMAC keys + API key
 //     store; PR-M.3 landed this), /var/log/faas, /var/spool/faas.
 //
@@ -41,54 +46,77 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitApid() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:           "onebox-faas apid — public control-plane API (spec §4.1)",
-		Documentation:         "https://docs.gregale.dev/ops/apid",
+		Documentation:         "https://gregale.dev/docs/ops/apid",
 		After:                 []string{"network.target", "postgresql.service", "faas-cp.slice"},
 		Wants:                 []string{"faas-cp.slice"},
 		Requires:              []string{"postgresql.service"},
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:               "notify",
-		User:               "faas-apid",
-		Group:              "faas",
-		ExecStart:          `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
-		Restart:            "on-failure",
-		RestartSec:         "2s",
-		RestartCountExport: "SYSTEMD_RESTARTS_ON_FAILURE",
+		Type:       "notify",
+		User:       "faas-apid",
+		Group:      "faas",
+		ExecStart:  `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
+		Restart:    "on-failure",
+		RestartSec: "2s",
 
 		Slice:     "faas-cp.slice",
 		MemoryMax: "256M",
 
-		AmbientCapabilities: []string{"CAP_NET_BIND_SERVICE"},
+		// apid serves unix and high loopback ports; it never needs host
+		// capabilities. Emit an empty bounding set so package defaults cannot
+		// silently widen it.
+		CapabilityBoundingSet: []string{},
+		AmbientCapabilities:   []string{""},
 
 		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
+			{Key: "FAAS_BILLING_MODE", Value: "live"},
 			{Key: "FAAS_SESSION_KEY", Value: "%d/faas_session_key"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
+			{Key: "FAAS_FLEET_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
+			{Key: "FAAS_FLEET_AGE_RECIPIENT_PATH", Value: "%d/faas_fleet_age_recipient"},
+			{Key: "FAAS_HOST_AGE_RECIPIENT_PATH", Value: "%d/faas_host_age_recipient"},
 			{Key: "FAAS_HOST_HMAC_KEY_PATH", Value: "%d/faas_host_hmac_key"},
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 			{Key: "FAAS_APID_ADVISORY_SOCK", Value: "/run/faas/apid.sock"},
 			{Key: "FAAS_STATUSPAGE_PATH", Value: "/etc/faas/statuspage/index.html"},
+			{Key: "FAAS_DPA_PATH", Value: "/etc/faas/dpa.md"},
+			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
+			{Key: "FAAS_EXECUTION_API_ENABLED", Value: "0"},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "faas_session_key", Path: "/etc/faas/secrets/session.key"},
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 			{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
+			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
+			{Name: "faas_fleet_age_recipient", Path: "/etc/faas/secrets/fleet.age.pub"},
+			{Name: "faas_host_age_recipient", Path: "/etc/faas/secrets/host.age.pub"},
 			{Name: "faas_host_hmac_key", Path: "/etc/faas/secrets/host.hmac.key"},
 			{Name: "faas_archive_creds", Path: "/etc/faas/secrets/storage-box/archive-creds.json", Optional: true},
 		},
 
-		NoNewPrivileges:       true,
-		ProtectSystem:         "strict",
-		ProtectHome:           true,
-		PrivateTmp:            daemonunit.BoolPtr(true),
-		ProtectKernelTunables: true,
-		ProtectKernelModules:  true,
-		ProtectControlGroups:  true,
+		NoNewPrivileges:         true,
+		ProtectSystem:           "strict",
+		ProtectHome:             true,
+		PrivateTmp:              daemonunit.BoolPtr(true),
+		PrivateDevices:          true,
+		ProtectKernelTunables:   true,
+		ProtectKernelModules:    true,
+		ProtectControlGroups:    true,
+		SystemCallArchitectures: "native",
+		LockPersonality:         true,
+		RestrictNamespaces:      true,
+		RestrictRealtime:        true,
+		RestrictSUIDSGID:        true,
+		RestrictAddressFamilies: []string{"AF_UNIX", "AF_INET", "AF_INET6"},
+		ProtectHostname:         true,
+		ProtectClock:            true,
+		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
-		ReadWritePaths: []string{"/var/lib/faas", "/var/log/faas", "/var/spool/faas"},
+		ReadWritePaths: []string{"/srv/fc", "/var/lib/faas", "/var/log/faas", "/var/spool/faas"},
 
 		WantedBy: "multi-user.target",
 	}

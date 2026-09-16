@@ -44,7 +44,7 @@ func TestPgSnapshotLocalityTracksOriginResidency(t *testing.T) {
 type localityTestStore interface {
 	state.Store
 	state.SnapshotOriginStore
-	state.SnapshotReplicaStore
+	state.SnapshotReplicaLeaseStore
 	state.SnapshotLocalityStore
 }
 
@@ -84,7 +84,11 @@ func checkSnapshotLocality(t *testing.T, s localityTestStore, dep string) {
 		t.Fatal(err)
 	}
 	assertLocality(nil) // Origin is not advertised until its cache is checked.
-	if err := s.MarkSnapshotReplicaReady(ctx, snap.ID, origin.ID); err != nil {
+	originJob, err := s.ClaimSnapshotReplica(ctx, origin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, origin.ID, originJob.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	assertLocality([]string{origin.ID})
@@ -92,7 +96,11 @@ func checkSnapshotLocality(t *testing.T, s localityTestStore, dep string) {
 		t.Fatal(err)
 	}
 	assertLocality([]string{origin.ID}) // Pending is not a verified local copy.
-	if err := s.MarkSnapshotReplicaReady(ctx, snap.ID, replica.ID); err != nil {
+	replicaJob, err := s.ClaimSnapshotReplica(ctx, replica.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkSnapshotReplicaReadyWithLease(ctx, snap.ID, replica.ID, replicaJob.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	ready := []string{origin.ID, replica.ID}

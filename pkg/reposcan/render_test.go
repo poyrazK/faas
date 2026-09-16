@@ -74,6 +74,58 @@ func TestDetectRender_AbsentFile(t *testing.T) {
 	}
 }
 
+func TestDetectRender_CurrentBlueprintSchema(t *testing.T) {
+	t.Parallel()
+	body := `services:
+  - type: web
+    name: api
+    runtime: node
+    startCommand: node handler.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+  - type: worker
+    name: jobs
+    startCommand: node worker.js
+  - type: cron
+    name: cleanup
+    schedule: "0 * * * *"
+    startCommand: node cleanup.js
+  - type: pserv
+    name: internal
+    startCommand: node internal.js
+  - type: keyvalue
+    name: cache
+databases:
+  - name: app-db
+`
+	seeds, managed, warnings, err := detectRender(fstest.MapFS{
+		"render.yaml": &fstest.MapFile{Data: []byte(body)},
+	})
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("detectRender: err=%v warnings=%v", err, warnings)
+	}
+	byName := map[string]workloadSeed{}
+	for _, seed := range seeds {
+		byName[seed.name] = seed
+	}
+	if got := byName["api"]; got.class != ClassHTTP || len(got.command) != 1 || got.command[0] != "node handler.js" || len(got.envKeys) != 1 || got.envKeys[0] != "NODE_ENV" {
+		t.Errorf("api = %#v", got)
+	}
+	if got := byName["jobs"]; got.class != ClassWorker || len(got.command) != 1 {
+		t.Errorf("jobs = %#v", got)
+	}
+	if got := byName["cleanup"]; got.class != ClassJob || got.schedule != "0 * * * *" || len(got.command) != 1 {
+		t.Errorf("cleanup = %#v", got)
+	}
+	if got := byName["internal"]; got.class != ClassServer {
+		t.Errorf("internal = %#v, want private server classification", got)
+	}
+	if len(managed) != 2 || managed[0].Name != "app-db" || managed[1].Name != "cache" {
+		t.Errorf("managed = %#v", managed)
+	}
+}
+
 func keysSorted(m map[string]Class) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

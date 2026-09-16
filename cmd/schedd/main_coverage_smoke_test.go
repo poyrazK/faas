@@ -55,6 +55,9 @@ func TestEnvOrAndDefaultDeps(t *testing.T) {
 	if deps.listen == nil {
 		t.Errorf("defaultDeps.listen is nil")
 	}
+	if deps.executionArtifacts == nil {
+		t.Errorf("defaultDeps.executionArtifacts is nil")
+	}
 	// The subscribe* seams must all be populated (production
 	// wiring; tests inject fakes via runDeps).
 	wireCount := 0

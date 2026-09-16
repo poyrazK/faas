@@ -19,9 +19,12 @@ import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenReques
 import type { DebugCompareRequest } from '../models/DebugCompareRequest.js';
 import type { DebugCompareResponse } from '../models/DebugCompareResponse.js';
 import type { DebugCoverageResponse } from '../models/DebugCoverageResponse.js';
+import type { DebugRegressionActionRequest } from '../models/DebugRegressionActionRequest.js';
+import type { DebugRegressionActionResponse } from '../models/DebugRegressionActionResponse.js';
 import type { DebugRegressionsResponse } from '../models/DebugRegressionsResponse.js';
 import type { DebugReplayResponse } from '../models/DebugReplayResponse.js';
 import type { DebugRequestEvidenceResponse } from '../models/DebugRequestEvidenceResponse.js';
+import type { DebugRunningResponse } from '../models/DebugRunningResponse.js';
 import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListResponse.js';
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
@@ -839,6 +842,9 @@ export class AppsService {
    * `gb_hours` are zeroed and `source` is
    * `"degraded: postgres unavailable"`.
    *
+   * This is a Hobby+ per-app observability surface. Free
+   * accounts receive 402 before the app slug is resolved.
+   *
    * @returns AppSLOResponse The SLO panel.
    * @throws ApiError
    */
@@ -867,6 +873,7 @@ export class AppsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
@@ -1282,6 +1289,59 @@ export class AppsService {
     });
   }
   /**
+   * Explain why an app is still running.
+   * Returns observed scheduler causes that prevented an application from
+   * parking during the requested window. Causes are evidence-shaped: the
+   * response reports request activity, open connections, tail tasks,
+   * configured or temporary warm floors, cooldowns, and workload modes
+   * when those signals were observed. It does not estimate a saving or
+   * infer a protocol that was not instrumented. Plan-gated by
+   * `DebugTelemetryEnabled` and clamped to `DebugTelemetryRetentionDays`.
+   *
+   * @returns DebugRunningResponse Observed causes explaining why the app remained resident.
+   * @throws ApiError
+   */
+  public static getAppDebugRunning({
+    slug,
+    since,
+    limit,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Optional lookback window for scheduler observations (e.g. 30m, 24h, 3d); defaults to 24h and is clamped by plan retention.
+     */
+    since?: string | null,
+    /**
+     * Maximum number of recent observations to return; default 20, max 100.
+     */
+    limit?: number | null,
+  }): CancelablePromise<DebugRunningResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/running',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
    * Get one request telemetry record (ADR-127).
    * Returns one request telemetry row by id for the app. The
    * lookup is scoped to the app resolved from `slug`, so a request
@@ -1418,6 +1478,49 @@ export class AppsService {
     });
   }
   /**
+   * Update regression triage state.
+   * Acknowledge, temporarily dismiss, resolve, or reopen one
+   * deployment/route regression observation. This changes debugger
+   * workflow metadata only; it never changes deployment traffic.
+   * `dismissed_until` is required only for dismiss and defaults to 24h
+   * when omitted. The server caps dismissals at 30 days.
+   *
+   * @returns DebugRegressionActionResponse Updated regression observation.
+   * @throws ApiError
+   */
+  public static updateAppDebugRegression({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: DebugRegressionActionRequest,
+  }): CancelablePromise<DebugRegressionActionResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/debug/regressions',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+      },
+    });
+  }
+  /**
    * Per-route latency compare (ADR-127 / PR-B).
    * Compares two deployments' per-route latency
    * distributions in a shared time window. Body holds the
@@ -1528,10 +1631,12 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
         `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
     });
   }
@@ -1942,7 +2047,9 @@ export class AppsService {
    *
    * PromQL cost: 6 round-trips regardless of N apps (vs. 7N
    * for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
-   * and `Client.QueryBuckets`.
+   * and `Client.QueryBuckets`. This rollup exposes the same
+   * Hobby+ signals as the per-app endpoint, so Free accounts
+   * receive 402.
    *
    * @returns AppsMetricsResponse The rollup.
    * @throws ApiError
@@ -1964,6 +2071,7 @@ export class AppsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
@@ -1981,11 +2089,19 @@ export class AppsService {
    * `wake.boot_failed`) are joined in alongside the success
    * path so a single GET shows the whole lifecycle.
    *
+   * For `wake.proxy_first_byte`, `data.latency_ms` is measured from
+   * request/queue acceptance through the first upstream byte. New rows
+   * also include `data.proxy_latency_ms` for the final bridge hop. Rows
+   * written before this contract correction contain the former
+   * proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+   *
    * The endpoint is a sub-resource of `/v1/apps/{slug}`;
    * auth and rate-limit share the §12 per-app budget with
    * logs/metrics/wake. Cross-account access 404s the
    * same way unknown slugs do (forge-proof: every row's
    * `data.app_id` is verified to match the resolved app).
+   * Wake narratives are a Hobby+ observability surface; Free
+   * accounts receive 402 before slug or wake lookup.
    *
    * @returns WakeTimelineResponse Wake-timeline frames.
    * @throws ApiError
@@ -2033,6 +2149,7 @@ export class AppsService {
       errors: {
         400: `Malformed query parameter on the wake-timeline read — \`since\` not RFC 3339 or \`limit\` out of range.`,
         401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
         404: `No such app (slug) or wake_id is unknown.`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).

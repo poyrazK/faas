@@ -23,9 +23,10 @@ state_root="${FAAS_PG_BACKUP_STATE_ROOT:-/var/lib/faas/backup-state}"
 rclone_remote="${OFF_HOST_BACKUP_REMOTE:-offhostbox}"
 wal_path="${OFF_HOST_BACKUP_WAL_PATH:-faas-pg-wal}"
 rclone_config="${FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG:-/var/lib/pgsql/backup-rclone.conf}"
+rclone_bin="${FAAS_RCLONE_BIN:-rclone}"
 
 fail() { echo "faas-pg-wal-prune: $*" >&2; exit 1; }
-for tool in find sort tar sed head pg_archivecleanup rclone mktemp basename wc tr date stat mv chmod mkdir; do
+for tool in find sort tar sed head pg_archivecleanup "$rclone_bin" mktemp basename wc tr date stat mv chmod mkdir; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
 done
 [[ -d "$archive_root" ]] || fail "WAL archive missing: $archive_root"
@@ -74,14 +75,14 @@ else
   # is absent or differs; upload candidates that archive_command may have
   # missed during an outage, then complete all checks before the first unlink.
   if [[ "$apply" == true ]]; then
-    rclone copy "$archive_root" "$rclone_remote:$wal_path" \
+    "$rclone_bin" copy "$archive_root" "$rclone_remote:$wal_path" \
       --config="$rclone_config" \
       --files-from="$candidate_names" \
       --checkers=16 \
       --stats=0 \
       --quiet || fail "off-host WAL copy failed; local WAL left intact"
   fi
-  rclone check "$archive_root" "$rclone_remote:$wal_path" \
+  "$rclone_bin" check "$archive_root" "$rclone_remote:$wal_path" \
     --config="$rclone_config" \
     --files-from="$candidate_names" \
     --one-way \

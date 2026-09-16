@@ -1,12 +1,10 @@
 # log_archive — daemon-reload handler (issue #562).
 #
-# Only used by the gatewayd-internal systemd drop-in task above.
-# We don't restart the daemon — the role never silently bounces
-# the edge on a deployed box. An operator who wants the new
-# `LoadCredential=` to take effect on a live host runs
-# `systemctl restart faas-gatewayd-internal` themselves; the
-# next ansible run will see the unit already loaded and skip
-# the daemon-reload.
+# The metadata-auth envelope has no long-lived secret and is converged by the
+# role. When it changes, try-restart each active archive consumer after the
+# daemon reload so the same rollout actually activates the configuration.
+# Missing/inactive services are ignored because this role runs on both host
+# roles and each role owns a different subset of daemons.
 #
 # Same shape as deploy/ansible/roles/postgres_backup/handlers/
 # main.yml:13-22. The `failed_when: false` is a defensive
@@ -27,3 +25,18 @@
     daemon_reload: true
   when: systemd_available.stat.exists | bool
   failed_when: false
+
+- name: activate log archive configuration
+  listen: activate log archive configuration
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - try-restart
+      - "{{ item }}.service"
+  loop:
+    - faas-apid
+    - faas-vmmd
+    - faas-gatewayd-internal
+  changed_when: true
+  failed_when: false
+  when: systemd_available.stat.exists | bool

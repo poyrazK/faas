@@ -106,4 +106,61 @@ make_event_at "$passing" 'test: add regression pin' "$(git -C "$passing" rev-par
 run_check "$passing" > "$passing/output"
 grep -q 'unexpected-pass.*TestUnpinned' "$passing/output"
 
+# Multiple changed tests in one package are classified from one JSON test
+# run, including a mix of passing and failing base behavior.
+mixed="$test_root/mixed"
+git_init "$mixed"
+cat > "$mixed/pin_test.go" <<'EOF'
+package pin
+
+import "testing"
+
+func TestStillBroken(t *testing.T) { t.Fatal("old bug") }
+func TestAlreadyPassing(t *testing.T) {}
+EOF
+git -C "$mixed" add pin_test.go
+git -C "$mixed" commit -q -m 'test: add mixed baseline tests'
+cat > "$mixed/pin_test.go" <<'EOF'
+package pin
+
+import "testing"
+
+func TestStillBroken(t *testing.T) {}
+func TestAlreadyPassing(t *testing.T) { t.Log("changed") }
+EOF
+git -C "$mixed" add pin_test.go
+git -C "$mixed" commit -q -m 'test: change both mixed tests'
+make_event_at "$mixed" 'test: change mixed tests' "$(git -C "$mixed" rev-parse HEAD^)"
+run_check "$mixed" > "$mixed/output"
+grep -q 'expected-failure.*TestStillBroken' "$mixed/output"
+grep -q 'unexpected-pass.*TestAlreadyPassing' "$mixed/output"
+
+# A baseline package that fails to compile emits ordinary diagnostic lines
+# alongside `go test -json` output. Those lines are not valid JSON; the
+# advisory must classify the non-zero package result instead of leaking jq's
+# parse status and blocking the PR.
+compile_error="$test_root/compile-error"
+git_init "$compile_error"
+cat > "$compile_error/pin_test.go" <<'EOF'
+package pin
+
+import "testing"
+
+func TestCompileFailure(t *testing.T) { missingSymbol() }
+EOF
+git -C "$compile_error" add pin_test.go
+git -C "$compile_error" commit -q -m 'test: add baseline compile failure'
+cat > "$compile_error/pin_test.go" <<'EOF'
+package pin
+
+import "testing"
+
+func TestCompileFailure(t *testing.T) { t.Log("fixed") }
+EOF
+git -C "$compile_error" add pin_test.go
+git -C "$compile_error" commit -q -m 'test: fix baseline compile failure'
+make_event_at "$compile_error" 'test: fix compile failure' "$(git -C "$compile_error" rev-parse HEAD^)"
+run_check "$compile_error" > "$compile_error/output"
+grep -q 'expected-failure.*TestCompileFailure.*base exits' "$compile_error/output"
+
 echo "check_regression_pin: OK"

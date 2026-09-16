@@ -102,9 +102,9 @@ type Config struct {
 	// DBURL is the Postgres DSN; empty falls back to $DATABASE_URL (db.Open).
 	DBURL string `toml:"db_url"`
 
-	// RetentionDuration is the §17 retention sweep window (PR #74).
-	// STOPPED/FAILED instances are DELETED this long after entering the
-	// terminal state. Zero or negative reverts to
+	// RetentionDuration is the §17 retention sweep window (PR #74,
+	// issue #2415). STOPPED/FAILED instances are deleted from terminal_at;
+	// PARKED wake-history rows are deleted from parked_at. Zero or negative reverts to
 	// api.DefaultInstanceRetention (30d). The sweep itself runs at the
 	// api.DefaultRetentionInterval cadence (1h) regardless.
 	RetentionDuration int64 `toml:"retention_duration_ns"`

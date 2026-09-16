@@ -50,11 +50,11 @@ var gregaleVersion = "dev"
 // users typo'ing `gregale man aps` get "did you mean 'apps'?"
 // instead of a bare "unknown command".
 func cmdMan(args []string) int {
-	// `--markdown` renders the whole manifest as one Markdown document —
-	// the committed docs/cli-reference.md the public site vendors. Roff
-	// stays the human-page format; this is the machine-vendorable one.
+	// `--markdown` renders the customer command surface as one Markdown
+	// document for the public site. Operator and compatibility commands remain
+	// available through explicit man pages and `help --all`.
 	if len(args) == 1 && args[0] == "--markdown" {
-		renderMarkdownReference(osStdout, cliCommands)
+		renderMarkdownReference(osStdout, customerCliCommands())
 		return 0
 	}
 	switch len(args) {
@@ -167,12 +167,7 @@ func renderManCommand(w io.Writer, c cliCommand) {
 	})
 	manSection(w, "SYNOPSIS", func(w io.Writer) {
 		_, _ = fmt.Fprintf(w, ".B gregale %s\n", c.Name)
-		for _, s := range c.Subcommands {
-			_, _ = fmt.Fprintf(w, ".RI [ %s ]\n", s.Name)
-		}
-		for _, p := range c.Positionals {
-			_, _ = fmt.Fprintf(w, ".RI %s\n", p)
-		}
+		writeManCommandArguments(w, c)
 		for _, f := range c.Flags {
 			// Required flags lose the surrounding brackets so the
 			// reader can distinguish them from optional flags at a
@@ -223,6 +218,21 @@ func renderManCommand(w io.Writer, c cliCommand) {
 		_, _ = fmt.Fprintln(w, ".UE")
 	})
 	manFooter(w)
+}
+
+func writeManCommandArguments(w io.Writer, c cliCommand) {
+	writeSubcommands := func() {
+		_, _ = fmt.Fprintf(w, ".RI [ %s ]\n", c.subcommandChoice())
+	}
+	if !c.SubcommandsAfterPositionals {
+		writeSubcommands()
+	}
+	for _, p := range c.Positionals {
+		_, _ = fmt.Fprintf(w, ".RI %s\n", p)
+	}
+	if c.SubcommandsAfterPositionals {
+		writeSubcommands()
+	}
 }
 
 // manSynopsisFlag emits one complete roff macro invocation. Embedding .IR

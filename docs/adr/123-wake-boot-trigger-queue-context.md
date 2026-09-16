@@ -225,10 +225,12 @@ timeline / dashboard queries get the data with no migration.
 - **Compatibility**: see ADR-064 §Compatibility — additive only. The
   typed struct change lights up the compile-time interface check at
   `pkg/events/wake_test.go:13-37`; every literal updates. No
-  call-site outside the schedd engine + vmmd mirror is affected
-  (vmmd does not emit a typed `BootStarted` struct — schedd is the
-  canonical source; verified via `grep -rn "events.BootStarted{"
-  pkg/vmmdgrpc/`).
+  call-site outside the schedd engine and vmmd observation is affected.
+  Schedd remains the only `BootStarted` source; vmmd emits the distinct
+  `BootObserved` type so customer counts cannot interpret the RPC-boundary
+  corroboration as a second boot decision. `BootObserved` carries only
+  correlation, node, method, and observation-time fields; it never repeats
+  scheduler-owned trigger, queue, concurrency, capacity, or tier values.
 - **Migration**: jsonb additive — no schema migration strictly
   required. The optional analytics expression index on
   `data->>'trigger'` is **deferred** (no dashboard panel needs

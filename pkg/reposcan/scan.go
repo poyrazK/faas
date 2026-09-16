@@ -1,7 +1,12 @@
 package reposcan
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"io/fs"
+	"path"
 	"sort"
 	"strings"
 )
@@ -92,18 +97,55 @@ type Workload struct {
 	Name       string   // service name; deterministic sort key
 	RootDir    string   // build context relative to repo root; "" = root
 	Dockerfile string   // explicit path if declared (relative to RootDir)
+	Image      string   // prebuilt OCI image when the source declares one
 	Command    []string // start-command override (compose `command:`, Procfile rhs)
-	Class      Class    // http|graphql|grpc|job|worker|server|unknown
-	Schedule   string   // cron expression when declared (CronJob, render, serverless)
-	Ports      []int
-	EnvKeys    []string // KEYS only — never values; spec §11 forbids logging secrets
-	Source     string   // "compose.yaml: api" (provenance; shown in confirm)
-	Tier       Tier
+	// CommandShell distinguishes shell-form strings from exec-form argv. The
+	// plan wire keeps Command as an array, while reconciliation uses this bit
+	// to preserve argument boundaries when persisting start_command.
+	CommandShell bool
+	// SourceSHA256 identifies the selected workload subtree. It is internal
+	// reconciliation metadata; the signed archive hash still binds the full
+	// project request.
+	SourceSHA256 string
+	// DependsOn contains service names declared by Compose's depends_on.
+	// Conditions are intentionally normalized to a name-only edge here; the
+	// deploy planner uses the graph for deterministic ordering while runtime
+	// readiness is provided by the private service proxy.
+	DependsOn []string
+	Class     Class  // http|graphql|grpc|job|worker|server|unknown
+	Schedule  string // primary cron expression retained for the existing plan wire
+	// Schedules is the complete desired cron set. Schedule remains the first
+	// expression for compatibility with clients that predate multi-schedule
+	// workloads; callers that reconcile crons must use CronSchedules.
+	Schedules []CronSchedule
+	Ports     []int
+	EnvKeys   []string // KEYS only — never values; spec §11 forbids logging secrets
+	Source    string   // "compose.yaml: api" (provenance; shown in confirm)
+	Tier      Tier
 	// DetectedBy is the explainability trace (issue #742). Source
 	// already carries human-readable provenance ("compose.yaml: api");
 	// this is the STRUCTURED form a client can branch on without
 	// parsing that string. Populated by mergeByKey.
 	DetectedBy Detection
+}
+
+// CronSchedule is one schedule discovered for a workload. Enabled preserves
+// source activation state such as Kubernetes CronJob spec.suspend.
+type CronSchedule struct {
+	Expression string
+	Enabled    bool
+}
+
+// CronSchedules returns the complete schedule set and adapts legacy detector
+// output that populated only Workload.Schedule.
+func (w Workload) CronSchedules() []CronSchedule {
+	if len(w.Schedules) > 0 {
+		return append([]CronSchedule(nil), w.Schedules...)
+	}
+	if w.Schedule == "" {
+		return nil
+	}
+	return []CronSchedule{{Expression: w.Schedule, Enabled: true}}
 }
 
 // Detection is the structured answer to "why does this workload
@@ -269,6 +311,13 @@ func Scan(fsys fs.FS) (Result, error) {
 	}
 
 	workloads := mergeByKey(seeds)
+	for i := range workloads {
+		digest, err := hashWorkloadSource(fsys, workloads[i])
+		if err != nil {
+			return Result{}, fmt.Errorf("reposcan: hash workload %q source: %w", workloads[i].Name, err)
+		}
+		workloads[i].SourceSHA256 = digest
+	}
 	sortStableByName(workloads)
 	sortManagedByName(managed)
 
@@ -278,6 +327,61 @@ func Scan(fsys fs.FS) (Result, error) {
 		Tier:      highestTier,
 		Warnings:  warnings,
 	}, nil
+}
+
+func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
+	root := workload.RootDir
+	cleanRoot := path.Clean(root)
+	if root != "" && root != "." && (!fs.ValidPath(root) || cleanRoot != root) {
+		return "", fmt.Errorf("invalid source root %q", root)
+	}
+	walkRoot := cleanRoot
+	if walkRoot == "" {
+		walkRoot = "."
+	}
+	relRoot := cleanRoot
+	if relRoot == "." {
+		relRoot = ""
+	}
+	h := sha256.New()
+	// The accepted digest is also the retry checkpoint for build-affecting
+	// project metadata. Include argument boundaries and the selected root and
+	// Dockerfile so a failed enqueue remains retryable even when the source
+	// bytes themselves did not move.
+	_, _ = fmt.Fprintf(h, "root=%s\x00dockerfile=%s\x00shell=%t\x00", workload.RootDir, workload.Dockerfile, workload.CommandShell)
+	for _, arg := range workload.Command {
+		_, _ = fmt.Fprintf(h, "arg=%d:%s\x00", len(arg), arg)
+	}
+	err := fs.WalkDir(fsys, walkRoot, func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		rel := strings.TrimPrefix(strings.TrimPrefix(name, relRoot), "/")
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", rel, info.Mode().Perm())
+		body, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return err
+		}
+		_, _ = h.Write(body)
+		_, _ = h.Write([]byte{0})
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// Keep the existing partial-apply contract: an absent inferred
+			// context is reported by staging without blocking valid siblings.
+			return hex.EncodeToString(h.Sum(nil)), nil
+		}
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // hasRootFloorMarker reports whether the archive has enough source shape to

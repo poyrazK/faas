@@ -3,7 +3,7 @@
 //
 //   - gregale alerts preset list                                  → cmdAlertPresetList
 //   - gregale alerts preset enable <name> --app <slug> --webhook-url ... \
-//     --webhook-secret ... [--cooldown-minutes N] [--enabled=false]
+//     --webhook-secret-stdin [--cooldown-minutes N] [--enabled=false]
 //     → cmdAlertPresetEnable
 //
 // Mirrors commands_alerts.go (the canonical dispatcher shape +
@@ -57,7 +57,7 @@ func cmdAlertsPreset(args []string) int {
 // | threshold | window_spec | enabled_in_catalog. JSON-mode
 // (`--json`) emits the raw []AlertPresetResponse.
 func cmdAlertPresetList(args []string) int {
-	fs := flag.NewFlagSet("alerts preset list", flag.ContinueOnError)
+	fs := newFlagSet("alerts preset list", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -107,18 +107,22 @@ func cmdAlertPresetList(args []string) int {
 // comparison, threshold, window_spec, default_cooldown_minutes)
 // sextuple comes from the catalog server-side.
 func cmdAlertPresetEnable(args []string) int {
-	fs := flag.NewFlagSet("alerts preset enable", flag.ContinueOnError)
+	fs := newFlagSet("alerts preset enable", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL (required, https://...)")
-	webhookSecret := fs.String("webhook-secret", "", "webhook secret (required, ≤256 bytes)")
+	webhookSecret := fs.String("webhook-secret", "", "webhook secret (compatibility; visible in argv; prefer --webhook-secret-stdin)")
+	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the webhook secret from stdin")
 	cooldown := fs.Int(flagNameCooldownMinutes, 0, fmt.Sprintf("cooldown override in minutes (%d..%d); 0 means use preset default", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	enabled := fs.Bool(flagNameEnabled, true, "whether the instantiated rule is enabled")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts preset enable --app <slug> [--webhook-url <url>] [--webhook-secret <s>] [--cooldown-minutes N] [--enabled=false] <preset-name>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alerts preset enable --app <slug> [--webhook-url <url>] (--webhook-secret-stdin|--webhook-secret <s>) [--cooldown-minutes N] [--enabled=false] <preset-name>", "alerts")
 		return 1
+	}
+	if err := resolveAlertSecret(webhookSecret, *webhookSecretStdin); err != nil {
+		return printErr("Invalid webhook secret input", err)
 	}
 	presetName := fs.Arg(0)
 	if *webhookURL == "" || *webhookSecret == "" {

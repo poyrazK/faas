@@ -43,6 +43,7 @@ Environment=FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG=/etc/faas/secrets/storage-box/rcl
 Environment=FAAS_PG_BASEBACKUP_ROOT=/var/lib/pgsql/basebackup
 Environment=FAAS_PG_BACKUP_STATE_ROOT=/var/lib/faas/backup-state
 Environment=FAAS_PG_LOCAL_BASEBACKUP_KEEP=2
+Environment=FAAS_RCLONE_BIN=/usr/local/lib/faas/faas-rclone-backup-identity.py
 # Issue #585 / ADR-127 — sealed.env is apid-only; pg-basebackup-push no
 # longer inherits it. A missing rclone config is a supported unconfigured
 # state; the helper logs that state and exits cleanly.

@@ -116,7 +116,7 @@ const deploysStatusUsage = "usage: gregale deploys status <id> [--json]"
 // `gregale deploys show --status <id>` or
 // `gregale deploys show <id> --status`.
 func cmdDeploysShow(args []string) int {
-	fs := flag.NewFlagSet("deploys show", flag.ContinueOnError)
+	fs := newFlagSet("deploys show", flag.ContinueOnError)
 	withStatus := fs.Bool("status", false, "include terminal-status footer (live since / failed at)")
 	urlOnly := fs.Bool("url", false, "print only the per-deployment preview URL (shell-friendly)")
 	reordered := splitFlagArgs(args)
@@ -232,7 +232,7 @@ func cmdDeploysShow(args []string) int {
 // shared helper fetchDeploySummaryInputs keeps the errgroup
 // wiring in one place.
 func cmdDeploysStatus(args []string) int {
-	fs := flag.NewFlagSet("deploys status", flag.ContinueOnError)
+	fs := newFlagSet("deploys status", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -26,7 +27,7 @@ type operatorDeploymentMutationOutput struct {
 
 func cmdDeploymentsDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl deployments: missing subcommand; want active|inspect|cancel|retry")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl deployments: missing subcommand; want active|inspect|cancel|retry|repair-stale")
 		return 2
 	}
 	switch args[0] {
@@ -38,10 +39,80 @@ func cmdDeploymentsDispatch(args []string) int {
 		return cmdDeploymentsCancel(args[1:])
 	case "retry":
 		return cmdDeploymentsRetry(args[1:])
+	case "repair-stale":
+		return cmdDeploymentsRepairStale(args[1:])
 	default:
 		_, _ = fmt.Fprintf(osStderr, "gregalectl deployments: unknown subcommand %q\n", args[0])
 		return 2
 	}
+}
+
+func cmdDeploymentsRepairStale(args []string) int {
+	fs := flag.NewFlagSet("repair-stale", flag.ContinueOnError)
+	fs.SetOutput(osStderr)
+	olderThan := fs.Duration("older-than", 2*time.Hour, "minimum nonterminal deployment age")
+	limit := fs.Int("limit", 200, "maximum deployments to inspect (1..200)")
+	yes := fs.Bool("yes", false, "apply cancellation; omit for a dry run")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 || *olderThan < 15*time.Minute || *limit < 1 || *limit > 200 {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl deployments repair-stale: use --older-than >=15m, --limit 1..200, and no positional arguments")
+		return 2
+	}
+	cutoff := time.Now().UTC().Add(-*olderThan)
+	query := url.Values{
+		"status":          {"pending,building,imaging,snapshotting"},
+		"include_deleted": {"true"},
+		"created_before":  {cutoff.Format(time.RFC3339)},
+		"limit":           {strconv.Itoa(*limit)},
+	}
+	var candidates api.OperatorDeploymentListResponse
+	if code := operatorDeploymentRequest("repair-stale", http.MethodGet, "/v1/admin/ops/deployments?"+query.Encode(), nil, &candidates, false, nil); code != 0 {
+		return code
+	}
+	if !*yes {
+		if jsonEnabled() {
+			return emitOperatorJSON(candidates)
+		}
+		_, _ = fmt.Fprintf(osStdout, "dry_run=true candidates=%d cutoff=%s\n", len(candidates.Deployments), cutoff.Format(time.RFC3339))
+		for _, deployment := range candidates.Deployments {
+			printOperatorDeployment(deployment)
+		}
+		return 0
+	}
+
+	repaired := 0
+	for _, deployment := range candidates.Deployments {
+		var detail api.OperatorDeploymentDetailResponse
+		inspectPath := "/v1/admin/ops/deployments/" + url.PathEscape(deployment.ID)
+		if code := operatorDeploymentRequest("repair-stale", http.MethodGet, inspectPath, nil, &detail, false, nil); code != 0 {
+			return code
+		}
+		if detail.Build != nil && (detail.Build.Status == "queued" || detail.Build.Status == "running") {
+			_, _ = fmt.Fprintf(osStdout, "skipped deployment_id=%s reason=active_build build_id=%s\n", deployment.ID, detail.Build.ID)
+			continue
+		}
+		traceID := wire.NewTraceID()
+		headers := make(http.Header)
+		headers.Set(operatorTraceIDHeader, traceID)
+		cancelQuery := url.Values{"confirm": {"true"}, "reason": {"stale_deployment_reconciler"}}
+		var response api.OperatorDeploymentMutationResponse
+		cancelPath := inspectPath + "/cancel?" + cancelQuery.Encode()
+		if code := operatorDeploymentRequest("repair-stale", http.MethodPost, cancelPath, nil, &response, true, headers); code != 0 {
+			return code
+		}
+		repaired++
+		if !jsonEnabled() {
+			_, _ = fmt.Fprintf(osStdout, "repaired deployment_id=%s previous_status=%s app=%s app_status=%s trace_id=%s\n",
+				deployment.ID, deployment.Status, deployment.AppSlug, deployment.AppStatus, traceID)
+		}
+	}
+	if jsonEnabled() {
+		return emitOperatorJSON(map[string]any{"candidates": len(candidates.Deployments), "repaired": repaired, "cutoff": cutoff.Format(time.RFC3339)})
+	}
+	_, _ = fmt.Fprintf(osStdout, "repair_complete candidates=%d repaired=%d cutoff=%s\n", len(candidates.Deployments), repaired, cutoff.Format(time.RFC3339))
+	return 0
 }
 
 func cmdDeploymentsActive(args []string) int {
@@ -255,8 +326,8 @@ func operatorDeploymentRequest(action, method, path string, input, output any, i
 }
 
 func printOperatorDeployment(deployment api.OperatorDeployment) {
-	_, _ = fmt.Fprintf(osStdout, "deployment_id=%s app=%s app_id=%s account_id=%s status=%s kind=%s created_at=%s priority=%d",
-		deployment.ID, deployment.AppSlug, deployment.AppID, deployment.AccountID, deployment.Status, deployment.Kind,
+	_, _ = fmt.Fprintf(osStdout, "deployment_id=%s app=%s app_status=%s app_id=%s account_id=%s status=%s kind=%s created_at=%s priority=%d",
+		deployment.ID, deployment.AppSlug, deployment.AppStatus, deployment.AppID, deployment.AccountID, deployment.Status, deployment.Kind,
 		deployment.CreatedAt, deployment.Priority)
 	if deployment.ErrorCode != "" {
 		_, _ = fmt.Fprintf(osStdout, " error_code=%s", deployment.ErrorCode)

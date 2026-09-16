@@ -258,36 +258,45 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
-	"GET /v1/github/repos":                         "ListGitHubRepositories",
-	"DELETE /v1/keys/{id}":                         "DeleteKey",
-	"POST /v1/keys/{id}/rotate":                    "RotateKey",
-	"PATCH /v1/account/keys/grace_window_days":     "SetGraceWindow",
-	"GET /v1/account/keys/grace_window_days":       "GetGraceWindow",
-	"DELETE /v1/domains/{domain}":                  "DeleteDomain",
-	"DELETE /v1/crons/{id}":                        "DeleteCron",
-	"DELETE /v1/apps/{slug}":                       "DeleteApp",
-	"POST /v1/apps/{slug}/restore":                 "RestoreApp",
-	"DELETE /v1/apps/{slug}/secrets/{key}":         "UnsetSecret",
-	"PUT /v1/apps/{slug}/secrets/{key}":            "SetSecret",
-	"POST /v1/apps/{slug}/secrets/{key}/rotate":    "RotateSecret",
-	"PATCH /v1/apps/{slug}":                        "UpdateApp",
-	"POST /v1/apps/{slug}/rename":                  "RenameApp",
-	"GET /v1/apps/{slug}":                          "GetApp",
-	"GET /v1/apps/{slug}/instances":                "ListInstances",
-	"POST /v1/apps/{slug}/park":                    "Park",
-	"POST /v1/apps/{slug}/wake":                    "Wake",
-	"POST /v1/apps/{slug}/restart":                 "RestartApp",
-	"DELETE /v1/apps/{slug}/cache":                 "PurgeAppCache",
-	"POST /v1/apps/{slug}/rollback":                "Rollback",
-	"POST /v1/apps/{slug}/rollouts/recover":        "RecoverRollout",
-	"POST /v1/apps/{slug}/deployments":             "Deploy",
-	"GET /v1/apps/{slug}/deployments":              "ListAppDeployments",
-	"GET /v1/apps/{slug}/deployments/latest":       "GetLatestAppDeployment",
-	"GET /v1/apps/{slug}/deployments/{id}/summary": "GetAppDeploymentSummary",
-	"POST /v1/apps/{slug}/deployments/dev-source":  "DeployDevSource",
-	"POST /v1/apps/{slug}/deployments/source-ref":  "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
-	"GET /v1/uploads/{id}":                         "GetUploadSession",    // issue #1182; resumable session discovery after restart
-	"POST /v1/apps/{slug}/diff":                    "Diff",                // PR-1 of deploy-diff cluster; CI gate input
+	"GET /v1/github/repos":                                 "ListGitHubRepositories",
+	"DELETE /v1/keys/{id}":                                 "DeleteKey",
+	"POST /v1/keys/{id}/rotate":                            "RotateKey",
+	"PATCH /v1/account/keys/grace_window_days":             "SetGraceWindow",
+	"GET /v1/account/keys/grace_window_days":               "GetGraceWindow",
+	"DELETE /v1/domains/{domain}":                          "DeleteDomain",
+	"DELETE /v1/crons/{id}":                                "DeleteCron",
+	"DELETE /v1/apps/{slug}":                               "DeleteApp",
+	"POST /v1/apps/{slug}/restore":                         "RestoreApp",
+	"DELETE /v1/apps/{slug}/secrets/{key}":                 "UnsetSecret",
+	"PUT /v1/apps/{slug}/secrets/{key}":                    "SetSecret",
+	"POST /v1/apps/{slug}/secrets/{key}/rotate":            "RotateSecret",
+	"PATCH /v1/apps/{slug}":                                "UpdateApp",
+	"POST /v1/apps/{slug}/rename":                          "RenameApp",
+	"GET /v1/apps/{slug}":                                  "GetApp",
+	"GET /v1/apps/{slug}/instances":                        "ListInstances",
+	"POST /v1/apps/{slug}/park":                            "Park",
+	"POST /v1/apps/{slug}/wake":                            "Wake",
+	"POST /v1/apps/{slug}/restart":                         "RestartApp",
+	"DELETE /v1/apps/{slug}/cache":                         "PurgeAppCache",
+	"POST /v1/apps/{slug}/rollback":                        "Rollback",
+	"POST /v1/apps/{slug}/rollouts/recover":                "RecoverRollout",
+	"POST /v1/apps/{slug}/deployments":                     "Deploy",
+	"GET /v1/apps/{slug}/deployments":                      "ListAppDeployments",
+	"GET /v1/apps/{slug}/deployments/latest":               "GetLatestAppDeployment",
+	"GET /v1/apps/{slug}/deployments/{id}/summary":         "GetAppDeploymentSummary",
+	"POST /v1/apps/{slug}/deployments/dev-source":          "DeployDevSource",
+	"POST /v1/apps/{slug}/deployments/source-ref":          "DeployFromSourceRef", // issue #739 / DEPLOY-PROV-4 / ADR-092; headless CI deploy
+	"GET /v1/projects":                                     "ListProjects",
+	"GET /v1/projects/{slug}":                              "GetProject",
+	"PATCH /v1/projects/{slug}":                            "UpdateProject",
+	"GET /v1/projects/{slug}/environments":                 "ListProjectEnvironments",
+	"POST /v1/projects/{slug}/environments":                "CreateProjectEnvironment",
+	"GET /v1/projects/{slug}/environments/{environment}":   "GetProjectEnvironment",
+	"PATCH /v1/projects/{slug}/environments/{environment}": "UpdateProjectEnvironment",
+	"GET /v1/projects/{slug}/delete-preview":               "PreviewDeleteProject",
+	"DELETE /v1/projects/{slug}":                           "DeleteProject",
+	"GET /v1/uploads/{id}":                                 "GetUploadSession", // issue #1182; resumable session discovery after restart
+	"POST /v1/apps/{slug}/diff":                            "Diff",             // PR-1 of deploy-diff cluster; CI gate input
 	// Issue #961 / Mega-C PR-1 / leaf 3 — preview-destroy route.
 	// Auto-derivation would produce "PostPreviewSlugDestroy" (the
 	// Swagger-style verb+resource concat), but the SDK convention
@@ -299,6 +308,12 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/account/plan":                     "ChangePlan",
 	"GET /v1/account":                            "Whoami",
 	"GET /v1/capabilities":                       "GetCapabilities",
+	"POST /v1/executions":                        "CreateExecution",
+	"POST /v1/domains/{domain}/retry":            "RetryDomainVerification",
+	"GET /v1/executions":                         "ListExecutions",
+	"GET /v1/executions/{id}":                    "GetExecution",
+	"GET /v1/executions/{id}/events":             "StreamExecution",
+	"DELETE /v1/executions/{id}":                 "CancelExecution",
 	"POST /v1/account/restore":                   "RestoreAccount",
 	"POST /v1/account/overage-cap":               "RaiseOverageCap", // issue #561 spend cap
 	"POST /v1/account/mfa/disable-email":         "PostAccountMfaDisableEmail",
@@ -343,6 +358,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/openapi/apply":                                                    "ApplyAppOpenAPIPolicy",          // explicit plan/confirm policy apply
 	"GET /v1/apps/{slug}/openapi/diff":                                                      "DiffAppOpenAPIContract",         // ADR-121 production contract gate preview
 	"GET /v1/apps/{slug}/github":                                                            "GetGitHubConnection",
+	"GET /v1/apps/{slug}/github/deployment-policy":                                          "GetGitHubDeploymentPolicy",
+	"PATCH /v1/apps/{slug}/github/deployment-policy":                                        "PatchGitHubDeploymentPolicy",
 	"POST /v1/apps/{slug}/github/bind":                                                      "BindGitHubConnection",
 	"POST /v1/apps/{slug}/github/sync":                                                      "SyncGitHubConnection",
 	"DELETE /v1/apps/{slug}/github":                                                         "DisconnectGitHubConnection",
@@ -368,6 +385,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                         "CreateAPIConsumerUsageStatement",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}":           "GetAPIConsumerUsageStatement",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/finalize": "FinalizeAPIConsumerUsageStatement",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff":   "GetAPIConsumerUsageStatementHandoff",
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff":  "ClaimAPIConsumerUsageStatement",
 	"DELETE /v1/apps/{slug}/consumers/{consumer_id}":                                        "RevokeAPIConsumer",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/keys":                                      "ListConsumerKeys",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/keys":                                     "CreateConsumerKey",
@@ -498,6 +517,18 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/webhooks/{id}/deliveries":              "ListAppWebhookDeliveries",
 	"POST /v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry": "RetryAppWebhookDelivery",
 
+	// ADR-156 — durable managed realtime endpoint configuration.
+	"GET /v1/apps/{slug}/realtime/endpoints":                                                             "ListManagedRealtimeEndpoints",
+	"POST /v1/apps/{slug}/realtime/endpoints":                                                            "CreateManagedRealtimeEndpoint",
+	"GET /v1/apps/{slug}/realtime/endpoints/{id}":                                                        "GetManagedRealtimeEndpoint",
+	"PATCH /v1/apps/{slug}/realtime/endpoints/{id}":                                                      "UpdateManagedRealtimeEndpoint",
+	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}":                                                     "DeleteManagedRealtimeEndpoint",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send":                      "SendManagedRealtimeConnection",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close":                     "CloseManagedRealtimeConnection",
+	"PUT /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}":    "SubscribeManagedRealtimeConnection",
+	"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}": "UnsubscribeManagedRealtimeConnection",
+	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish":                            "PublishManagedRealtimeChannel",
+
 	// Issue #1398 O4 — customer runtime log destinations. Hyphenated path
 	// segments need explicit noun-oriented SDK names.
 	"GET /v1/apps/{slug}/log-drains":                "ListAppLogDrains",
@@ -620,8 +651,10 @@ var methodRouteMap = map[string]string{
 	// indistinguishable in the SDK. Apply must hit POST /v1/projects
 	// (not /v1/projects/scan) — the SDK enforces this in
 	// ApplyProjectPlan via url.QueryEscape(plan_token).
-	"POST /v1/projects/scan": "ScanProject",
-	"POST /v1/projects":      "ApplyProjectPlan",
+	"POST /v1/projects/scan":            "ScanProject",
+	"POST /v1/projects/scan/source-ref": "ScanProjectSourceRef",
+	"POST /v1/projects":                 "ApplyProjectPlan",
+	"GET /v1/projects/{slug}/environments/{environment}/promotion-preview": "GetProjectEnvironmentPromotionPreview",
 
 	// ADR-124 follow-up #3 — persistent --exclude history. The
 	// auto-derivation would produce "DeleteProjectsSlugExclusionsSlug2"
@@ -704,6 +737,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/debug/requests/{req_id}":          "GetAppDebugRequest",
 	"GET /v1/apps/{slug}/debug/requests/{req_id}/evidence": "GetAppDebugRequestEvidence",
 	"GET /v1/apps/{slug}/debug/coverage":                   "GetAppDebugCoverage",
+	"GET /v1/apps/{slug}/debug/running":                    "GetAppDebugRunning",
 
 	// ADR-127 / PR-B — production debugger consumer surface.
 	// Same rationale as the PR-A request list: drop the slug from
@@ -728,8 +762,9 @@ var methodRouteMap = map[string]string{
 	// the /metrics entry above which is the 5m dashboard panel.
 	// Per-app pattern mirrors GetAppMetrics; account-scoped
 	// mirrors GetAccountUsage (the usage account-scoped family).
-	"GET /v1/apps/{slug}/slo": "GetAppSLO",
-	"GET /v1/account/slo":     "GetAccountSLO",
+	"GET /v1/apps/{slug}/slo":     "GetAppSLO",
+	"GET /v1/account/slo":         "GetAccountSLO",
+	"GET /v1/account/rate-limits": "GetAccountRateLimits",
 
 	// ADR-093 — per-route observability inside an app. The
 	// auto-derivation would produce GetAppsSlugRoutes

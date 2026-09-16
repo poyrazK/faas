@@ -1,3 +1,4 @@
+// adr: 053
 // capacity_sign_test.go — ADR-053 node_signature tests.
 //
 // Pins the canonical-payload / sign / verify triangle that
@@ -41,10 +42,14 @@ import (
 // this into VerifyNodeSignature without spinning up a real
 // NodeKeyRegistry (which has a Postgres loader behind it).
 type stubKeyLookup struct {
-	keys map[string]*ecdsa.PublicKey
+	keys  map[string]*ecdsa.PublicKey
+	owner string
 }
 
-func (s *stubKeyLookup) PublicKey(keyID string) (*ecdsa.PublicKey, bool) {
+func (s *stubKeyLookup) PublicKeyForNode(nodeID, keyID string) (*ecdsa.PublicKey, bool) {
+	if s.owner != "" && s.owner != nodeID {
+		return nil, false
+	}
 	pub, ok := s.keys[keyID]
 	return pub, ok
 }
@@ -183,6 +188,30 @@ func TestSignAndVerify_HappyPath(t *testing.T) {
 	}}
 	if err := VerifyNodeSignature(report, sig, keys); err != nil {
 		t.Errorf("VerifyNodeSignature: %v", err)
+	}
+}
+
+// TestVerifyNodeSignature_CrossNodeKeyRejected proves that possession of a
+// valid key cannot be used to publish capacity under another compute node's
+// identity. The node_id is part of the signed payload, but it is also supplied
+// by the caller; the registry ownership check supplies the authorization bind.
+func TestVerifyNodeSignature_CrossNodeKeyRejected(t *testing.T) {
+	t.Parallel()
+	priv, keyID := generateTestP256(t)
+	report := sampleReport("node-2")
+	sig, err := SignNodeReport(priv, report)
+	if err != nil {
+		t.Fatalf("SignNodeReport: %v", err)
+	}
+	report.NodeSignature = sig
+	report.NodeKeyID = keyID
+
+	keys := &stubKeyLookup{
+		owner: "node-1",
+		keys:  map[string]*ecdsa.PublicKey{keyID: &priv.PublicKey},
+	}
+	if err := VerifyNodeSignature(report, sig, keys); !errors.Is(err, ErrUnknownNodeKey) {
+		t.Fatalf("cross-node key: err = %v, want ErrUnknownNodeKey", err)
 	}
 }
 

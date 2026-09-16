@@ -1,0 +1,230 @@
+# GCP public-beta hardening and cost guard
+
+Gregale's GCP beta fleet is owned by `hpk.working@gmail.com` and billed through
+the linked billing account. The repository policy records the operator identity
+and project ID separately: changing the active `gcloud` account never changes
+project ownership or billing linkage.
+
+The executable policy covers issues #2346, #2424, and #2351–#2356 plus #2360. It checks
+the live project, not a cached inventory:
+
+- Cloud Ops Agent write IAM and an alert for dropped exports;
+- deletion protection, retained control-plane state disk, and daily snapshots;
+- IAP/OS Login access with project keys blocked and no public SSH, RDP, or 8080;
+- Cloudflare-only origin ingress on TCP/80+443 at both GCP and host firewalls;
+- separate control/compute identities and a backup writer without delete/IAM;
+- Storage and IAM Data Access logs;
+- SSD-backed active compute capacity and paid disks on stopped nodes;
+- billing linkage, budget visibility, thresholds, and a notification target.
+
+## Audit
+
+Use the owner account requested for normal platform operations. The audit is
+strict: unavailable APIs and insufficient IAM are findings because silence
+would make the green result misleading.
+
+```sh
+gcloud config set account hpk.working@gmail.com
+gcloud config set project project-5ae37259-04cf-4070-bef
+python3 scripts/ops/gcp_public_beta_audit.py
+```
+
+For an incident attachment, save the raw provider response locally. It can be
+replayed without network access and must not be committed because instance
+metadata can contain SSH keys.
+
+```sh
+python3 scripts/ops/gcp_public_beta_audit.py \
+  --write-snapshot /tmp/gregale-gcp-audit.json --json
+python3 scripts/ops/gcp_public_beta_audit.py \
+  --snapshot /tmp/gregale-gcp-audit.json
+```
+
+## Converge
+
+The convergence tool defaults to a dry run. Review that output in the change
+record, then apply one phase at a time. `guard` is online-safe and should run
+first.
+
+```sh
+bash scripts/ops/gcp_public_beta_converge.sh --phase guard
+bash scripts/ops/gcp_public_beta_converge.sh --phase guard --apply
+```
+
+The guard phase enables the logging/monitoring APIs, protects all fleet VMs,
+retains the control disk, attaches a 14-day daily snapshot schedule, restores
+log-writer IAM for the currently attached compute identity, and enables Data
+Access audit logs for Cloud Storage and IAM with at least 30 days of retention.
+It creates alerts for Ops Agent export failures, destructive backup operations,
+backup read bursts, and project or backup-bucket IAM changes. Confirm a fresh
+compute log and a harmless backup-object read appear in Cloud Logging after it
+runs.
+
+The beta threat model keeps Cloud Audit Logs in the production project. Every
+sink or retention-policy mutation creates an Admin Activity event, and the IAM
+change alert pages the operator. Before a separate security account exists, an
+off-project sink would share the same human administrator without creating an
+independent trust boundary. Revisit that decision when a separate security
+account is available.
+
+### Administrative access cutover
+
+The access phase is separate because deleting the old public SSH rule before
+IAP works would lock out the only control plane. First grant and exercise OS
+Login through IAP from a second terminal:
+
+```sh
+gcloud compute ssh faas-control-plane --zone=europe-west3-a \
+  --tunnel-through-iap --command='id && sudo -n true'
+```
+
+Keep that session open. Then run the release workflow's read-only SSH
+preflight through its IAP/OS Login deployment identity; public root SSH must
+not be the only path that can roll the control plane. Render the access plan
+and apply it only after both tests succeed. The apply guard requires explicit
+records of both tests.
+
+```sh
+bash scripts/ops/gcp_public_beta_converge.sh --phase access
+GCLOUD_IAP_SSH_VERIFIED=1 GCLOUD_IAP_CD_VERIFIED=1 \
+  bash scripts/ops/gcp_public_beta_converge.sh --phase access --apply
+```
+
+This creates an IAP-only SSH rule, grants the named operator OS Admin Login and
+IAP tunnel access, enables OS Login, blocks project SSH keys, creates IPv4 and
+IPv6 TCP/80+443 rules containing only the pinned Cloudflare ranges, tags the
+control plane as `gregale-origin`, and deletes known broad ingress rules. The
+Ansible nftables role enforces the same source boundary on every manifest-
+generated Cloudflare control plane. Loopback is the explicit health path; use
+IAP/OS Login for emergency access instead of opening a temporary public origin
+rule. The host-hardening role keeps password authentication and direct root
+login off.
+
+After the access phase and Ansible rollout, prove both sides from an Internet
+host whose address is outside Cloudflare. The first request must succeed through
+public DNS and include Cloudflare's server header; the direct `--resolve` probe
+must fail before receiving an HTTP response.
+
+```sh
+FAAS_ORIGIN_IP=<control-plane-public-ip> \
+  deploy/scripts/cloudflare-origin-smoke.sh
+```
+
+The canonical range files are
+`deploy/ansible/roles/nftables/files/cloudflare-ips-v4.txt` and
+`cloudflare-ips-v6.txt`. Compare them to Cloudflare's official `/ips-v4` and
+`/ips-v6` endpoints monthly and before a reported edge connectivity incident.
+Update both files in one reviewed release; the GCP convergence tool and host
+firewall consume the same files. Run the smoke above before removing an old
+range. Firewall Admin Activity changes page through the `Gregale origin
+firewall changes` alert; immediately rerun the read-only audit after any page.
+
+### Identity and backup cutover
+
+The identity phase stops instances while changing their attached service
+account. Keep one release-current compute node admitted while changing the
+other, drain it, and verify a snapshot restore on the changed node before
+moving on. The control-plane change requires a maintenance window.
+
+The custom backup writer role contains only object create/get/list. The control
+plane uses its attached `gregale-control` identity to mint one-hour tokens for
+`gregale-backup`; no service-account key is stored on the host. The installed
+`faas-rclone-backup-identity.py` helper injects that token only into rclone
+processes using an env-auth GCS remote. `gregale-backup-restore` receives
+read-only object access. Retention remains a bucket lifecycle responsibility.
+
+```sh
+bash scripts/ops/gcp_public_beta_converge.sh --phase identity
+GCLOUD_IDENTITY_CUTOVER_VERIFIED=1 GCLOUD_BACKUP_IMPERSONATION_VERIFIED=1 \
+  bash scripts/ops/gcp_public_beta_converge.sh --phase identity --apply
+
+systemctl start faas-pg-basebackup.service
+systemctl start faas-pg-basebackup-push.service
+deploy/scripts/pg-restore-verify.sh
+```
+
+Before setting `GCLOUD_BACKUP_IMPERSONATION_VERIFIED=1`, deploy the release
+that installs `/usr/local/lib/faas/faas-rclone-backup-identity.py`, temporarily
+grant the currently attached control-plane identity Token Creator on
+`gregale-backup`, and run both an rclone list and a disposable object
+copy/check through the helper as `postgres`. Remove the temporary binding after
+the check. The identity phase grants the permanent binding only to
+`gregale-control`, changes the VM identities, and removes the legacy bucket
+administrator and temporary impersonation grants last.
+
+Do not change both compute identities in one outage window. The script prints
+the exact rolling operations in dry-run mode; execute the phase per node if the
+fleet cannot preserve capacity for its generated sequence.
+
+### Budget
+
+The billing account owner must grant the operating identity Billing Account
+Costs Manager (`roles/billing.costsManager`) or an equivalent custom role on
+the billing account. Project Owner alone cannot list or create budgets.
+
+Set the monthly amount in the billing account currency. The tool creates 50%,
+80%, 100%, and forecasted-100% thresholds scoped to this project and retains
+the billing-account IAM recipients.
+
+```sh
+GCP_BETA_BUDGET_AMOUNT=100USD \
+  bash scripts/ops/gcp_public_beta_converge.sh --phase budget --apply
+```
+
+The remaining credit is an account-level promotion and is not a safe budget
+amount. Choose the amount from the expected monthly baseline, then review Cost
+Table by SKU weekly for Compute Engine, persistent disk, Logging ingestion,
+network egress, and backup storage.
+
+## Availability and stopped capacity
+
+The beta target is two release-current SSD compute nodes running active-active
+in at least two GCP zones. Application autoscaling only adds Firecracker guests
+within those hosts; it does not replace a lost GCE VM. Keep a stopped node for
+at most 24 hours while it has paid disks. Beyond that window, either start and
+roll it into the active fleet or snapshot required evidence and delete the
+VM/disks.
+
+The audit fails when either active compute node has no SSD, fewer than two
+compute nodes run, the running nodes occupy fewer than two zones, or a stopped
+node retains disks beyond 24 hours. For public beta, record these timings during
+every node replacement drill:
+
+1. failure detection and scheduler drain;
+2. GCE VM and SSD provisioning;
+3. signed release installation and node admission;
+4. snapshot readiness and first successful restore;
+5. customer traffic recovery.
+
+The current beta recovery objective is immediate placement on the surviving
+active node and 20 minutes from confirmed host loss to an admitted replacement.
+A stopped legacy HDD node is not a standby.
+
+The provider step is scripted and timed. It creates a private, deletion-
+protected N2 host with nested virtualization and a retained 100 GB `pd-ssd`,
+then emits a host-key-pinned `ComputeNodeClaim` for the existing signed
+enrollment path:
+
+```sh
+bash scripts/ops/gcp_provision_compute.sh \
+  --instance faas-compute-node-3 --node fsn-3
+bash scripts/ops/gcp_provision_compute.sh \
+  --instance faas-compute-node-3 --node fsn-3 --apply
+```
+
+The final line records `provider_ready_seconds`. Record the later release,
+admission, snapshot, and traffic timestamps beside it; VM creation alone is not
+traffic recovery.
+
+After the replacement is release-current and has passed a snapshot restore and
+public traffic probe, retire the stopped legacy VM and every disk attached to
+it. The retirement tool refuses running nodes and the last remaining active
+compute host. Its apply path requires the completed verification marker and
+then proves that both the VM and retained disks are gone.
+
+```sh
+bash scripts/ops/gcp_retire_compute.sh --instance faas-compute-node-2
+GCP_COMPUTE_RETIRE_VERIFIED=1 \
+  bash scripts/ops/gcp_retire_compute.sh \
+    --instance faas-compute-node-2 --apply
+```

@@ -93,14 +93,8 @@ func printBillingUsage(w io.Writer) {
 		"                      dunning-email lie at pkg/mail/account.go:107,150)\n"+
 		"  cancel              set cancel_at_period_end on the active subscription;\n"+
 		"                      y/N confirm (--yes for non-interactive shells)\n"+
-		"  status              read the active billing Provider's catalog snapshot\n"+
+		"  status              show your provider-independent billing status\n"+
 		"                      (--watch N  re-poll every 5 s for N seconds; --json  emit JSON)\n"+
-		"  price-catalog       list | sync | reset the provider price + product catalog\n"+
-		"  reconcile <id>      run a single-account reconcile via the active billing Provider\n"+
-		"  reconcile-paddle-overage\n"+
-		"                      pre-flight the paddle_overage_dedupe schema for migration 00041\n"+
-		"  webhook-test        signed round-trip POST to a webhook URL (operator-only)\n"+
-		"                      (gregale billing webhook-test paddle --url … --secret …)\n"+
 		"\n"+
 		"Run 'gregale billing help' for this message.\n")
 }
@@ -121,7 +115,7 @@ func printBillingUsage(w io.Writer) {
 // that would break `gregale billing portal && gregale plan <new>` flows on
 // headless boxes.
 func cmdBillingPortal(args []string) int {
-	fs := flag.NewFlagSet("billing portal", flag.ContinueOnError)
+	fs := newFlagSet("billing portal", flag.ContinueOnError)
 	printOnly := fs.Bool("print", false, "print URL to stdout only; do not open browser")
 	noOpen := fs.Bool("no-open", false, "alias of --print")
 	if err := fs.Parse(args); err != nil {

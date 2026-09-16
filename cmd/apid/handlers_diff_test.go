@@ -123,6 +123,53 @@ func TestDiffApp_MissingSlug_Returns200WithPreview(t *testing.T) {
 	}
 }
 
+func TestDiffApp_FreshSlugAtAppCapBlocksExistingSlugDoesNot(t *testing.T) {
+	e := newDiffTestEnv(t, api.PlanFree)
+	if _, err := e.store.CreateApp(context.Background(), state.App{
+		AccountID: e.acct.ID,
+		Slug:      "only-app",
+		Type:      state.AppTypeApp,
+		RAMMB:     128,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	freshRec := postDiffReq(t, e, "second-app", []byte(`{"build_plan":{"framework":"node","class":"app"}}`))
+	if freshRec.Code != http.StatusOK {
+		t.Fatalf("fresh preview status = %d; body=%s", freshRec.Code, freshRec.Body.String())
+	}
+	var fresh api.DiffResponse
+	if err := json.Unmarshal(freshRec.Body.Bytes(), &fresh); err != nil {
+		t.Fatal(err)
+	}
+	if !fresh.Blocking {
+		t.Fatalf("fresh preview at app cap is not blocking: %+v", fresh.Diff.Breaks)
+	}
+	found := false
+	for _, b := range fresh.Diff.Breaks {
+		if b.Code == api.CodePlanLimitApps {
+			found = true
+			if string(b.Observed) != "1" || string(b.Limit) != "1" {
+				t.Fatalf("app quota observed/limit = %s/%s, want 1/1", b.Observed, b.Limit)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("fresh preview breaks lack plan_limit_apps: %+v", fresh.Diff.Breaks)
+	}
+
+	existingRec := postDiffReq(t, e, "only-app", []byte(`{}`))
+	var existing api.DiffResponse
+	if err := json.Unmarshal(existingRec.Body.Bytes(), &existing); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range existing.Diff.Breaks {
+		if b.Code == api.CodePlanLimitApps {
+			t.Fatalf("existing app preview consumed another app slot: %+v", existing.Diff.Breaks)
+		}
+	}
+}
+
 func TestDiffApp_FreshSourcePreviewIncludesResolvedIdentity(t *testing.T) {
 	e := newDiffTestEnv(t, api.PlanHobby)
 	rec := postDiffReq(t, e, "fresh-function", []byte(`{

@@ -7,6 +7,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_open_api_policy_preview_response_observed_source import (
+    AppOpenAPIPolicyPreviewResponseObservedSource,
+    check_app_open_api_policy_preview_response_observed_source,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -27,9 +31,15 @@ class AppOpenAPIPolicyPreviewResponse:
 
     app_id: UUID
     source: str
-    """preview, empty: no_import, or degraded: routes_unavailable."""
+    """preview, empty: no_import, degraded: routes_partial, or degraded: routes_unavailable."""
     observed_available: bool
-    """Whether the gatewayd observed-route bridge returned successfully."""
+    """Whether at least one collector returned current route telemetry."""
+    observed_source: AppOpenAPIPolicyPreviewResponseObservedSource
+    """Completeness of the fleet-wide observed-route input."""
+    collectors_expected: int
+    """Number of registry compute gateways expected to contribute route observations."""
+    collectors_healthy: int
+    """Expected compute route collectors currently healthy in Prometheus."""
     routes: list[AppOpenAPIPolicyPreviewRoute]
     openapi_version: str | Unset = UNSET
     """OpenAPI version from the persisted declaration, when present."""
@@ -42,6 +52,12 @@ class AppOpenAPIPolicyPreviewResponse:
         source = self.source
 
         observed_available = self.observed_available
+
+        observed_source: str = self.observed_source
+
+        collectors_expected = self.collectors_expected
+
+        collectors_healthy = self.collectors_healthy
 
         routes = []
         for routes_item_data in self.routes:
@@ -64,6 +80,9 @@ class AppOpenAPIPolicyPreviewResponse:
                 "app_id": app_id,
                 "source": source,
                 "observed_available": observed_available,
+                "observed_source": observed_source,
+                "collectors_expected": collectors_expected,
+                "collectors_healthy": collectors_healthy,
                 "routes": routes,
             }
         )
@@ -85,6 +104,12 @@ class AppOpenAPIPolicyPreviewResponse:
         source = d.pop("source")
 
         observed_available = d.pop("observed_available")
+
+        observed_source = check_app_open_api_policy_preview_response_observed_source(d.pop("observed_source"))
+
+        collectors_expected = d.pop("collectors_expected")
+
+        collectors_healthy = d.pop("collectors_healthy")
 
         routes = []
         _routes = d.pop("routes")
@@ -108,6 +133,9 @@ class AppOpenAPIPolicyPreviewResponse:
             app_id=app_id,
             source=source,
             observed_available=observed_available,
+            observed_source=observed_source,
+            collectors_expected=collectors_expected,
+            collectors_healthy=collectors_healthy,
             routes=routes,
             openapi_version=openapi_version,
             suggestions=suggestions,
