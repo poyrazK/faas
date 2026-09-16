@@ -92,6 +92,10 @@ type Harness struct {
 	ScheddSock string
 	VMMDPath   string
 	VMMDSock   string
+
+	// startedAt bounds which guest consoles belong to this harness: only files
+	// modified after it are dumped on failure (see DumpLogs).
+	startedAt time.Time
 	// SignKeyPath is the PRIVATE half of the cosign keypair whose public half
 	// schedd verifies with. imaged must sign with this exact key; see
 	// writeScheddSignPub.
@@ -177,6 +181,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which) *Harness {
 	if which&GatewaySynthStub != 0 {
 		startGatewaySynthStub(t, h)
 	}
+	h.startedAt = time.Now()
 
 	// DB URL — pgtest opened the test pool with search_path=<schema>,public.
 	// The daemon subprocess must use the SAME schema so its reads/writes
@@ -1631,6 +1636,16 @@ func (h *Harness) DumpLogs(t *testing.T) {
 			}
 			t.Logf("e2etest: %s captured output:\n%s", filepath.Base(p.Path), s)
 		}
+	}
+	// The guests' own view. Only consoles written since this harness started,
+	// so a shared node's earlier runs do not bleed into this report.
+	tails, err := recentConsoleTails(GuestConsoleDir, h.startedAt)
+	if err != nil {
+		t.Logf("e2etest: guest consoles: %v", err)
+		return
+	}
+	if r := renderConsoleTails(tails); r != "" {
+		t.Logf("e2etest: guest serial consoles (%d, tails):\n%s", len(tails), r)
 	}
 }
 
