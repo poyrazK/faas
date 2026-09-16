@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Debugger-only workflow action for one deployment/route observation.
+ */
 export type DebugRegressionActionRequest = {
   deployment_id: string;
   route: string;

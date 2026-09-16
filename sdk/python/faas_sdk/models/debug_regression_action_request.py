@@ -19,6 +19,8 @@ T = TypeVar("T", bound="DebugRegressionActionRequest")
 
 @_attrs_define
 class DebugRegressionActionRequest:
+    """Debugger-only workflow action for one deployment/route observation."""
+
     deployment_id: UUID
     route: str
     action: DebugRegressionActionRequestAction

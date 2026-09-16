@@ -29097,6 +29097,7 @@ components:
 
     DebugRegressionActionRequest:
       type: object
+      description: "Debugger-only workflow action for one deployment/route observation."
       required: [deployment_id, route, action]
       properties:
         deployment_id: { type: string, format: uuid }
@@ -29106,6 +29107,7 @@ components:
 
     DebugRegressionActionResponse:
       type: object
+      description: "The updated debugger regression observation after a workflow action."
       required: [regression]
       properties:
         regression: { $ref: '#/components/schemas/DebugRegressionItem' }

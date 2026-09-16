@@ -15,6 +15,8 @@ T = TypeVar("T", bound="DebugRegressionActionResponse")
 
 @_attrs_define
 class DebugRegressionActionResponse:
+    """The updated debugger regression observation after a workflow action."""
+
     regression: DebugRegressionItem
     """One regression observation row."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
