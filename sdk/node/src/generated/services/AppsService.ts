@@ -1431,55 +1431,6 @@ export class AppsService {
     });
   }
   /**
-   * Update regression triage state.
-   * Acknowledge, temporarily dismiss, resolve, or reopen one
-   * deployment/route regression observation. This changes debugger
-   * workflow metadata only; it never changes deployment traffic.
-   * `dismissed_until` is required only for dismiss and defaults to 24h
-   * when omitted. The server caps dismissals at 30 days.
-   *
-   * @returns DebugRegressionActionResponse Updated regression observation.
-   * @throws ApiError
-   */
-  public static updateAppDebugRegression({
-    slug,
-    reqId,
-    requestBody,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Telemetry record UUID whose evidence should be retrieved.
-     */
-    reqId: string,
-    requestBody: DebugRegressionActionRequest,
-  }): CancelablePromise<DebugRegressionActionResponse> {
-    return __request(OpenAPI, {
-      method: 'PATCH',
-      url: '/v1/apps/{slug}/debug/requests/{req_id}/evidence',
-      path: {
-        'slug': slug,
-        'req_id': reqId,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        429: `429. Two response shapes:
-        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
-        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
-        `,
-        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
-      },
-    });
-  }
-  /**
    * Active regression observations (ADR-127 / PR-B).
    * Returns regression observations written by the
    * debug_regression_observations table — surfaces per-route
@@ -1517,6 +1468,49 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+        503: `code: debug_regressions_unavailable — the debugger regression table or read query is unavailable; inspect migrations/readiness and retry.`,
+      },
+    });
+  }
+  /**
+   * Update regression triage state.
+   * Acknowledge, temporarily dismiss, resolve, or reopen one
+   * deployment/route regression observation. This changes debugger
+   * workflow metadata only; it never changes deployment traffic.
+   * `dismissed_until` is required only for dismiss and defaults to 24h
+   * when omitted. The server caps dismissals at 30 days.
+   *
+   * @returns DebugRegressionActionResponse Updated regression observation.
+   * @throws ApiError
+   */
+  public static updateAppDebugRegression({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: DebugRegressionActionRequest,
+  }): CancelablePromise<DebugRegressionActionResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/debug/regressions',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).

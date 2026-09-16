@@ -1,7 +1,6 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
-from uuid import UUID
 
 import httpx
 
@@ -15,7 +14,6 @@ from ...types import Response
 
 def _get_kwargs(
     slug: str,
-    req_id: UUID,
     *,
     body: DebugRegressionActionRequest,
 ) -> dict[str, Any]:
@@ -23,9 +21,8 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "patch",
-        "url": "/v1/apps/{slug}/debug/requests/{req_id}/evidence".format(
+        "url": "/v1/apps/{slug}/debug/regressions".format(
             slug=quote(str(slug), safe=""),
-            req_id=quote(str(req_id), safe=""),
         ),
     }
 
@@ -99,7 +96,6 @@ def _build_response(
 
 def sync_detailed(
     slug: str,
-    req_id: UUID,
     *,
     client: AuthenticatedClient | Client,
     body: DebugRegressionActionRequest,
@@ -114,7 +110,6 @@ def sync_detailed(
 
     Args:
         slug (str):
-        req_id (UUID):
         body (DebugRegressionActionRequest): Debugger-only workflow action for one
             deployment/route observation.
 
@@ -128,7 +123,6 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
-        req_id=req_id,
         body=body,
     )
 
@@ -141,7 +135,6 @@ def sync_detailed(
 
 def sync(
     slug: str,
-    req_id: UUID,
     *,
     client: AuthenticatedClient | Client,
     body: DebugRegressionActionRequest,
@@ -156,7 +149,6 @@ def sync(
 
     Args:
         slug (str):
-        req_id (UUID):
         body (DebugRegressionActionRequest): Debugger-only workflow action for one
             deployment/route observation.
 
@@ -170,7 +162,6 @@ def sync(
 
     return sync_detailed(
         slug=slug,
-        req_id=req_id,
         client=client,
         body=body,
     ).parsed
@@ -178,7 +169,6 @@ def sync(
 
 async def asyncio_detailed(
     slug: str,
-    req_id: UUID,
     *,
     client: AuthenticatedClient | Client,
     body: DebugRegressionActionRequest,
@@ -193,7 +183,6 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        req_id (UUID):
         body (DebugRegressionActionRequest): Debugger-only workflow action for one
             deployment/route observation.
 
@@ -207,7 +196,6 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
-        req_id=req_id,
         body=body,
     )
 
@@ -218,7 +206,6 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
-    req_id: UUID,
     *,
     client: AuthenticatedClient | Client,
     body: DebugRegressionActionRequest,
@@ -233,7 +220,6 @@ async def asyncio(
 
     Args:
         slug (str):
-        req_id (UUID):
         body (DebugRegressionActionRequest): Debugger-only workflow action for one
             deployment/route observation.
 
@@ -248,7 +234,6 @@ async def asyncio(
     return (
         await asyncio_detailed(
             slug=slug,
-            req_id=req_id,
             client=client,
             body=body,
         )
