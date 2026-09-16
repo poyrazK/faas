@@ -65,7 +65,7 @@ func newProjectEnvironmentPromotionFixture(t *testing.T, label string) *projectE
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	apiApp := createPromotionApp(t, store, account.ID, project.ID, "api")
+	apiApp := createPromotionApp(t, store, account.ID, project.ID, "frontend")
 	workerApp := createPromotionApp(t, store, account.ID, project.ID, "worker")
 
 	stagingPath := "/v1/projects/" + project.Slug + "/environments"
@@ -212,7 +212,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 	if len(preview.ConfigDiff.Changes) != 2 {
 		t.Fatalf("config diff=%+v, want region and release changes", preview.ConfigDiff)
 	}
-	apiChange := promotionChangeBySlug(t, preview.Changes, "api")
+	apiChange := promotionChangeBySlug(t, preview.Changes, "frontend")
 	workerChange := promotionChangeBySlug(t, preview.Changes, "worker")
 	if apiChange.Kind != "update" || apiChange.SourceDeploymentID != f.apiSource.ID || apiChange.TargetDeploymentID != f.apiTarget.ID {
 		t.Fatalf("api promotion change=%+v", apiChange)
@@ -259,7 +259,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 	if promoted.PromotionID == "" || promoted.PromotionHash != preview.PromotionHash || len(promoted.Workloads) != 2 {
 		t.Fatalf("promotion response=%+v", promoted)
 	}
-	apiResult := promotionWorkloadBySlug(t, promoted.Workloads, "api")
+	apiResult := promotionWorkloadBySlug(t, promoted.Workloads, "frontend")
 	workerResult := promotionWorkloadBySlug(t, promoted.Workloads, "worker")
 	if apiResult.Status != "promoted" || apiResult.TargetDeploymentID == "" || apiResult.TargetDeploymentID == f.apiTarget.ID {
 		t.Fatalf("api promotion result=%+v", apiResult)
@@ -329,7 +329,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 	if promotionStatus.Status != "succeeded" || promotionStatus.VerificationStatus != "verified" {
 		t.Fatalf("promotion status=%+v", promotionStatus)
 	}
-	if got := promotionStatusWorkloadBySlug(t, promotionStatus.Workloads, "api"); got.VerificationStatus != "verified" {
+	if got := promotionStatusWorkloadBySlug(t, promotionStatus.Workloads, "frontend"); got.VerificationStatus != "verified" {
 		t.Fatalf("api verification=%+v", got)
 	}
 	if got := promotionStatusWorkloadBySlug(t, promotionStatus.Workloads, "worker"); got.VerificationStatus != "verified" {
@@ -350,7 +350,7 @@ func TestE2E_ProjectEnvironmentPromotion_RouteApprovalCopyAndRollback(t *testing
 	if rollbackStatus.RollbackStatus != "rolled_back" {
 		t.Fatalf("rollback status=%+v", rollbackStatus)
 	}
-	if got := promotionStatusWorkloadBySlug(t, rollbackStatus.Workloads, "api"); got.RollbackStatus != "restored" || got.RestoredTargetDeploymentID != f.apiTarget.ID {
+	if got := promotionStatusWorkloadBySlug(t, rollbackStatus.Workloads, "frontend"); got.RollbackStatus != "restored" || got.RestoredTargetDeploymentID != f.apiTarget.ID {
 		t.Fatalf("api rollback=%+v", got)
 	}
 	if got := promotionStatusWorkloadBySlug(t, rollbackStatus.Workloads, "worker"); got.RollbackStatus != "cleared" {
