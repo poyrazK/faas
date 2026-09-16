@@ -52,7 +52,7 @@ func TestE2E_ManagedPostgres_ManifestReapplyPreservesScopedBinding(t *testing.T)
 	}
 
 	first := applyProjectMultipartWithOptions(t, h, key, "managed-orders", "", "", true, managedPostgresSource(t, false))
-	appID := managedPostgresAppID(t, first, "api")
+	appID := managedPostgresAppID(t, first, "web")
 
 	database := seedManagedPostgresDatabase(t, pool, account.ID, backend, "orders", true)
 	binding := seedManagedPostgresBinding(t, pool, account.ID, database.ID, appID)
@@ -62,14 +62,14 @@ func TestE2E_ManagedPostgres_ManifestReapplyPreservesScopedBinding(t *testing.T)
 	if second.ProjectID != first.ProjectID {
 		t.Fatalf("re-apply project_id=%q want %q", second.ProjectID, first.ProjectID)
 	}
-	if got := managedPostgresAppID(t, second, "api"); got != appID {
+	if got := managedPostgresAppID(t, second, "web"); got != appID {
 		t.Fatalf("re-apply api app_id=%q want %q", got, appID)
 	}
 
 	// A second identical apply must reuse the existing ready binding rather
 	// than reserve a duplicate target or advance its credential generation.
 	third := applyProjectMultipartWithOptions(t, h, key, "managed-orders", "", "", true, manifestSource)
-	if got := managedPostgresAppID(t, third, "api"); got != appID {
+	if got := managedPostgresAppID(t, third, "web"); got != appID {
 		t.Fatalf("third apply api app_id=%q want %q", got, appID)
 	}
 
@@ -209,14 +209,14 @@ func managedPostgresSourceWithDatabase(t *testing.T, database string) []byte {
 	entries := []struct {
 		name, body string
 	}{
-		{"gregale-managed-postgres/docker-compose.yml", "services:\n  api:\n    build:\n      context: .\n"},
-		{"gregale-managed-postgres/Dockerfile.api", "FROM alpine:3.19\nCMD [\"./api\"]\n"},
-		{"gregale-managed-postgres/index.api.js", "exports.handler = () => 1;\n"},
+		{"gregale-managed-postgres/docker-compose.yml", "services:\n  web:\n    build:\n      context: .\n"},
+		{"gregale-managed-postgres/Dockerfile.web", "FROM alpine:3.19\nCMD [\"./web\"]\n"},
+		{"gregale-managed-postgres/index.web.js", "exports.handler = () => 1;\n"},
 	}
 	if database != "" {
 		entries = append(entries, struct{ name, body string }{
 			"gregale-managed-postgres/gregale.yaml",
-			"databases:\n  - database: " + database + "\n    app: api\n    scope: production\n    env: DATABASE_URL\n    access: read_write\n",
+			"databases:\n  - database: " + database + "\n    app: web\n    scope: production\n    env: DATABASE_URL\n    access: read_write\n",
 		})
 	}
 	var buf bytes.Buffer
