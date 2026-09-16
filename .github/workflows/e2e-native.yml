@@ -27,13 +27,24 @@ name: e2e-native
 # never touched, so a rejected run is inert rather than disruptive.
 
 on:
-  schedule:
-    # 04:43 UTC — after builder-native's 03:17 nightly has finished with the
-    # node. Both serialize on the same concurrency group and the same host
-    # flock, so an overrun waits rather than collides.
-    - cron: "43 4 * * *"
+  # Manual only for now. The nightly full run is deliberately off while the
+  # beta path is being made green: a scheduled hour on the node that nobody is
+  # watching finds nothing faster, and every finding so far came from a
+  # dispatched run someone was waiting on. Restore with:
+  #   schedule:
+  #     - cron: "43 4 * * *"   # after builder-native's 03:17 nightly
+  # A scheduled run has no `lane` input, so the != 'smoke' gates below run the
+  # full matrix for it.
   workflow_dispatch:
     inputs:
+      lane:
+        description: >-
+          smoke — the beta path only (one source deploy end to end, one image
+          deploy + wake, the §11 fences, fixture checks), ~10 min.
+          full — every metal test in nine phases, ~60 min.
+        type: choice
+        options: [smoke, full]
+        default: smoke
       keep_node_running:
         description: >-
           Leave faas-acceptance-1 running after the gate finishes, to debug on
@@ -175,9 +186,28 @@ jobs:
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
             --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go'"
 
+      - name: Smoke — the beta path (one source deploy, one image deploy, §11 fences)
+        id: phase_smoke
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'smoke'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: smoke
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          # Each phase is its own transient systemd unit: losing the GitHub SSH
+          # connection must not kill cleanup halfway through with the host still
+          # quiesced. The DSN is NOT passed here — the node owns it in
+          # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=25m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
       - name: Phase 1 — fixtures (app shape checks, no microVM)
         id: phase_fixtures
-        if: always() && steps.compute-node.conclusion == 'success'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -196,7 +226,7 @@ jobs:
 
       - name: Phase 2 — build (source → builderd → builder microVM)
         id: phase_build
-        if: always() && steps.compute-node.conclusion == 'success'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -215,7 +245,7 @@ jobs:
 
       - name: Phase 3 — deploy (image, tarball, healthcheck, secrets)
         id: phase_deploy
-        if: always() && steps.compute-node.conclusion == 'success'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -234,7 +264,7 @@ jobs:
 
       - name: Phase 4 — wake (timeline, dedup, CPU fairness)
         id: phase_wake
-        if: always() && steps.compute-node.conclusion == 'success'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -253,7 +283,7 @@ jobs:
 
       - name: Phase 5 — streaming (response streaming, h2c inner leg)
         id: phase_streaming
-        if: always() && steps.compute-node.conclusion == 'success'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -272,7 +302,7 @@ jobs:
 
       - name: Phase 6 — logs (app log SSE)
         id: phase_logs
-        if: always() && steps.compute-node.conclusion == 'success'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -291,7 +321,7 @@ jobs:
 
       - name: Phase 7 — security fences (§11, ship-blocking)
         id: phase_security
-        if: always() && steps.compute-node.conclusion == 'success'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -310,7 +340,7 @@ jobs:
 
       - name: Phase 8 — two-node (recovery arbiter, drain, drills)
         id: phase_twonode
-        if: always() && steps.compute-node.conclusion == 'success'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -329,7 +359,7 @@ jobs:
 
       - name: Phase 9 — jobs (unimplemented stubs, #2569)
         id: phase_jobs
-        if: always() && steps.compute-node.conclusion == 'success'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -389,6 +419,7 @@ jobs:
         if: always() && steps.compute-node.conclusion == 'success'
         env:
           PHASE_OUTCOMES: >-
+            smoke=${{ steps.phase_smoke.outcome }}
             fixtures=${{ steps.phase_fixtures.outcome }}
             build=${{ steps.phase_build.outcome }}
             deploy=${{ steps.phase_deploy.outcome }}

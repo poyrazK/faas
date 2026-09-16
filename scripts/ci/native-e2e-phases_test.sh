@@ -74,4 +74,29 @@ if native_e2e_phase_tally "${empty_log}" probe >/dev/null 2>&1; then
 fi
 rm -f "${empty_log}"
 
-echo "native e2e phase contracts OK (${#NATIVE_E2E_PHASES[@]} phases)"
+
+# 8. Lanes. A lane is hand-picked, so the only way it can silently shrink is a
+#    name that no longer matches a metal test; the assert must catch that, and
+#    the beta definition must stay what it is.
+native_e2e_assert_lanes "${repo_root}" || fail "a lane names a test that is not in the metal suite"
+smoke_tests="$(native_e2e_lane_tests smoke "${repo_root}")"
+for must in TestSourceDeployWakeMetal TestDeployWakeMetal \
+  TestSec11_MemoryMaxFenceEnforced_CrossProcess TestSec11_SeccompFilterEnforced_CrossProcess; do
+  printf '%s\n' "${smoke_tests}" | grep -qx "${must}" ||
+    fail "smoke lane lost ${must}; it no longer exercises the beta path"
+done
+# Fixture checks ride along (no microVM), so a broken fixture tree is reported
+# before anything boots.
+for t in $(native_e2e_phase_tests fixtures "${repo_root}"); do
+  printf '%s\n' "${smoke_tests}" | grep -qx "${t}" || fail "smoke lane lost fixtures test ${t}"
+done
+# And it must stay SMALL: the lane is the answer to the hour-long matrix.
+n="$(printf '%s\n' "${smoke_tests}" | grep -c .)"
+[[ "${n}" -le 12 ]] || fail "smoke lane has ${n} tests; it is growing back into the full matrix"
+# The assert must actually bite: a bogus name fails it.
+( NATIVE_E2E_SMOKE_TESTS+=(TestDoesNotExistAnywhere); native_e2e_assert_lanes "${repo_root}" ) 2>/dev/null &&
+  fail "native_e2e_assert_lanes accepted a lane naming a nonexistent test"
+native_e2e_is_lane smoke || fail "smoke is not recognised as a lane"
+native_e2e_is_lane build && fail "a phase was recognised as a lane"
+
+echo "native e2e phase contracts OK (${#NATIVE_E2E_PHASES[@]} phases, ${#NATIVE_E2E_LANES[@]} lane)"

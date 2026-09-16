@@ -149,9 +149,22 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 	}
 	jobTimeout, _ := time.ParseDuration(m[1] + "m")
 
-	var sum time.Duration
-	for _, d := range phaseOuterBudgets(t) {
+	// A lane never runs in the same job as the phases (the steps are gated on
+	// inputs.lane either way), so it must not be added to their sum — but it
+	// must fit on its own.
+	lanes := map[string]bool{"smoke": true}
+	var sum, laneMax time.Duration
+	for phase, d := range phaseOuterBudgets(t) {
+		if lanes[phase] {
+			if d > laneMax {
+				laneMax = d
+			}
+			continue
+		}
 		sum += d
+	}
+	if sum < laneMax {
+		sum = laneMax
 	}
 	// Staging, source transfer, log collection and the node stop itself.
 	const overhead = 20 * time.Minute
@@ -163,5 +176,30 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 	// GitHub-hosted runners cap a job at 6h; a larger value is silently clamped.
 	if jobTimeout > 6*time.Hour {
 		t.Errorf("job timeout-minutes=%s exceeds GitHub's 6h job ceiling and would be clamped", jobTimeout)
+	}
+}
+
+// The smoke lane and the full phases are mutually exclusive within one run:
+// every full-phase step is gated off when lane == smoke, and the smoke step
+// is gated on when it is. A step missing its gate would run the matrix on a
+// smoke dispatch and bring the hour back.
+func TestSmokeLaneAndFullPhasesAreExclusive(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
+	if err != nil {
+		t.Fatalf("read e2e-native workflow: %v", err)
+	}
+	wf := string(body)
+	if !strings.Contains(wf, "default: smoke") {
+		t.Error("the lane input does not default to smoke; a bare dispatch would run the hour-long matrix")
+	}
+	full := strings.Count(wf, "&& inputs.lane != 'smoke'")
+	if full != 9 {
+		t.Errorf("%d full-phase steps are gated on lane != smoke, want 9 (one per phase)", full)
+	}
+	if strings.Count(wf, "&& inputs.lane == 'smoke'") != 1 {
+		t.Error("expected exactly one step gated on lane == smoke")
+	}
+	if !strings.Contains(wf, "smoke=${{ steps.phase_smoke.outcome }}") {
+		t.Error("the Verdict does not see the smoke step's outcome; a red smoke run would report green")
 	}
 }

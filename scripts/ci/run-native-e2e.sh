@@ -441,10 +441,22 @@ phase="${FAAS_E2E_PHASE:-}"
 if [[ -n "${phase}" ]]; then
   printf '%s\n' "${NATIVE_E2E_PHASES[@]}" | grep -qx "${phase}" ||
     die "unknown phase ${phase}; known: ${NATIVE_E2E_PHASES[*]}"
-  RUN_REGEX="$(native_e2e_phase_regex "${phase}" "${repo_root}")"
-  run_count="$(native_e2e_phase_tests "${phase}" "${repo_root}" | grep -c . || true)"
+  # A lane (smoke) is a hand-picked subset and makes no whole-suite claim; it
+  # is selected only by an explicit dispatch input. See native-e2e-phases.sh.
+  if native_e2e_is_lane "${phase}"; then
+    native_e2e_assert_lanes "${repo_root}" || die "lane ${phase} names a test that is not in the metal suite"
+    RUN_REGEX="$(native_e2e_lane_regex "${phase}" "${repo_root}")"
+    run_count="$(native_e2e_lane_tests "${phase}" "${repo_root}" | grep -c . || true)"
+  else
+    RUN_REGEX="$(native_e2e_phase_regex "${phase}" "${repo_root}")"
+    run_count="$(native_e2e_phase_tests "${phase}" "${repo_root}" | grep -c . || true)"
+  fi
   echo "native e2e: phase ${phase} — ${run_count} of ${metal_test_count} metal tests"
-  native_e2e_phase_tests "${phase}" "${repo_root}" | sed 's/^/  - /'
+  if native_e2e_is_lane "${phase}"; then
+    native_e2e_lane_tests "${phase}" "${repo_root}" | sed 's/^/  - /'
+  else
+    native_e2e_phase_tests "${phase}" "${repo_root}" | sed 's/^/  - /'
+  fi
   e2e_log="${FAAS_E2E_TRANSFER_ROOT:-/var/tmp}/cmd-e2e-${phase}.log"
   # Per-phase budget. The whole-suite 75m was one opaque ceiling; a phase that
   # wedges now fails its own step instead of consuming the run's remaining
@@ -468,6 +480,8 @@ if [[ -n "${phase}" ]]; then
     #     running tests: TestDeployOverridePortMetal (8m54s)
     # — killing the phase before its other tests ran at all.
     deploy) phase_timeout=45m ;;
+    # One real build plus one image deploy; the beta path, not the matrix.
+    smoke) phase_timeout=20m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac

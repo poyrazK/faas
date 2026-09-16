@@ -147,3 +147,84 @@ native_e2e_assert_phase_partition() {
   fi
   return "${rc}"
 }
+
+# ---------------------------------------------------------------------------
+# Lanes. A phase partitions the FULL suite; a lane is a deliberately small,
+# hand-picked subset for a different question. The gate's whole-suite claim
+# ("every metal test ran") belongs to the phases and is unchanged. A lane
+# makes no such claim and must never be mistaken for one — which is why it is
+# selected by an explicit dispatch input, never by default on a schedule.
+#
+# smoke — "can a beta customer's app go live and answer?" One source deploy
+# end to end (upload -> builderd -> builder microVM -> imaged -> live -> cold
+# wake -> HTTP -> park), one prebuilt-image deploy + wake, the two §11
+# ship-blocking fences, and the no-VM fixture checks. That single path touches
+# apid, builderd, imaged, schedd, vmmd and gatewayd. ~10 minutes, versus ~60
+# for the full matrix, which is what makes fix-then-rerun a loop rather than
+# an afternoon. The full run had 16 real builds per pass; nine of them are
+# variants of the same fixture, and none of that tells you sooner whether the
+# beta path works.
+NATIVE_E2E_LANES=(smoke)
+
+# NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
+# (see above); native_e2e_assert_lanes below fails if any name is not a real
+# metal test, so a rename or a lost build tag cannot quietly shrink the lane.
+NATIVE_E2E_SMOKE_TESTS=(
+  TestSourceDeployWakeMetal
+  TestDeployWakeMetal
+  TestSec11_MemoryMaxFenceEnforced_CrossProcess
+  TestSec11_SeccompFilterEnforced_CrossProcess
+)
+
+# native_e2e_lane_tests echoes a lane's tests, one per line. smoke is the
+# explicit list plus every fixtures-phase test (no microVM, seconds).
+native_e2e_lane_tests() {
+  local lane="${1:?lane name required}" root="${2:-.}"
+  case "${lane}" in
+    smoke)
+      {
+        native_e2e_phase_tests fixtures "${root}"
+        printf '%s\n' "${NATIVE_E2E_SMOKE_TESTS[@]}"
+      } | sort -u
+      ;;
+    *) echo "native-e2e-phases: unknown lane: ${lane}" >&2; return 1 ;;
+  esac
+}
+
+# native_e2e_lane_regex builds the -run anchor for a lane. Refuses an empty
+# lane for the same reason native_e2e_phase_regex does.
+native_e2e_lane_regex() {
+  local lane="${1:?lane name required}" root="${2:-.}" tests
+  tests="$(native_e2e_lane_tests "${lane}" "${root}")"
+  [[ -n "${tests}" ]] || {
+    echo "native-e2e-phases: lane ${lane} selects no tests" >&2
+    return 1
+  }
+  printf '^(%s)$\n' "$(printf '%s\n' "${tests}" | paste -sd'|' -)"
+}
+
+# native_e2e_is_lane reports whether a name is a lane rather than a phase.
+native_e2e_is_lane() {
+  local name="${1:?name required}" lane
+  for lane in "${NATIVE_E2E_LANES[@]}"; do
+    [[ "${name}" == "${lane}" ]] && return 0
+  done
+  return 1
+}
+
+# native_e2e_assert_lanes fails when a lane names a test that is not in the
+# metal-tagged set — the way a lane silently shrinks.
+native_e2e_assert_lanes() {
+  local root="${1:-.}" all_tests lane t rc=0
+  all_tests="$(native_e2e_metal_tests "${root}")"
+  for lane in "${NATIVE_E2E_LANES[@]}"; do
+    while IFS= read -r t; do
+      [[ -n "${t}" ]] || continue
+      printf '%s\n' "${all_tests}" | grep -qx -- "${t}" || {
+        echo "native-e2e-phases: lane ${lane} names ${t}, which is not a metal-tagged test (renamed, or lost its build tag)" >&2
+        rc=1
+      }
+    done < <(native_e2e_lane_tests "${lane}" "${root}")
+  done
+  return "${rc}"
+}
