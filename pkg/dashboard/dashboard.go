@@ -1930,7 +1930,25 @@ type DebugRequestDetailView struct {
 	SpansTruncated      bool
 	Explanation         string
 	EvidenceStatus      string
+	Findings            []DebugEvidenceFindingView
+	Recommendations     []DebugEvidenceRecommendationView
 	GeneratedAt         string
+}
+
+// DebugEvidenceFindingView is the template-safe projection of one
+// evidence-backed synthesis finding.
+type DebugEvidenceFindingView struct {
+	Code       string
+	Title      string
+	Detail     string
+	Confidence string
+}
+
+// DebugEvidenceRecommendationView is the template-safe projection of one
+// bounded next action suggested by the debugger.
+type DebugEvidenceRecommendationView struct {
+	Action string
+	Detail string
 }
 
 // DebugCorrelationStageView is the template-safe projection of one

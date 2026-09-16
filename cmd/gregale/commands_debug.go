@@ -11,6 +11,7 @@
 //	gregale debug requests get <slug> <req_id>
 //	gregale debug requests show <slug> <req_id>
 //	gregale debug requests evidence <slug> <req_id>
+//	gregale debug requests explain <slug> <req_id>
 //	gregale debug requests replay <slug> <req_id>
 //	gregale debug coverage <slug> [--since <dur>]
 //	gregale debug running <slug> [--since <dur>] [--limit <n>]
@@ -47,7 +48,7 @@ import (
 // commands_invocations.go's PrintUsage strings.
 const debugCmdUsage = "usage: gregale debug <requests|coverage|running|regressions|compare|bundle> ..."
 
-const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|replay> ..."
+const debugRequestsCmdUsage = "usage: gregale debug requests <list|export|watch|get|show|evidence|explain|replay> ..."
 
 // debugCmdDocsTopic is the docs topic slug for the debug
 // namespace. Resolves to cli_meta.go's "debug" cliCommand entry;
@@ -60,7 +61,7 @@ func cmdDebug(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugCmdUsage+"\n\n  requests list     list recent request telemetry\n  requests watch    watch request telemetry for new or changed rows\n  requests export   export metadata-only request telemetry\n  requests get      show one request's metadata\n  requests show     show request timeline and evidence\n  requests evidence show request evidence and explanation\n  requests explain  synthesize root-cause findings and next actions\n  requests replay   queue a request replay\n  coverage          show observed debugger signal coverage\n  running           explain why an app is still running\n  regressions       list detected regressions (use --all for every app)\n  regressions watch watch live regression events (--poll for polling)\n  regressions acknowledge|dismiss|resolve|reopen change regression triage state\n  compare           compare two deployments\n  bundle            export a redacted incident bundle with coverage", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -116,7 +117,7 @@ func cmdDebugRequests(args []string) int {
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  export    export metadata-only request telemetry\n  watch     watch request telemetry for new or changed rows\n  get       show one request's metadata\n  show      show request timeline and evidence\n  evidence  show request evidence and explanation\n  replay    queue a request replay", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, debugRequestsCmdUsage+"\n\n  list      list recent request telemetry\n  export    export metadata-only request telemetry\n  watch     watch request telemetry for new or changed rows\n  get       show one request's metadata\n  show      show request timeline and evidence\n  evidence  show request evidence and explanation\n  explain   synthesize root-cause findings and next actions\n  replay    queue a request replay", debugCmdDocsTopic)
 		return 0
 	}
 	switch args[0] {
@@ -132,11 +133,35 @@ func cmdDebugRequests(args []string) int {
 		return cmdDebugRequestsEvidence(args[1:])
 	case "evidence":
 		return cmdDebugRequestsEvidence(args[1:])
+	case "explain":
+		return cmdDebugRequestsExplain(args[1:])
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
 	return 1
+}
+
+// cmdDebugRequestsExplain renders the structured root-cause synthesis from
+// the same bounded evidence endpoint used by `show` and `evidence`.
+func cmdDebugRequestsExplain(args []string) int {
+	if len(args) != 2 {
+		PrintUsage(os.Stderr, "usage: gregale debug requests explain <slug> <req_id>", debugCmdDocsTopic)
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.GetAppDebugRequestEvidence(context.Background(), args[0], args[1])
+	if err != nil {
+		return printErr("Could not synthesize debug explanation", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp.Explanation))
+	}
+	renderDebugRequestExplanation(osStdout, resp.Explanation)
+	return 0
 }
 
 // cmdDebugRequestsEvidence renders bounded span evidence and the server's
@@ -736,9 +761,7 @@ func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceRespon
 		}
 		_, _ = fmt.Fprintln(w)
 	}
-	if headline := strings.TrimSpace(resp.Explanation.Headline); headline != "" {
-		_, _ = fmt.Fprintf(w, "explanation: %s\n", headline)
-	}
+	renderDebugRequestExplanation(w, resp.Explanation)
 
 	if len(resp.Timeline) == 0 {
 		_, _ = fmt.Fprintln(w, "timeline: no retained markers")
@@ -815,6 +838,31 @@ func renderDebugRequestEvidence(w io.Writer, resp api.DebugRequestEvidenceRespon
 	}
 	if resp.GeneratedAt != "" {
 		_, _ = fmt.Fprintf(w, "evidence generated %s\n", resp.GeneratedAt)
+	}
+}
+
+func renderDebugRequestExplanation(w io.Writer, explanation api.DebugEvidenceExplanation) {
+	if headline := strings.TrimSpace(explanation.Headline); headline != "" {
+		_, _ = fmt.Fprintf(w, "explanation: %s\n", headline)
+	}
+	if explanation.Diagnosis != "" || explanation.Confidence != "" {
+		_, _ = fmt.Fprintf(w, "diagnosis: %s", explanation.Diagnosis)
+		if explanation.Confidence != "" {
+			_, _ = fmt.Fprintf(w, " (%s confidence)", explanation.Confidence)
+		}
+		_, _ = fmt.Fprintln(w)
+	}
+	if len(explanation.Findings) > 0 {
+		_, _ = fmt.Fprintln(w, "FINDINGS")
+		for _, finding := range explanation.Findings {
+			_, _ = fmt.Fprintf(w, "- %s [%s] %s\n", finding.Title, finding.Confidence, finding.Detail)
+		}
+	}
+	if len(explanation.Recommendations) > 0 {
+		_, _ = fmt.Fprintln(w, "NEXT ACTIONS")
+		for _, recommendation := range explanation.Recommendations {
+			_, _ = fmt.Fprintf(w, "- %s: %s\n", recommendation.Action, recommendation.Detail)
+		}
 	}
 }
 

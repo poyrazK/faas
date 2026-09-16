@@ -340,7 +340,14 @@ from .debug_compare_route_stats import DebugCompareRouteStats
 from .debug_coverage_response import DebugCoverageResponse
 from .debug_coverage_signal import DebugCoverageSignal
 from .debug_evidence_explanation import DebugEvidenceExplanation
+from .debug_evidence_explanation_confidence import DebugEvidenceExplanationConfidence
+from .debug_evidence_explanation_diagnosis import DebugEvidenceExplanationDiagnosis
+from .debug_evidence_explanation_generated_by import DebugEvidenceExplanationGeneratedBy
 from .debug_evidence_explanation_status import DebugEvidenceExplanationStatus
+from .debug_evidence_finding import DebugEvidenceFinding
+from .debug_evidence_finding_confidence import DebugEvidenceFindingConfidence
+from .debug_evidence_recommendation import DebugEvidenceRecommendation
+from .debug_evidence_ref import DebugEvidenceRef
 from .debug_guest_execution_evidence import DebugGuestExecutionEvidence
 from .debug_guest_execution_evidence_error_class import DebugGuestExecutionEvidenceErrorClass
 from .debug_guest_execution_evidence_outcome import DebugGuestExecutionEvidenceOutcome
@@ -1441,7 +1448,14 @@ __all__ = (
     "DebugCoverageResponse",
     "DebugCoverageSignal",
     "DebugEvidenceExplanation",
+    "DebugEvidenceExplanationConfidence",
+    "DebugEvidenceExplanationDiagnosis",
+    "DebugEvidenceExplanationGeneratedBy",
     "DebugEvidenceExplanationStatus",
+    "DebugEvidenceFinding",
+    "DebugEvidenceFindingConfidence",
+    "DebugEvidenceRecommendation",
+    "DebugEvidenceRef",
     "DebugGuestExecutionEvidence",
     "DebugGuestExecutionEvidenceErrorClass",
     "DebugGuestExecutionEvidenceOutcome",

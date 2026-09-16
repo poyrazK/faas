@@ -34,7 +34,7 @@ class DebugRequestEvidenceResponse:
     spans: list[DebugTelemetrySpan]
     spans_truncated: bool
     explanation: DebugEvidenceExplanation
-    """Deterministic explanation generated from the safe evidence payload."""
+    """Bounded root-cause synthesis generated from the safe evidence payload."""
     generated_at: datetime.datetime
     regression: DebugRegressionItem | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

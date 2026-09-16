@@ -28991,15 +28991,61 @@ components:
 
     DebugEvidenceExplanation:
       type: object
-      description: "Deterministic explanation generated from the safe evidence payload."
+      description: "Bounded root-cause synthesis generated from the safe evidence payload."
       required: [status, headline]
       properties:
         status: { type: string, enum: [regression_detected, unobserved, regression_unavailable] }
         headline: { type: string }
+        diagnosis: { type: string, enum: [request_failure, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
+        confidence: { type: string, enum: [high, medium, low] }
         primary_span:
           oneOf:
             - $ref: '#/components/schemas/DebugTelemetrySpan'
             - type: "null"
+        findings:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/DebugEvidenceFinding' }
+        recommendations:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/DebugEvidenceRecommendation' }
+        evidence_refs:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/DebugEvidenceRef' }
+        generated_by: { type: string, enum: [rules-v1] }
+
+    DebugEvidenceFinding:
+      type: object
+      description: "One bounded, evidence-backed debugger finding."
+      required: [code, title, detail, confidence]
+      properties:
+        code: { type: string, maxLength: 64 }
+        title: { type: string, maxLength: 128 }
+        detail: { type: string, maxLength: 512 }
+        confidence: { type: string, enum: [high, medium, low] }
+        evidence_refs:
+          type: array
+          maxItems: 4
+          items: { type: string, maxLength: 64 }
+
+    DebugEvidenceRecommendation:
+      type: object
+      description: "One safe next action suggested by the debugger."
+      required: [action, detail]
+      properties:
+        action: { type: string, maxLength: 64 }
+        detail: { type: string, maxLength: 512 }
+
+    DebugEvidenceRef:
+      type: object
+      description: "A stable label for the bounded signal supporting a finding."
+      required: [kind, label, value]
+      properties:
+        kind: { type: string, maxLength: 64 }
+        label: { type: string, maxLength: 128 }
+        value: { type: string, maxLength: 64 }
 
     DebugTimelineEvent:
       type: object

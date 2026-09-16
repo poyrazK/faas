@@ -24,6 +24,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/debugger"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -909,6 +910,28 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 			Approximate:   stage.Approximate,
 		})
 	}
+	evidence := api.DebugRequestEvidenceResponse{
+		Request:        item,
+		Regression:     apiRegression,
+		Timeline:       timeline,
+		Correlation:    correlation,
+		Spans:          spans,
+		SpansTruncated: truncated,
+		Explanation:    explanation,
+	}
+	explanation = debugger.Synthesize(evidence)
+	findingViews := make([]dashboard.DebugEvidenceFindingView, 0, len(explanation.Findings))
+	for _, finding := range explanation.Findings {
+		findingViews = append(findingViews, dashboard.DebugEvidenceFindingView{
+			Code: finding.Code, Title: finding.Title, Detail: finding.Detail, Confidence: finding.Confidence,
+		})
+	}
+	recommendationViews := make([]dashboard.DebugEvidenceRecommendationView, 0, len(explanation.Recommendations))
+	for _, recommendation := range explanation.Recommendations {
+		recommendationViews = append(recommendationViews, dashboard.DebugEvidenceRecommendationView{
+			Action: recommendation.Action, Detail: recommendation.Detail,
+		})
+	}
 	data.Selected = &dashboard.DebugRequestDetailView{
 		Request:             request,
 		Regression:          matching,
@@ -918,7 +941,9 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		Spans:               spanViews,
 		SpansTruncated:      truncated,
 		Explanation:         explanation.Headline,
-		EvidenceStatus:      explanation.Status,
+		EvidenceStatus:      explanation.Diagnosis,
+		Findings:            findingViews,
+		Recommendations:     recommendationViews,
 		GeneratedAt:         now.Format(time.RFC3339),
 	}
 	return nil

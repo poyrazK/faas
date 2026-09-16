@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/debugger"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -372,7 +373,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		explanation = buildDebugEvidenceDegradedExplanation(spans)
 	}
 
-	writeJSON(w, http.StatusOK, api.DebugRequestEvidenceResponse{
+	response := api.DebugRequestEvidenceResponse{
 		Request:        request,
 		Regression:     regression,
 		Timeline:       timeline,
@@ -381,7 +382,9 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		SpansTruncated: truncated,
 		Explanation:    explanation,
 		GeneratedAt:    now.Format(time.RFC3339Nano),
-	})
+	}
+	response.Explanation = debugger.Synthesize(response)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func buildDebugEvidenceDegradedExplanation(spans []api.DebugTelemetrySpan) api.DebugEvidenceExplanation {

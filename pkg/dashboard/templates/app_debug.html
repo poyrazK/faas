@@ -265,6 +265,22 @@
           <p class="muted">request <code>{{.Data.Selected.Request.ID}}</code> · deployment <code>{{.Data.Selected.Request.DeploymentID}}</code>{{if .Data.Selected.Request.InstanceID}} · instance <code>{{.Data.Selected.Request.InstanceID}}</code>{{end}}{{if .Data.Selected.Request.WakeID}} · wake <code>{{.Data.Selected.Request.WakeID}}</code>{{end}}{{if .Data.Selected.Request.TraceID}} · trace <code>{{.Data.Selected.Request.TraceID}}</code>{{end}}</p>
           {{if .Data.Selected.Request.GuestRuntime}}<p class="muted">guest execution <strong>{{.Data.Selected.Request.GuestRuntime}}</strong> · {{.Data.Selected.Request.GuestDurationMS}} ms · outcome <strong>{{.Data.Selected.Request.GuestOutcome}}</strong>{{if .Data.Selected.Request.GuestErrorClass}} · error <code>{{.Data.Selected.Request.GuestErrorClass}}</code>{{end}}</p>{{end}}
           <div class="explanation"><strong>{{.Data.Selected.EvidenceStatus}}</strong>: {{.Data.Selected.Explanation}}</div>
+          {{if .Data.Selected.Findings}}
+            <h3>Root-cause findings</h3>
+            <ul class="debug-findings">
+            {{range .Data.Selected.Findings}}
+              <li><strong>{{.Title}}</strong> <span class="muted">({{.Confidence}} confidence)</span><br><span>{{.Detail}}</span> <code>{{.Code}}</code></li>
+            {{end}}
+            </ul>
+          {{end}}
+          {{if .Data.Selected.Recommendations}}
+            <h3>Recommended next actions</h3>
+            <ul class="debug-findings">
+            {{range .Data.Selected.Recommendations}}
+              <li><strong>{{.Action}}</strong> — {{.Detail}}</li>
+            {{end}}
+            </ul>
+          {{end}}
           <h3>Request correlation</h3>
           <p class="muted">The stage view joins retained signals from the edge through billing. Missing signals are shown explicitly; they are not treated as zero latency.</p>
           <table class="span-table correlation-table" aria-label="Request correlation stages">

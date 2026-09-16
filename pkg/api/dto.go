@@ -7940,12 +7940,48 @@ type DebugTelemetrySpan struct {
 	DBStatement   string `json:"db_statement,omitempty"`
 }
 
-// DebugEvidenceExplanation is a deterministic explanation for a request's
-// evidence. LLM synthesis can build on this stable, redacted structure later.
+// DebugEvidenceExplanation is a bounded root-cause synthesis for a request's
+// evidence. The synthesis is generated only from the already-redacted
+// debugger envelope; it never receives request bodies, headers, raw logs, or
+// raw span attributes.
 type DebugEvidenceExplanation struct {
-	Status      string              `json:"status"`
-	Headline    string              `json:"headline"`
-	PrimarySpan *DebugTelemetrySpan `json:"primary_span,omitempty"`
+	Status          string                        `json:"status"`
+	Headline        string                        `json:"headline"`
+	Diagnosis       string                        `json:"diagnosis,omitempty"`
+	Confidence      string                        `json:"confidence,omitempty"`
+	PrimarySpan     *DebugTelemetrySpan           `json:"primary_span,omitempty"`
+	Findings        []DebugEvidenceFinding        `json:"findings,omitempty"`
+	Recommendations []DebugEvidenceRecommendation `json:"recommendations,omitempty"`
+	EvidenceRefs    []DebugEvidenceRef            `json:"evidence_refs,omitempty"`
+	GeneratedBy     string                        `json:"generated_by,omitempty"`
+}
+
+// DebugEvidenceFinding is one bounded, evidence-backed observation in a
+// debugger synthesis. EvidenceRefs contains stable labels such as "request",
+// "guest", "correlation:queue", "regression", or "span:0"; it never embeds
+// raw telemetry payloads.
+type DebugEvidenceFinding struct {
+	Code         string   `json:"code"`
+	Title        string   `json:"title"`
+	Detail       string   `json:"detail"`
+	Confidence   string   `json:"confidence"`
+	EvidenceRefs []string `json:"evidence_refs,omitempty"`
+}
+
+// DebugEvidenceRecommendation is a safe next action for an operator. Action
+// and Detail are intentionally closed, short strings so a future prose model
+// cannot turn this surface into an instruction-injection channel.
+type DebugEvidenceRecommendation struct {
+	Action string `json:"action"`
+	Detail string `json:"detail"`
+}
+
+// DebugEvidenceRef identifies the bounded debugger signal supporting a
+// synthesis. Value is an opaque local label, never a raw customer value.
+type DebugEvidenceRef struct {
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+	Value string `json:"value"`
 }
 
 // DebugTimelineEvent is one deterministic causal marker for a request. Wake
