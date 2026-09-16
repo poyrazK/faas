@@ -119,6 +119,14 @@ func validGuestErrorClass(value string) bool {
 }
 
 func forwardedResponseHeader(ctx context.Context, dst http.Header, name, value string) {
+	// Response headers cross the internal bridge before they reach the
+	// customer-facing writer. Connection-management headers belong only to
+	// that hop (RFC 7230 §6.1) and must not be exposed as guest application
+	// metadata. The streaming forwarder uses this helper for both initial
+	// response headers and trailers, so keep the boundary in one place.
+	if isHopByHop(name) {
+		return
+	}
 	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) {
 		return
 	}

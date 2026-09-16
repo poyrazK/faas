@@ -50,6 +50,12 @@
 //   next request from a fresh gateway process.
 //   reclaim an abandoned async dispatch after schedd restart and complete it
 //   exactly once from its durable lease.
+//   preserve request/body/header isolation across concurrent bridge streams.
+//   apply per-instance backpressure and release the waiting request after
+//   the active request completes.
+//   carry the http1/http2/grpc app-protocol selector through the bridge,
+//   including grpc trailers.
+//   keep guest hop-by-hop response headers off the customer-facing response.
 //
 // Deployment creation is seeded at the state boundary here because the
 // source/build/image pipeline is intentionally owned by the native acceptance
@@ -97,6 +103,10 @@ type normalPathFixture struct {
 }
 
 func newNormalPathFixture(t *testing.T, slug string) *normalPathFixture {
+	return newNormalPathFixtureWithPlan(t, slug, api.PlanHobby)
+}
+
+func newNormalPathFixtureWithPlan(t *testing.T, slug string, plan api.Plan) *normalPathFixture {
 	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -116,7 +126,7 @@ func newNormalPathFixture(t *testing.T, slug string) *normalPathFixture {
 	t.Setenv("FAAS_E2E_VMMD_SOCKET", vmmdSock)
 	h := e2etest.Start(t, pool, e2etest.APID|e2etest.Schedd|e2etest.Gatewayd)
 	ctx := context.Background()
-	key := h.SeedAccount(ctx, api.PlanHobby, slug)
+	key := h.SeedAccount(ctx, plan, slug)
 	body, statusCode := doReq(t, h, key, http.MethodPost, "/v1/apps",
 		api.CreateAppRequest{Slug: slug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false)})
 	if statusCode != http.StatusCreated {
@@ -1664,9 +1674,12 @@ type normalPathVMMD struct {
 	mu               sync.Mutex
 	versions         map[string]string
 	responses        map[string]normalPathResponse
+	responsesByPath  map[string]map[string]normalPathResponse
 	responseSequence map[string][]normalPathResponse
 	failNext         map[string]error
 	probes           map[string]*normalPathCancellationProbe
+	gates            map[string]*normalPathRequestGate
+	requests         []normalPathRequestCapture
 	last             *vmmdpb.ForwardHTTPRequestInit
 	lastBody         []byte
 	lastBodyChunks   int
@@ -1681,6 +1694,62 @@ type normalPathResponse struct {
 	chunks   [][]byte
 }
 
+type normalPathRequestCapture struct {
+	Init *vmmdpb.ForwardHTTPRequestInit
+	Body []byte
+}
+
+// normalPathRequestGate deliberately blocks the fake VMMD after it has
+// received a complete request. It lets the E2E tests prove that several
+// customer requests are genuinely in flight together, or that a saturated
+// instance keeps the next request outside the bridge until the first one
+// releases its gateway slot.
+type normalPathRequestGate struct {
+	want        int
+	arrived     chan struct{}
+	release     chan struct{}
+	mu          sync.Mutex
+	count       int
+	arrivedOnce sync.Once
+	releaseOnce sync.Once
+}
+
+func newNormalPathRequestGate(want int) *normalPathRequestGate {
+	return &normalPathRequestGate{
+		want:    want,
+		arrived: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (g *normalPathRequestGate) Block(ctx context.Context) error {
+	g.mu.Lock()
+	g.count++
+	if g.count >= g.want {
+		g.arrivedOnce.Do(func() { close(g.arrived) })
+	}
+	g.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-g.release:
+		return nil
+	}
+}
+
+func (g *normalPathRequestGate) WaitArrived(timeout time.Duration) bool {
+	select {
+	case <-g.arrived:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+func (g *normalPathRequestGate) Release() {
+	g.releaseOnce.Do(func() { close(g.release) })
+}
+
 func startNormalPathVMMD(t *testing.T, socketPath string) *normalPathVMMD {
 	t.Helper()
 	listener, err := net.Listen("unix", socketPath)
@@ -1691,9 +1760,11 @@ func startNormalPathVMMD(t *testing.T, socketPath string) *normalPathVMMD {
 	vmmd := &normalPathVMMD{
 		versions:         make(map[string]string),
 		responses:        make(map[string]normalPathResponse),
+		responsesByPath:  make(map[string]map[string]normalPathResponse),
 		responseSequence: make(map[string][]normalPathResponse),
 		failNext:         make(map[string]error),
 		probes:           make(map[string]*normalPathCancellationProbe),
+		gates:            make(map[string]*normalPathRequestGate),
 	}
 	vmmdpb.RegisterVmmdServer(server, vmmd)
 	go func() {
@@ -1725,6 +1796,17 @@ func (s *normalPathVMMD) SetResponse(instanceID string, response normalPathRespo
 	defer s.mu.Unlock()
 	s.responses[instanceID] = cloneNormalPathResponse(response)
 	delete(s.responseSequence, instanceID)
+}
+
+func (s *normalPathVMMD) SetResponseForPath(instanceID, requestURI string, response normalPathResponse) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byPath := s.responsesByPath[instanceID]
+	if byPath == nil {
+		byPath = make(map[string]normalPathResponse)
+		s.responsesByPath[instanceID] = byPath
+	}
+	byPath[requestURI] = cloneNormalPathResponse(response)
 }
 
 func (s *normalPathVMMD) SetResponseSequence(instanceID string, responses []normalPathResponse) {
@@ -1764,6 +1846,19 @@ func (s *normalPathVMMD) ForwardCount() int {
 	return s.forwardCount
 }
 
+func (s *normalPathVMMD) Requests() []normalPathRequestCapture {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	captures := make([]normalPathRequestCapture, len(s.requests))
+	for i, capture := range s.requests {
+		captures[i] = normalPathRequestCapture{
+			Init: proto.Clone(capture.Init).(*vmmdpb.ForwardHTTPRequestInit),
+			Body: append([]byte(nil), capture.Body...),
+		}
+	}
+	return captures
+}
+
 func (s *normalPathVMMD) InstallCancellationProbe(instanceID string, blockRequestBody, blockResponseBody bool) *normalPathCancellationProbe {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1776,6 +1871,14 @@ func (s *normalPathVMMD) ReleaseProbe(probe *normalPathCancellationProbe) {
 	if probe != nil {
 		probe.Release()
 	}
+}
+
+func (s *normalPathVMMD) InstallRequestGate(instanceID string, want int) *normalPathRequestGate {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	gate := newNormalPathRequestGate(want)
+	s.gates[instanceID] = gate
+	return gate
 }
 
 func waitForNormalPathInvocationState(t *testing.T, store *state.PgStore, id string, want state.InvocationState, timeout time.Duration) state.Invocation {
@@ -1856,15 +1959,30 @@ func (s *normalPathVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamS
 	s.lastBody = append([]byte(nil), body...)
 	s.lastBodyChunks = bodyChunkCount
 	s.forwardCount++
+	s.requests = append(s.requests, normalPathRequestCapture{
+		Init: proto.Clone(init).(*vmmdpb.ForwardHTTPRequestInit),
+		Body: append([]byte(nil), body...),
+	})
 	version := s.versions[init.Instance]
 	response := s.responses[init.Instance]
+	if byPath := s.responsesByPath[init.Instance]; byPath != nil {
+		if pathResponse, ok := byPath[init.RequestUri]; ok {
+			response = pathResponse
+		}
+	}
 	if sequence := s.responseSequence[init.Instance]; len(sequence) > 0 {
 		response = sequence[0]
 		s.responseSequence[init.Instance] = sequence[1:]
 	}
 	failure := s.failNext[init.Instance]
+	gate := s.gates[init.Instance]
 	delete(s.failNext, init.Instance)
 	s.mu.Unlock()
+	if gate != nil {
+		if err := gate.Block(stream.Context()); err != nil {
+			return err
+		}
+	}
 	if failure != nil {
 		return failure
 	}

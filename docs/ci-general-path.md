@@ -56,6 +56,10 @@ The current contract is intentionally small and high-signal:
 | `TestE2E_NormalPath_ScheddRestartReclaimsAbandonedDispatch` | an expired async dispatch lease is reclaimed after schedd restart and completed exactly once |
 | `TestE2E_NormalPath_CancelledUploadClosesBridge` | client cancellation during upload closes the real gateway-to-VMMD stream |
 | `TestE2E_NormalPath_CancelledResponseClosesBridge` | client cancellation after response bytes begin closes the real gateway-to-VMMD stream |
+| `TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation` | concurrent bridge streams preserve each request's path, body, and customer headers |
+| `TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot` | a full per-instance concurrency slot holds the next request outside the bridge until release |
+| `TestE2E_NormalPath_AppProtocolMatrix` | `http1`, `http2`, and `grpc` selectors reach VMMD; gRPC trailers remain trailers |
+| `TestE2E_NormalPath_GuestHopByHopHeadersAreNotExposed` | guest connection-management headers are filtered at the customer response boundary |
 
 The tests seed a deployment after the source/build/image pipeline has produced
 its durable state. They must not become a second KVM suite. Add a scenario here
@@ -68,9 +72,9 @@ All files under `cmd/e2e` are discovered by `scripts/ci/e2eshard`, so the
 shards. `make e2e-general` is the fast local feedback loop for this group; it
 does not replace the full sharded gate.
 
-The next general-path gaps are intentionally tracked rather than hidden:
+The remaining general-path gaps are intentionally tracked rather than hidden:
 
-- concurrent in-flight requests with independent headers, bodies, and trace
-  context, plus bounded backpressure behavior;
-- response-side RFC hop-by-hop header filtering and HTTP/2/gRPC app-protocol
-  acceptance through the real daemon bridge.
+- concurrent request cancellation and timeout races under a saturated
+  instance;
+- request-side RFC token-listed hop-by-hop filtering and real guest-side
+  HTTP/2/gRPC framing, which require the native guest bridge.
