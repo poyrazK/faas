@@ -132,3 +132,36 @@ func TestSourceBuildingPhasesHaveABuildSizedBudget(t *testing.T) {
 		}
 	}
 }
+
+// The job timeout must outlast the SUM of every phase's outer cap. When the
+// job hits timeout-minutes GitHub kills it outright and skips the remaining
+// steps — always() included — so the Verdict never runs and the acceptance
+// node is never stopped. Run 35115616655 hit 150m against 325m of caps: no
+// verdict, and the node billed until the next dispatch happened to find it.
+func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
+	if err != nil {
+		t.Fatalf("read e2e-native workflow: %v", err)
+	}
+	m := regexp.MustCompile(`(?m)^\s*timeout-minutes:\s*(\d+)`).FindStringSubmatch(string(body))
+	if m == nil {
+		t.Fatal("no job timeout-minutes in the workflow; a wedged run would hold the node until GitHub's 6h default")
+	}
+	jobTimeout, _ := time.ParseDuration(m[1] + "m")
+
+	var sum time.Duration
+	for _, d := range phaseOuterBudgets(t) {
+		sum += d
+	}
+	// Staging, source transfer, log collection and the node stop itself.
+	const overhead = 20 * time.Minute
+	if jobTimeout < sum+overhead {
+		t.Errorf("job timeout-minutes=%s does not cover the phase caps (%s) plus %s overhead. "+
+			"A run that uses its budgets is killed before Verdict and before the node is stopped.",
+			jobTimeout, sum, overhead)
+	}
+	// GitHub-hosted runners cap a job at 6h; a larger value is silently clamped.
+	if jobTimeout > 6*time.Hour {
+		t.Errorf("job timeout-minutes=%s exceeds GitHub's 6h job ceiling and would be clamped", jobTimeout)
+	}
+}
