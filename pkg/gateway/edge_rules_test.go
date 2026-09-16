@@ -775,6 +775,8 @@ func TestPickFirstCORSMatch_PriorityOrdering(t *testing.T) {
 }
 
 func TestPickFirstCORSMatch_StarCoversNestedPaths(t *testing.T) {
+	// adr: 091 — an empty or wildcard CORS path applies to the full app,
+	// including nested routes.
 	rule := sampleCORSRule("all-paths", 0, "a.example.com")
 	rule.PathGlob = "*"
 	for _, requestPath := range []string{"/", "/hello", "/api/hello", "/api/v1/users/42"} {

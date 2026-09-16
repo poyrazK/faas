@@ -59,7 +59,7 @@ var eventsChannels = []string{
 	// cmd/apid/advisory_receiver.go::ForwardStatelessAdvisory.
 	// Payload is the small summary (app_id, instance, n, sample_path);
 	// the audit row at /v1/audit-events?kind_prefix=stateless.advisory
-	// is the detail surface. eventsFrameForAccount below enforces
+	// is the detail surface. normalizedEventsFrameForAccount below enforces
 	// account-scoping; consumers can subscribe via `faas tail
 	// --include-stateless` or the dashboard's advisory tab.
 	db.NotifyStatelessAdvisory,
@@ -184,21 +184,6 @@ func (s *server) buildOwnedAppCache(ctx context.Context, accountID string) map[s
 		out[a.ID] = struct{}{}
 	}
 	return out
-}
-
-// eventsFrameForAccount filters notifications down to those that
-// concern this account. The pg_notify payload is JSON with optional
-// `app_id` (string uuid) and `account_id` (string uuid) fields.
-//
-// Failure mode: refuse-to-decide. Unparseable JSON or payloads
-// without an `app_id` or `account_id` are dropped — we cannot
-// prove the frame belongs to this account, so the privacy-safe
-// default is to not deliver it. (Was previously fail-open: any
-// unparseable or anonymous frame was sent to every connection,
-// which leaked cross-account notifications on a one-box.)
-func eventsFrameForAccount(n db.Notification, accountID string, apps map[string]struct{}) bool {
-	_, ok := normalizedEventsFrameForAccount(n, accountID, apps)
-	return ok
 }
 
 // normalizedEventsFrameForAccount also upgrades a legacy raw app_changed UUID

@@ -438,9 +438,11 @@ func TestPgStore_InvitationOps_AllBranches(t *testing.T) {
 		TokenHash: hash[:],
 		ExpiresAt: pgStoreTimeNow().Add(time.Hour),
 	}
-	if _, err := s.CreateOrgInvitation(ctx, inv); err != nil {
+	created, err := s.CreateOrgInvitation(ctx, inv)
+	if err != nil {
 		t.Fatalf("CreateOrgInvitation: %v", err)
 	}
+	inv = created
 
 	got, err := s.OrgInvitationByTokenHash(ctx, hash[:])
 	if err != nil {

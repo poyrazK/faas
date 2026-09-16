@@ -260,6 +260,7 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"DELETE /v1/orgs/{slug}/invitations/{invitation_id}":            "RevokeInvitation",
 	"GET /v1/github/repos":                                          "ListGitHubRepositories",
 	"DELETE /v1/keys/{id}":                                          "DeleteKey",
 	"POST /v1/keys/{id}/rotate":                                     "RotateKey",
