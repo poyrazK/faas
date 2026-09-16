@@ -14,6 +14,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/executionproto"
 )
 
+// Real Node startup can exceed three seconds under the race-enabled package
+// suite on a busy CI runner. Keep interpreter-backed tests focused on their
+// behavior instead of making them depend on that startup budget.
+const nodeExecutionTestTimeoutMS = 10_000
+
 func TestNodeExecutionReturnsJSONResult(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is not installed")
@@ -22,7 +27,7 @@ func TestNodeExecutionReturnsJSONResult(t *testing.T) {
 	result, err := e.Handle(context.Background(), executionproto.Request{
 		Version: executionproto.Version, ExecutionID: "node-test", Runtime: api.ExecutionRuntimeNode22,
 		Source: `export default async (input, context) => ({value: input.value + 1, runtime: context.runtime})`,
-		Input:  json.RawMessage(`{"value":41}`), TimeoutMS: 3000, MaxOutput: 4096,
+		Input:  json.RawMessage(`{"value":41}`), TimeoutMS: nodeExecutionTestTimeoutMS, MaxOutput: 4096,
 		NetworkMode: api.ExecutionNetworkNone,
 	}, nil, nil)
 	if err != nil {
@@ -62,7 +67,7 @@ func TestNodeExecutionStagesEphemeralBundle(t *testing.T) {
 			{Path: "src/main.mjs", Content: []byte("import { answer } from './lib.mjs'; export default async input => ({value: answer + input.value})")},
 			{Path: "src/lib.mjs", Content: []byte("export const answer = 41")},
 		},
-		Input: json.RawMessage(`{"value":1}`), TimeoutMS: 3000, MaxOutput: 4096,
+		Input: json.RawMessage(`{"value":1}`), TimeoutMS: nodeExecutionTestTimeoutMS, MaxOutput: 4096,
 		NetworkMode: api.ExecutionNetworkNone,
 	}, nil, nil)
 	if err != nil {
@@ -149,7 +154,7 @@ func TestNodeConsoleOutputUsesProtocolStream(t *testing.T) {
 	result, err := protoClient.Execute(context.Background(), executionproto.Request{
 		Version: executionproto.Version, ExecutionID: "stdout-test", Runtime: api.ExecutionRuntimeNode22,
 		Source: `export default async (input) => { console.log("hello"); return input }`,
-		Input:  json.RawMessage(`{"ok":true}`), TimeoutMS: 3000, MaxOutput: 4096,
+		Input:  json.RawMessage(`{"ok":true}`), TimeoutMS: nodeExecutionTestTimeoutMS, MaxOutput: 4096,
 		NetworkMode: api.ExecutionNetworkNone,
 	})
 	if err != nil {
@@ -182,7 +187,7 @@ func TestNodeOutputLimitReturnsBoundedFailure(t *testing.T) {
 		// Node under the race-enabled package suite can exceed three seconds on
 		// a busy CI runner. Keep enough headroom for process startup while still
 		// exercising the bounded-output cancellation path.
-		Input: json.RawMessage("null"), TimeoutMS: 10_000, MaxOutput: 1024,
+		Input: json.RawMessage("null"), TimeoutMS: nodeExecutionTestTimeoutMS, MaxOutput: 1024,
 		NetworkMode: api.ExecutionNetworkNone,
 	})
 	if err != nil {
