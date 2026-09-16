@@ -65,6 +65,24 @@ func updateNormalPathTraffic(t *testing.T, f *normalPathFixture, deploymentID st
 	return response
 }
 
+func waitForNormalPathTrafficResponse(t *testing.T, f *normalPathFixture, want string, timeout time.Duration) []byte {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastBody []byte
+	var lastStatus int
+	for time.Now().Before(deadline) {
+		_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, "/", nil,
+			map[string]string{"Authorization": "Bearer " + f.key})
+		lastBody, lastStatus = body, statusCode
+		if statusCode == http.StatusOK && string(body) == want {
+			return body
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("GET %s/ did not return %q within %s; last status=%d body=%q", f.host, want, timeout, lastStatus, lastBody)
+	return nil
+}
+
 func waitForNormalPathTrafficInstance(
 	t *testing.T,
 	f *normalPathFixture,
@@ -78,7 +96,8 @@ func waitForNormalPathTrafficInstance(
 	var lastStatus int
 	for i := 0; time.Now().Before(deadline); i++ {
 		path := fmt.Sprintf("/%s/probe/%d", strings.TrimPrefix(prefix, "/"), i)
-		_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
+		_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil,
+			map[string]string{"Authorization": "Bearer " + f.key})
 		lastStatus = statusCode
 		capture, ok := normalPathCaptureForURI(f.vmmd, path)
 		if ok {
@@ -109,7 +128,8 @@ func assertNormalPathTrafficSample(
 	seen := make(map[string]int)
 	for i := 0; i < requests; i++ {
 		path := fmt.Sprintf("/%s/sample/%d", strings.TrimPrefix(prefix, "/"), i)
-		_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
+		_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil,
+			map[string]string{"Authorization": "Bearer " + f.key})
 		if statusCode != http.StatusOK {
 			t.Fatalf("traffic sample %s status=%d body=%q, want 200", path, statusCode, body)
 		}
@@ -150,7 +170,7 @@ func TestE2E_NormalPath_TrafficSplitUpdatesAndRollsBack(t *testing.T) {
 	notifyNormalPathInstanceChanged(t, f, stableInstance.ID, string(state.StateRunning))
 	notifyNormalPathInstanceChanged(t, f, candidateInstance.ID, string(state.StateRunning))
 
-	waitForNormalPathResponse(t, f.h, f.host, "normal-path:stable\n", 10*time.Second)
+	waitForNormalPathTrafficResponse(t, f, "normal-path:stable\n", 10*time.Second)
 	initial := assertNormalPathTrafficSample(t, f, "traffic-split/zero", 8, map[string]string{
 		stableInstance.ID:    "normal-path:stable\n",
 		candidateInstance.ID: "normal-path:candidate\n",
