@@ -12,10 +12,10 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 )
 
-// TestE2E_NormalPath_CancelledUploadClosesBridge catches a cleanup regression
-// where a client disconnect during a streaming request upload leaves the
-// gateway body-copy goroutine or the VMMD ForwardHTTPStream alive.
-func TestE2E_NormalPath_CancelledUploadClosesBridge(t *testing.T) {
+// TestE2E_NormalPath_CancelledUploadDoesNotOpenBridge proves that incomplete
+// uploads remain in the upload-admission phase. A client disconnect must stop
+// the request without acquiring VM capacity or opening ForwardHTTPStream.
+func TestE2E_NormalPath_CancelledUploadDoesNotOpenBridge(t *testing.T) {
 	f := newNormalPathFixture(t, "normal-cancel-upload")
 	if f == nil {
 		return
@@ -23,7 +23,7 @@ func TestE2E_NormalPath_CancelledUploadClosesBridge(t *testing.T) {
 	_, instance := createNormalPathLiveDeployment(t, f.ctx, f.store, f.app.ID, f.nodeID, "cancel-upload")
 	f.vmmd.SetVersion(instance.ID, "cancel-upload")
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:cancel-upload\n", 10*time.Second)
-	probe := f.vmmd.InstallCancellationProbe(instance.ID, true, false)
+	probe := f.vmmd.InstallCancellationProbe(instance.ID, false, false)
 
 	requestCtx, cancel := context.WithCancel(f.ctx)
 	defer cancel()
@@ -46,13 +46,11 @@ func TestE2E_NormalPath_CancelledUploadClosesBridge(t *testing.T) {
 		requestDone <- err
 	}()
 
-	waitNormalPathProbe(t, probe.initSeen, "bridge init")
 	writeDone := make(chan error, 1)
 	go func() {
 		_, writeErr := bodyWriter.Write([]byte(strings.Repeat("x", 16*1024)))
 		writeDone <- writeErr
 	}()
-	waitNormalPathProbe(t, probe.firstBodySeen, "first request body chunk")
 	select {
 	case writeErr := <-writeDone:
 		if writeErr != nil {
@@ -72,7 +70,16 @@ func TestE2E_NormalPath_CancelledUploadClosesBridge(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancelled upload did not terminate the client request")
 	}
-	waitNormalPathProbe(t, probe.canceled, "bridge cancellation")
+	select {
+	case <-probe.initSeen:
+		t.Fatal("cancelled incomplete upload opened the VMMD bridge")
+	case <-time.After(250 * time.Millisecond):
+	}
+	for _, capture := range f.vmmd.Requests() {
+		if capture.Init.GetRequestUri() == "/cancel-upload" {
+			t.Fatal("cancelled incomplete upload reached VMMD")
+		}
+	}
 }
 
 // TestE2E_NormalPath_CancelledResponseClosesBridge catches a cleanup

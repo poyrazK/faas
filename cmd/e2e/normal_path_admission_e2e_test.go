@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -127,11 +126,11 @@ func TestE2E_NormalPath_CancelledQueuedAdmissionReleasesCapacity(t *testing.T) {
 	t.Fatal("request after cancellation did not reach VMMD")
 }
 
-// TestE2E_NormalPath_QueuedAdmissionBudgetExpiryReturns504 covers the
-// platform-owned timeout path while an instance is full. The short budget is
-// added only after the active requests are admitted, so those held streams
-// remain healthy while the queued request expires outside the bridge.
-func TestE2E_NormalPath_QueuedAdmissionBudgetExpiryReturns504(t *testing.T) {
+// TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget proves that
+// the customer execution budget starts after per-VM capacity admission. A
+// request can wait behind a full instance for longer than its configured
+// budget and still receive the full budget once it enters the guest bridge.
+func TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget(t *testing.T) {
 	f := newNormalPathFixtureWithPlan(t, "normal-admission-timeout", api.PlanFree)
 	if f == nil {
 		return
@@ -171,29 +170,40 @@ func TestE2E_NormalPath_QueuedAdmissionBudgetExpiryReturns504(t *testing.T) {
 	waiter := normalPathAdmissionRequest(client, ctx, f.h.GatewayURL, f.host, "/admission-timeout/waiter")
 	select {
 	case got := <-waiter:
-		if got.err != nil {
-			t.Fatalf("budget-expired queued request failed at transport: %v", got.err)
-		}
-		if got.status != http.StatusGatewayTimeout {
-			t.Fatalf("budget-expired queued request status=%d body=%q, want 504", got.status, got.body)
-		}
-		if got.headers.Get(api.ErrorCodeHeader) != api.CodeRequestBudgetExceeded {
-			t.Fatalf("budget-expired queued request error header=%q, want %q", got.headers.Get(api.ErrorCodeHeader), api.CodeRequestBudgetExceeded)
-		}
-		if problemCode(got.body) != api.CodeRequestBudgetExceeded || !strings.Contains(string(got.body), api.CodeRequestBudgetExceeded) {
-			t.Fatalf("budget-expired queued request body=%q, want canonical request-budget problem", got.body)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("budget-expired queued request did not complete")
+		t.Fatalf("queued request completed before capacity was released: status=%d body=%q err=%v", got.status, got.body, got.err)
+	case <-time.After(750 * time.Millisecond):
+		// The request has now waited longer than the 500 ms execution budget.
 	}
 
 	for _, capture := range f.vmmd.Requests() {
 		if capture.Init.GetRequestUri() == "/admission-timeout/waiter" {
-			t.Fatal("budget-expired queued request reached VMMD")
+			t.Fatal("queued request reached VMMD before capacity was released")
 		}
 	}
 
 	gate.Release()
+	select {
+	case got := <-waiter:
+		if got.err != nil {
+			t.Fatalf("queued request failed after capacity release: %v", got.err)
+		}
+		if got.status != http.StatusOK || string(got.body) != "normal-path:admission-timeout\n" {
+			t.Fatalf("queued request response=(status=%d,body=%q), want 200 after capacity release", got.status, got.body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued request did not complete after capacity release")
+	}
+
+	foundWaiter := false
+	for _, capture := range f.vmmd.Requests() {
+		if capture.Init.GetRequestUri() == "/admission-timeout/waiter" {
+			foundWaiter = true
+			break
+		}
+	}
+	if !foundWaiter {
+		t.Fatal("queued request did not reach VMMD after capacity release")
+	}
 	for i, resultCh := range active {
 		select {
 		case got := <-resultCh:

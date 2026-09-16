@@ -54,12 +54,12 @@ The current contract is intentionally small and high-signal:
 | `TestE2E_NormalPath_GatewayRestartReloadsDurableRoute` | gateway restart rehydrates routing from Postgres |
 | `TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse` | an in-flight bridge response is terminated on gateway restart and the fresh gateway serves the durable route |
 | `TestE2E_NormalPath_ScheddRestartReclaimsAbandonedDispatch` | an expired async dispatch lease is reclaimed after schedd restart and completed exactly once |
-| `TestE2E_NormalPath_CancelledUploadClosesBridge` | client cancellation during upload closes the real gateway-to-VMMD stream |
+| `TestE2E_NormalPath_CancelledUploadDoesNotOpenBridge` | client cancellation during upload terminates before the gateway opens a VMMD stream |
 | `TestE2E_NormalPath_CancelledResponseClosesBridge` | client cancellation after response bytes begin closes the real gateway-to-VMMD stream |
 | `TestE2E_NormalPath_ConcurrentRequestsPreserveIsolation` | concurrent bridge streams preserve each request's path, body, and customer headers |
 | `TestE2E_NormalPath_PerInstanceBackpressureReleasesSlot` | a full per-instance concurrency slot holds the next request outside the bridge until release |
 | `TestE2E_NormalPath_CancelledQueuedAdmissionReleasesCapacity` | canceling a queued request leaves it outside VMMD and preserves capacity for the next request |
-| `TestE2E_NormalPath_QueuedAdmissionBudgetExpiryReturns504` | a platform-owned budget expiry while admission is queued returns the canonical 504 problem |
+| `TestE2E_NormalPath_QueuedAdmissionDoesNotConsumeExecutionBudget` | per-VM capacity waiting does not consume the customer execution budget |
 | `TestE2E_NormalPath_TrafficSpreadsAcrossLiveInstances` | Postgres target hydration and round-robin routing reach multiple live siblings |
 | `TestE2E_NormalPath_StaleInstanceFailsOverAndReplacementRejoins` | a stale VMMD target is evicted while a healthy sibling continues serving and a replacement re-enters rotation |
 | `TestE2E_NormalPath_TrafficSplitUpdatesAndRollsBack` | live 0%-candidate isolation, API weight changes, pg_notify refresh, weighted routing, and rollback |
