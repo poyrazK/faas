@@ -654,6 +654,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/projects/scan":            "ScanProject",
 	"POST /v1/projects/scan/source-ref": "ScanProjectSourceRef",
 	"POST /v1/projects":                 "ApplyProjectPlan",
+	"GET /v1/projects/{slug}/environments/{environment}/promotion-preview": "GetProjectEnvironmentPromotionPreview",
 
 	// ADR-124 follow-up #3 — persistent --exclude history. The
 	// auto-derivation would produce "DeleteProjectsSlugExclusionsSlug2"

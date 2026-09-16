@@ -418,6 +418,8 @@ export type { ProjectEnvironmentApprovalResponse } from './ProjectEnvironmentApp
 export type { ProjectEnvironmentConfigChange } from './ProjectEnvironmentConfigChange.js';
 export type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';
 export type { ProjectEnvironmentConfigResponse } from './ProjectEnvironmentConfigResponse.js';
+export type { ProjectEnvironmentPromotionChange } from './ProjectEnvironmentPromotionChange.js';
+export type { ProjectEnvironmentPromotionPreviewResponse } from './ProjectEnvironmentPromotionPreviewResponse.js';
 export type { ProjectEnvironmentResponse } from './ProjectEnvironmentResponse.js';
 export type { ProjectResponse } from './ProjectResponse.js';
 export type { ProjectScanRequest } from './ProjectScanRequest.js';

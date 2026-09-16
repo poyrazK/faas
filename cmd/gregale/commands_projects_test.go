@@ -35,6 +35,17 @@ func TestProjectsListJSONUsesAccountEndpointAndNDJSON(t *testing.T) {
 	}
 }
 
+func TestProjectsEnvironmentPromotionPreviewUsesTargetRoute(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","to_environment_protected":true,"approval_required":true,"can_promote":true,"config_diff":{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":1,"to_version":1,"from_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","to_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","changes":[]},"changes":[],"promotion_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","promotion_token":"token"}`, http.StatusOK)
+	if code := cmdProjectsEnvironmentPromotionPreview([]string{"shop", "--from", "staging", "--to", "production"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/promotion-preview" {
+		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	}
+}
+
 func TestProjectsUpdateCarriesExplicitFields(t *testing.T) {
 	resetJSONOut(t)
 	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","slug":"shop","production_branch":"release","scan_source":"compose","workload_count":0,"created_at":"2026-09-15T00:00:00Z","updated_at":"2026-09-15T00:00:00Z","workloads":[],"exclusions":[]}`, http.StatusOK)

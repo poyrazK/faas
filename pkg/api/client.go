@@ -1488,6 +1488,22 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentConfigDiff(ctx context.Co
 	return c.GetProjectEnvironmentConfigDiff(ctx, projectSlug, targetEnvironment, sourceEnvironment)
 }
 
+// GetProjectEnvironmentPromotionPreview returns a read-only promotion plan
+// from one registered environment to another. The promotion token is an
+// identity for a future execute step; this call never mutates deployments.
+func (c *Client) GetProjectEnvironmentPromotionPreview(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentPromotionPreviewResponse, error) {
+	var out ProjectEnvironmentPromotionPreviewResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotion-preview?from=" + url.QueryEscape(sourceEnvironment)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+// GetProjectsSlugEnvironmentsEnvironmentPromotionPreview is the route-shaped
+// alias used by SDK coverage. Prefer GetProjectEnvironmentPromotionPreview
+// for new Go callers.
+func (c *Client) GetProjectsSlugEnvironmentsEnvironmentPromotionPreview(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string) (ProjectEnvironmentPromotionPreviewResponse, error) {
+	return c.GetProjectEnvironmentPromotionPreview(ctx, projectSlug, targetEnvironment, sourceEnvironment)
+}
+
 // ApproveProjectEnvironment authorizes one exact plan for a protected
 // environment. The returned token is short-lived and must be passed to apply.
 func (c *Client) ApproveProjectEnvironment(ctx context.Context, projectSlug, environmentSlug string, req CreateProjectEnvironmentApprovalRequest) (ProjectEnvironmentApprovalResponse, error) {

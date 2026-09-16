@@ -1187,7 +1187,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List projects in this account"},
 			{Name: "info", Short: "Show a project and its workloads"},
-			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect)"},
+			{Name: "environments", Short: "Manage project environments (list|create|protect|unprotect|preview)"},
 			{Name: "update", Short: "Update repository or production branch", Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository owner/name; empty unbinds", Value: "OWNER/NAME"},
 				{Name: "branch", Short: "production branch", Value: "BRANCH"},

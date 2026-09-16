@@ -424,6 +424,8 @@ export type { ProjectEnvironmentApprovalResponse } from './models/ProjectEnviron
 export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironmentConfigChange.js';
 export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';
 export type { ProjectEnvironmentConfigResponse } from './models/ProjectEnvironmentConfigResponse.js';
+export type { ProjectEnvironmentPromotionChange } from './models/ProjectEnvironmentPromotionChange.js';
+export type { ProjectEnvironmentPromotionPreviewResponse } from './models/ProjectEnvironmentPromotionPreviewResponse.js';
 export type { ProjectEnvironmentResponse } from './models/ProjectEnvironmentResponse.js';
 export type { ProjectResponse } from './models/ProjectResponse.js';
 export type { ProjectScanRequest } from './models/ProjectScanRequest.js';

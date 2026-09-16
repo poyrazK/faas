@@ -124,3 +124,36 @@ type ProjectEnvironmentConfigDiffResponse struct {
 	ToHash          string                           `json:"to_hash"`
 	Changes         []ProjectEnvironmentConfigChange `json:"changes"`
 }
+
+// ProjectEnvironmentPromotionChange describes one workload's source and
+// target environment release identity. Values are deployment metadata only;
+// the preview never exposes source bytes or secrets.
+type ProjectEnvironmentPromotionChange struct {
+	WorkloadSlug       string `json:"workload_slug"`
+	WorkloadName       string `json:"workload_name"`
+	Kind               string `json:"kind"`
+	SourceDeploymentID string `json:"source_deployment_id,omitempty"`
+	TargetDeploymentID string `json:"target_deployment_id,omitempty"`
+	SourceBuildID      string `json:"source_build_id,omitempty"`
+	TargetBuildID      string `json:"target_build_id,omitempty"`
+	SourceRevision     string `json:"source_revision,omitempty"`
+	TargetRevision     string `json:"target_revision,omitempty"`
+	SourceRevisionKind string `json:"source_revision_kind,omitempty"`
+	TargetRevisionKind string `json:"target_revision_kind,omitempty"`
+}
+
+// ProjectEnvironmentPromotionPreviewResponse is a read-only promotion plan
+// between two registered environments in one project.
+type ProjectEnvironmentPromotionPreviewResponse struct {
+	ProjectSlug            string                               `json:"project_slug"`
+	FromEnvironment        string                               `json:"from_environment"`
+	ToEnvironment          string                               `json:"to_environment"`
+	ToEnvironmentProtected bool                                 `json:"to_environment_protected"`
+	ApprovalRequired       bool                                 `json:"approval_required"`
+	CanPromote             bool                                 `json:"can_promote"`
+	BlockingReasons        []string                             `json:"blocking_reasons,omitempty"`
+	ConfigDiff             ProjectEnvironmentConfigDiffResponse `json:"config_diff"`
+	Changes                []ProjectEnvironmentPromotionChange  `json:"changes"`
+	PromotionHash          string                               `json:"promotion_hash"`
+	PromotionToken         string                               `json:"promotion_token"`
+}

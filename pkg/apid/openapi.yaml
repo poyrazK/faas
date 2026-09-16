@@ -10457,6 +10457,44 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/promotion-preview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the environment promotion preview.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Target environment receiving the promotion preview.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: from
+        in: query
+        required: true
+        description: Source environment whose live releases are compared with the target.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentPromotionPreview
+      summary: Preview promotion of live workloads between project environments.
+      description: |
+        Read-only comparison of the source and target environment. The
+        response includes non-secret configuration changes, live deployment
+        identities, target protection state, and an opaque promotion token
+        bound to those identities. It does not create deployments or audit
+        mutations.
+      responses:
+        '200':
+          description: Promotion preview and immutable promotion identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/delete-preview:
     parameters:
       - name: slug
@@ -21849,6 +21887,50 @@ components:
         changes:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentConfigChange' }
+
+    ProjectEnvironmentPromotionChange:
+      description: One workload's live release identity in a source and target environment.
+      type: object
+      required: [workload_slug, workload_name, kind]
+      properties:
+        workload_slug: { type: string }
+        workload_name: { type: string }
+        kind:
+          type: string
+          enum: [source_missing, create, update, unchanged]
+        source_deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        target_deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        source_build_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        target_build_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        source_revision: { type: string }
+        target_revision: { type: string }
+        source_revision_kind:
+          type: string
+          enum: [source_sha256, image_digest, commit_sha, deployment_id]
+        target_revision_kind:
+          type: string
+          enum: [source_sha256, image_digest, commit_sha, deployment_id]
+
+    ProjectEnvironmentPromotionPreviewResponse:
+      description: Read-only promotion preview between two registered project environments.
+      type: object
+      required: [project_slug, from_environment, to_environment, to_environment_protected, approval_required, can_promote, config_diff, changes, promotion_hash, promotion_token]
+      properties:
+        project_slug: { type: string }
+        from_environment: { type: string }
+        to_environment: { type: string }
+        to_environment_protected: { type: boolean }
+        approval_required: { type: boolean }
+        can_promote: { type: boolean }
+        blocking_reasons:
+          type: array
+          items: { type: string }
+        config_diff: { $ref: '#/components/schemas/ProjectEnvironmentConfigDiffResponse' }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionChange' }
+        promotion_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        promotion_token: { type: string, minLength: 1 }
 
     CreateProjectEnvironmentRequest:
       description: Request to register a named project environment.

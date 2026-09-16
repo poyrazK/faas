@@ -1476,7 +1476,13 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect)
+Manage project environments (list|create|protect|unprotect|preview)
+
+### projects environments preview
+
+Preview promotion of live workloads between two project environments
+
+`gregale projects environments preview <project-slug> --from <environment> --to <environment>`
 
 ### projects update
 
@@ -1887,4 +1893,3 @@ Print the powershell completion snippet
 Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg)
 
 `gregale man <command>`
-

@@ -11,6 +11,7 @@ import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePrevie
 import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnvironmentApprovalResponse.js';
 import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
+import type { ProjectEnvironmentPromotionPreviewResponse } from '../models/ProjectEnvironmentPromotionPreviewResponse.js';
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
@@ -562,6 +563,56 @@ export class ProjectsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429. Two response shapes:
+        - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
+        - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview promotion of live workloads between project environments.
+   * Read-only comparison of the source and target environment. The
+   * response includes non-secret configuration changes, live deployment
+   * identities, target protection state, and an opaque promotion token
+   * bound to those identities. It does not create deployments or audit
+   * mutations.
+   *
+   * @returns ProjectEnvironmentPromotionPreviewResponse Promotion preview and immutable promotion identity.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentPromotionPreview({
+    slug,
+    environment,
+    from,
+  }: {
+    /**
+     * Project slug owning the environment promotion preview.
+     */
+    slug: string,
+    /**
+     * Target environment receiving the promotion preview.
+     */
+    environment: string,
+    /**
+     * Source environment whose live releases are compared with the target.
+     */
+    from: string,
+  }): CancelablePromise<ProjectEnvironmentPromotionPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/promotion-preview',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'from': from,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429. Two response shapes:
         - \`application/problem+json\` for code-driven 429s (\`plan_limit_concurrency\`, \`quota_exhausted\`).
         - \`text/plain\` for the authlimiter middleware (\`pkg/middleware/authlimit.go\`).

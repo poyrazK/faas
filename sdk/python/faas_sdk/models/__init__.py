@@ -805,6 +805,15 @@ from .project_environment_config_change_kind import ProjectEnvironmentConfigChan
 from .project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
 from .project_environment_config_response import ProjectEnvironmentConfigResponse
 from .project_environment_config_response_values import ProjectEnvironmentConfigResponseValues
+from .project_environment_promotion_change import ProjectEnvironmentPromotionChange
+from .project_environment_promotion_change_kind import ProjectEnvironmentPromotionChangeKind
+from .project_environment_promotion_change_source_revision_kind import (
+    ProjectEnvironmentPromotionChangeSourceRevisionKind,
+)
+from .project_environment_promotion_change_target_revision_kind import (
+    ProjectEnvironmentPromotionChangeTargetRevisionKind,
+)
+from .project_environment_promotion_preview_response import ProjectEnvironmentPromotionPreviewResponse
 from .project_environment_response import ProjectEnvironmentResponse
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
@@ -1877,6 +1886,11 @@ __all__ = (
     "ProjectEnvironmentConfigDiffResponse",
     "ProjectEnvironmentConfigResponse",
     "ProjectEnvironmentConfigResponseValues",
+    "ProjectEnvironmentPromotionChange",
+    "ProjectEnvironmentPromotionChangeKind",
+    "ProjectEnvironmentPromotionChangeSourceRevisionKind",
+    "ProjectEnvironmentPromotionChangeTargetRevisionKind",
+    "ProjectEnvironmentPromotionPreviewResponse",
     "ProjectEnvironmentResponse",
     "ProjectResponse",
     "ProjectScanRequest",

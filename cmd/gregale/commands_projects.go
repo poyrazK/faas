@@ -34,7 +34,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|preview>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -46,10 +46,47 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentProtection(args[1:], true)
 	case "unprotect":
 		return cmdProjectsEnvironmentProtection(args[1:], false)
+	case "preview", "promotion-preview":
+		return cmdProjectsEnvironmentPromotionPreview(args[1:])
 	default:
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown project environments subcommand %q", args[0]), "projects environments")
 		return 1
 	}
+}
+
+func cmdProjectsEnvironmentPromotionPreview(args []string) int {
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("projects-environments-preview", flag.ContinueOnError)
+	from := fs.String("from", "", "source environment")
+	to := fs.String("to", "", "target environment")
+	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments preview <project-slug> --from <environment> --to <environment>", "projects environments")
+		return 1
+	}
+	if *from == *to {
+		return printErr("Invalid environments", fmt.Errorf("--from and --to must be different"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	preview, err := client.GetProjectEnvironmentPromotionPreview(context.Background(), positional[0], *to, *from)
+	if err != nil {
+		return printErr("Promotion preview failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(preview))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Promotion preview %s: %s -> %s\n  can promote: %t\n  approval required: %t\n  config changes: %d\n  promotion hash: %s\n",
+		preview.ProjectSlug, preview.FromEnvironment, preview.ToEnvironment, preview.CanPromote,
+		preview.ApprovalRequired, len(preview.ConfigDiff.Changes), preview.PromotionHash)
+	for _, reason := range preview.BlockingReasons {
+		_, _ = fmt.Fprintf(osStdout, "  blocked: %s\n", reason)
+	}
+	for _, change := range preview.Changes {
+		_, _ = fmt.Fprintf(osStdout, "  %-16s %-10s %s\n", change.WorkloadSlug, change.Kind, change.SourceRevision)
+	}
+	return 0
 }
 
 func cmdProjectsEnvironmentsList(args []string) int {
