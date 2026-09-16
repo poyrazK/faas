@@ -43,6 +43,7 @@ type fakeAPI struct {
 	srv       *httptest.Server
 	sawMethod string
 	sawPath   string
+	sawQuery  string
 	sawBody   []byte
 	sawHeader http.Header
 }
@@ -53,6 +54,7 @@ func newFakeAPI(t *testing.T, body string, status int) *fakeAPI {
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.sawMethod = r.Method
 		f.sawPath = r.URL.Path
+		f.sawQuery = r.URL.RawQuery
 		f.sawHeader = r.Header.Clone()
 		b, _ := io.ReadAll(r.Body)
 		f.sawBody = b

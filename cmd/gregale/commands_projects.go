@@ -37,7 +37,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|releases|history|config|diff|preview|promote|status|rollback>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -49,6 +49,14 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentProtection(args[1:], true)
 	case "unprotect":
 		return cmdProjectsEnvironmentProtection(args[1:], false)
+	case "releases", "release":
+		return cmdProjectsEnvironmentReleases(args[1:])
+	case "history":
+		return cmdProjectsEnvironmentHistory(args[1:])
+	case "config":
+		return cmdProjectsEnvironmentConfig(args[1:])
+	case "diff":
+		return cmdProjectsEnvironmentConfigDiff(args[1:])
 	case "preview", "promotion-preview":
 		return cmdProjectsEnvironmentPromotionPreview(args[1:])
 	case "promote":
@@ -61,6 +69,124 @@ func cmdProjectsEnvironments(args []string) int {
 		PrintUsage(os.Stderr, fmt.Sprintf("unknown project environments subcommand %q", args[0]), "projects environments")
 		return 1
 	}
+}
+
+func cmdProjectsEnvironmentReleases(args []string) int {
+	if len(args) != 2 || !api.ValidProjectSlug(args[0]) || !api.ValidProjectEnvironmentSlug(args[1]) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments releases <project-slug> <environment-slug>", "projects environments")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	releases, err := client.GetProjectEnvironmentReleases(context.Background(), args[0], args[1])
+	if err != nil {
+		return printErr("Could not load environment releases", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(releases))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Environment releases %s/%s\n%-24s %-14s %-36s %-18s %s\n", releases.ProjectSlug, releases.Environment, "WORKLOAD", "STATUS", "DEPLOYMENT", "BUILD", "COMMIT")
+	for _, workload := range releases.Workloads {
+		_, _ = fmt.Fprintf(osStdout, "%-24s %-14s %-36s %-18s %s\n", workload.WorkloadSlug, workload.Status, workload.DeploymentID, workload.BuildID, workload.CommitSHA)
+	}
+	return 0
+}
+
+func cmdProjectsEnvironmentHistory(args []string) int {
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("projects-environments-history", flag.ContinueOnError)
+	from := fs.String("from", "", "source environment filter")
+	status := fs.String("status", "", "promotion status filter: running|succeeded|failed")
+	before := fs.String("before", "", "opaque cursor from a previous page")
+	limit := fs.Int("limit", 50, "page size (1-100)")
+	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments history <project-slug> <environment-slug> [--from <environment>] [--status running|succeeded|failed] [--before <CURSOR>] [--limit <N>]", "projects environments")
+		return 1
+	}
+	if *from != "" && !api.ValidProjectEnvironmentSlug(*from) {
+		return printErr("Invalid source environment", fmt.Errorf("--from must be a lowercase project environment slug"))
+	}
+	if *status != "" && *status != "running" && *status != "succeeded" && *status != "failed" {
+		return printErr("Invalid promotion status", fmt.Errorf("--status must be running, succeeded, or failed"))
+	}
+	if *limit < 1 || *limit > 100 {
+		return printErr("Invalid history limit", fmt.Errorf("--limit must be between 1 and 100"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	history, err := client.ListProjectEnvironmentPromotions(context.Background(), positional[0], positional[1], *before, *limit, *from, *status)
+	if err != nil {
+		return printErr("Could not load promotion history", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(history))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Promotion history %s/%s\n%-36s %-12s %-16s %-16s %s\n", positional[0], positional[1], "PROMOTION", "STATUS", "FROM", "TO", "CREATED")
+	for _, promotion := range history.Items {
+		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-16s %-16s %s\n", promotion.PromotionID, promotion.Status, promotion.FromEnvironment, promotion.ToEnvironment, promotion.CreatedAt)
+	}
+	if history.NextBefore != "" {
+		_, _ = fmt.Fprintf(osStdout, "next_before: %s\n", history.NextBefore)
+	}
+	return 0
+}
+
+func cmdProjectsEnvironmentConfig(args []string) int {
+	if len(args) != 2 || !api.ValidProjectSlug(args[0]) || !api.ValidProjectEnvironmentSlug(args[1]) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments config <project-slug> <environment-slug>", "projects environments")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	config, err := client.GetProjectEnvironmentConfig(context.Background(), args[0], args[1])
+	if err != nil {
+		return printErr("Could not load environment config", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(config))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Environment config %s/%s\n  version: %d\n  hash: %s\n  updated: %s\n  values: %s\n", config.ProjectSlug, config.Environment, config.Version, config.ConfigHash, config.UpdatedAt, config.Values)
+	return 0
+}
+
+func cmdProjectsEnvironmentConfigDiff(args []string) int {
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("projects-environments-diff", flag.ContinueOnError)
+	from := fs.String("from", "", "source environment")
+	to := fs.String("to", "", "target environment")
+	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
+		PrintUsage(os.Stderr, "usage: gregale projects environments diff <project-slug> --from <environment> --to <environment>", "projects environments")
+		return 1
+	}
+	if *from == *to {
+		return printErr("Invalid environments", fmt.Errorf("--from and --to must be different"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	diff, err := client.GetProjectEnvironmentConfigDiff(context.Background(), positional[0], *to, *from)
+	if err != nil {
+		return printErr("Could not load environment config diff", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(diff))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Environment config diff %s: %s -> %s\n  versions: %d -> %d\n  hashes: %s -> %s\n", diff.ProjectSlug, diff.FromEnvironment, diff.ToEnvironment, diff.FromVersion, diff.ToVersion, diff.FromHash, diff.ToHash)
+	if len(diff.Changes) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "  no changes")
+		return 0
+	}
+	for _, change := range diff.Changes {
+		_, _ = fmt.Fprintf(osStdout, "  %-24s %-8s before=%s after=%s\n", change.Key, change.Kind, change.Before, change.After)
+	}
+	return 0
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {

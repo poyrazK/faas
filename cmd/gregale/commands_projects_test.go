@@ -46,6 +46,52 @@ func TestProjectsEnvironmentPromotionPreviewUsesTargetRoute(t *testing.T) {
 	}
 }
 
+func TestProjectsEnvironmentReleasesUsesEnvironmentRoute(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"project_slug":"shop","environment":"staging","workloads":[{"workload_slug":"api","workload_name":"api","status":"live","deployment_id":"dep-1","build_id":"build-1","commit_sha":"abc123"}]}`, http.StatusOK)
+	if code := cmdProjectsEnvironmentReleases([]string{"shop", "staging"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/staging/releases" {
+		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	}
+}
+
+func TestProjectsEnvironmentHistoryUsesFilters(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{"items":[{"promotion_id":"prom-1","project_slug":"shop","from_environment":"staging","to_environment":"production","status":"succeeded","created_at":"2026-09-17T00:00:00Z","updated_at":"2026-09-17T00:00:00Z"}],"next_before":"cursor"}`, http.StatusOK)
+	if code := cmdProjectsEnvironmentHistory([]string{"shop", "production", "--from", "staging", "--status", "succeeded", "--limit", "10", "--before", "cursor"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/promotions" || f.sawQuery != "before=cursor&from=staging&limit=10&status=succeeded" {
+		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	}
+}
+
+func TestProjectsEnvironmentConfigAndDiffUseEnvironmentRoutes(t *testing.T) {
+	t.Run("config", func(t *testing.T) {
+		resetJSONOut(t)
+		f := authedFakeAPI(t, `{"project_slug":"shop","environment":"staging","version":2,"config_hash":"hash","values":{"MODE":"staging"}}`, http.StatusOK)
+		if code := cmdProjectsEnvironmentConfig([]string{"shop", "staging"}); code != 0 {
+			t.Fatalf("exit = %d, want 0", code)
+		}
+		if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/staging/config" {
+			t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+		}
+	})
+
+	t.Run("diff", func(t *testing.T) {
+		resetJSONOut(t)
+		f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":2,"to_version":3,"from_hash":"from","to_hash":"to","changes":[{"key":"MODE","kind":"changed","before":"staging","after":"production"}]}`, http.StatusOK)
+		if code := cmdProjectsEnvironmentConfigDiff([]string{"shop", "--from", "staging", "--to", "production"}); code != 0 {
+			t.Fatalf("exit = %d, want 0", code)
+		}
+		if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/config/diff" || f.sawQuery != "from=staging" {
+			t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+		}
+	})
+}
+
 func TestProjectsUpdateCarriesExplicitFields(t *testing.T) {
 	resetJSONOut(t)
 	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","slug":"shop","production_branch":"release","scan_source":"compose","workload_count":0,"created_at":"2026-09-15T00:00:00Z","updated_at":"2026-09-15T00:00:00Z","workloads":[],"exclusions":[]}`, http.StatusOK)
