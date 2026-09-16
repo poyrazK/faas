@@ -18,7 +18,11 @@ import (
 )
 
 const (
-	publicStatusPreviousMigrationVersion int64 = 20260912130000001
+	// The billing identity migration lands immediately before the public
+	// status migration on this branch. Keep the rollback assertion pinned to
+	// that actual predecessor so the test exercises a one-migration rollback
+	// without skipping the billing schema changes already present in the repo.
+	publicStatusPreviousMigrationVersion int64 = 20260912142703123
 	publicStatusMigrationVersion         int64 = 20260912144727207
 )
 
