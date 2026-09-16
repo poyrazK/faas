@@ -296,8 +296,8 @@ func projectEnvironmentConfigChanges(beforeRaw, afterRaw []byte) ([]projectEnvir
 	if err != nil {
 		return nil, err
 	}
-	keys := make([]string, 0, len(before)+len(after))
-	seen := make(map[string]struct{}, len(before)+len(after))
+	keys := make([]string, 0, len(before))
+	seen := make(map[string]struct{}, len(before))
 	for key := range before {
 		seen[key] = struct{}{}
 		keys = append(keys, key)
