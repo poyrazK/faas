@@ -120,10 +120,13 @@ func TestE2E_NormalPath_DebuggerTelemetryAndReplay(t *testing.T) {
 	if statusCode != http.StatusOK {
 		t.Fatalf("debugger export: status=%d body=%s", statusCode, body)
 	}
-	if !strings.Contains(string(body), request.ID) {
-		t.Fatalf("debugger export=%q, want request %s", body, request.ID)
+	export := string(body)
+	if !strings.Contains(export, request.DeploymentID) ||
+		!strings.Contains(export, request.Route) ||
+		!strings.Contains(export, `"method":"GET"`) {
+		t.Fatalf("debugger export=%q, want persisted deployment %s route %q", body, request.DeploymentID, request.Route)
 	}
-	if strings.Contains(string(body), secret) {
+	if strings.Contains(export, secret) {
 		t.Fatalf("debugger export leaked customer header value %q", secret)
 	}
 
