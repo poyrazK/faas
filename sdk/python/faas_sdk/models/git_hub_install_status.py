@@ -12,6 +12,7 @@ from ..models.git_hub_install_status_state import GitHubInstallStatusState, chec
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.git_hub_install_activity import GitHubInstallActivity
     from ..models.git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
 
 
@@ -44,6 +45,11 @@ class GitHubInstallStatus:
     csrf_token: str | Unset = UNSET
     """CSRF token for sync and disconnect mutations."""
     sync_result: GitHubInstallStatusSyncResult | Unset = UNSET
+    activity: GitHubInstallActivity | Unset = UNSET
+    """Bounded, redacted activity for the currently bound app. Webhook
+    payloads, GitHub delivery identifiers, retry controls, and worker
+    error text are never returned.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,6 +99,10 @@ class GitHubInstallStatus:
         if not isinstance(self.sync_result, Unset):
             sync_result = self.sync_result.to_dict()
 
+        activity: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.activity, Unset):
+            activity = self.activity.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -126,11 +136,14 @@ class GitHubInstallStatus:
             field_dict["csrf_token"] = csrf_token
         if sync_result is not UNSET:
             field_dict["sync_result"] = sync_result
+        if activity is not UNSET:
+            field_dict["activity"] = activity
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.git_hub_install_activity import GitHubInstallActivity
         from ..models.git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
 
         d = dict(src_dict)
@@ -201,6 +214,13 @@ class GitHubInstallStatus:
         else:
             sync_result = GitHubInstallStatusSyncResult.from_dict(_sync_result)
 
+        _activity = d.pop("activity", UNSET)
+        activity: GitHubInstallActivity | Unset
+        if isinstance(_activity, Unset):
+            activity = UNSET
+        else:
+            activity = GitHubInstallActivity.from_dict(_activity)
+
         git_hub_install_status = cls(
             state=state,
             health=health,
@@ -218,6 +238,7 @@ class GitHubInstallStatus:
             last_reconcile_error=last_reconcile_error,
             csrf_token=csrf_token,
             sync_result=sync_result,
+            activity=activity,
         )
 
         git_hub_install_status.additional_properties = d
