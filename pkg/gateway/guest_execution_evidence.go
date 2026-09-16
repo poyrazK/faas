@@ -128,8 +128,11 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 	// that hop (RFC 7230 §6.1) and must not be exposed as guest application
 	// metadata. The streaming forwarder uses this helper for both initial
 	// response headers and trailers, so keep the boundary in one place.
-	if isHopByHop(name) && !(preserveUpgrade && (strings.EqualFold(strings.TrimSpace(name), "Connection") || strings.EqualFold(strings.TrimSpace(name), "Upgrade"))) {
-		return
+	if isHopByHop(name) {
+		isUpgradeHandshakeHeader := preserveUpgrade && (strings.EqualFold(strings.TrimSpace(name), "Connection") || strings.EqualFold(strings.TrimSpace(name), "Upgrade"))
+		if !isUpgradeHandshakeHeader {
+			return
+		}
 	}
 	if strings.EqualFold(strings.TrimSpace(name), api.DeploymentIDHeader) {
 		return
