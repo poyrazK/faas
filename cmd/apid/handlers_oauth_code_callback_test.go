@@ -34,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -285,11 +286,17 @@ func TestStartConnectGitHub_RedirectsToInstallationWhenNeeded(t *testing.T) {
 	t.Setenv("FAAS_GITHUB_APP_CLIENT_ID", "client-123")
 	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "https://github.com/apps/test-app/installations/new")
 	gh := &oauthCodeCallbackFake{installState: InstallStateNotInstalled}
-	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	connectToken, err := middleware.IssueForAuthenticatedNamed(mgr, githubConnectAction, accountID, githubConnectCSRFCookie)
+	if err != nil {
+		t.Fatalf("issue connect csrf: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", nil)
+	r := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader("csrf_token="+url.QueryEscape(connectToken)))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.AddCookie(sessionCookie)
+	r.AddCookie(&http.Cookie{Name: githubConnectCSRFCookie, Value: connectToken})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusFound {
@@ -316,11 +323,17 @@ func TestStartConnectGitHub_AuthorizesInstalledApp(t *testing.T) {
 	t.Setenv("FAAS_GITHUB_APP_REDIRECT_URI", "https://gregale.dev/oauth/code-callback")
 	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "https://github.com/apps/test-app/installations/new")
 	gh := &oauthCodeCallbackFake{installState: InstallStateInstalled}
-	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	connectToken, err := middleware.IssueForAuthenticatedNamed(mgr, githubConnectAction, accountID, githubConnectCSRFCookie)
+	if err != nil {
+		t.Fatalf("issue connect csrf: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", nil)
+	r := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader("csrf_token="+url.QueryEscape(connectToken)))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.AddCookie(sessionCookie)
+	r.AddCookie(&http.Cookie{Name: githubConnectCSRFCookie, Value: connectToken})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusFound {

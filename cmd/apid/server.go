@@ -2683,6 +2683,11 @@ func (s *server) handler() http.Handler {
 	// session-cookie auth, and the redirect URL is hit by a
 	// browser.
 	mux.Handle("GET "+oauthCallbackPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderOAuthCallback))))
+	// Dashboard new-app wizard. The POST is a browser form adapter around
+	// the existing app creation and GitHub binding lifecycle; it has its own
+	// named CSRF envelope so the installation picker cannot be confused with
+	// the account-level Connect GitHub action.
+	mux.Handle("POST /dashboard/apps/new", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.createAppFromGitHubWizard))))
 	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 

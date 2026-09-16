@@ -2317,9 +2317,9 @@ type AccountData struct {
 	RestoreConfirmToken string
 	// ConnectGithubConfirmToken (issue #961 / Mega-B PR-3) backs the
 	// dashboard's "Connect GitHub" button. The form posts to
-	// /dashboard/install/connect with this token + the matching
-	// faas_csrf sidecar cookie. Same envelope shape as the delete /
-	// restore tokens above — sealed by (action, account_id).
+	// /dashboard/install/connect with this token + the matching named
+	// faas_csrf_github_connect sidecar cookie. Same envelope shape as
+	// the delete / restore tokens above — sealed by (action, account_id).
 	ConnectGithubConfirmToken string
 	// PlanConfirmToken backs the account-page plan form. Its sidecar uses
 	// a dedicated cookie name because the account page renders several

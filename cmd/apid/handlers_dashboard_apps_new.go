@@ -8,10 +8,10 @@
 //	env.GithubLogin set, githubd unreachable → render retry banner
 //	env.GithubLogin set, githubd reachable    → render install/repo/template form
 //
-// The wizard does NOT call bindAppToRepo server-side. The form
-// POSTs to the existing /v1/apps/{new-slug}/install/bind endpoint —
-// the §11 trust root is the dashboard cookie session, not a new
-// wizard-internal bind API. See ADR-116 for the rationale.
+// The form POSTs to the dashboard-only create adapter, which validates the
+// selected installation and repository, creates the app, and then delegates
+// the durable binding to githubd. The §11 trust root remains the dashboard
+// cookie session.
 //
 // §11 ownership proof (sessionGithubLogin) is the load-bearing gate:
 // no install_id / repo / template is shown to a session that hasn't
@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -58,11 +59,18 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 		PreFilledRepo:      prefilledRepo,
 		PreFilledInstallID: prefilledInstall,
 		PreFilledBranch:    prefilledBranch,
+		PreFilledSlug:      q.Get("slug"),
+		ReturnTo:           r.URL.RequestURI(),
+		FormError:          q.Get("error"),
+	}
+	if view.PreFilledSlug == "" {
+		view.PreFilledSlug = "my-app"
 	}
 
-	// Templates — populated up-front so the post-connect redirect
-	// can pick up where the customer left off. The form section
-	// itself is gated by NeedsGithubConnect in the template.
+	// Keep the template catalog available to the view for compatibility with
+	// the dashboard catalog endpoint; starter projects are currently created
+	// locally with `gregale init`, not written into a GitHub repository by this
+	// server-side flow.
 	view.Templates = projectAppsNewTemplates(fetchTemplatesForWizard(log))
 
 	// §11 ownership proof. Empty env.GithubLogin → render the
@@ -75,53 +83,82 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 	// directly so the wizard can render the right state.
 	if _, hasLogin := peekSessionGithubLogin(s, r); !hasLogin {
 		view.NeedsGithubConnect = true
-		tok, err := middleware.IssueForAuthenticated(s.sessions, "connect_github", acct.ID)
+		tok, err := issueConnectGithubToken(s, w, acct.ID)
 		if err != nil {
 			log.Error("renderAppNew: csrf issue connect_github", "account_id", acct.ID, "err", err)
 			renderProblem(w, log, err)
 			return
 		}
 		view.ConnectGithubConfirmToken = tok
-		http.SetCookie(w, &http.Cookie{
-			Name:     middleware.CookieNameAuthenticated,
-			Value:    tok,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   s.domain != "",
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
-		})
 		renderAppsNewPage(w, log, r, view, acct)
 		return
 	}
 
-	// Bind-app CSRF envelope — minted at GET time so the form submit
-	// carries a fresh sealed token. Same shape as renderAccount's
-	// delete + restore envelope pattern (handlers_dashboard.go:1049).
-	bindTok, err := middleware.IssueForAuthenticated(s.sessions, "bind_app_to_repo", acct.ID)
+	// Create-app CSRF envelope — minted at GET time so the browser form
+	// carries a fresh sealed token. Use a dedicated sidecar cookie because
+	// this page may also render the Connect GitHub form.
+	createTok, err := middleware.IssueForAuthenticatedNamed(s.sessions, githubWizardCreateAction, acct.ID, githubWizardCreateCSRFCookie)
 	if err != nil {
-		log.Error("renderAppNew: csrf issue bind_app_to_repo", "account_id", acct.ID, "err", err)
+		log.Error("renderAppNew: csrf issue create app", "account_id", acct.ID, "err", err)
 		renderProblem(w, log, err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     middleware.CookieNameAuthenticated,
-		Value:    bindTok,
+		Name:     githubWizardCreateCSRFCookie,
+		Value:    createTok,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.domain != "",
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 	})
-	view.BindAppConfirmToken = bindTok
+	view.CreateAppConfirmToken = createTok
 
-	// Repos — githubd is the source of truth for what's installed
-	// under this account. Best-effort: a 502 from githubd renders
-	// the retry banner rather than 500ing the page.
+	// Resolve the installation explicitly from durable state. The old
+	// synthetic ID=0 option silently delegated to githubd's latest-install
+	// fallback and then failed when the form submitted it.
+	githubInstalls, err := s.store.ListGitHubInstallationsForAccount(ctx, acct.ID)
+	if err != nil || len(githubInstalls) == 0 {
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			view.GitHubDegraded = true
+			view.GitHubDegradedMessage = "Could not read your GitHub connections — retry in a minute."
+			log.Warn("renderAppNew: list GitHub installations", "account_id", acct.ID, "err", err)
+			renderAppsNewPage(w, log, r, view, acct)
+			return
+		}
+		view.NeedsGithubInstall = true
+		view.ConnectGithubConfirmToken, err = issueConnectGithubToken(s, w, acct.ID)
+		if err != nil {
+			log.Error("renderAppNew: csrf issue connect github", "account_id", acct.ID, "err", err)
+			renderProblem(w, log, err)
+			return
+		}
+		renderAppsNewPage(w, log, r, view, acct)
+		return
+	}
+
 	selectedInstallationID := int64(0)
 	if prefilledInstall != "" {
 		selectedInstallationID, _ = strconv.ParseInt(prefilledInstall, 10, 64)
 	}
+	if selectedInstallationID <= 0 {
+		selectedInstallationID = githubInstalls[0].InstallationID
+	}
+	view.PreFilledInstallID = strconv.FormatInt(selectedInstallationID, 10)
+	for _, inst := range githubInstalls {
+		label := "GitHub installation " + strconv.FormatInt(inst.InstallationID, 10)
+		if login := strings.TrimSpace(inst.AuditGithubLogin); login != "" {
+			label += " (authorized by @" + login + ")"
+		}
+		view.Installations = append(view.Installations, views.AppsNewInstallView{
+			ID:           inst.InstallationID,
+			AccountLogin: label,
+		})
+	}
+
+	// Repos — githubd is the source of truth for what's installed
+	// under this account. Best-effort: a 502 from githubd renders
+	// the retry banner rather than 500ing the page.
 	installs, err := s.githubd.ListInstallableRepos(ctx, acct.ID, selectedInstallationID)
 	if err != nil {
 		// Same degradation path as listInstallableRepos: distinguish
@@ -152,18 +189,20 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 		return repoViews[i].RepoFullName < repoViews[j].RepoFullName
 	})
 	view.Repos = repoViews
-
-	// Installations — at minimum, surface one synthetic "your repos"
-	// install so the form has a non-empty selection. Multi-install
-	// support (personal + work) lands when pkg/githubdgrpc.Repo
-	// carries an InstallID.
-	if prefilledInstall != "" {
-		if id, err := strconv.ParseInt(prefilledInstall, 10, 64); err == nil && id > 0 {
-			view.Installations = []views.AppsNewInstallView{{ID: id, AccountLogin: "your install", RepoCount: len(repoViews)}}
+	if view.PreFilledBranch == "" && len(repoViews) > 0 {
+		branch := repoViews[0].DefaultBranch
+		for _, repo := range repoViews {
+			if repo.RepoFullName == view.PreFilledRepo {
+				branch = repo.DefaultBranch
+				break
+			}
 		}
+		view.PreFilledBranch = branch
 	}
-	if len(view.Installations) == 0 {
-		view.Installations = []views.AppsNewInstallView{{ID: 0, AccountLogin: "your GitHub App install", RepoCount: len(repoViews)}}
+	for i := range view.Installations {
+		if view.Installations[i].ID == selectedInstallationID {
+			view.Installations[i].RepoCount = len(repoViews)
+		}
 	}
 
 	renderAppsNewPage(w, log, r, view, acct)

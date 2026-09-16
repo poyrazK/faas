@@ -50,9 +50,10 @@ Concretely:
   does NOT call `POST /v1/apps/{slug}/install/bind`.
 - `/dashboard/apps/new` (PR-3) renders a 3-step wizard
   (Connect GitHub → pick install + repo + template → bind).
-- The wizard's submit form POSTs to the existing
-  `/v1/apps/{slug}/install/bind` endpoint (handlers_install_github.go:207).
-  The cookie-session §11 proof re-runs server-side.
+- The wizard's submit form POSTs to the dashboard-only
+  `/dashboard/apps/new` adapter. It creates the app, verifies the selected
+  repository against the installation, and then calls the existing durable
+  binding primitive. The cookie-session §11 proof re-runs server-side.
 - `GET /v1/templates` (PR-3) is the dashboard's source of truth for
   the template catalog. The CLI's runtime validator reads the same
   `templates.Names` locally (the embed FS in `cmd/gregale/templates/`).
@@ -94,10 +95,10 @@ Concretely:
   the CLI's main package.
 - `/dashboard/apps/new` (handlers_dashboard_apps_new.go) renders
   three states: Connect-first (no `env.GithubLogin`), Degraded
-  (githubd unreachable), Form (everything wired). The wizard does
-  NOT call `bindAppToRepo` server-side — the form POSTs to the
-  existing `/v1/apps/{slug}/install/bind` endpoint so the §11
-  proof re-runs.
+  (githubd unreachable), Form (everything wired). The form POSTs to
+  the dashboard-only create adapter, which performs the §11 proof,
+  creates the app, verifies repository visibility, and persists the
+  binding through githubd.
 - New `peekSessionGithubLogin` helper (handlers_dashboard_apps_new.go)
   is the side-effect-free sibling of `sessionGithubLogin`. The
   wizard peeks the cookie so it can render the Connect CTA; the
