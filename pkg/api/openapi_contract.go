@@ -36,6 +36,33 @@ type GitHubInstallStatus struct {
 	} `json:"sync_result,omitempty"`
 }
 
+// GitHubInstallActivity is the redacted activity projection returned with a
+// GitHub connection status. It intentionally contains no payloads, queue
+// identifiers, retry controls, or worker error text.
+type GitHubInstallActivity struct {
+	WebhookDeliveries []GitHubWebhookActivity `json:"webhook_deliveries"`
+	CheckUpdates      []GitHubCheckActivity   `json:"check_updates"`
+}
+
+// GitHubWebhookActivity is a customer-safe projection of webhook processing.
+type GitHubWebhookActivity struct {
+	EventType   string     `json:"event_type"`
+	Status      string     `json:"status"`
+	CommitSHA   string     `json:"commit_sha,omitempty"`
+	ReceivedAt  time.Time  `json:"received_at"`
+	ProcessedAt *time.Time `json:"processed_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+// GitHubCheckActivity is a customer-safe projection of Check Run syncing.
+type GitHubCheckActivity struct {
+	DeploymentID string     `json:"deployment_id"`
+	Status       string     `json:"status"`
+	CommitSHA    string     `json:"commit_sha,omitempty"`
+	ProcessedAt  *time.Time `json:"processed_at,omitempty"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
 // GitHubDeploymentPolicy is the customer-owned project-level policy applied
 // by githubd to source staging and PR-preview leases.
 type GitHubDeploymentPolicy struct {
