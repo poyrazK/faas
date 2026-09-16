@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Redacted Check Run synchronization activity for the bound GitHub app.
+ */
 export type GitHubCheckActivity = {
   deployment_id: string;
   status: 'pending' | 'processing' | 'succeeded' | 'dead';

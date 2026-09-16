@@ -16,6 +16,8 @@ T = TypeVar("T", bound="GitHubCheckActivity")
 
 @_attrs_define
 class GitHubCheckActivity:
+    """Redacted Check Run synchronization activity for the bound GitHub app."""
+
     deployment_id: UUID
     status: GitHubCheckActivityStatus
     updated_at: datetime.datetime

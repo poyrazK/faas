@@ -16903,6 +16903,7 @@ components:
           items: { $ref: '#/components/schemas/GitHubCheckActivity' }
 
     GitHubWebhookActivity:
+      description: Redacted webhook processing activity for the bound GitHub app.
       type: object
       required: [event_type, status, received_at, updated_at]
       properties:
@@ -16914,6 +16915,7 @@ components:
         updated_at: { type: string, format: date-time }
 
     GitHubCheckActivity:
+      description: Redacted Check Run synchronization activity for the bound GitHub app.
       type: object
       required: [deployment_id, status, updated_at]
       properties:

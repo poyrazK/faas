@@ -16882,6 +16882,48 @@ components:
             detached: { type: boolean }
             remote_repository_count: { type: integer, minimum: 0 }
             synced_at: { type: string, format: date-time }
+        activity:
+          $ref: '#/components/schemas/GitHubInstallActivity'
+
+    GitHubInstallActivity:
+      description: |
+        Bounded, redacted activity for the currently bound app. Webhook
+        payloads, GitHub delivery identifiers, retry controls, and worker
+        error text are never returned.
+      type: object
+      required: [webhook_deliveries, check_updates]
+      properties:
+        webhook_deliveries:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/GitHubWebhookActivity' }
+        check_updates:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/GitHubCheckActivity' }
+
+    GitHubWebhookActivity:
+      description: Redacted webhook processing activity for the bound GitHub app.
+      type: object
+      required: [event_type, status, received_at, updated_at]
+      properties:
+        event_type: { type: string }
+        status: { type: string, enum: [pending, processing, succeeded, dead] }
+        commit_sha: { type: string }
+        received_at: { type: string, format: date-time }
+        processed_at: { type: [string, "null"], format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GitHubCheckActivity:
+      description: Redacted Check Run synchronization activity for the bound GitHub app.
+      type: object
+      required: [deployment_id, status, updated_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, processing, succeeded, dead] }
+        commit_sha: { type: string }
+        processed_at: { type: [string, "null"], format: date-time }
+        updated_at: { type: string, format: date-time }
 
     RepoResponse:
       description: |

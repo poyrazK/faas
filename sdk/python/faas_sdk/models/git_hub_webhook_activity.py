@@ -15,6 +15,8 @@ T = TypeVar("T", bound="GitHubWebhookActivity")
 
 @_attrs_define
 class GitHubWebhookActivity:
+    """Redacted webhook processing activity for the bound GitHub app."""
+
     event_type: str
     status: GitHubWebhookActivityStatus
     received_at: datetime.datetime

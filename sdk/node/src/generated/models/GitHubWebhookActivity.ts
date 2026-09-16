@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Redacted webhook processing activity for the bound GitHub app.
+ */
 export type GitHubWebhookActivity = {
   event_type: string;
   status: 'pending' | 'processing' | 'succeeded' | 'dead';
