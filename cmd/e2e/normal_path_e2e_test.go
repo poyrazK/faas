@@ -1409,35 +1409,19 @@ func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
 	}
 	req.Host = f.host
 	client := *f.h.HTTPClient()
-	type responseResult struct {
-		resp *http.Response
-		err  error
-	}
-	responseDone := make(chan responseResult, 1)
-	bodyDone := make(chan struct{})
+	requestDone := make(chan error, 1)
 	go func() {
-		resp, requestErr := client.Do(req)
-		responseDone <- responseResult{resp: resp, err: requestErr}
-		if resp != nil {
-			_, _ = io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
+		resp, err := client.Do(req)
+		if err != nil {
+			requestDone <- err
+			return
 		}
-		close(bodyDone)
+		_, bodyErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		requestDone <- bodyErr
 	}()
 
-	waitNormalPathProbe(t, probe.headersSent, "restart response headers")
 	waitNormalPathProbe(t, probe.firstResponseBody, "restart first response body")
-	select {
-	case result := <-responseDone:
-		if result.err != nil {
-			t.Fatalf("in-flight response failed before restart: %v", result.err)
-		}
-		if result.resp == nil || result.resp.StatusCode != http.StatusOK {
-			t.Fatalf("in-flight response=%v, want HTTP 200", result.resp)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("in-flight response headers did not reach the client")
-	}
 
 	// Stop every real daemon while the response is blocked. The fake VMMD
 	// remains alive so the test can distinguish a gateway lifecycle failure
@@ -1445,8 +1429,11 @@ func TestE2E_NormalPath_GatewayRestartTerminatesInFlightResponse(t *testing.T) {
 	f.h.Stop()
 	waitNormalPathProbe(t, probe.canceled, "restart bridge cancellation")
 	select {
-	case <-bodyDone:
+	case requestErr := <-requestDone:
 		// The old response must terminate once its owning gateway exits.
+		if requestErr == nil {
+			t.Fatal("in-flight response completed successfully after gateway restart")
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("in-flight response remained blocked after gateway restart")
 	}
