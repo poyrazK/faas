@@ -10599,6 +10599,50 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug owning the promotion rollback operation.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Target environment receiving the promotion rollback.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - name: promotion
+        in: path
+        required: true
+        description: Durable promotion operation identifier to roll back.
+        schema: { type: string, minLength: 1 }
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Stable key that makes this rollback replayable without repeating cutover.
+        schema: { type: string, minLength: 1, maxLength: 255 }
+    post:
+      tags: [projects]
+      operationId: rollbackProjectEnvironmentPromotion
+      summary: Roll back a completed or failed project environment promotion.
+      description: |
+        Restores each workload to the target deployment captured before the
+        promotion. Workloads created by the promotion are failed and removed
+        from traffic when there was no prior target. The operation refuses to
+        overwrite a target changed after the promotion and records durable
+        per-workload rollback checkpoints.
+      responses:
+        '200':
+          description: Durable rollback status and per-workload restoration result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/delete-preview:
     parameters:
       - name: slug
@@ -22124,6 +22168,11 @@ components:
         previous_target_deployment_id: { type: string }
         target_deployment_id: { type: string }
         error: { type: string }
+        rollback_status:
+          type: string
+          enum: [pending, restored, cleared, unchanged, skipped, failed]
+        restored_target_deployment_id: { type: string }
+        rollback_error: { type: string }
 
     ProjectEnvironmentPromotionStatusResponse:
       description: Durable status for a project environment promotion operation.
@@ -22142,6 +22191,12 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+        rollback_status:
+          type: string
+          enum: [rolling_back, rolled_back, rollback_failed]
+        rollback_error: { type: string }
+        rollback_started_at: { type: string, format: date-time }
+        rollback_completed_at: { type: string, format: date-time }
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusWorkloadResponse' }

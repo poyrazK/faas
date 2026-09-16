@@ -1564,6 +1564,22 @@ func (c *Client) GetProjectsSlugEnvironmentsEnvironmentPromotionsPromotion(ctx c
 	return c.GetProjectEnvironmentPromotionStatus(ctx, projectSlug, targetEnvironment, promotionID)
 }
 
+// RollbackProjectEnvironmentPromotion restores the target environment to the
+// per-workload state captured before a durable promotion. The request is
+// idempotent through ContextWithIdempotencyKey or the client's normal mutation
+// key handling.
+func (c *Client) RollbackProjectEnvironmentPromotion(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
+	var out ProjectEnvironmentPromotionStatusResponse
+	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotions/" + url.PathEscape(promotionID) + "/rollback"
+	return out, c.do(ctx, http.MethodPost, path, nil, &out)
+}
+
+// PostProjectsSlugEnvironmentsEnvironmentPromotionsPromotionRollback is the
+// route-shaped SDK alias used by SDK coverage.
+func (c *Client) PostProjectsSlugEnvironmentsEnvironmentPromotionsPromotionRollback(ctx context.Context, projectSlug, targetEnvironment, promotionID string) (ProjectEnvironmentPromotionStatusResponse, error) {
+	return c.RollbackProjectEnvironmentPromotion(ctx, projectSlug, targetEnvironment, promotionID)
+}
+
 // PreviewDeleteProject returns the state related to a project deletion.
 func (c *Client) PreviewDeleteProject(ctx context.Context, slug string) (ProjectDeletePreviewResponse, error) {
 	var out ProjectDeletePreviewResponse

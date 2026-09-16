@@ -17,6 +17,10 @@ export type ProjectEnvironmentPromotionStatusResponse = {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+  rollback_status?: 'rolling_back' | 'rolled_back' | 'rollback_failed';
+  rollback_error?: string;
+  rollback_started_at?: string;
+  rollback_completed_at?: string;
   workloads: Array<ProjectEnvironmentPromotionStatusWorkloadResponse>;
 };
 

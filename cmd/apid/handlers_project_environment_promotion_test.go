@@ -127,6 +127,85 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	if live.ID == target.ID || live.SourceSHA256 != source.SourceSHA256 || live.RootfsKey != "apps/source.ext4" {
 		t.Fatalf("promoted live deployment=%+v", live)
 	}
+	rollbackReq, rollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
+	rollbackReq.SetPathValue("environment", "production")
+	rollbackReq.SetPathValue("promotion", response.PromotionID)
+	rollbackReq.Header.Set("Idempotency-Key", "rollback-test-1")
+	srv.rollbackProjectEnvironmentPromotion(rollbackRec, rollbackReq, acct)
+	if rollbackRec.Code != http.StatusOK {
+		t.Fatalf("rollback status=%d body=%s", rollbackRec.Code, rollbackRec.Body.String())
+	}
+	var rollbackStatus api.ProjectEnvironmentPromotionStatusResponse
+	if err := json.Unmarshal(rollbackRec.Body.Bytes(), &rollbackStatus); err != nil {
+		t.Fatal(err)
+	}
+	if rollbackStatus.RollbackStatus != "rolled_back" || len(rollbackStatus.Workloads) != 1 || rollbackStatus.Workloads[0].RollbackStatus != "restored" || rollbackStatus.Workloads[0].RestoredTargetDeploymentID != target.ID {
+		t.Fatalf("rollback response=%+v", rollbackStatus)
+	}
+	live, err = store.LiveDeploymentForScope(ctx, app.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.ID != target.ID {
+		t.Fatalf("restored live deployment=%+v want=%s", live, target.ID)
+	}
+	replayRollbackReq, replayRollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
+	replayRollbackReq.SetPathValue("environment", "production")
+	replayRollbackReq.SetPathValue("promotion", response.PromotionID)
+	replayRollbackReq.Header.Set("Idempotency-Key", "rollback-test-1")
+	srv.rollbackProjectEnvironmentPromotion(replayRollbackRec, replayRollbackReq, acct)
+	if replayRollbackRec.Code != http.StatusOK || replayRollbackRec.Body.String() != rollbackRec.Body.String() {
+		t.Fatalf("rollback replay status=%d body=%s want=%s", replayRollbackRec.Code, replayRollbackRec.Body.String(), rollbackRec.Body.String())
+	}
+}
+
+func TestProjectEnvironmentPromotionRollbackClearsNewTarget(t *testing.T) {
+	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	ctx := context.Background()
+	promotionID := "promotion-no-prior"
+	candidate, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Scope: "production", SourceSHA256: "promoted-source",
+		Status: state.DeployPending, Reason: projectEnvironmentPromotionDeploymentReason(promotionID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentRootfs(ctx, candidate.ID, "/rootfs/promoted", "apps/promoted.ext4", 42); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = store.CreateProjectEnvironmentPromotion(ctx, state.ProjectEnvironmentPromotion{
+		ID: promotionID, AccountID: acct.ID, ProjectID: project.ID, ProjectSlug: project.Slug,
+		FromEnvironment: "staging", ToEnvironment: "production", PromotionHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		IdempotencyKey: "promotion-no-prior-key", Status: "succeeded",
+	}, []state.ProjectEnvironmentPromotionWorkload{{
+		WorkloadSlug: app.Slug, WorkloadName: app.WorkloadName, SourceDeploymentID: "source",
+		TargetDeploymentID: candidate.ID, Status: "promoted",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+promotionID+"/rollback", "shop", nil)
+	req.SetPathValue("environment", "production")
+	req.SetPathValue("promotion", promotionID)
+	req.Header.Set("Idempotency-Key", "rollback-no-prior")
+	srv.rollbackProjectEnvironmentPromotion(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rollback status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var status api.ProjectEnvironmentPromotionStatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.RollbackStatus != "rolled_back" || len(status.Workloads) != 1 || status.Workloads[0].RollbackStatus != "cleared" {
+		t.Fatalf("rollback status=%+v", status)
+	}
+	if _, err := store.LiveDeploymentForScope(ctx, app.ID, "production"); err == nil {
+		t.Fatal("promotion-created target remained live after rollback")
+	}
 }
 
 func TestProjectEnvironmentPromotionPreviewComparesLiveReleasesAndConfig(t *testing.T) {

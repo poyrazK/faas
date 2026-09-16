@@ -295,6 +295,167 @@ func (s *server) getProjectEnvironmentPromotionStatus(w http.ResponseWriter, r *
 	writeJSON(w, http.StatusOK, projectEnvironmentPromotionStatusResponse(promotion, workloads))
 }
 
+func (s *server) rollbackProjectEnvironmentPromotion(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 255 {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Idempotency-Key required", "promotion rollbacks require an Idempotency-Key of 1..255 characters"))
+		return
+	}
+	promotion, workloads, err := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, r.PathValue("slug"), r.PathValue("environment"), r.PathValue("promotion"))
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Environment promotion not found", "no promotion exists with that id"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not load environment promotion"))
+		return
+	}
+	if promotion.Status == "running" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Promotion is still running", "wait for the promotion to finish before requesting a rollback"))
+		return
+	}
+	started, err := s.store.StartProjectEnvironmentPromotionRollback(r.Context(), acct.ID, promotion.ID, idempotencyKey)
+	if err != nil {
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Rollback idempotency key already used", "retry with the original rollback key or choose a new promotion"))
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not start environment promotion rollback"))
+		return
+	}
+	if started.RollbackStatus == "rolled_back" {
+		writeJSON(w, http.StatusOK, projectEnvironmentPromotionStatusResponse(started, workloads))
+		return
+	}
+
+	apps, err := s.store.AppsForProject(r.Context(), acct.ID, promotion.ProjectID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list project workloads for rollback"))
+		return
+	}
+	appsBySlug := make(map[string]state.App, len(apps))
+	for _, app := range apps {
+		appsBySlug[app.Slug] = app
+	}
+	for _, workload := range workloads {
+		if workload.RollbackStatus == "restored" || workload.RollbackStatus == "cleared" ||
+			workload.RollbackStatus == "unchanged" || workload.RollbackStatus == "skipped" {
+			continue
+		}
+		app, ok := appsBySlug[workload.WorkloadSlug]
+		if !ok {
+			if problem := s.failProjectEnvironmentPromotionRollback(r.Context(), acct, promotion, workload,
+				errors.New("workload no longer belongs to the project")); problem != nil {
+				api.WriteProblem(w, problem)
+			}
+			return
+		}
+		rollbackStatus, restoredID, rollbackErr := rollbackProjectEnvironmentPromotionWorkload(
+			r.Context(), s.store, promotion, workload, app.ID)
+		if rollbackErr != nil {
+			if problem := s.failProjectEnvironmentPromotionRollback(r.Context(), acct, promotion, workload, rollbackErr); problem != nil {
+				api.WriteProblem(w, problem)
+			}
+			return
+		}
+		if _, err := s.store.UpdateProjectEnvironmentPromotionRollbackWorkload(r.Context(), acct.ID, promotion.ID,
+			workload.ID, rollbackStatus, restoredID, ""); err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not update environment rollback checkpoint"))
+			return
+		}
+	}
+
+	now := time.Now().UTC()
+	completed, err := s.store.UpdateProjectEnvironmentPromotionRollback(r.Context(), acct.ID, promotion.ID, "rolled_back", "", &now)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not complete environment promotion rollback"))
+		return
+	}
+	_, finalWorkloads, err := s.store.ProjectEnvironmentPromotionByID(r.Context(), acct.ID, promotion.ProjectSlug, promotion.ToEnvironment, promotion.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not load environment rollback result"))
+		return
+	}
+	s.audit.Emit(r.Context(), "project.environment.promotion_rolled_back", &acct.ID, map[string]any{
+		"promotion_id": promotion.ID, "project_slug": promotion.ProjectSlug,
+		"from_environment": promotion.FromEnvironment, "to_environment": promotion.ToEnvironment,
+		"workload_count": len(finalWorkloads), "rollback_idempotency_key": idempotencyKey,
+	})
+	writeJSON(w, http.StatusOK, projectEnvironmentPromotionStatusResponse(completed, finalWorkloads))
+}
+
+func (s *server) failProjectEnvironmentPromotionRollback(ctx context.Context, acct state.Account, promotion state.ProjectEnvironmentPromotion, workload state.ProjectEnvironmentPromotionWorkload, cause error) *api.Problem {
+	message := cause.Error()
+	if _, err := s.store.UpdateProjectEnvironmentPromotionRollbackWorkload(ctx, acct.ID, promotion.ID, workload.ID, "failed", "", message); err != nil {
+		return api.ErrCapacity("could not record environment rollback failure")
+	}
+	now := time.Now().UTC()
+	if _, err := s.store.UpdateProjectEnvironmentPromotionRollback(ctx, acct.ID, promotion.ID, "rollback_failed", message, &now); err != nil {
+		return api.ErrCapacity("could not complete environment rollback failure")
+	}
+	if errors.Is(cause, state.ErrConflict) {
+		return api.NewProblem(http.StatusConflict, api.CodeValidation, "Rollback refused", message)
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeValidation, "Rollback failed", message)
+}
+
+func rollbackProjectEnvironmentPromotionWorkload(ctx context.Context, store state.Store, promotion state.ProjectEnvironmentPromotion, workload state.ProjectEnvironmentPromotionWorkload, appID string) (string, string, error) {
+	current, currentErr := store.LiveDeploymentForScope(ctx, appID, promotion.ToEnvironment)
+	if currentErr != nil && !errors.Is(currentErr, state.ErrNotFound) {
+		return "", "", fmt.Errorf("could not inspect current target deployment: %w", currentErr)
+	}
+	hasCurrent := currentErr == nil
+	previousID := workload.PreviousTargetDeploymentID
+	marker := projectEnvironmentPromotionDeploymentReason(promotion.ID)
+
+	var candidate state.Deployment
+	if workload.TargetDeploymentID != "" && workload.TargetDeploymentID != previousID {
+		candidate, currentErr = store.DeploymentByID(ctx, workload.TargetDeploymentID)
+		if currentErr != nil {
+			return "", "", fmt.Errorf("could not load promotion deployment: %w", currentErr)
+		}
+		if candidate.AppID != appID || candidate.Scope != promotion.ToEnvironment || candidate.Reason != marker {
+			return "", "", fmt.Errorf("%w: recorded deployment is not owned by this promotion", state.ErrConflict)
+		}
+	} else if hasCurrent && current.Reason == marker {
+		candidate = current
+	}
+
+	if previousID != "" {
+		previous, err := store.DeploymentByID(ctx, previousID)
+		if err != nil {
+			return "", "", fmt.Errorf("could not load previous target deployment: %w", err)
+		}
+		if previous.AppID != appID || previous.Scope != promotion.ToEnvironment || previous.DeletedAt != nil {
+			return "", "", fmt.Errorf("%w: previous target deployment is not a restorable target", state.ErrConflict)
+		}
+		if hasCurrent && current.ID == previous.ID {
+			return "restored", previous.ID, nil
+		}
+		if candidate.ID == "" || !hasCurrent || current.ID != candidate.ID || candidate.Status != state.DeployLive {
+			return "", "", fmt.Errorf("%w: target changed after promotion; refusing to overwrite it", state.ErrConflict)
+		}
+		if err := store.MarkDeploymentLive(ctx, previous.ID); err != nil {
+			return "", "", fmt.Errorf("could not restore previous target deployment: %w", err)
+		}
+		return "restored", previous.ID, nil
+	}
+
+	if !hasCurrent {
+		return "cleared", "", nil
+	}
+	if candidate.ID == "" || current.ID != candidate.ID || candidate.Status != state.DeployLive {
+		return "", "", fmt.Errorf("%w: target changed after promotion; refusing to clear it", state.ErrConflict)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, candidate.ID, state.DeployFailed, "environment promotion rollback"); err != nil {
+		return "", "", fmt.Errorf("could not clear promotion deployment: %w", err)
+	}
+	return "cleared", "", nil
+}
+
 func projectEnvironmentPromotionWorkloads(plan projectEnvironmentPromotionPlan) []state.ProjectEnvironmentPromotionWorkload {
 	workloads := make([]state.ProjectEnvironmentPromotionWorkload, 0, len(plan.Preview.Changes))
 	for _, change := range plan.Preview.Changes {
@@ -429,14 +590,19 @@ func projectEnvironmentPromotionStatusResponse(promotion state.ProjectEnvironmen
 			Status: workload.Status, SourceDeploymentID: workload.SourceDeploymentID,
 			PreviousTargetDeploymentID: workload.PreviousTargetDeploymentID,
 			TargetDeploymentID:         workload.TargetDeploymentID, Error: workload.Error,
+			RollbackStatus: workload.RollbackStatus, RestoredTargetDeploymentID: workload.RestoredTargetDeploymentID,
+			RollbackError: workload.RollbackError,
 		})
 	}
 	return api.ProjectEnvironmentPromotionStatusResponse{
 		PromotionID: promotion.ID, ProjectSlug: promotion.ProjectSlug,
 		FromEnvironment: promotion.FromEnvironment, ToEnvironment: promotion.ToEnvironment,
 		PromotionHash: promotion.PromotionHash, Status: promotion.Status, Error: promotion.Error,
-		CreatedAt: promotion.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt: promotion.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		RollbackStatus: promotion.RollbackStatus, RollbackError: promotion.RollbackError,
+		RollbackStartedAt:   formatOptionalTime(promotion.RollbackStartedAt),
+		RollbackCompletedAt: formatOptionalTime(promotion.RollbackCompletedAt),
+		CreatedAt:           promotion.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:           promotion.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		CompletedAt: func() string {
 			if promotion.CompletedAt == nil {
 				return ""
@@ -445,6 +611,13 @@ func projectEnvironmentPromotionStatusResponse(promotion state.ProjectEnvironmen
 		}(),
 		Workloads: items,
 	}
+}
+
+func formatOptionalTime(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func projectEnvironmentPromotionExecutionProblem(plan projectEnvironmentPromotionPlan) *api.Problem {

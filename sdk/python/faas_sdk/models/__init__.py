@@ -817,8 +817,14 @@ from .project_environment_promotion_change_target_revision_kind import (
 from .project_environment_promotion_preview_response import ProjectEnvironmentPromotionPreviewResponse
 from .project_environment_promotion_response import ProjectEnvironmentPromotionResponse
 from .project_environment_promotion_status_response import ProjectEnvironmentPromotionStatusResponse
+from .project_environment_promotion_status_response_rollback_status import (
+    ProjectEnvironmentPromotionStatusResponseRollbackStatus,
+)
 from .project_environment_promotion_status_response_status import ProjectEnvironmentPromotionStatusResponseStatus
 from .project_environment_promotion_status_workload_response import ProjectEnvironmentPromotionStatusWorkloadResponse
+from .project_environment_promotion_status_workload_response_rollback_status import (
+    ProjectEnvironmentPromotionStatusWorkloadResponseRollbackStatus,
+)
 from .project_environment_promotion_status_workload_response_status import (
     ProjectEnvironmentPromotionStatusWorkloadResponseStatus,
 )
@@ -1906,8 +1912,10 @@ __all__ = (
     "ProjectEnvironmentPromotionPreviewResponse",
     "ProjectEnvironmentPromotionResponse",
     "ProjectEnvironmentPromotionStatusResponse",
+    "ProjectEnvironmentPromotionStatusResponseRollbackStatus",
     "ProjectEnvironmentPromotionStatusResponseStatus",
     "ProjectEnvironmentPromotionStatusWorkloadResponse",
+    "ProjectEnvironmentPromotionStatusWorkloadResponseRollbackStatus",
     "ProjectEnvironmentPromotionStatusWorkloadResponseStatus",
     "ProjectEnvironmentPromotionWorkloadResponse",
     "ProjectEnvironmentPromotionWorkloadResponseStatus",
